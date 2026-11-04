@@ -5,8 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from planner.core import authority
-from planner.core.authority import require_above_or_self
+from planner.commands import admit
 from planner.core.contracts import Principal
 from planner.files import managed_files
 from planner.files.logic.listing import entries_as_json, fold_directory
@@ -82,7 +81,7 @@ def delete_file(
 
 
 def _require_manager(conn: sqlite3.Connection, principal: Principal, manager_id: str) -> None:
-    require_above_or_self(conn, principal, authority.manager(manager_id))
+    admit(conn, principal, "files._require_manager", manager_id)
 
 
 def _item_root(db_path: str, manager_id: str, *, create: bool) -> Path | None:

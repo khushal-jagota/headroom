@@ -16,9 +16,8 @@ from urllib.parse import quote, unquote, urlsplit
 import anyio.to_thread
 from fastapi import APIRouter, Request
 
-from planner.core import authority
+from planner.commands import admit
 from planner.core.authctx import request_context
-from planner.core.authority import require_above_or_self
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import goal_files
 from planner.files.catalog.config import (
@@ -199,9 +198,7 @@ def _read(
     try:
         conn.execute("BEGIN")
         if kind == "manager":
-            require_above_or_self(
-                conn, request_context(request).principal, authority.manager(owner_id)
-            )
+            admit(conn, request_context(request).principal, "files._read", owner_id)
         elif kind == "goal":
             goal_files.require_goal(conn, request_context(request).principal, owner_id)
         else:

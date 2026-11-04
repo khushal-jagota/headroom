@@ -12,13 +12,8 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from planner.core import authority
+from planner.commands import admit
 from planner.core.authctx import RequestContext
-from planner.core.authority import (
-    refuse_manager_re_parenting,
-    require_above,
-    require_above_or_self,
-)
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import Principal
@@ -99,15 +94,14 @@ def _manager_ticket_rule(
     So it is re-parenting under another name, and the stated exception decides it. Not
     ``or_self``: a Ticket setting its own Manager is the case the exception exists for.
     """
-    require_above(conn, ctx.principal, authority.ticket(member_id))
-    refuse_manager_re_parenting(ctx.principal, member_id)
+    admit(conn, ctx.principal, "membership._manager_ticket_rule", member_id)
 
 
 def _blocker_rule(
     conn: sqlite3.Connection, ctx: RequestContext, container_id: str, member_id: str
 ) -> None:
     """The blocked Ticket is the one acted on. The blocking Ticket is named, not changed."""
-    require_above_or_self(conn, ctx.principal, authority.ticket(container_id))
+    admit(conn, ctx.principal, "membership._blocker_rule", container_id)
 
 
 @dataclass(frozen=True)

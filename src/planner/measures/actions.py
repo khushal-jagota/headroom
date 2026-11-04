@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import replace
 from itertools import islice
 
-from planner.core import authority
+from planner.commands import admit
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.measures import configuration as limits
@@ -27,7 +27,7 @@ from planner.measures.logic.formulas import dependencies, parse_formula, validat
 
 def _require_author(conn: sqlite3.Connection, principal: Principal, source_id: str | None) -> None:
     if source_id is None:
-        authority.require_above(conn, principal, authority.owner_only("measures"))
+        admit(conn, principal, "measures._require_author", "measures")
     else:
         from planner.measure_sources import authority as sources_authority
         from planner.measure_sources import data as sources_data

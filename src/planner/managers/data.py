@@ -7,9 +7,8 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import NamedTuple
 
+from planner.commands import admit
 from planner.conversation.contracts import ConversationBackendKey
-from planner.core import authority
-from planner.core.authority import require_above
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
@@ -206,7 +205,7 @@ def update_manager_launch_configuration(
     explicit_choice: bool = False,
 ) -> Manager:
     """Save a Manager choice, and distinguish explicit intent from historical metadata."""
-    require_above(conn, principal, authority.manager(item_id))
+    admit(conn, principal, "managers.update_manager_launch_configuration", item_id)
     _load_manager(conn, item_id)
     with _tx(conn):
         if (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from planner.commands.service import admit_message
 from planner.conversation.contracts import (
     ConversationMessageContent,
     ConversationSystem,
@@ -16,7 +17,6 @@ from planner.conversation.contracts import (
     PromptDeliverySuppressed,
 )
 from planner.conversation.message_content import text_message_content
-from planner.core import authority
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
@@ -29,7 +29,6 @@ from planner.message_delivery.contracts import (
     MessageDeliveryResult,
     MessageRecordedToOwner,
 )
-from planner.message_delivery.logic.permissions import permits_manager_message
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
@@ -106,53 +105,10 @@ def _sender_conversation_link_key(conn: sqlite3.Connection, sender: Principal) -
     raise ValueError("the owner has no sender conversation link")
 
 
-def _as_target(principal: Principal) -> authority.Target | None:
-    """The thing this principal is, when something can stand above it.
-
-    Khushal and the Chief are above everything, so nothing is above them and they are no
-    target. A message addressed to either asks no authority question.
-    """
-    if principal.kind is PrincipalKind.goal:
-        return authority.goal(principal.id)
-    if principal.kind is PrincipalKind.ticket:
-        return authority.ticket(principal.id)
-    if principal.kind is PrincipalKind.manager:
-        return authority.manager(principal.id)
-    return None
 
 
 def require_reach(conn: sqlite3.Connection, caller: Principal, recipient: Principal) -> None:
-    """Sending down the chain is acting on the recipient. Sending up is only speaking.
-
-    Two principals in one chain can talk, in both directions. Standing above the
-    recipient is acting on it — starting a turn in a conversation that belongs to
-    something below you — and that is the rule's own question. Standing below it is not:
-    a Worker answering the Outcome that asked it something is speaking, and refusing that
-    would make the reply every addressed prompt requires impossible to send.
-
-    Existing ordinary Managers can also speak to one another. This
-    message-only permission grants no authority over either supervisor or its Tickets.
-    Other strangers are neither, and they refuse.
-
-    Asked by the two routes that take a recipient from their caller, and it lives here so
-    they ask the same question rather than two. It is not asked inside ``send_message``:
-    the other callers name a recipient the route has already guarded, and a Ticket asking
-    its own ceiling holder for help names a principal Panels addressed it to, which is not
-    the caller reaching anywhere.
-    """
-    if permits_manager_message(caller, recipient):
-        managers_data.read_manager(conn, caller.id)
-        managers_data.read_manager(conn, recipient.id)
-        return
-    target = _as_target(recipient)
-    if target is None:
-        return
-    if authority.is_above(conn, caller, target):
-        return
-    caller_target = _as_target(caller)
-    if caller_target is not None and authority.is_above(conn, recipient, caller_target):
-        return
-    authority.require_above(conn, caller, target)
+    admit_message(conn, caller, recipient)
 
 
 async def send_message(

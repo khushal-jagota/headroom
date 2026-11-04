@@ -6,9 +6,9 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from planner.commands import admit
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import require_conversation_backend_key
-from planner.core import authority
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.managers.assignment import normalize_assignment
@@ -124,7 +124,7 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
 async def create_schedule(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    authority.require_above(conn, ctx.principal, authority.owner_only("scheduled_ticket_schedules"))
+    admit(conn, ctx.principal, "scheduled_tickets.create_schedule", "scheduled_ticket_schedules")
     raw = normalize_assignment(raw)
     _reject_unknown(raw, _CREATE_KEYS)
     template = _template_from_create(raw, conn)
@@ -172,7 +172,7 @@ async def patch_schedule(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    authority.require_above(conn, ctx.principal, authority.owner_only("scheduled_ticket_schedules"))
+    admit(conn, ctx.principal, "scheduled_tickets.patch_schedule", "scheduled_ticket_schedules")
     raw = normalize_assignment(raw)
     _reject_unknown(raw, _PATCH_KEYS)
     if not raw:

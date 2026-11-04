@@ -9,14 +9,13 @@ import anyio.to_thread
 import icu  # type: ignore[import-untyped]
 from fastapi import APIRouter, Request
 
+from planner.commands import admit
 from planner.conversation.history_contracts import (
     ConversationHistoryEntry,
     ConversationHistoryPage,
     HistoryOwnerKind,
 )
-from planner.core import authority
 from planner.core.authctx import request_context
-from planner.core.authority import require_above_or_self
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files.catalog.config import PAGE_MAX_BYTES, PAGE_SIZE
 from planner.managers.data import manager_agent_key
@@ -49,13 +48,9 @@ def _read(
     try:
         conn.execute("BEGIN")
         if kind == "manager":
-            require_above_or_self(
-                conn, request_context(request).principal, authority.manager(owner_id)
-            )
+            admit(conn, request_context(request).principal, "conversation._read", owner_id)
         elif kind == "goal":
-            require_above_or_self(
-                conn, request_context(request).principal, authority.goal(owner_id)
-            )
+            admit(conn, request_context(request).principal, "conversation._read.goal", owner_id)
         elif conn.execute("SELECT 1 FROM tickets WHERE id=?", (owner_id,)).fetchone() is None:
             raise PlannerError(ErrorCode.not_found, "ticket not found", {})
         current_row = conn.execute(

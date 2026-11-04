@@ -5,12 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from dataclasses import replace
 from sqlite3 import Connection
 
 import pytest
 
 from planner.core import authority
-from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
+from planner.core.authority import service as authority_service
 from planner.core.clock import Clock
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
@@ -366,7 +367,15 @@ def test_declared_ticket_authority_never_admits_a_review_holder(
 ) -> None:
     reviewer = _park(tmp_db, OWNER_PRINCIPAL)
     holder = Principal(PrincipalKind.ticket, reviewer.id)
-    monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "coding", (authority.ticket("*"),))
+    original_chain_facts = authority_service.chain_facts
+    monkeypatch.setattr(
+        authority_service,
+        "chain_facts",
+        lambda conn, caller, scope_target: replace(
+            original_chain_facts(conn, caller, scope_target),
+            caller_declared_targets=(authority.ticket("*"),),
+        ),
+    )
     target = _park(tmp_db, OWNER_PRINCIPAL, now=20)
     assert authority.is_above(tmp_db, holder, authority.ticket(target.id))
     before = tuple(tmp_db.iterdump())

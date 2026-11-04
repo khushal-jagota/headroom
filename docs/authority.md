@@ -55,6 +55,8 @@ A refused call is the product surface: a Worker that tries to approve, a Manager
 
 ## Pointers
 
-`src/planner/core/authority/logic.py` is the rule. `src/planner/core/authority/service.py` is the door routes call. `src/planner/core/authctx.py` turns a request into a principal.
+`src/planner/commands/service.py` admits commands from HTTP routes and direct Python writers. It selects each operation’s target and rank relation in one place. Creation, edits, source assignment, and messages use their existing special policies there. Admission stays within the existing transaction and validation sequence.
+
+`src/planner/core/authority/logic.py` is the rank rule. `src/planner/core/authority/service.py` supplies its database facts. `src/planner/core/authctx.py` turns a request into a principal.
 
 _Last verified: 2026-10-30._
