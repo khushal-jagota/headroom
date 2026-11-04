@@ -109,8 +109,8 @@ time.sleep(30)
     status = Path(f"/proc/{descendant}/stat")
     try:
         process_state = status.read_text().split()[2]
-    except FileNotFoundError:
-        pass  # Reaping can remove the process between an existence check and a read.
+    except (FileNotFoundError, ProcessLookupError):
+        pass  # Reaping can remove the process before open or during the read.
     else:
         assert process_state in {"Z", "X"}  # Both states describe a terminated process.
     assert result.metrics.elapsed_milliseconds < 3000
