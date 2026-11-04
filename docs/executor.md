@@ -37,13 +37,13 @@ A Mac Worker runs in its Project's folder, taken as a path on the Mac. A Ticket 
 
 Before it sends a start command, the VPS records which Mac agent process belongs to which conversation. That record lets it find and stop the process later, even after a restart.
 
-To start, the Mac fetches the files the prompt needs, installs the current skills, prepares the workspace, and then starts the provider. Skills come from the VPS database at each start and are linked into the provider's normal home on the Mac, so a Mac Worker reads the same skills as a VPS Worker. Provider settings and credentials stay untouched.
+To start, the Mac fetches the files the prompt needs, installs the current skills, prepares the workspace, and then starts the provider. Skills come from the VPS database at each start and are linked into the provider's normal home on the Mac, so a Mac Worker reads the same skills as a VPS Worker.
 
 The Worker uses ordinary tools. Its Ticket artifacts go to a Ticket folder on the Mac, and the Mac copies new or changed files to the Ticket's folder on the VPS. When the Worker runs `panels`, the command goes to the Mac service. Reads go straight through to the VPS. Writes are saved in the outbox and applied on the VPS with the Worker's own authority, which comes from the VPS's record of the run and not from anything the Mac claims.
 
 ## Getting work back to the VPS
 
-The Mac saves each piece of output before it sends it. The VPS applies it and records a receipt in one step, so a resend after a lost reply returns the first result instead of applying the work twice. Output keeps its order within a conversation. Separate conversations do not wait on each other.
+The Mac saves each piece of output before it sends it. The VPS applies it and records a receipt in one step, so a resend after a lost reply returns the first result instead of applying the work twice.
 
 A file reaches the VPS before any message that refers to it is accepted. A link in a Ticket field therefore never points at a file that has not arrived.
 
@@ -54,8 +54,7 @@ Live text, thinking, and tool progress skip the outbox. They show in the convers
 A lost connection supplies no answer. Panels never guesses an outcome.
 
 - **A short outage** leaves the Mac's agent processes running. On reconnect the VPS checks which processes, turns, and open questions still exist, and the Mac resends what it saved.
-- **A VPS restart** ends every Mac run that was live before it. The VPS stops those exact processes and starts fresh ones on the next send, resuming the provider session. Anything whose delivery was uncertain stays uncertain and is not resent.
-- **A Mac service restart** ends that Mac's runs the same way, and delivery of anything in flight stays uncertain.
+- **A VPS or Mac service restart** ends every Mac run that was live before it. The next send starts a fresh process that resumes the provider session. Anything whose delivery was uncertain stays uncertain and is not resent.
 - **A Worker's `panels` write** that cannot be confirmed says so. It stays in the outbox, and the Worker must not repeat it.
 
 Answers to permission and question requests can be saved while the Mac is offline. A saved answer counts as applied only when the Mac confirms that the original request received it.
@@ -64,9 +63,9 @@ A stop counts only when the Mac's final stop receipt arrives, after all of that 
 
 ## Model lists and health
 
-Each machine reads its own backends' model lists. The VPS keeps the Mac's last answer, so pickers for Mac Tickets still work while the Mac is offline. They refresh on reconnect, after a provider update, or when they grow old. [Conversations](conversations.md) covers the picker.
+Each machine reads its own backends' model lists. The VPS keeps the Mac's last answer, so pickers for Mac Tickets still work while the Mac is offline. [Conversations](conversations.md) covers the picker.
 
-The executor health read shows whether the Mac is connected and ready, and when the VPS last heard from it. Last contact proves receipt only, not that an agent is busy or that an answer arrived.
+The executor health read shows whether the Mac is connected and ready, and when the VPS last heard from it.
 
 ## What runs on the Mac
 
