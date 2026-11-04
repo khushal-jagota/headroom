@@ -3,7 +3,7 @@
 from alembic import op
 
 revision = "native_push_deliveries"
-down_revision = "conversation_background_tasks"
+down_revision = "mac_contact_status"
 branch_labels = None
 depends_on = None
 

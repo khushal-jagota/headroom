@@ -557,8 +557,8 @@ def create_app(
         can_refresh=lambda: not app.state.update_startup_pending,
     )
 
-    app.add_middleware(UpdateAdmissionMiddleware, config=config)
     app.add_middleware(IOSBuildGateMiddleware)
+    app.add_middleware(UpdateAdmissionMiddleware, config=config)
 
     app.state.resource_version_epoch = str(uuid4())
 
