@@ -38,7 +38,13 @@ from planner.conversation.video_uploads.service import VideoUploadService
 from planner.conversation.views.api import router as conversation_views_router
 from planner.core import change_signal
 from planner.core.clock import Clock
-from planner.core.config import HOST, Config
+from planner.core.config import (
+    DB_BUSY_TIMEOUT_MS,
+    HOST,
+    SHUTDOWN_GRACE_SECONDS,
+    SSE_HEARTBEAT_MS,
+    Config,
+)
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
 from planner.core.request_guidance import preserve_authored_request_examples
@@ -191,7 +197,6 @@ def create_app(
     @asynccontextmanager
     async def _configured_lifespan(app: FastAPI) -> AsyncIterator[None]:
         Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
         from planner.tickets import data as tickets_data
 
         recovery_task: asyncio.Task[None] | None = None
@@ -205,7 +210,7 @@ def create_app(
 
         async def shutdown_dependents() -> None:
             app.state.conversation = None
-            deadline = _monotonic() + float(config.shutdown_grace_seconds)
+            deadline = _monotonic() + float(SHUTDOWN_GRACE_SECONDS)
             failures: list[BaseException] = []
 
             async def attempt(operation: Awaitable[None]) -> None:
@@ -245,7 +250,7 @@ def create_app(
                 raise failures[0]
 
         remembered_codex_login_rejection = DurableCodexLoginRejection(
-            config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
+            config.db_path, busy_timeout_ms=DB_BUSY_TIMEOUT_MS
         )
         backend_factories = (
             backend_child_factories_for_test
@@ -277,8 +282,8 @@ def create_app(
 
             async with application_runtime(
                 db_path=config.db_path,
-                db_busy_timeout_ms=config.db_busy_timeout_ms,
-                sse_heartbeat_ms=config.sse_heartbeat_ms,
+                db_busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
+                sse_heartbeat_ms=SSE_HEARTBEAT_MS,
                 backend_child_factories=backend_factories,
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
                 navigation_delivery=navigation_delivery,
@@ -668,7 +673,7 @@ def create_app(
     @answers_with_an_event_stream
     async def changes() -> StreamingResponse:
         return StreamingResponse(
-            change_stream(config.sse_heartbeat_ms),
+            change_stream(SSE_HEARTBEAT_MS),
             media_type="text/event-stream",
         )
 

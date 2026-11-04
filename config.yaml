@@ -7,11 +7,8 @@ workspace_root: null              # optional existing absolute default workspace
 port: 8767                         # server port; bind host is fixed at 127.0.0.1 (§2)
 tick_seconds: 60                   # background schedule/readiness poll interval
 dispatch_enabled: true             # single-owner schedule and readiness loop startup switch
-sse_heartbeat_ms: 15000            # quiet change-stream heartbeat cadence
 dispatcher_lock_path: data/dispatcher.lock   # advisory lock: one readiness poller per machine (§7.1)
-logs_dir: data/logs                # per-run log files (§7.4)
+logs_dir: data/logs                # existing log inventory and cleanup; startup does not create it
 backup_dir: data/backups           # verified database snapshots
-db_busy_timeout_ms: 5000           # SQLite busy timeout on connect
-shutdown_grace_seconds: 30         # one monotonic budget for runtime/gateway shutdown
 voice_transcription_base_url: https://api.groq.com/openai/v1   # OpenAI-compatible speech-to-text provider
 voice_transcription_model: whisper-large-v3-turbo              # transcription model at that provider

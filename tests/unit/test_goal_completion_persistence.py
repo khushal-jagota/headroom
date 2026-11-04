@@ -2,21 +2,16 @@
 
 import asyncio
 import json
-import shutil
-from contextlib import closing
 from copy import deepcopy
 from datetime import UTC, datetime
-from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
 import pytest
-from tests.unit.test_db import _migration_tree_through
 from tests.unit.test_goal_completion import page
 from tests.unit.test_goal_pages import numeric_rule
 from tests.unit.test_measure_persistence import NOW
 
-from planner.core import db
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL, PlannerError
@@ -346,38 +341,3 @@ def test_write_detail_list_and_readings_project_the_same_completion(tmp_db: Conn
     checklist["items"][0]["state"] = "open"
     edit(tmp_db, saved, page=document)
     asyncio.run(responses(False))
-
-
-def test_selector_migration_preserves_binary_inputs_and_saved_page(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    shipped = db.MIGRATIONS_DIRECTORY
-    tree = _migration_tree_through(tmp_path, monkeypatch, "manual_measures")
-    document = page({"type": "checklist", "id": "delivery", "items": []})
-    with closing(db.connect(str(tmp_path / "before-selector.db"))) as conn:
-        db.create_schema(conn)
-        for checked in (0, 1):
-            conn.execute(
-                "INSERT INTO goals(id,project_id,title,why,kind,active,completed,page,revision,"
-                "created_at,updated_at,employee_backend,employee_launch_model) "
-                "VALUES(?,'project_vylo','Retained','','binary',1,?,?,1,1,1,'codex','gpt-6.1-sol')",
-                (f"retained-{checked}", checked, json.dumps(document)),
-            )
-        before = [dict(row) for row in conn.execute("SELECT * FROM goals ORDER BY id")]
-        conn.commit()
-        shutil.copy(
-            shipped / "versions/primary_goal_checklist.py",
-            tree / "versions/primary_goal_checklist.py",
-        )
-        db.create_schema(conn)
-        after = [dict(row) for row in conn.execute("SELECT * FROM goals ORDER BY id")]
-        assert after == [{**row, "primary_checklist_block_id": None} for row in before]
-        for checked in (False, True):
-            goal = data.read_goal(conn, f"retained-{int(checked)}")
-            assert goal.binary_checked is checked and goal.page == document
-            assert (
-                views.goal_json(conn, goal, datetime.fromtimestamp(NOW, UTC))["completed"]
-                is checked
-            )
-        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

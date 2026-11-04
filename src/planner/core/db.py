@@ -24,85 +24,15 @@ from typing import Any, Final, Literal, Self, TypeVar, overload
 
 from alembic import command
 from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.engine import URL
 
 from planner.core import change_signal
+from planner.core.config import DB_BUSY_TIMEOUT_MS
 from planner.core.transaction_participants import TransactionParticipant, finalize
 
 MIGRATIONS_DIRECTORY: Final = Path(__file__).resolve().parent / "migrations"
-BASELINE_REVISION: Final = "baseline_2026_09"
-
-# The head of the sixty-revision chain the baseline replaced. A database that carries this
-# revision holds exactly the schema the baseline builds, and every row rewrite those
-# revisions performed, so it is adopted at the baseline rather than rebuilt. Frozen: it
-# names a moment in history, so later schema work never changes it.
-PRE_COLLAPSE_HEAD_REVISION: Final = "settled_stage_and_field_ids"
-
-# Every table, index and trigger a database at that head holds. Frozen alongside the
-# revision above, and read only when adopting such a database, so it describes that one
-# moment in history and never follows later schema changes.
-PRE_COLLAPSE_HEAD_SCHEMA_OBJECT_NAMES: Final = frozenset(
-    {
-        "agents",
-        "backend_model_enablement",
-        "backend_usage_snapshots",
-        "backend_usage_windows",
-        "chief_settings",
-        "conversation_error_acknowledgements",
-        "conversation_events",
-        "conversations",
-        "day_tickets",
-        "days",
-        "feedback_notes",
-        "ideas",
-        "idx_conversation_events_kind_recipient",
-        "idx_conversation_events_sender_message_id",
-        "idx_conversations_automatic_compaction_due",
-        "idx_feedback_notes_state_created",
-        "idx_feedback_notes_ticket_id",
-        "idx_ideas_project_id",
-        "idx_notification_deliveries_due",
-        "idx_scheduled_ticket_occurrences_created_at",
-        "idx_scheduled_ticket_schedules_slot",
-        "idx_sprint_items_project_id",
-        "idx_sprint_items_supervisor_agent_key",
-        "idx_sprint_outcomes_outcome_id",
-        "idx_ticket_blocks_blocked_ticket_id",
-        "idx_ticket_conversations_ticket_id",
-        "idx_tickets_project_id",
-        "idx_tickets_stage",
-        "idx_tickets_worker_type_stage",
-        "managed_skill_versions",
-        "managed_skill_versions_no_delete",
-        "managed_skill_versions_no_update",
-        "managed_skills",
-        "notification_attention_edges",
-        "notification_attention_state",
-        "notification_deliveries",
-        "notification_preferences",
-        "notification_push_subscriptions",
-        "notification_web_push_identity",
-        "projects",
-        "scheduled_ticket_occurrences",
-        "scheduled_ticket_schedules",
-        "sprint_items",
-        "sprint_items_supervisor_create",
-        "sprint_items_supervisor_insert_guard",
-        "sprint_items_supervisor_update_guard",
-        "sprint_outcomes",
-        "sprints",
-        "ticket_blocks",
-        "ticket_conversations",
-        "ticket_paired_stage_openers",
-        "ticket_revision_feedback",
-        "tickets",
-        "worker_step_skill_bindings",
-        "worker_types",
-    }
-)
-
+BASELINE_REVISION: Final = "canonical_manager_identities"
 
 _CONTROL_TOKEN = re.compile(
     r"\s+|--[^\n]*(?:\n|$)|/\*.*?\*/|"
@@ -450,7 +380,7 @@ def commit_without_change_signal(conn: sqlite3.Connection) -> None:
         conn.execute("COMMIT")
 
 
-def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
+def connect(db_path: str, busy_timeout_ms: int = DB_BUSY_TIMEOUT_MS) -> sqlite3.Connection:
     conn = sqlite3.connect(
         db_path,
         isolation_level=None,
@@ -571,7 +501,7 @@ def _busy_timeout_ms(conn: sqlite3.Connection) -> int:
 
 @contextmanager
 def schema_migration_transaction(
-    db_path: str, busy_timeout_ms: int = 5000
+    db_path: str, busy_timeout_ms: int = DB_BUSY_TIMEOUT_MS
 ) -> Iterator[Connection]:
     """Hold the all-or-nothing schema transaction used by application startup.
 
@@ -591,8 +521,7 @@ def schema_migration_transaction(
 
 
 def upgrade_schema_connection(connection: Connection, revision: str) -> None:
-    """Replay packaged historical revisions within the caller's existing transaction."""
-    _adopt_database_left_by_the_collapsed_chain(connection)
+    """Apply packaged revisions within the caller's existing transaction."""
     command.upgrade(_alembic_config(connection), revision)
 
 
@@ -640,84 +569,3 @@ def _alembic_config(connection: Connection) -> Config:
     config.set_main_option("script_location", str(MIGRATIONS_DIRECTORY))
     config.attributes["connection"] = connection
     return config
-
-
-def _schema_object_names(connection: Connection) -> set[str]:
-    """Every table, index and trigger a database holds, excluding SQLite's own."""
-    return {
-        str(row[0])
-        for row in connection.exec_driver_sql(
-            "SELECT name FROM sqlite_master "
-            "WHERE type IN ('table', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'"
-        )
-    }
-
-
-def _revisions_this_build_carries(connection: Connection) -> frozenset[str]:
-    """Every revision id in this build's own migration directory."""
-    script = ScriptDirectory.from_config(_alembic_config(connection))
-    return frozenset(revision.revision for revision in script.walk_revisions())
-
-
-def _adopt_database_left_by_the_collapsed_chain(connection: Connection) -> None:
-    """Give a database the old chain left behind the version marker this build reads.
-
-    A new database needs nothing here, and neither does a database standing on any
-    set of revisions this build carries — the upgrade that follows builds the first
-    and moves the second through its packaged DAG to the head. A database at the head
-    the old chain finished at holds the baseline's schema and the row rewrites that chain
-    performed, so it is adopted at the baseline once that schema is confirmed.
-
-    Every other state is refused. The revisions that would carry such a database forward
-    are not in this build, so the only honest answer is to say which build has them.
-    """
-    tables = {
-        str(row[0])
-        for row in connection.exec_driver_sql(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-        )
-    }
-
-    if "alembic_version" not in tables:
-        if not tables:
-            return
-        raise RuntimeError(
-            "this database has tables but no version table, so there is no saying what "
-            "schema it holds. Open it once with a build from before the migration chain "
-            "was collapsed, let it start, then come back."
-        )
-
-    revisions = [
-        str(row[0]) for row in connection.exec_driver_sql("SELECT version_num FROM alembic_version")
-    ]
-    # Leave every nonempty, wholly known head set to Alembic's normal DAG upgrade.
-    # A source branch may have committed before the navigation join was attempted.
-    if revisions and set(revisions) <= _revisions_this_build_carries(connection):
-        return
-    if revisions != [PRE_COLLAPSE_HEAD_REVISION]:
-        held = ", ".join(revisions) if revisions else "nothing"
-        raise RuntimeError(
-            f"this database is at revision {held}, which this build does not carry. It "
-            f"starts at {BASELINE_REVISION} and adopts only from {PRE_COLLAPSE_HEAD_REVISION}. "
-            "Deploy the build from before the migration chain was collapsed, let it start "
-            "once so it carries this database to "
-            f"{PRE_COLLAPSE_HEAD_REVISION}, then deploy this build again."
-        )
-
-    present = _schema_object_names(connection)
-    promised = set(PRE_COLLAPSE_HEAD_SCHEMA_OBJECT_NAMES)
-    missing = sorted(promised - present)
-    unexpected = sorted(present - promised - {"alembic_version"})
-    if missing or unexpected:
-        raise RuntimeError(
-            f"this database is at revision {PRE_COLLAPSE_HEAD_REVISION} but does not hold "
-            f"that schema: missing {missing}, unexpected {unexpected}"
-        )
-    # purge, because the row already in the version table names a revision this build no
-    # longer carries. Without it Alembic tries to resolve that name to plot a path, and
-    # fails before it writes anything.
-    command.stamp(_alembic_config(connection), BASELINE_REVISION, purge=True)
-    # The pre-Alembic ladder left a version marker behind, and no build still reads it.
-    # Clearing it as the database is adopted makes an adopted database and a database this
-    # build made from nothing the same database.
-    connection.exec_driver_sql("PRAGMA user_version=0")
