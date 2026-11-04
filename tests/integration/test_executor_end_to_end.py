@@ -1284,9 +1284,7 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
                     (child.conversation_id,),
                 ).fetchall()
                 refusals = [json.loads(row[0]) for row in rows if "outbox_refusal_" in row[0]]
-                assert len(refusals) == 1
-                assert refusals[0]["tool_call_status"] == "failed"
-                assert "validation" in refusals[0]["detail"]
+                assert refusals == []
             finally:
                 connection.close()
             accepted = lookup_receipt(
@@ -1309,6 +1307,8 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     monkeypatch: pytest.MonkeyPatch,
     receipt_failure: str,
 ) -> None:
+    from planner.executor.protocol import as_object
+
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
@@ -1357,7 +1357,9 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                 harness.endpoint.inbox.store, pending[0].sender_id, pending[0].submission_id
             )
             assert first_receipt is not None
-            assert first_receipt.payload_sha256 == pending[0].payload_sha256
+            assert first_receipt.submission_id == pending[0].submission_id
+            assert "payload_sha256" not in as_object(first_receipt)
+            assert "payload_sha256" not in as_object(pending[0])
             await eventually(
                 lambda: not harness.mac.outbox.pending() and harness.endpoint.runs.ready,
                 "Committed entry did not replay and acknowledge",
