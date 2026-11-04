@@ -6,7 +6,6 @@ runtime paths. Upgraded databases receive only raw read-only canonical readers.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -37,18 +36,10 @@ def historical_sources(
     """Own exact historical source and interpreters without retained sibling state.
 
     Keep these compatibility boundaries until their support floor is explicitly retired.
-    Each source gets its own environment and its own editable install. Sources with the
-    same pinned requirements read one installed copy of those pins through a path file.
-    That copy is built once per run, under a lock, so pytest-xdist workers share it.
+    Each source gets its own environment. Only downloaded package cache is reused.
     """
     repository = Path(__file__).resolve().parents[2]
     root = tmp_path_factory.mktemp("navigation-historical")
-    # Under pytest-xdist each worker's base directory sits inside the run's own one.
-    run_root = tmp_path_factory.getbasetemp()
-    if os.environ.get("PYTEST_XDIST_WORKER"):
-        run_root = run_root.parent
-    dependency_root = run_root / "historical-dependencies"
-    dependency_root.mkdir(exist_ok=True)
     diagnostics = root / "diagnostics"
     diagnostics.mkdir()
     sources: dict[str, Path] = {}
@@ -108,49 +99,6 @@ def historical_sources(
             )
         return elapsed
 
-    def site_packages(interpreter: Path) -> Path:
-        return Path(
-            subprocess.check_output(
-                [
-                    str(interpreter),
-                    "-c",
-                    "import sysconfig; print(sysconfig.get_path('purelib'))",
-                ],
-                env=environment,
-                text=True,
-            ).strip()
-        )
-
-    def pinned_dependencies(tip: str, requirements: Path) -> tuple[Path, float]:
-        """Return the shared site-packages holding these exact pins, building it once."""
-        digest = hashlib.sha256(requirements.read_bytes()).hexdigest()
-        environment_path = dependency_root / digest
-        complete = dependency_root / f"{digest}.complete"
-        with (dependency_root / f"{digest}.lock").open("w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            if complete.exists():
-                record_testsuite_property(f"historical.{tip}.pins_reused", True)
-                return site_packages(environment_path / "bin/python"), 0.0
-            if environment_path.exists():
-                # An earlier holder of the lock failed part way. Start again.
-                shutil.rmtree(environment_path)
-            elapsed = run(tip, "venv-pins", [sys.executable, "-m", "venv", str(environment_path)])
-            elapsed += run(
-                tip,
-                "pins",
-                [
-                    str(environment_path / "bin/python"),
-                    "-m",
-                    "pip",
-                    "install",
-                    "--disable-pip-version-check",
-                    "-r",
-                    str(requirements),
-                ],
-            )
-            complete.touch()
-            return site_packages(environment_path / "bin/python"), elapsed
-
     def source_for(tip: str) -> Path:
         nonlocal peak_bytes, setup_seconds
         if tip not in HISTORICAL_TIPS:
@@ -169,10 +117,18 @@ def historical_sources(
             hashlib.sha256((source / "requirements.txt").read_bytes()).hexdigest(),
         )
         interpreter = str(source / ".venv/bin/python")
-        dependencies, pins_seconds = pinned_dependencies(tip, source / "requirements.txt")
-        elapsed += pins_seconds
-        (site_packages(source / ".venv/bin/python") / "historical-pins.pth").write_text(
-            f"{dependencies}\n"
+        elapsed += run(
+            tip,
+            "pins",
+            [
+                interpreter,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "-r",
+                str(source / "requirements.txt"),
+            ],
         )
         elapsed += run(
             tip,

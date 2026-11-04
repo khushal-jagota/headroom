@@ -17,7 +17,6 @@ from tests.unit.test_executor_native_runtime import (
 from tests.unit.test_executor_retired_journal import IDENTITY as SOURCE_IDENTITY
 from tests.unit.test_executor_retired_journal import endpoint
 
-from planner.conversation.backends import claude_agent_sdk
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChild,
     ClaudeAgentSdkBackendChildFactory,
@@ -90,9 +89,6 @@ def test_claude_stop_result_controls_canonical_retirement(
     tmp_db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fails: bool
 ) -> None:
     """Gap: scripted native stop hid Claude's swallowed disconnect failures."""
-    # The scripted client never settles an interrupted turn, so the kill's cancel
-    # always times out before the stop under test. Only the wait is shortened.
-    monkeypatch.setattr(claude_agent_sdk, "CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS", 0.05)
 
     async def run() -> None:
         remote = endpoint(tmp_db)

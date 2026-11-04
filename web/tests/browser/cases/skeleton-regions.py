@@ -423,12 +423,7 @@ def run(browser, urls):
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "geometry.json").write_text(json.dumps(measurements, indent=2))
         page.evaluate("window.__load(true)")
-        # The placeholders have appeared after their delay and finished entering.
-        page.wait_for_function("""() => {
-          const layers = [...document.querySelectorAll('.skeleton')];
-          return layers.length > 0 && layers.every(layer =>
-            layer.getAnimations().every(animation => animation.playState === 'finished'));
-        }""")
+        page.wait_for_timeout(200)
         page.screenshot(path=str(directory / "skeleton-narrow.png"), full_page=True)
     # This existing host also exercises the imperative Markdown/Svelte boundary.
     # A controlled Worker exposes waits that a real parser can finish between frames.

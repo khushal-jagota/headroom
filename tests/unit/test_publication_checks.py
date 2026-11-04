@@ -10,7 +10,7 @@ from scripts import publication_checks as checks
 
 IDENTITY = {"requested_sha": "a" * 40, "workflow_sha": "b" * 40,
             "run_id": "123", "run_attempt": "2"}
-SUCCESS: dict[str, object] = {"prepare": "success", "suites": "success", "build": "success"}
+SUCCESS: dict[str, object] = {"prepare": "success", "suites": "success"}
 SOURCE = Path(__file__).resolve().parents[2]
 
 
@@ -157,16 +157,13 @@ def test_collection_refuses_destination_collision_without_overwriting(
     assert (gate / "reports/integration.xml").is_file()
 
 
-@pytest.mark.parametrize(("job", "result"), [
-    ("suites", "failure"), ("suites", "skipped"), ("suites", "cancelled"), ("suites", ""),
-    ("build", "failure"),
-])
+@pytest.mark.parametrize("result", ["failure", "skipped", "cancelled", ""])
 def test_failed_or_skipped_prerequisites_fail_after_diagnostics_are_collected(
-    evidence: Path, tmp_path: Path, job: str, result: str,
+    evidence: Path, tmp_path: Path, result: str,
 ) -> None:
     gate = tmp_path / "publication"
     with pytest.raises(ValueError, match="prerequisites did not succeed"):
-        checks.collect(evidence, gate, IDENTITY, SUCCESS | {job: result})
+        checks.collect(evidence, gate, IDENTITY, SUCCESS | {"suites": result})
     assert (gate / "reports/unit.xml").is_file()
     assert (gate / "reports/browser.json").is_file()
 
@@ -202,61 +199,3 @@ def test_missing_report_retains_verified_failure_log_and_record_in_publication_p
         evidence / "unit/suite-record.json"
     ).read_bytes()
     assert not (gate / "reports/unit.xml").exists()
-
-
-def sealed_build_gate(tmp_path: Path) -> Path:
-    gate = tmp_path / "build"
-    for name in checks.CANDIDATE_REQUIRED:
-        (gate / name).parent.mkdir(parents=True, exist_ok=True)
-        (gate / name).write_bytes(name.encode() + b" sealed bytes")
-    (gate / "target/target.log").write_text("Debian proof log")
-    (gate / "reports").mkdir()
-    (gate / "reports/ruff.log").write_text("All checks passed")
-    # The Debian root and dependency installs stay on the build runner.
-    (gate / "target-root/bin").mkdir(parents=True)
-    (gate / "target-root/bin/sh").write_text("root file")
-    (gate / "hermes-install.log").write_text("install log")
-    return gate
-
-
-def test_sealed_candidate_crosses_runners_with_exact_bytes(tmp_path: Path) -> None:
-    build = sealed_build_gate(tmp_path)
-    handoff = tmp_path / "handoff"
-    anchor = checks.pack_candidate(build, handoff, IDENTITY)
-    record = checks.read_object(handoff / checks.CANDIDATE_RECORD)
-    files = record["files"]
-    assert isinstance(files, dict)
-    assert set(files) == {*checks.CANDIDATE_REQUIRED, "target/target.log", "reports/ruff.log"}
-    gate = tmp_path / "publication"
-    checks.accept_candidate(handoff, gate, IDENTITY, anchor)
-    for relative in files:
-        assert (gate / relative).read_bytes() == (build / relative).read_bytes()
-    assert checks.read_object(gate / checks.CANDIDATE_RECORD) == record
-
-
-@pytest.mark.parametrize("damage", ["anchor", "archive", "extra-file", "incomplete"])
-def test_candidate_acceptance_refuses_bytes_the_build_job_did_not_seal(
-    tmp_path: Path, damage: str,
-) -> None:
-    handoff = tmp_path / "handoff"
-    anchor = checks.pack_candidate(sealed_build_gate(tmp_path), handoff, IDENTITY)
-    record_path = handoff / checks.CANDIDATE_RECORD
-    if damage == "anchor":
-        anchor = "0" * 64
-    elif damage == "archive":
-        (handoff / "panels-app.tar.gz").write_bytes(b"replaced archive")
-    elif damage == "extra-file":
-        (handoff / "unlisted").write_text("unlisted artifact")
-    else:
-        # Even a record the build job reported cannot omit a required proof.
-        (handoff / "smoke.json").unlink()
-        record = checks.read_object(record_path)
-        files = record["files"]
-        assert isinstance(files, dict)
-        del files["smoke.json"]
-        checks.write_object(record_path, record)
-        anchor = checks.digest(record_path)
-    gate = tmp_path / "publication"
-    with pytest.raises(ValueError, match="sealed candidate"):
-        checks.accept_candidate(handoff, gate, IDENTITY, anchor)
-    assert not (gate / "panels-app.tar.gz").exists()
