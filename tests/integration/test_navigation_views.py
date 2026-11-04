@@ -174,27 +174,29 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     conn.execute(
         "UPDATE tickets SET is_backlogged=0,pending_proposal=NULL WHERE id IN ('t','chief-ticket')"
     )
-    definition = json.loads(
-        conn.execute(
-            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
-        ).fetchone()[0]
-    )
-    implementation_stage = next(
-        stage for stage in definition["stages"] if stage["id"] == "needs_implementation"
-    )
-    implementation_stage["ownership_mode"] = "user"
-    conn.execute(
-        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
-        (json.dumps(definition),),
-    )
+    # Each Ticket owns its stages, so ownership changes in each Ticket's saved workflow.
+    workflows = {
+        str(row[0]): json.loads(row[1])
+        for row in conn.execute(
+            "SELECT id,workflow_json FROM tickets WHERE id IN ('t','chief-ticket')"
+        )
+    }
+
+    def set_implementation_owner(ownership_mode: str) -> None:
+        for ticket_id, workflow in workflows.items():
+            for stage in workflow["stages"]:
+                if stage["id"] == "needs_implementation":
+                    stage["ownership_mode"] = ownership_mode
+            conn.execute(
+                "UPDATE tickets SET workflow_json=? WHERE id=?",
+                (json.dumps(workflow), ticket_id),
+            )
+
+    set_implementation_owner("user")
     conn.commit()
     memberships(grouping="assigned")
     conn.execute("BEGIN")
-    implementation_stage["ownership_mode"] = "worker"
-    conn.execute(
-        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
-        (json.dumps(definition),),
-    )
+    set_implementation_owner("worker")
     conn.execute("DELETE FROM ticket_blocks WHERE blocking_ticket_id='blocker'")
     conn.commit()
     memberships(grouping="errored", in_rail=True)

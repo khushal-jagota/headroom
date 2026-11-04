@@ -11,7 +11,6 @@ from tests.e2e.harness import JsonObject, ServerHandle
 from planner.core.db import connect
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step, worker_step_blocker
 from planner.tickets import data as tickets_data
-from planner.worker_types.configuration import configured_worker_type_registry
 
 
 def _stored_tickets(server: ServerHandle) -> list[tuple[object, ...]]:
@@ -49,7 +48,7 @@ def test_http_native_provider_creation_allowed_offline_but_both_execution_doors_
         assert created["conversation_id"] is None
         with connect(str(server.db_path)) as connection:
             ticket = tickets_data.read_ticket(connection, created["id"])
-            definition = configured_worker_type_registry().require(ticket.worker_type)
+            definition = ticket.workflow
             assert not is_ready_for_worker_step(
                 connection, ticket, worker_type_definition=definition
             )

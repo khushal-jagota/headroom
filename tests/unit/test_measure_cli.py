@@ -72,6 +72,7 @@ def test_canonical_route_body_and_worker_actor(
     path: str,
     body: dict[str, Any] | None,
 ) -> None:
+    monkeypatch.delenv("PLAN_CONVERSATION_ID", raising=False)
     calls: list[tuple[str, str, dict[str, Any]]] = []
     reply = {"id": "run", "status": "pending", "collection_failure": {"code": "http_error"}}
 

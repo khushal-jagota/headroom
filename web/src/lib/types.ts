@@ -182,9 +182,11 @@ export type WorkerTypeRecordStage = {
   gating_field: string | null;
   is_terminal: boolean;
   ownership_mode: StageOwnershipMode | null;
+  instructions?: string;
 };
 
 export type WorkerTypeRecord = {
+  guidance?: string;
   worker_type: string;
   label: string;
   stages: WorkerTypeRecordStage[];
@@ -268,7 +270,8 @@ export type TicketDetail = {
   manager?: Principal;
   id: string;
   title: string;
-  worker_type: string;
+  worker_type: string | null;
+  workflow?: import("./lifecycle").WorkflowManifest;
   employee_backend: string;
   employee_launch_model: string | null;
   employee_launch_reasoning_effort: string | null;
@@ -328,7 +331,8 @@ export type ManagerWorkspaceTicket = WorkAttention & {
   has_pending_proposal: boolean;
   gating_field: string | null;
   blocked: boolean;
-  worker_type: string;
+  worker_type: string | null;
+  stage_label?: string;
 };
 
 export type ManagerWorkspace = ManagerSummary & {
@@ -416,7 +420,7 @@ export type BoardCard = WorkAttention & {
   activity_at: number;
   has_pending_proposal: boolean;
   ticket_status: string;
-  worker_type: string;
+  worker_type: string | null;
   employee_backend: string;
   stage: string;
   stage_label: string;

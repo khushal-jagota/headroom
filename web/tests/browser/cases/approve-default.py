@@ -151,11 +151,7 @@ def run(browser, urls):
                     {**parent, "id": identity}
                     for identity in {
                         "item_one",
-                        *(
-                            row["manager_id"]
-                            for row in tickets.values()
-                            if row["manager_id"]
-                        ),
+                        *(row["manager_id"] for row in tickets.values() if row["manager_id"]),
                     }
                 ],
             },
@@ -175,6 +171,8 @@ def run(browser, urls):
                     ceiling=row["ceiling"],
                     ceiling_holder=row["ceiling_holder"],
                     gating_field=stage["gating_field"],
+                    stage_label=stage["label"],
+                    workflow_label=definition["label"],
                     stage_ownership=stage["ownership_mode"],
                     terminal=stage["is_terminal"],
                     proposal_field=None if proposal is None else proposal["field"],
@@ -198,6 +196,7 @@ def run(browser, urls):
         )
         return {
             **source,
+            "workflow": definition,
             "locale": "en-US",
             "manager": ({"kind": "manager", "id": source["manager_id"]}
                         if source["manager_id"] else {"kind": "chief", "id": "chief"}),
@@ -319,7 +318,15 @@ def run(browser, urls):
             worker_type = path.split("/")[1]
             matches = [row for row in manifest["worker_types"] if row["worker_type"] == worker_type]
             if not matches:
-                route.fulfill(status=404, json={"error": {"code": "unknown_worker_type", "message": f"Unknown worker type: {worker_type}"}})
+                route.fulfill(
+                    status=404,
+                    json={
+                        "error": {
+                            "code": "unknown_worker_type",
+                            "message": f"Unknown worker type: {worker_type}",
+                        }
+                    },
+                )
                 return
             result = {"worker_types": matches}
         elif path == "worker-types":
@@ -623,7 +630,9 @@ def run(browser, urls):
                 "edited_body": edited_body,
             },
         }
-        assert len([item for item in accept_attempts if item["ticket_id"] == ticket_id]) == (2 if host_kind == "review" else 1)
+        assert len([item for item in accept_attempts if item["ticket_id"] == ticket_id]) == (
+            2 if host_kind == "review" else 1
+        )
     page.evaluate("window.__showTicket('t_stale')")
     expect(block()).to_have_attribute("data-field", "plan")
     choose("needs_implementation")

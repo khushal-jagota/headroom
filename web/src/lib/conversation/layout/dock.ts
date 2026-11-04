@@ -1,4 +1,5 @@
 import { conversationMotion, CONVERSATION_CARD_MS } from '../surfaceMotion';
+import { observeVisibleViewport, visibleViewport } from '../../keyboardViewport';
 import { visibleHostBounds } from './geometry';
 
 /** Reserve the dock row, and retain the reader's geometry beneath full conversation. */
@@ -15,7 +16,6 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
   let mousePoint: { x: number; y: number } | null = null;
   // Remember the press before outside dismissal can return an open pane to rest.
   let backgroundPress: { id: number; x: number; y: number } | null = null;
-  const viewport = window.visualViewport;
   function outsideInput(target: EventTarget | null): target is Element {
     return target instanceof Element && target.closest('[data-conversation-box]') === null;
   }
@@ -77,7 +77,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     reader = host.querySelector<HTMLElement>('.ticket-reading, .manager-reading');
     layer = pane?.closest<HTMLElement>('.conversation-layer') ?? null;
     const rect = host.getBoundingClientRect();
-    const bounds = visibleHostBounds(rect, { top: viewport?.offsetTop ?? 0, left: viewport?.offsetLeft ?? 0, width: viewport?.width ?? window.innerWidth, height: viewport?.height ?? window.innerHeight });
+    const bounds = visibleHostBounds(rect, visibleViewport());
     set('--conversation-visible-top', bounds.top);
     set('--conversation-visible-bottom', bounds.bottom);
     set('--conversation-visible-left', bounds.left);
@@ -172,11 +172,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
   host.addEventListener('pointerover', pointer);
   host.addEventListener('pointermove', pointer);
   host.addEventListener('pointerleave', pointer);
-  host.addEventListener('focusin', schedule);
-  host.addEventListener('focusout', schedule);
-  viewport?.addEventListener('resize', schedule);
-  viewport?.addEventListener('scroll', schedule);
-  window.addEventListener('resize', schedule);
+  const stopViewport = observeVisibleViewport(schedule);
   window.addEventListener('scroll', schedule, true);
   schedule();
   return { destroy() {
@@ -192,11 +188,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     host.removeEventListener('pointerover', pointer);
     host.removeEventListener('pointermove', pointer);
     host.removeEventListener('pointerleave', pointer);
-    host.removeEventListener('focusin', schedule);
-    host.removeEventListener('focusout', schedule);
-    viewport?.removeEventListener('resize', schedule);
-    viewport?.removeEventListener('scroll', schedule);
-    window.removeEventListener('resize', schedule);
+    stopViewport();
     window.removeEventListener('scroll', schedule, true);
     delete host.dataset.conversationDockState;
     host.removeAttribute('data-conversation-dock-transition');

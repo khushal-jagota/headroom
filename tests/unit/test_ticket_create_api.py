@@ -153,6 +153,8 @@ def test_create_accepts_and_preserves_the_supported_optional_keys(
         "employee_launch_model": "hermes-model",
         "employee_launch_reasoning_effort": None,
     }
+    preset = client.get("/api/worker-types/coding").json()
+    body["workflow"] = {key: preset[key] for key in ("label", "guidance", "stages", "fields")}
     assert set(body) == set(CreateTicketBody.__annotations__)
     response = client.post("/api/tickets", json=body)
     assert response.status_code == 200, response.text

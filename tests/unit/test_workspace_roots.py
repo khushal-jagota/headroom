@@ -9,16 +9,27 @@ from sqlite3 import Connection
 
 import pytest
 import yaml
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
+from planner.conversation.contracts import ConversationStartRequest
 from planner.core import server
+from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as Clock
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.contracts import OWNER_PRINCIPAL, ErrorCode, PlannerError
+from planner.core.contracts import (
+    CHIEF_PRINCIPAL,
+    OWNER_PRINCIPAL,
+    ErrorCode,
+    PlannerError,
+    Principal,
+    PrincipalKind,
+)
 from planner.core.db import connect, create_schema
 from planner.goals.actions import create_goal
 from planner.goals.conversation import resolve_goal
 from planner.managers.data import create_manager
+from planner.message_delivery.service import send_message
 from planner.projects.data import create_project
 from planner.runtime.conversation_start import agent_resolve, manager_resolve, worker_resolve
 from planner.runtime.workspaces import register_workspace_root, workspace_root_for_connection
@@ -111,9 +122,12 @@ def test_all_agent_resolvers_keep_explicit_and_project_precedence(
         worker_type="coding",
     )
     path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    files = Path(path).parent / "files"
     with register_workspace_root(path, configured):
-        assert agent_resolve(tmp_db).workspace_folder == configured
-        assert manager_resolve(tmp_db, manager).workspace_folder == configured
+        assert agent_resolve(tmp_db).workspace_folder == files / "chief"
+        assert manager_resolve(tmp_db, manager).workspace_folder == (
+            files / "sprint-items" / manager.id
+        )
         assert resolve_goal(tmp_db, goal.id).workspace_folder == configured
         assert worker_resolve(tmp_db, ticket).workspace_folder == configured
         assert agent_resolve(tmp_db, workspace_folder=explicit).workspace_folder == explicit
@@ -139,9 +153,9 @@ def test_unconfigured_workspace_preserves_both_existing_fallbacks(
     application.mkdir()
     monkeypatch.setattr(server, "_PREFERRED_WORKER_WORKSPACE_ROOT", preferred)
     monkeypatch.setattr(server, "_REPO_ROOT", application)
-    assert agent_resolve(tmp_db).workspace_folder == application
+    assert f"are under {application}." in agent_resolve(tmp_db).role_materials.role_text
     preferred.mkdir()
-    assert agent_resolve(tmp_db).workspace_folder == preferred
+    assert f"are under {preferred}." in agent_resolve(tmp_db).role_materials.role_text
 
 
 def test_lifespans_isolate_databases_and_reject_duplicate_database_aliases(
@@ -179,7 +193,8 @@ def test_lifespans_isolate_databases_and_reject_duplicate_database_aliases(
             with closing(connect(str(paths[1]))) as conn:
                 assert workspace_root_for_connection(conn) is None
                 assert (
-                    agent_resolve(conn).workspace_folder == server.resolve_worker_workspace_root()
+                    f"are under {server.resolve_worker_workspace_root()}."
+                    in agent_resolve(conn).role_materials.role_text
                 )
             alias = tmp_path / "database-alias"
             alias.symlink_to(paths[0])
@@ -226,3 +241,32 @@ def test_skill_conflict_unwinds_real_application_startup(tmp_path: Path) -> None
             assert conflict.is_symlink()
 
     asyncio.run(asyncio.wait_for(exercise(), 15))
+
+
+def test_chief_and_manager_first_start_creates_and_uses_their_home_folder(
+    tmp_db: Connection, tmp_path: Path, fake_clock: Clock
+) -> None:
+    configured = tmp_path / "configured"
+    configured.mkdir()
+    manager = create_manager(tmp_db, title="Manager", project_id="project_vylo", clock=fake_clock)
+    system = InMemoryConversationSystem()
+    started: list[tuple[Path, bool]] = []
+    start = system.start_conversation
+
+    async def record_start(request: ConversationStartRequest) -> None:
+        assert request.workspace_folder is not None
+        started.append((request.workspace_folder, request.workspace_folder.is_dir()))
+        await start(request)
+
+    system.start_conversation = record_start  # type: ignore[method-assign]
+    owner = RequestContext(OWNER_PRINCIPAL)
+    path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    files = Path(path).parent / "files"
+
+    async def exercise() -> None:
+        for recipient in (CHIEF_PRINCIPAL, Principal(PrincipalKind.manager, manager.id)):
+            await send_message(system, tmp_db, fake_clock, owner, recipient, "Hello")
+
+    with register_workspace_root(path, configured):
+        asyncio.run(exercise())
+    assert started == [(files / "chief", True), (files / "sprint-items" / manager.id, True)]

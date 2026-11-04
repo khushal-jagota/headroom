@@ -982,15 +982,31 @@ def verify_rail_pagination(page, url, fixture, evidence):
             'members':members('rail_tickets')},indent=2))
         page.mouse.move(900, 600)
         if queued:
-            page.wait_for_function("""()=>document.querySelector('[data-ticket-id="page_worker_00"]')?.getAnimations()
-              .some(a=>a.playState==='running' && a.effect?.getKeyframes().some(k=>'opacity' in k))""")
+            # Hold the actual exit until native input starts. Driver round trips must
+            # not consume its short duration before the wheel reaches the browser.
+            page.wait_for_function("""()=>{
+              const exit=document.querySelector('[data-ticket-id="page_worker_00"]')?.getAnimations()
+                .find(a=>a.playState==='running' && a.effect?.getKeyframes().some(k=>'opacity' in k));
+              if(!exit)return false;
+              exit.pause();exit.currentTime=0;window.__heldOpacityExit=exit;return true;
+            }""")
             bounds = scroll.bounding_box()
             page.mouse.move(bounds['x']+1,bounds['y']+30)
             scroll.evaluate("""n=>{
               window.__exitScrollSamples=[];window.__captureExitScroll=true;
-              n.addEventListener('wheel',event=>window.__exitWheel={ms:performance.now(),trusted:event.isTrusted,
-                before:n.scrollTop,deltaY:event.deltaY},{once:true,capture:true});
-              n.addEventListener('scroll',event=>{
+              window.__exitWheel=null;
+              const wheel=event=>{
+                if(!event.isTrusted)return;
+                n.removeEventListener('wheel',wheel,true);
+                window.__exitWheel={ms:performance.now(),trusted:event.isTrusted,before:n.scrollTop,deltaY:event.deltaY};
+                window.__heldOpacityExit.play();
+              };
+              n.addEventListener('wheel',wheel,{capture:true});
+              const continued=event=>{
+                // Layout scrolls can arrive before the physical wheel. They do not
+                // prove native movement during the exit and must not consume capture.
+                if(!window.__exitWheel || !event.isTrusted || n.scrollTop===window.__exitWheel.before)return;
+                n.removeEventListener('scroll',continued,true);
                 const row=document.querySelector('[data-ticket-id="page_worker_17"]');
                 const exit=document.querySelector('[data-ticket-id="page_worker_00"]');
                 const exitRunning=exit?.getAnimations().some(a=>a.playState==='running'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
@@ -1004,7 +1020,8 @@ def verify_rail_pagination(page, url, fixture, evidence):
                 };
                 const sample=()=>{if(!window.__captureExitScroll)return;window.__exitScrollTake();
                   requestAnimationFrame(sample);};sample();
-              },{once:true,capture:true});
+              };
+              n.addEventListener('scroll',continued,{capture:true});
             }""")
             page.mouse.wheel(0,36)
             page.wait_for_function('window.__exitContinued')
@@ -1130,6 +1147,7 @@ def verify_conversation_overlay(browser, url):
     brief = "\n\n".join(f"Document paragraph {i}. " + "This content retains its place beneath the floating conversation. " * 4 for i in range(30)) + "\n\nFinal document paragraph."
     detail = {**tickets[0], "project_id": None, "project": "", "manager_id": None, "manager_title": None, "employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None, "employee_configuration_editable": False, "ceiling": "done", "ceiling_holder": {"kind":"owner","id":"owner"}, "blocked": False, "is_backlogged": False, "blocker_summary": {"blocked_by": []}, "field_values": {"brief": brief}, "field_summaries": {"brief": {"revision": brief, "byte_count": len(brief.encode())}}, "pending_proposal": None}
     manifest = {"worker_types": [{"worker_type":"coding", "label":"Coding", "stages":[{"id":"needs_brief","label":"Brief","gating_field":"brief","is_terminal":False,"ownership_mode":"user"},{"id":"done","label":"Done","gating_field":None,"is_terminal":True,"ownership_mode":None}], "fields":[{"id":"brief","label":"Brief"}], "advance":{"needs_brief":"done"}, "ceiling_range":["none","needs_brief","done"], "default_ceiling":"needs_brief"}]}
+    detail["workflow"] = manifest["worker_types"][0]
     source = fixture["navigation_response"]({"columns": [{"cards": tickets}]}, {"chief_of_staff": {"label": "Chief", "conversation_id": "bounded-reader"}})
     evidence = Path(os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/tmp/panels-overlay")) / "overlay"
     evidence.mkdir(parents=True, exist_ok=True)

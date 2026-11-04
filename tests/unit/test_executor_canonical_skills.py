@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -218,7 +219,10 @@ def test_worker_snapshot_omits_retired_specialists_except_its_assigned_personal_
     assert not ({source.skill_name for source in ordinary.sources} & WORKER_ONLY_SKILL_NAMES)
     # Restore a historical fixture directly. New personal creation stays forbidden.
     seed_historical_worker_type(tmp_db, "personal")
-    tmp_db.execute("UPDATE tickets SET worker_type='personal' WHERE id=?", (ticket.id,))
+    from tests.support.ticket_workflows import preset_workflow_json
+
+    tmp_db.execute("UPDATE tickets SET worker_type='personal', workflow_json=? WHERE id=?",
+                   (preset_workflow_json(tmp_db, "personal"), ticket.id))
     before = tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone()
     personal = read_canonical_skill_snapshot(tmp_db, ticket.id)
     assert {source.skill_name for source in personal.sources} & WORKER_ONLY_SKILL_NAMES == {
@@ -232,3 +236,64 @@ def test_worker_snapshot_omits_retired_specialists_except_its_assigned_personal_
     assert not (home / "skills/panels-worker-personal-task").exists()
     assert (personal_generation / "skills/panels-worker-personal-task/SKILL.md").is_file()
     assert tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone() == before
+
+
+def test_required_skills_follow_saved_ticket_workflow(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from tests.support.principals import OWNER_PRINCIPAL
+
+    from planner.core.db import connect, create_schema
+    from planner.executor.skills import read_canonical_skill_snapshot
+    from planner.tickets.data import create_ticket
+    from planner.worker_types.configuration import configured_worker_type_registry
+    from planner.worker_types.store import workflow_from_preset, write_definition
+
+    with closing(connect(str(tmp_path / "skills.db"))) as conn:
+        create_schema(conn)
+        preset = configured_worker_type_registry().require("coding")
+        normal = create_ticket(
+            conn,
+            worker_type="coding",
+            title="Preset",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+        )
+        custom = create_ticket(
+            conn,
+            worker_type=None,
+            workflow=replace(
+                workflow_from_preset(preset),
+                specialist_skill=None,
+            ),
+            title="Custom",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+            employee_backend="codex",
+            employee_launch_model="gpt-6.1-sol",
+        )
+        assert read_canonical_skill_snapshot(conn, custom.id).required_skill_names == (
+            "panels",
+            "panels-worker",
+        )
+        replacement = (
+            configured_worker_type_registry().require("general").worker_profile.specialist_skill
+        )
+        write_definition(
+            conn,
+            replace(
+                preset,
+                worker_profile=replace(
+                    preset.worker_profile,
+                    specialist_skill=replacement,
+                ),
+            ),
+            now=2,
+        )
+        assert read_canonical_skill_snapshot(conn, normal.id).required_skill_names == (
+            "panels",
+            "panels-worker",
+            preset.worker_profile.specialist_skill,
+        )

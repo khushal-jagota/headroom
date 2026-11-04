@@ -16,7 +16,7 @@
   import { labelize } from "../lib/ui";
   import {
     fieldLabelFor,
-    lifecycleFor,
+    buildLifecycle,
     stageLabelFor
   } from "../lib/lifecycle";
   import { holderLabelFor } from "../lib/ceilingHolder";
@@ -88,24 +88,11 @@
   const conversationStartValues = createQuery(() =>
     queries.ticketConversationStartValues(stableId)
   );
-  // The whole list, deliberately, even though this page draws one type's stages. The
-  // workspace shell around it already reads the list to write a stage sentence on every
-  // rail row, so this shares that one cached read; asking for the single type instead was
-  // measured to add a second request of 1,732 bytes rather than save the list's 20,005.
-  // The review screen, which has no rail, does ask for the one type.
-  const manifest = createQuery(() => queries.workerTypeManifests());
-
-  // Conversation labels and the loaded section use Worker configuration.
-  let conversationLifecycle = $derived(lifecycleFor(manifest.data, healthyTicket?.worker_type));
-  let manifestMissingWorkerType = $derived(
-    Boolean(
-      healthyTicket &&
-        manifest.data &&
-        !manifest.data.worker_types.some((item) => item.worker_type === healthyTicket?.worker_type)
-    )
-  );
+  // The Ticket's saved workflow is authoritative, independent of later preset edits.
+  let conversationLifecycle = $derived(healthyTicket?.workflow ? buildLifecycle(healthyTicket.workflow) : null);
+  let manifestMissingWorkerType = $derived(Boolean(healthyTicket && !healthyTicket.workflow));
   let canonicalTicket=$derived(currentView ? navigation.presentationFor(currentView).rawTicketsById.get(stableId) : undefined);
-  let sectionConfiguration=$derived(manifest.data?.worker_types.find(item=>item.worker_type===healthyTicket?.worker_type));
+  let sectionConfiguration=$derived(healthyTicket?.workflow);
   let section=$derived(ticketSection(healthyTicket,sectionConfiguration));
   let sectionFacts=$derived(section ? ticketSectionFacts(section,currentView) : undefined);
   let conversationId=$state<string | null>(null);
@@ -259,7 +246,7 @@
   }
 
   function conversationWorkerTypeLabel(detail: TicketDetail): string {
-    return conversationLifecycle?.workerTypeLabel ?? labelize(detail.worker_type);
+    return conversationLifecycle?.workerTypeLabel ?? (detail.worker_type ? labelize(detail.worker_type) : 'Custom workflow');
   }
 
   function conversationEmployeeLabel(detail: TicketDetail): string {
@@ -290,7 +277,7 @@
       headerError = err;
     }
   }
-  let mastheadTypeLabel=$derived(masthead ? lifecycleFor(manifest.data,masthead.worker_type)?.workerTypeLabel ?? labelize(masthead.worker_type) : '');
+  let mastheadTypeLabel=$derived(masthead ? masthead.workflow_label ?? (healthyTicket?.worker_type === masthead.worker_type ? healthyTicket?.workflow?.label : null) ?? (masthead.worker_type ? labelize(masthead.worker_type) : 'Custom workflow') : '');
 
   // The pointer footprint belongs to the mounted pane, independent of section controls.
 
@@ -325,11 +312,11 @@
       </main>
     </div>
   {:else}
-  <ResourceState shape="document" layout="fill" error={ticket.error} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(healthyTicket && masthead && (section || manifest.error || manifestMissingWorkerType))} loadingText="Loading ticket...">
-    {#if healthyTicket && (manifest.error || manifestMissingWorkerType)}
+  <ResourceState shape="document" layout="fill" error={ticket.error} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(healthyTicket && masthead && (section || manifestMissingWorkerType))} loadingText="Loading ticket...">
+    {#if healthyTicket && manifestMissingWorkerType}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
-          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${healthyTicket.worker_type}"` }}
+          error={{ code: "invalid_workflow", message: "The Ticket workflow is unavailable." }}
         />
       </div>
     {:else if healthyTicket && masthead}

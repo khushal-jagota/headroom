@@ -7,7 +7,7 @@ import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
 import { ticketSection, ticketSectionFacts, ticketSectionHeading, ticketSectionFieldState } from '../src/lib/ticketSection';
 import { currentSnapshot, continuity, conversation } from './support/navigation/fixtures';
 
-const record:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'ticket',value:{title:'Ticket',recap:'',recap_preview:'',worker_type:'coding',stage:'needs_plan',
+const record:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'ticket',value:{title:'Ticket',recap:'',recap_preview:'',worker_type:'coding',stage_label:'Plan',workflow_label:'Coding',stage:'needs_plan',
   gating_field:'plan',stage_ownership:'worker',terminal:false,ticket_status:'awaiting_approval',blocked:false,created_at:1,updated_at:2,
   worker_step_claim_out:false,deadline:null,project_id:null,manager_kind:'chief',manager_id:null,
   conversation_id:'conversation',is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'chief',id:'chief'},

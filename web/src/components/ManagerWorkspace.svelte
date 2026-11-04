@@ -11,7 +11,6 @@
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import type { EffectiveNavigationView } from "../lib/navigation/knowledge";
 
-  import { lifecycleFor } from "../lib/lifecycle";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
 
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -69,7 +68,6 @@
   let content=$derived(workspaceResource ?? ownWorkspace);
   let workspace=$derived({data:publicItem && content.data ? {...publicItem,...content.data} : undefined,
     error:fullRecap.error ?? content.error,isLoading:content.isLoading || !publicItem});
-  const manifests=createQuery(()=>queries.workerTypeManifests());
   let headerElement=$state<HTMLElement | null>(null);
   let hoverElement=$state<HTMLDivElement | null>(null);
 
@@ -201,7 +199,7 @@
           </div>
 
           <section class="manager-workers" aria-label="Workers">
-            <ManagerChildren principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication} tickets={shared?.ticketsByParent.get(`manager:${itemId}`) ?? []}
+            <ManagerChildren principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication}
               onHover={(element, id, immediate) => {
                 const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
                 if (ticket) hoverRow(element, ticket, immediate);

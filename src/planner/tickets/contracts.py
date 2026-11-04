@@ -5,11 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Final, Literal, Required, TypedDict
+from typing import TYPE_CHECKING, Final, Literal, TypedDict
 
 from planner.conversation.contracts import ConversationSignal
 from planner.core.contracts import JsonDict, Principal
 from planner.execution_identity import TicketLocale as TicketLocale
+
+if TYPE_CHECKING:
+    from planner.worker_types.contracts import TicketWorkflowDefinition
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
 # `CHECK (length(title) <= 200)` as the DB-level backstop; this constant is the
@@ -183,7 +186,8 @@ NextCeiling = str | Literal["none"]
 class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     """Accepted create keys. Unknown keys are rejected before creation."""
 
-    worker_type: Required[str]  # required registry type id (no ingress default)
+    worker_type: str | None  # source preset identity; custom workflows need none
+    workflow: TicketWorkflowDefinition
     # A backend other than the Worker type's own brings its model with it: the type's
     # launch defaults belong to the type's backend, so there is nothing left for this
     # Ticket to run on unless the creator names one.
@@ -271,7 +275,8 @@ class EmployeeConfigurationBody(TypedDict):
 class Ticket:  # §3.3 — column names match exactly
     id: str
     title: str  # <= TITLE_MAX_CHARS (200), every write path
-    worker_type: str  # immutable registry id selected at creation
+    worker_type: str | None  # source preset identity, not workflow authority
+    workflow: TicketWorkflowDefinition = field(kw_only=True)
     employee_backend: str  # last-chosen backend for this Ticket's worker
     # The last-chosen model, and the reasoning effort that went with it. A null model is a
     # Ticket that has never chosen: the column was filled in back when leaving it empty
