@@ -23,7 +23,7 @@ def test_retired_types_are_refused_by_all_creation_writers(
     tmp_db: Connection,
     worker_type: str,
 ) -> None:
-    for create in (
+    for index, create in enumerate((
         lambda: data.create_ticket(
             tmp_db,
             title="Retired direct writer",
@@ -46,6 +46,7 @@ def test_retired_types_are_refused_by_all_creation_writers(
             title_max_chars=200,
             worker_type=worker_type,
         ),
-    ):
-        with pytest.raises(PlannerError, match="unknown worker type"):
+    )):
+        message = "unknown worker type" if index < 2 else "Worker type is retired"
+        with pytest.raises(PlannerError, match=message):
             create()

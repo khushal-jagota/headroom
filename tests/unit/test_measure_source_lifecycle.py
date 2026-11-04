@@ -5,6 +5,8 @@ from sqlite3 import Connection
 from zoneinfo import ZoneInfo
 
 import pytest
+from fastapi.testclient import TestClient
+from tests.support.api_app import _app
 from tests.support.measure_sources import NOW, configured_source
 from tests.unit.test_manager_wakes import _item_and_ticket
 
@@ -80,14 +82,17 @@ def test_assigned_worker_saves_tests_and_collects_without_daily_schedule(
     with pytest.raises(PlannerError, match="revision changed"):
         actions.submit_script(tmp_db, source.id, body, principal=worker, now=NOW)
     other_manager, _ = _item_and_ticket(tmp_db, fake_clock)
-    with pytest.raises(PlannerError):
-        actions.submit_script(
-            tmp_db,
-            source.id,
-            SourceScriptBody(expected_revision=source.source_revision, text="pass"),
-            principal=Principal(PrincipalKind.manager, other_manager),
-            now=NOW,
+    with TestClient(_app(tmp_db)) as client:
+        denied = client.put(
+            f"/api/measure-sources/{source.id}/script",
+            json={"expected_revision": source.source_revision, "text": "pass"},
+            headers={
+                "X-Plan-Actor": "sprint_item_supervisor",
+                "X-Plan-Sprint-Item-ID": other_manager,
+            },
         )
+        assert denied.status_code == 403, denied.text
+    assert data.read_source(tmp_db, source.id).active_script == source.active_script
     candidate = CandidateObservation(
         measure.id,
         "2026-10-27",

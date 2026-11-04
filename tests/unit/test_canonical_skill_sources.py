@@ -545,25 +545,36 @@ def test_workspace_skill_setup_preserves_every_existing_conflict(
         assert (conflict / "custom.txt").read_text() == "custom skill"
 
 
-def test_workspace_skill_setup_rechecks_exclusive_creation_race(
+def test_workspace_skill_setup_preserves_foreign_link_after_creation_race(
     tmp_path: Path, database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     del database
     workspace = tmp_path / "workspace"
     (workspace / ".agents").mkdir(parents=True)
-    exposed = workspace / ".agents/skills"
+    foreign = tmp_path / "foreign-skills"
+    foreign.mkdir()
+    retained = foreign / "SKILL.md"
+    retained.write_text("Foreign skill bytes")
     real_symlink = os.symlink
+    raced: list[Path] = []
 
     def concurrent_creator(
         src: str | Path, dst: str, target_is_directory: bool = False,
         *, dir_fd: int | None = None,
     ) -> None:
-        real_symlink(src, dst, target_is_directory, dir_fd=dir_fd)
+        # The native projection races before the workspace link exists.
+        real_symlink(foreign, dst, target_is_directory, dir_fd=dir_fd)
+        raced.append(Path(dst))
         raise FileExistsError(dst)
 
     monkeypatch.setattr("planner.skill_sources.os.symlink", concurrent_creator)
-    provision_workspace_skills(workspace, tmp_path)
-    assert exposed.resolve() == (tmp_path / "agent-skill-home/skills").resolve()
+    with pytest.raises(FileExistsError):
+        provision_workspace_skills(workspace, tmp_path)
+    assert len(raced) == 1
+    assert raced[0].parent == tmp_path / "agent-skill-home/skills"
+    assert raced[0].resolve() == foreign
+    assert retained.read_text() == "Foreign skill bytes"
+    assert not (workspace / ".agents/skills").exists()
 
 
 def test_workspace_migrates_only_its_previous_managed_skill_link(

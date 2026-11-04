@@ -1,9 +1,11 @@
 """SQLite proves replacement, retained identity, mixed rollback, authority, and read bounds."""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from sqlite3 import Connection, IntegrityError
 
 import pytest
+from fastapi.testclient import TestClient
+from tests.support.api_app import _app
 from tests.unit.test_manager_wakes import _item_and_ticket
 from tests.unit.test_measure_persistence import NOW, run, source, taken
 
@@ -273,20 +275,23 @@ def test_source_authority_project_agreement_and_revisions(
     before = sources.read_source(tmp_db, source_id).source_revision
     item = dataset(tmp_db, source_id, principal=responsible)
     assert sources.read_source(tmp_db, source_id).source_revision == before + 1
-    for actor in (
-        Principal(PrincipalKind.manager, other_manager),
-        Principal(PrincipalKind.ticket, other_ticket),
-    ):
-        with pytest.raises(PlannerError):
-            dataset(tmp_db, source_id, principal=actor)
-        with pytest.raises(PlannerError):
-            actions.update_dataset(
-                tmp_db,
-                item.id,
-                UpdateDatasetBody(expected_revision=1, name="No"),
-                principal=actor,
-                now=NOW,
+    body = asdict(item)
+    body = {key: body[key] for key in (
+        "project_id", "source_id", "name", "timezone", "dimensions", "fields"
+    )}
+    with TestClient(_app(tmp_db)) as client:
+        for headers in (
+            {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": other_manager},
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": other_ticket},
+        ):
+            denied = client.post("/api/datasets", json=body, headers=headers)
+            assert denied.status_code == 403, denied.text
+            denied = client.patch(
+                f"/api/datasets/{item.id}",
+                json={"expected_revision": 1, "name": "No"}, headers=headers,
             )
+            assert denied.status_code == 403, denied.text
+    assert sources.read_source(tmp_db, source_id).source_revision == before + 1
     with pytest.raises(PlannerError, match="Projects differ"):
         actions.create_dataset(
             tmp_db,

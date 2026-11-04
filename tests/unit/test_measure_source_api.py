@@ -457,8 +457,11 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "gauge",
         )
         # Empty objects were deliberate setup probes, not failed valid product operations.
-        for path in ("/api/measure-sources", "/api/measures"):
-            invalid(client.post(path, json={}, headers=headers), "required")
+        invalid(
+            client.post("/api/measure-sources", json={}, headers=headers),
+            "$.responsible: expected an object with kind and id",
+        )
+        invalid(client.post("/api/measures", json={}, headers=headers), "required")
         invalid(
             client.patch(
                 f"/api/goals/{goal_id}",
