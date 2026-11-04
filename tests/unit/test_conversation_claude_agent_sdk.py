@@ -181,10 +181,11 @@ def test_a_claude_model_change_rebinds_the_child_and_preserves_the_conversation(
             store=store,
             message_files=ConversationMessageFiles(db_path),
             backend_child_factories={
-                ConversationBackendKey.claude: ClaudeAgentSdkBackendChildFactory(
+                key: ClaudeAgentSdkBackendChildFactory(
                     ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")),
                     client_factory=make,
                 )
+                for key in ConversationBackendKey
             },
             live_tail=ConversationLiveTail(),
         )
