@@ -13,7 +13,7 @@ describe('canonical browser protocol boundary', () => {
     const manager={kind:'manager',id:'o',value:{title:'Manager',recap:'Manager recap',recap_preview:'Manager recap',project_id:'p',
       created_at:3,updated_at:4,settled:false,conversation_id:null}};
     const parse=(records:unknown[])=>parseSnapshotResponse({wire_version:WIRE_VERSION,mode:'current',authority:authority('navigation'),cursor:encodeCursor(continuity),
-      snapshot:{...continuity,records},proof:null});
+      snapshot:{...continuity,records}});
     expect(parse([ticket,manager]).snapshot.records).toHaveLength(2);
     expect(parse([{...ticket,value:{...ticket.value,gating_field:null}}]).snapshot.records).toHaveLength(1);
     expect(parse([{...ticket,value:{...ticket.value,proposal_created_at:13}}]).snapshot.records).toHaveLength(1);
@@ -43,7 +43,7 @@ describe('canonical browser protocol boundary', () => {
   });
   it('rejects duplicate keys, unsafe integer values, unsupported versions, cursor mismatch', () => {
     const record={kind:'totals',id:'x',value:{child_count:1,distinct_conversation_count:1}};
-    const value={wire_version:WIRE_VERSION,mode:'current',authority:authority('navigation'),cursor:encodeCursor(continuity),snapshot:{...continuity,records:[record]},proof:null};
+    const value={wire_version:WIRE_VERSION,mode:'current',authority:authority('navigation'),cursor:encodeCursor(continuity),snapshot:{...continuity,records:[record]}};
     expect(parseSnapshotResponse(value).snapshot.records).toHaveLength(1);
     expect(() => parseSnapshotResponse({...value,snapshot:{...value.snapshot,records:[record,record]}})).toThrow();
     expect(() => parseSnapshotResponse({...value,snapshot:{...value.snapshot,records:[{...record,value:{...record.value,child_count:9007199254740992}}]}})).toThrow();
@@ -61,7 +61,6 @@ describe('canonical browser protocol boundary', () => {
   });
 });
 
-
 describe('strict attention authority profiles',()=>{
   it('rejects missing knowledge, contradictory durable bits, and current facts in degraded snapshots',()=>{
     const record=conversation();
@@ -76,7 +75,6 @@ describe('strict attention authority profiles',()=>{
     const degraded=degradedSnapshot(full.snapshot);
     expect(parseSnapshotResponse(degraded).cursor).toBeNull();
     expect(()=>parseSnapshotResponse({...degraded,cursor:full.cursor})).toThrow();
-    expect(()=>parseSnapshotResponse({...degraded,proof:{status:'included',reason:null}})).toThrow();
     expect(()=>parseSnapshotResponse({...degraded,snapshot:full.snapshot})).toThrow();
     expect(()=>parseSnapshotResponse({...full,authority:{...full.authority,availability:{state:'unavailable',generation:'1',reason:null}}})).toThrow();
     expect(()=>parseSnapshotResponse({...full,authority:{...full.authority,permit:{...full.authority.permit,generation:'2'}}})).toThrow();

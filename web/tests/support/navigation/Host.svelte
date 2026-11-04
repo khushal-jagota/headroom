@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import type { RenderObserver } from '../../../src/lib/navigation/visibility';
   import { createNavigationCollection } from '../../../src/lib/navigation/collection';
   import type { NavigationPublication } from '../../../src/lib/navigation/collection';
   import { createNavigationOwner } from '../../../src/lib/navigation/owner';
@@ -29,7 +28,6 @@
     closeStream = realTransport.connect(...args); return closeStream;
   }};
   const owner = createNavigationOwner({ adapter, transport });
-  let observer: RenderObserver | undefined;
   let route = $state(location.hash);
   function navigate() { route = location.hash; }
   window.addEventListener('hashchange', navigate);
@@ -50,7 +48,7 @@
     }
   });
   const harness = {
-    state: () => ({owner:owner.getState().connection, revision:base.getPublication()?.continuity.revision, selector:selectors.publication?.continuity.revision,status,waitResults}), ready: () => Boolean(displayed && observer), ownerIdentity: crypto.randomUUID(),
+    state: () => ({owner:owner.getState().connection, revision:base.getPublication()?.continuity.revision, selector:selectors.publication?.continuity.revision,status,waitResults}), ready: () => Boolean(displayed), ownerIdentity: crypto.randomUUID(),
     publishedRevision: () => base.getPublication()?.continuity.revision,
     waitStatus: () => status, coherenceErrors, renderMarks,
     holdRender(value: boolean) { renderHeld = value; },
@@ -62,9 +60,6 @@
       const response = await fetch('/api/harness/change', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tag,scenario})});
       if (!response.ok) throw new Error('harness command failed');
       const sample = await response.json();
-      status = 'pending';
-      owner.waitForVisibility(sample.fence, {requiredObservers:observer ? [observer] : [],timeoutMs:10000})
-        .then(result => { status = result.status; waitResults.push({tag,result}); });
       return sample;
     },
     disconnect() { disconnected = true; closeStream(); },
@@ -73,12 +68,12 @@
   };
   (window as any).navigationHarness = harness;
   owner.start();
-  onDestroy(() => { observer?.dispose(); owner.dispose(); base.destroy(); unsubscribeOwner(); window.removeEventListener('hashchange', navigate); });
+  onDestroy(() => { owner.dispose(); base.destroy(); unsubscribeOwner(); window.removeEventListener('hashchange', navigate); });
 </script>
 <input data-draft aria-label="local draft" />
 <select data-choice aria-label="manual choice"><option value="automatic">Automatic</option><option value="manual">Manual</option></select>
 {#if displayed}
   {#key route}
-    <Consumer publication={displayed} generation={ownerState.generation} {owner} setObserver={(value) => { observer = value; }} {renderMarks} {coherenceErrors} />
+    <Consumer publication={displayed} {renderMarks} {coherenceErrors} />
   {/key}
 {/if}

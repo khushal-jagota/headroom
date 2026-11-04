@@ -1,5 +1,5 @@
 import { wireDescriptors, SCHEMA_VERSION, SUPPORTED_SEMANTICS, WIRE_VERSION } from './contracts';
-import type { SnapshotResponse, RevisionBatch, Fence, Cursor, Continuity, Reset, BatchEnvelope, CurrentAuthority, DegradedAuthority, NavigationRecord } from './contracts';
+import type { SnapshotResponse, RevisionBatch, Cursor, Continuity, Reset, BatchEnvelope, CurrentAuthority, DegradedAuthority, NavigationRecord } from './contracts';
 
 export class NavigationProtocolError extends Error {}
 type Descriptor = {ref?: string; primitive?: string; literal?: unknown[]; array?: Descriptor; union?: Descriptor[]; object?: Record<string, Descriptor>};
@@ -133,5 +133,4 @@ export function parseRevisionBatch(raw: unknown): RevisionBatch {
   if (parseRevision(value.revision) !== parseRevision(value.base_revision) + 1n) throw new NavigationProtocolError('Nonadvancing batch');
   uniqueKeys([...value.upserts,...value.deletes]); return value;
 }
-export function parseFence(raw: unknown): Fence { const value = parse<Fence>('Fence',raw); continuity(value); return value; }
 export function parseReset(raw: unknown): Reset { return parse<Reset>('Reset',raw); }

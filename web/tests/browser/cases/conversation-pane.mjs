@@ -259,7 +259,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   (window as any).__catalogOwner=(owner:string)=>catalogOwner=owner;
   import ManagerHeader from "../src/components/ManagerHeader.svelte";
   import InlineEdit from "../src/components/InlineEdit.svelte";
-  import { workspaceHeaderDomMatches } from "../src/lib/managerWorkspaceDom";
+  import { workspaceHeaderDomMatches } from "../tests/support/managerWorkspaceDom";
   const managerLayoutOnly=new URLSearchParams(window.location.search).has("manager-layout");
   let layoutRecap=$state("The recap belongs below the title.");
   const headerFacts={project:"Panels",title:"Workspace clarity",settled:false,conversation_id:null};

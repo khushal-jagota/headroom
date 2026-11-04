@@ -1,16 +1,15 @@
-import type {Fence,ViewFrame,ViewRequest,ViewSnapshot} from '../contracts';
+import type {ViewFrame,ViewRequest,ViewSnapshot} from '../contracts';
 import {parseFrame} from './validation';
 
 const MAX_FRAME_BYTES=800*1024;
-function path(kind:'snapshot'|'events',view:ViewRequest,fence?:Fence) {
+function path(kind:'snapshot'|'events',view:ViewRequest) {
   const query=new URLSearchParams({view:JSON.stringify(view)});
-  if(fence) query.set('fence',JSON.stringify(fence));
   return `/api/navigation/view/${kind}?${query}`;
 }
 export function createViewTransport() {
   return {
-    async snapshot(view:ViewRequest,signal:AbortSignal,fence?:Fence):Promise<ViewSnapshot> {
-      const response=await fetch(path('snapshot',view,fence),{signal,cache:'no-store'});
+    async snapshot(view:ViewRequest,signal:AbortSignal):Promise<ViewSnapshot> {
+      const response=await fetch(path('snapshot',view),{signal,cache:'no-store'});
       if(!response.ok) throw new Error(`Navigation view unavailable (${response.status})`);
       const body=await response.text();if(new TextEncoder().encode(body).byteLength>MAX_FRAME_BYTES)throw new Error('Navigation frame overflow');
       const result=parseFrame(JSON.parse(body));if(result.event!=='snapshot')throw new Error('Expected view snapshot');return result;

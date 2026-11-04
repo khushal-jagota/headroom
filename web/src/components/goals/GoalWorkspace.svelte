@@ -13,7 +13,7 @@
  import {queryClient} from '../../lib/queryClient';
  import ConversationSignalMark from '../ConversationSignalMark.svelte';
  import {navigationConversationSignal} from '../../lib/navigation/presentation';
- import {conversationOwnerImpact} from '../../lib/workspaceNavigationImpact';
+
  import {navigationApplication} from '../../lib/navigation/application.svelte';
  import {mutateJson} from '../../lib/mutate';
  import {readBackends,type BackendSnapshot,type DeliveredMessage,type OwnerSendBody} from '../../lib/conversation/wire';
@@ -68,8 +68,8 @@
   goalId:()=>id,goal:()=>goal,readings:()=>readings.data,narrow:()=>narrow,sessions:()=>sessions,
  },{manualSession:measureId=>sessions.manual(id,measureId),updateBlock,authorText}));
  async function change(patch:Omit<GoalEditBody,'expected_revision'>){try{await save(patch);error=null;}catch(e){error=e;}}
- async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson<DeliveredMessage>(`/api/goals/${encodeURIComponent(id)}/conversation/send`,{method:'POST',body,responseMetadata});const view=navigation?.state.effective;const delivered=navigation?await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'send goal message'):await operation();await detail.refetch();return delivered;}
- async function reset(){const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson(`/api/goals/${encodeURIComponent(id)}/conversation/reset`,{method:'POST',responseMetadata});const view=navigation?.state.effective;if(navigation)await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'reset goal conversation');else await operation();selectedPastConversationId=null;await detail.refetch();}
+ async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const delivered=await mutateJson<DeliveredMessage>(`/api/goals/${encodeURIComponent(id)}/conversation/send`,{method:'POST',body});await detail.refetch();return delivered;}
+ async function reset(){await mutateJson(`/api/goals/${encodeURIComponent(id)}/conversation/reset`,{method:'POST'});selectedPastConversationId=null;await detail.refetch();}
  let display=$derived(resolveGoalPrimaryDisplay(goal));
  let checklist=$derived(display.checklist);
  let renderedPage=$derived(goal?pageWithoutSelectedChecklistForRender(goal.page,checklist?.id??null):null);

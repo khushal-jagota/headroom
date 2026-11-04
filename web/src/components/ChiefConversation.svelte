@@ -10,10 +10,9 @@
    * It stays separate from the Agents layout because this component owns the canonical
    * Chief conversation while the route owns roster selection and responsive navigation.
    */
-  import { tick, onDestroy } from "svelte";
+  import { onDestroy } from "svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
-  import { actualMark, expectedMark } from "../lib/conversationSignalDom";
+
   import { createQuery } from "@tanstack/svelte-query";
   import GoalsOverview from "./goals/GoalsOverview.svelte";
   import ManagerHeader from "./ManagerHeader.svelte";
@@ -37,11 +36,7 @@
     if (!value) throw new Error("Chief conversation requires the application navigation owner");
     return value;
   })();
-  const observer = navigation.registerRenderBoundary(`chief-conversation:${crypto.randomUUID()}`,impact => {
-    if(impact.kind==='chief') return impact.fields==='*' || impact.fields.includes('conversation_id');
-    return impact.kind==='conversation' && impact.id===chief?.conversation_id && (impact.fields==='*' || impact.fields.includes('attention'));
-  });
-  onDestroy(() => navigation.disposeRenderBoundary(observer));
+
   let root = $state<HTMLElement | null>(null);
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
@@ -75,32 +70,9 @@
       conversationId = chief.conversation_id;
     }
   });
-  $effect(() => {
-    const effective = displayed;
-    const generation = navigation.state.generation;
-    const element = root;
-    const source = chief;
-    const localPointer = shownConversationId;
-    if (!effective?.runtimeCurrent || !element || !source || (selectedPastConversationId === null && source.conversation_id !== localPointer)) return;
-    const publication = effective.publication;
-    const observation = observer.observeSelectors(publication,generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (obsolete || !element.isConnected || navigation.selectors.effective !== effective
-        || navigation.state.generation !== generation || shownConversationId !== localPointer) return;
-      const pane = element.querySelector('[data-conversation-pane]');
-      if (pane?.getAttribute('data-conversation-id') !== (localPointer ?? '')) return;
-      const region=element.querySelector('.manager-workspace-title');
-      if(JSON.stringify(region ? actualMark(region) : [null,null]) !== JSON.stringify(expectedMark(source.conversation_signal,source.conversation_id))) return;
-      observer.acknowledgeRender(publication,observation);
-    });
-    return () => { obsolete = true; };
-  });
 
   async function sendToTheChief(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const view=navigation.state.effective;
-    const delivered=await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'chief','chief'),responseMetadata =>
-      mutateJson<DeliveredMessage>("/api/chief/conversation/send",{method:"POST",body,responseMetadata}),"send Chief message");
+    const delivered=await mutateJson<DeliveredMessage>("/api/chief/conversation/send",{method:"POST",body});
     if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
     return delivered;
   }
@@ -108,9 +80,7 @@
     return mutateJson("/api/workers/chief-of-staff/recap", { method: "PUT", body: { recap } });
   }
   async function newConversation():Promise<void> {
-    const view=navigation.state.effective;
-    await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'chief','chief'),responseMetadata =>
-      mutateJson("/api/chief/conversation/reset",{method:"POST",responseMetadata}),"reset Chief conversation");
+    await mutateJson("/api/chief/conversation/reset",{method:"POST"});
     conversationId=null;
   }
 

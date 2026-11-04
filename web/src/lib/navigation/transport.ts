@@ -1,4 +1,4 @@
-import type { Fence, SnapshotResponse } from './contracts';
+import type { SnapshotResponse } from './contracts';
 import { parseSnapshotResponse } from './validation';
 import { PlannerFetchError } from '../api';
 
@@ -11,7 +11,7 @@ export interface NavigationStreamHandlers {
   error(): void;
 }
 export interface NavigationTransport {
-  snapshot(signal: AbortSignal, fence?: Fence): Promise<SnapshotResponse>;
+  snapshot(signal: AbortSignal): Promise<SnapshotResponse>;
   connect(cursor: string, handlers: NavigationStreamHandlers, signal: AbortSignal): () => void;
 }
 
@@ -23,10 +23,9 @@ export function createNavigationTransport(options: {
   const request = options.fetch ?? globalThis.fetch.bind(globalThis);
   const source = options.eventSource ?? ((url: string) => new EventSource(url));
   return {
-    async snapshot(signal, fence) {
-      const query = fence ? `?fence=${encodeURIComponent(JSON.stringify(fence))}` : '';
+    async snapshot(signal) {
       let response: Response;
-      try { response = await request(`/api/navigation/snapshot${query}`, { signal, cache: 'no-store' }); }
+      try { response = await request('/api/navigation/snapshot', { signal, cache: 'no-store' }); }
       catch (error) {
         if (signal.aborted) throw error;
         throw new NavigationRequestError('network error','network');

@@ -40,17 +40,7 @@ describe('navigation transport',()=>{
     expect(source.close).toHaveBeenCalledOnce();expect(reset).not.toHaveBeenCalled();expect(error).not.toHaveBeenCalled();
   });
 });
-describe('optional response header access',()=>{
-  it('keeps domain result unchanged and supplies an isolated header copy',async()=>{
-    const prior=globalThis.fetch;
-    globalThis.fetch=vi.fn(async()=>new Response('{"ok":true}',{headers:{'X-Navigation-Fence':'issued'}}));
-    try {
-      const metadata:{headers?:Headers}={};
-      expect(await fetchJson('/command',{responseMetadata:metadata})).toEqual({ok:true});
-      expect(metadata.headers?.get('X-Navigation-Fence')).toBe('issued');
-      expect(await fetchJson('/command')).toEqual({ok:true});
-    } finally {globalThis.fetch=prior;}
-  });
+describe('command errors',()=>{
   it('retains planner error status, code and detail',async()=>{
     const prior=globalThis.fetch;
     globalThis.fetch=vi.fn(async()=>new Response('{"error":{"code":"rejected","message":"Rejected","detail":{"x":1}}}',{status:409}));

@@ -5,7 +5,6 @@ import { navigationWorkspacePresentation } from '../src/lib/navigation/presentat
 import { currentSnapshot, continuity } from './support/navigation/fixtures';
 import type { TicketRecord } from '../src/lib/navigation/contracts';
 import { railTicketEligible } from '../src/lib/workspaceRail';
-import { ticketCommandImpact } from '../src/lib/ticketNavigationImpact';
 
 it('admits a diagnostic navigation record without valid stage or holder and keeps healthy Tickets visible',()=>{
   const broken:TicketRecord={kind:'ticket',id:'broken',value:{title:'Broken',recap:'',recap_preview:'',worker_type:'removed',stage:'done',ticket_status:'errored',
@@ -23,7 +22,6 @@ it('admits a diagnostic navigation record without valid stage or holder and keep
     const diagnostic=presentation.tickets.find(row=>row.id==='broken')!;
     expect(diagnostic).toMatchObject({agent_state:'errored',awaiting_approval:false,assigned:false,integrity_error:{reason:'unknown Worker type'}});
     expect(railTicketEligible(diagnostic)).toBe(true);
-    expect(ticketCommandImpact(view,'broken','scope').complete).toBe(false);
     expect(presentation.review.items).toEqual([]);
   } finally {adapter.destroy();}
 });

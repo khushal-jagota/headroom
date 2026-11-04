@@ -5,7 +5,7 @@ import { tick } from "svelte";
 import type { BoardCard, BoardManager, ManagerWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
 import { buildWorkspaceRail, railTicketEligible, refreshWorkspaceRailSignals, stabilizeWorkspaceRail, workspaceWorkerStageSentence, workspaceListRecap } from "../src/lib/workspaceRail";
-import { railDomMatches } from "../src/lib/workspaceRailDom";
+import { railDomMatches } from "./support/workspaceRailDom";
 import { createRailMotionController, type WorkspaceRailPresentation } from "../src/lib/workspaceRailMotion";
 
 const quiet = {

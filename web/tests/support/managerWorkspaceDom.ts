@@ -1,11 +1,11 @@
-import { workspaceAddress } from './workspaceAddress';
-import type { WorkItemTicketFacts } from './workItemPresentation';
-import { managerGroupDefaultOpen } from './managerChildren';
-import { actualMark, expectedMark } from './conversationSignalDom';
+import { workspaceAddress } from '../../src/lib/workspaceAddress';
+import type { WorkItemTicketFacts } from '../../src/lib/workItemPresentation';
+import { managerGroupDefaultOpen } from '../../src/lib/managerChildren';
+import { actualMark, expectedMark } from '../../src/lib/conversationSignalDom';
 /** Only visible child rows attest paint; closed groups attest their label/count alone. */
-export function childrenDomMatches(root:HTMLElement,principal:import('./types').ManagerPrincipal,filter:string,
+export function childrenDomMatches(root:HTMLElement,principal:import('../../src/lib/types').ManagerPrincipal,filter:string,
   groups:readonly {key:string;label:string;tickets:readonly WorkItemTicketFacts[]}[],
-  page:import('./types').ListPageFacts | undefined,open:Readonly<Record<string,boolean>>):boolean {
+  page:import('../../src/lib/types').ListPageFacts | undefined,open:Readonly<Record<string,boolean>>):boolean {
   if(root.dataset.managerChildren!==`${principal.kind}:${principal.id}` || root.querySelector('select')?.value!==filter) return false;
   const actual=[...root.querySelectorAll<HTMLDetailsElement>('details[data-workspace-group]')];
   if(actual.length!==groups.length || !groups.every((group,index)=>{
@@ -27,7 +27,7 @@ export function childrenDomMatches(root:HTMLElement,principal:import('./types').
     && buttons?.[0].disabled===(page.omitted_before===0) && buttons?.[1].disabled===(page.next_offset===null);
 }
 
-export function workspaceHeaderDomMatches(root:HTMLElement,item:import('./workspaceRail').WorkspaceManager):boolean {
+export function workspaceHeaderDomMatches(root:HTMLElement,item:import('../../src/lib/workspaceRail').WorkspaceManager):boolean {
   return root.querySelector('.page-eyebrow > span')?.textContent===(item.project ?? '')
     && root.querySelector('h1 [contenteditable]')?.textContent===item.title
     && root.querySelector('.page-settle')?.getAttribute('aria-label')===`${item.settled ? 'Reopen' : 'Settle'} ${item.title}`

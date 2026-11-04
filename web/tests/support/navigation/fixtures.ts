@@ -7,12 +7,12 @@ export const authority = (scope = 'signal-workspace', generation = '1', session 
   permit:{scope,runtime_epoch:'producer',installation_id:'installed',generation},
 });
 export function currentSnapshot(snapshot: Snapshot, profile = authority()): CurrentSnapshotResponse {
-  return {wire_version:WIRE_VERSION,mode:'current',authority:profile,cursor:encodeCursor(snapshot),snapshot,proof:null};
+  return {wire_version:WIRE_VERSION,mode:'current',authority:profile,cursor:encodeCursor(snapshot),snapshot};
 }
 export function degradedSnapshot(snapshot: Snapshot, generation = '1', session = 'delivery'): DegradedSnapshotResponse {
   const profile: DegradedAuthority = {delivery_session_id:session,availability:{state:'unavailable',generation,reason:'lost'},permit:null};
   return {wire_version:WIRE_VERSION,mode:'degraded',authority:profile,cursor:null,snapshot:{...snapshot,records:snapshot.records.map(record => record.kind === 'conversation'
-    ? {...record,value:{...record.value,attention:{current:null,durable:record.value.attention.durable}}} : record)},proof:null};
+    ? {...record,value:{...record.value,attention:{current:null,durable:record.value.attention.durable}}} : record)}};
 }
 export const envelope = (batch: RevisionBatch, profile = authority()): BatchEnvelope => ({wire_version:WIRE_VERSION,authority:profile,batch});
 export const continuity: Continuity = {scope:'workspace',schema_version:SCHEMA_VERSION,semantics:SUPPORTED_SEMANTICS,epoch:'e1',revision:'0'};

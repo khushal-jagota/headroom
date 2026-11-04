@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { createTransaction } from '@tanstack/db';
-import type { RenderObserver, RenderObservation } from '../src/lib/navigation/visibility';
 import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { createNavigationOwner } from '../src/lib/navigation/owner';
 import { encodeCursor } from '../src/lib/navigation/validation';
-import type { Continuity, Fence, SnapshotResponse, RevisionBatch, BatchEnvelope, CurrentSnapshotResponse } from '../src/lib/navigation/contracts';
+import type { Continuity, SnapshotResponse, RevisionBatch, BatchEnvelope, CurrentSnapshotResponse } from '../src/lib/navigation/contracts';
 import { NavigationRequestError, type NavigationStreamHandlers, type NavigationTransport } from '../src/lib/navigation/transport';
 import { continuity, currentSnapshot, degradedSnapshot, envelope, authority, conversation } from './support/navigation/fixtures';
-function snapshot(revision = '0', epoch = 'e1', proof: SnapshotResponse['proof'] = null): CurrentSnapshotResponse {
+function snapshot(revision = '0', epoch = 'e1'): CurrentSnapshotResponse {
   const value = {...continuity, revision, epoch};
-  return {...currentSnapshot({...value,records:[{kind:'project',id:'p',value:{name:`name-${revision}`}}]}),proof};
+  return {...currentSnapshot({...value,records:[{kind:'project',id:'p',value:{name:`name-${revision}`}}]})};
 }
 function batch(base: string, revision: string, extra = {}): RevisionBatch {
   return {...continuity,base_revision:base,revision,upserts:[{kind:'project',id:'p',value:{name:`name-${revision}`}}],deletes:[],...extra};
@@ -17,10 +16,10 @@ function batch(base: string, revision: string, extra = {}): RevisionBatch {
 function fixture() {
   let handlers: NavigationStreamHandlers;
   const cursors: string[] = [];
-  const requests: (Fence | undefined)[] = [];
+  const requests: undefined[] = [];
   let response: SnapshotResponse = snapshot();
   const transport: NavigationTransport = {
-    async snapshot(_signal, fence) { requests.push(fence); return response; },
+    async snapshot() { requests.push(undefined); return response; },
     connect(cursor, value) { cursors.push(cursor); handlers = value; return () => undefined; },
   };
   const adapter = createNavigationCollection();
@@ -30,17 +29,12 @@ function fixture() {
     error(){handlers.error();}, dispose(){owner.dispose();adapter.destroy();}};
 }
 const flush = async () => { for(let i=0;i<24;i++) await Promise.resolve(); };
-function observerFor(owner:ReturnType<typeof createNavigationOwner>, id:string) {
-  const raw=owner.registerObserver(id);let token:RenderObservation|undefined;
-  return {raw, ...raw,observeSelectors(publication:Parameters<RenderObserver['observeSelectors']>[0]) {token=raw.observeSelectors(publication,owner.getState().generation);},
-    acknowledgeRender(publication:Parameters<RenderObserver['acknowledgeRender']>[0]) {raw.acknowledgeRender(publication,token);}};
-}
-function fence(revision = '1', extra = {}): Fence {return {version:1,...continuity,revision,coverage:'complete',witnesses:['a'.repeat(64)],signature:'signed',...extra};}
+
 describe('navigation owner', () => {
   it('retains request failure until an accepted snapshot and ignores obsolete aborted failures',async()=>{
     const adapter=createNavigationCollection();
     let read:NavigationTransport['snapshot']=async()=>{throw new NavigationRequestError('offline','network');};
-    const owner=createNavigationOwner({adapter,transport:{snapshot:(signal,fence)=>read(signal,fence),connect:()=>()=>undefined},reconnectDelayMs:100000});
+    const owner=createNavigationOwner({adapter,transport:{snapshot:(signal)=>read(signal),connect:()=>()=>undefined},reconnectDelayMs:100000});
     try {
       await expect(owner.start()).rejects.toThrow('offline');
       expect(owner.getState().error?.code).toBe('network');
@@ -59,20 +53,13 @@ describe('navigation owner', () => {
       expect(owner.getState().connection).toBe('subscribed');
     } finally {owner.dispose();adapter.destroy();}
   });
-  it('publishes in order, waits separately for selectors and render, and ignores duplicate batches', async () => {
+  it('publishes in order and ignores duplicate batches', async () => {
     const f = fixture();
     try {
       await f.owner.start();
-      const observer = observerFor(f.owner,'list');
-      let result: unknown;
-      void f.owner.waitForVisibility(fence(),{requiredObservers:[observer.raw]}).then(value=>{result=value;});
       f.send(batch('0','1')); await flush();
       const publication = f.adapter.getPublication()!;
       expect(publication.continuity.revision).toBe('1');
-      expect(result).toBeUndefined();
-      observer.acknowledgeRender(publication); await flush(); expect(result).toBeUndefined();
-      observer.observeSelectors(publication); await flush(); expect(result).toBeUndefined();
-      observer.acknowledgeRender(publication); await flush(); expect(result).toEqual({status:'included',reason:null});
       f.send(batch('0','1')); await flush(); expect(f.requests).toHaveLength(1);
     } finally {f.dispose();}
   });
@@ -97,41 +84,9 @@ describe('navigation owner', () => {
       expect(f.adapter.getPublication()).toBe(prior);
     } finally {f.dispose();}
   });
-  it('observer removal and late callbacks never manufacture visibility; disposal releases waits', async () => {
-    const f=fixture();
-    try {
-      await f.owner.start();
-      const observer=observerFor(f.owner,'route');
-      const wait=f.owner.waitForVisibility(fence('0'),{requiredObservers:[observer.raw]});
-      const pub=f.adapter.getPublication()!;
-      observer.observeSelectors(pub);observer.dispose();observer.acknowledgeRender(pub);
-      expect(await wait).toEqual({status:'unknown',reason:'observer_removed'});
-      const second=observerFor(f.owner,'route');
-      const pending=f.owner.waitForVisibility(fence('4'),{requiredObservers:[second.raw]});
-      f.owner.dispose();expect(await pending).toEqual({status:'unknown',reason:'disposed'});
-    } finally {f.dispose();}
-  });
-  it('certifies exact cross-epoch fence and preserves no_op without asserting a relevant change', async () => {
-    const f=fixture();
-    try {
-      await f.owner.start();const observer=observerFor(f.owner,'route');
-      f.setResponse(snapshot('0','e2',{status:'no_op',reason:null}));
-      const issued=fence('0',{epoch:'e0',witnesses:[]});
-      const wait=f.owner.waitForVisibility(issued,{requiredObservers:[observer.raw]});
-      await flush();expect(f.requests[1]).toEqual(issued);
-      const pub=f.adapter.getPublication()!;observer.observeSelectors(pub);observer.acknowledgeRender(pub);
-      expect(await wait).toEqual({status:'no_op',reason:null});
-    } finally {f.dispose();}
-  });
-  it('returns unknown for incomplete capture and expired proof', async () => {
-    const f=fixture();
-    try {
-      await f.owner.start();const observer=observerFor(f.owner,'route');
-      expect(await f.owner.waitForVisibility(fence('0',{coverage:'unknown'}),{requiredObservers:[observer.raw]})).toEqual({status:'unknown',reason:'incomplete_capture'});
-      f.setResponse(snapshot('0','e2',{status:'unknown',reason:'missing_witness'}));
-      expect(await f.owner.waitForVisibility(fence('0',{epoch:'old'}),{requiredObservers:[observer.raw]})).toEqual({status:'unknown',reason:'missing_witness'});
-    } finally {f.dispose();}
-  });
+  ;
+  ;
+  ;
 });
 describe('bounded delayed publication',()=>{
   it('reconnects from published cursor and aborts delayed obsolete admission',async()=>{
@@ -172,21 +127,7 @@ describe('bounded delayed publication',()=>{
       expect(responses).toBe(2);expect(()=>delayed!()).toThrow('aborted');
     }finally{owner.dispose();base.destroy();}
   });
-  it('certifies a wait that outlives an epoch transition and rejects stale render callbacks',async()=>{
-    const f=fixture();
-    try{
-      await f.owner.start();const observer=observerFor(f.owner,'route');
-      const old=f.adapter.getPublication()!;observer.observeSelectors(old);
-      const pending=f.owner.waitForVisibility(fence('2'),{requiredObservers:[observer.raw]});
-      f.setResponse(snapshot('0','e2',{status:'included',reason:null}));
-      await f.owner.recover();await flush();
-      observer.observeSelectors(old);observer.acknowledgeRender(old);
-      let result:unknown;void pending.then(value=>{result=value;});await flush();expect(result).toBeUndefined();
-      expect(f.requests.some(value=>value?.revision==='2')).toBe(true);
-      const pub=f.adapter.getPublication()!;observer.observeSelectors(pub);observer.acknowledgeRender(pub);
-      expect(await pending).toEqual({status:'included',reason:null});
-    }finally{f.dispose();}
-  });
+  ;
 });
 describe('real accepted provider transaction',()=>{
   it('suppresses runtime before accepted source drain and restores authority only from a complete snapshot',async()=>{
@@ -224,23 +165,7 @@ describe('real accepted provider transaction',()=>{
       stop();
     }finally{f.dispose();}
   });
-  it('requires new generation-bound observation after unchanged reconnect',async()=>{
-    const f=fixture();
-    try{
-      await f.owner.start();const observer=f.owner.registerObserver('route');
-      const pub=f.adapter.getPublication()!;
-      const oldToken=observer.observeSelectors(pub,f.owner.getState().generation);
-      f.error();await new Promise(resolve=>setTimeout(resolve,5));await flush();
-      const wait=f.owner.waitForVisibility(fence('0'),{requiredObservers:[observer]});
-      observer.acknowledgeRender(pub,oldToken);
-      let result:unknown;void wait.then(value=>{result=value;});await flush();expect(result).toBeUndefined();
-      const recovered=f.adapter.getPublication()!;
-      expect(recovered).not.toBe(pub);
-      const token=observer.observeSelectors(recovered,f.owner.getState().generation);
-      observer.acknowledgeRender(recovered,token);
-      expect(await wait).toEqual({status:'included',reason:null});
-    }finally{f.dispose();}
-  });
+  ;
 });
 
 describe('attention availability and independent durable knowledge', () => {
@@ -266,7 +191,6 @@ describe('attention availability and independent durable knowledge', () => {
       expect(f.owner.getState().effective?.conversations.get('c')?.message_for_owner).toMatchObject({state:'fresh',value:true});
       expect(f.owner.getState().effective?.conversations.get('c')?.working).toEqual({state:'unknown'});
       expect(f.cursors).toHaveLength(2);
-      expect(await f.owner.waitForVisibility(fence('0'),{requiredObservers:[]})).toMatchObject({status:'unknown'});
       f.setResponse(full);
       await f.owner.recover();
       expect(f.owner.getState().publication?.cursor).toBe(first.cursor);

@@ -12,7 +12,7 @@
    *
    * The Review screen (`ReviewRoute`) mounts the card.
    */
-  import { onMount, onDestroy, tick, type Snippet } from "svelte";
+  import { onMount, onDestroy, type Snippet } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { workspaceAddress } from "../lib/workspaceAddress";
@@ -20,9 +20,7 @@
   import { lifecycleFor } from "../lib/lifecycle";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { reviewProposalIdentity, reviewProposalDetailMatches } from "../lib/navigation/presentation";
-  import { reviewProposalImpact } from "../lib/reviewNavigationImpact";
-  import { ticketCommandImpact, type TicketNavigationOperation } from "../lib/ticketNavigationImpact";
-  import { reviewProposalDomMatches } from "../lib/reviewDom";
+
   import type { NavigationReviewProposalItem, TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
@@ -40,7 +38,6 @@
 
   let {
     identity,
-    onRendered,
     ticketId,
     field,
     title = null,
@@ -51,7 +48,6 @@
   }: {
     identity: NavigationReviewProposalItem;
     embedded?: boolean;
-    onRendered?: () => void;
     /** The Ticket whose proposal this is. */
     ticketId: string;
     /** The Ticket field the proposal is filed against. */
@@ -85,9 +81,7 @@
   // The Ticket behind the proposal on screen. The key follows the Ticket, so
   // moving to the next ask switches the query rather than re-opening a handle.
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review proposal requires the application navigation owner"); return value; })();
-  const observer = navigation.registerRenderBoundary(`review-proposal:${crypto.randomUUID()}`,impact => reviewProposalImpact(impact,ticketId));
-  onDestroy(() => navigation.disposeRenderBoundary(observer));
-  let cardElement = $state<HTMLElement | null>(null);
+
   const detail = createQuery(() => queries.reviewProposal(identity));
   let healthyDetail = $derived(detail.data && !isBrokenTicket(detail.data) ? detail.data : undefined);
 
@@ -164,10 +158,9 @@
     return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => item.review_item_type === 'ticket' && item.proposal !== null && reviewProposalIdentity(item.proposal) === currentKey));
   }
 
-  async function write(path: string, options: Parameters<typeof mutateJson>[1], operation:TicketNavigationOperation): Promise<unknown> {
+  async function write(path: string, options: Parameters<typeof mutateJson>[1]): Promise<unknown> {
     if (!currentIdentity() || !healthyDetail || isStale(healthyDetail)) throw new Error("the visible proposal changed; read it again before accepting");
-    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,ticketId,operation),responseMetadata =>
-      mutateJson(path,{...options,responseMetadata}),`review proposal ${operation}`);
+    return mutateJson(path,{...options});
   }
 
   /** One announcement per proposal, whichever way it left the queue. */
@@ -201,29 +194,13 @@
     void detail.refetch().catch(() => undefined);
     void navigation.owner.recover().catch(() => undefined);
   });
-  $effect(() => {
-    const effective = navigation.selectors.effective;
-    const generation = navigation.state.generation;
-    const element = cardElement;
-    const loaded = healthyDetail;
-    const expected = identity;
-    if (!effective?.runtimeCurrent || !element || !loaded || isStale(loaded) || !currentIdentity()) return;
-    const publication = effective.publication;
-    const observation = observer.observeSelectors(publication,generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (!obsolete && element.isConnected && navigation.state.generation === generation
-        && navigation.selectors.effective === effective && reviewProposalDomMatches(element,expected,loaded)) { observer.acknowledgeRender(publication,observation); onRendered?.(); }
-    });
-    return () => { obsolete = true; };
-  });
 
   async function accept(payload: Record<string, unknown>): Promise<unknown> {
     if (!acceptField) throw new Error("Review decision is not a Ticket field");
     const result = await write(`/api/tickets/${ticketId}/accept/${acceptField}`, {
       method: "POST",
       body: payload
-    },"stage");
+    });
     announceResolved();
     return result;
   }
@@ -232,7 +209,7 @@
     return write(`/api/tickets/${ticketId}`, {
       method: "PATCH",
       body: { title: raw }
-    },"title");
+    });
   }
 
   async function returnForRevision(): Promise<void> {
@@ -244,7 +221,7 @@
       await write(`/api/tickets/${ticketId}/reject`, {
         method: "POST",
         body: { message }
-      },"stage");
+      });
       revisionDraft = "";
       announceResolved();
     } catch (err) {
@@ -284,7 +261,6 @@
   {@const ticketDetail = healthyDetail}
   {#if !isStale(ticketDetail)}
     <div
-      bind:this={cardElement}
       data-proposal-identity={currentKey}
       class="modern-review-content"
       data-review-card
@@ -326,8 +302,8 @@
               ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} manager={reviewManager}
               disabled={revisionBusy} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
-              onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body },"scope"); }}
-              onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } },"stage"); announceResolved(); }}
+              onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
+              onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}
               {revisionEditor} />
             {/key}
           {/if}
