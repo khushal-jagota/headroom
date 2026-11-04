@@ -1,7 +1,7 @@
 import type { TicketValue } from './navigation/contracts';
 import type { EffectiveNavigationView } from './navigation/knowledge';
 import type { TicketDetail } from './types';
-import type { WorkerTypeManifest } from './lifecycle';
+import type { WorkflowManifest } from './lifecycle';
 import { buildLifecycle, ticketStageVisualStateFor, type Lifecycle } from './lifecycle';
 import { navigationAgentState, navigationKnownBoolean, navigationConversationSignal } from './navigation/presentation';
 import { agentHoldsTicket } from './workAttentionPresentation';
@@ -16,7 +16,7 @@ export type TicketSection = {
 };
 
 /** Render the loaded Ticket directly. The server decides whether an action is valid. */
-export function ticketSection(detail:TicketDetail | undefined,configuration:WorkerTypeManifest | undefined):TicketSection | undefined {
+export function ticketSection(detail:TicketDetail | undefined,configuration:WorkflowManifest | undefined):TicketSection | undefined {
   if(!detail || !configuration) return undefined;
   const lifecycle=buildLifecycle(configuration),stage=configuration.stages.find(stage=>stage.id===detail.stage);
   return {detail,lifecycle,record:{id:detail.id,value:{

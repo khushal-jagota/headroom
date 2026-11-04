@@ -189,19 +189,15 @@ assert 'planner.core.db' not in sys.modules
             requests.append(self.path)
             assert self.headers["X-Plan-Actor"] == "worker"
             assert self.headers["X-Plan-Ticket-ID"] == "t_fixture"
-            response: dict[str, object]
-            if self.path == "/api/tickets/t_fixture/worker-self":
-                response = {
-                    "id": "t_fixture",
-                    "title": "Installed wheel",
-                    "worker_type": "coding",
-                    "field_values": {"brief": "Read from the isolated fixture."},
-                }
-            else:
-                assert self.path == "/api/worker-types"
-                response = {
-                    "worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]
-                }
+            # The Ticket carries its own saved workflow, so worker-self is the only read.
+            assert self.path == "/api/tickets/t_fixture/worker-self"
+            response: dict[str, object] = {
+                "id": "t_fixture",
+                "title": "Installed wheel",
+                "worker_type": "coding",
+                "field_values": {"brief": "Read from the isolated fixture."},
+                "workflow": {"fields": [{"id": "brief"}]},
+            }
             body = json.dumps(response).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -230,7 +226,7 @@ assert 'planner.core.db' not in sys.modules
         server.server_close()
         thread.join(timeout=5)
     assert json.loads(result.stdout)["header"]["title"] == "Installed wheel"
-    assert requests == ["/api/tickets/t_fixture/worker-self", "/api/worker-types"]
+    assert requests == ["/api/tickets/t_fixture/worker-self"]
     # The ordinary generated console supports executor commands.
     subprocess.run(
         [

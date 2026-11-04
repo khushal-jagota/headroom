@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from tests.support.ticket_workflows import preset_workflow_json
 from tests.unit.test_conversation_system import _Harness, _run, _start
 
 from planner.conversation.contracts import PromptDeliveryQueued
@@ -70,9 +71,10 @@ def _ticket(path: Path) -> None:
             "INSERT INTO "
             "tickets(id,title,worker_type,employee_backend,stage,ceiling,field_values,cr"
             "eated_at,updated_at,conversation_id,worker_step_claim,worker_step_claim_rev"
-            "ision) VALUES "
+            "ision,workflow_json) VALUES "
             "('t','Worker','coding','hermes','needs_implementation','needs_implementatio"
-            "n','{}',0,0,'c','out',7)"
+            "n','{}',0,0,'c','out',7,?)",
+            (preset_workflow_json(conn),),
         )
         conn.commit()
 
@@ -832,8 +834,9 @@ def test_user_owned_stage_recovers_only_its_already_admitted_opener(
         _ticket(path)
         with connect(str(path)) as conn:
             conn.execute(
-                "UPDATE tickets SET worker_type='new_worker',stage=?,ceiling=? WHERE id='t'",
-                (stage, stage),
+                "UPDATE tickets SET worker_type='new_worker',stage=?,ceiling=?,workflow_json=? "
+                "WHERE id='t'",
+                (stage, stage, preset_workflow_json(conn, "new_worker")),
             )
             if opener_admitted:
                 conn.execute(

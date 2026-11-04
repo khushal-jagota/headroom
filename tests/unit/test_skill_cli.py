@@ -97,8 +97,11 @@ def test_skill_edit_sends_only_supplied_fields_in_one_patch(
     "command", (("skill", "edit", "custom-skill"), ("worker-type", "skill", "custom"))
 )
 def test_skill_edit_commands_keep_worker_identity_and_resolve_declared_skill(
-    skill_requests: list[tuple[str, str, dict[str, Any]]], command: tuple[str, ...]
+    skill_requests: list[tuple[str, str, dict[str, Any]]],
+    command: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("PLAN_CONVERSATION_ID", raising=False)
     result = CliRunner().invoke(
         main,
         [*command, "--json"],

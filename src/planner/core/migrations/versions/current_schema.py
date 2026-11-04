@@ -1,7 +1,9 @@
 """The current Panels schema, after the guard sweep.
 
-The revision identifier is retained from the sweep head. A database that completed
-that sweep already stands here, so Alembic leaves its records unchanged.
+The revision identifier is retained from the sweep head. Existing databases must
+first install the bridge build documented in docs/deployment.md. That build includes
+staging's saved workflows and background tasks before the sweep revisions. The
+baseline build then recognizes the exact schema and leaves its records unchanged.
 """
 
 import sqlite3
@@ -178,11 +180,11 @@ BASELINE_STATEMENTS = (
     "CREATE INDEX attention_approval_events_time ON attention_approval_events(occurred_at)",
     "CREATE TABLE attention_gate_intervals (id INTEGER PRIMARY KEY AUTOINCREMENT,ticket_id TEXT NOT NULL,destination_json TEXT NOT NULL,opened_at INTEGER,observed_since INTEGER NOT NULL,closed_at INTEGER,CHECK(closed_at IS NULL OR closed_at>=observed_since))",
     "CREATE UNIQUE INDEX attention_gate_intervals_open ON attention_gate_intervals(ticket_id) WHERE closed_at IS NULL",
-    "CREATE TABLE \"tickets\" (id TEXT PRIMARY KEY, title TEXT NOT NULL CHECK (length(title) <= 200), worker_type TEXT NOT NULL, employee_backend TEXT NOT NULL, employee_launch_model TEXT, employee_launch_reasoning_effort TEXT, stage TEXT NOT NULL DEFAULT 'needs_kickoff', deadline TEXT, project_id TEXT REFERENCES projects(id), manager_id TEXT REFERENCES managers(id), recap TEXT NOT NULL DEFAULT '', ceiling TEXT NOT NULL, conversation_id TEXT, field_values TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, guidance TEXT NOT NULL DEFAULT '', pending_proposal TEXT, ceiling_holder TEXT NOT NULL DEFAULT '{\"id\":\"owner\",\"kind\":\"owner\"}', worker_step_claim TEXT NOT NULL DEFAULT 'none' CHECK (worker_step_claim IN ('none','out','errored')), worker_step_claim_revision INTEGER NOT NULL DEFAULT 0 CHECK (worker_step_claim_revision >= 0), pending_proposal_revision INTEGER NOT NULL DEFAULT 0 CHECK (pending_proposal_revision >= 0), manager_kind TEXT NOT NULL DEFAULT 'chief' CHECK (manager_kind IN ('chief','manager')), is_backlogged INTEGER NOT NULL DEFAULT 0 CHECK (is_backlogged IN (0,1)), locale TEXT NOT NULL DEFAULT 'vps' CHECK (locale IN ('vps','macos')), field_approvals TEXT NOT NULL DEFAULT '{}', integrity_error_reason TEXT, CHECK (COALESCE(json_type(ceiling_holder) = 'object' AND json_type(ceiling_holder, '$.kind') = 'text' AND json_type(ceiling_holder, '$.id') = 'text' AND json_extract(ceiling_holder, '$.kind') IN ('owner','chief','manager') AND length(trim(json_extract(ceiling_holder, '$.id'))) > 0 AND json_extract(ceiling_holder, '$.id') = trim(json_extract(ceiling_holder, '$.id')) AND (json_extract(ceiling_holder, '$.kind') != 'owner' OR json_extract(ceiling_holder, '$.id') = 'owner') AND (json_extract(ceiling_holder, '$.kind') != 'chief' OR json_extract(ceiling_holder, '$.id') = 'chief'), 0)))",
-    "CREATE INDEX idx_tickets_project_id ON tickets(project_id)",
-    "CREATE INDEX idx_tickets_stage ON tickets(stage)",
-    "CREATE INDEX idx_tickets_worker_type_stage ON tickets(worker_type,stage)",
-    "CREATE INDEX deploy_capture_ticket_conversation ON tickets(conversation_id)",
+    "CREATE TABLE \"tickets\" (\n\tid TEXT, \n\ttitle TEXT NOT NULL, \n\tworker_type TEXT, \n\temployee_backend TEXT NOT NULL, \n\temployee_launch_model TEXT, \n\temployee_launch_reasoning_effort TEXT, \n\tstage TEXT DEFAULT 'needs_kickoff' NOT NULL, \n\tdeadline TEXT, \n\tproject_id TEXT, \n\tmanager_id TEXT, \n\trecap TEXT DEFAULT ('') NOT NULL, \n\tceiling TEXT NOT NULL, \n\tconversation_id TEXT, \n\tfield_values TEXT NOT NULL, \n\tcreated_at INTEGER NOT NULL, \n\tupdated_at INTEGER NOT NULL, \n\tguidance TEXT DEFAULT ('') NOT NULL, \n\tpending_proposal TEXT, \n\tceiling_holder TEXT DEFAULT '{\"id\":\"owner\",\"kind\":\"owner\"}' NOT NULL, \n\tworker_step_claim TEXT DEFAULT 'none' NOT NULL, \n\tworker_step_claim_revision INTEGER DEFAULT 0 NOT NULL, \n\tpending_proposal_revision INTEGER DEFAULT 0 NOT NULL, \n\tmanager_kind TEXT DEFAULT 'chief' NOT NULL, \n\tis_backlogged INTEGER DEFAULT 0 NOT NULL, \n\tlocale TEXT DEFAULT 'vps' NOT NULL, \n\tfield_approvals TEXT DEFAULT '{}' NOT NULL, \n\tintegrity_error_reason TEXT, \n\tworkflow_json TEXT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(manager_id) REFERENCES managers (id), \n\tFOREIGN KEY(project_id) REFERENCES projects (id)\n)",
+    "CREATE INDEX idx_tickets_project_id ON tickets (project_id)",
+    "CREATE INDEX idx_tickets_stage ON tickets (stage)",
+    "CREATE INDEX idx_tickets_worker_type_stage ON tickets (worker_type, stage)",
+    "CREATE INDEX deploy_capture_ticket_conversation ON tickets (conversation_id)",
     "CREATE TRIGGER managed_skill_versions_no_update BEFORE UPDATE ON managed_skill_versions BEGIN SELECT RAISE(ABORT, 'managed skill versions are immutable'); END",
     "CREATE TRIGGER managed_skill_versions_no_delete BEFORE DELETE ON managed_skill_versions BEGIN SELECT RAISE(ABORT, 'managed skill versions are immutable'); END",
     "CREATE TRIGGER tickets_assignment_insert BEFORE INSERT ON tickets WHEN NOT ((NEW.manager_kind='chief' AND NEW.manager_id IS NULL) OR (NEW.manager_kind='manager' AND NEW.manager_id IS NOT NULL)) BEGIN SELECT RAISE(ABORT,'invalid manager assignment'); END",
@@ -333,6 +335,10 @@ BASELINE_STATEMENTS = (
     "CREATE TRIGGER signal_source_deploy_interruption_deliveries_insert AFTER INSERT ON deploy_interruption_deliveries BEGIN INSERT INTO signal_publication_dirty SELECT NEW.conversation_id WHERE NEW.conversation_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM signal_publication_dirty WHERE conversation_id=NEW.conversation_id); END",
     "CREATE TRIGGER signal_source_deploy_interruption_deliveries_update BEFORE UPDATE ON deploy_interruption_deliveries BEGIN INSERT INTO signal_publication_dirty SELECT OLD.conversation_id WHERE OLD.conversation_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM signal_publication_dirty WHERE conversation_id=OLD.conversation_id);INSERT INTO signal_publication_dirty SELECT NEW.conversation_id WHERE NEW.conversation_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM signal_publication_dirty WHERE conversation_id=NEW.conversation_id); END",
     "CREATE TRIGGER signal_source_deploy_interruption_deliveries_delete BEFORE DELETE ON deploy_interruption_deliveries BEGIN INSERT INTO signal_publication_dirty SELECT OLD.conversation_id WHERE OLD.conversation_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM signal_publication_dirty WHERE conversation_id=OLD.conversation_id); END",
+    "CREATE TABLE conversation_background_tasks (conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id),task_id TEXT NOT NULL, task_description TEXT NOT NULL,PRIMARY KEY(conversation_id, task_id))",
+    "CREATE TRIGGER signal_source_conversation_background_tasks_insert AFTER INSERT ON conversation_background_tasks BEGIN INSERT INTO signal_publication_dirty SELECT NEW.conversation_id WHERE NEW.conversation_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM signal_publication_dirty WHERE conversation_id=NEW.conversation_id); END",
+    "CREATE TRIGGER signal_source_conversation_background_tasks_update BEFORE UPDATE ON conversation_background_tasks BEGIN INSERT INTO signal_publication_dirty SELECT OLD.conversation_id WHERE OLD.conversation_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM signal_publication_dirty WHERE conversation_id=OLD.conversation_id);INSERT INTO signal_publication_dirty SELECT NEW.conversation_id WHERE NEW.conversation_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM signal_publication_dirty WHERE conversation_id=NEW.conversation_id); END",
+    "CREATE TRIGGER signal_source_conversation_background_tasks_delete BEFORE DELETE ON conversation_background_tasks BEGIN INSERT INTO signal_publication_dirty SELECT OLD.conversation_id WHERE OLD.conversation_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM signal_publication_dirty WHERE conversation_id=OLD.conversation_id); END",
 )
 
 

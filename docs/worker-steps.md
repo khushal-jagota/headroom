@@ -42,7 +42,7 @@ One more question goes to the conversation itself: is a turn already running? A 
 
 ## How a step is sent
 
-One guarded write takes the claim, re-running every readiness check inside it, so two passes cannot both win. On a user-owned stage the same write records the opener fact. The loop then starts or reuses the Ticket's conversation and sends an opener built from the current Ticket, the Worker type, any revision guidance from a sent-back proposal, and a memory-loss note when the Worker was compacted mid-step. It sends in Queue mode, which waits for a free turn.
+One guarded write takes the claim, re-running every readiness check inside it, so two passes cannot both win. On a user-owned stage the same write records the opener fact. The loop then starts or reuses the Ticket's conversation and sends an opener built from the current Ticket and its saved workflow, any revision guidance from a sent-back proposal, and a memory-loss note when the Worker was compacted mid-step. It sends in Queue mode, which waits for a free turn.
 
 | Delivery fate | What happens to the claim |
 | --- | --- |
@@ -54,9 +54,11 @@ One guarded write takes the claim, re-running every readiness check inside it, s
 
 On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A turn that merely ends does not give it back. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot.
 
+A preset Ticket reads its saved specialist skill reference as usual. A custom Ticket receives the complete workflow guide at kickoff. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step.
+
 ## Where it shows up
 
-A running turn shows a working mark, and that mark comes from the conversation, not the claim. An idle Ticket with its claim out can look quiet while it waits for a proposal. An errored claim shows as an error, which is how a supervisor learns that automatic progress has stopped. Restarting the Worker is the explicit repair. The loop never does it by itself.
+A running turn or a running background task shows a working mark, and that mark comes from the conversation, not the claim. An idle Ticket with its claim out can look quiet while it waits for a proposal. An errored claim shows as an error, which is how a supervisor learns that automatic progress has stopped. Restarting the Worker is the explicit repair. The loop never does it by itself.
 
 ## Decisions that shape it
 

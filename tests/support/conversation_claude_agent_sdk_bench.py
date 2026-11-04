@@ -36,7 +36,10 @@ from planner.conversation.backends.contracts import (
     AgentMessageDelta,
     BackendEventValue,
     BackendPermissionAsk,
+    BackendStreamEnded,
     BackendUserInputRequest,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     ComposerCatalogReported,
     ContextCompacted,
     ModelThinkingHappened,
@@ -250,6 +253,9 @@ class _RecordingSink:
         self.composer_catalog: list[tuple[ComposerCatalogEntry, ...]] = []
         self.token_usage: list[dict[str, Any]] = []
         self.compactions: list[TurnToken] = []
+        self.session_news: list[
+            BackgroundTaskStarted | BackgroundTaskEnded | BackendStreamEnded
+        ] = []
         # The order the facts a result message carries were told in. What is said about a
         # turn after its ending is said about a turn that has stopped running, and is
         # dropped — so the order is the whole of whether the counts arrive at all.
@@ -331,6 +337,9 @@ class _RecordingSink:
             self.cursors.append(event.vendor_session_cursor)
         elif isinstance(event, ComposerCatalogReported):
             self.composer_catalog.append(event.composer_catalog)
+        elif isinstance(event, (BackgroundTaskStarted, BackgroundTaskEnded, BackendStreamEnded)):
+            assert turn is None
+            self.session_news.append(event)
 
     @property
     def message_texts(self) -> list[tuple[TurnToken, str]]:

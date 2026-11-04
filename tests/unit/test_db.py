@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from tests.support.ticket_workflows import preset_workflow_json
 
 from planner.core import db as db_module
 from planner.core.db import BASELINE_REVISION, connect, create_schema
@@ -73,8 +74,10 @@ def test_current_database_reopens_without_changing_authored_rows(tmp_path: Path)
     create_schema(conn)
     conn.execute(
         "INSERT INTO tickets (id,title,worker_type,employee_backend,ceiling,field_values,"
-        "worker_step_claim,stage,created_at,updated_at) VALUES "
-        "('t_kept','Keep owner text','coding','hermes','needs_brief','{}','out','needs_brief',1,2)"
+        "worker_step_claim,stage,created_at,updated_at,workflow_json) VALUES "
+        "('t_kept','Keep owner text','coding','hermes','needs_brief','{}','out',"
+        "'needs_brief',1,2,?)",
+        (preset_workflow_json(conn),),
     )
     conn.execute("UPDATE managed_skills SET source_text=source_text || '\nOwner note.'")
     conn.commit()

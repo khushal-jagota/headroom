@@ -436,11 +436,20 @@ def _main() -> None:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only=ON")
     try:
+        from planner.core.contracts import PlannerError
         from planner.projects.data import list_projects
         from planner.tickets.data import read_ticket
         from planner.worker_types.configuration import load_worker_runtime_definitions
 
-        load_worker_runtime_definitions(connection)
+        failures: dict[str, str] = {}
+        try:
+            load_worker_runtime_definitions(connection)
+        except PlannerError as error:
+            # ticket_owned_workflows stores Worker types as creation presets, a record
+            # shape old binaries refuse. Only their matched backup is readable to them.
+            if action == "read":
+                raise
+            failures["worker_types"] = str(error)
         denied: list[str] = []
         for statement in (
             "UPDATE native_usage_sources SET source_key='forbidden'",
@@ -495,7 +504,6 @@ def _main() -> None:
             return
         if action == "read_incompatible":
             assert expected_tip == F097_TIP
-            failures: dict[str, str] = {}
             for name, read in (
                 ("projects", lambda: list_projects(connection)),
                 ("ticket", lambda: read_ticket(connection, "t_historical")),

@@ -25,7 +25,7 @@ from planner.skill_sources import (
     WORKER_ONLY_SKILL_NAMES,
     provision_native_backend_skills,
 )
-from planner.worker_types.store import read_definitions
+from planner.worker_types.store import workflow_from_row
 
 
 def native_skill_home(backend: ConversationBackendKey) -> Path:
@@ -71,17 +71,21 @@ def read_canonical_skill_snapshot(
 ) -> CanonicalSkillSnapshot:
     """Read authority in the caller's transaction, without seeding or committing."""
     try:
-        row = conn.execute("SELECT worker_type FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        row = conn.execute(
+            "SELECT workflow_json FROM tickets WHERE id = ?", (ticket_id,)
+        ).fetchone()
         if row is None:
             raise ValueError("assigned Ticket does not exist")
-        definition = next(
-            (item for item in read_definitions(conn) if item.worker_type == row["worker_type"]),
-            None,
-        )
-        if definition is None:
-            raise ValueError("assigned Ticket Worker type does not exist")
+        definition = workflow_from_row(row)
         required = tuple(
-            dict.fromkeys(("panels", "panels-worker", definition.worker_profile.specialist_skill))
+            dict.fromkeys(
+                ("panels", "panels-worker")
+                + (
+                    (definition.specialist_skill,)
+                    if definition.specialist_skill is not None
+                    else ()
+                )
+            )
         )
         snapshot = CanonicalSkillSnapshot(
             sources=tuple(

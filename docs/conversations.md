@@ -53,7 +53,9 @@ What happens to a Worker step after each fate belongs to [Worker steps](worker-s
 
 ## Lifecycle
 
-A conversation has at most one child process. Nothing runs after a server restart until the next send. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused. Headroom never puts a fresh agent behind an old transcript. A conversation that has gone quiet is compacted automatically while the backend's prompt cache is still warm.
+A conversation has at most one child process. Nothing runs after a server restart until the next send. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused.
+
+A Claude agent can start a background task, such as a long test run, that keeps going after its turn ends. Headroom records each one until Claude reports that it ended. While a task runs, the child is not idle, and the conversation shows as working. The idle clock starts again when the task ends. If the child goes away first, the task dies with it. The child may be stopped, its process may die, or the server may restart. Headroom then sends one prompt per lost task, from Panels, saying the task did not finish and asking the agent to read its output and restart it or report. The prompt waits behind a running turn and resumes the session like any send. A killed conversation drops its tasks without a prompt, because nothing runs in it until someone sends again. Headroom never puts a fresh agent behind an old transcript. A conversation that has gone quiet is compacted automatically while the backend's prompt cache is still warm.
 
 Held messages live in memory, so a restart loses anything not yet delivered.
 
@@ -75,13 +77,13 @@ Permission asks are always shown and always wait for an answer. Headroom does no
 
 ## The workspace for an agent
 
-Each conversation starts in one folder and keeps it through resume and restart. The folder is an explicit workspace when one is given, otherwise the Ticket's Project folder, otherwise the server's default workspace. A Mac Worker without either uses the executor's own Panels workspace on the Mac. A new configuration applies to new conversations. [Environments](environments.md) covers the server default.
+Each conversation starts in one folder and keeps it through resume and restart. The folder is an explicit workspace when one is given, otherwise the Ticket's Project folder, otherwise the server's default workspace. A Mac Worker without either uses the executor's own Panels workspace on the Mac. The Chief and each Manager instead start in a home folder of their own, made on their first start: `data/files/chief/` for the Chief, and the Manager's files folder for a Manager, beside the `artifacts/` the owner sees. They keep their own notes, scratch files and rules there, and their role text names the server's default workspace, where the repositories are. A new configuration applies to new conversations. [Environments](environments.md) covers the server default.
 
 ## What comes back out
 
 Automation sends a Ticket its [Worker steps](worker-steps.md), a Manager its goal and wakes ([Managers and Chief](managers.md)), the Chief a recap request, and any interrupted conversation its recovery notice, all through the ordinary send path.
 
-The notebook feeds attention: messages to the owner, open asks, and failures become the marks the rail, [Review](review.md), and [notifications](notifications.md) read. Unread dots and working marks are per conversation, so a child Ticket's dot is not its Manager's. A failed Ticket turn wakes the agent who holds the Ticket's ceiling, or reaches Khushal through attention when he holds it. Gated Ticket text changes only through [proposals](tickets.md#how-a-stage-advances). Files an agent writes are artifacts on disk, not notebook rows. Usage rows feed the cost lines on [Usage](usage.md). An agent asking for an API key is covered by [Credentials](credentials.md).
+The notebook feeds attention: messages to the owner, open asks, and failures become the marks the rail, [Review](review.md), and [notifications](notifications.md) read. Unread dots and working marks are per conversation, so a child Ticket's dot is not its Manager's. A working mark means a running turn or a running background task. A failed Ticket turn wakes the agent who holds the Ticket's ceiling, or reaches Khushal through attention when he holds it. Gated Ticket text changes only through [proposals](tickets.md#how-a-stage-advances). Files an agent writes are artifacts on disk, not notebook rows. Usage rows feed the cost lines on [Usage](usage.md). An agent asking for an API key is covered by [Credentials](credentials.md).
 
 After each application save, Headroom updates changed conversation statuses and sends them to the browser. Server startup recalculates every status from conversation records and current runtime state. Plain SQLite edits remain possible.
 

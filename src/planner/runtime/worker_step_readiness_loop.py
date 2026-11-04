@@ -157,7 +157,7 @@ async def _admitted_start_ready_worker_step(
             # only for a collision that slipped between this check and the send.
             return WorkerStepStartResult(started=False)
 
-        worker_type_definition = worker_type_registry.require(ticket.worker_type)
+        worker_type_definition = ticket.workflow
         if not worker_step_readiness.is_ready_for_worker_step(
             conn,
             ticket,
@@ -201,7 +201,7 @@ async def _admitted_start_ready_worker_step(
         try:
             # Inside the guard: a lookup that raises must give the claim back, or the
             # Ticket sits out of `empty` with nothing running and nothing to re-claim it.
-            worker_type_definition = worker_type_registry.require(claimed.worker_type)
+            worker_type_definition = claimed.workflow
             conversation_id = claimed.conversation_id
             # Composed before anything is made: a failure here must not leave a conversation
             # behind, and the opener is what would have brought one into being.
@@ -215,10 +215,11 @@ async def _admitted_start_ready_worker_step(
                     str(
                         Path(conn.execute("PRAGMA database_list").fetchone()[2]).parent
                         / "skills"
-                        / worker_type_definition.worker_profile.specialist_skill
+                        / worker_type_definition.specialist_skill
                         / "SKILL.md"
                     )
                     if current_ticket.locale == "vps"
+                    and worker_type_definition.specialist_skill is not None
                     else None
                 ),
                 memory_was_lost=worker_memory.conversation_holds_an_unanswered_memory_loss(
@@ -451,7 +452,6 @@ class WorkerStepReadinessLoop:
         try:
             rows = conn.execute(_CANDIDATE_SQL).fetchall()
             ready_ticket_ids: list[str] = []
-            registry = configured_worker_type_registry()
             for row in rows:
                 try:
                     ticket = tickets_data.read_ticket(conn, str(row["id"]))
@@ -462,7 +462,7 @@ class WorkerStepReadinessLoop:
                         # every other ready Ticket in this pass.
                         continue
                     raise
-                worker_type_definition = registry.require(ticket.worker_type)
+                worker_type_definition = ticket.workflow
                 if not worker_step_readiness.is_ready_for_worker_step(
                     conn,
                     ticket,

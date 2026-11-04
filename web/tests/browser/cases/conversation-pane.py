@@ -2711,13 +2711,29 @@ def _overlay_menu_bounds(browser, url):
       const viewport = new EventTarget();
       Object.assign(viewport, {offsetTop:0,offsetLeft:0,width:1100,height:900});
       Object.defineProperty(window,'visualViewport',{value:viewport,configurable:true});
-      window.__keyboardBounds=(top,height)=>{Object.assign(viewport,{offsetTop:top,height});viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));};
+      let keyboard={offsetTop:0,height:900};
+      const update=()=>{
+        // Text fields, pickers, and editable content open the simulated keyboard.
+        // Buttons move focus out of text entry and close it.
+        const active=document.activeElement;
+        const textEntry=active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement
+          || active instanceof HTMLElement && active.isContentEditable
+          || active instanceof HTMLInputElement && !['button','checkbox','color','file','hidden','image','radio','range','reset','submit'].includes(active.type);
+        const shown=textEntry || window.__keepStaleKeyboardAfterBlur;
+        const next=shown?keyboard:{offsetTop:0,height:900};
+        if(viewport.offsetTop===next.offsetTop && viewport.height===next.height)return;
+        Object.assign(viewport,next);
+        viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));
+      };
+      window.__keyboardBounds=(top,height)=>{keyboard={offsetTop:top,height};update();};
+      document.addEventListener('focusin',update);
+      document.addEventListener('focusout',()=>queueMicrotask(update));
     })()""")
-    proof = {"nativeKeyboard":"Not tested: visualViewport reduction and displacement are simulated.", "states":[], "actions":[]}
+    proof = {"nativeKeyboard":"Not tested: focus-driven visualViewport reduction and displacement are simulated.", "states":[], "actions":[]}
     def settle():
         _settle_conversation_layout(page)
     def composer_geometry():
-        return page.locator('[data-conversation-composer]').evaluate("""el=>({height:el.clientHeight,scrollHeight:el.scrollHeight,top:el.getBoundingClientRect().top,popupRoom:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-popup-height')),target:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-target')),gap:parseFloat(getComputedStyle(el).getPropertyValue('--space-6')),constrained:el.hasAttribute('data-conversation-composer-constrained'),viewportTop:visualViewport.offsetTop,viewportHeight:visualViewport.height})""")
+        return page.locator('[data-conversation-composer]').evaluate("""el=>({height:el.clientHeight,scrollHeight:el.scrollHeight,top:el.getBoundingClientRect().top,popupRoom:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-popup-height')),target:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-target')),gap:parseFloat(getComputedStyle(el).getPropertyValue('--space-6')),constrained:el.hasAttribute('data-conversation-composer-constrained'),visibleTop:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-visible-top')),visibleHeight:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-visible-height')),viewportTop:visualViewport.offsetTop,viewportHeight:visualViewport.height})""")
     def hit(item):
         item.scroll_into_view_if_needed()
         settle()
@@ -2726,7 +2742,11 @@ def _overlay_menu_bounds(browser, url):
         x,y=bounds["x"]+bounds["width"]/2,bounds["y"]+bounds["height"]/2
         assert item.evaluate("(el,p)=>el.contains(document.elementFromPoint(p.x,p.y))", {"x":x,"y":y}), (item.get_attribute("class"), bounds)
         viewport = page.evaluate("({top:visualViewport.offsetTop,bottom:visualViewport.offsetTop+visualViewport.height})")
-        assert viewport["top"] <= y <= viewport["bottom"], (bounds,viewport)
+        focus = page.evaluate("""()=>({tag:document.activeElement?.tagName,
+          add:document.activeElement?.hasAttribute('data-conversation-add'),
+          input:document.activeElement?.hasAttribute('data-conversation-input'),
+          composer:document.querySelector('[data-conversation-composer]')?.getBoundingClientRect().toJSON()})""")
+        assert viewport["top"] <= y <= viewport["bottom"], (bounds,viewport,focus)
         return x,y
     def keyboard_rail(item, key):
         picker.get_by_role('listbox').press('ArrowLeft')
@@ -2751,6 +2771,24 @@ def _overlay_menu_bounds(browser, url):
         assert page.locator('.chat-menu').evaluate("el=>getComputedStyle(el).position")=='absolute'
         proof["ordinaryMenusFloating"]=True
         input_box.fill('')
+        ordinary=composer_geometry()
+        page.evaluate("window.__keyboardBounds(120,340)")
+        settle()
+        keyboard=composer_geometry()
+        assert keyboard['visibleHeight'] < ordinary['visibleHeight'], (ordinary,keyboard)
+        # Safari can retain its last keyboard-sized viewport after text focus ends.
+        # The dock must recover without another visualViewport resize event.
+        page.evaluate("window.__keepStaleKeyboardAfterBlur=true")
+        input_box.evaluate("el=>el.blur()")
+        settle()
+        recovered=composer_geometry()
+        assert recovered['viewportTop']==120 and recovered['viewportHeight']==340, recovered
+        assert abs(recovered['visibleHeight']-ordinary['visibleHeight'])<1, (ordinary,recovered)
+        assert abs(recovered['visibleTop']-ordinary['visibleTop'])<1, (ordinary,recovered)
+        assert abs(recovered['top']-ordinary['top'])<1, (ordinary,recovered)
+        proof['staleAfterBlur']={'keyboard':keyboard,'recovered':recovered}
+        page.evaluate("window.__keepStaleKeyboardAfterBlur=false;window.__keyboardBounds(0,900)")
+        input_box.focus()
         for mode,top,height in (("keyboard",120,340),("constrained",200,190)):
             page.evaluate("([top,height])=>window.__keyboardBounds(top,height)",[top,height])
             settle()

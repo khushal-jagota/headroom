@@ -13,7 +13,6 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.resource_versions.contracts import ResourceSnapshot, ResourceSourceTrigger
 from planner.resource_versions.data import source_revision
 from planner.tickets.workspace.views import field_revision, workspace_field, workspace_ticket
-from planner.worker_types.resource_versions import WorkerTypeResources
 
 
 def _sources(table: str, kind: str, identity: str) -> tuple[ResourceSourceTrigger, ...]:
@@ -76,15 +75,12 @@ class TicketWorkspaceResources:
                 (ticket_id,),
             )
         )
-        manifest = WorkerTypeResources().capture(conn, request, "/api/worker-types")
-        assert manifest is not None
         revision = json.dumps(
             [
                 [
                     (kind, identity, source_revision(conn, f"workspace-{kind}", identity))
                     for kind, identity in dependencies
                 ],
-                manifest.revision,
             ],
             separators=(",", ":"),
         )

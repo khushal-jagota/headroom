@@ -13,7 +13,8 @@ from typing import Final
 from planner.tickets.contracts import StageOwnershipMode, Ticket
 from planner.tickets.logic import machine
 from planner.tickets.revision_feedback import PendingRevisionFeedback
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
+from planner.worker_types.guidance import render_workflow_guide
 
 READ_YOUR_TICKET_COMMAND: Final = "panels worker my-ticket brief"
 
@@ -51,7 +52,7 @@ class WorkerStepPrompt:
 def compose_worker_step_prompt(
     ticket: Ticket,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
     revision_feedback: PendingRevisionFeedback | None,
     memory_was_lost: bool,
     specialist_skill_path: str | None = None,
@@ -91,10 +92,19 @@ def compose_worker_step_prompt(
             f"Stage owner: {ownership_wire}."
         )
     step_instruction = f"{step_instruction} Read your Ticket first: {READ_YOUR_TICKET_COMMAND}."
+    if ticket.workflow.specialist_skill is None:
+        step_instruction += (
+            " Follow this Ticket’s workflow guide. It has no specialist skill. "
+            "Read the full guide again with panels worker my-ticket workflow if needed."
+        )
 
     inputs: list[WorkerStepInput] = []
     if memory_was_lost:
         inputs.append(WorkerStepInput("memory loss", MEMORY_LOSS_NOTICE, quoted=False))
+    if ticket.workflow.specialist_skill is None and memory_was_lost:
+        inputs.append(
+            WorkerStepInput("Ticket workflow guidance", render_workflow_guide(ticket.workflow))
+        )
     inputs.append(WorkerStepInput("stage instruction", step_instruction, quoted=False))
     if specialist_skill_path is not None:
         inputs.append(
@@ -114,9 +124,16 @@ def mid_step_memory_loss_prompt(ticket: Ticket) -> str:
 
     No stage instruction follows this one, so it names the Ticket and Stage itself.
     """
+    guidance = (
+        "\n\n[Ticket workflow guidance]\n"
+        + render_workflow_guide(ticket.workflow)
+        + "\n[/Ticket workflow guidance]"
+        if ticket.workflow.specialist_skill is None
+        else ""
+    )
     return (
         f"You are part-way through a step on ticket {ticket.id} — {ticket.title}, "
-        f"at Stage '{str(ticket.stage)}'. {MEMORY_LOSS_NOTICE}"
+        f"at Stage '{str(ticket.stage)}'. {MEMORY_LOSS_NOTICE}{guidance}"
     )
 
 

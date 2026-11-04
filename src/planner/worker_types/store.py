@@ -21,10 +21,15 @@ from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
     TicketTypeMigration,
+    TicketWorkflowDefinition,
     WorkerProfile,
     WorkerTypeDefinition,
 )
-from planner.worker_types.registry import KNOWN_TOOLSET_PROFILES, validate_definition
+from planner.worker_types.registry import (
+    KNOWN_TOOLSET_PROFILES,
+    validate_definition,
+    validate_workflow,
+)
 
 
 def _fail(message: str, detail: dict[str, Any]) -> PlannerError:
@@ -47,9 +52,15 @@ def _require_text(value: object, what: str) -> str:
 
 
 def _stage_from_json(raw: object) -> StageDefinition:
+    if isinstance(raw, dict):
+        raw = {"instructions": "", **raw}
     payload = _require_exact_keys(
-        raw, {"id", "label", "gating_field", "is_terminal", "ownership_mode"}, "stage"
+        raw,
+        {"id", "label", "gating_field", "is_terminal", "ownership_mode", "instructions"},
+        "stage",
     )
+    if not isinstance(payload["instructions"], str):
+        raise _fail("stage instructions must be text", {})
     gating_field = payload["gating_field"]
     if gating_field is not None:
         gating_field = _require_text(gating_field, "stage gating field")
@@ -70,6 +81,7 @@ def _stage_from_json(raw: object) -> StageDefinition:
         gating_field=gating_field,
         is_terminal=payload["is_terminal"],
         ownership_mode=ownership_mode,
+        instructions=payload["instructions"],
     )
 
 
@@ -80,6 +92,7 @@ def _stage_to_json(stage: StageDefinition) -> dict[str, Any]:
         "gating_field": stage.gating_field,
         "is_terminal": stage.is_terminal,
         "ownership_mode": None if stage.ownership_mode is None else stage.ownership_mode.value,
+        "instructions": stage.instructions,
     }
 
 
@@ -120,6 +133,7 @@ def definition_to_json(definition: WorkerTypeDefinition) -> str:
         {
             "worker_type": definition.worker_type,
             "label": definition.label,
+            "guidance": definition.guidance,
             "stages": [_stage_to_json(stage) for stage in definition.stages],
             "fields": [{"id": field.id, "label": field.label} for field in definition.fields],
             "profile": {
@@ -139,9 +153,13 @@ def definition_from_json(raw: str) -> WorkerTypeDefinition:
         decoded: Any = json.loads(raw)
     except ValueError as exc:
         raise _fail("stored worker type is not valid JSON", {}) from exc
+    if isinstance(decoded, dict):
+        decoded = {"guidance": "", **decoded}
     payload = _require_exact_keys(
-        decoded, {"worker_type", "label", "stages", "fields", "profile"}, "record"
+        decoded, {"worker_type", "label", "stages", "fields", "profile", "guidance"}, "record"
     )
+    if not isinstance(payload["guidance"], str):
+        raise _fail("workflow guidance must be text", {})
     stages = payload["stages"]
     fields = payload["fields"]
     if not isinstance(stages, list) or not isinstance(fields, list):
@@ -152,6 +170,7 @@ def definition_from_json(raw: str) -> WorkerTypeDefinition:
         stages=tuple(_stage_from_json(stage) for stage in stages),
         fields=tuple(_field_from_json(field) for field in fields),
         worker_profile=_profile_from_json(payload["profile"]),
+        guidance=payload["guidance"],
     )
 
 
@@ -210,134 +229,92 @@ def definition_transaction(conn: sqlite3.Connection) -> Iterator[None]:
         raise
 
 
-def _plan_migrations(
-    conn: sqlite3.Connection, previous: WorkerTypeDefinition, replacement: WorkerTypeDefinition
-) -> tuple[TicketTypeMigration, ...]:
-    from planner.tickets.logic import fields_codec
-    from planner.worker_types.logic.migration import map_reference
-
-    results: list[TicketTypeMigration] = []
-    failures: list[dict[str, str]] = []
-    lost_fields = set(previous.field_ids()) - set(replacement.field_ids())
-    for row in conn.execute(
-        "SELECT id, title, stage, ceiling, field_values, pending_proposal, worker_step_claim "
-        "FROM tickets WHERE worker_type = ? ORDER BY id",
-        (previous.worker_type,),
-    ):
-        stage, ceiling = str(row["stage"]), str(row["ceiling"])
-        field = "stage"
-        try:
-            terminal = previous.is_terminal(stage)
-            if terminal:
-                if not replacement.is_known_stage(stage) or not replacement.is_terminal(stage):
-                    raise _fail("finished Ticket Stage must remain terminal", {})
-                new_stage = stage
-            else:
-                new_stage = map_reference(stage, previous, replacement)
-            field = "ceiling"
-            new_ceiling = map_reference(ceiling, previous, replacement)
-            replacement.validate_ticket_position(new_stage, new_ceiling)
-            field = "stage"
-            if not terminal and replacement.is_terminal(new_stage):
-                raise _fail("migration cannot finish a Ticket", {})
-            field = "field_values"
-            values = fields_codec.values_from_json(row["field_values"], replacement.field_ids())
-            field = "pending_proposal"
-            proposal = fields_codec.proposal_from_json(row["pending_proposal"])
-            fields_codec.validate_state(
-                values, proposal, new_stage, worker_type_definition=replacement
-            )
-            old_step = previous.stage_definition(stage)
-            new_step = replacement.stage_definition(new_stage)
-            changed_step = (
-                stage != new_stage
-                or ceiling != new_ceiling
-                or old_step.gating_field != new_step.gating_field
-                or old_step.ownership_mode != new_step.ownership_mode
-            )
-            field = "worker_step_claim"
-            if row["worker_step_claim"] == "out" and changed_step:
-                raise _fail("dispatched Worker must release its step before migration", {})
-            historical = fields_codec.stored_values_from_json(row["field_values"])
-            if changed_step or any(historical.get(field) for field in lost_fields):
-                results.append(
-                    TicketTypeMigration(
-                        str(row["id"]), str(row["title"]), stage, new_stage, ceiling, new_ceiling
-                    )
-                )
-        except (PlannerError, ValueError, TypeError, KeyError) as exc:
-            failures.append(
-                {
-                    "ticket_id": str(row["id"]),
-                    "title": str(row["title"]),
-                    "field": field,
-                    "reason": str(exc),
-                }
-            )
-    if failures:
-        raise _fail(
-            "Worker type amendment cannot safely migrate Tickets",
-            {
-                "worker_type": previous.worker_type,
-                "tickets": [failure["ticket_id"] for failure in failures],
-                "failures": failures,
-            },
-        )
-    return tuple(results)
-
-
 def write_definition(
     conn: sqlite3.Connection,
     definition: WorkerTypeDefinition,
     *,
     now: int,
 ) -> tuple[TicketTypeMigration, ...]:
-    """Store the definition and all backward migrations as one indivisible save.
-
-    The outer transaction owner publishes the validated runtime registry after commit.
-    """
-    from planner.tickets.data import apply_worker_type_migrations, audit_ticket_registry_integrity
-    from planner.worker_types.configuration import build_worker_runtime_definitions
-
+    """Save a preset without rewriting any existing Ticket's workflow."""
     with definition_transaction(conn):
         validate_definition(
             definition,
             known_skills=skill_names(conn),
             known_toolset_profiles=KNOWN_TOOLSET_PROFILES,
         )
-        existing = conn.execute(
-            "SELECT definition_json FROM worker_types WHERE worker_type = ?",
-            (definition.worker_type,),
-        ).fetchone()
-        previous = (
-            definition_from_json(str(existing["definition_json"])) if existing is not None else None
-        )
-        migrations = () if previous is None else _plan_migrations(conn, previous, definition)
         next_position = conn.execute(
             "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM worker_types"
         ).fetchone()["next"]
         conn.execute(
             "INSERT INTO worker_types (worker_type, position, definition_json, updated_at) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(worker_type) DO UPDATE SET definition_json = excluded.definition_json, "
-            "updated_at = excluded.updated_at",
+            "VALUES (?, ?, ?, ?) ON CONFLICT(worker_type) DO UPDATE SET "
+            "definition_json = excluded.definition_json, updated_at = excluded.updated_at",
             (definition.worker_type, int(next_position), definition_to_json(definition), now),
         )
-        replacement_runtime = build_worker_runtime_definitions(
-            worker_type_definitions=read_definitions(conn), known_skills=skill_names(conn)
-        )
-        apply_worker_type_migrations(
-            conn, migrations, definition=definition, previous_definition=previous, now=now
-        )
-        try:
-            audit_ticket_registry_integrity(
-                conn,
-                worker_type_registry=replacement_runtime.worker_type_registry,
-                worker_type=definition.worker_type,
-            )
-        except RuntimeError as exc:
-            raise _fail(
-                "Worker type amendment failed the Ticket integrity check",
-                {"worker_type": definition.worker_type, "reason": str(exc)},
-            ) from exc
-    return migrations
+    return ()
+
+
+def workflow_from_preset(definition: WorkerTypeDefinition) -> TicketWorkflowDefinition:
+    return TicketWorkflowDefinition(
+        label=definition.label,
+        stages=definition.stages,
+        fields=definition.fields,
+        guidance=definition.guidance,
+        specialist_skill=definition.worker_profile.specialist_skill,
+    )
+
+
+def workflow_to_json(definition: TicketWorkflowDefinition) -> str:
+    return json.dumps(
+        {
+            "label": definition.label,
+            "guidance": definition.guidance,
+            "stages": [_stage_to_json(stage) for stage in definition.stages],
+            "fields": [{"id": field.id, "label": field.label} for field in definition.fields],
+            "specialist_skill": definition.specialist_skill,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _workflow_from_dict(raw: object, *, saved: bool) -> TicketWorkflowDefinition:
+    keys = {"label", "guidance", "stages", "fields"}
+    if saved:
+        keys.add("specialist_skill")
+    payload = _require_exact_keys(raw, keys, "Ticket workflow")
+    if not isinstance(payload["guidance"], str):
+        raise _fail("workflow guidance must be text", {})
+    if not isinstance(payload["stages"], list) or not isinstance(payload["fields"], list):
+        raise _fail("workflow stages and fields must be arrays", {})
+    specialist_skill = payload.get("specialist_skill")
+    if specialist_skill is not None:
+        specialist_skill = _require_text(specialist_skill, "specialist skill")
+    if saved and any(
+        not isinstance(stage, dict) or "instructions" not in stage for stage in payload["stages"]
+    ):
+        raise _fail("saved workflow stage lacks instructions", {})
+    workflow = TicketWorkflowDefinition(
+        label=_require_text(payload["label"], "workflow label"),
+        guidance=payload["guidance"],
+        stages=tuple(_stage_from_json(stage) for stage in payload["stages"]),
+        fields=tuple(_field_from_json(field) for field in payload["fields"]),
+        specialist_skill=specialist_skill,
+    )
+    validate_workflow(workflow)
+    return workflow
+
+
+def custom_workflow_from_dict(raw: object) -> TicketWorkflowDefinition:
+    return _workflow_from_dict(raw, saved=False)
+
+
+def workflow_from_json(raw: str) -> TicketWorkflowDefinition:
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise _fail("saved Ticket workflow is not valid JSON", {}) from exc
+    return _workflow_from_dict(payload, saved=True)
+
+
+def workflow_from_row(row: sqlite3.Row) -> TicketWorkflowDefinition:
+    return workflow_from_json(row["workflow_json"])

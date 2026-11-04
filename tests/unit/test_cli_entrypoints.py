@@ -23,14 +23,13 @@ def test_explicit_ticket_parts_read_only_the_named_retained_field(
         "worker_type": "coding",
         "worker": "panels-worker-coding",
         "worker_skill_path": "/canonical/skills/panels-worker-coding/SKILL.md",
+        "workflow": {"fields": [{"id": "brief"}]},
         "field_values": {"brief": "Current brief"},
     }
 
     def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         assert method == "GET"
         calls.append(path)
-        if path == "/api/worker-types":
-            return {"worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]}
         if path in ("/api/tickets", f"/api/tickets/{ticket_id}/worker-self"):
             return record
         if path == body_path:

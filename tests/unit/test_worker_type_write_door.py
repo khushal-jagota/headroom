@@ -6,6 +6,7 @@ it is now a write, and that the write is guarded where the import-time check use
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterator
 from contextlib import closing
@@ -56,14 +57,12 @@ def _arrival_record(coding: dict[str, Any]) -> dict[str, Any]:
     record["worker_type"] = "arrival"
     record["label"] = "Arrival"
     record["profile"]["specialist_skill"] = "panels-worker-arrival"
-    record["skill"] = {
-        "description": "A worker declared without a release.",
-        "markdown_body": "# Arrival\n\nDo the work.\n",
-    }
+    record["guidance"] = "# Arrival\n\nDo the work.\n"
+    record["skill"] = {"description": "A worker declared without a release."}
     return record
 
 
-def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
+def test_a_rewrite_keeps_ticket_snapshots_and_the_read_record_shape(
     client: tuple[TestClient, Path],
 ) -> None:
     test_client, db_path = client
@@ -115,41 +114,19 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
     response = test_client.post("/api/worker-types", json=without_implementation)
 
     assert response.status_code == 200, response.text
-    assert sorted(
-        response.json()["migrations"], key=lambda migration: migration["ticket_id"]
-    ) == sorted(
-        [
-            {
-                "ticket_id": ticket.id,
-                "title": "Mid flight",
-                "old_stage": "needs_implementation",
-                "new_stage": "needs_what_changes",
-                "old_ceiling": "needs_brief",
-                "new_ceiling": "needs_brief",
-            },
-            {
-                "ticket_id": finished.id,
-                "title": "Historical Implementation ceiling",
-                "old_stage": "done",
-                "new_stage": "done",
-                "old_ceiling": "needs_implementation",
-                "new_ceiling": "needs_what_changes",
-            },
-        ],
-        key=lambda migration: migration["ticket_id"],
-    )
+    assert response.json()["migrations"] == []
     assert test_client.get("/api/worker-types/coding").json() == without_implementation
     assert configured_worker_type_registry().require("coding").stage_ids() == tuple(
         stage["id"] for stage in without_implementation["stages"]
     )
     with closing(connect(str(db_path))) as conn:
         assert conn.execute("SELECT stage FROM tickets WHERE id=?", (ticket.id,)).fetchone()[0] == (
-            "needs_what_changes"
+            "needs_implementation"
         )
     historical = test_client.get(f"/api/tickets?detail=full&id={finished.id}")
     assert historical.status_code == 200, historical.text
     assert historical.json()["stage"] == "done"
-    assert historical.json()["ceiling"] == "needs_what_changes"
+    assert historical.json()["ceiling"] == "needs_implementation"
     listing = test_client.get("/api/tickets?detail=full")
     assert listing.status_code == 200, listing.text
     assert finished.id in {row["id"] for row in listing.json()["tickets"]}
@@ -158,8 +135,8 @@ def test_a_rewrite_returns_backward_migrations_and_keeps_the_read_record_shape(
             conn.execute("SELECT * FROM tickets WHERE id=?", (finished.id,)).fetchone()
         )
         assert finished_after["stage"] == finished_before["stage"] == "done"
-        assert finished_after["ceiling"] == "needs_what_changes"
-        for key in ("field_values", "field_approvals", "ceiling_holder", "guidance"):
+        assert finished_after["ceiling"] == "needs_implementation"
+        for key in ("field_values", "field_approvals", "ceiling_holder", "workflow_json"):
             assert finished_after[key] == finished_before[key]
         tickets_data.audit_ticket_registry_integrity(conn)
 
@@ -184,11 +161,11 @@ def test_failed_bundled_amendment_preserves_skill_definition_and_runtime(
         conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id=?", (ticket.id,))
     replacement = json.loads(json.dumps(coding))
     replacement["stages"] = [s for s in replacement["stages"] if s["id"] != "needs_implementation"]
-    replacement["fields"] = [f for f in replacement["fields"] if f["id"] != "implementation"]
+    # Leave the field undeclared by any stage: the record itself is invalid.
     replacement["skill"] = {"description": "must not persist"}
     response = test_client.post("/api/worker-types", json=replacement)
     assert response.status_code == 400, response.text
-    assert ticket.id in response.text
+    assert "field" in response.text
     assert test_client.get("/api/worker-types/coding").json() == coding
     assert test_client.get("/api/skills/panels-worker-coding").json() == skill_before
     assert configured_worker_type_registry() is registry_before
@@ -286,9 +263,9 @@ def test_generic_skill_edit_and_legacy_adapters_use_the_same_partial_writer(
     client: tuple[TestClient, Path],
 ) -> None:
     test_client, db_path = client
-    before = test_client.get("/api/skills/panels-worker-coding").json()
+    before = test_client.get("/api/skills/panels-worker").json()
     response = test_client.patch(
-        "/api/skills/panels-worker-coding",
+        "/api/skills/panels-worker",
         json={"description": "common writer", "markdown_body": "# Updated"},
     )
     assert response.status_code == 200, response.text
@@ -299,9 +276,37 @@ def test_generic_skill_edit_and_legacy_adapters_use_the_same_partial_writer(
         response = test_client.request(
             method, "/api/workers/coding/skill", json={"body": f"# {method}"}
         )
-        assert response.status_code == 200, response.text
-        assert response.json()["specialist_skill"]["description"] == "common writer"
-        assert response.json()["specialist_skill"]["markdown_body"] == f"\n# {method}\n"
+        assert response.status_code == 400, response.text
+        assert "structured Worker preset" in response.text
+    source_before = test_client.get("/api/skills/panels-worker-coding").json()["source_text"]
+    independent = test_client.patch(
+        "/api/skills/panels-worker-coding", json={"markdown_body": "Independent instructions"}
+    )
+    assert independent.status_code == 400, independent.text
+    batch = test_client.post(
+        "/api/skills/apply",
+        json={
+            "skills": [
+                {
+                    "name": "panels-worker-coding",
+                    "source_text": source_before.replace("Coding", "Independent"),
+                    "expected_sha256": hashlib.sha256(source_before.encode()).hexdigest(),
+                }
+            ]
+        },
+    )
+    assert batch.status_code == 400, batch.text
+    assert (
+        test_client.get("/api/skills/panels-worker-coding").json()["source_text"] == source_before
+    )
+    structured = test_client.get("/api/worker-types/coding").json()
+    structured["stages"][1]["instructions"] = "STRUCTURED STAGE INSTRUCTIONS"
+    generated = test_client.post("/api/worker-types", json=structured)
+    assert generated.status_code == 200, generated.text
+    assert (
+        "STRUCTURED STAGE INSTRUCTIONS"
+        in test_client.get("/api/skills/panels-worker-coding").json()["source_text"]
+    )
     for method in ("put", "patch"):
         response = test_client.request(
             method, "/api/workers/chief-of-staff/skill", json={"body": f"# Chief {method}"}
@@ -353,7 +358,6 @@ def test_embedded_skill_validates_the_original_payload_and_requires_initial_fiel
     test_client, _db_path = client
     coding = test_client.get("/api/worker-types/coding").json()
     for skill in (
-        {"description": "initial"},
         {"body": "initial body"},
         {"name": "wrong", "description": "initial", "body": "body"},
         {"description": "initial", "body": "body", "unknown": "bad"},
@@ -369,7 +373,6 @@ def test_embedded_skill_validates_the_original_payload_and_requires_initial_fiel
     record["skill"] = {
         "name": "panels-worker-arrival",
         "description": "initial",
-        "body": "new body",
     }
     assert test_client.post("/api/worker-types", json=record).status_code == 200
 
@@ -487,16 +490,7 @@ def test_committed_amendment_receipt_survives_skill_file_publication_failure(
     assert response.status_code == 500, response.text
     detail = response.json()["error"]["detail"]
     assert detail["definition_saved"] is True
-    assert detail["migrations"] == [
-        {
-            "ticket_id": ticket.id,
-            "title": "Receipt survives",
-            "old_stage": "needs_what_changes",
-            "new_stage": "needs_what_changes",
-            "old_ceiling": "needs_implementation",
-            "new_ceiling": "needs_what_changes",
-        }
-    ]
+    assert detail["migrations"] == []
     assert (
         "needs_implementation"
         not in configured_worker_type_registry().require("coding").stage_ids()
@@ -504,4 +498,4 @@ def test_committed_amendment_receipt_survives_skill_file_publication_failure(
     with closing(connect(str(db_path))) as conn:
         assert conn.execute("SELECT ceiling FROM tickets WHERE id=?", (ticket.id,)).fetchone()[
             0
-        ] == ("needs_what_changes")
+        ] == ("needs_implementation")

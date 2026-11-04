@@ -150,6 +150,8 @@ export const queries = {
    * to write a stage sentence on every rail row - so the single-type read added a second
    * request rather than removing the first. The review screen has no rail, reads no list,
    * and saves 91%. Check which it is before switching a screen over. */
+  workerTypeRecord: (workerType: string) =>
+    jsonQuery<import("./types").WorkerTypeRecord>(["worker-type-record", workerType], `/api/worker-types/${encodeURIComponent(workerType)}`),
   workerTypeManifest: (workerType: string) =>
     versionedJsonQuery<WorkerTypesResponse>(
       ["worker-types", "one", workerType],
