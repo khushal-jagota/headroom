@@ -1,13 +1,12 @@
 import { parseConfigSelection, type ConfigSelection } from "./shellRouting";
 import { parseUsageSelection, type UsageTab } from "./usageAddress";
 
-export type WorkspaceUtility = "usage" | "settings" | "ideas" | "feedback";
+export type WorkspaceUtility = "usage" | "settings" | "ideas";
 
 export const WORKSPACE_UTILITIES: readonly WorkspaceUtility[] = [
   "usage",
   "settings",
-  "ideas",
-  "feedback"
+  "ideas"
 ];
 
 export function isWorkspaceUtility(value: string): value is WorkspaceUtility {
@@ -39,8 +38,7 @@ export type SettingsPlacement = { section: string } & ConfigSelection;
 export type UtilityPlacement =
   | { utility: "usage"; usage: UsagePlacement }
   | { utility: "settings"; settings: SettingsPlacement }
-  | { utility: "ideas" }
-  | { utility: "feedback" };
+  | { utility: "ideas" };
 
 /** The one reading of a utility screen's own path.
  *

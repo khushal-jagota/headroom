@@ -126,14 +126,6 @@ EXCLUDED_COMMAND_ROUTES = (
         "/workers/chief-of-staff/recap",
     ),
     *_routes(
-        "POST",
-        "Feedback is outside navigation records",
-        "/feedback",
-        "/feedback/{feedback_id}/dismiss",
-        "/feedback/{feedback_id}/reopen",
-        "/feedback/use",
-    ),
-    *_routes(
         "PUT",
         "Notification configuration is outside navigation records",
         "/notifications/preferences/{subject_key}/{notification_type}",

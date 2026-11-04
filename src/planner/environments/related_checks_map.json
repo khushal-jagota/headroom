@@ -10,32 +10,6 @@
   ],
   "domains": [
     {
-      "name": "feedback persisted capture",
-      "patterns": [
-        "src/planner/feedback/*",
-        "web/src/lib/feedback.ts",
-        "web/src/*/FeedbackCapture.svelte",
-        "web/src/*/FeedbackToast.svelte",
-        "web/src/*/FeedbackRoute.svelte",
-        "tests/unit/test_ticket_derivation.py",
-        "tests/unit/test_feedback.py",
-        "tests/e2e/test_feedback_inbox.py",
-        "web/tests/shell-feedback-browser.test.mjs",
-        "tests/unit/test_authority_matrix.py"
-      ],
-      "tests": {
-        "unit": [
-          "tests/unit/test_authority_matrix.py",
-          "tests/unit/test_feedback.py",
-          "tests/unit/test_ticket_derivation.py"
-        ],
-        "e2e": [],
-        "browser": [
-          "web/tests/shell-feedback-browser.test.mjs"
-        ]
-      }
-    },
-    {
       "name": "scheduled Tickets and default API/CLI handoff",
       "patterns": [
         "src/planner/scheduled_tickets/*",

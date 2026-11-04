@@ -12,7 +12,6 @@ import { describe, expect, it } from "vitest";
 
 import { workItemTicketGroups } from "../src/lib/workItemPresentation";
 import { conversationSignalReading } from "./support/conversationSignalReading";
-import { feedbackTicketStateLabel } from "../src/lib/feedback";
 import type { BoardCard } from "../src/lib/types";
 
 const quiet = {
@@ -71,10 +70,6 @@ describe("a worker waiting on an answer", () => {
     expect(workItemTicketGroups([{ ...quiet, awaiting_answer: true }])[0].label).toBe("Needs your answer");
   });
 
-  it("is not called a message in the Feedback inbox", () => {
-    const waiting = { ...quiet, awaiting_answer: true };
-    expect(feedbackTicketStateLabel(waiting)).toBe("Needs your answer");
-  });
 });
 
 describe("an unread message", () => {
@@ -82,7 +77,6 @@ describe("an unread message", () => {
     const withAMessage = boardCard({ awaiting_reply: true, conversation_signal: {working:false,message_for_owner:true} });
     expect(conversationSignalReading(withAMessage)).toContain('data-conversation-signal="message"');
     expect(workItemTicketGroups([{ ...quiet, awaiting_reply: true }])[0].label).toBe("Messages");
-    expect(feedbackTicketStateLabel({ ...quiet, awaiting_reply: true })).toBe("Messages");
   });
 
   it("keeps its message dot while the answer owns the group", () => {

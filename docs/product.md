@@ -36,7 +36,7 @@ When the stage is Consequences, the applicable merge, deploy, follow-up, and boo
 
 Khushal, Chief, and Managers create Tickets and send messages. A daily schedule can create an ordinary Ticket at one local minute; the schedule stops there, and the same readiness loop that starts every other Ticket sends the first prompt. Worker steps, approvals, and messages all land in conversations. Settled stage text, recaps, artifacts, and Review state are what the screens read back.
 
-The browser is the main human surface. Workspace is home: Chief, Managers, and the Ticket you are inspecting. Review is the attention pass. Usage, Ideas, Feedback, VPS, and Settings are the other destinations. The `panels` command is the same record through HTTP, used by Khushal and by the Workers themselves. A Worker files proposals and sends messages. It does not approve its own gate.
+The browser is the main human surface. Workspace is home: Chief, Managers, and the Ticket you are inspecting. Review is the attention pass. Usage, Ideas, VPS, and Settings are the other destinations. The `panels` command is the same record through HTTP, used by Khushal and by the Workers themselves. A Worker files proposals and sends messages. It does not approve its own gate.
 
 ## Where it shows up
 

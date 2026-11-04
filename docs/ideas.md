@@ -10,7 +10,7 @@ Capture feeds the list. The list feeds nothing else automatically. A person read
 
 ## Where it shows up
 
-`#/ideas`, and the same page embedded in the Workspace at `#/workspace/utility/ideas`. The shell groups it under Work. It is not the Feedback inbox. Feedback is a note about the product for an agent to handle. An Idea is a possible piece of future work. See [Feedback](feedback.md).
+`#/ideas`, and the same page embedded in the Workspace at `#/workspace/utility/ideas`. The shell groups it under Work.
 
 ## Pointers
 

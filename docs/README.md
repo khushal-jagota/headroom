@@ -29,7 +29,6 @@ The word list for Ticket, Stage, Review, Conversation, and the rest lives in [`C
 - [Historical attention](attention.md) — where recorded owner involvement went over selected dates.
 - [Project measures](measures.md) — dated values, retained datasets, sources, credentials, and collection.
 - [Projects](projects.md) — the catalog that classifies work and points at a folder.
-- [Feedback](feedback.md) — notes captured from any page for an agent to handle.
 - [Design](design.md) — the quiet visual system and the shared page kit.
 - [Live screens](live-updates.md) — why an open screen moves after a write, and what does not.
 - [Usage](usage.md) — allowance, recorded spend, and backend setup.

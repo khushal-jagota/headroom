@@ -143,10 +143,6 @@ def test_archive_then_delete_preserves_private_snapshot_artifacts_and_upgrade_re
         "('t_cancelled','needs_review','{\"feedback\":\"Keep\"}',1,1,1)"
     )
     tmp_db.execute(
-        "INSERT INTO feedback_notes(id,text,state,ticket_id,created_at,updated_at,handled_at) "
-        "VALUES ('feedback_old','Substance','handled','t_cancelled',1,1,1)"
-    )
-    tmp_db.execute(
         "INSERT INTO notification_attention_state VALUES ('ticket','t_cancelled','assigned',1,1)"
     )
     artifact = tmp_path / "files" / "tickets" / "t_cancelled" / "evidence.txt"
@@ -179,9 +175,6 @@ def test_archive_then_delete_preserves_private_snapshot_artifacts_and_upgrade_re
             "notification_attention_state",
         ):
             assert archived.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 1
-        assert (
-            archived.execute("SELECT ticket_id FROM feedback_notes").fetchone()[0] == "t_cancelled"
-        )
     assert tuple(tmp_db.execute("SELECT ticket_id,position FROM day_tickets").fetchone()) == (
         "t_personal_0",
         0,
@@ -190,7 +183,6 @@ def test_archive_then_delete_preserves_private_snapshot_artifacts_and_upgrade_re
     assert (
         tmp_db.execute("SELECT updated_at FROM tickets WHERE id='t_personal_0'").fetchone()[0] > 1
     )
-    assert tmp_db.execute("SELECT ticket_id FROM feedback_notes").fetchone()[0] is None
     for table in (
         "ticket_blocks",
         "ticket_conversations",

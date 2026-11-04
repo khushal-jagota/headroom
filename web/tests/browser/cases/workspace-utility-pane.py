@@ -129,7 +129,6 @@ def run(browser, urls):
                 "/api/goals": {"goals": card_fixture.get("goals", []), "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
                 "/api/worker-types?supported=true": {"worker_types": manifests},
                 "/api/worker-types": {"worker_types": manifests},
-                "/api/feedback/count": {"open_count": 0},
                 "/api/deployment-status": {"state": "preparing", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))},
             }.get(key)
             if key == "/api/projects" and card_fixture.get("goals"):
@@ -154,8 +153,6 @@ def run(browser, urls):
             result = {"skills": [skill]}
         elif path == "/api/worker-types":
             result = {"worker_types": manifests}
-        elif path == "/api/feedback/count":
-            result = {"open_count": 0}
         elif path == "/api/meta":
             result = {"test_mode": True, "app_sha": fold["release_sha"]}
         elif path == "/api/review":
@@ -312,10 +309,10 @@ def run(browser, urls):
     for _ in range(20):
         page.keyboard.press("Shift+ArrowLeft")
     expect(grip).to_have_attribute("aria-valuenow", "232")
-    expect(rail.locator('.utility')).to_have_count(6)
+    expect(rail.locator('.utility')).to_have_count(5)
     rail_bounds = page.locator('.workspace-rail').bounding_box()
     assert rail_bounds and abs(rail_bounds['width'] - 232) < 2, rail_bounds
-    for name in ["Review", "Usage", "Ideas", "Feedback", "VPS", "Settings"]:
+    for name in ["Review", "Usage", "Ideas", "VPS", "Settings"]:
         control = rail.get_by_label(name, exact=True)
         control.focus()
         label = control.locator('.utility-label')
@@ -342,8 +339,8 @@ def run(browser, urls):
     expect(pane.locator('[data-settings]')).to_be_visible()
     expect(page.locator('.workspace-rail')).to_be_hidden()
     # Resizing while the compact bar owns focus must reveal an equivalent target.
-    for name in ["Review", "Workspace"]:
-        link = page.locator('.workspace-mobile-nav').get_by_role('link', name=name, exact=True)
+    for name in ["Review", "Workspace", "More"]:
+        link = page.locator('.workspace-mobile-nav').get_by_role("button" if name == "More" else "link", name=name, exact=name != "More")
         link.focus()
         page.set_viewport_size({"width": 721, "height": 700})
         page.wait_for_function("document.activeElement && document.activeElement.getClientRects().length > 0 && document.activeElement !== document.body")
@@ -1154,7 +1151,6 @@ def verify_conversation_overlay(browser, url):
             "/api/tickets/t_overlay0/conversation/start-values": {"backend_key":"codex","model":None,"reasoning_effort":None},
             "/api/worker-types?supported=true": manifest,
             "/api/worker-types": manifest,
-            "/api/feedback/count": {"open_count": 0},
             "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
             "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None},
             "/api/meta": {"test_mode": True, "app_sha": None},
@@ -1588,7 +1584,6 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "Owner updates", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
             "/api/worker-types?supported=true": {"worker_types": []},
-            "/api/feedback/count": {"open_count": 0},
             "/api/deployment-status": deployment,
             "/api/review": {"items": [], "running_worker_count": 0},
         }

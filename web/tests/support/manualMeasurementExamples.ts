@@ -1,6 +1,6 @@
-import { PlannerFetchError } from '../api';
-import type { ChartBlock, ManualMeasureState, ManualWriteBody, ManualWriteResult, MeasureValue, Observation } from '../goals/contracts';
-import type { ManualMeasurementAdapter } from '../goals/manualMeasurements';
+import { PlannerFetchError } from '../../src/lib/api';
+import type { ChartBlock, ManualMeasureState, ManualWriteBody, ManualWriteResult, MeasureValue, Observation } from '../../src/lib/goals/contracts';
+import type { ManualMeasurementAdapter } from '../../src/lib/goals/manualMeasurements';
 
 // These adapters are local sample state. They do not call any measurement API.
 export const manualSampleDate = '2026-10-28';

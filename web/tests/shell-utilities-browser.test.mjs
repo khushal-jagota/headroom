@@ -1,2 +1,2 @@
 import {run} from "./browser/run.mjs";
-await run(["shell-feedback"]);
+await run(["shell-utilities"]);

@@ -46,7 +46,7 @@ The header has no success-threshold or completion-display controls. Saved target
 
 On the full goal page, visible authored strings outside charts also support native text edits. This includes nested sections, view labels, callouts, saved metric and property strings, row copy, and table copy. Stable block and item IDs remain intact. Table edits retain original row identity after display sorting. Generated counts, chart titles, and measurement readings keep their existing behavior.
 
-Text blocks retain Markdown, artifact previews, source links, and download fallbacks. Other authored fields remain plain text. Checklist titles, item labels, details, and action labels remain plain text. The goal agent changes checklist text. Other text editors and disclosure, sort, view selection, or completion actions use separate targets. Sidebar previews and the component gallery retain their existing controls without page-text editors.
+Text blocks retain Markdown, artifact previews, source links, and download fallbacks. Other authored fields remain plain text. Checklist titles, item labels, details, and action labels remain plain text. The goal agent changes checklist text. Other text editors and disclosure, sort, view selection, or completion actions use separate targets. Sidebar previews retain their existing controls without page-text editors.
 
 Each text draft retains its original goal and revision through background refreshes. A stale write fails visibly instead of replacing newer data. The draft remains until an explicit retry or discard. Accepted edits survive reload.
 
@@ -195,7 +195,6 @@ Source-authored coverage facts stay separate from target comparisons. Partial pe
 
 Page tables retain editable string cells and the existing sort and selection components. An optional matrix of cell tones adds the approved outcome colors without replacing the table or changing its stored cell text.
 
-The unlisted application page `#/dev/goal-components` shows all 22 approved chart-sheet examples through the production page, chart, and table components. It uses explicit sample data from October 28, 2026. Local sample controls switch among the approved states without API writes. The chart controls, table sorting, and mobile disclosure use the same components as goal pages. The examples follow the approved responsive grid. The six mobile studies use the production disclosure at their available grid width. An optional 390 px preview shows mobile goal-host behavior for all examples. The page does not add measurement entry or increment controls.
 
 ## Manual chart controls
 

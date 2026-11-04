@@ -60,10 +60,6 @@ def write_ticket_mutation(
     body = args.get("body")
     if not isinstance(body, dict):
         raise PlannerError(ErrorCode.validation, "ticket mutation needs a body", {})
-    if write.operation == "feedback.use":
-        from planner.feedback.api import write_use_feedback
-
-        return write_use_feedback(body, connection, clock, RequestContext(principal))
     if write.operation in ("ticket.block", "ticket.unblock"):
         from planner.membership.collections import ENTRIES, MembershipWrite
         from planner.membership.contracts import Collection

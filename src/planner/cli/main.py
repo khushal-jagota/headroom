@@ -16,7 +16,6 @@ import json
 import os
 import sys
 from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -229,12 +228,6 @@ def _drop_none(d: dict[str, Any]) -> dict[str, Any]:
 
 def _lines(rows: list[Any], fmt: Callable[[Any], str]) -> str:
     return "\n".join(fmt(r) for r in rows) if rows else "(none)"
-
-
-def _feedback_list_line(note: dict[str, Any]) -> str:
-    captured_at = datetime.fromtimestamp(int(note["created_at"])).astimezone()
-    page = note["page_label"] or "No page"
-    return f"{note['id']} · {captured_at.strftime('%Y-%m-%d %H:%M')} · {page} · {note['text']}"
 
 
 def _record_parts(raw: str | None, as_json: bool) -> tuple[str, ...] | None:
@@ -478,46 +471,6 @@ main.add_command(attention_group)
 main.add_command(measure_source_group)
 main.add_command(preview_group)
 environment_group.hidden = True
-
-
-# --- feedback -----------------------------------------------------------------
-
-
-@main.group("feedback", hidden=True)
-def feedback_group() -> None:
-    """Read and use captured feedback notes."""
-
-
-@feedback_group.command("list")
-@json_option
-def feedback_list(as_json: bool) -> None:
-    result = http.send("GET", "/api/feedback", as_json=as_json)
-    http.emit(
-        result,
-        as_json,
-        _lines(
-            result["open"],
-            _feedback_list_line,
-        ),
-    )
-
-
-@feedback_group.command("use")
-@click.option("--ticket", "ticket_id", required=True, help="Ticket receiving the notes.")
-@click.argument("feedback_ids", nargs=-1, required=True)
-@json_option
-def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -> None:
-    result = http.send(
-        "POST",
-        "/api/feedback/use",
-        as_json=as_json,
-        json_body={"feedback_ids": list(feedback_ids), "ticket_id": ticket_id},
-    )
-    http.emit(
-        result,
-        as_json,
-        f"{len(result['notes'])} feedback note(s) used on {ticket_id}",
-    )
 
 
 @main.command("send-message")

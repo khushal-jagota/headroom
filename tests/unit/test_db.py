@@ -1433,3 +1433,30 @@ def test_workspace_policy_migration_keeps_legacy_conversation_home_mapping(
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE conversations SET workspace_path_policy = 'guess'")
     conn.close()
+
+
+def test_feedback_removal_upgrade_keeps_ticket_revision_feedback(
+    tmp_db: sqlite3.Connection,
+) -> None:
+    """A database upgrade drops the inbox without deleting the separate review channel."""
+    conn = tmp_db
+    conn.execute("CREATE TABLE feedback_notes(id TEXT PRIMARY KEY, text TEXT)")
+    conn.execute("CREATE INDEX idx_feedback_notes_state_created ON feedback_notes(text)")
+    conn.execute("CREATE INDEX idx_feedback_notes_ticket_id ON feedback_notes(id)")
+    conn.execute("INSERT INTO feedback_notes VALUES ('old-note', 'Unused note')")
+    conn.execute("UPDATE alembic_version SET version_num='goal_outcomes'")
+    _insert_ticket(conn, "t_feedback_kept", "Keep")
+    conn.execute(
+        "INSERT INTO ticket_revision_feedback VALUES "
+        "('t_feedback_kept','needs_success','{\"feedback\":\"Keep this review\"}',1,1,1)"
+    )
+    before = list(conn.execute("SELECT * FROM tickets"))
+    reviews = list(conn.execute("SELECT * FROM ticket_revision_feedback"))
+    create_schema(conn)
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE name IN "
+        "('feedback_notes','idx_feedback_notes_state_created','idx_feedback_notes_ticket_id')"
+    ).fetchall() == []
+    assert list(conn.execute("SELECT * FROM tickets")) == before
+    assert list(conn.execute("SELECT * FROM ticket_revision_feedback")) == reviews
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

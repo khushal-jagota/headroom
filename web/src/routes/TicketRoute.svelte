@@ -462,7 +462,7 @@
             <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
           </div>
           <div class="ticket-title-row">
-            <div class="ticket-title" data-feedback-page-title>
+            <div class="ticket-title">
               <InlineEdit
                 value={masthead.title}
                 placeholder="Untitled"

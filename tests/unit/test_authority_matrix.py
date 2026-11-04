@@ -416,7 +416,6 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         "PATCH  /skills/{n}",
         lambda s: Call("PATCH", "/api/skills/panels", {"description": "x"}),
     ),
-    ("POST   /feedback", lambda s: Call("POST", "/api/feedback", {"body": "Some feedback."})),
     (
         "POST   /messages/send",
         lambda s: Call(
