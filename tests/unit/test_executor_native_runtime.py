@@ -202,7 +202,6 @@ def acknowledge_pending(spool: MacOutbox) -> None:
             AcceptanceReceipt(
                 row.sender_id,
                 row.submission_id,
-                row.payload_sha256,
                 ReceiptDisposition.accepted,
                 {},
                 1,

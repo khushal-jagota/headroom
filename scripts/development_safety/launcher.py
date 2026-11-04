@@ -60,12 +60,16 @@ def node_environment(tree: Path, package: Path, env: Mapping[str, str]) -> None:
         "global-prefix": package,
         "userconfig": Path.home() / ".npmrc",
         "globalconfig": package / "etc/npmrc",
-        "cache": Path.home() / ".npm",
         "init-module": Path.home() / ".npm-init.js",
     }
     for name in env:
         if name.lower().startswith("npm_config_"):
             key = name[len("npm_config_") :].lower().replace("_", "-")
+            if key == "cache":
+                # A cache can outlive isolated test homes. It still needs the
+                # deployment-storage check, including nested links and aliases.
+                check_paths([Path(env[name])], environment=env)
+                continue
             if key in expected_paths:
                 allowed = {expected_paths[key].absolute()}
                 if key in {"prefix", "global-prefix"}:

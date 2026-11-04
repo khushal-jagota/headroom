@@ -48,7 +48,6 @@ def receipt(
     return AcceptanceReceipt(
         envelope.sender_id,
         envelope.submission_id,
-        envelope.payload_sha256,
         disposition,
         {"original": True},
         1,

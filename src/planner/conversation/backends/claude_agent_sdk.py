@@ -61,6 +61,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 import warnings
 from base64 import b64encode
@@ -97,6 +98,7 @@ from claude_agent_sdk import (
     UserMessage,
 )
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+from claude_agent_sdk._version import __version__ as claude_sdk_version
 from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 
 from planner.conversation.backends.contracts import (
@@ -167,6 +169,7 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
+from planner.conversation.worker_unit import WorkerUnit
 
 LOGGER = logging.getLogger("planner.conversation.backends.claude_agent_sdk")
 
@@ -403,16 +406,71 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         super().__init__(prompt, options)
         self._cleanup_process: Process | None = None
         self._cleanup_started = False
+        self._worker_unit: WorkerUnit | None = None
+
+    def _build_command(self) -> list[str]:
+        command = super()._build_command()
+        if self._worker_unit is not None:
+            return list(self._worker_unit.argv(command))
+        return command
 
     async def connect(self) -> None:
         if self._cleanup_started:
             raise RuntimeError("a Claude transport cannot reconnect after cleanup")
-        await super().connect()
+        # Use the role's explicit identity, never an inherited Worker identity.
+        if self._options.env.get("PLAN_TICKET_ID"):
+            environment = {
+                key: value for key, value in os.environ.items() if key != "CLAUDECODE"
+            }
+            environment.update({"CLAUDE_CODE_ENTRYPOINT": "sdk-py"})
+            environment.update(self._options.env)
+            environment["CLAUDE_AGENT_SDK_VERSION"] = claude_sdk_version
+            if self._cwd:
+                environment["PWD"] = self._cwd
+            if self._options.enable_file_checkpointing:
+                environment["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "true"
+            self._worker_unit = await WorkerUnit.create(
+                environment, Path(self._cwd or os.getcwd())
+            )
+            if self._worker_unit is not None:
+                self._options.env.update(self._worker_unit.environment)
+        try:
+            await super().connect()
+        except asyncio.CancelledError:
+            if self._worker_unit is not None:
+                await self._worker_unit.stop()
+            raise
+        except Exception as error:
+            if self._worker_unit is not None:
+                reason = await self._worker_unit.finish()
+                if reason is not None:
+                    raise RuntimeError(reason) from error
+            raise
+
+    async def _read_messages_impl(self) -> AsyncIterator[dict[str, Any]]:
+        try:
+            async for message in super()._read_messages_impl():
+                yield message
+        except Exception as error:
+            reason = (
+                await self._worker_unit.finish()
+                if self._worker_unit is not None else None
+            )
+            if reason is not None:
+                raise RuntimeError(reason) from error
+            raise
+        else:
+            if self._worker_unit is not None:
+                reason = await self._worker_unit.finish()
+                if reason is not None:
+                    raise RuntimeError(reason)
 
     async def close(self) -> None:
         self._cleanup_started = True
         if self._cleanup_process is None:
             self._cleanup_process = self._process
+        if self._worker_unit is not None:
+            await self._worker_unit.stop()
         await super().close()
         if self._cleanup_process is not None and self._cleanup_process.returncode is None:
             raise RuntimeError("Claude process termination remains unconfirmed")
