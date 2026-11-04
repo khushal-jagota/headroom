@@ -869,6 +869,7 @@ def run(browser, urls):
     assert len(ceiling_writes) == 1 and approvals == []
     ceiling_writes.clear()
     refuse_scope_save = False
+    page.evaluate("window.__detail()")
     for _ in range(100):
         if held_details:
             break
