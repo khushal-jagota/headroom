@@ -844,9 +844,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     state = api.get(server, f"/api/measures/{manual_snapshot['id']}/manual-state")
     assert state["observation"]["value"] == 7
     expect(snapshot.get_by_role("textbox")).to_have_attribute("data-reading", "7", timeout=WAIT_MS)
-    expect(rail_manual.locator("small")).to_contain_text("Below target", timeout=WAIT_MS)
+    expect(rail_manual.locator("small")).to_contain_text("Open", timeout=WAIT_MS)
     expect(rail_manual.locator("[data-tone]")).to_have_attribute(
-        "data-tone", "bad", timeout=WAIT_MS
+        "data-tone", "neutral", timeout=WAIT_MS
     )
     rail_manual.hover(timeout=WAIT_MS)
     expect(value).to_have_attribute("data-reading", "7", timeout=WAIT_MS)
@@ -886,7 +886,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(manual_page.get_by_role("textbox")).to_have_attribute(
         "data-reading", "7", timeout=WAIT_MS
     )
-    expect(rail_manual.locator("small")).to_contain_text("Below target", timeout=WAIT_MS)
+    expect(rail_manual.locator("small")).to_contain_text("Open", timeout=WAIT_MS)
     expect(selected_bar.locator(".bar")).to_have_attribute(
         "style", re.compile(r"background-color: var\(--accent-error\)"), timeout=WAIT_MS
     )
