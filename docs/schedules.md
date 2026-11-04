@@ -1,25 +1,49 @@
 # Schedules
 
-A schedule supplies an ordinary Ticket at one exact local minute. It is a way to have a known kind of work appear without remembering to create it. The schedule does not start the Worker, choose a gate, or send a prompt. The creation commit announces itself, and [worker steps](worker-steps.md) pick the new Ticket up like any other.
+A schedule creates an ordinary Ticket every day at one local minute. It exists so a known kind of recurring work appears without anyone remembering to create it. The schedule's job ends at creation. It does not start the Worker, choose a gate, or send a prompt.
+
+## What a schedule is made of
+
+- **A time of day.** New schedules are daily.
+- **A Ticket template**: the title, Worker type, a kickoff note that becomes the Brief, the assignment to Chief or a Manager, the project, launch choice, locale, and blockers.
+- **An enabled switch.**
+- **Occurrence receipts**, one per schedule per minute it fired, recording whether the Ticket was created or the attempt failed.
 
 ## How a minute becomes a Ticket
 
-New schedules are daily. The template holds the title, Worker type, kickoff note used as Brief context, deadline, Project, assignment to Chief or one Manager, launch choice, locale, and blockers. Only Khushal and Chief can create or edit a schedule, including enable and disable. Being assigned the resulting Tickets does not give a Manager control of the schedule. Managers and Workers keep their ordinary ability to create Tickets directly.
+```text
+schedule loop ── due this minute? ──► ordinary Ticket creation, as the owner
+                                          │
+                                          └─ receipt for this schedule and minute
 
-The loop evaluates the current local minute and does not backfill minutes the host missed. Each schedule and minute has one occurrence receipt: created, failed, or otherwise settled. Repeating the poll returns the same receipt. A failure records its error and the other schedules in that minute still run. There is no suppression because a similar Ticket already exists. Two schedules may create two Tickets with the same type or title. The receipt prevents only its own replay.
+commit ──► change signal ──► worker-step loop starts the Ticket like any other
+```
 
-Due creation acts as the owner. The usual Ticket validation and approval gates still apply inside that creation. A new schedule without an explicit locale defaults to VPS. Each occurrence uses the stored locale. Set the locale at creation, or with `panels schedule set`.
+A loop inside the server checks the current local minute. Each due schedule creates its Ticket through the same creation path everyone uses, acting as the owner, so the usual validation and ceiling rules apply. The receipt is written in the same transaction. A repeated check finds the receipt and does nothing. One schedule failing does not stop the others.
 
-## Retired supply
+From there the Ticket is ordinary. The [worker-step loop](worker-steps.md) notices it and sends the first prompt.
 
-Sprint placement, sprint cadences, and the planning Worker types are retired. Those schedules were disabled. They keep their identity, their templates, and their receipts. A retired row, recognized by a non-daily cadence or a retired Worker type, accepts only disable. The runtime skips a retired row even if the database is edited by hand to look enabled. The Scheduled Tasks screen shows them as retired history, with enable and edit turned off. There is no schedule delete. Empty installations do not receive a shipped planning schedule.
+Minutes the host was down are not backfilled. Receipts only stop a schedule from repeating its own minute. They do not stop two schedules from creating similar Tickets.
+
+## Who controls it
+
+Schedules are owner-level configuration. Only Khushal and Chief create, edit, enable, or disable them. A Manager assigned a schedule's Tickets does not control the schedule. See [Who may act](authority.md).
+
+Schedules from retired planning workflows remain as history and can only be disabled.
 
 ## Where it shows up
 
-Settings → Scheduled tasks, `#/settings/scheduled-tasks`. The editor shows the local time, Every day, the due date, the Worker type, the Manager (Chief of Staff when none is named), the project, and the kickoff note. `panels schedule` and `/api/schedules` are the same records.
+Settings → Scheduled tasks in the browser, `panels schedule` on the command line.
 
-## Pointers
+## Decisions that shape it
 
-`src/planner/scheduled_tickets/` and the loop started from `src/planner/core/loops.py`.
+- **Supply, not execution.** A schedule only creates a Ticket. Starting work stays with the one loop that starts every Ticket.
+- **No catch-up.** A missed minute is missed. Recurring work should not arrive in a burst after downtime.
+- **One receipt per minute.** The receipt, written with the Ticket, is what makes a fire happen at most once.
+
+## Code
+
+- `src/planner/scheduled_tickets/`: records, the due check, creation, and the loop.
+- `src/planner/core/loops.py`: where the loop starts with the server.
 
 _Last verified: 2026-11-04._

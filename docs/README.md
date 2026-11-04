@@ -1,57 +1,53 @@
 # Headroom
 
-Headroom is the workspace where Khushal directs agents, reviews what they propose, and keeps the work that is actually committed. The app and the `panels` command still carry the old Panels name. These pages describe the product as it runs today.
+Headroom is the workspace where Khushal directs agents, reviews what they propose, and keeps the work that is actually committed. The app and the `panels` command still carry the old Panels name.
 
-Read the page that owns the question. Each focused page says what the thing is, how it works, what it takes in and sends on, and where a person meets it. Code pointers sit at the end.
+These pages are a top-level view of each system: what it is for, how it works, and roughly how. Read the page that owns your question, then go to the code for the details. [`AGENTS.md`](AGENTS.md) holds the rules for editing them.
 
-The word list for Ticket, Stage, Review, Conversation, and the rest lives in [`CONTEXT.md`](../CONTEXT.md). Standing engineering rules live in [`PRINCIPLES.md`](../PRINCIPLES.md). The visual rules live in [`DESIGN.md`](../DESIGN.md). Historical ticket plans live under `orchestration/tickets/` and are not this manual.
+The word list lives in [`CONTEXT.md`](../CONTEXT.md), the engineering rules in [`PRINCIPLES.md`](../PRINCIPLES.md), and the visual rules in [`DESIGN.md`](../DESIGN.md). Step-by-step procedures live under [`ops/`](../ops/). Historical ticket plans live under `orchestration/tickets/` and are not this manual.
 
 ## Start here
 
 - [The product](product.md) — what Headroom is for, and how a piece of work moves through it.
-- [Decisions that must stay put](invariants.md) — the rules a later change has to respect on purpose.
+- [Decisions that must stay put](invariants.md) — the cross-cutting rules a later change has to respect on purpose.
 
 ## The work
 
-- [Tickets](tickets.md) — one bounded piece of work, its stages, and where it can run.
-- [Proposals and gates](proposals.md) — the single door that settles a stage and the ceiling that decides who must look.
+- [Ticket lifecycle](tickets.md) — one bounded piece of work, its stages, proposals, and the ceiling that decides who must look.
 - [Worker types](worker-types.md) — the workflows Headroom ships, and where each one pulls a person in.
-- [Worker steps](worker-steps.md) — how a ready Ticket receives its next prompt, and why nothing watches the turn end.
-- [Schedules](schedules.md) — exact-time supply of ordinary Tickets.
+- [Worker steps](worker-steps.md) — how a ready Ticket receives its next prompt.
+- [Schedules](schedules.md) — Tickets created at an exact time.
 - [Skills](skills.md) — the instructions an agent actually reads, and who may change them.
 
 ## People, attention, and screens
 
 - [Managers and Chief](managers.md) — shared direction, child Tickets, and the conversations that supervise them.
 - [Review](review.md) — the pass through everything waiting on Khushal.
+- [Goals](goals.md) — outcomes with a deadline, their pages, and whether they were hit.
+- [Measures](measures.md) — dated numbers, the sources that collect them, and datasets.
+- [Historical attention](attention.md) — where Khushal's recorded involvement went between two dates.
 - [Ideas](ideas.md) — possibilities kept before they become work.
-- [Goals](goals.md) — Chief goal pages, explicit displays, checklists, charts, and independent completion and active states.
-- [Historical attention](attention.md) — where recorded owner involvement went over selected dates.
-- [Project measures](measures.md) — dated values, retained datasets, sources, credentials, and collection.
 - [Projects](projects.md) — the catalog that classifies work and points at a folder.
-- [Design](design.md) — the quiet visual system and the shared page kit.
-- [Live screens](live-updates.md) — why an open screen moves after a write, and what does not.
+- [Design](design.md) — how the visual principles show up, and the shared page kit.
+- [Live screens](live-updates.md) — why an open screen moves after a write.
 - [Usage](usage.md) — allowance, recorded spend, and backend setup.
-- [Notifications](notifications.md) — which edges can reach a phone, and how a device is enabled.
-- [Who may act](authority.md) — one sentence for every guarded call.
+- [Notifications](notifications.md) — which events can reach a phone.
+- [Who may act](authority.md) — the rule behind every guarded call.
 
 ## Talking to an agent
 
-- [Mac execution](executor.md) — VPS-owned Tickets with agent processes on the Mac.
-- [Mac installation](mac-executor-installation.md) — install and verify the native service.
-- [Conversations](conversations.md) — the only path into an agent, the notebook, and honest send fates.
+- [Conversations](conversations.md) — the only path into an agent, its notebook, and honest send fates.
+- [Credentials](credentials.md) — named API keys that scripts use without a secret reaching an agent.
+- [Mac execution](executor.md) — Tickets whose agents run on the Mac while the VPS keeps the record.
 - [The command line](cli.md) — how people and Workers act through `panels`.
 
 ## Operating a host
 
-- [Run locally](running-locally.md) — one checkout, one loopback server, one database.
-- [Environments](environments.md) — live, staging, and Ticket servers on one user account.
-- [Deployment](deployment.md) — how a push to `main` becomes a retained release, and how that release replaces the app.
-- [Updates](updates.md) — the owner’s now-or-idle install, and what a lost runner does not do.
-- [Archive runtime](archive-runtime.md) — the private Python the sealed release carries, and the host it accepts.
+- [Environments](environments.md) — live, staging, Ticket, and local servers on one user account.
+- [Deployment](deployment.md) — how a push to `main` becomes a sealed release, and how the owner installs it.
 - [Backups](backups.md) — verified snapshots and the stopped restore.
-- [Previews](previews.md) — one tailnet link to a Ticket’s own dev server.
-- [VPS](vps.md) — machine measurements, and the smaller status summary.
-- [Maintenance](maintenance.md) — diagnostic history, which waits for an explicit owner decision.
+- [Previews](previews.md) — one tailnet link to a Ticket's own dev server.
+- [VPS](vps.md) — machine measurements and the status summary.
+- [Diagnostic history](diagnostic-history.md) — the event record, kept until the owner decides to expire it.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._

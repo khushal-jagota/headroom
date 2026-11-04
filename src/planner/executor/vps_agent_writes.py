@@ -263,7 +263,6 @@ class AgentWrites:
             reservation = AcceptanceReceipt(
                 envelope.sender_id,
                 envelope.submission_id,
-                envelope.payload_sha256,
                 ReceiptDisposition.uncertain,
                 result,
                 now_ms(),
@@ -289,14 +288,9 @@ class AgentWrites:
             if result.get("fate") == "uncertain"
             else ReceiptDisposition.accepted
         )
-        if disposition is ReceiptDisposition.refused:
-            from planner.executor.refusals import record_refused_write
-
-            record_refused_write(conn, self.db_path, envelope, result)
         receipt = AcceptanceReceipt(
             envelope.sender_id,
             envelope.submission_id,
-            envelope.payload_sha256,
             disposition,
             result,
             now_ms(),

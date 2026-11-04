@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import struct
 from dataclasses import dataclass
 from enum import StrEnum
@@ -195,7 +193,7 @@ class EnvelopeKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class QueuedEnvelope:
-    """Digest binds routing identity, kind, payload and ordered file dependencies.
+    """Ordered result delivery with stable sender and submission identities.
 
     sender_id survives process restart in the sender row.
     Sequence increases globally for the sender;
@@ -209,7 +207,6 @@ class QueuedEnvelope:
     submission_id: str
     kind: EnvelopeKind
     payload: JsonObject
-    payload_sha256: str
     file_dependencies: tuple[FileManifest, ...] = ()
 
 
@@ -231,7 +228,6 @@ class ReceiptDisposition(StrEnum):
 class AcceptanceReceipt:
     sender_id: str
     submission_id: str
-    payload_sha256: str
     disposition: ReceiptDisposition
     result: JsonObject
     accepted_at_vps_ms: int
@@ -674,32 +670,6 @@ def decode_prompt_result(result: JsonObject) -> BackendPromptAccepted:
     return BackendPromptAccepted(
         composed_content_delivered=bool(result["composed_content_delivered"]),
     )
-
-
-def envelope_payload_digest(
-    payload: JsonObject,
-    manifests: tuple[FileManifest, ...],
-    *,
-    sender_id: str,
-    conversation_id: str,
-    sequence: int,
-    submission_id: str,
-    kind: EnvelopeKind,
-) -> str:
-    value = {
-        "payload": payload,
-        "sender_id": sender_id,
-        "conversation_id": conversation_id,
-        "sequence": sequence,
-        "submission_id": submission_id,
-        "kind": kind.value,
-        "file_dependencies": type_adapter(tuple[FileManifest, ...]).dump_python(
-            manifests, mode="json"
-        ),
-    }
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    ).hexdigest()
 
 
 def _encode_payload(value: object) -> bytes:
