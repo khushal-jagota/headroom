@@ -34,7 +34,7 @@ private struct PlotLine: Shape {
 
 /// Touch inspection must coexist with the enclosing page's vertical pan. A
 /// zero-duration press observes the finger without claiming the scroll gesture.
-private struct GoalLineInspection: UIViewRepresentable {
+struct GoalLineInspection: UIViewRepresentable {
     let changed: (CGPoint) -> Void
     let ended: (Bool) -> Void
     let scrolling: () -> Void
@@ -137,83 +137,74 @@ struct GoalPlot: View {
         let samples = GoalLineGeometry.samples(values: data.map { $0.values[key] }, positions: positions, breaks: data.map { key == "target" && $0.breakBefore }, smooth: key != "target" || block["expectation"].isNull)
         return (.init(values: samples.map { hidden.contains(key) ? 0 : (($0 ?? limits.0) - limits.0) / (limits.1 - limits.0) }), samples.map { $0 != nil })
     }
+    private var lineSeries: [GoalLineSeries] {
+        keys.enumerated().map { index, key in
+            let label = key == "target" ? (!block["expectation"].isNull ? "Expected" : "Target") : series.indices.contains(index) ? series[index]["name"].text : (block["series"].array.first?["name"].string ?? (manual ? "Reading" : "Current"))
+            // A manual reading line keeps the accent as its own colour; comparisons colour only the stroke.
+            return GoalLineSeries(key: key, label: label, color: manual && key != "target" ? PanelsTheme.accent : key == "target" && manual ? PanelsTheme.faint : color(key, index: index), stops: lineStops(key, index: index), dashed: key == "target", area: index == 0 && key != "target",
+                                  smooth: key != "target" || block["expectation"].isNull, values: data.map { $0.values[key] }, breaks: data.map { key == "target" && $0.breakBefore })
+        }
+    }
+    /// Stroke colours along x: compared against the target sample by sample, or by each dated comparison.
+    private func lineStops(_ key: String, index: Int) -> [Gradient.Stop]? {
+        guard key != "target", index == 0, block["binding"].isNull, data.contains(where: { $0.values["target"] != nil }) || manual else { return nil }
+        let positions = data.enumerated().map { $0.element.position ?? Double($0.offset) / Double(max(1, data.count - 1)) }
+        if block["measure_id"].isNull && block["expectation"].isNull {
+            let actual = GoalLineGeometry.samples(values: data.map { $0.values[key] }, positions: positions, breaks: data.map { _ in false }, smooth: true)
+            let target = GoalLineGeometry.samples(values: data.map { $0.values["target"] }, positions: positions, breaks: data.map(\.breakBefore), smooth: block["expectation"].isNull)
+            return actual.indices.compactMap { at -> Gradient.Stop? in
+                guard let value = actual[at] else { return nil }
+                let good = target[at].map { GoalChartPresentation.direction(block) == "atmost" ? value <= $0 : value >= $0 } ?? true
+                return .init(color: good ? PanelsTheme.success : PanelsTheme.Goal.tone(block["below_target_tone"].string ?? "bad"), location: Double(at) / Double(max(1, actual.count - 1)))
+            }
+        }
+        return data.enumerated().map { index, datum in Gradient.Stop(color: color(key, index: 0, datum: datum), location: positions[index]) }
+    }
+    private var manualDomain: [Double]? {
+        guard manual else { return nil }
+        let readings = data.compactMap { $0.values["actual"] }, targets = data.compactMap { $0.values["target"] }
+        return [min(0, (targets + readings).min() ?? 0), max(0, (targets + readings).max() ?? 0)]
+    }
     var body: some View {
         VStack(spacing: 12) {
-            GeometryReader { geometry in
-                ZStack(alignment: .topLeading) {
-                    grid
-                    if block.kind == "bar" {
-                        bars
-                        if keys.contains("target") {
-                            let target = samples("target")
-                            PlotLine(samples: target.0, valid: target.1).stroke(PanelsTheme.Goal.reference, style: .init(lineWidth: 1.3, dash: [4, 5])).allowsHitTesting(false)
-                        }
-                    }
-                    else {
-                        ForEach(Array(keys.enumerated()), id: \.element) { index, key in
-                            let sampled = samples(key)
-                            if index == 0 {
-                                PlotLine(samples: sampled.0, valid: sampled.1, fill: true)
-                                    .fill(LinearGradient(colors: [color(key, index: index).opacity(0.16), .clear], startPoint: .top, endPoint: .bottom))
-                                    .opacity(hidden.contains(key) ? 0 : 1)
-                            }
-                            PlotLine(samples: sampled.0, valid: sampled.1)
-                                .trim(from: 0, to: revealed || reduceMotion ? 1 : 0)
-                                .stroke(lineGradient(key, index: index), style: StrokeStyle(lineWidth: key == "target" ? 1.3 : 2, lineCap: .round, lineJoin: .round, dash: key == "target" ? [4, 5] : []))
-                                .opacity(hidden.contains(key) ? 0 : 1)
-                                .animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: sampled.0)
-                        }
-                        if let datum = data.first(where: { $0.id == active }), let index = data.firstIndex(where: { $0.id == active }) {
-                            let x = (datum.position ?? Double(index) / Double(max(1, data.count - 1))) * max(0, geometry.size.width - 32)
-                            Rectangle().fill(PanelsTheme.Goal.reference.opacity(0.5)).frame(width: 1).offset(x: x)
-                                .animation(reduceMotion ? nil : PanelsTheme.Goal.snappy, value: x)
-                            ForEach(Array(keys.enumerated()), id: \.element) { seriesIndex, key in
-                                if let value = datum.values[key], !hidden.contains(key) {
-                                    Circle().fill(color(key, index: seriesIndex, datum: datum)).frame(width: 6, height: 6)
-                                        .position(x: x, y: (1 - (value - bounds.0) / (bounds.1 - bounds.0)) * max(0, geometry.size.height - 22))
-                                        .animation(reduceMotion ? nil : PanelsTheme.Goal.snappy, value: active)
-                                }
-                            }.allowsHitTesting(false)
-                        }
-                    }
-                    if let datum = data.first(where: { $0.id == active }) {
-                        inspection(datum).padding(8).background(PanelsTheme.Goal.raised, in: RoundedRectangle(cornerRadius: 8))
-                            .frame(maxWidth: min(geometry.size.width - 32, 230), alignment: .leading)
-                            .offset(x: tooltipX(width: geometry.size.width - 32), y: 4)
-                            .animation(reduceMotion ? nil : PanelsTheme.Goal.snappy, value: active)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .padding(.trailing, 32).padding(.bottom, 22)
-                .contentShape(Rectangle())
-                .overlay {
-                    if block.kind != "bar" {
-                        GoalLineInspection(changed: { point in
-                            guard !data.isEmpty else { return }
-                            let fraction = max(0, min(1, point.x / max(1, geometry.size.width - 32)))
-                            active = data.enumerated().min { abs(($0.element.position ?? Double($0.offset) / Double(max(1, data.count - 1))) - fraction) < abs(($1.element.position ?? Double($1.offset) / Double(max(1, data.count - 1))) - fraction) }?.element.id
-                        }, ended: { inspecting in
-                            if inspecting, let active, let select { select(active) }
-                            active = nil
-                        }, scrolling: { active = nil })
-                        .accessibilityHidden(true)
-                    }
-                }
-                .overlay(alignment: .bottom) { axisLabels.padding(.trailing, 32) }
-            }.frame(height: CGFloat(block["plot_height"].number ?? Double(PanelsTheme.Goal.plotHeight)))
-                .accessibilityElement(children: .contain).accessibilityLabel(block["title"].string ?? "Reading chart")
-                .accessibilityIdentifier("goal-plot-\(block.id)")
-                .accessibilityAdjustableAction { direction in
-                    guard !data.isEmpty else { return }
-                    let index = data.firstIndex { $0.id == active } ?? data.count - 1
-                    active = data[max(0, min(data.count - 1, index + (direction == .increment ? 1 : -1)))].id
-                }
+            if block.kind == "bar" { barPlot } else {
+                GoalLineChart(data: data, series: lineSeries, hidden: hidden, height: manual ? 196 : CGFloat(block["plot_height"].number ?? Double(PanelsTheme.Goal.plotHeight)),
+                              domain: manualDomain ?? { let explicit = GoalChartPresentation.domain(block, range: range); return explicit.count == 2 && explicit[1] > explicit[0] ? explicit : nil }(),
+                              integerTicks: integerTicks, title: block["title"].string ?? "Reading",
+                              formatTick: { GoalChartPresentation.axisTick(block, $0) }, formatValue: { GoalChartPresentation.format(block, $0) },
+                              pointColor: { line, datum in color(line.key, index: keys.firstIndex(of: line.key) ?? 0, datum: datum) },
+                              active: $active, select: select, revealAtOnce: manual)
+                    .accessibilityIdentifier("goal-plot-\(block.id)")
+            }
             if !manual { legend }
-            if data.isEmpty { Text("No readings yet").font(.footnote).foregroundStyle(PanelsTheme.Goal.faint) }
         }
-        .background { if active != nil { GoalInspectionDismissal { active = nil } } }
-        .onScrollVisibilityChange(threshold: 0.3) { visible in if visible { reveal() } }
-        .onAppear { if manual || reduceMotion { reveal() } }
+    }
+    private var barPlot: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                grid
+                bars
+                if keys.contains("target") {
+                    let target = samples("target")
+                    PlotLine(samples: target.0, valid: target.1).stroke(PanelsTheme.Goal.reference, style: .init(lineWidth: 1.3, dash: [4, 5])).allowsHitTesting(false)
+                        .animation(reduceMotion ? nil : manual ? PanelsTheme.Goal.easeInOut(PanelsTheme.Goal.standardDuration) : PanelsTheme.Goal.bars, value: data)
+                }
+                if let datum = data.first(where: { $0.id == active }) {
+                    inspection(datum).padding(8).background(PanelsTheme.Goal.raised, in: RoundedRectangle(cornerRadius: 8))
+                        .frame(maxWidth: min(geometry.size.width - 32, 230), alignment: .leading)
+                        .offset(x: tooltipX(width: geometry.size.width - 32), y: 4)
+                        .animation(reduceMotion ? nil : PanelsTheme.Goal.snappy, value: active)
+                        .allowsHitTesting(false)
+                }
+            }
+            .padding(.trailing, 32).padding(.bottom, 22)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) { axisLabels.padding(.trailing, 32) }
+        }.frame(height: CGFloat(block["plot_height"].number ?? Double(PanelsTheme.Goal.plotHeight)))
+            .accessibilityElement(children: .contain).accessibilityLabel(block["title"].string ?? "Reading chart")
+            .accessibilityIdentifier("goal-plot-\(block.id)")
+            .background { if active != nil { GoalInspectionDismissal { active = nil } } }
+            .onAppear { reveal() }
     }
     private func reveal() {
         guard !revealed else { return }
@@ -228,9 +219,9 @@ struct GoalPlot: View {
                     Text(GoalChartPresentation.axisTick(block, tick))
                         .font(.system(size: 9)).foregroundStyle(PanelsTheme.faint).frame(width: 30, alignment: .leading)
                         .offset(x: geometry.size.width + 6, y: geometry.size.height * fraction - 6)
-                }.transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: reduceMotion ? 0 : PanelsTheme.Goal.standardDuration)), removal: .opacity.animation(.easeOut(duration: reduceMotion ? 0 : PanelsTheme.Goal.instantDuration))))
+                }
             }
-        }.animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: bounds.1)
+        }.transaction { $0.animation = nil } // Chart.js redraws its scale at once; only the bars move.
     }
     private var axisLabels: some View {
         HStack {
@@ -272,11 +263,12 @@ struct GoalPlot: View {
                             .opacity(active == nil || active == datum.id ? 1 : 0.45)
                             .contentShape(Rectangle())
                     }.buttonStyle(.plain)
+                        .transition(.asymmetric(insertion: .modifier(active: GoalBarGrowth(fraction: 0), identity: GoalBarGrowth(fraction: 1)), removal: .identity))
                         .accessibilityLabel(datum.label + ", " + GoalChartPresentation.format(block, datum.values[keys.first ?? "actual"]))
                         .accessibilityAddTraits(active == datum.id ? .isSelected : [])
                 }
             }.scaleEffect(x: 1, y: revealed || reduceMotion || manual ? 1 : 0, anchor: .bottom)
-                .animation(reduceMotion ? nil : manual ? PanelsTheme.Goal.standard : PanelsTheme.Goal.bars, value: data)
+                .animation(reduceMotion ? nil : manual ? PanelsTheme.Goal.easeInOut(PanelsTheme.Goal.standardDuration) : PanelsTheme.Goal.bars, value: data)
         }
     }
     private func height(_ value: Double?, in height: CGFloat) -> CGFloat { max(0, abs(value ?? 0) / (bounds.1 - bounds.0) * height) }
@@ -317,4 +309,10 @@ struct GoalPlot: View {
             }.buttonStyle(.plain).accessibilityValue(hidden.contains(key) ? "Hidden" : "Visible")
         }
     }
+}
+
+/// Chart.js starts a bar it has not drawn before at the baseline.
+private struct GoalBarGrowth: ViewModifier {
+    let fraction: Double
+    func body(content: Content) -> some View { content.scaleEffect(x: 1, y: fraction, anchor: .bottom) }
 }

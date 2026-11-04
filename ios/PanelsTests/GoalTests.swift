@@ -157,6 +157,7 @@ import XCTest
         XCTAssertFalse(prepared)
         XCTAssertTrue(GoalProtocol.state.manualWrites().isEmpty)
         editor.beginEditing()
+        XCTAssertEqual(editor.draft, "5", "A whole reading opens without a decimal")
         let changed = GoalProtocolState.manualState.replacingOccurrences(of: "\"write_revision\":1", with: "\"write_revision\":2")
         editor.accept(try APIClient.decoder().decode(GoalManualState.self, from: Data(changed.utf8)))
         await editor.write(value: 12)

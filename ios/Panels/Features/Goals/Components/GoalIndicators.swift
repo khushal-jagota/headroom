@@ -1,120 +1,201 @@
 import SwiftUI
 
-private struct GaugeArc: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        let radius = min(rect.width / 2 - 8, rect.height / 1.8)
-        p.addArc(center: CGPoint(x: rect.midX, y: rect.height * 0.56), radius: radius, startAngle: .degrees(135), endAngle: .degrees(405), clockwise: false)
-        return p
+/// The web's dial (gauge-geometry.ts): a 270° ring open at the bottom, in a 100 × 90 box.
+enum GoalGaugeGeometry {
+    static func point(_ fraction: Double, radius: Double, scale: CGFloat) -> CGPoint {
+        let angle = (-135 + 270 * fraction) * Double.pi / 180
+        return CGPoint(x: (50 + radius * sin(angle)) * scale, y: (50 - radius * cos(angle)) * scale)
     }
-}
-private struct GaugeTarget: Shape {
-    let fraction: Double
-    func path(in rect: CGRect) -> Path {
-        let radius = min(rect.width / 2 - 8, rect.height / 1.8)
-        let angle = (135 + 270 * fraction) * .pi / 180
-        let center = CGPoint(x: rect.midX, y: rect.height * 0.56)
-        var p = Path()
-        p.move(to: .init(x: center.x + (radius - 7) * cos(angle), y: center.y + (radius - 7) * sin(angle)))
-        p.addLine(to: .init(x: center.x + (radius + 7) * cos(angle), y: center.y + (radius + 7) * sin(angle)))
-        return p
+    static func arc(_ fraction: Double, scale: CGFloat) -> Path {
+        let sweep = min(1, max(0, fraction))
+        var path = Path()
+        path.addArc(center: CGPoint(x: 50 * scale, y: 50 * scale), radius: 42 * scale, startAngle: .degrees(135), endAngle: .degrees(135 + 270 * sweep), clockwise: false)
+        return path
     }
 }
 
-/// One interpolated value drives the arc, count and threshold on every frame.
-private struct GaugeFrame: View, @MainActor Animatable {
-    let block: GoalJSON
-    let headline: GoalChartHeadline
-    let manual: GoalManualEditor?
-    var displayed: Double
-    var settled: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var animatableData: Double { get { displayed } set { displayed = newValue } }
-    private var limits: (Double, Double) {
-        let domain = block["domain"].array.compactMap(\.number)
-        return (domain.first ?? (manual == nil ? 0 : min(0, headline.value ?? 0)), manual != nil ? headline.target ?? 100 : domain.count == 2 ? domain[1] : 100)
+private struct GaugeBand: Equatable { let from: Double; let tone: String; let label: String }
+
+/// Drives the read-only gauge as gauge.tsx does: the first fill sweeps the arc and
+/// counts the number together on the smooth spring stretched to 0.768 s; later the
+/// arc morphs and the count follows on the smooth spring. The state colour and label
+/// change as the count on screen crosses a threshold.
+@MainActor @Observable private final class GoalGaugeMotion {
+    private(set) var animating = false
+    private(set) var filled = false
+    private(set) var liveBand: GaugeBand?
+    @ObservationIgnored private var sweep = GoalSpringValue(0, spec: .visual(PanelsTheme.Goal.gaugeReveal))
+    @ObservationIgnored private var count = GoalSpringValue(0, spec: .visual(PanelsTheme.Goal.gaugeReveal))
+    @ObservationIgnored private var digitsWidth: GoalSpringValue?
+    @ObservationIgnored var bands: [GaugeBand] = []
+    @ObservationIgnored private var revealed = false
+    /// The ring's colour crossfades over 0.24 s on the standard ease, as the web's CSS transition does.
+    @ObservationIgnored private var toneFrom: Color?
+    @ObservationIgnored private var toneTo: Color?
+    @ObservationIgnored private var toneMix = GoalTween(1)
+    func tone(_ next: Color, reduce: Bool) {
+        guard next != toneTo else { return }
+        let time = GoalLineMotion.now()
+        if let current = toneTo, !reduce {
+            toneFrom = current.mix(with: toneFrom ?? current, by: 1 - toneMix.value(at: time))
+            toneMix.jump(0); toneMix.animate(to: 1, at: time, duration: PanelsTheme.Goal.standardDuration, curve: GoalCurve.standard)
+            if !animating { animating = true }
+        } else { toneMix.jump(1) }
+        toneTo = next
     }
-    private var fraction: Double { max(0, min(1, (displayed - limits.0) / max(0.000001, limits.1 - limits.0))) }
-    private var label: String {
-        guard let target = headline.target else { return "" }
-        if manual != nil { return "of " + GoalChartPresentation.number(target, decimals: 6, trim: true) }
-        if GoalChartPresentation.direction(block) == "atmost" { return displayed <= target ? "Within limit" : "Above limit" }
-        return displayed >= target ? "On target" : "Below target"
+    func color(at time: Double, fallback: Color) -> Color {
+        guard let to = toneTo else { return fallback }
+        guard let from = toneFrom, !toneMix.resting else { return to }
+        return from.mix(with: to, by: toneMix.value(at: time))
     }
-    private var tone: Color {
-        guard headline.target != nil else { return PanelsTheme.accent }
-        if !block["binding"].isNull, headline.comparison == nil { return PanelsTheme.muted }
-        let good = GoalChartPresentation.direction(block) == "atmost" ? displayed <= headline.target! : displayed >= headline.target!
-        return good ? PanelsTheme.success : PanelsTheme.error
+    private static let reveal = GoalSpringSpec.visual(PanelsTheme.Goal.gaugeReveal)
+    private static let morph = GoalSpringSpec.visual(0.42)
+    private static let smooth = GoalSpringSpec.visual(0.4)
+    func band(at value: Double) -> GaugeBand? { bands.filter { value >= $0.from - 1e-6 }.last }
+    func show(fraction: Double, value: Double, reduce: Bool) {
+        let time = GoalLineMotion.now()
+        revealed = true
+        if reduce { sweep = GoalSpringValue(fraction, spec: Self.morph); count = GoalSpringValue(value, spec: Self.smooth); filled = true; liveBand = band(at: value); return }
+        var nextSweep = GoalSpringValue(sweep.value(at: time), spec: filled ? Self.morph : Self.reveal)
+        var nextCount = GoalSpringValue(count.value(at: time), spec: filled ? Self.smooth : Self.reveal)
+        // Motion drops inherited velocity on time-defined springs.
+        nextSweep.animate(to: fraction, at: time, keepVelocity: false); nextCount.animate(to: value, at: time, keepVelocity: false)
+        sweep = nextSweep; count = nextCount
+        if !animating { animating = true }
     }
-    var body: some View {
-        ZStack {
-            GaugeArc().stroke(tone.opacity(0.13), style: .init(lineWidth: 9, lineCap: .round))
-            GaugeArc().trim(from: 0, to: fraction).stroke(tone, style: .init(lineWidth: 9, lineCap: .round)).opacity(min(1, fraction / 0.02))
-            if manual == nil, let target = headline.target, target >= limits.0, target <= limits.1 {
-                GaugeTarget(fraction: (target - limits.0) / max(0.000001, limits.1 - limits.0)).stroke(PanelsTheme.Goal.surface, lineWidth: 5)
-                GaugeTarget(fraction: (target - limits.0) / max(0.000001, limits.1 - limits.0)).stroke(PanelsTheme.Goal.reference, lineWidth: 1.5)
-            }
-            VStack(spacing: 4) {
-                if let manual { GoalManualValue(editor: manual, block: block, centered: true) }
-                else {
-                    Text(GoalChartPresentation.format(block, headline.value, trim: true)).hidden()
-                        .overlay(alignment: .trailing) { Text(GoalChartPresentation.format(block, displayed, trim: true)) }
-                        .panelsScaledFont(size: 32, relativeTo: .largeTitle, weight: .medium).monospacedDigit().foregroundStyle(PanelsTheme.strong)
-                        .animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: GoalChartPresentation.format(block, headline.value, trim: true))
-                }
-                if headline.target != nil {
-                    Text(label).id(label).font(.footnote).foregroundStyle(tone).opacity(settled ? 1 : 0)
-                        .transition(.offset(y: 5).combined(with: .opacity).combined(with: .blurReplace))
-                }
-            }.offset(y: 4)
-        }
+    func width(_ target: CGFloat, reduce: Bool) -> Void {
+        let time = GoalLineMotion.now()
+        guard var current = digitsWidth, !reduce else { digitsWidth = GoalSpringValue(target, spec: Self.smooth); return }
+        if current.target != target { current.animate(to: target, at: time, keepVelocity: false); digitsWidth = current; if !animating { animating = true } }
     }
+    func frame(at time: Double, value: Double) -> (sweep: Double, count: Double, width: CGFloat?) {
+        let current = count.value(at: time)
+        let next = band(at: current)
+        if filled, next != liveBand { schedule { self.liveBand = next } }
+        else if !filled, revealed, abs(current - value) < 1 { schedule { self.filled = true; self.liveBand = next } }
+        let resting = sweep.settle(at: time) && count.settle(at: time) && (digitsWidth?.settle(at: time) ?? true) && toneMix.settle(at: time)
+        if resting, animating { schedule { if self.resting { self.animating = false } } }
+        return (sweep.value(at: time), current, digitsWidth.map { CGFloat($0.value(at: time)) })
+    }
+    private var resting: Bool { sweep.resting && count.resting && (digitsWidth?.resting ?? true) && toneMix.resting }
+    /// A changed comparison re-reads the band at the number on screen, even when the count stays still.
+    func rebandLive() { if filled { liveBand = band(at: count.value(at: GoalLineMotion.now())) } }
+    private func schedule(_ change: @escaping @MainActor () -> Void) { Task { @MainActor in change() } }
 }
 
 struct GoalGauge: View {
     let block: GoalJSON
     let headline: GoalChartHeadline
-    var manual: GoalManualEditor? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var displayed = 0.0
-    @State private var appeared = false
-    @State private var settled = false
+    @State private var motion = GoalGaugeMotion()
+    @State private var seen = false
     @State private var inspecting = false
+    @State private var direction = 1.0
+    private var limits: (Double, Double) {
+        let domain = block["domain"].array.compactMap(\.number)
+        let low = domain.count == 2 ? domain[0] : 0, high = domain.count == 2 ? domain[1] : 100
+        return (low, high > low ? high : low + 1)
+    }
+    private var value: Double { headline.value ?? 0 }
+    private var fraction: Double { min(1, max(0, (value - limits.0) / (limits.1 - limits.0))) }
+    private var suffix: String { GoalChartPresentation.suffix(block) }
+    private func digits(_ number: Double) -> String {
+        let text = GoalChartPresentation.format(block, number, trim: true)
+        return !suffix.isEmpty && text.hasSuffix(suffix) ? String(text.dropLast(suffix.count)) : text
+    }
+    private var bands: [GaugeBand] {
+        guard let target = headline.target, block["binding"].isNull || headline.comparison != nil else { return [] }
+        let atmost = GoalChartPresentation.direction(block) == "atmost"
+        return [GaugeBand(from: min(0, value), tone: atmost ? "good" : "bad", label: atmost ? "Within limit" : "Below target"),
+                GaugeBand(from: target + (atmost ? 0.00001 : 0), tone: atmost ? "bad" : "good", label: atmost ? "Above limit" : "On target")].sorted { $0.from < $1.from }
+    }
+    private func color(_ band: GaugeBand?) -> (Color, Color) {
+        switch band?.tone { case "good": (PanelsTheme.success, PanelsTheme.success); case "bad": (PanelsTheme.error, PanelsTheme.error); default: (PanelsTheme.accent, PanelsTheme.accentText) }
+    }
     var body: some View {
-        GaugeFrame(block: block, headline: headline, manual: manual, displayed: displayed, settled: settled)
-            .frame(height: 190)
+        let shownBand = reduceMotion || !motion.filled ? motion.band(at: value) : motion.liveBand
+        let (tone, text) = color(shownBand)
+        VStack(spacing: 10) {
+            TimelineView(.animation(minimumInterval: nil, paused: !motion.animating)) { timeline in
+                let frame = motion.frame(at: timeline.date.timeIntervalSinceReferenceDate, value: value)
+                let ring = motion.color(at: timeline.date.timeIntervalSinceReferenceDate, fallback: tone)
+                GeometryReader { geometry in
+                    let scale = geometry.size.width / 100
+                    ZStack(alignment: .top) {
+                        Canvas { context, _ in
+                            let style = StrokeStyle(lineWidth: 9 * scale, lineCap: .round)
+                            context.stroke(GoalGaugeGeometry.arc(1, scale: scale), with: .color(ring.opacity(0.13)), style: style)
+                            var fill = context; fill.opacity = min(1, max(0, frame.sweep / 0.02))
+                            if frame.sweep > 0 { fill.stroke(GoalGaugeGeometry.arc(frame.sweep, scale: scale), with: .color(ring), style: style) }
+                            if let target = headline.target {
+                                let at = (target - limits.0) / (limits.1 - limits.0)
+                                if at >= 0, at <= 1 {
+                                    let tick = Path { $0.move(to: GoalGaugeGeometry.point(at, radius: 35, scale: scale)); $0.addLine(to: GoalGaugeGeometry.point(at, radius: 49, scale: scale)) }
+                                    context.stroke(tick, with: .color(PanelsTheme.Goal.surface), style: StrokeStyle(lineWidth: 3 * scale, lineCap: .round))
+                                    context.stroke(tick, with: .color(PanelsTheme.muted), style: StrokeStyle(lineWidth: 1.1 * scale, lineCap: .round))
+                                }
+                            }
+                        }
+                        VStack(spacing: 4) {
+                            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                                Text(digits(frame.count)).lineLimit(1).fixedSize()
+                                    .frame(width: frame.width, alignment: .trailing)
+                                    .font(.system(size: 32, weight: .medium)).monospacedDigit().foregroundStyle(PanelsTheme.strong)
+                                if !suffix.isEmpty { Text(suffix).font(.system(size: 16)).foregroundStyle(PanelsTheme.muted) }
+                            }
+                            .background { Text(digits(value)).font(.system(size: 32, weight: .medium)).monospacedDigit().fixedSize().hidden()
+                                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { motion.width($0, reduce: reduceMotion) } }
+                            if !bands.isEmpty {
+                                ZStack {
+                                    let label = motion.filled ? shownBand?.label ?? "" : ""
+                                    Text(label).id(label)
+                                        .transition(.asymmetric(
+                                            insertion: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : 0.3 * 11 * direction, blur: reduceMotion ? 0 : 4, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1)).animation(reduceMotion ? .linear(duration: PanelsTheme.Goal.instantDuration) : PanelsTheme.Goal.enter(PanelsTheme.Goal.standardDuration)),
+                                            removal: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : -0.3 * 11 * direction, blur: reduceMotion ? 0 : 2, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1)).animation(reduceMotion ? .linear(duration: PanelsTheme.Goal.instantDuration) : PanelsTheme.Goal.standardEase(0.16))))
+                                }
+                                .font(.system(size: 11, weight: .medium)).foregroundStyle(text)
+                                .frame(minWidth: 100, minHeight: 15.4)
+                                .animation(reduceMotion ? nil : PanelsTheme.Goal.standardEase(PanelsTheme.Goal.standardDuration), value: text)
+                            }
+                        }.frame(width: geometry.size.width, height: geometry.size.width)
+                    }
+                }
+                .aspectRatio(100 / 90, contentMode: .fit)
+                .frame(maxWidth: 176)
+            }
             .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded { if manual == nil { inspecting.toggle() } })
+            .simultaneousGesture(TapGesture().onEnded { inspecting.toggle() })
             .overlay(alignment: .topTrailing) {
                 if inspecting {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(block["title"].text).fontWeight(.medium)
-                        Text("Current: " + GoalChartPresentation.format(block, headline.value))
-                        if let target = headline.target { Text("Target: " + GoalChartPresentation.format(block, target)) }
-                    }.font(.caption).padding(12).background(PanelsTheme.Goal.raised, in: RoundedRectangle(cornerRadius: 8)).allowsHitTesting(false)
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(block["title"].text).font(.system(size: 11)).foregroundStyle(PanelsTheme.muted)
+                        Text("Current  " + GoalChartPresentation.format(block, headline.value, trim: true)).font(.system(size: 13))
+                        if let target = headline.target { Text("Target  " + GoalChartPresentation.format(block, target, trim: true)).font(.system(size: 13)) }
+                    }.padding(.vertical, 10).padding(.horizontal, 12).background(PanelsTheme.Goal.raised, in: RoundedRectangle(cornerRadius: 14)).allowsHitTesting(false)
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
             }
             .background { if inspecting { GoalInspectionDismissal { inspecting = false } } }
-            .animation(reduceMotion ? nil : PanelsTheme.Goal.snappy, value: inspecting)
-            .accessibilityElement(children: manual == nil ? .ignore : .contain)
-            .accessibilityLabel(GoalChartPresentation.format(block, headline.value) + ", " + GoalChartPresentation.comparison(block, headline: headline))
-            .accessibilityAction(named: "Inspect reading") { inspecting.toggle() }
-            .onScrollVisibilityChange(threshold: 0.5) { visible in if visible { reveal() } }
-            .onAppear { if manual != nil || reduceMotion { reveal() } }
-            .onChange(of: headline.value) { _, next in
-                guard appeared else { return }
-                withAnimation(reduceMotion ? nil : manual == nil ? PanelsTheme.Goal.morph : PanelsTheme.Goal.smooth) { displayed = next ?? 0 }
-            }
-    }
-    private func reveal() {
-        guard !appeared else { return }; appeared = true
-        if manual != nil || reduceMotion { displayed = headline.value ?? 0; settled = true; return }
-        withAnimation(.timingCurve(0.65, 0, 0.35, 1, duration: PanelsTheme.Goal.gaugeReveal), completionCriteria: .logicallyComplete) { displayed = headline.value ?? 0 } completion: {
-            withAnimation(PanelsTheme.Goal.standard) { settled = true }
+            .animation(reduceMotion ? nil : PanelsTheme.Goal.standardEase(0.16), value: inspecting)
         }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(GoalChartPresentation.format(block, headline.value) + (shownBand.map { ", " + $0.label } ?? ""))
+        .accessibilityAction(named: "Inspect reading") { inspecting.toggle() }
+        .onAppear { motion.bands = bands; if reduceMotion { motion.show(fraction: fraction, value: value, reduce: true) } }
+        .goalInView(amount: 0.5) { if !seen { seen = true; motion.show(fraction: fraction, value: value, reduce: reduceMotion) } }
+        .onChange(of: value) { old, next in direction = next < old ? -1 : 1; motion.bands = bands; if seen || reduceMotion { motion.show(fraction: fraction, value: next, reduce: reduceMotion) } }
+        .onChange(of: bands) { motion.bands = bands; motion.rebandLive() }
+        .onChange(of: tone, initial: true) { _, next in motion.tone(next, reduce: reduceMotion) }
     }
+}
+
+/// Copy that swaps in place: it rises from the side the value moved toward, out of a blur.
+struct GoalSwapState: ViewModifier {
+    let y: CGFloat
+    let blur: CGFloat
+    let opacity: Double
+    func body(content: Content) -> some View { content.offset(y: y).blur(radius: blur).opacity(opacity) }
 }
 
 struct GoalProgressMeter: View {
@@ -192,6 +273,7 @@ struct GoalRing: View {
                     GoalCounter(block: displayBlock, value: display, size: 32).minimumScaleFactor(0.6).lineLimit(1)
                     Text(active.flatMap { entries.indices.contains($0) ? entries[$0].0 : nil } ?? (block.kind == "time-budget" ? "Spent" : block["total_label"].string ?? "Total"))
                         .font(.footnote).foregroundStyle(PanelsTheme.Goal.faint)
+                        .transaction { $0.animation = nil } // The web swaps this label at once.
                 }
             }.padding(14).frame(width: 144, height: 144)
                 .contentShape(Circle())
@@ -244,11 +326,17 @@ struct GoalCompletion: View {
                     GoalTick().trim(from: 0, to: done ? 1 : 0).stroke(PanelsTheme.success, style: .init(lineWidth: 2, lineCap: .round)).opacity(done ? 1 : 0)
                     Text("–").foregroundStyle(PanelsTheme.faint).opacity(done ? 0 : 1)
                 }.frame(width: 32, height: 32).animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: done)
-                Text(done ? "Done" : "Not done").id(done).panelsScaledFont(size: PanelsTheme.Goal.completionReading, relativeTo: .largeTitle, weight: .medium)
-                    .transition(.offset(y: 8).combined(with: .opacity).combined(with: .blurReplace))
+                // completion-reading.tsx: the new word rises 8 pt out of a 2 pt blur over 0.24 s; the old one leaves upward.
+                ZStack(alignment: .leading) {
+                    Text(done ? "Done" : "Not done").id(done).panelsScaledFont(size: PanelsTheme.Goal.completionReading, relativeTo: .largeTitle, weight: .medium)
+                        .transition(.asymmetric(insertion: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : 8, blur: reduceMotion ? 0 : 2, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1)),
+                                                removal: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : -8, blur: reduceMotion ? 0 : 2, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1))))
+                }.animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: done)
             }
-            Label(done ? "Completed" : status == "bad" ? "Overdue" : status == "attention" ? "Due today" : "Not done", systemImage: "circle.fill")
-                .font(.footnote).foregroundStyle(PanelsTheme.Goal.tone(status))
-        }.animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: done)
+            HStack(spacing: 8) {
+                Circle().frame(width: 6, height: 6)
+                Text(done ? "Completed" : status == "bad" ? "Overdue" : status == "attention" ? "Due today" : "Not done")
+            }.font(.footnote).foregroundStyle(PanelsTheme.Goal.tone(done ? "good" : status))
+        }
     }
 }

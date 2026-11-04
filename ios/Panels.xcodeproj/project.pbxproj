@@ -133,11 +133,13 @@
 		D051ED49F0870C1000840B7B /* ArtifactImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C54D786EA56D45854D6EFDE9 /* ArtifactImageView.swift */; };
 		D167E7BF146E779606455478 /* WorkspacePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADB52188776E5136E566E076 /* WorkspacePresentationTests.swift */; };
 		D1C05703E2F502D775656AEA /* TicketTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59E4714669F1A2E56D0CBAFD /* TicketTextEditor.swift */; };
+		D4449A7AF115673334954527 /* GoalLineChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270F7ACCC8F59761C20934FA /* GoalLineChart.swift */; };
 		D7A0E00FFBF4883BBB6C28D8 /* TicketPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C4C3CD047D6C91BA010C488 /* TicketPresentation.swift */; };
 		D863C2DB0472D5E5C45BC142 /* FeedbackPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4947C201978999EE83C7707 /* FeedbackPresentation.swift */; };
 		D8759A19CECC7DF6FE887A2F /* manager.json in Resources */ = {isa = PBXBuildFile; fileRef = 84958E18FFD4BF0F350CDDA3 /* manager.json */; };
 		DE4550E09997382CFE236EF6 /* TicketTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B65B958CE406314A52A4AB /* TicketTests.swift */; };
 		DF98D89CF003C17DFD2322F9 /* ArtifactViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E71530843F077BD7F076F6B /* ArtifactViewerView.swift */; };
+		E60549765B052E8561049045 /* GoalMotionCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08579F5C36831C5A3F327C80 /* GoalMotionCore.swift */; };
 		E7EFCAAEF02CEB7B09D87478 /* ArtifactModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C56C713C713662C2E7B1D24 /* ArtifactModels.swift */; };
 		E8EB97A1681A6EAEA0322130 /* ChiefModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C8B9D9D1FE5DC39AC9839B9 /* ChiefModels.swift */; };
 		E8F08B99070CBB0970264947 /* NotificationDeliveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EB15638EE9ABE98DDC6877D /* NotificationDeliveryTests.swift */; };
@@ -183,6 +185,7 @@
 		05DD5FF34DA3FF7E97C54502 /* GoalMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalMotion.swift; sourceTree = "<group>"; };
 		0612B955BAA1970756E2915B /* ReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewView.swift; sourceTree = "<group>"; };
 		0718559967EA837B4003EB0F /* WorkerGroups.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkerGroups.swift; sourceTree = "<group>"; };
+		08579F5C36831C5A3F327C80 /* GoalMotionCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalMotionCore.swift; sourceTree = "<group>"; };
 		08B13A66D381488CEFC63E89 /* artifacts.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = artifacts.json; sourceTree = "<group>"; };
 		0AA980845BC1C25E5F54217D /* ReviewModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewModels.swift; sourceTree = "<group>"; };
 		0D4FCDBCAD742D3FCA6B73F0 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -194,6 +197,7 @@
 		1B24D7E11E1B5A8A52BB5E3A /* GoalFilters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalFilters.swift; sourceTree = "<group>"; };
 		1C45F3D7A86215A521781B78 /* Navigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation.swift; sourceTree = "<group>"; };
 		235B29593C129B082143CFEF /* WorkspaceContextMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceContextMenu.swift; sourceTree = "<group>"; };
+		270F7ACCC8F59761C20934FA /* GoalLineChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalLineChart.swift; sourceTree = "<group>"; };
 		2A008FF2BE0EE350DEA44FC9 /* RingRefreshControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RingRefreshControl.swift; sourceTree = "<group>"; };
 		2A13357733DE7E9E23A232EA /* TicketApprovalLimitSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketApprovalLimitSheet.swift; sourceTree = "<group>"; };
 		2C504A7DC566D315CFE44BE6 /* WorkspaceCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCard.swift; sourceTree = "<group>"; };
@@ -964,8 +968,10 @@
 				71C763B1DF57C63443CF5B40 /* GoalChecklist.swift */,
 				2F54308867CE10C1E310A144 /* GoalEditableText.swift */,
 				66AC93A517A2F5EEDFC4097F /* GoalIndicators.swift */,
+				270F7ACCC8F59761C20934FA /* GoalLineChart.swift */,
 				8453471545425B3B9DAFD28B /* GoalManualChart.swift */,
 				05DD5FF34DA3FF7E97C54502 /* GoalMotion.swift */,
+				08579F5C36831C5A3F327C80 /* GoalMotionCore.swift */,
 				34CB25289AD1E25C4848C5D1 /* GoalPageBlocks.swift */,
 				4AF531306C62970CBC036AEB /* GoalPlot.swift */,
 			);
@@ -1207,9 +1213,11 @@
 				83882322EFB97A8CD2D5E9DA /* GoalEditableText.swift in Sources */,
 				A50CB3925FA62A39D63C95AB /* GoalFilters.swift in Sources */,
 				9A04A79B67637A46E68F3196 /* GoalIndicators.swift in Sources */,
+				D4449A7AF115673334954527 /* GoalLineChart.swift in Sources */,
 				AA3C8F4CA4F3D560A241CAA7 /* GoalLineGeometry.swift in Sources */,
 				3FE766EFF088FFC378D6AD5F /* GoalManualChart.swift in Sources */,
 				3928D5B5C68E2937ED9DA943 /* GoalMotion.swift in Sources */,
+				E60549765B052E8561049045 /* GoalMotionCore.swift in Sources */,
 				1BAFF6F39AF3B13448F6D589 /* GoalPageBlocks.swift in Sources */,
 				34A9B428AA331C967DA8174B /* GoalPlacements.swift in Sources */,
 				F829D079BB9CE9D90F990B62 /* GoalPlot.swift in Sources */,
