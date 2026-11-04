@@ -55,6 +55,8 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.storage import ensure_started_conversation_record
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
+from planner.files.lifecycle import database_path
+from planner.files.logic.paths import chief_files_root, manager_files_root
 from planner.projects import data as projects_data
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
@@ -70,6 +72,7 @@ from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration
 from planner.tickets.contracts import Ticket, TicketLocale
 from planner.worker_settings.service import (
+    CHIEF_SETTINGS_KEY,
     read_chief_settings,
     read_worker_launch_defaults_for_ticket_creation,
 )
@@ -112,6 +115,16 @@ def _default_workspace_folder(conn: sqlite3.Connection) -> Path:
 
     configured = workspace_root_for_connection(conn)
     return configured if configured is not None else resolve_worker_workspace_root()
+
+
+def chief_home_folder(conn: sqlite3.Connection) -> Path:
+    """The Chief's own folder, which its conversation starts in unless told otherwise."""
+    return chief_files_root(database_path(conn))
+
+
+def manager_home_folder(conn: sqlite3.Connection, manager_id: str) -> Path:
+    """A Manager's own folder: its files folder, beside the ``artifacts/`` the owner sees."""
+    return manager_files_root(database_path(conn)) / manager_id
 
 
 def new_conversation_id() -> str:
@@ -247,9 +260,8 @@ def agent_resolve(
             reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
         ),
         overrides=overrides,
-        workspace_folder=(
-            _default_workspace_folder(conn) if workspace_folder is None else workspace_folder
-        ),
+        workspace_folder=chief_home_folder(conn) if workspace_folder is None else workspace_folder,
+        shared_workspace_folder=_default_workspace_folder(conn),
     )
     require_enabled_model(conn, values.backend_key, values.model)
     return values
@@ -272,8 +284,9 @@ def manager_resolve(
         ),
         overrides=overrides,
         workspace_folder=(
-            _default_workspace_folder(conn) if workspace_folder is None else workspace_folder
+            manager_home_folder(conn, item.id) if workspace_folder is None else workspace_folder
         ),
+        shared_workspace_folder=_default_workspace_folder(conn),
     )
 
     return values
@@ -884,7 +897,19 @@ async def start_agent_conversation(
     that does not exist. The link lands only on an agent that has none, for the reason a
     Ticket's does — an agent has one conversation, and the loser of a race would otherwise
     be left live and unreachable.
+
+    The Chief and a Manager start in a home folder of their own, which does not exist
+    until their first start. It is made here, because a backend refuses to start in a
+    folder that is not there. Any other folder is the caller's, and is left as it is.
     """
+    if agent_key == CHIEF_SETTINGS_KEY:
+        home: Path | None = chief_home_folder(conn)
+    elif required_manager_id is not None:
+        home = manager_home_folder(conn, required_manager_id)
+    else:
+        home = None
+    if home is not None and values.workspace_folder == home:
+        home.mkdir(parents=True, exist_ok=True)
     await system.start_conversation(
         ConversationStartRequest(
             conversation_id=conversation_id,
