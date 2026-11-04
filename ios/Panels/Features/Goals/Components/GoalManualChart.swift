@@ -45,7 +45,7 @@ struct GoalManualValue: View {
             // tearing down a first responder in the frame the counter starts turning.
             GoalNumberField(text: Binding(get: { editor.draft ?? current.map(GoalChartPresentation.plainNumber) ?? "" }, set: { editor.draft = $0 }),
                             focused: $editing, size: size, centered: centered, label: block["title"].string ?? "Reading",
-                            commit: save, cancel: { Task { await editor.discard(); editing = false } })
+                            commit: save, cancel: cancel)
                 .frame(height: size * 1.2).fixedSize(horizontal: true, vertical: false)
                 .opacity(editingValue ? 1 : 0).allowsHitTesting(editingValue).accessibilityHidden(!editingValue)
         }
@@ -61,11 +61,18 @@ struct GoalManualValue: View {
             if editor.draft != nil, !submitting { Task { _ = await editor.prepare() } }
         }
     }
+    /// Done writes only a changed number, as the web's commit does; an unreadable one keeps the keyboard up.
     private func save() {
-        guard let value = Double(editor.draft?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""), value.isFinite else { editing = false; return }
+        guard let value = Double(editor.draft?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""), value.isFinite else { editor.error = "Enter a number."; return }
         submitting = true
         editing = false
-        Task { await editor.write(value: value); submitting = false }
+        Task { _ = await editor.prepare(); submitting = false }
+    }
+    /// Cancel drops the draft at once, so nothing typed while the accepted reading reloads can be saved.
+    private func cancel() {
+        editor.draft = nil
+        editing = false
+        Task { await editor.discard() }
     }
 }
 
@@ -116,7 +123,12 @@ private struct GoalNumberField: UIViewRepresentable {
     final class Coordinator: NSObject, UITextFieldDelegate {
         var owner: GoalNumberField
         init(_ owner: GoalNumberField) { self.owner = owner }
-        @objc func changed(_ field: UITextField) { owner.text = field.text ?? "" }
+        @objc func changed(_ field: UITextField) {
+            // A comma-decimal keypad types ","; readings are parsed with ".".
+            let text = (field.text ?? "").replacingOccurrences(of: ",", with: ".")
+            if field.text != text { field.text = text }
+            owner.text = text
+        }
         @objc func done() { owner.commit() }
         @objc func cancel() { owner.cancel() }
         func textFieldDidBeginEditing(_ field: UITextField) {

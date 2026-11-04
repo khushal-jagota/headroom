@@ -74,9 +74,12 @@ private struct GaugeBand: Equatable { let from: Double; let tone: String; let la
         if filled, next != liveBand { schedule { self.liveBand = next } }
         else if !filled, revealed, abs(current - value) < 1 { schedule { self.filled = true; self.liveBand = next } }
         let resting = sweep.settle(at: time) && count.settle(at: time) && (digitsWidth?.settle(at: time) ?? true) && toneMix.settle(at: time)
-        if resting, animating { schedule { if self.sweep.resting && self.count.resting { self.animating = false } } }
+        if resting, animating { schedule { if self.resting { self.animating = false } } }
         return (sweep.value(at: time), current, digitsWidth.map { CGFloat($0.value(at: time)) })
     }
+    private var resting: Bool { sweep.resting && count.resting && (digitsWidth?.resting ?? true) && toneMix.resting }
+    /// A changed comparison re-reads the band at the number on screen, even when the count stays still.
+    func rebandLive() { if filled { liveBand = band(at: count.value(at: GoalLineMotion.now())) } }
     private func schedule(_ change: @escaping @MainActor () -> Void) { Task { @MainActor in change() } }
 }
 
@@ -147,8 +150,8 @@ struct GoalGauge: View {
                                     let label = motion.filled ? shownBand?.label ?? "" : ""
                                     Text(label).id(label)
                                         .transition(.asymmetric(
-                                            insertion: .modifier(active: GoalSwapState(y: 0.3 * 11 * direction, blur: 4, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1)).animation(reduceMotion ? .linear(duration: PanelsTheme.Goal.instantDuration) : PanelsTheme.Goal.enter(PanelsTheme.Goal.standardDuration)),
-                                            removal: .modifier(active: GoalSwapState(y: -0.3 * 11 * direction, blur: 2, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1)).animation(reduceMotion ? .linear(duration: PanelsTheme.Goal.instantDuration) : PanelsTheme.Goal.standardEase(0.16))))
+                                            insertion: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : 0.3 * 11 * direction, blur: reduceMotion ? 0 : 4, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1)).animation(reduceMotion ? .linear(duration: PanelsTheme.Goal.instantDuration) : PanelsTheme.Goal.enter(PanelsTheme.Goal.standardDuration)),
+                                            removal: .modifier(active: GoalSwapState(y: reduceMotion ? 0 : -0.3 * 11 * direction, blur: reduceMotion ? 0 : 2, opacity: 0), identity: GoalSwapState(y: 0, blur: 0, opacity: 1)).animation(reduceMotion ? .linear(duration: PanelsTheme.Goal.instantDuration) : PanelsTheme.Goal.standardEase(0.16))))
                                 }
                                 .font(.system(size: 11, weight: .medium)).foregroundStyle(text)
                                 .frame(minWidth: 100, minHeight: 15.4)
@@ -182,7 +185,7 @@ struct GoalGauge: View {
         .onAppear { motion.bands = bands; if reduceMotion { motion.show(fraction: fraction, value: value, reduce: true) } }
         .goalInView(amount: 0.5) { if !seen { seen = true; motion.show(fraction: fraction, value: value, reduce: reduceMotion) } }
         .onChange(of: value) { old, next in direction = next < old ? -1 : 1; motion.bands = bands; if seen || reduceMotion { motion.show(fraction: fraction, value: next, reduce: reduceMotion) } }
-        .onChange(of: bands) { motion.bands = bands }
+        .onChange(of: bands) { motion.bands = bands; motion.rebandLive() }
         .onChange(of: tone, initial: true) { _, next in motion.tone(next, reduce: reduceMotion) }
     }
 }

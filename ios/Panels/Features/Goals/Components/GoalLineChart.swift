@@ -189,6 +189,7 @@ struct GoalLineChart: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var motion = GoalLineMotion()
     @State private var plotWidth: CGFloat = 0
+    @State private var inView = false
 
     private var positions: [Double] { data.enumerated().map { $0.element.position ?? (data.count > 1 ? Double($0.offset) / Double(data.count - 1) : 0.5) } }
     private var visible: [GoalLineSeries] { series.filter { !hidden.contains($0.key) } }
@@ -250,7 +251,9 @@ struct GoalLineChart: View {
         .onChange(of: pickEntries.map(\.0), initial: true) { old, _ in motion.setPicks(pickEntries, initial: old.isEmpty) }
         .onChange(of: activeIndex) { _, index in motion.inspect(index.map { positions[$0] }, reduce: reduceMotion) }
         .onChange(of: data.map(\.id)) { if active != nil { active = nil } }
-        .goalInView(amount: 0.3) { if !data.isEmpty { motion.reveal(reduce: reduceMotion) } }
+        // The lines draw left to right the first time the chart is seen with data, even when readings arrive after it was seen.
+        .goalInView(amount: 0.3) { inView = true; if !data.isEmpty { motion.reveal(reduce: reduceMotion) } }
+        .onChange(of: data.isEmpty) { _, empty in if !empty, inView { motion.reveal(reduce: reduceMotion) } }
         .accessibilityElement(children: .contain).accessibilityLabel(title)
         .accessibilityAdjustableAction { direction in
             guard !data.isEmpty else { return }
@@ -283,7 +286,8 @@ struct GoalLineChart: View {
             HStack(spacing: 0) {
                 Canvas { context, size in
                     // Gridlines ride the scale, so a taller range slides them while new rows fade in.
-                    for fade in motion.ticks.values where fade.value != tickValues.first || !fade.present {
+                    let baseline = tickValues.first
+                    for fade in motion.ticks.values where fade.value != baseline || !fade.present {
                         let y = rowY(fade.value)
                         context.stroke(Path { $0.move(to: .init(x: 0, y: y)); $0.addLine(to: .init(x: size.width, y: y)) }, with: .color(PanelsTheme.Goal.grid.opacity(fade.opacity.value(at: time))), lineWidth: 1)
                     }
