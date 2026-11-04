@@ -1,14 +1,16 @@
 # The product
 
-Headroom is an agent harness whose job is to reduce mental load. The agents run on one host. Khushal uses a browser, including from a phone, to give work, answer questions, read results, and approve the points he chose to keep. The priorities, plans, conversations, and approvals stay together so attention goes to deciding what is worth doing.
+Headroom is an agent harness whose job is to reduce Khushal's mental load. Agents do the work. Khushal gives work, answers questions, reads results, and approves only the points he chose to keep, from a browser on a laptop or a phone. Priorities, conversations, plans, and approvals sit in one place, so his attention goes to deciding what is worth doing. The installation and its command still carry the old name, Panels.
 
-The product was formerly called Panels. The command is still `panels`, deployment paths still say Panels, and a few on-screen sentences still say Panels (the home-screen notification hint is one). Those names are the installation. Headroom is the product.
+## Who is in it
 
-## Why it is shaped this way
+- **Khushal**, the owner. He stands above everything.
+- **Chief**, his top-level agent. It also stands above everything, creates and routes work, and sets [goals](goals.md).
+- **Managers**, agents that each hold one direction and the Tickets that serve it. See [Managers and Chief](managers.md).
+- **Workers**, one agent per Ticket, doing that Ticket's work.
+- **Goal agents**, one per goal, keeping its page current.
 
-Different work needs different attention. A coding task can run a long way and stop for a reviewable package. A research task can work a framed question. An exploration can pause to think with the person. A design task can bring a wireframe and a visual pass before any implementation Ticket exists. Headroom keeps each of those as a Ticket with its own stages, and it keeps the person’s involvement as an explicit boundary on that Ticket: the ceiling.
-
-The record of the work lives on the host, in one SQLite database. Codex, Claude Code, and Hermes are the agents Headroom can run. They use the logins already on that host, and their providers’ limits and billing still apply. Headroom does not replace those subscriptions and does not sandbox the machine. A Ticket gate is a workflow boundary. It says how far this piece of work may go before a person looks. It is not an operating-system permission.
+Every agent is a [conversation](conversations.md) running Codex, Claude Code, or Hermes. What may act on what is one rule: you may act on anything strictly below you. See [Who may act](authority.md).
 
 ## A piece of work, from first thought to done
 
@@ -16,36 +18,38 @@ The record of the work lives on the host, in one SQLite database. Codex, Claude 
 Idea (optional) ──► Ticket under Chief or a Manager
                          │
                          ├─ Brief, then the stages of its Worker type
-                         ├─ each stage fills one blank
+                         ├─ the Worker proposes the text of each stage
                          │     below the ceiling: it settles and advances
-                         │     at the ceiling: it parks for a person
-                         ├─ the Worker’s only input is its conversation
+                         │     at the ceiling: it waits for a person
+                         ├─ the Worker's only input is its conversation
                          └─ Consequences, then Done
 
-Khushal meets that work in Review, on the Ticket, and in the conversation.
-A phone notification is a separate edge when something newly needs him.
+Waits addressed to Khushal reach him in Review.
+Waits addressed to Chief or a Manager arrive in that agent's conversation.
 ```
 
-An Idea is only a remembered possibility. It does not become a Ticket by itself. A Ticket is the committed unit: one Worker type, one stage ladder, one active conversation, one assignment to Chief or an ordinary Manager.
+An [Idea](ideas.md) is a remembered possibility. It never becomes work by itself. A [Ticket](tickets.md) is the committed unit: one piece of work for one Worker, with a ladder of stages that its [Worker type](worker-types.md) declares. People, Chief, Managers, and daily [schedules](schedules.md) create Tickets.
 
-The Worker proposes the text of the current stage. The proposal resolver is the only writer that can make that text canonical and move the stage. Below the ceiling the proposal settles on its own. At the ceiling it waits. Review is the owner’s queue for those waits, together with messages that need him. A proposal addressed to Chief or a Manager is delivered into that supervisor’s conversation as a real prompt. Approving still happens through the resolver. A reply in chat is not an approval.
+When a Ticket is ready, the [worker-step loop](worker-steps.md) sends the Worker one prompt and stops watching. The Worker answers by filing a proposal for the current stage. The Ticket's ceiling decides whether that proposal settles on its own or waits for a person. [Review](review.md) is Khushal's queue of the waits addressed to him, together with messages that need him. Consequences is where merges, deploys, follow-up Tickets, and a verified report happen. Done ends the ladder.
 
-When the stage is Consequences, the applicable merge, deploy, follow-up, and bookkeeping happen, and the Worker proposes a verified report. Done is the end of the ladder. Backlog is a separate pause: it stops the next automatic Worker step and leaves the Ticket, its messages, and its approvals in place.
+## Where it runs
 
-## What feeds the day, and what the day feeds
+One host, the VPS, holds the SQLite database, the server, and the loops that start work. Most agents run there too, using the logins already on that machine, and their providers' limits and billing still apply. A Ticket can instead be pinned to Khushal's Mac, where its agent runs while the VPS keeps the record. See [Mac execution](executor.md).
 
-Khushal, Chief, and Managers create Tickets and send messages. A daily schedule can create an ordinary Ticket at one local minute; the schedule stops there, and the same readiness loop that starts every other Ticket sends the first prompt. Worker steps, approvals, and messages all land in conversations. Settled stage text, recaps, artifacts, and Review state are what the screens read back.
+The browser is the main surface: the Workspace with Chief, Managers, and Tickets; Review; and the pages for goals, ideas, measures, and settings. The `panels` command reaches the same records over HTTP, for Khushal and for the agents themselves. A phone [notification](notifications.md) arrives when something newly needs him.
 
-The browser is the main human surface. Workspace is home: Chief, Managers, and the Ticket you are inspecting. Review is the attention pass. Usage, Ideas, Feedback, VPS, and Settings are the other destinations. The `panels` command is the same record through HTTP, used by Khushal and by the Workers themselves. A Worker files proposals and sends messages. It does not approve its own gate.
+## Decisions that shape it
 
-## Where it shows up
+- **The person's involvement is an explicit setting on each Ticket.** The ceiling says how far the work may go before someone looks, so different kinds of work stop at different points. See [Ticket lifecycle](tickets.md).
+- **Gates are workflow, not a sandbox.** They govern the work record. They do not confine an agent's process, files, network, or credentials.
+- **Headroom uses existing subscriptions.** It runs the agents' own command-line tools under the logins already on the machine. It does not replace them.
 
-Add the site to a phone’s home screen. Dictate into a conversation or a plan. A notification arrives when a chosen kind of attention flips on, which needs HTTPS, and on iPhone needs the installed home-screen app. Open a plan, document, image, or HTML prototype beside the conversation and tell the agent what to change without losing the task. For coding work, a trusted local dev server can be opened through Headroom on the tailnet. See [Previews](previews.md).
+The cross-cutting rules are listed in [Decisions that must stay put](invariants.md).
 
-The host has to stay running and reachable. One machine holds the database. Agents still call their model providers from that machine.
+## Code
 
-## Pointers
+- `src/planner/`: the server, grouped by system (`tickets/`, `managers/`, `runtime/`, `conversation/`, and others). The server starts with `panels serve`.
+- `web/`: the browser app.
+- `src/planner/cli/`: the `panels` command.
 
-Product copy for a new checkout is the repository [README](../README.md). Domain code lives under `src/planner/`, grouped by Tickets, Managers, Ideas, Projects, conversation, and runtime. The browser app is `web/`. The server entry is `panels serve`.
-
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._
