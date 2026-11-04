@@ -232,6 +232,9 @@ def test_real_scanner_blocks_shared_dependencies_before_npm_exec(
     (tree / "web/node_modules").symlink_to(deployment / "node_modules")
     monkeypatch.setattr(scanner, "protected_roots", lambda environment: (deployment,))
     monkeypatch.setattr(launcher, "TREE", tree)
+    # The suite points npm at the real shared cache, and scanning it costs seconds.
+    # The cache check has its own test: test_shared_npm_cache_requires_independent_storage.
+    monkeypatch.delenv("npm_config_cache", raising=False)
     started: list[object] = []
     monkeypatch.setattr(os, "execvpe", lambda *args: started.append(args))
     assert launcher.main(["npm", "--prefix", "web", "ci"]) == 2
