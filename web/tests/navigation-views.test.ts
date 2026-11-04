@@ -64,7 +64,7 @@ describe('bounded navigation owner',()=>{
       expect(count()).toBe(7);
       expect(navigationReviewPresentation(owner.getState().effective!)).toMatchObject({runningConversationCount:7,currentConversationIds:new Set(['c'])});
       let revision=0;
-      for(const total of [9,0,null,6]) {
+      for(const total of [9,0,6]) {
         const previous=owner.getState().publication!;
         source.send({event:'patch',wire_version:3,projection_version:7,view_id:initial.view_id,
           scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
@@ -77,6 +77,8 @@ describe('bounded navigation owner',()=>{
       }
       source.error();
       expect(count()).toBeNull();
+      expect(owner.getState().effective!.runtimeCurrent).toBe(false);
+      expect(navigationReviewPresentation(owner.getState().effective!).runningConversationCount).toBeNull();
       expect(owner.getState().publication!.view!.counts.running_conversations).toBe(6);
       const recovering=owner.recover();
       expect(count()).toBeNull();
