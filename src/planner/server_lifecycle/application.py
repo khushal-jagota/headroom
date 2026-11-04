@@ -37,7 +37,6 @@ def run_application_process() -> None:
     os.chdir(launch_root)
     config = load_config(os.environ.get("PLAN_CONFIG_PATH", str(launch_root / "config.yaml")))
     os.makedirs(os.path.dirname(config.db_path) or ".", exist_ok=True)
-    os.makedirs(config.logs_dir, exist_ok=True)
     clock = build_clock(config)
 
     def conn_factory() -> sqlite3.Connection:
