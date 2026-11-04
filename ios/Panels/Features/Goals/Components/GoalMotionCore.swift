@@ -136,8 +136,38 @@ extension View {
     func goalInView(amount: Double, _ action: @escaping () -> Void) -> some View {
         onGeometryChange(for: Bool.self) { proxy in
             let frame = proxy.frame(in: .local)
-            guard frame.height > 0, let visible = proxy.bounds(of: .scrollView) else { return true }
+            guard frame.height > 0, var visible = proxy.bounds(of: .scrollView) else { return true }
+            // A folding disclosure clips what it holds, as `overflow: hidden` does for the web's observer.
+            if let disclosure = proxy.bounds(of: .named(GoalDisclosureSpace.name)) { visible = visible.intersection(disclosure) }
             return frame.intersection(visible).height / frame.height >= amount - 0.0001
         } action: { shown in if shown { action() } }
     }
+}
+
+enum GoalDisclosureSpace { static let name = "goal-disclosure" }
+
+/// Lays its content out at a share of its natural height, top-aligned.
+struct GoalHeightReveal: Layout, Animatable {
+    var fraction: Double
+    var animatableData: Double { get { fraction } set { fraction = newValue } }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let size = subviews.first?.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) ?? .zero
+        return CGSize(width: proposal.width ?? size.width, height: size.height * max(0, fraction))
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let subview = subviews.first else { return }
+        subview.place(at: CGPoint(x: bounds.minX, y: bounds.minY), anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: nil))
+    }
+}
+
+private struct GoalHeightPresence: ViewModifier {
+    let fraction: Double
+    func body(content: Content) -> some View {
+        GoalHeightReveal(fraction: fraction) { content }.clipped().coordinateSpace(.named(GoalDisclosureSpace.name))
+    }
+}
+
+extension AnyTransition {
+    /// The web's `.support-reveal`: height grows from zero inside a clip (`height: 0 ↔ auto`).
+    static var goalDisclosure: AnyTransition { .modifier(active: GoalHeightPresence(fraction: 0), identity: GoalHeightPresence(fraction: 1)) }
 }

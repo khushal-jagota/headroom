@@ -209,7 +209,7 @@ struct GoalManualChart: View {
                             }
                         }))
                     }
-                }.opacity(!supporting || bodyVisible || reduceMotion ? 1 : 0).transition(.opacity)
+                }.opacity(!supporting || bodyVisible || reduceMotion ? 1 : 0).transition(supporting && !reduceMotion ? .goalDisclosure : .opacity)
             }
             GoalManualFailure(editor: editor)
         }.modifier(GoalChartContainer(framed: !integrated || supporting))

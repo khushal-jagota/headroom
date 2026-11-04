@@ -80,7 +80,7 @@ struct GoalChart: View {
                     }
                     if let caption = block["caption"].string { Text(caption).font(.caption).foregroundStyle(PanelsTheme.Goal.faint) }
                 }.opacity(!supporting || bodyVisible || reduceMotion ? 1 : 0)
-                    .transition(.opacity)
+                    .transition(supporting && !reduceMotion ? .goalDisclosure : .opacity)
             }
         }
         .modifier(GoalChartContainer(framed: !integrated || supporting))
