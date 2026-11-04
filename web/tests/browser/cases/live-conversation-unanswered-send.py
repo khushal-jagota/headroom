@@ -82,67 +82,6 @@ def _motion_wheel(page, delta, code, *, late=False, consume="()=>null"):
         page.evaluate("window.__nativeMotion?.completion.cleanup()")
 
 
-# Settled: no surface motion, no admitted presentation or entry work, and the
-# same thread geometry for this many consecutive frames. Every pane reaction
-# (scroll handler, notification reconciliation, resize repair, placement) starts
-# within a frame of its cause and marks the pane while it moves.
-_SETTLED_FRAMES = 5
-_SETTLED = r"""({frames,until,arg})=>{
-  const t=document.querySelector('[data-conversation-thread]');
-  const region=t?.closest('.conversation-transcript-region');
-  const dormant='[data-visible-content-state="released"], [data-visible-content-state="retained"]';
-  const busy=!!t&&(!!t.closest('[data-conversation-pane]')?.hasAttribute('data-conversation-motion')||
-    t.dataset.conversationPlacementReady!=='true'||region?.getAttribute('aria-busy')==='true'||
-    ['loading','placing'].includes(region?.dataset.conversationEntry)||
-    [...t.querySelectorAll('[aria-busy="true"], [data-markdown-rendering]')].some(n=>!n.closest(dormant)));
-  const room=t?.querySelector('[data-conversation-reserved-space]'),content=t?.querySelector('[data-conversation-content]');
-  const key=t?JSON.stringify([t.scrollTop,t.scrollHeight,t.clientHeight,getComputedStyle(t).paddingTop,
-    room?.getBoundingClientRect().height??0,content?.getBoundingClientRect().height??0,
-    t.dataset.conversationPositionOwner??null]):'absent';
-  const met=!until||!!(0,eval)('('+until+')')(arg);
-  const s=window.__settled;
-  s.stable=met&&!busy&&key===s.key?s.stable+1:0;s.key=key;s.busy=busy;s.met=met;
-  return s.stable>=frames;
-}"""
-# Exact end states some steps need before settling.
-_SENT_AT_TOP = "()=>{const t=document.querySelector('[data-conversation-thread]'),n=t&&[...t.querySelectorAll('[data-conversation-outgoing]')].at(-1);return !!n&&Math.abs(n.getBoundingClientRect().top-t.getBoundingClientRect().top-32)<2}"
-_BUBBLE_AT_TOP = "()=>{const n=window.__sentBubble,t=n?.closest('[data-conversation-thread]');return !!t&&Math.abs(n.getBoundingClientRect().top-t.getBoundingClientRect().top-32)<2}"
-_BUBBLE_SAYS = "text=>!!window.__sentBubble?.innerText.includes(text)"
-_THREAD_SAYS = "text=>!!document.querySelector('[data-conversation-thread]')?.textContent.includes(text)"
-_NOT_LATEST = "()=>document.querySelector('[data-conversation-thread]')?.dataset.conversationPositionOwner!=='latest'"
-
-
-def _settle(page, until=None, arg=None, *, label=""):
-    """Wait for the end state a step needs, then for the pane to settle.
-
-    A timeout proceeds to the step's own assertions, which report the state.
-    """
-    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-    page.evaluate("window.__settled={stable:0,key:null}")
-    try:
-        page.wait_for_function(_SETTLED, arg={"frames": _SETTLED_FRAMES, "until": until, "arg": arg}, polling="raf", timeout=5_000)
-    except PlaywrightTimeoutError:
-        print("SETTLE_TIMEOUT", label, until, page.evaluate("window.__settled"), flush=True)
-
-
-def _frames(page, count):
-    page.evaluate("n=>new Promise(resolve=>{const next=k=>k?requestAnimationFrame(()=>next(k-1)):resolve();next(n)})", count)
-
-
-# Native wheel travel is due unless the wheel points past the edge it holds.
-_WHEEL_ARM = r"""delta=>{
-  window.__wheelScroll?.cleanup();
-  const t=document.querySelector('[data-conversation-thread]');
-  const due=delta<0?t.scrollTop>0:t.scrollTop<t.scrollHeight-t.clientHeight-.5;
-  let wheeled=false,ended=false;
-  const wheel=event=>{if(event.isTrusted&&t.contains(event.target))wheeled=true;};
-  const end=event=>{if(event.target===t&&wheeled)ended=true;};
-  document.addEventListener('wheel',wheel,true);t.addEventListener('scrollend',end);
-  window.__wheelScroll={done:()=>wheeled&&(ended||!due),
-    cleanup(){document.removeEventListener('wheel',wheel,true);t.removeEventListener('scrollend',end);}};
-}"""
-
-
 def run_retirement(browser, urls, *, control=""):
     """Trusted input, browser anchoring, and view notifications share the live host.
 
@@ -256,23 +195,17 @@ def run_retirement(browser, urls, *, control=""):
     def remember_anchor():
         page.evaluate("""()=>{const t=document.querySelector('[data-conversation-thread]'),b=t.getBoundingClientRect();window.__retirementAnchor=[...t.querySelectorAll('[data-conversation-view-key], [data-conversation-outgoing]')].find(n=>n.getBoundingClientRect().bottom>b.top+30&&n.getBoundingClientRect().top<b.bottom)??t.querySelector('[data-conversation-outgoing]');}""")
 
-    def wheel(delta, label, settle=True):
+    def wheel(delta, label, wait=220):
         page.evaluate("label=>window.__retirementPhase=label", label)
         page.locator('[data-conversation-thread]').hover()
-        if settle:
-            page.evaluate(_WHEEL_ARM, delta)
         page.mouse.wheel(0, delta)
-        if settle:
-            # Native travel has ended and the pane's response has settled.
-            _settle(page, "()=>window.__wheelScroll.done()", label=label)
-            page.evaluate("window.__wheelScroll.cleanup()")
+        page.wait_for_timeout(wait)
         return sample(label)
 
     def pulse(label):
         before = sample(label + "-before")
         page.evaluate("window.__pulse()")
-        # The notification's reconciliation has run and nothing moves.
-        _settle(page, label=label)
+        page.wait_for_timeout(260)
         after = sample(label + "-after")
         fixed_reading_frames(before, after, label)
         checks.append(("notification cannot snap the manual reader", abs(after['top'] - before['top']) <= 1, before, after))
@@ -288,16 +221,16 @@ def run_retirement(browser, urls, *, control=""):
         page.wait_for_function("n=>window.__sends?.length===n+1 && !!window.__resolveDelivery", arg=count)
         page.evaluate("window.__resolveDelivery()")
         page.locator('[data-conversation-outgoing]').last.wait_for()
-        _settle(page, _SENT_AT_TOP, label="accepted-send-placed")
+        page.wait_for_timeout(380)
         page.evaluate("window.__publishOutcome(window.__sends.at(-1),'prompt')")
-        _settle(page, label="accepted-send-recorded")
+        page.wait_for_timeout(200)
         remember_anchor()
         return sample("accepted-send")
 
     try:
         page.goto(urls[0] + '?lifecycle&running&retirement', wait_until='domcontentloaded')
         page.locator('[data-conversation-entry="complete"]').wait_for()
-        _settle(page, label="opening")
+        page.wait_for_timeout(250)
         page.evaluate(r"""probe=>{
           window.__retirementFrames=[];window.__retirementEvents=[];window.__retirementStop=false;window.__retirementPhase='opening';
           const read=(0,eval)('('+probe+')');
@@ -341,10 +274,10 @@ def run_retirement(browser, urls, *, control=""):
         # Compare a leave/return with exactly the same content and real bottom.
         bottom = sample('before-leave')
         page.evaluate('window.__showConversation(false)')
-        page.locator('[data-conversation-thread]').wait_for(state='detached')
+        page.wait_for_timeout(70)
         page.evaluate('window.__showConversation(true)')
         page.locator('[data-conversation-entry="complete"]').wait_for()
-        _settle(page, label="returned-opening")
+        page.wait_for_timeout(300)
         wheel(1200, 'after-return-bottom')
         returned = sample('returned')
         assert returned['totalTail'] == 0, returned
@@ -377,7 +310,7 @@ def run_retirement(browser, urls, *, control=""):
         remember_anchor()
         held = sample('growth-held')
         page.evaluate("window.__publishAnswer('A short answer begins here.')")
-        _settle(page, _THREAD_SAYS, 'A short answer begins here.', label="growth-before-zero")
+        page.wait_for_timeout(250)
         short = sample('growth-before-zero')
         fixed_reading_frames(held, short, 'reply growth before zero')
         assert abs(short['anchor']['offset'] - held['anchor']['offset']) <= 1, (held, short)
@@ -392,12 +325,12 @@ def run_retirement(browser, urls, *, control=""):
         assert fractional_down['top'] <= held['top'] + 1, (held, fractional_down)
         pulse('fractional-tiny-notification')
         page.evaluate("window.__publishAnswer(Array.from({length:24},(_,i)=>'Answer paragraph '+i+'. The answer extends below the current manual reading line.').join('\\n\\n'))")
-        _settle(page, _THREAD_SAYS, 'Answer paragraph 23.', label="growth-to-zero")
+        page.wait_for_timeout(300)
         long = sample('growth-to-zero')
         fixed_reading_frames(held, long, 'reply growth to zero')
         assert long['totalTail'] == 0 and abs(long['anchor']['offset'] - held['anchor']['offset']) <= 1, (held, long)
         page.evaluate("window.__publishAnswer(Array.from({length:30},(_,i)=>'Answer paragraph '+i+'. The answer extends below the current manual reading line.').join('\\n\\n'))")
-        _settle(page, _THREAD_SAYS, 'Answer paragraph 29.', label="growth-after-zero")
+        page.wait_for_timeout(300)
         after = pulse('growth-after-zero')
         fixed_reading_frames(long, after, 'reply growth after zero')
         assert after['totalTail'] == 0 and abs(after['anchor']['offset'] - held['anchor']['offset']) <= 1, (held, after)
@@ -409,8 +342,7 @@ def run_retirement(browser, urls, *, control=""):
         arrival = sample('genuine-newest-held')
         assert arrival['totalTail'] == 0 and abs(arrival['top'] - arrival['scrollHeight'] + arrival['clientHeight']) <= 2, arrival
         page.evaluate("window.__publishAnswer(Array.from({length:32},(_,i)=>'Answer paragraph '+i+'. The answer extends below the current manual reading line.').join('\\n\\n'))")
-        # Arrival follow has carried the reader to the new bottom and stopped.
-        _settle(page, _THREAD_SAYS, 'Answer paragraph 31.', label="genuine-arrival-follow")
+        page.wait_for_timeout(1000)
         arrival_follow = sample('genuine-arrival-follow')
         assert arrival_follow['top'] > arrival['top'] + 20, (arrival, arrival_follow)
         assert abs(arrival_follow['top'] - arrival_follow['scrollHeight'] + arrival_follow['clientHeight']) <= 3, arrival_follow
@@ -420,7 +352,7 @@ def run_retirement(browser, urls, *, control=""):
         # Explicit Latest owns one move and restores ordinary arrival follow.
         latest_start = sample('latest-motion')
         page.get_by_role('button', name='Jump to latest message').click()
-        _settle(page, _NOT_LATEST, label='latest-arrived')
+        page.wait_for_timeout(500)
         latest = sample('latest-arrived')
         assert latest['totalTail'] == 0 and not latest['latest'], latest
         motion = page.evaluate('(ms)=>window.__retirementFrames.filter(f=>f.ms>=ms)', latest_start['ms'])
@@ -431,8 +363,7 @@ def run_retirement(browser, urls, *, control=""):
         assert max(abs(b['top'] - a['top']) for a, b in zip(motion, motion[1:], strict=False)) < abs(latest['top'] - latest_start['top']) * .45, motion
         assert abs(latest['top'] - (latest['scrollHeight'] - latest['clientHeight'])) <= 2, latest
         page.evaluate("window.__publishAnswer(Array.from({length:34},(_,i)=>'Answer paragraph '+i+'. The answer extends below the current manual reading line.').join('\\n\\n'))")
-        # Arrival follow has carried the reader to the new bottom and stopped.
-        _settle(page, _THREAD_SAYS, 'Answer paragraph 33.', label="latest-follows-arrival")
+        page.wait_for_timeout(1200)
         following = sample('latest-follows-arrival')
         assert following['top'] > latest['top'] + 20, (latest, following)
         assert abs(following['top'] - (following['scrollHeight'] - following['clientHeight'])) <= 3, following
@@ -440,13 +371,13 @@ def run_retirement(browser, urls, *, control=""):
         # Latest also admits real newest history before travel.
         wheel(-180, 'incomplete-manual')
         page.evaluate('window.__setIncomplete()')
-        _settle(page, label='incomplete-notification')
+        page.wait_for_timeout(100)
         assert page.locator('[data-conversation-view-key="incomplete-newest"]').count() == 0
         reads = page.evaluate('window.__pageReads')
         page.get_by_role('button', name='Jump to latest message').click()
         page.wait_for_function('n=>window.__pageReads>n', arg=reads)
+        page.wait_for_timeout(500)
         page.locator('[data-conversation-view-key="incomplete-newest"]').wait_for()
-        _settle(page, _NOT_LATEST, label='incomplete-latest-arrived')
         incomplete = sample('incomplete-latest-arrived')
         assert incomplete['totalTail'] == 0 and not incomplete['latest'], incomplete
         assert abs(incomplete['top'] - (incomplete['scrollHeight'] - incomplete['clientHeight'])) <= 2, incomplete
@@ -456,7 +387,7 @@ def run_retirement(browser, urls, *, control=""):
         residual = wheel(-80, 'latest-residual-manual')
         assert residual['totalTail'] > 0, residual
         page.get_by_role('button', name='Jump to latest message').click()
-        _settle(page, _NOT_LATEST, label='residual-latest-arrived')
+        page.wait_for_timeout(500)
         residual_arrival = sample('residual-latest-arrived')
         residual_motion = frames_between(residual, residual_arrival)
         assert residual_arrival['totalTail'] == 0 and not residual_arrival['latest'], residual_arrival
@@ -504,14 +435,13 @@ def run_retirement(browser, urls, *, control=""):
             assert predecessor['totalTail'] > 0, ('CONTROL_POSITIVE_TAIL', predecessor)
         before = baseline['before']
         samples.append({"label": 'latest-canceled-notification-before', **before})
-        _settle(page, label='latest-canceled-notification')
+        page.wait_for_timeout(260)
         canceled = sample('latest-canceled-notification-after')
         fixed_reading_frames(before, canceled, 'latest-canceled-notification')
         checks.append(("notification cannot snap the manual reader", abs(canceled['top'] - before['top']) <= 1, before, canceled))
         if before['anchor'] and canceled['anchor']:
             checks.append(("notification preserves the reading line", abs(canceled['anchor']['offset'] - before['anchor']['offset']) <= 1, before, canceled))
-        # A canceled Latest that resumed would mark motion and move the reader.
-        _settle(page, label='latest-canceled-settled')
+        page.wait_for_timeout(300)
         after = sample('latest-canceled-settled')
         assert abs(after['top'] - canceled['top']) <= 1, ('BEHAVIOR_WHEEL_CANCELLATION', canceled, after)
         for check in checks:
@@ -549,16 +479,15 @@ def run_retirement(browser, urls, *, control=""):
         page.evaluate('()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
         send_owner = page.locator('[data-conversation-thread]').get_attribute('data-conversation-position-owner')
         page.locator('[data-conversation-outgoing]').last.wait_for()
-        _settle(page, _SENT_AT_TOP, label='superseding-send-placed')
+        page.wait_for_timeout(380)
         page.evaluate("window.__publishOutcome(window.__sends.at(-1),'prompt')")
-        _settle(page, label='superseding-send-recorded')
+        page.wait_for_timeout(200)
         remember_anchor()
         latest_send = sample('accepted-send')
         frame_contract = supersession_frame_contract(acceptance, latest_send, superseding_send_id)
         native_events.append(frame_contract)
         assert abs(latest_send['sentTop'] - 32) < 2 and latest_send['totalTail'] > 100, ('BEHAVIOR_SEND_SUPERSESSION', latest_send)
-        # An old Latest that took the pane back would mark motion and move the send.
-        _settle(page, label='new-send-still-owns')
+        page.wait_for_timeout(300)
         try:
             assert abs(sample('new-send-still-owns')['sentTop'] - 32) < 2
         finally:
@@ -573,7 +502,7 @@ def run_retirement(browser, urls, *, control=""):
 
         # A second trusted gesture and an accepted send supersede queued retirement.
         # No wait between wheel and send lets already-queued observer work overlap.
-        wheel(-50, 'retirement-new-gesture', settle=False)
+        wheel(-50, 'retirement-new-gesture', wait=0)
         replacement = accept('The new send replaces pending retirement work.')
         assert abs(replacement['sentTop'] - 32) < 2 and replacement['totalTail'] > 100, replacement
         pulse('replacement-send-notification')
@@ -582,14 +511,14 @@ def run_retirement(browser, urls, *, control=""):
         # A layout invalidation during manual retirement gets fresh measurements.
         wheel(-90, 'resize-manual')
         page.set_viewport_size({'width': 1100, 'height': 820})
-        _settle(page, label='resized')
+        page.wait_for_timeout(200)
         resized = sample('resized')
         pulse('resize-notification')
         assert sample('resize-settled')['totalTail'] <= resized['totalTail'] + 1
         # Content shrink races retirement remeasurement. Existing layout rules own
         # any unavoidable clamp; retirement must settle once and never regrow.
         page.evaluate("window.__publishAnswer('The answer is now short.')")
-        _settle(page, _THREAD_SAYS, 'The answer is now short.', label='content-shrunk')
+        page.wait_for_timeout(220)
         shrunk = sample('content-shrunk')
         pulse('shrink-notification')
         assert sample('shrink-settled')['totalTail'] <= shrunk['totalTail'] + 1
@@ -850,9 +779,7 @@ def run(browser, urls):
     page.wait_for_function("window.__sends?.length === 4")
     page.evaluate("window.__theServerIsDown(true)")
     page.reload(wait_until="domcontentloaded")
-    # The conversation is mounted and has drawn its restored state.
-    page.locator(INPUT).wait_for()
-    _frames(page, _SETTLED_FRAMES)
+    page.wait_for_timeout(100)
     assert page.get_by_text("in flight when the page went", exact=True).count() == 0
     assert page.locator("[data-conversation-held-stack]").count() == 0
 
@@ -883,7 +810,7 @@ def run(browser, urls):
         case.locator('[data-conversation-entry="complete"]').wait_for()
         if outcome=='accepted':
             case.locator('[data-conversation-lens-choice="full"]').click()
-        _settle(case, label=outcome + '-opening')
+        case.wait_for_timeout(300)
         case.evaluate("outcome => window.__delivery = outcome", outcome)
         case.evaluate("""() => {
           window.__deliveryFrames=[];window.__deliveryStop=false;window.__sentBubble=null;
@@ -903,14 +830,13 @@ def run(browser, urls):
         case.locator(INPUT).fill("Have a look at the bundle and tell me what changed.")
         case.locator(INPUT).press("Enter")
         case.wait_for_function("window.__sends?.length === 1 && !!window.__resolveDelivery")
-        # The send's own render pass has run; an unresolved send draws nothing.
-        _settle(case, label=outcome + '-pending')
+        case.wait_for_timeout(100)
         pending = case.evaluate("({bubbles:document.querySelectorAll('[data-conversation-outgoing]').length,queue:!!document.querySelector('[data-conversation-held-stack]')})")
         assert pending == {"bubbles": 0, "queue": False}, (outcome, pending)
         if outcome == "record-first":
             case.evaluate("window.__publishOutcome(window.__sends[0], 'prompt')")
             case.locator('[data-conversation-outgoing]').wait_for()
-            _settle(case, _SENT_AT_TOP, label=outcome + '-record-placed')
+            case.wait_for_timeout(350)
             case.evaluate("window.__resolveDelivery()")
         else:
             if outcome == 'cancelled':
@@ -920,7 +846,7 @@ def run(browser, urls):
         if outcome == "queued":
             case.locator('[data-conversation-held-stack]').wait_for()
             assert case.locator('[data-conversation-thread] [data-conversation-outgoing]').count() == 0
-            _settle(case, label=outcome + '-queued')
+            case.wait_for_timeout(100)
             frames=case.evaluate('window.__deliveryStop=true;window.__deliveryFrames')
             assert all(row['count'] <= 1 for row in frames), frames
             proof.append({'outcome':outcome,'pending':pending,'frames':frames})
@@ -929,13 +855,10 @@ def run(browser, urls):
         case.locator('[data-conversation-outgoing]').wait_for()
         if outcome == 'cancelled':
             _motion_wheel(case, -160, 'SETUP_ACCEPTED_SEND_WHEEL')
-        # Placement has finished: at the top for a started send, under the
-        # bubble's own words for a send without one, at rest after a gesture.
-        phrase = {"unanswered": "no answer came", "refused": "not delivered", "uncertain": "delivery uncertain"}.get(outcome)
-        _settle(case, _BUBBLE_SAYS if phrase else None if outcome == 'cancelled' else _BUBBLE_AT_TOP, phrase, label=outcome + '-placed')
+        case.wait_for_timeout(450)
         if outcome == "http-first":
             case.evaluate("window.__publishOutcome(window.__sends[0], 'prompt')")
-            _settle(case, label=outcome + '-recorded')
+            case.wait_for_timeout(350)
         settled = case.evaluate("""() => {const n=window.__sentBubble,t=n.closest('[data-conversation-thread]');return {same:n===document.querySelector('[data-conversation-outgoing]'),top:n.getBoundingClientRect().top-t.getBoundingClientRect().top,bottom:t.getBoundingClientRect().bottom-n.getBoundingClientRect().bottom,room:t.querySelector('[data-conversation-reserved-space]')?.getBoundingClientRect().height??0,text:n.innerText};}""")
         frames=case.evaluate('window.__deliveryStop=true;window.__deliveryFrames')
         assert settled["same"] and all(row['same'] and row['count'] <= 1 and not row['queue'] for row in frames), (outcome, settled, frames)
@@ -950,17 +873,14 @@ def run(browser, urls):
             assert all(b['scrollTop'] >= a['scrollTop']-1 for a,b in zip(visible,visible[1:],strict=False)), (outcome, visible)
             # Late browser-owned layout cannot start another animated chase.
             case.evaluate("""()=>{const n=window.__sentBubble;const first=n.closest('[data-conversation-thread]').querySelector('[data-conversation-row]');const image=document.createElement('img');image.style.cssText='display:block;width:1px;height:180px';first.append(image);window.__lateLayout=image;}""")
-            # Layout, resize observation, and its correction have run. Settling
-            # here would let an animated chase finish before this check.
-            _frames(case, 3)
+            case.wait_for_timeout(100)
             gap=case.evaluate("window.__sentBubble.getBoundingClientRect().top-window.__sentBubble.closest('[data-conversation-thread]').getBoundingClientRect().top")
             assert abs(gap-32)<2, (outcome,gap)
             case.evaluate("window.__lateLayout.remove()")
         elif outcome == "cancelled":
             assert abs(settled['top']-32)>20,settled
             after=case.evaluate('window.__sentBubble.getBoundingClientRect().top')
-            # A placement that resumed after the gesture would mark motion and move.
-            _settle(case, label=outcome + '-held')
+            case.wait_for_timeout(300)
             assert abs(case.evaluate('window.__sentBubble.getBoundingClientRect().top')-after)<2
         else:
             assert settled["room"] == 0 and abs(settled["bottom"] - 12) < 2, (outcome, settled)
@@ -972,7 +892,7 @@ def run(browser, urls):
             case.wait_for_function('window.__sends.length===2')
             case.evaluate('window.__resolveDelivery()')
             case.locator('[data-conversation-held-stack]').wait_for()
-            _settle(case, label=outcome + '-retry-queued')
+            case.wait_for_timeout(350)
             retry_frames=case.evaluate('window.__retryQueueStop=true;window.__retryQueueFrames')
             assert all(not row['queue'] or row['thread']==0 for row in retry_frames),retry_frames
             assert case.locator('[data-conversation-thread] [data-conversation-outgoing]').count()==0
@@ -981,42 +901,35 @@ def run(browser, urls):
             case.reload(wait_until="domcontentloaded")
             case.locator('[data-conversation-entry="complete"]').wait_for()
             case.wait_for_function("document.querySelector('[data-conversation-outgoing]')?.innerText.includes('no answer came')")
-            _settle(case, label=outcome + '-reloaded')
+            case.wait_for_timeout(400)
             assert case.locator('[data-conversation-reserved-space]').count() == 0
         if outcome == "accepted":
             case.screenshot(path=str(output / 'accepted-send-held.png'))
             # A late transport timeout exposes actions in the same lifted bubble.
             case.clock.fast_forward(181_000)
             case.wait_for_function("window.__sentBubble.innerText.includes('no answer came')")
-            _settle(case, label=outcome + '-timed-out')
+            case.wait_for_timeout(300)
             assert abs(case.evaluate("window.__sentBubble.getBoundingClientRect().top-window.__sentBubble.closest('[data-conversation-thread]').getBoundingClientRect().top")-32)<2
             case.locator('[data-conversation-held-send-again]').click()
             case.wait_for_function("window.__sends.length===2")
             assert case.evaluate("window.__sentBubble===document.querySelector('[data-conversation-outgoing]')")
             case.evaluate('window.__resolveDelivery()')
-            _settle(case, _BUBBLE_AT_TOP, label=outcome + '-sent-again')
+            case.wait_for_timeout(350)
             case.evaluate("window.__publishOutcome(window.__sends[1], 'prompt')")
             case.wait_for_function("!window.__sentBubble.innerText.includes('no answer came')")
-            _settle(case, _BUBBLE_AT_TOP, label=outcome + '-sent-again-recorded')
+            case.wait_for_timeout(350)
             assert case.evaluate("window.__sentBubble === document.querySelector('[data-conversation-outgoing]')")
             assert abs(case.evaluate("window.__sentBubble.getBoundingClientRect().top-window.__sentBubble.closest('[data-conversation-thread]').getBoundingClientRect().top") - 32) < 2
         if outcome=='accepted':
             case.evaluate("window.__publishStream('The reply starts here.')")
-            _settle(case, "()=>!!document.querySelector('.c2-streaming')?.textContent.includes('The reply starts here.')", label=outcome + '-stream-started')
+            case.wait_for_timeout(300)
             short=case.evaluate("""()=>{const t=document.querySelector('[data-conversation-thread]');return {gap:window.__sentBubble.getBoundingClientRect().top-t.getBoundingClientRect().top,room:t.querySelector('[data-conversation-reserved-space]')?.getBoundingClientRect().height??0};}""")
             assert abs(short['gap']-32)<2 and short['room']>100,short
-            # Record until the whole reply has arrived, its room is spent, and the
-            # pane has stopped moving for the settled frame count (or 10 s pass).
-            crossing=case.evaluate(r"""settled=>new Promise(resolve=>{
+            crossing=case.evaluate(r"""()=>new Promise(resolve=>{
               const t=document.querySelector('[data-conversation-thread]');const start=performance.now(),before=t.scrollHeight,frames=[];
               window.__publishStream('\n\n'+Array.from({length:14},(_,i)=>'Crossing answer room '+i+'. The arriving reply continues over several lines.').join('\n\n'));
-              let stable=0,last=null;
-              const sample=()=>{const stream=t.querySelector('.c2-streaming');frames.push({ms:performance.now()-start,top:t.scrollTop,growth:t.scrollHeight-before,room:t.querySelector('[data-conversation-reserved-space]')?.getBoundingClientRect().height??0,gap:stream?t.getBoundingClientRect().bottom-stream.getBoundingClientRect().bottom:null});
-                const frame=frames.at(-1),key=JSON.stringify([frame.top,frame.growth,frame.room,frame.gap]);
-                const done=!!stream?.textContent.includes('Crossing answer room 13.')&&frame.room===0&&!t.closest('[data-conversation-pane]')?.hasAttribute('data-conversation-motion');
-                stable=done&&key===last?stable+1:0;last=key;
-                if(stable<settled&&performance.now()-start<10000)requestAnimationFrame(sample);else resolve(frames);};sample();
-            })""", _SETTLED_FRAMES)
+              const sample=()=>{const stream=t.querySelector('.c2-streaming');frames.push({ms:performance.now()-start,top:t.scrollTop,growth:t.scrollHeight-before,room:t.querySelector('[data-conversation-reserved-space]')?.getBoundingClientRect().height??0,gap:stream?t.getBoundingClientRect().bottom-stream.getBoundingClientRect().bottom:null});if(performance.now()-start<2600)requestAnimationFrame(sample);else resolve(frames);};sample();
+            })""")
             moving=[b for a,b in zip(crossing,crossing[1:],strict=False) if b['top']-a['top']>.5]
             assert len(moving)>3 and moving[-1]['ms']>300,crossing
             assert crossing[-1]['room']==0 and -2<=crossing[-1]['gap']<=18,crossing[-1]

@@ -39,32 +39,9 @@ def run(browser, urls):
         assert all(node['opacity'] == 1 and node['transform'] == 'none' and not node['animations']
                    for node in frame['ancestors']), frame
 
-    def next_frames():
-        # The fixture answers with promises and dispatches synchronously, without timers.
-        # Two rendered frames let that work, its Svelte flush and its paint finish.
-        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
-
-    def wait_settled(pattern, count):
-        # A request has settled when the fixture's response reached the pane.
-        page.wait_for_function(
-            "([pattern, count]) => window.__settledFetches.filter(url => new RegExp(pattern).test(url)).length >= count",
-            arg=[pattern, count],
-        )
-        next_frames()
-
-    def settled(pattern):
-        return page.evaluate(
-            "pattern => window.__settledFetches.filter(url => new RegExp(pattern).test(url)).length", pattern
-        )
-
     page.goto([__file__, *urls][1], wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")
     page.wait_for_function("window.__navigation?.state.connection === 'subscribed'")
-    page.evaluate("""() => {
-      const fetch = window.fetch;
-      window.__settledFetches = [];
-      window.fetch = (input, init) => fetch(input, init).finally(() => window.__settledFetches.push(String(input)));
-    }""")
     assert page.evaluate("window.__sameNavigation") is True
     assert page.evaluate("window.__navigationSnapshots") == 1
     assert page.evaluate("window.__navigationStreams") == 1
@@ -94,7 +71,7 @@ def run(browser, urls):
     page.evaluate(
         "window.__emitConversationRow('conversation-a', {\n      conversation_id: 'conversation-a',\n      sequence: 9,\n      kind: 'prompt',\n      payload: { text: 'stale A row', sender_label: 'owner', mode: 'queue' },\n      created_at: 9\n    })"
     )
-    next_frames()
+    page.wait_for_timeout(100)
     assert page.get_by_text("stale A row", exact=True).count() == 0
     assert page.evaluate("window.__ownerReads") == []
     assert page.evaluate("window.__navigationSnapshots") == 1
@@ -132,9 +109,8 @@ def run(browser, urls):
     }""")
     assert_ready()
     page.get_by_text("current B reply", exact=True).wait_for()
-    delayed_a_snapshots = settled("conversations/conversation-a$")
     page.evaluate("window.__releaseDelayedASnapshot()")
-    wait_settled("conversations/conversation-a$", delayed_a_snapshots + 1)
+    page.wait_for_timeout(150)
     assert page.get_by_text("current B reply", exact=True).count() == 1
     assert full_choice.get_attribute("aria-pressed") == "true"
     assert page.evaluate("window.__ownerReads") == [
@@ -207,28 +183,26 @@ def run(browser, urls):
     page.wait_for_function("window.__navigationSnapshots === 9")
     page.wait_for_function("window.__readRefreshes === 8")
     page.evaluate("window.__finishRead(11)")
-    # Read 11 refreshes navigation in the same callback that decides its query refresh.
     page.wait_for_function("window.__navigationSnapshots === 10")
-    next_frames()
+    page.wait_for_timeout(100)
     assert page.evaluate("window.__readRefreshes") == 8
     assert page.evaluate("window.__ownerReads.filter(r => r.sequence === 12).length") == 1
     emit_tool(13)
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 13")
-    page.wait_for_function("window.__navigationSnapshots === 11")
-    next_frames()
+    page.wait_for_timeout(100)
     assert page.evaluate("window.__readRefreshes") == 8
+    page.wait_for_function("window.__navigationSnapshots === 11")
     page.evaluate("window.__holdRead(14); window.__holdRead(15)")
     emit_message(14)
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 14")
     emit_tool(15)
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 15")
-    refused_reads = settled("owner-read$")
     page.evaluate("window.__finishRead(14, false)")
-    wait_settled("owner-read$", refused_reads + 1)
+    page.wait_for_timeout(100)
     assert page.evaluate("window.__readRefreshes") == 8
     assert page.evaluate("window.__navigationSnapshots") == 11
     page.evaluate("window.__setAttention(true,true)")
-    next_frames()
+    page.wait_for_timeout(100)
     assert page.evaluate("window.__ownerReads.filter(r => r.sequence === 15).length") == 1
     page.evaluate("window.__finishRead(15)")
     page.wait_for_function("window.__readRefreshes === 9")
@@ -236,9 +210,8 @@ def run(browser, urls):
     page.evaluate("window.__holdRead(16)")
     emit_message(16)
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 16")
-    a_snapshots = settled("conversations/conversation-a$")
     page.evaluate("window.__switchConversation('conversation-a')")
-    wait_settled("conversations/conversation-a$", a_snapshots + 1)
+    page.wait_for_timeout(100)
     page.evaluate("window.__finishRead(16)")
     page.wait_for_function("window.__readRefreshes === 10")
     page.wait_for_function("window.__navigationSnapshots === 13")

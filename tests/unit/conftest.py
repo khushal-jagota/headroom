@@ -9,7 +9,6 @@ from sqlite3 import Connection
 from typing import Never
 
 import pytest
-from tests.support.fresh_schema_template import install_fresh_schema_template
 
 from planner.conversation.backends.contracts import BackendEventSink
 from planner.conversation.contracts import ConversationBackendKey, ResolvedConversationStart
@@ -17,10 +16,6 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.clock import TestClock
 from planner.core.config import Config, load_config
 from planner.core.db import connect, create_schema
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    install_fresh_schema_template()
 
 
 @pytest.fixture

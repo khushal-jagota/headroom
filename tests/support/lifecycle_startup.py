@@ -19,19 +19,12 @@ def assert_lifecycle_startup(root: Path, scratch: Path, *, packaged: bool) -> No
     """Reuse one interpreter for default, relative-socket, and explicit-config proofs."""
     scratch.mkdir()
     python = root / ".venv/bin/python"
-    if not packaged:
-        # The tree's .venv serves every concurrent test process, and each of them would
-        # run a hook placed there. This throwaway environment reads the tree's
-        # site-packages the way that venv's own site startup does, editable install
-        # included, and only it takes the hook.
-        shared_site = _purelib(python)
-        observed = scratch / "observed-venv"
-        subprocess.run([str(python), "-m", "venv", "--without-pip", str(observed)], check=True)
-        python = observed / "bin/python"
-        (_purelib(python) / "panels_lifecycle_dependencies.pth").write_text(
-            f"import site; site.addsitedir({str(shared_site)!r})\n"
-        )
-    site = _purelib(python)
+    site = Path(
+        subprocess.check_output(
+            [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+            text=True,
+        ).strip()
+    )
     descendant = scratch / "descendant"
     subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(descendant)], check=True)
     unrelated = scratch / "unrelated"
@@ -157,15 +150,6 @@ def assert_lifecycle_startup(root: Path, scratch: Path, *, packaged: bool) -> No
                     assert not socket_path.exists()
     finally:
         pth.unlink()
-
-
-def _purelib(python: Path) -> Path:
-    return Path(
-        subprocess.check_output(
-            [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
-            text=True,
-        ).strip()
-    )
 
 
 def _hook_source(observation: Path, descendant: Path) -> str:

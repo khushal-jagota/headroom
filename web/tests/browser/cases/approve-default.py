@@ -17,7 +17,6 @@ def run(browser, urls):
     from pathlib import Path
     from urllib.parse import parse_qs
 
-    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import expect
 
     def worker_manifest(worker_type, label, stages):
@@ -412,13 +411,10 @@ def run(browser, urls):
         page.locator(f'[data-ceiling-picker-choice="{reviewer}"]').click()
 
     def wait_count(items, count):
-        # The route records a write before it fulfills it, so the write's own
-        # finished request is the earliest moment the record can be complete.
-        if len(items) != count:
-            try:
-                page.wait_for_event("requestfinished", lambda _: len(items) == count, timeout=5000)
-            except PlaywrightTimeoutError:
-                pass
+        for _ in range(100):
+            if len(items) == count:
+                return
+            page.wait_for_timeout(20)
         assert len(items) == count, items
 
     expect(block().locator("[data-reviewer-heading]")).to_have_text("Manager")

@@ -480,8 +480,7 @@ async def boot(
     reconnect_interval: float | None = None,
 ) -> ExecutorHarness:
     if reconnect_interval is not None:
-        # Fixtures that reconnect accelerate this timer. The rest keep the shipped
-        # interval, so nothing they prove may wait for it.
+        # Only fixtures with short reconnect deadlines accelerate this timer.
         monkeypatch.setattr(
             "planner.executor.mac_service.RECONNECT_INTERVAL_SECONDS", reconnect_interval
         )
@@ -1311,7 +1310,7 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     from planner.executor.protocol import as_object
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         try:
@@ -1394,19 +1393,13 @@ def test_vps_core_recreation_stops_old_child_before_fresh_send(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
-        # The Mac stays away until the new core exists, as the shipped interval ensured.
-        resume = pause_reconnection(harness, monkeypatch)
         try:
             await asyncio.wait_for(harness.endpoint.close(), 2)
             await harness.native.raise_ask()
-            await harness.restart_vps_core(wait_ready=False)
-            resume.set()
-            await eventually(
-                lambda: harness.endpoint.runs.ready, "VPS core restart did not reconcile"
-            )
+            await harness.restart_vps_core()
             await eventually(lambda: harness.native.stop_count == 1, "old child was not stopped")
             state = harness.system._conversations["c_scripted"]
             await eventually(lambda: not state.child_is_quarantined, "stop proof did not settle")
@@ -1419,7 +1412,6 @@ def test_vps_core_recreation_stops_old_child_before_fresh_send(
             assert isinstance(delivery, PromptDeliveryStarted)
             assert harness.native.start_count == harness.native.prompt_count == 2
         finally:
-            resume.set()
             await harness.close()
 
     asyncio.run(run())
@@ -1635,7 +1627,7 @@ def test_input_transfer_drop_refuses_stale_context_then_explicit_send_delivers_b
     from planner.conversation.message_content import MessageFile, MessageText
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         try:
@@ -1697,7 +1689,7 @@ def test_kill_stalled_initial_input_fences_reconnect_replay(
     from planner.executor.protocol import ChildCommand, ChildOperation
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         entered, cleanup = asyncio.Event(), asyncio.Event()
@@ -1791,7 +1783,7 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
     from planner.conversation.snapshot import BackendSnapshotService
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         try:
@@ -2075,8 +2067,9 @@ def test_input_descriptor_must_validate_before_provider_invocation(
     asyncio.run(run())
 
 
-def pause_reconnection(harness: ExecutorHarness, monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
-    """Hold every later Mac connection attempt until the returned event is set."""
+async def hold_reconnection(
+    harness: ExecutorHarness, monkeypatch: pytest.MonkeyPatch
+) -> asyncio.Event:
     resume = asyncio.Event()
     connected = harness.mac._connected
 
@@ -2085,13 +2078,6 @@ def pause_reconnection(harness: ExecutorHarness, monkeypatch: pytest.MonkeyPatch
         await connected()
 
     monkeypatch.setattr(harness.mac, "_connected", paused)
-    return resume
-
-
-async def hold_reconnection(
-    harness: ExecutorHarness, monkeypatch: pytest.MonkeyPatch
-) -> asyncio.Event:
-    resume = pause_reconnection(harness, monkeypatch)
     assert harness.endpoint.runs.link is not None
     harness.endpoint.runs.link.close()
     await eventually(lambda: not harness.endpoint.runs.ready, "link did not disconnect")
@@ -2136,7 +2122,7 @@ def test_saved_answer_after_vps_restart_remains_unapplied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: AskKind
 ) -> None:
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         resume = None
@@ -2230,7 +2216,7 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: AskKind
 ) -> None:
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        harness = await boot(tmp_path, monkeypatch)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
         resume = None
@@ -2526,7 +2512,7 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
     from planner.executor import catalog_relay
 
     async def run() -> None:
-        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        harness = await boot(tmp_path, monkeypatch)
         try:
             source = harness.mac.catalog.snapshots
             assert isinstance(source, ScriptedBackendSnapshots)
