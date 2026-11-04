@@ -37,6 +37,7 @@ from tests.e2e.harness import (
     JsonObject,
     ServerHandle,
 )
+from tests.support.fresh_schema_template import install_fresh_schema_template
 from tests.support.server_fixtures import (  # noqa: F401 - fixture registration
     _reusable_server,
     api,
@@ -62,6 +63,10 @@ __all__ = [
 
 
 BROWSER_CHECK_FAILED = pytest.StashKey[bool]()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    install_fresh_schema_template()
 
 
 # Capture Linux's browser-cache location during collection, before test setup
