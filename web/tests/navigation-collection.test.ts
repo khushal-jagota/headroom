@@ -4,7 +4,7 @@ import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { encodeCursor } from '../src/lib/navigation/validation';
 import type { Snapshot, TicketRecord } from '../src/lib/navigation/contracts';
 import { railTicketEligible } from '../src/lib/workspaceRail';
-import { currentSnapshot, degradedSnapshot, envelope } from './support/navigation/fixtures';
+import { currentSnapshot, envelope } from './support/navigation/fixtures';
 import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from '../src/lib/navigation/contracts';
 import type { WorkItemTicketFacts } from '../src/lib/workItemPresentation';
 const snapshot = (revision:string, ids:string[]):Snapshot => ({scope:'navigation',schema_version:SCHEMA_VERSION,semantics:SUPPORTED_SEMANTICS,epoch:'a',revision,records:ids.map(id => ({kind:'project',id,value:{name:id}}))});
@@ -89,18 +89,17 @@ describe('TanStack source publication', () => {
 });
 
 describe('atomic knowledge publication metadata',()=>{
-  it('replaces mode and null cursor at the same structural revision without conflating admission tokens',()=>{
+  it('replaces the same structural revision without conflating admission tokens',()=>{
     const adapter=createNavigationCollection();
     const full=currentSnapshot(snapshot('1',['x']));
     const observed:unknown[]=[];
     adapter.subscribe(value=>observed.push([value.mode,value.cursor,value.admissionToken,value.records.map(record=>record.id)]));
     try {
       adapter.publishSnapshot(full,'first');
-      adapter.publishSnapshot(degradedSnapshot(full.snapshot),'degraded');
       adapter.publishSnapshot(full,'recovered');
       expect(observed).toEqual([
-        ['current',full.cursor,'first',['x']],['degraded',null,'degraded',['x']],['current',full.cursor,'recovered',['x']]]);
-      expect(adapter.getPublication()?.publicationId).toBe(3);
+        ['current',full.cursor,'first',['x']],['current',full.cursor,'recovered',['x']]]);
+      expect(adapter.getPublication()?.publicationId).toBe(2);
     } finally {adapter.destroy();}
   });
 });

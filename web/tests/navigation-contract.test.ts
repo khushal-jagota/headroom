@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compareRevision, decodeCursor, encodeCursor, parseSnapshotResponse, parseRevisionBatch, parseBatchEnvelope } from '../src/lib/navigation/validation';
-import { authority, conversation, currentSnapshot, degradedSnapshot, envelope } from './support/navigation/fixtures';
+import { authority, conversation, currentSnapshot, envelope } from './support/navigation/fixtures';
 import { SCHEMA_VERSION, SUPPORTED_SEMANTICS, WIRE_VERSION } from '../src/lib/navigation/contracts';
 const continuity: import('../src/lib/navigation/contracts').Continuity = {scope:'navigation',schema_version:SCHEMA_VERSION,semantics:SUPPORTED_SEMANTICS,epoch:'é',revision:'9007199254740993'};
 describe('canonical browser protocol boundary', () => {
@@ -63,7 +63,7 @@ describe('canonical browser protocol boundary', () => {
 
 
 describe('strict attention authority profiles',()=>{
-  it('rejects missing knowledge, contradictory durable bits, and current facts in degraded snapshots',()=>{
+  it('rejects missing knowledge, contradictory durable bits, and obsolete snapshot modes',()=>{
     const record=conversation();
     const full=currentSnapshot({...continuity,records:[record]});
     expect(full.authority.permit.scope).not.toBe(full.snapshot.scope);
@@ -73,11 +73,7 @@ describe('strict attention authority profiles',()=>{
     expect(()=>parseSnapshotResponse(invalid({current:null,durable:record.value.attention.durable}))).toThrow();
     const current=record.value.attention.current!;
     expect(()=>parseSnapshotResponse(invalid({current,durable:{message_for_owner:false,last_turn_failed:true}}))).toThrow();
-    const degraded=degradedSnapshot(full.snapshot);
-    expect(parseSnapshotResponse(degraded).cursor).toBeNull();
-    expect(()=>parseSnapshotResponse({...degraded,cursor:full.cursor})).toThrow();
-    expect(()=>parseSnapshotResponse({...degraded,proof:{status:'included',reason:null}})).toThrow();
-    expect(()=>parseSnapshotResponse({...degraded,snapshot:full.snapshot})).toThrow();
+    expect(()=>parseSnapshotResponse({...full,mode:'degraded'})).toThrow();
     expect(()=>parseSnapshotResponse({...full,authority:{...full.authority,availability:{state:'unavailable',generation:'1',reason:null}}})).toThrow();
     expect(()=>parseSnapshotResponse({...full,authority:{...full.authority,permit:{...full.authority.permit,generation:'2'}}})).toThrow();
     expect(()=>parseSnapshotResponse({...full,authority:{...full.authority,delivery_session_id:''}})).toThrow();
@@ -85,6 +81,6 @@ describe('strict attention authority profiles',()=>{
     const batch=envelope({...continuity,base_revision:'0',revision:'1',upserts:[record],deletes:[]});
     expect(batch.authority.permit.scope).not.toBe(batch.batch.scope);
     expect(parseBatchEnvelope(batch).batch.upserts).toHaveLength(1);
-    expect(()=>parseBatchEnvelope({...batch,authority:degraded.authority})).toThrow();
+    expect(()=>parseBatchEnvelope({...batch,authority:{...authority(),permit:null}})).toThrow();
   });
 });

@@ -6,7 +6,7 @@ import { createNavigationOwner } from '../src/lib/navigation/owner';
 import { encodeCursor } from '../src/lib/navigation/validation';
 import type { Continuity, Fence, SnapshotResponse, RevisionBatch, BatchEnvelope, CurrentSnapshotResponse } from '../src/lib/navigation/contracts';
 import { NavigationRequestError, type NavigationStreamHandlers, type NavigationTransport } from '../src/lib/navigation/transport';
-import { continuity, currentSnapshot, degradedSnapshot, envelope, authority, conversation } from './support/navigation/fixtures';
+import { continuity, currentSnapshot, envelope, authority, conversation } from './support/navigation/fixtures';
 function snapshot(revision = '0', epoch = 'e1', proof: SnapshotResponse['proof'] = null): CurrentSnapshotResponse {
   const value = {...continuity, revision, epoch};
   return {...currentSnapshot({...value,records:[{kind:'project',id:'p',value:{name:`name-${revision}`}}]}),proof};
@@ -244,7 +244,7 @@ describe('real accepted provider transaction',()=>{
 });
 
 describe('attention availability and independent durable knowledge', () => {
-  it('replaces same-cursor current/degraded views atomically and retains the message when runtime authority is lost',async()=>{
+  it('retains the message during reconnect and replaces the same-cursor view atomically',async()=>{
     const f=fixture();
     const full={...snapshot(),snapshot:{...snapshot().snapshot,records:[conversation()]}};
     f.setResponse(full);
@@ -257,16 +257,6 @@ describe('attention availability and independent durable knowledge', () => {
       expect(f.owner.getState().effective?.conversations.get('c')?.working).toEqual({state:'unknown'});
       expect(f.owner.getState().effective?.conversations.get('c')?.message_for_owner).toMatchObject({state:'retained',value:true,provenance:{conversationId:'c',publicationId:first.publicationId}});
       await recovery;
-      f.setResponse(degradedSnapshot(full.snapshot));
-      await f.owner.recover();
-      const degraded=f.owner.getState().publication!;
-      expect(degraded.cursor).toBeNull();
-      expect(degraded.continuity).toEqual(first.continuity);
-      expect(degraded.publicationId).toBeGreaterThan(first.publicationId);
-      expect(f.owner.getState().effective?.conversations.get('c')?.message_for_owner).toMatchObject({state:'fresh',value:true});
-      expect(f.owner.getState().effective?.conversations.get('c')?.working).toEqual({state:'unknown'});
-      expect(f.cursors).toHaveLength(2);
-      expect(await f.owner.waitForVisibility(fence('0'),{requiredObservers:[]})).toMatchObject({status:'unknown'});
       f.setResponse(full);
       await f.owner.recover();
       expect(f.owner.getState().publication?.cursor).toBe(first.cursor);
@@ -333,7 +323,7 @@ describe('attention availability and independent durable knowledge', () => {
       next={...snapshot(),authority:authority('workspace','0','replacement')};
       await owner.recover();
       const accepted=owner.getState().publication;
-      release(degradedSnapshot(snapshot().snapshot,'99','delivery'));
+      release({...snapshot(),authority:authority('workspace','99','delivery')});
       await expect(obsolete).rejects.toThrow('obsolete');
       expect(owner.getState().publication).toBe(accepted);
       next=snapshot();
