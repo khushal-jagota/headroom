@@ -1493,6 +1493,12 @@ def accept_proposal(
             manager_id=ticket.manager_id,
         )
         updated = _apply_decision(conn, ticket, decision, now)
+        from planner.attention.history import record_approval
+
+        record_approval(
+            conn, ticket_id=ticket_id, field=field, principal=principal,
+            method=TicketApprovalMethod.explicit_accept.value, now=now,
+        )
         _give_back_worker_step_claim(conn, updated, now=now)
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -1695,6 +1701,10 @@ def delete_ticket_records(
                 conn, str(row["blocked_ticket_id"]), now, capture_attention=capture_attention
             )
 
+    # Deletion bypasses notification capture. End its interval before its identity goes.
+    from planner.attention.history import capture_gate
+
+    capture_gate(conn, ticket_id=ticket_id, active=False, now=now)
     conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
     for table in ("notification_attention_edges", "notification_attention_state"):
         conn.execute(

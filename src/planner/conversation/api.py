@@ -621,6 +621,7 @@ async def send_into_conversation(
                 conversation_id,
                 content,
                 sender_label=body.sender_label,
+                sender=ctx.principal,
                 mode=body.mode,
                 model_change=body.model_change,
                 reasoning_effort_change=body.reasoning_effort_change,
