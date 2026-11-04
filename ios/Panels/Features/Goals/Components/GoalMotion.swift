@@ -45,17 +45,10 @@ private struct GoalDigit: View {
             .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.12), .init(color: .black, location: 0.88), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
             .clipped().contentShape(Rectangle())
         .task(id: digit) {
-            var transaction = Transaction(); transaction.disablesAnimations = true
-            let old = Int(position.rounded()) % 10
-            guard old != digit else { return }
-            withTransaction(transaction) { position = Double(old + 10) }
-            var destination = digit + 10
-            if increasing, digit < old { destination += 10 }
-            if !increasing, digit > old { destination -= 10 }
-            withAnimation(PanelsTheme.Goal.smooth) { position = Double(destination) }
-            try? await Task.sleep(for: .seconds(PanelsTheme.Goal.smoothDuration))
-            guard !Task.isCancelled else { return }
-            withTransaction(transaction) { position = Double(digit + 10) }
+            let old = (Int(position.rounded()) % 10 + 10) % 10
+            let delta = increasing ? (digit - old + 10) % 10 : -((old - digit + 10) % 10)
+            guard delta != 0 else { return }
+            withAnimation(PanelsTheme.Goal.smooth) { position += Double(delta) }
         }
     }
 }
@@ -69,14 +62,14 @@ private struct GoalDigitWindow: View, @MainActor Animatable {
     var body: some View {
         Canvas { context, bounds in
             let height = size * 1.18
-            for index in 0..<30 {
+            for index in (Int(floor(position)) - 1)...(Int(ceil(position)) + 1) {
                 let y = (Double(index) - position + 0.5) * height
                 let offset = abs(Double(index) - position)
                 guard offset < 1 else { continue }
                 var glyph = context
                 glyph.opacity = 1 - offset
                 if offset > 0.02 { glyph.addFilter(.blur(radius: offset * 2)) }
-                glyph.draw(Text(String(index % 10)).font(.system(size: size, weight: .medium)).monospacedDigit().foregroundStyle(PanelsTheme.strong), at: CGPoint(x: bounds.width / 2, y: y))
+                glyph.draw(Text(String((index % 10 + 10) % 10)).font(.system(size: size, weight: .medium)).monospacedDigit().foregroundStyle(PanelsTheme.strong), at: CGPoint(x: bounds.width / 2, y: y))
             }
         }
     }
