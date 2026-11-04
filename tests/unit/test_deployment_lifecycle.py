@@ -35,7 +35,9 @@ def test_last_step_persists_without_renewal_or_expiry(tmp_path: Path) -> None:
     assert store.project(PRIOR_SHA).state == "preparing"
     store.transition("deploy", "restarting")
     clock.value += timedelta(days=2)
-    assert store.read().lifecycle.phase == "restarting"
+    lifecycle = store.read().lifecycle
+    assert lifecycle is not None
+    assert lifecycle.phase == "restarting"
     assert store.project(PRIOR_SHA).state == "restarting"
     assert "expires_at" not in json.loads(store.path.read_text())
     assert not store.path.with_suffix(".json.lock").exists()

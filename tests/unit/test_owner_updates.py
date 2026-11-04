@@ -559,7 +559,9 @@ def test_runner_failure_records_failure_without_reopening_terminal_requests(
 
     monkeypatch.setattr(update_runner, "apply", refuse)
     assert update_runner.main() == 1
-    assert store.read().state == ("failed" if state == "installing" else state)
+    request = store.read()
+    assert request is not None
+    assert request.state == ("failed" if state == "installing" else state)
 
 
 def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
