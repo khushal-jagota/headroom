@@ -114,11 +114,10 @@ def test_actual_domain_callback_invalidates_threaded_snapshot_across_recovery(
         value: ViewRequest,
         availability: SignalAvailability,
         access: DeliveryAccess,
-        fence: object,
         inventory: tuple[str, ...],
         config: ViewConfig,
-    ) -> tuple[Continuity, ViewContent, Any]:
-        result = original(parent, value, availability, access, fence, inventory, config)
+    ) -> tuple[Continuity, ViewContent]:
+        result = original(parent, value, availability, access, inventory, config)
         pinned.set()
         assert release.wait(3), "snapshot worker was not released"
         return result
