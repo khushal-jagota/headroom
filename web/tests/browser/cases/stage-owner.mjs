@@ -14,14 +14,11 @@ const index = join(scratchRoot, `${stem}.html`);
   await writeFile(host, `<script lang="ts">
 import { QueryClientProvider } from '@tanstack/svelte-query';
 import ConfigRoute from '../src/routes/ConfigRoute.svelte';
-import CreateTicket from '../src/components/CreateTicket.svelte';
-const creation = new URLSearchParams(location.search).has('create');
-let open = $state(true);
 // The app's own client, because a write's invalidation goes through that one instance.
 import { queryClient } from '../src/lib/queryClient';
 </script>
 <QueryClientProvider client={queryClient}>
-  {#if creation}{#if open}<CreateTicket onClose={() => open = false} />{/if}{:else}<ConfigRoute roleKind="worker" roleId="coding" />{/if}
+  <ConfigRoute roleKind="worker" roleId="coding" />
 </QueryClientProvider>`);
   await writeFile(main, `import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
   await writeFile(index, `<html><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
