@@ -6,7 +6,7 @@ import copy
 import json
 import sqlite3
 from dataclasses import asdict, replace
-from datetime import date, datetime
+from datetime import date
 from typing import Any, cast, get_type_hints
 
 from planner.core import authority
@@ -14,6 +14,7 @@ from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.datasets.data import read_dataset
 from planner.goals import data
+from planner.goals.calendar import server_date
 from planner.goals.contracts import GOAL_REQUIRED_TEXT, ChartBlock, Goal, GoalWriteFields
 from planner.goals.logic.categories import validate_category_references
 from planner.goals.logic.completion import completion_date_after_edit, prepare_completion
@@ -138,7 +139,7 @@ def _accepted(
             raise ValueError("completion follows the goal's completion_rule")
     else:
         result = replace(result, completion_date=completion_date_after_edit(
-            current, result, today=datetime.fromtimestamp(now).astimezone().date().isoformat(),
+            current, result, today=server_date(now),
             creating=creating,
         ))
     return result

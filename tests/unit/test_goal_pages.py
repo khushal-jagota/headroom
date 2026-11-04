@@ -21,6 +21,7 @@ from planner.core.clock import RealClock
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, PlannerError, Principal, PrincipalKind
 from planner.goals import actions, category_reads, data, views
+from planner.goals import calendar as goal_calendar
 from planner.goals.contracts import (
     ChartBlock,
     ChecklistBlock,
@@ -248,7 +249,7 @@ def test_goal_calendar_uses_process_tz_before_localtime_fallback(
 
         return SimpleNamespace(open=open_localtime)
 
-    monkeypatch.setattr(views, "Path", localtime_path)
+    monkeypatch.setattr(goal_calendar, "Path", localtime_path)
     monkeypatch.setenv("TZ", ":Pacific/Honolulu")
     configured = views.calendar_now(clock)
     assert configured.isoformat() == "2026-03-28T14:30:00-10:00"

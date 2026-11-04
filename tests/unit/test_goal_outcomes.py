@@ -13,8 +13,10 @@ from tests.unit.test_goal_pages import create, numeric_rule
 from tests.unit.test_measure_persistence import NOW
 from tests.unit.test_navigation_goal_completion import navigation_goal
 
+from planner.core.clock import RealClock
 from planner.core.contracts import OWNER_PRINCIPAL, PlannerError
 from planner.goals import actions, data, views
+from planner.goals.calendar import server_calendar, server_date
 from planner.goals.contracts import ChecklistBlock, Goal
 from planner.goals.logic.completion import goal_completed
 from planner.goals.logic.outcomes import goal_outcome, outcome_summary
@@ -160,3 +162,30 @@ def test_navigation_projects_automatic_completion_date_without_binary_flag(
         conn.commit()
         assert navigation_goal(conn, goal.id)["completed"]
         assert not data.read_goal(conn, goal.id).binary_checked
+
+
+def test_completion_date_uses_server_calendar_at_midnight(
+    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Changing TZ must not depend on a global tzset that races other threads.
+    monkeypatch.setenv("TZ", ":America/Los_Angeles")
+    instant = datetime(2026, 10, 28, 1, 30, tzinfo=UTC)
+    now = int(instant.timestamp())
+    goal = actions.create_goal(
+        tmp_db,
+        {
+            "project_id": "project_vylo",
+            "title": "Calendar boundary",
+            "kind": "binary",
+            "primary_checklist_block_id": None,
+            "completed": True,
+            "deadline": "2026-10-27",
+        },
+        principal=OWNER_PRINCIPAL,
+        now=now,
+    )
+    assert server_date(now) == goal.completion_date == "2026-10-27"
+    assert server_calendar(instant).date().isoformat() == "2026-10-27"
+    monkeypatch.setattr(RealClock, "now", lambda self: instant)
+    detail = views.goal_json(tmp_db, goal, views.calendar_now(RealClock()))
+    assert detail["outcome"] == "hit" and detail["status_date"] == "2026-10-27"
