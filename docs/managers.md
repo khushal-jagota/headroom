@@ -44,7 +44,7 @@ Khushal and Chief set the default backend, model, and reasoning for new Managers
 
 ## Where it shows up
 
-The Workspace shows Chief first, then active Managers with their Tickets grouped by the attention they need, then the Settled fold. A Manager page has its header, recap, conversation, and children. `panels manager` reaches the same records.
+The Workspace shows Chief first, then active Managers with their Tickets grouped by the attention they need, then the Settled fold. A Manager page has its header, recap, conversation, and children. When a Manager or Chief page opens, its children list shows a placeholder until its own data arrives, then draws once. `panels manager` reaches the same records.
 
 ## Decisions that shape it
 

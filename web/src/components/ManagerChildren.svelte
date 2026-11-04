@@ -1,10 +1,8 @@
 <script lang="ts">
   import type { ManagerPrincipal, ManagerChildFilter } from "../lib/types";
-  import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import ManagerChildrenSection from "./ManagerChildrenSection.svelte";
-  let { principal, tickets, publication, onHover = undefined, onLeave = () => undefined }: {
+  let { principal, publication, onHover = undefined, onLeave = () => undefined }: {
     principal: ManagerPrincipal;
-    tickets?: readonly (WorkItemTicketFacts & {is_backlogged:boolean})[];
     publication?: import("../lib/navigation/collection").NavigationPublication;
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave?: () => void;
@@ -16,7 +14,7 @@
 <section class="manager-children" aria-label="Workers" data-manager-children={scope}>
   {#key scope}
     {#each sections as filter}
-      <ManagerChildrenSection {principal} {tickets} {publication} {filter} {onHover} {onLeave} />
+      <ManagerChildrenSection {principal} {publication} {filter} {onHover} {onLeave} />
     {/each}
   {/key}
 </section>

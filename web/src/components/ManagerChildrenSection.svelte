@@ -4,11 +4,11 @@
   import { managerChildrenImpact } from "../lib/workspaceNavigationImpact";
   import { childrenSectionDomMatches } from "../lib/managerSectionDom";
   import { railPreview } from "../lib/workspaceRailInteraction";
-  import { chiefChildrenPage, filterManagerChildren } from "../lib/managerChildren";
   import { managerPageGroups } from "../lib/managerPage";
   import { WORK_ITEM_TICKET_GROUPS, workItemTicketOrder, type WorkItemTicketFacts } from "../lib/workItemPresentation";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import type { ManagerPrincipal, ManagerChildFilter } from "../lib/types";
+  import type { ViewWindow } from "../lib/navigation/contracts";
   import Disclosure from "./Disclosure.svelte";
   import { navigationScrollWindow } from "../lib/navigation/views/scrollWindow";
   import NavigationWindowPages from "./NavigationWindowPages.svelte";
@@ -17,37 +17,46 @@
   import ResourceState from "./ResourceState.svelte";
   import WorkerRow from "./WorkerRow.svelte";
 
-  let { principal, tickets, publication, filter, onHover, onLeave }: {
+  let { principal, publication, filter, onHover, onLeave }: {
     principal: ManagerPrincipal;
-    tickets?: readonly (WorkItemTicketFacts & {is_backlogged:boolean})[];
     publication?: import("../lib/navigation/collection").NavigationPublication;
     filter: ManagerChildFilter;
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave: () => void;
   } = $props();
-  let offset = $state(0);
   let groupOpen = $state<Record<string, boolean>>({});
   let root = $state<HTMLElement | null>(null);
   const navigation = navigationApplication();
   let effective = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | undefined>(undefined);
   $effect(() => { const view = navigation?.selectors.effective; if (view) effective = view; });
   let shared = $derived(effective && navigation ? navigation.presentationFor(effective) : undefined);
-  let parentKey = $derived(principal.kind === "chief" ? "chief:chief" : `manager:${principal.id}`);
-  let sharedPage = $derived(shared ? chiefChildrenPage(shared.ticketsByParent.get(parentKey) ?? [], filter, offset) : undefined);
   let scopeOwner=$derived({kind:principal.kind==='chief'?'chief' as const:'manager' as const,id:principal.id});
   let scopedWindow=$derived(navigationWindow(shared,'children',scopeOwner,filter));
-  let scopedGroups=$derived(principal.kind!=='chief' && filter==='active' && scopedWindow!==undefined);
+  let scopedGroups=$derived(principal.kind!=='chief' && filter==='active');
   let groupPages=$state<Record<string,{anchor:string|null;direction:'before'|'after'}>>({});
   const activeDefinitions=WORK_ITEM_TICKET_GROUPS.filter(group=>group.key!=='awaiting_reply');
-  let ordinaryGroups=$derived(activeDefinitions.flatMap(definition=>{
-    const window=navigationWindow(shared,'children',scopeOwner,'active',definition.key);
+  const windowRows=(window:ViewWindow)=>window.members.flatMap(key=>{const row=shared?.ticketsById.get(key.id);return row?[row]:[];});
+  // A count arrives before its rows: a group asks for rows only once it knows it has some.
+  // An open group with a count and no rows yet is unanswered.
+  const answered=(window:ViewWindow,open:boolean)=>!open || window.total===0 || window.request.limit>0;
+  let groupWindows=$derived(scopedGroups ? activeDefinitions.map(definition=>({definition,window:navigationWindow(shared,'children',scopeOwner,'active',definition.key)})) : []);
+  let ordinaryGroups=$derived(groupWindows.flatMap(({definition,window})=>{
     if(!window?.total)return [];
-    return [{...definition,count:window.total,window,tickets:window.members.flatMap(key=>{const row=shared?.ticketsById.get(key.id);return row?[row]:[];})}];
+    return [{...definition,count:window.total,window,tickets:windowRows(window)}];
   }));
-  let rows = $derived(scopedGroups?ordinaryGroups.flatMap(group=>group.tickets):scopedWindow ? scopedWindow.members.flatMap(key=>{const row=shared?.ticketsById.get(key.id);return row?[row]:[];}) : tickets === undefined ? sharedPage?.tickets ?? [] : filterManagerChildren(tickets, filter));
-  let page = $derived(scopedWindow ? undefined : tickets === undefined ? sharedPage?.page : undefined);
+  let rows = $derived(scopedGroups?ordinaryGroups.flatMap(group=>group.tickets):scopedWindow ? windowRows(scopedWindow) : []);
   let groups = $derived(scopedGroups?ordinaryGroups:filter === "active" ? managerPageGroups<WorkItemTicketFacts>(rows).map(group=>({...group,count:group.tickets.length,window:undefined})) : []);
   let sectionOpen = $state(false);
+  // The section first draws when its own windows have all answered. It never draws from
+  // rows that another surface happened to load.
+  let settled = $derived(scopedWindow!==undefined && (scopedGroups
+    ? groupWindows.every(({definition,window})=>window!==undefined && answered(window,groupOpen[definition.key]??true))
+    : answered(scopedWindow,filter==='active' || sectionOpen)));
+  // Grouped sections hold that first draw. Other sections ask for every row up front,
+  // so they wait for their window whenever the reader opens them.
+  let drawn = $state(false);
+  $effect(() => { if (settled) drawn = true; });
+  let ready = $derived(scopedGroups ? drawn : settled);
   let anchor=$state<string|null>(null);
   let direction=$state<'before'|'after'>('after');
   const demand=`children:${crypto.randomUUID()}`;
@@ -68,14 +77,8 @@
     return managerChildrenImpact(impact,principal,view && navigation ? navigation.presentationFor(view) : undefined,rows,observedGroups,observedOpen);
   });
   onDestroy(() => { if (observer) navigation?.disposeRenderBoundary(observer); });
-  let count = $derived(scopedWindow?.total ?? page?.match_count ?? rows.length);
+  let count = $derived(scopedWindow?.total);
   let label = $derived(filter === "backlogged" ? "Backlogged" : "Done");
-  $effect(() => {
-    // A membership change can empty the last page. Return to the last remaining page.
-    if (page && page.return_count === 0 && page.offset > 0) {
-      offset = Math.max(0, Math.floor((page.match_count - 1) / page.limit) * page.limit);
-    }
-  });
   $effect.pre(() => {
     groups;
     // Native toggle events are queued. Capture the DOM before a refresh removes a group.
@@ -88,17 +91,17 @@
   });
   $effect(() => {
     const view = effective, element = root, generation = navigation?.state.generation;
-    const expectedRows = rows, expectedGroups = groups, expectedPage = page;
+    const expectedRows = rows, expectedGroups = groups;
     const expectedFilter = filter, expectedPrincipal = principal;
     const expectedOpen = {...groupOpen}, expectedSectionOpen = sectionOpen;
     const expectedCount = count;
-    if (!navigation || !observer || !view?.runtimeCurrent || !element || generation === undefined
-      || navigation.selectors.effective !== view || (tickets !== undefined && publication !== view.publication)) return;
+    if (!navigation || !observer || !view?.runtimeCurrent || !element || generation === undefined || !ready || expectedCount === undefined
+      || navigation.selectors.effective !== view || (publication !== undefined && publication !== view.publication)) return;
     const observation = observer.observeSelectors(view.publication,generation);
     let obsolete = false;
     void tick().then(() => {
       if (obsolete || !element.isConnected || navigation.state.generation !== generation || navigation.selectors.effective !== view) return;
-      if (childrenSectionDomMatches(element,expectedPrincipal,expectedFilter,expectedRows,expectedGroups,expectedPage,expectedOpen,expectedSectionOpen,expectedCount,scopedWindow,principal.kind!=='chief'))
+      if (childrenSectionDomMatches(element,expectedPrincipal,expectedFilter,expectedRows,expectedGroups,expectedOpen,expectedSectionOpen,expectedCount,scopedWindow,principal.kind!=='chief'))
         observer.acknowledgeRender(view.publication,observation);
     });
     return () => { obsolete = true; };
@@ -120,8 +123,7 @@
     </div>
   {/snippet}
   {#snippet contents()}
-    <ResourceState shape="rows" loading={tickets === undefined && !shared}
-      hasData={tickets !== undefined || shared !== undefined} loadingText={`Loading ${filter === "active" ? "Workers" : label}…`}>
+    <ResourceState shape="rows" loading={!ready} hasData={ready} loadingText={`Loading ${filter === "active" ? "Workers" : label}…`}>
       {#if filter === "active"}
         {#each groups as group (group.key)}
           <div use:navigationScrollWindow={{window:(groupOpen[group.key]??true)?group.window:undefined,activate:()=>navigation?.owner.prioritizeWindow(group.window?.request),selector:'[data-worker-ticket-id]',key:node=>node.dataset.workerTicketId ?? '',move:(next,nextDirection)=>{groupPages[group.key]={anchor:next,direction:nextDirection};}}}>
@@ -141,12 +143,6 @@
       {#if (scopedGroups?count:rows.length) === 0}<div class="manager-workspace-empty">No {filter === "active" ? "active Workers" : label === "Done" ? "completed Workers" : "backlogged Workers"}</div>{/if}
       {#if scopedWindow && principal.kind==='chief'}
         <NavigationWindowPages window={scopedWindow} label={filter==='active'?'Active Workers':label} onPage={(next,nextDirection)=>{anchor=next;direction=nextDirection;}} />
-      {:else if page && (page.omitted_before > 0 || page.omitted_after > 0)}
-        <nav class="child-pages" aria-label={`${filter === "active" ? "Active" : label} Worker pages`}>
-          <button type="button" disabled={page.omitted_before === 0} onclick={() => offset = Math.max(0, page!.offset - page!.limit)}>Previous</button>
-          <span>{page.return_count ? page.omitted_before + 1 : 0}–{page.omitted_before + page.return_count} of {page.match_count}</span>
-          <button type="button" disabled={page.next_offset === null} onclick={() => offset = page!.next_offset ?? offset}>Next</button>
-        </nav>
       {/if}
     </ResourceState>
   {/snippet}
@@ -157,7 +153,7 @@
       defaultOpen={false} onReaderToggle={(open) => sectionOpen = open} chevron="none">
       {#snippet summary()}
         <span class="manager-workspace-status-label">{label}</span>
-        <span class="manager-workspace-count" data-group-count>{count}</span>
+        <span class="manager-workspace-count" data-group-count>{count ?? ""}</span>
       {/snippet}
       {#if sectionOpen}{@render contents()}{/if}
     </Disclosure>
