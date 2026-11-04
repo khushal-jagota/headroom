@@ -99,7 +99,7 @@
       if (restoreFocus) void tick().then(() => {
         let target: HTMLElement | null = null;
         if (focusedScreen === "review") {
-          target = Array.from(document.querySelectorAll<HTMLElement>('[data-screen="review"]')).find(element => element.getClientRects().length > 0) ?? null;
+          target = Array.from(document.querySelectorAll<HTMLElement>('a[data-screen="review"]')).find(element => element.getClientRects().length > 0) ?? null;
         } else if (!compact && focusedScreen === "workspace") {
           target = document.querySelector<HTMLElement>('.workspace-rail [aria-current="page"]')
             ?? document.querySelector<HTMLElement>(".workspace-rail [data-chief-destination]");
