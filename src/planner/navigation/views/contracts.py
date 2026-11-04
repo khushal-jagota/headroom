@@ -20,7 +20,7 @@ from planner.navigation.contracts import (
     RecordKey,
     TicketValue,
 )
-from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuthority
+from planner.navigation.delivery_contracts import CurrentAuthority
 from planner.navigation.proof_contracts import ProofResult
 
 VIEW_WIRE_VERSION = 3
@@ -182,7 +182,7 @@ class ViewWindow(TypedDict):
 
 
 class ViewCounts(TypedDict):
-    running_conversations: int | None
+    running_conversations: int
     out_claims: int
     review: int
     unread: int
@@ -220,15 +220,7 @@ class CurrentViewSnapshot(ViewIdentity):
     proof: ProofResult | None
 
 
-class DegradedViewSnapshot(ViewIdentity):
-    event: Literal["snapshot"]
-    mode: Literal["degraded"]
-    authority: DegradedAuthority
-    content: ViewContent
-    proof: None
-
-
-type ViewSnapshot = CurrentViewSnapshot | DegradedViewSnapshot
+type ViewSnapshot = CurrentViewSnapshot
 
 
 class ViewPatch(ViewIdentity):

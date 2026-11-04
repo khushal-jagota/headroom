@@ -1,5 +1,5 @@
 import { wireDescriptors, SCHEMA_VERSION, SUPPORTED_SEMANTICS, WIRE_VERSION } from './contracts';
-import type { SnapshotResponse, RevisionBatch, Fence, Cursor, Continuity, Reset, BatchEnvelope, CurrentAuthority, DegradedAuthority, NavigationRecord } from './contracts';
+import type { SnapshotResponse, RevisionBatch, Fence, Cursor, Continuity, Reset, BatchEnvelope, CurrentAuthority, NavigationRecord } from './contracts';
 
 export class NavigationProtocolError extends Error {}
 type Descriptor = {ref?: string; primitive?: string; literal?: unknown[]; array?: Descriptor; union?: Descriptor[]; object?: Record<string, Descriptor>};
@@ -76,7 +76,7 @@ export function assertCursorMatches(cursor: string, value: Continuity): void {
   const decoded = decodeCursor(cursor);
   for (const key of ['scope','schema_version','semantics','epoch','revision'] as const) if (decoded[key] !== value[key]) throw new NavigationProtocolError('Cursor mismatch');
 }
-export function sameAuthority(left: CurrentAuthority | DegradedAuthority, right: CurrentAuthority | DegradedAuthority): boolean {
+export function sameAuthority(left: CurrentAuthority, right: CurrentAuthority): boolean {
   return left.delivery_session_id === right.delivery_session_id
     && left.availability.state === right.availability.state
     && left.availability.generation === right.availability.generation
@@ -85,7 +85,7 @@ export function sameAuthority(left: CurrentAuthority | DegradedAuthority, right:
       && left.permit.scope === right.permit.scope && left.permit.runtime_epoch === right.permit.runtime_epoch
       && left.permit.installation_id === right.permit.installation_id && left.permit.generation === right.permit.generation);
 }
-export function authority(value: CurrentAuthority | DegradedAuthority): void {
+export function authority(value: CurrentAuthority): void {
   if (!value.delivery_session_id) throw new NavigationProtocolError('Empty delivery session');
   parseRevision(value.availability.generation);
   if (value.permit !== null) {
@@ -107,7 +107,7 @@ function attentionProfile(records: NavigationRecord[], mode: SnapshotResponse['m
         || knowledge.current.last_turn_failed !== knowledge.durable.last_turn_failed) {
         throw new NavigationProtocolError('Incomplete or contradictory current attention');
       }
-    } else if (knowledge.current !== null) throw new NavigationProtocolError('Runtime attention in degraded view');
+    }
   }
 }
 export function parseSnapshotResponse(raw: unknown): SnapshotResponse {

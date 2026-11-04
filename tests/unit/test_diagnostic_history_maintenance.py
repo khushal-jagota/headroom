@@ -22,7 +22,7 @@ from planner.conversation.retention.policy import RETENTION_SECONDS
 from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.conversation.views.storage import read_page
 from planner.core import db
-from planner.core.db import bind_transaction_admission, connect, create_schema
+from planner.core.db import connect, create_schema
 from planner.maintenance import diagnostic_history as maintenance
 from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
 
@@ -164,11 +164,10 @@ def test_stale_protection_fact_and_actor_refuse_before_delete(
     with pytest.raises(RuntimeError, match="requires the owner"):
         maintenance.apply_report(archive, report, confirmed=True)
     monkeypatch.delenv("PLAN_ACTOR")
-    with maintenance._exclusive_database(archive) as (conn, bootstrap):
-        with bind_transaction_admission(conn, bootstrap):
-            conn.execute("BEGIN")
-            conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id='ticket'")
-            conn.commit()
+    with maintenance._exclusive_database(archive) as conn:
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id='ticket'")
+        conn.commit()
     with pytest.raises(RuntimeError, match="stale"):
         maintenance.apply_report(archive, report, confirmed=True)
     assert rows(archive, "conversation_events") == before
@@ -188,7 +187,7 @@ def test_database_runtime_owner_and_sqlite_reader_block_apply(archive: Path) -> 
 
 
 def test_exclusive_sqlite_lock_survives_commit_and_compaction(archive: Path) -> None:
-    with maintenance._exclusive_database(archive) as (conn, _bootstrap):
+    with maintenance._exclusive_database(archive) as conn:
         for operation in (lambda: None, lambda: conn.execute("VACUUM")):
             operation()
             with closing(sqlite3.connect(archive, timeout=0)) as competitor:
@@ -269,19 +268,18 @@ def test_actual_migration_and_explicit_install_converge_preserving_ranges(
 
 @pytest.mark.parametrize("drift", ["table", "trigger"])
 def test_metadata_schema_drift_refuses_before_deletion(archive: Path, drift: str) -> None:
-    with maintenance._exclusive_database(archive) as (conn, bootstrap):
-        with bind_transaction_admission(conn, bootstrap):
-            conn.execute("BEGIN")
-            if drift == "table":
-                conn.execute("DROP TABLE conversation_expired_ranges")
-                conn.execute("CREATE TABLE conversation_expired_ranges (wrong TEXT)")
-            else:
-                maintenance.install_expiry_metadata(conn)
-                conn.execute(
-                    "CREATE TRIGGER unexpected_omission_side_effect AFTER INSERT "
-                    "ON conversation_expired_ranges BEGIN DELETE FROM tickets; END"
-                )
-            conn.commit()
+    with maintenance._exclusive_database(archive) as conn:
+        conn.execute("BEGIN")
+        if drift == "table":
+            conn.execute("DROP TABLE conversation_expired_ranges")
+            conn.execute("CREATE TABLE conversation_expired_ranges (wrong TEXT)")
+        else:
+            maintenance.install_expiry_metadata(conn)
+            conn.execute(
+                "CREATE TRIGGER unexpected_omission_side_effect AFTER INSERT "
+                "ON conversation_expired_ranges BEGIN DELETE FROM tickets; END"
+            )
+        conn.commit()
     report = read_report(archive, as_of_unix=AS_OF)
     before = rows(archive, "conversation_events")
     protected_tickets = rows(archive, "tickets")
@@ -361,74 +359,73 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
     from planner.core.server import handle_planner_error
 
     # Reuse the private archive and guarded offline writer; no provider is running.
-    with maintenance._exclusive_database(archive) as (conn, bootstrap):
-        with bind_transaction_admission(conn, bootstrap):
-            conn.execute("BEGIN")
-            conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id='ticket'")
-            conn.execute(
-                "INSERT INTO projects(id,name,created_at,updated_at) VALUES ('p','Archive',1,1)"
-            )
-            conn.execute(
-                "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
-                "created_at,updated_at,settled) VALUES ('item','Settled','p','codex','test',1,1,1)"
-            )
-            conn.execute(
-                "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,"
-                "identity_environment_variables,latest_sequence,created_at) "
-                "VALUES ('supervisor','codex','/tmp','full',?,200,1)",
-                (
-                    json.dumps(
-                        [["PLAN_ACTOR", "sprint_item_supervisor"], ["PLAN_SPRINT_ITEM_ID", "item"]]
-                    ),
+    with maintenance._exclusive_database(archive) as conn:
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id='ticket'")
+        conn.execute(
+            "INSERT INTO projects(id,name,created_at,updated_at) VALUES ('p','Archive',1,1)"
+        )
+        conn.execute(
+            "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
+            "created_at,updated_at,settled) VALUES ('item','Settled','p','codex','test',1,1,1)"
+        )
+        conn.execute(
+            "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,"
+            "identity_environment_variables,latest_sequence,created_at) "
+            "VALUES ('supervisor','codex','/tmp','full',?,200,1)",
+            (
+                json.dumps(
+                    [["PLAN_ACTOR", "sprint_item_supervisor"], ["PLAN_SPRINT_ITEM_ID", "item"]]
                 ),
+            ),
+        )
+        controls = []
+        for turn in range(40):
+            base = turn * 5
+            controls += [base + 1, base + 5]
+            events = (
+                (
+                    "prompt",
+                    {
+                        "text": f"Owner turn {turn}",
+                        "sender_label": "owner",
+                        "mode": "queue",
+                        "sender_message_id": f"message-{turn}",
+                    },
+                ),
+                (
+                    "tool_call_started",
+                    {
+                        "tool_call_id": f"tool-{turn}",
+                        "title": "Inspect",
+                        "tool_kind": "exec",
+                        "detail": "inspect",
+                    },
+                ),
+                (
+                    "tool_call_finished",
+                    {
+                        "tool_call_id": f"tool-{turn}",
+                        "tool_call_status": "completed",
+                        "detail": "output",
+                    },
+                ),
+                ("agent_message", {"text": f"Diagnostic {turn}"}),
+                ("turn_ended", {"ending": "completed", "error_summary": None}),
             )
-            controls = []
-            for turn in range(40):
-                base = turn * 5
-                controls += [base + 1, base + 5]
-                events = (
-                    (
-                        "prompt",
-                        {
-                            "text": f"Owner turn {turn}",
-                            "sender_label": "owner",
-                            "mode": "queue",
-                            "sender_message_id": f"message-{turn}",
-                        },
-                    ),
-                    (
-                        "tool_call_started",
-                        {
-                            "tool_call_id": f"tool-{turn}",
-                            "title": "Inspect",
-                            "tool_kind": "exec",
-                            "detail": "inspect",
-                        },
-                    ),
-                    (
-                        "tool_call_finished",
-                        {
-                            "tool_call_id": f"tool-{turn}",
-                            "tool_call_status": "completed",
-                            "detail": "output",
-                        },
-                    ),
-                    ("agent_message", {"text": f"Diagnostic {turn}"}),
-                    ("turn_ended", {"ending": "completed", "error_summary": None}),
+            for offset, (kind, payload) in enumerate(events, 1):
+                conn.execute(
+                    "INSERT INTO conversation_events VALUES ('supervisor',?,?,?,?)",
+                    (base + offset, kind, json.dumps(payload), base + offset),
                 )
-                for offset, (kind, payload) in enumerate(events, 1):
-                    conn.execute(
-                        "INSERT INTO conversation_events VALUES ('supervisor',?,?,?,?)",
-                        (base + offset, kind, json.dumps(payload), base + offset),
-                    )
-            maintenance.rebuild_projection(conn, "supervisor")
-            source_row = _row_record(conn, "supervisor", 97)
-            tool_reference = _body_reference(
-                source_row,
-                encode_wire(_body(conn, "supervisor", source_row, full_tool_detail=True)).encode(),
-                detail=True,
-            )
-            conn.commit()
+        maintenance.rebuild_projection(conn, "supervisor")
+        source_row = _row_record(conn, "supervisor", 97)
+        tool_reference = _body_reference(
+            source_row,
+            encode_wire(_body(conn, "supervisor", source_row, full_tool_detail=True)).encode(),
+            detail=True,
+        )
+        conn.commit()
     report = read_report(archive, as_of_unix=AS_OF)
     held = next(item for item in report.decisions if item.conversation_id == "history")
     assert held.hold_reasons == ("unfinished_ticket",) and held.candidates == ()

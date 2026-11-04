@@ -15,10 +15,10 @@ The Ticket current-stage section admits private detail only when its public iden
 The Ticket masthead joins the assigned Manager's Project when a parent exists. Otherwise it uses the Ticket's own Project. Its title, type, and exact current conversation mark remain separate from the detail object that authorizes actions and supplies bodies. A retained header after deletion cannot acknowledge a current publication. The shell reports navigation health. Independent detail or content errors keep their own existing error lines.
 
 The scoped owner carries client health separately from its mechanical connection state.
-A degraded snapshot preserves the server's availability and reason through the existing retry sequence.
+A failed stream or snapshot uses the existing retry sequence.
 A transport or protocol failure reports reconnecting. Only accepted current data for the demanded scope clears the warning.
 Current frames from an older active scope cannot clear a warning for its pending replacement.
-Obsolete callbacks cannot update health. Rejected authority cannot supply a degraded reason or restore healthy status.
+Obsolete callbacks cannot update health or restore healthy status.
 Generation changes, runtime knowledge loss, and retry timing retain their existing rules.
 The application passes this health to both shell status mounts, alongside deployment and update messages.
 
@@ -41,7 +41,7 @@ It includes only the requested conversation identities and follows existing reco
 
 The existing Review field `runningConversationCount` delegates to this API. The exact unfiltered Worker out-claim sum remains separate. The API adds no display or placement. A pending collection handoff retains the last coherent display without dropping local proposal edits. Explicit authority loss still suppresses runtime knowledge.
 
-Snapshots have current or degraded mode. A current response contains complete attention, an exact authority profile, and a replay cursor. A degraded response contains coherent durable attention only, with a null cursor and proof. Every batch carries the same complete authority profile as its accepted current snapshot. Producer permit scope and navigation cursor scope are independent namespaces. Authority checks precede duplicate suppression.
+Snapshots contain complete current attention, an exact authority profile, and a replay cursor. Every batch carries the same complete authority profile as its accepted current snapshot. Producer permit scope and navigation cursor scope are independent namespaces. Authority checks precede duplicate suppression.
 
 Collection records and publication metadata enter one TanStack transaction. Metadata includes mode, authority, nullable cursor, and a local admission token. That token identifies pending publication independently of cursor equality. `selectors.effective` exposes the shared fresh, retained, or unknown conversation facts with exact publication and read-boundary provenance. Unknown has no Boolean value. An observed loss suppresses runtime knowledge synchronously before an admitted collection transaction drains. A late old commit cannot restore runtime knowledge.
 
@@ -63,7 +63,7 @@ Use `application.runCommand(impact, request, label)` for commands. Pass the call
 
 Visibility returns `included`, `no_op`, or `unknown`. `included` proves committed history, not that a later action did not replace its value. `no_op` requires server certification. An unknown result never authorizes a command resend. A timeout, removed observer, or disposal releases the wait conservatively.
 
-Connection state stays internal. `subscribed` means that the owner created a stream, not that the server acknowledged a live connection. The owner retains the last complete view during recovery. It closes transport and stops new admission immediately. The local generation and runtime gate change before an already admitted library transaction drains. Obsolete requests cannot enter a new source transaction. Recovery requires a complete current snapshot before a new stream starts. Degraded snapshots retry through the existing recovery schedule and never resume a stream or certify command visibility.
+Connection state stays internal. `subscribed` means that the owner created a stream, not that the server acknowledged a live connection. The owner retains the last complete view during recovery. It closes transport and stops new admission immediately. The local generation and runtime gate change before an already admitted library transaction drains. Obsolete requests cannot enter a new source transaction. Recovery requires a complete current snapshot before a new stream starts. Failed requests retry through the existing recovery schedule.
 
 An atomic local publication number distinguishes identical replacement snapshots. It does not advance the server revision. This identity lets live selectors observe a new certified snapshot even when its facts match the previous view.
 

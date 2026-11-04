@@ -24,8 +24,6 @@ from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.publication import persistence
 from planner.conversation.publication.coordinator import (
-    SignalGuardLease,
-    SignalInitializationAdmission,
     SignalPublicationCoordinator,
 )
 from planner.conversation.snapshot import BackendSnapshotService
@@ -33,14 +31,11 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.db import (
     ChangeSignallingConnection,
-    bind_transaction_admission,
     connect,
     create_schema,
     transaction_control_guard,
-    transaction_savepoint_depth,
 )
 from planner.core.read_connections import ReadConnections
-from planner.core.transaction_guards import GuardRegistration, register_transaction_guard
 from planner.credentials.requests import data as credential_request_data
 
 
@@ -50,29 +45,8 @@ def _managed(connection: sqlite3.Connection) -> ChangeSignallingConnection:
     return connection
 
 
-def bind_admission(connection: sqlite3.Connection, token: object) -> AbstractContextManager[None]:
-    return bind_transaction_admission(_managed(connection), token)
-
-
 def transaction_control(connection: sqlite3.Connection) -> AbstractContextManager[None]:
     return transaction_control_guard(_managed(connection))
-
-
-def savepoint_depth(connection: sqlite3.Connection) -> int:
-    return transaction_savepoint_depth(_managed(connection))
-
-
-class _SignalTransactionGuard:
-    """Refresh functions on idle connections from before this producer generation."""
-
-    def __init__(self, source: SignalPublicationCoordinator) -> None:
-        self.source = source
-
-    def enter(
-        self, connection: sqlite3.Connection, admission: object | None, /
-    ) -> SignalGuardLease:
-        self.source.attach_connection(connection)
-        return self.source.enter(connection, admission)
 
 
 class SignalRuntimeComposition:
@@ -87,8 +61,6 @@ class SignalRuntimeComposition:
         self.busy_timeout_ms = busy_timeout_ms
         self.ownership: IO[bytes] | None = None
         self.coordinator: SignalPublicationCoordinator
-        self.initialization: SignalInitializationAdmission
-        self._guard: GuardRegistration | None = None
         self._modules: database_modules.SignalRegistration | None = None
         self._transferred = False
         self._closed = False
@@ -110,31 +82,25 @@ class SignalRuntimeComposition:
                 self.ownership,
                 connect=self.connect,
                 authority_check=validate_runtime_ownership,
-                savepoint_depth=savepoint_depth,
                 transaction_control=transaction_control,
-                bind_admission=bind_admission,
             )
             self._modules = database_modules.register_signal_publication(
                 self.db_path, self.coordinator
             )
-            self._guard = register_transaction_guard(
-                self.db_path, _SignalTransactionGuard(self.coordinator)
-            )
-            with self.coordinator.bootstrap_authority(self.ownership) as bootstrap:
-                with closing(self.connect()) as connection:
-                    create_schema(
-                        connection, migration_admission=bootstrap, startup_audit=startup_audit
-                    )
-                    with bind_admission(connection, bootstrap):
-                        connection.execute("BEGIN IMMEDIATE")
-                        try:
-                            persistence.create_schema(connection)
-                            persistence.install_source_triggers(connection)
-                            connection.commit()
-                        except BaseException:
-                            connection.rollback()
-                            raise
-                self.initialization = self.coordinator.begin_initialization(bootstrap)
+            with closing(self.connect()) as connection:
+                # Old admission functions no longer exist. Remove their triggers
+                # before migrations and startup audit writes reach source tables.
+                persistence.remove_source_triggers(connection)
+                connection.commit()
+                create_schema(connection, startup_audit=startup_audit)
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    persistence.create_schema(connection)
+                    persistence.install_source_triggers(connection)
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
         except BaseException:
             self.close()
             raise
@@ -146,8 +112,7 @@ class SignalRuntimeComposition:
 
     def initialize(self) -> None:
         with closing(self.connect()) as connection:
-            with bind_admission(connection, self.initialization):
-                connection.execute("BEGIN IMMEDIATE")
+            connection.execute("BEGIN IMMEDIATE")
             try:
                 self.coordinator.initialize(connection)
                 connection.commit()
@@ -160,8 +125,6 @@ class SignalRuntimeComposition:
             return
         # A refused drain must retain module hooks and ownership. Releasing either
         # could expose an active transaction to a successor without its participant.
-        if self._guard is not None:
-            self._guard.close()
         if self._modules is not None:
             self._modules.close()
         if self.ownership is not None and not self._transferred:
@@ -228,10 +191,6 @@ def build_conversation_runtime(
         event_participant=credential_request_data.observe_events,
         startup_participant=credential_request_data.reconcile_deliveries,
         signal_coordinator=None if signal_composition is None else signal_composition.coordinator,
-        bind_signal_admission=None if signal_composition is None else bind_admission,
-        runtime_reconciliation_admission=(
-            None if signal_composition is None else signal_composition.initialization
-        ),
         transaction_control_guard=None if signal_composition is None else transaction_control,
     )
     live_tail = ConversationLiveTail(

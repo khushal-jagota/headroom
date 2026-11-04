@@ -10,17 +10,16 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from planner.conversation.contracts import SignalAvailability, SignalUnavailable
+from planner.conversation.contracts import SignalUnavailable
 from planner.core import change_signal
 from planner.core.sse import register_open_stream_closer
-from planner.navigation.contracts import Continuity, DurableSignal
+from planner.navigation.contracts import Continuity
 from planner.navigation.delivery import (
     DeliveryRuntime,
     _read_connection,
-    _require_current_knowledge,
 )
 from planner.navigation.delivery_authority import DeliveryAccess, DeliveryUnavailable
-from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuthority
+from planner.navigation.delivery_contracts import CurrentAuthority
 from planner.navigation.proof import certify
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.contracts import (
@@ -46,61 +45,18 @@ class Subscription:
     coverage: Continuity | None = None
 
 
-def _content_ids(content: ViewContent) -> tuple[str, ...]:
-    return tuple(sorted(row["id"] for row in content["records"] if row["kind"] == "conversation"))
-
-
-def _candidate(
-    parent: DeliveryRuntime, value: ViewRequest, current: bool, config: ViewConfig
-) -> tuple[str, ...]:
-    with contextlib.closing(_read_connection(parent.path)) as conn:
-        conn.execute("BEGIN")
-        return _content_ids(read_content(conn, value, current=current, config=config)[1])
-
-
 def _snapshot(
     parent: DeliveryRuntime,
     value: ViewRequest,
-    availability: SignalAvailability,
     access: DeliveryAccess,
     fence: object,
-    inventory: tuple[str, ...],
     config: ViewConfig,
 ) -> tuple[Continuity, ViewContent, Any]:
     with contextlib.closing(_read_connection(parent.path)) as conn:
         conn.execute("BEGIN")
-        # FIRST source read occurs under the producer gate, before SQL establishes its snapshot.
-        observations = parent._require_source().read_durable_signal_knowledge(
-            conn, inventory, availability.generation
-        )
         parent.admission.validate_snapshot(conn, access)
-        coverage, content = read_content(
-            conn, value, current=availability.state == "current", config=config
-        )
-        if inventory != _content_ids(content) or len(observations) != len(inventory):
-            raise DeliveryUnavailable("scoped conversation inventory changed")
-        facts = {item.conversation_id: item for item in observations}
-        if set(facts) != set(inventory):
-            raise DeliveryUnavailable("scoped durable coverage is incomplete")
-        for row in content["records"]:
-            if row["kind"] != "conversation":
-                continue
-            observation = facts[row["id"]]
-            if observation.availability != availability or observation.durable is None:
-                raise DeliveryUnavailable("scoped durable profile changed")
-            durable: DurableSignal = {
-                "message_for_owner": observation.durable.message_for_owner,
-                "last_turn_failed": observation.durable.last_turn_failed,
-            }
-            if any(type(bit) is not bool for bit in durable.values()):
-                raise DeliveryUnavailable("durable facts require exact booleans")
-            if availability.state == "current":
-                _require_current_knowledge(row["value"]["attention"], durable)
-            else:
-                row["value"]["attention"] = {"current": None, "durable": durable}
-        proof = (
-            certify(conn, fence) if fence is not None and availability.state == "current" else None
-        )
+        coverage, content = read_content(conn, value, config=config)
+        proof = certify(conn, fence) if fence is not None else None
         return coverage, content, proof
 
 
@@ -216,51 +172,20 @@ class ScopedDeliveryRuntime:
             except TimeoutError:
                 pass
 
-    async def capture(
-        self,
-    ) -> tuple[SignalAvailability, DeliveryAccess, CurrentAuthority | DegradedAuthority]:
-        def read() -> tuple[
-            SignalAvailability, DeliveryAccess, CurrentAuthority | DegradedAuthority
-        ]:
-            access: DeliveryAccess
-            available = self.parent._availability()
-            if available.state == "current":
-                access, authority = self.parent.current_read()
-                return available, access, authority
-            access = self.parent.admission.capture_degraded(
-                lambda: self.parent._validate_profile(available)
-            )
-            return (
-                available,
-                access,
-                {
-                    "delivery_session_id": self.parent.delivery_session_id,
-                    "availability": {
-                        "state": available.state,
-                        "generation": str(available.generation),
-                        "reason": available.reason,
-                    },
-                    "permit": None,
-                },
-            )
-
-        return await asyncio.to_thread(read)
+    async def capture(self) -> tuple[DeliveryAccess, CurrentAuthority]:
+        return await asyncio.to_thread(self.parent.current_read)
 
     async def snapshot(
         self,
         value: ViewRequest,
         fence: object = None,
         *,
-        captured: tuple[SignalAvailability, DeliveryAccess, CurrentAuthority | DegradedAuthority]
-        | None = None,
+        captured: tuple[DeliveryAccess, CurrentAuthority] | None = None,
     ) -> tuple[ViewSnapshot, DeliveryAccess]:
-        available, access, authority = captured or await self.capture()
+        access, authority = captured or await self.capture()
         try:
-            inventory = await asyncio.to_thread(
-                _candidate, self.parent, value, available.state == "current", self.config
-            )
             coverage, content, proof = await asyncio.to_thread(
-                _snapshot, self.parent, value, available, access, fence, inventory, self.config
+                _snapshot, self.parent, value, access, fence, self.config
             )
             await asyncio.to_thread(self.parent.admission.validate, access)
         except (
@@ -281,7 +206,7 @@ class ScopedDeliveryRuntime:
             "ordering_generation": ORDERING_GENERATION,
             "coverage": coverage,
             "content_version": await asyncio.to_thread(digest, content),
-            "mode": "current" if available.state == "current" else "degraded",
+            "mode": "current",
             "authority": authority,
             "content": content,
             "proof": proof,
@@ -291,7 +216,7 @@ class ScopedDeliveryRuntime:
     async def stream(
         self,
         value: ViewRequest,
-        captured: tuple[SignalAvailability, DeliveryAccess, CurrentAuthority | DegradedAuthority],
+        captured: tuple[DeliveryAccess, CurrentAuthority],
     ) -> AsyncIterator[bytes]:
         subscription = Subscription(
             set(),
@@ -312,14 +237,12 @@ class ScopedDeliveryRuntime:
             loop.call_soon_threadsafe(closed.set)
 
         forget_close = register_open_stream_closer(close)
-        forget_authority = self.parent.admission.watch(closed, captured[1])
+        forget_authority = self.parent.admission.watch(closed, captured[0])
         try:
             previous, _ = await self.snapshot(value, captured=captured)
             subscription.keys = {(row["kind"], row["id"]) for row in previous["content"]["records"]}
             subscription.reading = False
             yield await asyncio.to_thread(encode_frame, previous)
-            if previous["mode"] != "current":
-                return
             while not self._closed and not closed.is_set():
                 if subscription.event.is_set():
                     subscription.event.clear()
@@ -329,7 +252,7 @@ class ScopedDeliveryRuntime:
                     if reset:
                         return
                     if target and int(target["revision"]) > int(previous["coverage"]["revision"]):
-                        await asyncio.to_thread(self.parent.admission.validate, captured[1])
+                        await asyncio.to_thread(self.parent.admission.validate, captured[0])
                         if dirty:
                             subscription.reading = True
                             current, _ = await self.snapshot(value, captured=captured)

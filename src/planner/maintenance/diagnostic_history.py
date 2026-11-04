@@ -10,25 +10,15 @@ from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 from typing import cast
 
-from planner import database_modules
 from planner.conversation.lifecycle_storage import (
     acquire_runtime_ownership,
-    validate_runtime_ownership,
-)
-from planner.conversation.publication.coordinator import (
-    SignalGuardLease,
-    SignalPublicationCoordinator,
 )
 from planner.conversation.retention.contracts import ApplyResult, ReclaimResult, RetentionReport
 from planner.conversation.views.contracts import VIEW_PROJECTION_VERSION
 from planner.core.db import (
     ChangeSignallingConnection,
-    bind_transaction_admission,
     connect,
-    transaction_control_guard,
-    transaction_savepoint_depth,
 )
-from planner.core.transaction_guards import register_transaction_guard
 
 
 def require_owner() -> None:
@@ -43,17 +33,6 @@ def _managed(conn: sqlite3.Connection) -> ChangeSignallingConnection:
     if not isinstance(conn, ChangeSignallingConnection):
         raise TypeError("Diagnostic maintenance requires the core connection")
     return conn
-
-
-class _OfflineGuard:
-    def __init__(self, coordinator: SignalPublicationCoordinator) -> None:
-        self.coordinator = coordinator
-
-    def enter(
-        self, connection: sqlite3.Connection, admission: object | None, /
-    ) -> SignalGuardLease:
-        self.coordinator.attach_connection(connection)
-        return self.coordinator.enter(connection, admission)
 
 
 def _require_no_backend_activity(
@@ -124,7 +103,7 @@ def _require_no_backend_activity(
 @contextmanager
 def _exclusive_database(
     database: Path, *, private_copy: bool = False
-) -> Iterator[tuple[ChangeSignallingConnection, object]]:
+) -> Iterator[ChangeSignallingConnection]:
     """Caller holds the port lifecycle lease. Keep database ownership through VACUUM."""
     database = database.resolve(strict=True)
     if private_copy:
@@ -132,33 +111,17 @@ def _exclusive_database(
     if database.stat().st_uid != os.geteuid():
         raise RuntimeError("Diagnostic maintenance requires the database file owner")
     with ExitStack() as stack:
-        ownership = stack.enter_context(closing(acquire_runtime_ownership(str(database))))
+        stack.enter_context(closing(acquire_runtime_ownership(str(database))))
         _require_no_backend_activity(database, private_copy=private_copy)
-        coordinator = SignalPublicationCoordinator(
-            str(database),
-            ownership,
-            authority_check=validate_runtime_ownership,
-            savepoint_depth=lambda connection: transaction_savepoint_depth(_managed(connection)),
-            transaction_control=lambda connection: transaction_control_guard(_managed(connection)),
-            bind_admission=lambda connection, token: bind_transaction_admission(
-                _managed(connection), token
-            ),
-        )
-        registration = database_modules.register_signal_publication(str(database), coordinator)
-        stack.callback(registration.close)
-        guard = register_transaction_guard(str(database), _OfflineGuard(coordinator))
-        stack.callback(guard.close)
         conn = cast(
             ChangeSignallingConnection, stack.enter_context(closing(connect(str(database), 1000)))
         )
-        bootstrap = stack.enter_context(coordinator.bootstrap_authority(ownership))
         conn.execute("PRAGMA locking_mode=EXCLUSIVE")
-        with bind_transaction_admission(conn, bootstrap):
-            conn.execute("BEGIN EXCLUSIVE")
-            # Force the WAL exclusive lock before source revalidation.
-            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
-            conn.commit()
-        yield conn, bootstrap
+        conn.execute("BEGIN EXCLUSIVE")
+        # Force the WAL exclusive lock before source revalidation.
+        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        conn.commit()
+        yield conn
 
 
 def _validate_projection_schema(conn: sqlite3.Connection) -> None:
@@ -214,10 +177,10 @@ def install_expiry_metadata(conn: sqlite3.Connection) -> None:
 def prepare_private_copy(database: Path) -> None:
     """Prepare omission storage on an explicitly marked private measurement copy."""
     _require_private_copy(database)
-    with _exclusive_database(database, private_copy=True) as (conn, bootstrap):
+    with _exclusive_database(database, private_copy=True) as conn:
         _validate_projection_schema(conn)
-        with bind_transaction_admission(conn, bootstrap):
-            conn.execute("BEGIN EXCLUSIVE")
+        conn.execute("BEGIN EXCLUSIVE")
+        with conn:
             try:
                 install_expiry_metadata(conn)
                 conn.commit()
@@ -295,9 +258,9 @@ def _apply_report(
         raise RuntimeError("Report time is in the future; nothing expired")
     from planner.conversation.retention.data import build_report
 
-    with _exclusive_database(database, private_copy=private_copy) as (conn, bootstrap):
-        with bind_transaction_admission(conn, bootstrap):
-            conn.execute("BEGIN EXCLUSIVE")
+    with _exclusive_database(database, private_copy=private_copy) as conn:
+        conn.execute("BEGIN EXCLUSIVE")
+        with conn:
             try:
                 current = build_report(
                     conn,
@@ -376,7 +339,7 @@ def _reclaim_database(
     if not confirmed:
         raise RuntimeError("Explicit confirmation is required")
     database = database.resolve(strict=True)
-    with _exclusive_database(database, private_copy=private_copy) as (conn, _bootstrap):
+    with _exclusive_database(database, private_copy=private_copy) as conn:
         before = database.stat()
         logical = _logical_digest(conn)
         for row in conn.execute("PRAGMA wal_checkpoint(TRUNCATE)"):

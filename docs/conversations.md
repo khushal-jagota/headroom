@@ -27,6 +27,14 @@ Live streaming text is shown while a turn runs and is not stored as notebook pro
 
 A message to the owner is a notebook row for Khushal. It does not invoke the backend. Editing a Ticket field, parking a proposal, or updating a recap in the database does not inform the Worker. Those become agent context only when a later prompt carries them.
 
+## Live status dots
+
+Database triggers mark changed conversations and capture changes to their Ticket or agent links. Before an application save commits, Headroom recalculates those statuses. After the commit, the existing stream sends the changes to the browser.
+
+The triggers do not require a special save gate. A plain SQLite connection can edit the source records. These edits leave change marks for the next application save. A direct SQLite edit does not emit the application's process-local change signal.
+
+At server startup, Headroom recalculates every status from the conversation records and current runtime state. This replaces stale values after a crash or an external edit. Ordinary SQLite transactions and rollback remain. There are no save-operation records, uncertain-save repair steps, or unavailable status mode.
+
 ## One process, three backends
 
 The backends are a closed set: `hermes`, `codex`, and `claude`. One door turns an untrusted name into a member of that set or refuses it. While work is running, the conversation has one child process. After a server restart, nothing is running until the next send. After about half an hour idle, the process stops. The next send starts it again. If the backend cannot restore the session’s memory, the send refuses out loud. Headroom does not put a fresh brain behind an old transcript.

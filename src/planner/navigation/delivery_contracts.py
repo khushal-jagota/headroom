@@ -30,12 +30,6 @@ class CurrentAvailability(TypedDict):
     reason: None
 
 
-class NoncurrentAvailability(TypedDict):
-    state: Literal["initializing", "unavailable"]
-    generation: str
-    reason: str | None
-
-
 class SignalPermit(TypedDict):
     scope: str
     runtime_epoch: str
@@ -49,12 +43,6 @@ class CurrentAuthority(TypedDict):
     permit: SignalPermit
 
 
-class DegradedAuthority(TypedDict):
-    delivery_session_id: str
-    availability: NoncurrentAvailability
-    permit: None
-
-
 class CurrentSnapshotResponse(TypedDict):
     wire_version: Literal[2]
     mode: Literal["current"]
@@ -64,16 +52,7 @@ class CurrentSnapshotResponse(TypedDict):
     proof: ProofResult | None
 
 
-class DegradedSnapshotResponse(TypedDict):
-    wire_version: Literal[2]
-    mode: Literal["degraded"]
-    authority: DegradedAuthority
-    cursor: None
-    snapshot: Snapshot
-    proof: None
-
-
-type SnapshotResponse = CurrentSnapshotResponse | DegradedSnapshotResponse
+type SnapshotResponse = CurrentSnapshotResponse
 
 
 class BatchEnvelope(TypedDict):

@@ -15,9 +15,8 @@ from typing import Any
 import pytest
 
 from planner.conversation.contracts import SignalAttachment
-from planner.conversation.publication import PlainFieldMutation, SignalRuntimeMutation
 from planner.conversation.publication.reader import read_durable_facts
-from planner.conversation.runtime_composition import SignalRuntimeComposition, bind_admission
+from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.navigation import journal, snapshot
 from planner.navigation.signal_publication import install, participate
 
@@ -51,24 +50,14 @@ class Host:
             participate=participate,
             unavailable=lambda invalidation: None,
         )
-        self.composition.coordinator.admit_runtime()
 
     def mutation(self, turn: Turn | None, operation: str) -> sqlite3.Connection:
         conn = self.connect()
-        coordinator = self.composition.coordinator
-        admission = coordinator.prepare_mutation(
-            conn,
-            SignalRuntimeMutation(
-                "c",
-                coordinator.runtime_epoch,
-                self.runtime.running_turn,
-                (PlainFieldMutation(self.runtime, "running_turn", turn),),
-            ),
-            operation_id=operation,
-        )
-        with bind_admission(conn, admission):
-            conn.execute("BEGIN IMMEDIATE")
-        coordinator.apply_mutation(conn, admission)
+        conn.execute("BEGIN IMMEDIATE")
+        self.runtime.running_turn = turn
+        from planner.conversation.publication.persistence import mark_changed
+
+        mark_changed(conn, "c")
         return conn
 
 
@@ -82,8 +71,7 @@ def prepared(tmp_path: Path) -> Iterator[Host]:
     )
     conn = composition.connect()
     try:
-        with bind_admission(conn, composition.initialization):
-            conn.execute("BEGIN IMMEDIATE")
+        conn.execute("BEGIN IMMEDIATE")
         conn.executemany(
             "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,"
             "created_at) "

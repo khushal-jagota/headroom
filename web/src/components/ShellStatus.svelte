@@ -187,7 +187,7 @@
   aria-hidden={statusKey === null ? "true" : undefined} style={motionStyle}>
   <div role="status" aria-live="polite" inert={closing ? true : undefined}>
     {#if displayedWord}
-      <div class="status-card" class:owner-update-only={displayedWord === "owner-update" && !displayedHealth} data-state={card?.state ?? (displayedHealth?.state === "degraded" ? "wrong" : "changing")}
+      <div class="status-card" class:owner-update-only={displayedWord === "owner-update" && !displayedHealth} data-state={card?.state ?? "changing"}
         data-connection-status data-connection-state={connectionState} data-status-state={statusState}>
         {#if card && displayedWord !== "owner-update"}
           {#if card.action}
@@ -203,13 +203,10 @@
           <UpdateActions status={updates.data} now={clock} />
         {/if}
         {#if displayedHealth}
-          <div class="navigation-health" data-navigation-health={displayedHealth.state} data-state={displayedHealth.state === "degraded" ? "wrong" : "changing"}>
+          <div class="navigation-health" data-navigation-health={displayedHealth.state} data-state={"changing"}>
             <span class="status-mark" aria-hidden="true"></span>
             <span class="navigation-health-text">
               <span>Navigation {displayedHealth.state}</span>
-              {#if displayedHealth.state === "degraded" && displayedHealth.availability.reason !== null}
-                <span class="navigation-reason">{displayedHealth.availability.reason}</span>
-              {/if}
             </span>
           </div>
         {/if}

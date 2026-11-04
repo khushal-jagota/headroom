@@ -21,7 +21,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI
 
-from planner.conversation.runtime_composition import SignalRuntimeComposition, bind_admission
+from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.core.db import connect
 from planner.core.sse import open_change_stream_count
 from planner.navigation.configuration import DeliveryConfig
@@ -53,8 +53,7 @@ async def serving(
         composition.bootstrap()
         composition.coordinator.bind_runtime(lambda identity: None)
         with contextlib.closing(composition.connect()) as conn:
-            with bind_admission(conn, composition.initialization):
-                conn.execute("BEGIN IMMEDIATE")
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "INSERT INTO projects(id,name,created_at,updated_at) VALUES('p','initial',0,0)"
             )
@@ -65,7 +64,6 @@ async def serving(
         binding = SignalNavigationBinding(composition.coordinator, runtime)
         cleanup.callback(binding.close)
         binding.attach()
-        composition.coordinator.admit_runtime()
         runtime.ready = True
         app = FastAPI()
         app.include_router(runtime.router)

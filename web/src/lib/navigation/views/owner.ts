@@ -1,5 +1,5 @@
 import { VIEW_PROJECTION_VERSION } from "../contracts";
-import type {Fence,ViewRequest,ViewSnapshot,ViewFrame,ViewWindowRequest,ViewOwner,CurrentAuthority,DegradedAuthority} from '../contracts';
+import type {Fence,ViewRequest,ViewSnapshot,ViewFrame,ViewWindowRequest,ViewOwner,CurrentAuthority} from '../contracts';
 import type {NavigationPublication} from '../collection';
 import type {NavigationHealth,ScopedNavigationOwnerState} from '../owner';
 import {createNavigationKnowledge,type DurableFact} from '../knowledge';
@@ -44,14 +44,14 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
   let demandScheduled=false;
   let priorityWindow:string|undefined;
   const retiredSessions=new Set<string>();
-  let lastAuthority:CurrentAuthority|DegradedAuthority|undefined;
+  let lastAuthority:CurrentAuthority|undefined;
   const visibility=createVisibilityTracker(certify);
   function emit(){for(const listener of listeners)listener(state);}
   function canCertify(){return state.effective?.runtimeCurrent===true && [...state.effective.conversations.values()].every(v=>v.message_for_owner.state==='fresh' && v.last_turn_failed.state==='fresh');}
   function publication(value:ViewSnapshot):NavigationPublication {
     return Object.freeze({publicationId:++publicationSequence,admissionToken:`view:${state.generation}:${publicationSequence}`,continuity:value.coverage,cursor:null,mode:value.mode,authority:value.authority,records:Object.freeze(value.content.records),view:Object.freeze({id:value.view_id,scopeGeneration:value.scope_generation,contentVersion:value.content_version,orderingGeneration:value.ordering_generation,windows:Object.freeze(value.content.windows),counts:Object.freeze(value.content.counts),reviewContext:Object.freeze(value.content.review_context),reviewSummary:Object.freeze(value.content.review_summary)})});
   }
-  function rememberAuthority(authority:CurrentAuthority|DegradedAuthority) {
+  function rememberAuthority(authority:CurrentAuthority) {
     if(lastAuthority && lastAuthority.delivery_session_id!==authority.delivery_session_id) {
       if(retiredSessions.size>=64)throw new Error('Navigation authority history full; reload workspace');
       retiredSessions.add(lastAuthority.delivery_session_id);
@@ -72,9 +72,7 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     const admitted=publication(next);
     // Recovery concerns the demanded scope. Updates to the retained active scope
     // cannot certify that its failed replacement is current.
-    const health:NavigationHealth=next.mode==='degraded'
-      ? {state:'degraded',availability:{...next.authority.availability}}
-      : value.event==='snapshot' && scope.scope_generation===request.scope_generation ? null : state.health;
+    const health:NavigationHealth=value.event==='snapshot' && scope.scope_generation===request.scope_generation ? null : state.health;
     const healthChanged=health!==state.health;
     if(value.event==='checkpoint' || unchanged) {
       // Coverage changes do not create a new selector/DOM generation or rebuild knowledge.
@@ -83,7 +81,7 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
       if(healthChanged)emit();
       return admitted;
     }
-    state={...state,publication:admitted,effective:knowledge.accept(admitted),connection:next.mode==='current'?'subscribed':'degraded',error:null,health};
+    state={...state,publication:admitted,effective:knowledge.accept(admitted),connection:'subscribed',error:null,health};
     if(canCertify())visibility.publication(admitted);
     emit();
     return admitted;
@@ -107,7 +105,7 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
     const scope=activeRequest,signal=controller.signal;
     closeStream=transport.connect(scope,{frame(frame){
       if(disposed||signal.aborted||generation!==state.generation)return;
-      try{const result=admit(frame,generation,scope);if(frame.event==='snapshot'&&result){onSnapshot?.(result);if(frame.mode==='degraded')failure(generation,undefined,{state:'degraded',availability:{...frame.authority.availability}});}}
+      try{const result=admit(frame,generation,scope);if(frame.event==='snapshot'&&result){onSnapshot?.(result);}}
       catch(error){onError?.(error instanceof Error?error:new Error('Invalid navigation view'));failure(generation);}
     },error(){if(disposed||signal.aborted||generation!==state.generation)return;onError?.(new Error('Navigation stream unavailable'));failure(generation);}},signal);
   }
@@ -153,10 +151,6 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
           buffered=applyFrame(buffered,frame);
           if(retiredSessions.has(buffered.authority.delivery_session_id))throw new Error('Retired navigation authority');
           if(lastAuthority?.delivery_session_id===buffered.authority.delivery_session_id && compareRevision(buffered.authority.availability.generation,lastAuthority.availability.generation)<0)throw new Error('Obsolete navigation authority');
-          if(buffered.mode!=='current'){
-            rememberAuthority(buffered.authority);
-            failure(state.generation,undefined,{state:'degraded',availability:{...buffered.authority.availability}});return;
-          }
           // Active scope remains authoritative while this bounded pending stream catches up.
           if(current && sameDomain(buffered.coverage,current.coverage) && compareRevision(buffered.coverage.revision,current.coverage.revision)<0)return;
           const sameContent=current?.view_id===buffered.view_id && current.content_version===buffered.content_version && sameAuthority(current.authority,buffered.authority);
@@ -179,7 +173,7 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
       if(disposed||generation!==state.generation)throw new Error('Obsolete navigation certification');
       const admitted=admit(result,generation);
       if(!admitted)throw new Error('Navigation certification not admitted');
-      if(result.mode==='current')connect(generation);else failure(generation,undefined,{state:'degraded',availability:{...result.authority.availability}});
+      connect(generation);
       return {publication:admitted,proof:canCertify()?result.proof:null};
     }catch(error){failure(generation);throw error;}
   }

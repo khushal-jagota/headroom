@@ -48,7 +48,6 @@ def test_idle_managed_connection_refreshes_functions_across_runtime_generations(
             )
             try:
                 binding.attach()
-                composition.coordinator.admit_runtime()
                 idle.execute("BEGIN IMMEDIATE")
                 with pytest.raises(RuntimeError, match="active transaction"):
                     composition.close()

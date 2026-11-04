@@ -18,7 +18,7 @@ export function parseFrame(input:unknown):ViewFrame {
 export function sameDomain(left:ViewSnapshot['coverage'],right:ViewSnapshot['coverage']) {
   return left.scope===right.scope && left.schema_version===right.schema_version && left.semantics===right.semantics && left.epoch===right.epoch;
 }
-export function validateContent(content:ViewContent,mode:'current'|'degraded') {
+export function validateContent(content:ViewContent,mode:'current') {
   if(content.records.length>512 || content.windows.length>160) throw new NavigationProtocolError('View budget exceeded');
   const keys=new Set<string>();
   for(const row of content.records) {
@@ -44,7 +44,7 @@ export function validateContent(content:ViewContent,mode:'current'|'degraded') {
     windows.add(window.window_id);const members=new Set<string>();
     for(const key of window.members) {const id=recordKey(key);if(!keys.has(id)||members.has(id))throw new NavigationProtocolError('Missing or duplicate window member');members.add(id);}
   }
-  if(Object.values(content.counts).some(value=>value!==null && value<0) || mode==='degraded' && content.counts.running_conversations!==null) throw new NavigationProtocolError('Invalid global count profile');
+  if(Object.values(content.counts).some(value=>value!==null && value<0)) throw new NavigationProtocolError('Invalid global count profile');
 }
 export function applyFrame(previous:ViewSnapshot | undefined,frame:ViewFrame):ViewSnapshot {
   if(frame.event==='reset') throw new NavigationProtocolError('View reset required');

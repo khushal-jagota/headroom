@@ -17,7 +17,6 @@ from planner.conversation.contracts import (
     SignalAvailability,
     SignalPublicationSource,
     SignalReadPermit,
-    SignalUnavailable,
 )
 from planner.core import change_signal
 from planner.core.sse import register_open_stream_closer
@@ -25,9 +24,7 @@ from planner.navigation.configuration import DeliveryConfig
 from planner.navigation.contracts import (
     SCHEMA_VERSION,
     SUPPORTED_SEMANTICS,
-    AttentionKnowledge,
     Continuity,
-    DurableSignal,
     RevisionBatch,
     Snapshot,
     parse_revision,
@@ -187,127 +184,6 @@ def read_page(
             conn.rollback()
 
 
-def _inventory(path: Path) -> tuple[str, ...]:
-    try:
-        with contextlib.closing(_read_connection(path)) as conn:
-            return tuple(
-                str(row[0])
-                for row in conn.execute(
-                    "SELECT conversation_id FROM conversations ORDER BY conversation_id"
-                )
-            )
-    except sqlite3.Error as exc:
-        raise DeliveryUnavailable("conversation inventory is unavailable") from exc
-
-
-def _require_current_knowledge(value: AttentionKnowledge, durable: DurableSignal) -> None:
-    current = value["current"]
-    if (
-        set(value) != {"current", "durable"}
-        or current is None
-        or set(current) != {"signal", "awaiting_answer", "last_turn_failed"}
-        or set(current["signal"]) != {"working", "message_for_owner"}
-        or set(value["durable"]) != {"message_for_owner", "last_turn_failed"}
-        or any(
-            type(bit) is not bool
-            for bit in (
-                current["signal"]["working"],
-                current["signal"]["message_for_owner"],
-                current["awaiting_answer"],
-                current["last_turn_failed"],
-                value["durable"]["message_for_owner"],
-                value["durable"]["last_turn_failed"],
-            )
-        )
-        or value["durable"] != durable
-        or current["signal"]["message_for_owner"] != durable["message_for_owner"]
-        or current["last_turn_failed"] != durable["last_turn_failed"]
-    ):
-        raise DeliveryUnavailable("current publication disagrees with canonical durable knowledge")
-
-
-def _knowledge_snapshot(
-    path: Path,
-    source: SignalPublicationSource,
-    inventory: tuple[str, ...],
-    availability: SignalAvailability,
-    admission: DeliveryAdmission,
-    read: DeliveryAccess,
-    fence: object,
-) -> StoredSnapshot:
-    from planner.navigation.proof import certify
-
-    try:
-        with contextlib.closing(_read_connection(path)) as conn:
-            conn.execute("BEGIN")
-            try:
-                # FIRST canonical source read: the domain acquires its gate before
-                # establishing the SQL snapshot. Identity PRAGMAs do not pin it.
-                knowledge = source.read_durable_signal_knowledge(
-                    conn, inventory, availability.generation
-                )
-                actual = tuple(
-                    str(row[0])
-                    for row in conn.execute(
-                        "SELECT conversation_id FROM conversations ORDER BY conversation_id"
-                    )
-                )
-                if actual != inventory or len(knowledge) != len(actual):
-                    raise DeliveryUnavailable(
-                        "conversation inventory changed during knowledge read"
-                    )
-                by_id = {value.conversation_id: value for value in knowledge}
-                if set(by_id) != set(actual):
-                    raise DeliveryUnavailable("Signal durable knowledge coverage is incomplete")
-                for observation in knowledge:
-                    if observation.availability != availability or observation.durable is None:
-                        raise DeliveryUnavailable("Signal durable knowledge profile is incomplete")
-                    if any(
-                        type(bit) is not bool
-                        for bit in (
-                            observation.durable.message_for_owner,
-                            observation.durable.last_turn_failed,
-                        )
-                    ):
-                        raise DeliveryUnavailable("Signal durable facts must be exact booleans")
-                admission.validate_snapshot(conn, read)
-                value = snapshot(conn)
-                if (
-                    value["schema_version"] != SCHEMA_VERSION
-                    or value["semantics"] != SUPPORTED_SEMANTICS
-                ):
-                    raise DeliveryUnavailable("navigation knowledge schema is not activated")
-                covered: set[str] = set()
-                for record in value["records"]:
-                    if record["kind"] != "conversation":
-                        continue
-                    identity = record["id"]
-                    if identity in covered or identity not in by_id:
-                        raise DeliveryUnavailable("stored conversation knowledge coverage changed")
-                    covered.add(identity)
-                    facts = by_id[identity].durable
-                    if facts is None:
-                        raise DeliveryUnavailable("extant conversation has no durable facts")
-                    durable: DurableSignal = {
-                        "message_for_owner": facts.message_for_owner,
-                        "last_turn_failed": facts.last_turn_failed,
-                    }
-                    if availability.state == "current":
-                        _require_current_knowledge(record["value"]["attention"], durable)
-                    else:
-                        record["value"]["attention"] = {"current": None, "durable": durable}
-                if covered != set(actual):
-                    raise DeliveryUnavailable("stored navigation omits an extant conversation")
-                proof = certify(conn, fence) if fence is not None else None
-                return {"cursor": encode_cursor(value), "snapshot": value, "proof": proof}
-            finally:
-                conn.rollback()
-    except DeliveryUnavailable:
-        raise
-    except (sqlite3.Error, SignalUnavailable, ValueError, KeyError, TypeError, RuntimeError) as exc:
-        raise DeliveryUnavailable("coherent navigation knowledge is unavailable") from exc
-
-
 class DeliveryRuntime:
     def __init__(self, path: str | Path, config: DeliveryConfig | None = None) -> None:
         from planner.navigation.api import delivery_router
@@ -439,60 +315,16 @@ class DeliveryRuntime:
     async def current_snapshot(
         self, fence: object = None
     ) -> tuple[SnapshotResponse, DeliveryAccess]:
-        source = self._require_source()
-        inventory = await asyncio.to_thread(_inventory, self.path)
-        availability = self._availability()
-        read: DeliveryAccess
-        if availability.state == "current":
-            read, authority = self.current_read()
-            if self._availability() != availability:
-                raise DeliveryUnavailable("Signal availability changed before SQL")
-            value = await asyncio.to_thread(
-                _knowledge_snapshot,
-                self.path,
-                source,
-                inventory,
-                availability,
-                self.admission,
-                read,
-                fence,
-            )
-            result: SnapshotResponse = {
-                "wire_version": 2,
-                "mode": "current",
-                "authority": authority,
-                "cursor": value["cursor"],
-                "snapshot": value["snapshot"],
-                "proof": value["proof"],
-            }
-        else:
-            read = self.admission.capture_degraded(lambda: self._validate_profile(availability))
-            value = await asyncio.to_thread(
-                _knowledge_snapshot,
-                self.path,
-                source,
-                inventory,
-                availability,
-                self.admission,
-                read,
-                None,
-            )
-            result = {
-                "wire_version": 2,
-                "mode": "degraded",
-                "authority": {
-                    "delivery_session_id": self.delivery_session_id,
-                    "availability": {
-                        "state": availability.state,
-                        "generation": str(availability.generation),
-                        "reason": availability.reason,
-                    },
-                    "permit": None,
-                },
-                "cursor": None,
-                "snapshot": value["snapshot"],
-                "proof": None,
-            }
+        read, authority = self.current_read()
+        value = await asyncio.to_thread(read_snapshot, self.path, fence, self.admission, read)
+        result: SnapshotResponse = {
+            "wire_version": 2,
+            "mode": "current",
+            "authority": authority,
+            "cursor": value["cursor"],
+            "snapshot": value["snapshot"],
+            "proof": value["proof"],
+        }
         self.admission.validate(read)
         return result, read
 

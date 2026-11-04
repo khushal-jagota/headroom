@@ -20,7 +20,6 @@ from planner.conversation.contracts import (
     SignalAvailability,
     SignalInstaller,
     SignalInvalidation,
-    SignalKnowledge,
     SignalParticipant,
     SignalReadPermit,
 )
@@ -49,17 +48,6 @@ class InjectedKnowledgeSource:
 
     def signal_availability(self) -> SignalAvailability:
         return self.availability
-
-    def read_durable_signal_knowledge(
-        self,
-        connection: sqlite3.Connection,
-        conversation_ids: tuple[str, ...],
-        expected_generation: int,
-        /,
-    ) -> tuple[SignalKnowledge, ...]:
-        assert conversation_ids == ()
-        assert expected_generation == self.availability.generation
-        return ()
 
     def attach_signal_publication(
         self,
@@ -266,7 +254,7 @@ class InjectedDeliveryAuthority:
         return DeliveryAuthority(self.capture_permit, self.validate, self.validate_snapshot)
 
 
-def test_actual_current_and_degraded_snapshots_keep_canonical_durable_facts(
+def test_actual_current_snapshot_preserves_facts_and_detach_stops_delivery(
     actual_binding: _ActualBinding,
 ) -> None:
     host = actual_binding
@@ -287,25 +275,11 @@ def test_actual_current_and_degraded_snapshots_keep_canonical_durable_facts(
         current["authority"]["permit"]["generation"]
         == current["authority"]["availability"]["generation"]
     )
-    host.composition.coordinator.invalidate("publication_failed")
-    degraded, _ = asyncio.run(host.delivery.current_snapshot({"not": "a proof request"}))
-    assert degraded["mode"] == "degraded"
-    assert degraded["cursor"] is None and degraded["proof"] is None
-    assert degraded["authority"]["permit"] is None
     record = next(
-        value for value in degraded["snapshot"]["records"] if value["kind"] == "conversation"
+        value for value in current["snapshot"]["records"] if value["kind"] == "conversation"
     )
     assert record["kind"] == "conversation"
-    assert record["value"]["attention"] == {
-        "current": None,
-        "durable": {"message_for_owner": True, "last_turn_failed": False},
-    }
-    assert (
-        degraded["authority"]["delivery_session_id"] == current["authority"]["delivery_session_id"]
-    )
-    host.confirm_repaired()
-    host.binding.recover()
-    recovered, _ = asyncio.run(host.delivery.current_snapshot())
-    assert recovered["mode"] == "current"
-    assert recovered["authority"]["permit"] != current["authority"]["permit"]
-    assert recovered["snapshot"]["epoch"] != current["snapshot"]["epoch"]
+    assert record["value"]["attention"]["current"]["signal"]["message_for_owner"] is True
+    host.binding.close()
+    with pytest.raises(DeliveryUnavailable):
+        asyncio.run(host.delivery.current_snapshot())

@@ -1,4 +1,4 @@
-import type { Fence, SnapshotResponse, CurrentAuthority, DegradedAuthority, NoncurrentAvailability } from './contracts';
+import type { Fence, SnapshotResponse, CurrentAuthority } from './contracts';
 import type { NavigationCollectionAdapter, NavigationPublication } from './collection';
 import { compareRevision, assertCursorMatches, parseBatchEnvelope, parseSnapshotResponse, sameAuthority } from './validation';
 import { navigationConfiguration } from './configuration';
@@ -7,14 +7,14 @@ import { createVisibilityTracker, type Certification, type VisibilityResult } fr
 import { createNavigationKnowledge, type DurableFact, type EffectiveNavigationView } from './knowledge';
 
 export type NavigationOwnerState = {
-  connection: 'idle' | 'snapshot' | 'subscribed' | 'reconnecting' | 'degraded' | 'disposed';
+  connection: 'idle' | 'snapshot' | 'subscribed' | 'reconnecting' | 'disposed';
   generation: number;
   error: NavigationRequestError | null;
   publication: NavigationPublication | undefined;
   effective: EffectiveNavigationView | undefined;
 };
 
-export type NavigationHealth = null | { state: 'reconnecting' } | { state: 'degraded'; availability: NoncurrentAvailability };
+export type NavigationHealth = null | { state: 'reconnecting' };
 export type ScopedNavigationOwnerState = NavigationOwnerState & { health: NavigationHealth };
 
 /** Create once above routes. Only this owner admits canonical collection transactions. */
@@ -39,7 +39,7 @@ export function createNavigationOwner(options: {
   let paused = false;
   let admission = 0;
   const retiredSessions = new Set<string>();
-  let lastAuthority: CurrentAuthority | DegradedAuthority | undefined;
+  let lastAuthority: CurrentAuthority | undefined;
   const maximumPending = options.maximumPendingBatches ?? navigationConfiguration.maximumPendingBatches;
   if (!Number.isInteger(maximumPending) || maximumPending < 1) throw new Error('invalid navigation queue limit');
   const visibility = createVisibilityTracker((fence) => {
@@ -160,7 +160,7 @@ export function createNavigationOwner(options: {
       error() { if (current(generation) && !paused) void recover().catch(() => undefined); },
     },signal);
   }
-  function checkAuthority(value: CurrentAuthority | DegradedAuthority) {
+  function checkAuthority(value: CurrentAuthority) {
     if (retiredSessions.has(value.delivery_session_id)) throw new Error('obsolete delivery session');
     if (lastAuthority?.delivery_session_id === value.delivery_session_id
       && compareRevision(value.availability.generation,lastAuthority.availability.generation) < 0) throw new Error('obsolete availability generation');
@@ -186,8 +186,7 @@ export function createNavigationOwner(options: {
       if (lastAuthority && lastAuthority.delivery_session_id !== response.authority.delivery_session_id) retiredSessions.add(lastAuthority.delivery_session_id);
       lastAuthority = response.authority;
       state = {...state,error:null};
-      if (response.mode === 'current') connect(generation);
-      else { update('degraded'); scheduleRecovery(generation); }
+      connect(generation);
       return {publication,proof:canCertify() ? response.proof : null};
     } catch (error) {
       if (current(generation) && !paused) {

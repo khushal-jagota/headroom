@@ -147,12 +147,7 @@ export interface CurrentAttentionKnowledge {
   durable: DurableSignal;
 }
 
-export interface DurableAttentionKnowledge {
-  current: null;
-  durable: DurableSignal;
-}
-
-export type AttentionKnowledge = CurrentAttentionKnowledge | DurableAttentionKnowledge;
+export type AttentionKnowledge = CurrentAttentionKnowledge;
 
 export interface ConversationValue {
   first_unread_owner_message_at: number | null;
@@ -299,12 +294,6 @@ export interface CurrentAvailability {
   reason: null;
 }
 
-export interface NoncurrentAvailability {
-  state: "initializing" | "unavailable";
-  generation: string;
-  reason: string | null;
-}
-
 export interface SignalPermit {
   scope: string;
   runtime_epoch: string;
@@ -318,12 +307,6 @@ export interface CurrentAuthority {
   permit: SignalPermit;
 }
 
-export interface DegradedAuthority {
-  delivery_session_id: string;
-  availability: NoncurrentAvailability;
-  permit: null;
-}
-
 export interface CurrentSnapshotResponse {
   wire_version: 2;
   mode: "current";
@@ -333,16 +316,7 @@ export interface CurrentSnapshotResponse {
   proof: ProofResult | null;
 }
 
-export interface DegradedSnapshotResponse {
-  wire_version: 2;
-  mode: "degraded";
-  authority: DegradedAuthority;
-  cursor: null;
-  snapshot: Snapshot;
-  proof: null;
-}
-
-export type SnapshotResponse = CurrentSnapshotResponse | DegradedSnapshotResponse;
+export type SnapshotResponse = CurrentSnapshotResponse;
 
 export interface BatchEnvelope {
   wire_version: 2;
@@ -522,7 +496,7 @@ export interface ViewWindow {
 }
 
 export interface ViewCounts {
-  running_conversations: number | null;
+  running_conversations: number;
   out_claims: number;
   review: number;
   unread: number;
@@ -567,22 +541,7 @@ export interface CurrentViewSnapshot {
   proof: ProofResult | null;
 }
 
-export interface DegradedViewSnapshot {
-  wire_version: 3;
-  projection_version: 7;
-  view_id: string;
-  scope_generation: number;
-  ordering_generation: string;
-  coverage: Continuity;
-  content_version: string;
-  event: "snapshot";
-  mode: "degraded";
-  authority: DegradedAuthority;
-  content: ViewContent;
-  proof: null;
-}
-
-export type ViewSnapshot = CurrentViewSnapshot | DegradedViewSnapshot;
+export type ViewSnapshot = CurrentViewSnapshot;
 
 export interface ViewPatch {
   wire_version: 3;
@@ -1150,25 +1109,8 @@ export const wireDescriptors: Record<string, unknown> = {
       }
     }
   },
-  "DurableAttentionKnowledge": {
-    "object": {
-      "current": {
-        "primitive": "null"
-      },
-      "durable": {
-        "ref": "DurableSignal"
-      }
-    }
-  },
   "AttentionKnowledge": {
-    "union": [
-      {
-        "ref": "CurrentAttentionKnowledge"
-      },
-      {
-        "ref": "DurableAttentionKnowledge"
-      }
-    ]
+    "ref": "CurrentAttentionKnowledge"
   },
   "ConversationValue": {
     "object": {
@@ -1633,29 +1575,6 @@ export const wireDescriptors: Record<string, unknown> = {
       }
     }
   },
-  "NoncurrentAvailability": {
-    "object": {
-      "state": {
-        "literal": [
-          "initializing",
-          "unavailable"
-        ]
-      },
-      "generation": {
-        "primitive": "string"
-      },
-      "reason": {
-        "union": [
-          {
-            "primitive": "string"
-          },
-          {
-            "primitive": "null"
-          }
-        ]
-      }
-    }
-  },
   "SignalPermit": {
     "object": {
       "scope": {
@@ -1682,19 +1601,6 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       "permit": {
         "ref": "SignalPermit"
-      }
-    }
-  },
-  "DegradedAuthority": {
-    "object": {
-      "delivery_session_id": {
-        "primitive": "string"
-      },
-      "availability": {
-        "ref": "NoncurrentAvailability"
-      },
-      "permit": {
-        "primitive": "null"
       }
     }
   },
@@ -1731,41 +1637,8 @@ export const wireDescriptors: Record<string, unknown> = {
       }
     }
   },
-  "DegradedSnapshotResponse": {
-    "object": {
-      "wire_version": {
-        "literal": [
-          2
-        ]
-      },
-      "mode": {
-        "literal": [
-          "degraded"
-        ]
-      },
-      "authority": {
-        "ref": "DegradedAuthority"
-      },
-      "cursor": {
-        "primitive": "null"
-      },
-      "snapshot": {
-        "ref": "Snapshot"
-      },
-      "proof": {
-        "primitive": "null"
-      }
-    }
-  },
   "SnapshotResponse": {
-    "union": [
-      {
-        "ref": "CurrentSnapshotResponse"
-      },
-      {
-        "ref": "DegradedSnapshotResponse"
-      }
-    ]
+    "ref": "CurrentSnapshotResponse"
   },
   "BatchEnvelope": {
     "object": {
@@ -2508,14 +2381,7 @@ export const wireDescriptors: Record<string, unknown> = {
   "ViewCounts": {
     "object": {
       "running_conversations": {
-        "union": [
-          {
-            "primitive": "integer"
-          },
-          {
-            "primitive": "null"
-          }
-        ]
+        "primitive": "integer"
       },
       "out_claims": {
         "primitive": "integer"
@@ -2657,63 +2523,8 @@ export const wireDescriptors: Record<string, unknown> = {
       }
     }
   },
-  "DegradedViewSnapshot": {
-    "object": {
-      "wire_version": {
-        "literal": [
-          3
-        ]
-      },
-      "projection_version": {
-        "literal": [
-          7
-        ]
-      },
-      "view_id": {
-        "primitive": "string"
-      },
-      "scope_generation": {
-        "primitive": "integer"
-      },
-      "ordering_generation": {
-        "primitive": "string"
-      },
-      "coverage": {
-        "ref": "Continuity"
-      },
-      "content_version": {
-        "primitive": "string"
-      },
-      "event": {
-        "literal": [
-          "snapshot"
-        ]
-      },
-      "mode": {
-        "literal": [
-          "degraded"
-        ]
-      },
-      "authority": {
-        "ref": "DegradedAuthority"
-      },
-      "content": {
-        "ref": "ViewContent"
-      },
-      "proof": {
-        "primitive": "null"
-      }
-    }
-  },
   "ViewSnapshot": {
-    "union": [
-      {
-        "ref": "CurrentViewSnapshot"
-      },
-      {
-        "ref": "DegradedViewSnapshot"
-      }
-    ]
+    "ref": "CurrentViewSnapshot"
   },
   "ViewPatch": {
     "object": {

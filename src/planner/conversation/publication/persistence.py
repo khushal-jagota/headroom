@@ -20,17 +20,12 @@ SCHEMA = (
     "CREATE TABLE IF NOT EXISTS signal_publication_dirty (conversation_id TEXT PRIMARY KEY)",
     "CREATE TABLE IF NOT EXISTS signal_publication_associations ("
     "sequence INTEGER PRIMARY KEY, value TEXT NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS signal_publication_operations ("
-    "operation_id TEXT PRIMARY KEY,batch_id TEXT NOT NULL,result TEXT NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS signal_publication_batches ("
-    "batch_id TEXT PRIMARY KEY,sequence INTEGER NOT NULL,fingerprint TEXT NOT NULL,"
-    "value TEXT NOT NULL)",
 )
 
 
 def create_schema(connection: sqlite3.Connection) -> None:
     if not connection.in_transaction:
-        raise RuntimeError("Signal schema requires an admitted transaction")
+        raise RuntimeError("Signal schema requires a transaction")
     for statement in SCHEMA:
         connection.execute(statement)
 
@@ -87,16 +82,6 @@ def association_changed(connection: sqlite3.Connection, effect: SignalAssociatio
             mark_changed(connection, identity)
 
 
-def operation_result(
-    connection: sqlite3.Connection, operation_id: str
-) -> tuple[str, object] | None:
-    row = connection.execute(
-        "SELECT batch_id,result FROM signal_publication_operations WHERE operation_id=?",
-        (operation_id,),
-    ).fetchone()
-    return None if row is None else (str(row[0]), json.loads(row[1]))
-
-
 def _association_capture(
     table: str,
     alias: str,
@@ -135,33 +120,21 @@ def _association_capture(
     )
 
 
-def _install_source_triggers(connection: sqlite3.Connection, *, require_admission: bool) -> None:
-    """Install only during admitted bootstrap, after connection functions attach.
+def remove_source_triggers(connection: sqlite3.Connection) -> None:
+    """Remove source capture and obsolete private-table fences before schema upgrades."""
+    names = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND "
+        "(name LIKE 'signal_source_%' OR name LIKE 'signal_private_%')"
+    ).fetchall()
+    for row in names:
+        connection.execute('DROP TRIGGER "' + str(row[0]).replace('"', '""') + '"')
 
-    This is intentionally separate from the schema-only migration. A database with
-    protected triggers requires the retained core adapter on every source connection.
-    """
-    if not connection.in_transaction:
-        raise RuntimeError("Signal triggers require bootstrap transaction")
-    if (
-        require_admission
-        and connection.execute("SELECT signal_publication_admitted()").fetchone()[0] != 1
-    ):
-        raise RuntimeError("Signal trigger installation requires admitted authority")
-    connection.execute("PRAGMA recursive_triggers=ON")
-    for table in ("meta", "values", "operations", "batches", "dirty", "associations"):
-        function = "admitted" if table in ("dirty", "associations") else "internal"
-        # Internal finalization also clears transactional source capture.
-        check = f"signal_publication_{function}()=1"
-        if function == "admitted":
-            check += " OR signal_publication_internal()=1"
-        for operation in ("INSERT", "UPDATE", "DELETE"):
-            connection.execute(
-                f"CREATE TRIGGER IF NOT EXISTS signal_private_{table}_{operation.lower()} "
-                f"BEFORE {operation} ON signal_publication_{table} BEGIN "
-                f"SELECT CASE WHEN NOT ({check}) THEN "
-                "RAISE(ABORT,'Signal private phase is closed') END; END"
-            )
+
+def install_source_triggers(connection: sqlite3.Connection) -> None:
+    """Replace old source fences with ordinary SQLite change capture."""
+    remove_source_triggers(connection)
+    connection.execute("DROP TABLE IF EXISTS signal_publication_operations")
+    connection.execute("DROP TABLE IF EXISTS signal_publication_batches")
     current = (
         connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sprint_items'"
@@ -191,10 +164,7 @@ def _install_source_triggers(connection: sqlite3.Connection, *, require_admissio
             aliases: tuple[str, ...] = ("NEW",) if operation == "INSERT" else ("OLD",)
             if operation == "UPDATE":
                 aliases = ("OLD", "NEW")
-            body = (
-                "SELECT CASE WHEN signal_publication_admitted()!=1 THEN "
-                "RAISE(ABORT,'source lacks Signal admission') END;"
-            )
+            body = ""
             for alias in aliases:
                 if column is None:
                     continue
@@ -221,6 +191,8 @@ def _install_source_triggers(connection: sqlite3.Connection, *, require_admissio
                     body += _association_capture(
                         table, "NEW", "NULL", new, changed, current=current
                     )
+            if not body:
+                continue
             # Capture OLD before cascading deletes and unique REPLACE destruction.
             timing = "AFTER" if operation == "INSERT" else "BEFORE"
             connection.execute(
@@ -229,32 +201,12 @@ def _install_source_triggers(connection: sqlite3.Connection, *, require_admissio
             )
 
 
-def install_source_triggers(connection: sqlite3.Connection) -> None:
-    """Install source declarations through admitted runtime bootstrap."""
-    _install_source_triggers(connection, require_admission=True)
-
-
 def install_migration_source_triggers(connection: sqlite3.Connection) -> None:
-    """Reinstall declarations inside the offline schema migration transaction.
-
-    Migration connections have no producer runtime. Trigger bodies retain the exact
-    runtime authority guards. Only declaration installation bypasses its runtime check.
-    """
-    if not connection.in_transaction:
-        raise RuntimeError("Signal migration triggers require a migration transaction")
+    """Refresh capture when migrations replace their source tables."""
     if (
         connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='signal_publication_meta'"
         ).fetchone()
-        is None
+        is not None
     ):
-        return
-    names = [
-        str(row[0])
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'signal_source_%'"
-        )
-    ]
-    for name in names:
-        connection.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
-    _install_source_triggers(connection, require_admission=False)
+        install_source_triggers(connection)
