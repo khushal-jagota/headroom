@@ -907,6 +907,13 @@ def run(browser, urls):
     parent_project = {"id": "project_one", "name": "One"}
     runtime_working = False
     drive("window.__batch()")
+    # Scoped publication restores the masthead. The loaded lifecycle body uses
+    # its ordinary detail query, independent of navigation publication.
+    drive("window.__detail()")
+    expect(page.locator("[data-ticket-section]")).to_have_attribute(
+        "data-section-stage", "needs_success_condition"
+    )
+    expect(page.locator("[data-approval-block] [contenteditable]")).to_have_text("A result")
     expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding · VPS")
     expect(page.locator("[data-parent-link]")).to_have_count(0)
     assert (
