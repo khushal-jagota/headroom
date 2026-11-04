@@ -321,7 +321,7 @@ extension OfflineTests {
         let work = PendingWork(id: "legacy-id", created: .now, kind: .message, owner: .chief, message: message)
         do {
             let schema = Schema([LegacyPhoneSchema.LocalRecord.self])
-            let container = try ModelContainer(for: schema, configurations: ModelConfiguration(url: url))
+            let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(url: url)])
             let context = ModelContext(container)
             context.autosaveEnabled = false
             context.insert(LegacyPhoneSchema.LocalRecord(key: LocalStore.key(server, "draft", "draft"), server: server, kind: "draft", payload: Data("Legacy unsent draft".utf8), updated: .now))
