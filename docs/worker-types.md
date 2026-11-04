@@ -10,7 +10,7 @@ Every shipped type starts at Brief and ends at Done, with a Consequences stage b
 
 A stage marked worker-owned is the Worker’s to draft. A stage marked user-owned receives one automatic opening turn, then continues with the person in the same conversation until the gate is filled or the person completes it. See [Proposals and gates](proposals.md). The ceiling can still park a worker-owned stage. That is how a coding Ticket stops before Implementation even though every coding stage is worker-owned: set the ceiling on What Changes.
 
-Ten types ship. `probe` exists only in tests, with unfamiliar stage names, so a coding-shaped assumption fails loudly. `personal`, `planning-day`, `planning-midday-check`, and `planning-sprint` remain readable history. They cannot be created, and their schedules can only be disabled.
+Ten types ship. `probe` exists only in tests, with unfamiliar stage names, so a coding-shaped assumption fails loudly. `personal`, `planning-day`, `planning-midday-check`, and `planning-sprint` remain readable history. They cannot be created.
 
 Launch defaults below are what a fresh database copies onto a new Ticket. The owner can change prospective defaults and the specialist text in Settings. Hermes ignores reasoning.
 

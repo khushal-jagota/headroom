@@ -27,10 +27,9 @@
       "companions": []
     },
     {
-      "id": "configuration-schedules",
-      "path": "web/tests/configuration-schedules-browser.test.mjs",
+      "id": "configuration",
+      "path": "web/tests/configuration-browser.test.mjs",
       "cases": [
-        "scheduled-tasks",
         "skill-editors"
       ],
       "companions": []

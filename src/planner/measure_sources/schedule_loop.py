@@ -1,4 +1,4 @@
-"""The single-server polling loop for exact-time scheduled Ticket creation."""
+"""The single-server polling loop for exact-time measure source collection."""
 
 from __future__ import annotations
 
@@ -10,25 +10,22 @@ from time import monotonic
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
 from planner.core.db import connect
-from planner.scheduled_tickets.contracts import ScheduledTicketOccurrence
-from planner.scheduled_tickets.participants import SlotParticipant, TicketScheduleParticipant
+from planner.measure_sources.participants import SlotParticipant
 
 _LOG = logging.getLogger(__name__)
 
 
-class ScheduledTicketLoop:
+class SourceScheduleLoop:
     def __init__(
         self,
         db_path: str,
         clock: Clock,
         *,
         busy_timeout_ms: int = 5000,
-        participants: tuple[SlotParticipant, ...] | None = None,
+        participants: tuple[SlotParticipant, ...],
         workspace_admission: WorkspaceAdmission | None = None,
     ) -> None:
-        self._participants = (
-            participants if participants is not None else (TicketScheduleParticipant(),)
-        )
+        self._participants = participants
         self._workspace_admission = workspace_admission
         self._db_path = db_path
         self._clock = clock
@@ -36,35 +33,31 @@ class ScheduledTicketLoop:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def poll_once(self) -> list[ScheduledTicketOccurrence]:
+    def poll_once(self) -> None:
         with (
             self._workspace_admission.operation()
             if self._workspace_admission
             else nullcontext(True) as admitted
         ):
             if not admitted:
-                return []
+                return
             conn = connect(self._db_path, self._busy_timeout_ms)
             try:
                 local_now = self._clock.now()
-                results: list[ScheduledTicketOccurrence] = []
                 for participant in self._participants:
-                    results.extend(
-                        participant.poll(conn, local_now=local_now, now=int(local_now.timestamp()))
-                    )
-                return results
+                    participant.poll(conn, local_now=local_now, now=int(local_now.timestamp()))
             finally:
                 conn.close()
 
     def start(self, interval: int) -> None:
         if self._thread is not None:
-            raise RuntimeError("scheduled Ticket loop already started")
+            raise RuntimeError("measure source loop already started")
         for participant in self._participants:
             participant.start()
         self._thread = threading.Thread(
             target=self._run_loop,
             args=(interval,),
-            name="scheduled-ticket-loop",
+            name="measure-source-loop",
             daemon=True,
         )
         self._thread.start()
@@ -98,5 +91,5 @@ class ScheduledTicketLoop:
             try:
                 self.poll_once()
             except Exception:
-                _LOG.exception("scheduled Ticket poll failed")
+                _LOG.exception("measure source poll failed")
             self._stop.wait(interval)

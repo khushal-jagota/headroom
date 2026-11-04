@@ -271,17 +271,11 @@ def update_manager(
                 (*values, now, item_id),
             )
             if "project_id" in stored_edits:
-                item = _load_manager(conn, item_id)
                 conn.execute(
                     "UPDATE tickets SET updated_at = ? WHERE manager_id = ?",
                     (now, item_id),
                 )
-                conn.execute(
-                    "UPDATE scheduled_ticket_schedules SET project_id = ?, "
-                    "updated_at = ? "
-                    "WHERE manager_id = ?",
-                    (item.project_id, now, item_id),
-                )
+
     return _load_manager(conn, item_id)
 
 

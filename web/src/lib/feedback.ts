@@ -55,7 +55,6 @@ const SCREEN_LABELS: Record<string, string> = {
   usage: "Usage",
   vps: "VPS",
   notifications: "Notifications",
-  "scheduled-tasks": "Scheduled tasks",
   preview: "Preview"
 };
 
