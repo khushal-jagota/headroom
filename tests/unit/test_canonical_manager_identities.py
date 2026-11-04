@@ -18,6 +18,7 @@ def test_manager_identity_migration_preserves_links_and_authored_bytes(
     # Reuse the migration directly with only its input tables. Navigation has its own
     # existing occupied-database coverage; this case isolates retained identity bytes.
     monkeypatch.setattr("planner.navigation.data.rebuild", lambda conn: None)
+    monkeypatch.setattr("planner.navigation.data.install_source_triggers", lambda conn: None)
     conn = sqlite3.connect(":memory:")
     conn.executescript("""
         CREATE TABLE agents(agent_key TEXT PRIMARY KEY,conversation_id TEXT);
