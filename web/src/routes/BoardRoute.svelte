@@ -533,6 +533,10 @@
      mounted in, beside a text-only status node. */
   .board-workspace-utility > :global(div) { flex:1 0 auto; min-height:0; }
   .approved-rail-shell { position:relative; isolation:isolate; grid-template-columns:var(--rail-width) minmax(0,1fr); }
+  /* The rail's isolated wash layers also contain its fixed goal preview. Keep that
+     whole stack above pane content without moving native controls out of DOM order. */
+  .workspace-rail { position:relative; z-index:1; }
+  .board-workspace-right { position:relative; z-index:0; }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); border-right:0; }
   .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
   .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }

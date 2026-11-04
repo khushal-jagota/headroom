@@ -503,6 +503,10 @@ def cumulative_preflight_lifetime(page, fixture):
 
 
 def native_owner_interactions(page):
+    # The real adjacent document can cover a preview trapped in the rail's wash
+    # stacking context. Reuse this host to prove pointer access and native Tab.
+    page.evaluate("location.hash='#/workspace/chief-of-staff'")
+    expect(page.locator('.board-workspace-right--chief .manager-doc')).to_be_visible()
     panel = open_preview(page, "daily_quota")
     row = page.locator('a[data-goal-id="daily_quota"]')
     row.press("Tab")
@@ -534,6 +538,9 @@ def native_owner_interactions(page):
     # A real click establishes pointer input mode. A later generic scroll event
     # can come from accepted-state reflow and is not itself user scroll intent.
     panel.get_by_role("button", name="Long item 12", exact=True).click()
+    evidence = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    if evidence:
+        page.screenshot(path=str(Path(evidence) / "goal-preview-above-chief.png"), animations="disabled")
     page.locator("[data-active-work-scroll]").evaluate(
         'node => node.dispatchEvent(new Event("scroll"))'
     )
