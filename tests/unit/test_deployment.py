@@ -82,6 +82,20 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
     events: list[str] = []
     lifecycle: list[tuple[str, dict[str, object]]] = []
     snapshot = tmp_path / "snapshot"
+    # An older rollback copy and interrupted attempts must not accumulate.
+    _app(current / "app-previous", "c" * 40, "older")
+    stale = [
+        current / name
+        for name in (
+            ".app-candidate-old",
+            ".app-failed-old",
+            ".app-fallback-old",
+            "app-mutated-before-old",
+        )
+    ]
+    for app in stale:
+        app.mkdir()
+        (app / "old-copy").write_text("obsolete")
 
     health = FakeHealth(events, {SHA_B})
 
@@ -117,6 +131,9 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
     assert database.read_text(encoding="utf-8") == "db"
     assert log.read_text(encoding="utf-8") == "log"
     assert candidate.is_dir()
+    assert (current / "app-previous" / "old").is_file()
+    assert not (current / "app-previous" / "older").exists()
+    assert not any(app.exists() for app in stale)
     assert list(current.glob(".app-*")) == []
 
 
@@ -124,6 +141,7 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
     current = tmp_path / "current"
     _app(current / "app", SHA_A, "old", include_cli=False)
     prior_artifact_digest = digest_app_artifact(current / "app")
+    previous = _app(current / "app-previous", "c" * 40, "older")
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
     database = _database(current)
     events: list[str] = []
@@ -146,6 +164,7 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
     assert health.deadlines == [27.0, 27.0]
     assert (current / "app" / "old").is_file()
     assert digest_app_artifact(current / "app") == prior_artifact_digest
+    assert (previous / "older").is_file()
     assert (
         json.loads((current / "app" / "manifest.json").read_text(encoding="utf-8"))["app_sha"]
         == SHA_A
@@ -278,6 +297,7 @@ def _app(
         "{}\n", encoding="utf-8"
     )
     from planner.environments.runtime_contracts import RuntimeContract, runtime_bytes_digest
+
     inventory = b'{"native_files": []}'
     contract = RuntimeContract("3.12.12", runtime_bytes_digest(inventory))
     (root / "runtime").mkdir()

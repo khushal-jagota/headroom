@@ -22,12 +22,10 @@ export type DeploymentStatus = {
   target_sha: string | null;
   outcome: DeploymentOutcome | null;
   detail: string | null;
-  valid_until: string | null;
   success_display_until: string | null;
   installation_confirmed?: boolean;
   work_paused?: boolean;
   unknown_display_until?: string | null;
-  attention_status?: "pending" | "queued" | "started" | "delivery_uncertain" | "resolved" | "superseded" | null;
 };
 
 export type VpsMetricState = "healthy" | "warning" | "critical" | "unavailable";

@@ -251,9 +251,7 @@ def deploy_app(
             except (OSError, ValueError) as exc:
                 raise DeploymentError(str(exc)) from exc
         _validate_current_root(root)
-        candidate_manifest = _validate_app(
-            candidate_app, "candidate app", require_runtime=True
-        )
+        candidate_manifest = _validate_app(candidate_app, "candidate app", require_runtime=True)
         _admit_candidate(candidate_app, candidate_manifest)
         prior_manifest = _validate_optional_current_app(current_app)
         if prior_manifest is None:
@@ -285,6 +283,7 @@ def deploy_app(
             _publish_lifecycle(
                 lifecycle_transition, "app_healthy", serving_sha=prior_manifest.app_sha
             )
+            _remove_obsolete_apps(root)
             return DeploymentResult(
                 "unchanged", candidate_manifest.app_sha, prior_manifest.app_sha, None
             )
@@ -311,8 +310,7 @@ def deploy_app(
             if staged_manifest != candidate_manifest:
                 raise DeploymentError("copied candidate differs from admitted manifest")
             _admit_candidate(staged, staged_manifest)
-            # Admission closes only after staging succeeds. A refused claim exits
-            # through staging cleanup without entering stop/recovery handling.
+            # Check database compatibility before any service action.
             if before_stop is not None:
                 before_stop()
             try:
@@ -452,7 +450,11 @@ def deploy_app(
                 serving_sha=candidate_manifest.app_sha,
             )
             try:
-                shutil.rmtree(fallback)
+                previous = root / "app-previous"
+                if previous.exists():
+                    shutil.rmtree(previous)
+                os.replace(fallback, previous)
+                _remove_obsolete_apps(root)
             except OSError as exc:
                 _publish_lifecycle(
                     lifecycle_transition,
@@ -462,8 +464,8 @@ def deploy_app(
                     detail="The requested app is healthy, but deployment cleanup failed.",
                 )
                 raise DeploymentError(
-                    f"candidate is healthy at {current_app}, but fallback cleanup failed: "
-                    f"{exc}; retained fallback: {fallback}"
+                    f"candidate is healthy at {current_app}, but app retention cleanup failed: "
+                    f"{exc}; rollback paths: {previous}, {fallback}"
                 ) from exc
             return DeploymentResult(
                 "succeeded", candidate_manifest.app_sha, prior_manifest.app_sha, None
@@ -528,10 +530,19 @@ def _install_first_app(
         _publish_lifecycle(
             lifecycle_transition, "app_healthy", serving_sha=candidate_manifest.app_sha
         )
+        _remove_obsolete_apps(current_app.parent)
         return DeploymentResult("succeeded", candidate_manifest.app_sha, None, None)
     finally:
         if staged.exists() and not staged.is_symlink():
             shutil.rmtree(staged)
+
+
+def _remove_obsolete_apps(root: Path) -> None:
+    """Successful adoption needs only app and app-previous, not scratch copies."""
+    for pattern in (".app-candidate-*", ".app-failed-*", ".app-fallback-*", "app-mutated-before-*"):
+        for app in root.glob(pattern):
+            if app.is_dir() and not app.is_symlink():
+                shutil.rmtree(app)
 
 
 def _validate_current_root(root: Path) -> None:

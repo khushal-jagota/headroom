@@ -19,11 +19,12 @@ Production runs one Git-free application as the existing `vps` user:
 ```text
 ~/Deployments/Panels/current/
 ├── app/     the executable release
+├── app-previous/  the preceding healthy release after a successful update
 ├── data/    database, configuration, managed files, deployment records
 └── logs/
 ```
 
-Replacement changes `app`. Data and logs stay. Backups taken on this path include the database and the managed configuration roots. They exclude uploads and Ticket artifacts under `data/files`. See [Backups](backups.md).
+Replacement changes `app`. After success, `app-previous` keeps the preceding release for rollback. The deploy deletes older rollback copies and obsolete candidate, failed, fallback, and mutated-before app copies. Data and logs stay. Backups taken on this path include the database and the managed configuration roots. They exclude uploads and Ticket artifacts under `data/files`. See [Backups](backups.md).
 
 The live service is the user unit `panels-live.service`, started with `systemctl --user`. The deployment runner is its own user unit. The workflow does not provision the host and does not change Tailscale Serve. Health is `http://127.0.0.1:8767/api/health`. The database file is `current/data/planner.db`. Agent homes stay `~/.hermes`, `~/.codex`, and `~/.claude`. Provider secrets stay in the service environment, including `~/.config/panels/panels-live.env`. Replacing `app` does not replace that file.
 
@@ -39,7 +40,7 @@ A pull request’s merged-tree mypy check is not publication. Publication is the
 
 ## Replacement and what can be undone
 
-The runner downloads the pinned archive and proof. It does not rebuild. It checks the archive, the runtime contract, and the database schema ancestry before downtime. The schema floor is `video_upload_ledger`. An older or unknown ancestry is refused before the service stops.
+The runner downloads the archive from the owner request. It checks the archive fingerprint once and database schema ancestry once before downtime. It does not download another proof or rebuild. The schema floor is `video_upload_ledger`. An older or unknown ancestry is refused before the service stops.
 
 The candidate is staged while production is still serving. The runner then stops writers and takes a verified snapshot. Only after that snapshot succeeds does it keep the prior app and replace `current/app`. Uploads and Ticket artifacts are outside the snapshot and outside the replacement.
 
@@ -57,9 +58,9 @@ The published route check runs after skill reconciliation. The operator sets the
 
 Interrupted agent sessions are captured outside the snapshot. After admission, eligible conversations get one recovery prompt through the normal send path. Nothing uncertain is replayed. See [Conversations](conversations.md).
 
-If the runner disappears before commit, work stays closed. Expired lifecycle evidence reports an unconfirmed installation and required Chief review. Expiry does not admit traffic, restore data, or prove that a restart is necessary. No maximum outage is promised. When a recorded commit matches the available app and admission is open, only the final report remains uncertain. That owner notice ends after five minutes without changing the evidence. See [Updates](updates.md) for the display rules.
+If the runner disappears before commit, work stays closed. The status file retains its last recorded step. It does not admit traffic, restore data, or prove that a restart is necessary. No maximum outage is promised. When a recorded commit matches the available app and admission is open, only the final report remains uncertain. That owner notice ends five minutes after the last status update without a change to the evidence. See [Updates](updates.md) for the display rules.
 
-Deployment attention stays beside the lifecycle, outside database snapshots and temporary cleanup. Panels sends the Chief a real system prompt through the normal conversation path. Its durable message identity prevents duplicate prompts after a lost receipt. A pending record never means that delivery occurred. If startup or conversation admission holds agent work, attention remains pending until admission permits delivery. An uncertain delivery stays uncertain and does not automatically resend.
+The deploy writes a plain status file at each step. The file has no lease or renewal. It retains the last recorded step until the next deploy replaces it. Panels does not send an unfinished-deploy alert. The separate process lock still permits only one deploy at a time.
 
 ## An older database that still has cancelled Tickets
 

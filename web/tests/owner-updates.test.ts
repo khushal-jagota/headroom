@@ -10,7 +10,7 @@ const release: PublishedUpdate = {
   manifest: { app_sha: "a".repeat(40), source_digest: "source", artifact_digest: "artifact" },
   archive_sha256: "archive", schema_floor: "17", expires_at: "2099-01-01T00:00:00Z"
 };
-const request: OwnerUpdateRequest = { request_id: "pinned", release, mode: "idle", state: "pending", created_at: "2026-10-28T00:00:00Z", detail: null };
+const request: OwnerUpdateRequest = { request_id: "pinned", release, mode: "idle", state: "requested", created_at: "2026-10-28T00:00:00Z", detail: null };
 const status: UpdateStatus = { configured: true, available: release, request: null, activity: "unknown", detail: null };
 
 // These gaps concern exact publication identity, cancellation state, and offering
@@ -18,7 +18,7 @@ const status: UpdateStatus = { configured: true, available: release, request: nu
 describe("owner-controlled updates", () => {
   it("reports cancellation neutrally and retains the next update controls", () => {
     const html = render(UpdateActions, { props: { status: { ...status,
-      request: { ...request, state: "cancelled" } }, now: Date.now() } }).body;
+      request: { ...request, state: "failed", detail: "Update canceled before installation. The previous version stayed active." } }, now: Date.now() } }).body;
     expect(html).toContain("Update canceled before installation. The previous version stayed active.");
     expect(html).not.toContain('role="alert"');
     expect(html).not.toContain("Update failed");
@@ -48,24 +48,24 @@ describe("owner-controlled updates", () => {
     expect(html).toContain("Cancel update");
     expect(html).not.toContain("Start update");
     expect(html).not.toContain("bbbbbbb");
-    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({ ...request, state: "cancelled" })));
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({ ...request, state: "failed", detail: "Update canceled before installation. The previous version stayed active." })));
     vi.stubGlobal("fetch", fetch);
     await cancelUpdate(request.request_id);
     expect(fetch.mock.calls[0]?.[0]).toBe("/api/updates/requests/pinned/cancel");
     for (const mode of ["idle", "now"] as const) {
-      for (const state of ["pending", "dispatched"] as const) {
+      for (const state of ["requested"] as const) {
         const queued = { ...request, mode, state };
         expect(canCancelUpdate(queued)).toBe(true);
         const body = render(UpdateActions, { props: { status: { ...status, request: queued }, now: Date.now() } }).body;
         expect(body).toContain("Cancel update");
-        expect(body).toContain(mode === "idle" && state === "pending" ? "Update waits for idle" : "Update requested");
+        expect(body).toContain(mode === "idle" && state === "requested" ? "Update waits for idle" : "Update requested");
         expect(body).not.toContain("Update queued");
       }
     }
-    expect(canCancelUpdate({ ...request, state: "applying" })).toBe(false);
-    expect(activeUpdateRequest({ ...request, state: "applying" })).toBe(true);
-    expect(render(UpdateActions, { props: { status: { ...status, request: { ...request, state: "applying" } }, now: Date.now() } }).body).toContain("Update in progress");
-    expect(render(UpdateActions, { props: { status: { ...status, request: { ...request, state: "applying" } }, now: Date.now() } }).body).not.toContain("Cancel update");
+    expect(canCancelUpdate({ ...request, state: "installing" })).toBe(false);
+    expect(activeUpdateRequest({ ...request, state: "installing" })).toBe(true);
+    expect(render(UpdateActions, { props: { status: { ...status, request: { ...request, state: "installing" } }, now: Date.now() } }).body).toContain("Update in progress");
+    expect(render(UpdateActions, { props: { status: { ...status, request: { ...request, state: "installing" } }, now: Date.now() } }).body).not.toContain("Cancel update");
   });
 
   it("offers adoption only for a configured unexpired release and never calls it page refresh", () => {

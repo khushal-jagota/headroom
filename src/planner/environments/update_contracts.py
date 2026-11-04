@@ -18,7 +18,7 @@ UPDATE_ARTIFACT_RETENTION_DAYS = 30
 type UpdateMode = Literal["now", "idle"]
 type UpdateActivity = Literal["idle", "busy", "unknown"]
 type UpdateRequestState = Literal[
-    "pending", "dispatched", "applying", "applied", "cancelled", "failed"
+    "requested", "installing", "done", "failed"
 ]
 
 

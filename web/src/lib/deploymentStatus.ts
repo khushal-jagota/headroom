@@ -17,27 +17,14 @@ function timestamp(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function expiryTime(status: DeploymentStatus): number | null {
-  return timestamp(status.valid_until);
-}
-
-function isFresh(status: DeploymentStatus, now: number): boolean {
-  const expiry = expiryTime(status);
-  return expiry !== null && now < expiry;
-}
-
-/** The sole success presentation rule. A live record alone is not permission
- * to keep speaking. Both deadlines must be usable, and a disconnected tab reports
- * its connection instead. No browser bundle SHA participates in this decision. */
+/** Success stays visible for its presentation deadline. Status itself does not expire. */
 export function successPresentation(
   status: DeploymentStatus,
   connectionState: ConnectionStatus,
   now: number
 ): SuccessPresentation {
-  const validUntil = timestamp(status.valid_until);
   const displayUntil = timestamp(status.success_display_until);
-  const deadline = validUntil === null || displayUntil === null
-    ? null : Math.min(validUntil, displayUntil);
+  const deadline = displayUntil;
   if (connectionState !== "connected" || deadline === null || now >= deadline) {
     return { state: connectionState, wakeAt: null };
   }
@@ -84,10 +71,10 @@ export function resolveDeploymentStatus(
   }
   if (!status) return "reconnecting";
   if (status.state === "preparing") {
-    return isFresh(status, now) ? "preparing" : unknownPresentation(status, connectionState, now);
+    return "preparing";
   }
   if (status.state === "restarting") {
-    return isFresh(status, now) ? "restarting" : unknownPresentation(status, connectionState, now);
+    return status.installation_confirmed ? unknownPresentation(status, connectionState, now) : "restarting";
   }
   if (status.state === "back_up") {
     return successPresentation(status, connectionState, now).state;
@@ -114,8 +101,6 @@ export function deploymentStatusExpiry(
   if (status.state === "back_up") {
     return successPresentation(status, connectionState, now).wakeAt;
   }
-  const expiry = expiryTime(status);
-  if (status.state !== "unknown" && expiry !== null && expiry > now) return expiry;
   const unknownDeadline = status.installation_confirmed && connectionState === "connected"
     ? timestamp(status.unknown_display_until) : null;
   return unknownDeadline !== null && unknownDeadline > now ? unknownDeadline : null;

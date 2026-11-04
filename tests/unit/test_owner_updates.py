@@ -87,7 +87,7 @@ def test_named_agents_remain_refused_through_hosted_ingress(tmp_path: Path) -> N
             ("worker", {"X-Plan-Ticket-ID": "t"}),
         ):
             response = client.post(
-                "/api/updates/requests/x/claim",
+                "/api/updates/requests/x/cancel",
                 headers={
                     "tailscale-user-login": "owner@example.test",
                     "X-Plan-Actor": actor,
@@ -99,7 +99,7 @@ def test_named_agents_remain_refused_through_hosted_ingress(tmp_path: Path) -> N
         assert client.get("/api/updates").json()["configured"] is True
 
 
-def test_pinned_request_survives_new_publication_and_cannot_be_claimed_after_cancel(
+def test_pinned_request_survives_new_publication_and_install_cannot_be_cancelled(
     tmp_path: Path,
     harness: _Harness,  # noqa: F811
 ) -> None:
@@ -115,120 +115,12 @@ def test_pinned_request_survives_new_publication_and_cannot_be_claimed_after_can
     provider.offered = replace(provider.offered, artifact_id=99)
     assert service.dispatch_pending()
     assert provider.dispatched[0].release == request.release
-    service.cancel(request.request_id)
-    with pytest.raises(UpdateConflict, match="cancelled"):
-        asyncio.run(service.claim(request.request_id))
+    with pytest.raises(UpdateConflict, match="already began"):
+        service.cancel(request.request_id)
     assert not harness.system.workspace_admission.closed
     expired = replace(provider.offered, expires_at="2020-01-01T00:00:00Z")
     with pytest.raises(UpdateConflict, match="expired"):
         service.request(expired, "idle", confirm_activity=False)
-
-
-def test_idle_claim_rechecks_new_send_and_now_claim_does_not_wait_for_backend(
-    tmp_path: Path,
-    harness: _Harness,  # noqa: F811
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "first")
-        await _start(harness, "second")
-        provider = Provider()
-        store = FileUpdateRequestStore(tmp_path / "request.json")
-        service = UpdateService(
-            provider,
-            store,
-            lambda: cast(ConversationSystem, harness.system),
-            connection_factory=lambda: connect(str(harness.db_path)),
-        )
-        request = service.request(provider.offered, "idle", confirm_activity=False)
-        assert service.dispatch_pending()
-        first = harness.backend("first")
-        first.write_has_begun = asyncio.Event()
-        first.writes_wait_for_release = asyncio.Event()
-        sending = asyncio.create_task(
-            harness.system.send("first", text_message_content("slow"), sender_label="Owner")
-        )
-        await first.write_has_begun.wait()
-        # Another conversation still reaches its backend while the first send waits.
-        await asyncio.wait_for(
-            harness.system.send(
-                "second", text_message_content("independent"), sender_label="Owner"
-            ),
-            1,
-        )
-        with pytest.raises(UpdateConflict, match="activity changed"):
-            await service.claim(request.request_id)
-        assert store.read().state == "pending"  # type: ignore[union-attr]
-        service.cancel(request.request_id)
-        request = service.request(provider.offered, "now", confirm_activity=True)
-        assert service.dispatch_pending()
-        assert (await asyncio.wait_for(service.claim(request.request_id), 1)).state == "applying"
-        with pytest.raises(UpdateConflict, match="already began"):
-            service.cancel(request.request_id)
-        with pytest.raises(RuntimeError, match="admission is closed"):
-            await _start(harness, "too-late")
-        first.writes_wait_for_release.set()
-        await sending
-
-    _run(exercise)
-
-
-def test_invalid_finished_ticket_refuses_claim_and_keeps_workspace_open(
-    tmp_path: Path,
-    harness: _Harness,  # noqa: F811
-) -> None:
-    # Existing admission tests cover activity races, but not a database that fails startup.
-    provider = Provider()
-    store = FileUpdateRequestStore(tmp_path / "request.json")
-    service = UpdateService(
-        provider,
-        store,
-        lambda: cast(ConversationSystem, harness.system),
-        connection_factory=lambda: connect(str(harness.db_path)),
-    )
-    connection = connect(str(harness.db_path))
-    try:
-        connection.execute(
-            "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
-            "field_values,created_at,updated_at,ceiling_holder) "
-            "VALUES ('finished','Finished Ticket','coding','codex','done','removed_stage',"
-            "'{}',1,1,?)",
-            (json.dumps({"kind": "chief", "id": "chief"}),),
-        )
-    finally:
-        connection.close()
-    request = service.request(provider.offered, "idle", confirm_activity=False)
-    assert service.dispatch_pending()
-    app = FastAPI()
-    app.include_router(router, prefix="/api")
-    app.state.updates = service
-    app.state.update_admission_closed = False
-    with TestClient(app) as client:
-        response = client.post(f"/api/updates/requests/{request.request_id}/claim")
-        assert response.status_code == 409
-        assert "finished" in response.json()["detail"]
-        assert "ceiling outside the type's range" in response.json()["detail"]
-        assert "before service shutdown" in response.json()["detail"]
-        assert not app.state.update_admission_closed
-    receipt = store.read()
-    assert receipt is not None and receipt.state == "failed"
-    assert not harness.system.workspace_admission.closed
-    # An ordinary DB write and conversation start remain available after refusal.
-    connection = connect(str(harness.db_path))
-    try:
-        connection.execute(
-            "UPDATE tickets SET ceiling = 'needs_implementation' WHERE id='finished'"
-        )
-    finally:
-        connection.close()
-
-    async def exercise() -> None:
-        await _start(harness, "still-serving")
-        retry = service.request(provider.offered, "idle", confirm_activity=False)
-        assert service.dispatch_pending()
-        assert (await service.claim(retry.request_id)).state == "applying"
-        assert harness.system.workspace_admission.closed
-
-    _run(exercise)
 
 
 def test_health_commit_publication_error_never_restores_database(tmp_path: Path) -> None:
@@ -277,14 +169,10 @@ def test_now_request_rechecks_confirmation_and_hides_installed_release(
             lambda: cast(ConversationSystem, harness.system),
             connection_factory=lambda: connect(str(harness.db_path)),
         )
-        request = service.request(provider.offered, "now", confirm_activity=False)
-        assert service.dispatch_pending()
         await _start(harness, "new-work")
         await harness.system.send("new-work", text_message_content("active"), sender_label="Owner")
         with pytest.raises(UpdateConflict, match="confirmation"):
-            await service.claim(request.request_id)
-        receipt = store.read()
-        assert receipt is not None and receipt.state == "failed"
+            service.request(provider.offered, "now", confirm_activity=False)
         assert not harness.system.workspace_admission.closed
         installed = UpdateService(
             provider,
@@ -360,7 +248,7 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     )
     request_store = FileUpdateRequestStore(database.parent / "owner-update-request.json")
     request_store.create(
-        OwnerUpdateRequest("request", release(), "now", "applying", datetime.now(UTC).isoformat())
+        OwnerUpdateRequest("request", release(), "now", "installing", datetime.now(UTC).isoformat())
     )
     progress = DeploymentLifecycleStore(database.parent / "deployment-lifecycle.json")
     progress.path.write_text("unreadable progress")
@@ -592,7 +480,6 @@ def test_runner_refuses_unknown_schema_before_any_shutdown(tmp_path: Path) -> No
 def test_provider_rechecks_metadata_without_repeated_proof_download(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import json
     import zipfile
     from dataclasses import asdict
     from io import BytesIO
@@ -652,25 +539,12 @@ def test_provider_rechecks_metadata_without_repeated_proof_download(
     assert metadata_reads == ["run", "artifacts"] * 3
 
 
-@pytest.mark.parametrize(
-    ("state", "lifecycle_identity"),
-    [
-        ("dispatched", None),
-        ("cancelled", None),
-        ("applying", None),
-        ("applying", "prior-attempt"),
-        ("applying", "request"),
-    ],
-)
-def test_runner_preflight_failure_preserves_cancellation_and_uncertain_admission(
+@pytest.mark.parametrize("state", ["requested", "installing", "done", "failed"])
+def test_runner_failure_records_failure_without_reopening_terminal_requests(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     state: str,
-    lifecycle_identity: str | None,
 ) -> None:
-    from argparse import Namespace
-    from typing import cast
-
     from planner.environments import update_runner
     from planner.environments.update_contracts import UpdateRequestState
 
@@ -678,56 +552,22 @@ def test_runner_preflight_failure_preserves_cancellation_and_uncertain_admission
     store.create(
         OwnerUpdateRequest("request", release(), "now", cast(UpdateRequestState, state), "now")
     )
-    if lifecycle_identity is not None:
-        lifecycle = DeploymentLifecycleStore(tmp_path / "data" / "deployment-lifecycle.json")
-        lifecycle.start(lifecycle_identity, SHA_B)
-        lifecycle.transition(lifecycle_identity, "verifying")
-        lifecycle.transition(lifecycle_identity, "app_healthy", serving_sha=SHA_B)
-    monkeypatch.delenv("PANELS_DEPLOYMENT_ID", raising=False)
-    arguments = [
-        "runner",
-        "apply",
-        "--current-root",
-        str(tmp_path),
-        "--request-id",
-        "request",
-        "--app-sha",
-        SHA_B,
-        "--artifact-digest",
-        "d" * 64,
-        "--archive-sha256",
-        "e" * 64,
-        "--artifact-id",
-        "2",
-        "--proof-artifact-id",
-        "3",
-        "--publication-run-id",
-        "1",
-    ]
-    monkeypatch.setattr("sys.argv", arguments)
+    monkeypatch.setattr(
+        "sys.argv", ["runner", "apply", "--current-root", str(tmp_path), "--request-id", "request"]
+    )
 
-    def refuse(_args: Namespace) -> dict[str, object]:
-        raise ValueError("expired, missing artifact, or unknown ancestry")
+    def refuse(_args: object) -> dict[str, object]:
+        raise ValueError("artifact unavailable")
 
     monkeypatch.setattr(update_runner, "apply", refuse)
     assert update_runner.main() == 1
-    receipt = store.read()
-    assert receipt is not None
-    if state == "dispatched":
-        assert receipt.state == "failed"
-    elif lifecycle_identity == "request":
-        assert receipt.state == "applied"
-    else:
-        assert receipt.state == state
-    if state == "applying" and lifecycle_identity != "request":
-        assert "Recovery required" in (receipt.detail or "")
+    assert store.read().state == ("failed" if state == "installing" else state)
 
 
 def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import json
     import shutil
     import sqlite3
     import zipfile
@@ -774,7 +614,7 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
         conn.execute("INSERT INTO alembic_version VALUES ('video_upload_ledger')")
     update_runner.validate_schema_ancestry(database)
     store = FileUpdateRequestStore(database.parent / "owner-update-request.json")
-    store.create(OwnerUpdateRequest("request", offered, "idle", "dispatched", "now"))
+    store.create(OwnerUpdateRequest("request", offered, "idle", "installing", "now"))
     effects: list[str] = []
 
     class RetainedProvider:
@@ -815,7 +655,7 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     with pytest.raises(ValueError, match="unknown schema ancestry"):
         update_runner.apply(arguments)
     assert effects == []
-    assert store.read().state == "dispatched"  # type: ignore[union-attr]
+    assert store.read().state == "installing"  # type: ignore[union-attr]
 
 
 @pytest.fixture(autouse=True)
@@ -834,8 +674,10 @@ def test_cancellation_evidence_survives_replacement_with_bounded_retention(
     store = FileUpdateRequestStore(tmp_path / "request.json")
     for number in range(4):
         request_id = f"request-{number}"
-        store.create(OwnerUpdateRequest(request_id, release(), "now", "pending", "now"))
-        cancelled = store.transition(request_id, frozenset({"pending"}), "cancelled")
+        store.create(OwnerUpdateRequest(request_id, release(), "now", "requested", "now"))
+        cancelled = store.transition(
+            request_id, frozenset({"requested"}), "failed", detail=CANCELLED_DETAIL
+        )
         assert cancelled.detail == CANCELLED_DETAIL
     assert store.read_for_reporting("request-0") is None
     assert store.read_for_reporting("request-1") is not None
@@ -843,7 +685,7 @@ def test_cancellation_evidence_survives_replacement_with_bounded_retention(
     assert len(list((tmp_path / "cancelled-update-requests").glob("*.json"))) == 2
     assert store.read_for_reporting("request-3") == store.read()
     with pytest.raises(UpdateConflict):
-        store.transition("request-2", frozenset({"cancelled"}), "dispatched")
+        store.transition("request-2", frozenset({"failed"}), "installing")
 
     def refuse_prune() -> None:
         raise OSError("pruning unavailable")
@@ -851,8 +693,8 @@ def test_cancellation_evidence_survives_replacement_with_bounded_retention(
     monkeypatch.setattr(store, "_prune_cancelled_reports", refuse_prune)
     for number in range(4, 7):
         request_id = f"request-{number}"
-        store.create(OwnerUpdateRequest(request_id, release(), "now", "pending", "now"))
-        store.transition(request_id, frozenset({"pending"}), "cancelled")
+        store.create(OwnerUpdateRequest(request_id, release(), "now", "requested", "now"))
+        store.transition(request_id, frozenset({"requested"}), "failed", detail=CANCELLED_DETAIL)
     assert len(list((tmp_path / "cancelled-update-requests").glob("*.json"))) == 2
     assert store.read_for_reporting("request-3") is None
 
@@ -864,7 +706,11 @@ def test_reporting_failure_cannot_block_replacement(
     from planner.environments import update_requests
 
     store = FileUpdateRequestStore(tmp_path / "request.json")
-    store.create(OwnerUpdateRequest("old", release(), "now", "cancelled", "now"))
+    store.create(
+        OwnerUpdateRequest(
+            "old", release(), "now", "failed", "now", detail=update_requests.CANCELLED_DETAIL
+        )
+    )
 
     def refuse(*args: object, **kwargs: object) -> None:
         raise OSError("report storage unavailable")
@@ -880,7 +726,7 @@ def test_reporting_failure_cannot_block_replacement(
         monkeypatch.setattr(update_requests, "_atomic_write", write)
     else:
         monkeypatch.setattr(store, "_prune_cancelled_reports", refuse)
-    replacement = OwnerUpdateRequest("new", release(), "now", "pending", "now")
+    replacement = OwnerUpdateRequest("new", release(), "now", "requested", "now")
     assert store.create(replacement) == replacement
     assert store.read() == replacement
     if operation == "archive":
@@ -897,3 +743,63 @@ def test_uncertain_report_preserves_candidate_admission(tmp_path: Path, committe
     store.transition("attempt", "unknown", detail="Final checks are uncertain.")
     assert matching_commit(store, SHA_B) is committed
     assert startup_requires_commit(store, SHA_B) is not committed
+
+
+def test_runner_downloads_only_app_and_checks_candidate_schema_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One connected archive/request path replaces repeated claim/proof assertions."""
+    import zipfile
+    from argparse import Namespace
+    from typing import Any
+
+    from planner.environments import update_runner
+    from planner.environments.app import validate_app_manifest
+    from planner.environments.deployment import DeploymentResult
+    from planner.environments.update_artifacts import create_app_archive
+
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old", include_cli=False)
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    archive = tmp_path / "panels-app.tar.gz"
+    checksum = create_app_archive(candidate, archive)
+    offered = replace(
+        release(),
+        manifest=validate_app_manifest(candidate / "manifest.json"),
+        archive_sha256=checksum,
+    )
+    store = FileUpdateRequestStore(current / "data" / "owner-update-request.json")
+    store.create(OwnerUpdateRequest("request", offered, "now", "installing", "now"))
+    downloads: list[int] = []
+    checks: list[tuple[Path, Path]] = []
+
+    class ProviderOnlyApp:
+        def download_artifact(self, artifact_id: int, destination: Path) -> None:
+            downloads.append(artifact_id)
+            with zipfile.ZipFile(destination, "w") as zipped:
+                zipped.write(archive, "panels-app.tar.gz")
+
+    def deploy(**kwargs: Any) -> DeploymentResult:
+        kwargs["before_stop"]()
+        assert (kwargs["candidate_app"] / "manifest.json").is_file()
+        return DeploymentResult("succeeded", SHA_B, SHA_A, None)
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repository")
+    monkeypatch.setattr(update_runner, "GitHubUpdateProvider", lambda *a, **kw: ProviderOnlyApp())
+    monkeypatch.setattr(
+        update_runner, "validate_schema_ancestry", lambda db, history: checks.append((db, history))
+    )
+    monkeypatch.setattr(update_runner, "SubprocessServiceController", lambda *args: FakeService([]))
+    monkeypatch.setattr(update_runner, "deploy_app", deploy)
+    result = update_runner.apply(
+        Namespace(
+            current_root=current, request_id="request", health_url="http://127.0.0.1:1/api/health"
+        )
+    )
+    assert result["status"] == "succeeded"
+    assert downloads == [offered.artifact_id]
+    assert len(checks) == 1
+    assert checks[0][0] == current / "data" / "planner.db"
+    assert checks[0][1].parts[-3:] == ("planner", "core", "migrations")
+    assert store.read().state == "done"  # type: ignore[union-attr]

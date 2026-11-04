@@ -6,7 +6,7 @@ import type { DeploymentStatus } from "../src/lib/types";
 const now = Date.parse("2026-10-21T12:00:00Z");
 const status = (changes: Partial<DeploymentStatus> = {}): DeploymentStatus => ({
   state: "idle", deployed_sha: null, target_sha: null, outcome: null,
-  detail: null, valid_until: null, success_display_until: null, ...changes
+  detail: null, success_display_until: null, ...changes
 });
 
 describe("deployment status precedence and expiry", () => {
@@ -19,7 +19,7 @@ describe("deployment status precedence and expiry", () => {
   it("keeps failed deployments visible over fresh progress, recovery, and disconnection", () => {
     for (const outcome of ["failed", "rolled_back"] as const) {
       for (const state of ["preparing", "restarting", "back_up"] as const) {
-        const failed = status({ state, outcome, valid_until: new Date(now + 1000).toISOString() });
+        const failed = status({ state, outcome });
         expect(resolveDeploymentStatus(failed, "connected", now)).toBe("problem");
         expect(resolveDeploymentStatus(failed, "reconnecting", now)).toBe("problem");
         expect(deploymentStatusExpiryDelay(failed, now)).toBeNull();
@@ -27,26 +27,18 @@ describe("deployment status precedence and expiry", () => {
     }
     expect(resolveDeploymentStatus(status({ state: "problem" }), "reconnecting", now)).toBe("problem");
   });
-  it("expires progress at its boundary and schedules one wake just after it", () => {
+  it("retains the last progress step without a lease deadline", () => {
     for (const state of ["preparing", "restarting"] as const) {
-      const progress = status({ state, valid_until: new Date(now + 1000).toISOString() });
+      const progress = status({ state });
       expect(resolveDeploymentStatus(progress, "connected", now)).toBe(state);
-      expect(deploymentStatusExpiry(progress, now)).toBe(now + 1000);
-      expect(deploymentStatusExpiryDelay(progress, now)).toBe(1001);
-      expect(resolveDeploymentStatus(progress, "connected", now + 1000)).toBe("unknown");
-      expect(deploymentStatusExpiryDelay(progress, now + 1000)).toBeNull();
-      for (const valid_until of [null, "invalid", new Date(now - 1).toISOString()]) {
-        const expired = status({ state, valid_until });
-        expect(resolveDeploymentStatus(expired, "connected", now)).toBe("unknown");
-        expect(deploymentStatusExpiryDelay(expired, now)).toBeNull();
-      }
+      expect(resolveDeploymentStatus(progress, "connected", now + 86_400_000)).toBe(state);
+      expect(deploymentStatusExpiryDelay(progress, now)).toBeNull();
     }
   });
   it("retires only an installed report notice at a fixed deadline, including stale progress", () => {
     const deadline = now + 300_000;
     for (const state of ["unknown", "restarting"] as const) {
       const installed = status({ state, installation_confirmed: true,
-        valid_until: new Date(now).toISOString(),
         unknown_display_until: new Date(deadline).toISOString() });
       expect(resolveDeploymentStatus(installed, "connected", now)).toBe("unknown");
       expect(deploymentStatusDetail(installed, "unknown")).toContain("No action is needed from you.");
@@ -60,7 +52,7 @@ describe("deployment status precedence and expiry", () => {
         expect(resolveDeploymentStatus({ ...installed, unknown_display_until }, "connected", deadline)).toBe("unknown");
       }
       const held = { ...installed, installation_confirmed: false, work_paused: true };
-      expect(resolveDeploymentStatus(held, "connected", deadline + 86_400_000)).toBe("unknown");
+      expect(resolveDeploymentStatus(held, "connected", deadline + 86_400_000)).toBe(state === "restarting" ? "restarting" : "unknown");
       expect(deploymentStatusExpiryDelay(held, now)).toBeNull();
       expect(deploymentStatusDetail(held, "unknown")).toContain("Chief review is required.");
       expect(deploymentStatusDetail(held, "unknown")).toContain("Work remains paused.");
@@ -70,22 +62,17 @@ describe("deployment status precedence and expiry", () => {
       }
     }
   });
-  it("requires both success deadlines and wakes at the earlier boundary", () => {
-    const validUntil = now + 86_400_000;
+  it("uses the success display deadline", () => {
     const displayUntil = now + 300_000;
     const recovered = status({ state: "back_up", outcome: "succeeded",
-      valid_until: new Date(validUntil).toISOString(),
       success_display_until: new Date(displayUntil).toISOString() });
     expect(deploymentStatusExpiryDelay(recovered, now)).toBe(300_001);
     expect(resolveDeploymentStatus(recovered, "connected", displayUntil - 1)).toBe("back_up");
     expect(resolveDeploymentStatus(recovered, "connected", displayUntil)).toBe("connected");
     expect(deploymentStatusExpiryDelay(recovered, displayUntil)).toBeNull();
-    const shorterRecord = { ...recovered, valid_until: new Date(now + 1000).toISOString() };
-    expect(deploymentStatusExpiry(shorterRecord, now)).toBe(now + 1000);
-    expect(resolveDeploymentStatus(shorterRecord, "connected", now + 1000)).toBe("connected");
     // Older API bodies can omit the new field. Neither absence nor malformed
     // evidence must turn record retention back into card visibility.
-    for (const field of ["valid_until", "success_display_until"] as const) {
+    for (const field of ["success_display_until"] as const) {
       for (const value of [null, undefined, "invalid", new Date(now).toISOString()]) {
         const unusable = { ...recovered, [field]: value } as DeploymentStatus;
         expect(resolveDeploymentStatus(unusable, "connected", now)).toBe("connected");

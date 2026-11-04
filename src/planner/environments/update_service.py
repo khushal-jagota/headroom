@@ -14,7 +14,6 @@ from uuid import uuid4
 
 from planner.conversation.contracts import ConversationSystem
 from planner.core import change_signal
-from planner.core.errors import PlannerError
 from planner.environments.deployment_lifecycle import _atomic_write
 from planner.environments.update_configuration import UPDATE_AVAILABILITY_REFRESH_SECONDS
 from planner.environments.update_contracts import (
@@ -26,11 +25,7 @@ from planner.environments.update_contracts import (
     UpdateRequestStore,
     UpdateStatus,
 )
-from planner.environments.update_requests import UpdateConflict, parse_release
-from planner.managed_skills import skill_names
-from planner.tickets.data import audit_ticket_registry_integrity
-from planner.worker_types.configuration import build_worker_runtime_definitions
-from planner.worker_types.store import read_definitions
+from planner.environments.update_requests import CANCELLED_DETAIL, UpdateConflict, parse_release
 
 
 class UpdateService:
@@ -142,7 +137,7 @@ class UpdateService:
                 uuid4().hex,
                 release,
                 mode,
-                "pending",
+                "requested",
                 datetime.now(UTC).isoformat(),
                 confirm_activity=confirm_activity,
             )
@@ -152,7 +147,7 @@ class UpdateService:
     def dispatch_pending(self) -> bool:
         self.refresh_available()
         request = self.store.read()
-        if request is None or request.state != "pending" or self.provider is None:
+        if request is None or request.state != "requested" or self.provider is None:
             return False
         system = self.conversation()
         if request.mode == "idle" and (system is None or system.workspace_activity() != "idle"):
@@ -161,7 +156,7 @@ class UpdateService:
             validate_release(request.release)
             # Persist before the external call. An uncertain response never replays dispatch.
             request = self.store.transition(
-                request.request_id, frozenset({"pending"}), "dispatched"
+                request.request_id, frozenset({"requested"}), "installing"
             )
             self.provider.dispatch(request)
         except UpdateConflict:
@@ -169,7 +164,7 @@ class UpdateService:
         except (OSError, RuntimeError, ValueError):
             self.store.transition(
                 request.request_id,
-                frozenset({"pending", "dispatched"}),
+                frozenset({"requested", "installing"}),
                 "failed",
                 detail=(
                     "Update dispatch failed or its result is uncertain. "
@@ -180,80 +175,9 @@ class UpdateService:
         return True
 
     def cancel(self, request_id: str) -> OwnerUpdateRequest:
-        return self.store.transition(request_id, frozenset({"pending", "dispatched"}), "cancelled")
-
-    async def claim(self, request_id: str) -> OwnerUpdateRequest:
-        request = self.store.read()
-        if request is None or request.request_id != request_id or request.state != "dispatched":
-            raise UpdateConflict("The update was cancelled or application already began.")
-        validate_release(request.release)
-        system = self.conversation()
-        if system is None:
-            raise UpdateConflict("Workspace activity is unknown. Application did not begin.")
-        claimed: OwnerUpdateRequest | None = None
-
-        def claim() -> None:
-            nonlocal claimed
-            try:
-                connection = self._connection_factory()
-                try:
-                    # Audit the stored definition and Tickets in one writer-locked snapshot.
-                    # Never publish a temporary registry into the running application.
-                    connection.execute("BEGIN IMMEDIATE")
-                    definitions = build_worker_runtime_definitions(
-                        worker_type_definitions=read_definitions(connection),
-                        known_skills=skill_names(connection),
-                    )
-                    audit_ticket_registry_integrity(
-                        connection, worker_type_registry=definitions.worker_type_registry
-                    )
-                    claimed = self.store.transition(
-                        request_id, frozenset({"dispatched"}), "applying"
-                    )
-                finally:
-                    try:
-                        if connection.in_transaction:
-                            connection.rollback()
-                    finally:
-                        connection.close()
-            except UpdateConflict:
-                raise
-            except (PlannerError, RuntimeError, ValueError, sqlite3.Error) as exc:
-                detail = (
-                    "Ticket integrity check refused the update before service shutdown. "
-                    f"Resolve the saved Ticket or Worker type error before retry: {exc}"
-                )
-                self.store.transition(
-                    request_id, frozenset({"dispatched"}), "failed", detail=detail
-                )
-                raise UpdateConflict(detail) from exc
-
-        admitted = await system.run_with_workspace_admission(
-            claim, require_idle=request.mode == "idle" or not request.confirm_activity
+        return self.store.transition(
+            request_id, frozenset({"requested"}), "failed", detail=CANCELLED_DETAIL
         )
-        if not admitted:
-            if request.mode == "now":
-                self.store.transition(
-                    request_id,
-                    frozenset({"dispatched"}),
-                    "failed",
-                    detail=(
-                        "Workspace activity changed. Confirm active work before "
-                        "a new Update now request."
-                    ),
-                )
-                raise UpdateConflict(
-                    "Workspace activity changed. Explicit confirmation is required."
-                )
-            self.store.transition(
-                request_id,
-                frozenset({"dispatched"}),
-                "pending",
-                detail="Workspace activity changed. The update still waits for idle.",
-            )
-            raise UpdateConflict("Workspace activity changed. Application did not begin.")
-        assert claimed is not None
-        return claimed
 
 
 def validate_release(release: PublishedUpdate) -> None:
