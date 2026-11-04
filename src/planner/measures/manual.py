@@ -5,7 +5,6 @@ from dataclasses import asdict
 
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.measures import data
-from planner.measures.actions import _require_author
 from planner.measures.contracts import (
     ManualMeasureState,
     ManualWriteBody,
@@ -64,7 +63,6 @@ def _receipt(row: sqlite3.Row) -> ManualWriteReceipt:
 
 def _require_manual_author(conn: sqlite3.Connection, principal: Principal, measure_id: str) -> None:
     if principal.kind is not PrincipalKind.goal:
-        _require_author(conn, principal, None)
         return
     from planner.goals import data as goals
     from planner.goals.logic.documents import measure_ids

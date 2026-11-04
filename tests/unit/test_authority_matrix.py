@@ -31,9 +31,9 @@ from typing import Any, Final, cast
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.retired_workers import seed_historical_worker_type
 
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -416,7 +416,6 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         "PATCH  /skills/{n}",
         lambda s: Call("PATCH", "/api/skills/panels", {"description": "x"}),
     ),
-    ("POST   /feedback", lambda s: Call("POST", "/api/feedback", {"body": "Some feedback."})),
     (
         "POST   /messages/send",
         lambda s: Call(

@@ -5,8 +5,7 @@ facts the rule needs and hands them to :mod:`planner.core.authority.logic`, whic
 dependency-free.
 
 The chain is already in the data and this module stores nothing new. A Ticket's Manager
-is ``tickets.manager_id``. A planning Ticket's reach is declared in
-:mod:`planner.core.authority.declarations`, which is code, not a row.
+is ``tickets.manager_id``. Workers have no declared reach above other objects.
 
 A position is a truthful local claim, exactly as it was before: the caller's
 ``X-Plan-Actor`` and its one id header, resolved once in
@@ -20,7 +19,6 @@ from __future__ import annotations
 import sqlite3
 
 from planner.core.authority.contracts import Target, TargetKind
-from planner.core.authority.declarations import stands_above_for_worker_type
 from planner.core.authority.logic import (
     ChainFacts,
     is_self,
@@ -58,20 +56,6 @@ def _target_parent_manager_id(conn: sqlite3.Connection, target: Target) -> str |
     return None if row is None else str(row["id"])
 
 
-def _caller_declared_targets(conn: sqlite3.Connection, caller: Principal) -> tuple[Target, ...]:
-    """What the caller's Worker type declares it stands above.
-
-    Empty for every caller that is not a Ticket, and for a claimed Ticket id with no row:
-    a claim that names nothing stands above nothing.
-    """
-    if caller.kind is not PrincipalKind.ticket:
-        return ()
-    row = conn.execute("SELECT worker_type FROM tickets WHERE id = ?", (caller.id,)).fetchone()
-    if row is None:
-        return ()
-    return stands_above_for_worker_type(str(row["worker_type"]))
-
-
 def _caller_parent_manager_id(conn: sqlite3.Connection, caller: Principal) -> str | None:
     """The Manager the caller sits under, if the caller is a Ticket that sits under one.
 
@@ -104,7 +88,6 @@ def _target_is_itself_a_principal(conn: sqlite3.Connection, target: Target) -> b
 def chain_facts(conn: sqlite3.Connection, caller: Principal, target: Target) -> ChainFacts:
     return ChainFacts(
         target_parent_manager_id=_target_parent_manager_id(conn, target),
-        caller_declared_targets=_caller_declared_targets(conn, caller),
         target_is_itself_a_principal=_target_is_itself_a_principal(conn, target),
         caller_parent_manager_id=_caller_parent_manager_id(conn, caller),
     )
@@ -202,7 +185,6 @@ def _facts_for_a_ticket_being_created(
     """
     return ChainFacts(
         target_parent_manager_id=parent_manager_id,
-        caller_declared_targets=_caller_declared_targets(conn, principal),
         target_is_itself_a_principal=True,
     )
 

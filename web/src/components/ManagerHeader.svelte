@@ -22,7 +22,7 @@
 
 <header class="manager-workspace-head">
   {@render eyebrow?.()}
-  <h1 class="manager-workspace-title" data-feedback-page-title>
+  <h1 class="manager-workspace-title">
     {@render title()}
     <ConversationSignalMark {signal} {conversationId} class="manager-workspace-title-mark" />
   </h1>

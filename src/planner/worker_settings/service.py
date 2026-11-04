@@ -7,7 +7,6 @@ them. Nothing here reconciles two sources, because there is only one.
 
 from __future__ import annotations
 
-import hashlib
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -308,7 +307,6 @@ def read_worker_settings(
         worker_type=worker_type,
         specialist_skill=read_skill(conn, definition.worker_profile.specialist_skill),
         launch_defaults=_launch_defaults(definition.worker_profile),
-        requires_macos=read_worker_requires_macos(conn, worker_type),
         candidate_specialist_skill=None,
     )
 
@@ -325,7 +323,6 @@ def read_worker_management_index(
                 worker_type=worker_type,
                 label=definition.label,
                 specialist_skill_name=definition.worker_profile.specialist_skill,
-                requires_macos=read_worker_requires_macos(conn, worker_type),
                 launch_defaults=_launch_defaults(definition.worker_profile),
             )
         )
@@ -381,7 +378,6 @@ def update_worker_launch_defaults(
         worker_type=worker_type,
         specialist_skill=read_skill(conn, definition.worker_profile.specialist_skill),
         launch_defaults=launch_defaults,
-        requires_macos=read_worker_requires_macos(conn, worker_type),
         candidate_specialist_skill=None,
     )
 
@@ -484,33 +480,6 @@ def save_chief_skill(
     return read_chief_settings(conn)
 
 
-def read_worker_requires_macos(conn: sqlite3.Connection, worker_type: str) -> bool:
-    row = conn.execute(
-        "SELECT requires_macos FROM worker_types WHERE worker_type=?", (worker_type,)
-    ).fetchone()
-    # In-memory registries used before a Worker is registered have no managed override.
-    return bool(row["requires_macos"]) if row is not None else False
-
-
-def update_worker_requirements(
-    conn: sqlite3.Connection,
-    registry: WorkerTypeRegistry,
-    worker_type: str,
-    *,
-    requires_macos: bool,
-    now: int,
-) -> ManagedWorkerSettings:
-    registry.require(worker_type)
-    if type(requires_macos) is not bool:
-        raise PlannerError(ErrorCode.validation, "requires_macos must be a boolean", {})
-    with _one_writer(conn):
-        conn.execute(
-            "UPDATE worker_types SET requires_macos=?,updated_at=? WHERE worker_type=?",
-            (int(requires_macos), now, worker_type),
-        )
-    return read_worker_settings(conn, registry, worker_type)
-
-
 def apply_skills(
     conn: sqlite3.Connection,
     raw: dict[str, Any],
@@ -530,47 +499,27 @@ def apply_skills(
     entries: list[SkillApplication] = []
     names: set[str] = set()
     for item in raw["skills"]:
-        if not isinstance(item, dict) or set(item) != {"name", "source_text", "expected_sha256"}:
+        if not isinstance(item, dict) or set(item) != {"name", "source_text"}:
             raise PlannerError(
                 ErrorCode.validation, "skill application must be an exact object", {}
             )
-        name, text, expected = item["name"], item["source_text"], item["expected_sha256"]
+        name, text = item["name"], item["source_text"]
         if (
             not isinstance(name, str)
             or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name)
             or name in names
         ):
             raise PlannerError(ErrorCode.validation, "skill name is invalid or duplicated", {})
-        if not isinstance(text, str) or (
-            expected is not None
-            and (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected))
-        ):
-            raise PlannerError(ErrorCode.validation, "source text or expected hash is invalid", {})
+        if not isinstance(text, str):
+            raise PlannerError(ErrorCode.validation, "source text is invalid", {})
         parse_skill(text, name)
         names.add(name)
-        entries.append(SkillApplication(name, text, expected))
+        entries.append(SkillApplication(name, text))
     with skill_publication_lock(database_parent) as skills_home:
         with _one_writer(conn):
             current = read_all_skill_sources(conn)
             exact_retry = all(current.get(entry.name) == entry.source_text for entry in entries)
             if not exact_retry:
-                for entry in entries:
-                    source = current.get(entry.name)
-                    actual = (
-                        None
-                        if source is None
-                        else hashlib.sha256(source.encode("utf-8")).hexdigest()
-                    )
-                    if actual != entry.expected_sha256:
-                        raise PlannerError(
-                            ErrorCode.validation,
-                            "skill source hash changed",
-                            {
-                                "skill_name": entry.name,
-                                "expected_sha256": entry.expected_sha256,
-                                "actual_sha256": actual,
-                            },
-                        )
                 for entry in entries:
                     write_skill_source(conn, entry.name, entry.source_text, now=now)
         for entry in entries:

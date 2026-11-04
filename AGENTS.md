@@ -9,7 +9,6 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Domain code is grouped by system: `tickets/`, `managers/`, `ideas/`, and `projects/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
 - `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `ticket`, `manager`, `worker`, and `worker-type`. The Chief is a recipient of `send-message`, not a command group.
 - Worker orchestration lives in `runtime/`. `worker_step_readiness.py` is the whole readiness decision — read-only, no writes. `worker_step_readiness_loop.py` holds both the poll thread and `start_ready_worker_step`, the per-Ticket flow: conversation busy check, one guarded write that takes the worker-step claim (the only state of control a Ticket stores — no claim stamp, no run row), start or reuse the Ticket's conversation, compose the opener, send. Started and queued are both success; only a refusal releases the claim. Nothing watches a turn end. `conversation_start.py` owns resolve/start/send/reset against the conversation contract.
-- Generic exact-time Ticket supply lives in `scheduled_tickets/`. Its sibling poll loop shares the server lifespan and single-machine lock, evaluates only the current local minute, and transactionally records a created, suppressed, or failed occurrence. It stops at ordinary Ticket creation with explicit manager assignment; the change signal and readiness loop own the Worker handoff.
 - `core/change_signal.py` is the payload-free, best-effort "something was written" signal. Every connection from `core/db.connect` announces its own commits, so no domain action carries wake or invalidation calls. The one way past it is `core/db.commit_without_change_signal`, used where the writer has established that no screen is waiting for its rows: managed skill history, and the conversation rows only an open conversation shows, which the live tail hands over directly. While the polling-lock owner's readiness loop runs it is subscribed to the signal; SQLite and the periodic timer remain canonical. The browser hears the same signal over `GET /api/changes` (`core/sse.py`).
 - Conversation code lives in `conversation/`, and it is the only one: contract, core, record, live tail, backend snapshots, and one adapter per backend under `backends/`. Every screen that shows a conversation and every worker step goes through it. The backends are a closed set of exactly `hermes`, `codex`, and `claude`, stated in the contract, and one door turns untrusted text into a member of it.
 - Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design assets remain in `assets/`: `tokens.css` and `app.css`; the Vite-owned GFM pipeline lives in `web/src/lib/markdownPipeline.ts`.
@@ -28,7 +27,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Memory
 - **Panels ticket fields, recap, and artifacts** — keep the current stage, evidence, judgment calls, next step, and blockers with the ticket that owns the work.
-- **docs/** — plain-language documentation of what exists and how it works, split by system (`docs/README.md` is the map; `docs/CLAUDE.md` holds the conventions, and `docs/AGENTS.md` is the same source). Simple sentences, no jargon — a smart non-engineer must be able to read it; if a section can't be understood without reading the code, rewrite the section. Kept **current, not frozen**: written as work completes, and corrected in the same breath when a feature changes or is removed — a doc still describing deleted machinery is a bug, not history. History is git's.
+- **docs/** — a top-level view of each system: what it is for, how it works, and roughly how, with just enough detail to sense-check the design. `docs/README.md` is the map, and `docs/AGENTS.md` holds the rules. Plain language that a smart non-engineer can read. When you change a system, update its page in the same change at the same depth: trim before you add, and never add a page for a feature. A doc that describes removed machinery is a bug. History is git's.
 
 ## Verification
 - Apply the test-admission policy in **PRINCIPLES.md** during existing plan and implementation review. Record each added test's distinct risk, existing coverage gap, chosen layer, reused setup, and any new connected case or browser host cost.
@@ -90,22 +89,15 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   an unresolved link or mount. If valid independent dependencies receive a false refusal,
   fix the detector and add a regression check. If evidence is unavailable, restore the
   evidence or fix its acquisition before retry. See `docs/deployment.md` for diagnostics.
-- `mypy` with this tree's config and any `pytest` that collects under `tests/` check
-  deployment safety, then environment identity, then installed distributions against applicable exact
-  pins in `requirements.txt`. The dependency check runs before `planner` imports.
-  Extra installed distributions and this tree's editable install are valid.
-  A dependency refusal names the required and installed versions, active interpreter,
-  and a repair command anchored to this tree. Missing or unusable `packaging` reports
-  a parser bootstrap failure. A foreign or moved virtualenv needs a rebuild.
-  A pin change makes old environments stale, so refusal is expected until their
-  installed dependencies match. No environment variable or flag skips this check.
-  Restore the pinned dependency versions to pass it.
-  These hooks cannot cover failures before pytest or mypy loads them. They do not
-  cover `ruff`, pytest outside `tests/`, or arbitrary `.venv/bin` commands.
+- `mypy` with this tree's config and `pytest` under `tests/` use one source path
+  check. The imported `planner` package must resolve inside this checkout's `src`.
+  If it resolves elsewhere, reinstall this checkout with `.venv/bin/python -m pip install --editable .`.
+  Keep development dependencies and runtime state independent of the deployment.
+  The separate development safety launcher checks deployment sharing before tools start.
   Direct invocations outside guarded entry points can still write into the deployment.
   General prevention and race-free filesystem containment remain uncommissioned.
   Development and verification run in independent worktrees, never the installed tree.
-  Startup checks do not contain running processes or prevent writes after the check.
+  Startup checks do not contain running processes or prevent later writes.
   The artifact digest detects damage after a write. Do not add cache exclusions.
   If a write reaches the installed tree, report it and leave it in place. Do not clean it.
   Repository review or merge does not install enforcement into the deployed release.

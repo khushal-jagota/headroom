@@ -3,13 +3,11 @@
  import type {GoalResponse,GoalWriteFields} from '../../lib/goals/contracts';
  import type {InlineEditDraft} from '../../lib/inlineEditDraft';
  import {createGoalEditor} from '../../lib/goals/editing';
- import {deadlineTone,deadlineColor} from '../../lib/goals/presentation';
- import {goalQueries} from '../../lib/goals/queries';
- import {queryClient} from '../../lib/queryClient';
+ import {goalDeadlineTone,deadlineColor} from '../../lib/goals/presentation';
  import {queries} from '../../lib/queryCatalogue';
- import {PlannerFetchError} from '../../lib/api';
  import InlineEdit from '../InlineEdit.svelte';
  import ErrorLine from '../ErrorLine.svelte';
+ import GoalOutcome from './GoalOutcome.svelte';
 
  let {goal,mark}:{goal:GoalResponse;mark?:import('svelte').Snippet}=$props();
  const projects=createQuery(()=>queries.projects());
@@ -54,8 +52,7 @@
  async function write(edit:Edit,patch:GoalWriteFields){
   const accepted=edit.accepted,editor=edit.editor;
   if(!accepted||!editor)throw new Error('Focus this field before another edit.');
-  try{
-   const saved=await editor.write(patch,accepted.revision);
+  const saved=await editor.write(patch);
    // A previous field can save while focus enters its pristine sibling. Only
    // this known local acceptance advances that sibling's unused snapshot.
    for(const sibling of Object.values(drafts.get(saved.id)??{})){
@@ -64,12 +61,6 @@
     }
    }
    edit.accepted=null;edit.editor=null;edit.dirty=false;
-  }catch(error){
-   if(error instanceof PlannerFetchError&&error.status===409){
-    await queryClient.invalidateQueries({queryKey:goalQueries.detail(accepted.id).queryKey}).catch(()=>undefined);
-   }
-   throw error;
-  }
  }
  async function saveText(edit:Edit,field:'title'|'why',raw:string){
   if(field==='title'&&!raw.trim())throw new Error('Enter a goal title.');
@@ -114,10 +105,10 @@
     {#each projects.data?.projects??[] as project}<option value={project.id}>{project.name}</option>{/each}
    </select>
   </span>
-  <span class="metadata deadline" class:empty={!deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)}>
+  <span class="metadata deadline" class:empty={!deadline} data-deadline-tone={goalDeadlineTone(goal)}>
    <span class="control-size date-size" aria-hidden="true">{dateText(deadline)}</span>
    {#if !deadline}<span class="deadline-empty" aria-hidden="true">No deadline</span>{/if}
-   <input type="date" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))} aria-label="By date" value={deadline} disabled={editFields.deadline.saving} onfocus={()=>start(editFields.deadline,true)} onclick={openDatePicker} oninput={e=>input(editFields.deadline,e.currentTarget)} onblur={e=>void commit(editFields.deadline,'deadline',e.currentTarget)} onkeydown={e=>keydown(e,editFields.deadline,'deadline')}/>
+   <input type="date" style:color={deadlineColor(goalDeadlineTone(goal))} aria-label="By date" value={deadline} disabled={editFields.deadline.saving} onfocus={()=>start(editFields.deadline,true)} onclick={openDatePicker} oninput={e=>input(editFields.deadline,e.currentTarget)} onblur={e=>void commit(editFields.deadline,'deadline',e.currentTarget)} onkeydown={e=>keydown(e,editFields.deadline,'deadline')}/>
   </span>
   <span class="metadata">
    <span class="control-size" aria-hidden="true">{(editFields.active.value??String(goal.active))==='true'?'Active':'Inactive'}</span>
@@ -128,6 +119,7 @@
  {#each ['project_id','deadline','active'] as field}{@render failure(field as Field)}{/each}
  <h1 oninput={()=>editFields.title.dirty=true}><InlineEdit value={goal.title} draft={editFields.title} placeholder="Goal title…" ariaLabel="Goal title" onStart={()=>start(editFields.title,true)} onCancel={()=>discard(editFields.title,'title')} onSave={raw=>saveText(editFields.title,'title',raw)}/></h1>
  <div class="why" oninput={()=>editFields.why.dirty=true}><InlineEdit value={goal.why} draft={editFields.why} multiline placeholder="Why this goal matters…" ariaLabel="Why this goal matters" onStart={()=>start(editFields.why,true)} onCancel={()=>discard(editFields.why,'why')} onSave={raw=>saveText(editFields.why,'why',raw)}/></div>
+ <div class="completion"><GoalOutcome {goal}/></div>
  {/each}
 </header>
 
@@ -136,6 +128,7 @@
  .error-actions button{border:0;background:none;padding:var(--space-1);color:var(--accent-bright);font:inherit;font-size:12px;cursor:pointer}
  .error-actions button:disabled{opacity:.65}
  .goal-heading{margin-bottom:28px}
+ .completion{margin-top:var(--space-4)}
  .goal-context{display:flex;align-items:baseline;gap:var(--space-4);margin-bottom:14px;color:var(--text-faint);font-size:12px;font-weight:500;line-height:1.4;flex-wrap:wrap}
  .metadata{position:relative;display:inline-grid;grid-template-columns:minmax(0,1fr);align-items:baseline;min-width:0;max-width:100%}
  .control-size,.deadline-empty{grid-area:1/1;padding:var(--space-1);white-space:pre}

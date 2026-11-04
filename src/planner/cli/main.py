@@ -16,13 +16,13 @@ import json
 import os
 import sys
 from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import click
 
+from planner.attention.cli import attention as attention_group
 from planner.cli import http
 from planner.cli.artifact_io import read_artifact_source
 from planner.cli.errors import CompatibilityChoice, CompatibilityOption, PanelsGroup
@@ -40,7 +40,6 @@ from planner.environments.cli import environment as environment_group
 from planner.executor.cli import executor_group
 from planner.goals.cli import goal as goal_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
-from planner.maintenance.cli import maintenance as maintenance_group
 from planner.measure_sources.cli import measure_source as measure_source_group
 from planner.measures.cli import measure as measure_group
 from planner.message_delivery.contracts import MessageDeliveryMode
@@ -68,8 +67,7 @@ def caller_principal() -> dict[str, str]:
     """The principal this process is, as a holder object.
 
     A caller who does not say where a ceiling goes next keeps it. Khushal keeps it as the
-    owner, and a Manager or a Ticket keeps it as itself, which is what the two approval
-    doors each defaulted to before they became one.
+    owner, and a Manager keeps it as itself. A Worker cannot hold a review.
     """
     actor = os.environ.get(_ACTOR_ENV, "").strip()
     ticket_id = os.environ.get(_TICKET_ID_ENV, "").strip()
@@ -95,24 +93,12 @@ def resolve_holder(raw: str, as_json: bool) -> dict[str, str]:
         return {"kind": alias[0], "id": alias[1]}
     if holder.startswith("si_"):
         return {"kind": "manager", "id": holder}
-    if holder.startswith("t_"):
-        return {"kind": "ticket", "id": holder}
     http.fail_validation(
-        "holder must be me, chief, a Manager id, or a Ticket id",
+        "holder must be me, chief, or a Manager id",
         as_json,
     )
     raise AssertionError("unreachable")
 
-
-_TICKET_SET_FIELDS = {
-    "ceiling": "ceiling",
-    "ceiling-holder": "ceiling_holder",
-    "title": "title",
-    "kickoff-note": "brief",
-    "deadline": "deadline",
-    "project": "project",
-    "project-id": "project_id",
-}
 
 _SPRINT_FIELDS = {
     "name": "name",
@@ -133,28 +119,10 @@ _ITEM_FIELDS = {
 }
 
 _PROJECT_FIELDS = {
-    "requires-macos": "requires_macos",
     "folder-path": "folder_path",
     "name": "name",
     "summary": "summary",
 }
-
-_SCHEDULE_FIELDS = {
-    "locale": "locale",
-    "enabled": "enabled",
-    "cadence": "cadence",
-    "time": "local_time",
-    "title": "title",
-    "worker-type": "worker_type",
-    "kickoff-note": "kickoff_note",
-    "deadline": "deadline",
-    "project-id": "project_id",
-    "manager": "manager_id",
-    "employee-backend": "employee_backend",
-    "employee-launch-model": "employee_launch_model",
-}
-
-_SCHEDULE_CADENCES = ("daily",)
 
 
 def _read_source(spec: str, as_json: bool) -> str:
@@ -231,12 +199,6 @@ def _lines(rows: list[Any], fmt: Callable[[Any], str]) -> str:
     return "\n".join(fmt(r) for r in rows) if rows else "(none)"
 
 
-def _feedback_list_line(note: dict[str, Any]) -> str:
-    captured_at = datetime.fromtimestamp(int(note["created_at"])).astimezone()
-    page = note["page_label"] or "No page"
-    return f"{note['id']} · {captured_at.strftime('%Y-%m-%d %H:%M')} · {page} · {note['text']}"
-
-
 def _record_parts(raw: str | None, as_json: bool) -> tuple[str, ...] | None:
     try:
         return parse_part_names(raw)
@@ -277,6 +239,7 @@ def _ticket_record(
         "title",
         "worker_type",
         "worker",
+        "worker_skill_path",
         "locale",
         "employee_backend",
         "employee_launch_model",
@@ -348,7 +311,7 @@ def _project_record(
     data: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, RecordPart]]:
     return (
-        {key: data[key] for key in ("id", "name", "folder_path", "requires_macos") if key in data},
+        {key: data[key] for key in ("id", "name", "folder_path") if key in data},
         {"summary": part(data["summary"])},
     )
 
@@ -469,54 +432,14 @@ def main() -> None:
 
 main.add_command(executor_group)
 main.add_command(environment_group)
-main.add_command(maintenance_group)
 main.add_command(credential_group)
 main.add_command(goal_group)
 main.add_command(measure_group)
 main.add_command(dataset_group)
+main.add_command(attention_group)
 main.add_command(measure_source_group)
 main.add_command(preview_group)
 environment_group.hidden = True
-
-
-# --- feedback -----------------------------------------------------------------
-
-
-@main.group("feedback", hidden=True)
-def feedback_group() -> None:
-    """Read and use captured feedback notes."""
-
-
-@feedback_group.command("list")
-@json_option
-def feedback_list(as_json: bool) -> None:
-    result = http.send("GET", "/api/feedback", as_json=as_json)
-    http.emit(
-        result,
-        as_json,
-        _lines(
-            result["open"],
-            _feedback_list_line,
-        ),
-    )
-
-
-@feedback_group.command("use")
-@click.option("--ticket", "ticket_id", required=True, help="Ticket receiving the notes.")
-@click.argument("feedback_ids", nargs=-1, required=True)
-@json_option
-def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -> None:
-    result = http.send(
-        "POST",
-        "/api/feedback/use",
-        as_json=as_json,
-        json_body={"feedback_ids": list(feedback_ids), "ticket_id": ticket_id},
-    )
-    http.emit(
-        result,
-        as_json,
-        f"{len(result['notes'])} feedback note(s) used on {ticket_id}",
-    )
 
 
 @main.command("send-message")
@@ -645,217 +568,6 @@ def restart() -> None:
     except (ServerRestartConnectionError, ServerRestartProtocolError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo("Panels restart accepted.")
-
-
-# --- schedule -----------------------------------------------------------------
-
-
-@main.group("schedule", hidden=True)
-def schedule_group() -> None:
-    """Configure exact-time creation of ordinary Tickets."""
-
-
-@schedule_group.command("create")
-@click.option("--title", required=True, help="Title for each created Ticket.")
-@click.option(
-    "--worker-type",
-    "worker_type",
-    required=True,
-    help="Registered Worker type id. List choices with `panels worker-type list`.",
-)
-@click.option("--time", "local_time", required=True, help="Exact local time in HH:MM form.")
-@click.option(
-    "--cadence",
-    type=click.Choice(_SCHEDULE_CADENCES),
-    default="daily",
-    show_default=True,
-)
-@click.option("--enabled/--disabled", default=True, help="Whether the schedule may run.")
-@click.option("--deadline", default=None, help="Ticket deadline in YYYY-MM-DD form.")
-@click.option("--project", default=None, help="Project name.")
-@click.option("--project-id", default=None, help="Project id.")
-@click.option(
-    "--manager",
-    "--sprint-item",
-    "--orchestrator",
-    "manager",
-    cls=CompatibilityOption,
-    default=None,
-    help="Parent manager id.",
-)
-@click.option("--locale", type=click.Choice(_LOCALES), default=None)
-@click.option("--employee-backend", default=None, help="Registered employee backend override.")
-@click.option("--employee-launch-model", default=None, help="Model for an overriding backend.")
-@click.option(
-    "--blocked-by",
-    "blocked_by_ticket_ids",
-    multiple=True,
-    help="Existing blocking Ticket id (repeatable).",
-)
-@click.option("--kickoff-note", default=None, help="Proposed kickoff context.")
-@click.option("--kickoff-note-file", default=None, help="Read kickoff context from this file.")
-@json_option
-def schedule_create(
-    title: str,
-    worker_type: str,
-    local_time: str,
-    locale: str | None,
-    cadence: str,
-    enabled: bool,
-    deadline: str | None,
-    project: str | None,
-    project_id: str | None,
-    manager: str | None,
-    employee_backend: str | None,
-    employee_launch_model: str | None,
-    blocked_by_ticket_ids: tuple[str, ...],
-    kickoff_note: str | None,
-    kickoff_note_file: str | None,
-    as_json: bool,
-) -> None:
-    if kickoff_note is not None and kickoff_note_file is not None:
-        http.fail_validation("kickoff note accepts only one note option", as_json)
-    body: dict[str, Any] = {
-        "title": title,
-        "worker_type": worker_type,
-        "local_time": local_time,
-        "cadence": cadence.replace("-", "_"),
-        "enabled": enabled,
-    }
-    if locale is not None:
-        body["locale"] = locale
-    if kickoff_note_file is not None:
-        body["kickoff_note"] = _read_source(kickoff_note_file, as_json)
-    elif kickoff_note is not None:
-        body["kickoff_note"] = kickoff_note
-    if deadline is not None:
-        body["deadline"] = deadline
-    add_project_selectors(
-        body, project=project, project_id=project_id, required=False, as_json=as_json
-    )
-    if manager is not None:
-        body["manager"] = {"kind": "manager", "id": manager}
-    if employee_backend is not None:
-        body["employee_backend"] = employee_backend
-    if employee_launch_model is not None:
-        body["employee_launch_model"] = employee_launch_model
-    if blocked_by_ticket_ids:
-        body["blocked_by_ticket_ids"] = list(blocked_by_ticket_ids)
-    result = http.send(
-        "POST",
-        "/api/schedules",
-        as_json=as_json,
-        json_body=body,
-    )
-    http.emit(
-        result,
-        as_json,
-        f"{result['id']} {result['local_time']} {result['cadence']} {result['worker_type']}",
-    )
-
-
-@schedule_group.command("list")
-@json_option
-def schedule_list(as_json: bool) -> None:
-    result = http.send("GET", "/api/schedules", as_json=as_json)
-    http.emit(
-        result,
-        as_json,
-        _lines(
-            result["schedules"],
-            lambda item: (
-                f"{item['id']} {'enabled' if item['enabled'] else 'disabled'} "
-                f"{item['local_time']} {item['cadence']} {item['worker_type']} {item['title']}"
-            ),
-        ),
-    )
-
-
-@schedule_group.command("show")
-@click.argument("schedule_id")
-@json_option
-def schedule_show(schedule_id: str, as_json: bool) -> None:
-    result = http.send(
-        "GET",
-        f"/api/schedules/{schedule_id}",
-        as_json=as_json,
-    )
-    occurrences = result.get("occurrences", [])
-    latest = "never run"
-    if occurrences:
-        latest_item = occurrences[0]
-        latest = f"{latest_item['outcome']} {latest_item['occurrence_key']}"
-    text = (
-        f"{result['id']} {'enabled' if result['enabled'] else 'disabled'} "
-        f"{result['local_time']} {result['cadence']} {result['worker_type']} "
-        f"{result['title']} · {latest}"
-    )
-    http.emit(result, as_json, text)
-
-
-@schedule_group.command("set")
-@click.argument("schedule_id")
-@click.argument("field", type=CompatibilityChoice(sorted(_SCHEDULE_FIELDS)))
-@click.option("--value", default=None, help="Set the field to this value.")
-@click.option("--body-file", default=None, help="Read field text from this file, or -.")
-@click.option("--clear", is_flag=True, default=False, help="Clear a nullable field.")
-@json_option
-def schedule_set(
-    schedule_id: str,
-    field: str,
-    value: str | None,
-    body_file: str | None,
-    clear: bool,
-    as_json: bool,
-) -> None:
-    api_field = _SCHEDULE_FIELDS[field]
-    new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if (
-        field
-        in {
-            "cadence",
-            "time",
-            "title",
-            "worker-type",
-            "kickoff-note",
-            "enabled",
-            "locale",
-            "placement",
-        }
-        and new_value is None
-    ):
-        http.fail_validation(f"{field} cannot be cleared", as_json)
-    if field == "enabled":
-        lowered = str(new_value).lower()
-        if lowered not in {"true", "false"}:
-            http.fail_validation("enabled must be true or false", as_json)
-        body_value: object = lowered == "true"
-    elif field == "locale":
-        if new_value not in _LOCALES:
-            http.fail_validation("locale must be vps or macos", as_json)
-        body_value = new_value
-    elif field == "cadence":
-        if new_value not in _SCHEDULE_CADENCES:
-            http.fail_validation(
-                f"cadence must be one of: {', '.join(_SCHEDULE_CADENCES)}", as_json
-            )
-        body_value = new_value.replace("-", "_")
-    elif field == "manager":
-        api_field = "manager"
-        body_value = (
-            {"kind": "chief", "id": "chief"}
-            if new_value is None
-            else {"kind": "manager", "id": new_value}
-        )
-    else:
-        body_value = new_value
-    result = http.send(
-        "PATCH",
-        f"/api/schedules/{schedule_id}",
-        as_json=as_json,
-        json_body={api_field: body_value},
-    )
-    http.emit(result, as_json, f"{result['id']} {field} set")
 
 
 # --- worker types -------------------------------------------------------------
@@ -1004,7 +716,7 @@ def skill_edit(name: str, description: str | None, as_json: bool) -> None:
 )
 @json_option
 def skill_apply(input_json: str, as_json: bool) -> None:
-    """Atomically apply a reviewed manifest with expected source hashes."""
+    """Atomically apply a reviewed skill manifest."""
     try:
         manifest = json.loads(_read_source(input_json, as_json))
     except ValueError:
@@ -1079,18 +791,14 @@ def project_show(project_id: str, part_names: str | None, as_json: bool) -> None
 @click.option("--name", required=True, help="Project display name.")
 @click.option("--summary", default=None, help="Optional project summary text.")
 @click.option("--folder-path", default=None, help="Optional absolute Project folder path.")
-@click.option("--requires-macos/--no-requires-macos", default=None)
 @json_option
 def project_create(
     name: str,
     summary: str | None,
     folder_path: str | None,
-    requires_macos: bool | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"name": name}
-    if requires_macos is not None:
-        body["requires_macos"] = requires_macos
     if summary is not None:
         body["summary"] = summary
     if folder_path is not None:
@@ -1123,17 +831,6 @@ def project_set(
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
     if field in {"name"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
-    if field == "requires-macos":
-        if new_value not in {"true", "false"}:
-            http.fail_validation("requires-macos must be true or false", as_json)
-        data = http.send(
-            "PATCH",
-            f"/api/projects/{project_id}",
-            as_json=as_json,
-            json_body={api_field: new_value == "true"},
-        )
-        http.emit(data, as_json, f"{data['id']} {field} set")
-        return
     data = http.send(
         "PATCH",
         f"/api/projects/{project_id}",
@@ -1162,136 +859,19 @@ def ticket() -> None:
 @ticket.command("create")
 @click.option(
     "--input-json",
-    default=None,
+    required=True,
     help="Read one Ticket create object from this file, or - for standard input.",
 )
-@click.option("--title", default=None, hidden=True)
-@click.option(
-    "--worker-type",
-    "worker_type",
-    default=None,
-    hidden=True,
-)
 @click.option("--locale", type=click.Choice(_LOCALES), default=None)
-@click.option("--employee-backend", default=None, hidden=True)
-@click.option(
-    "--employee-launch-model",
-    default=None,
-    hidden=True,
-)
-@click.option("--deadline", default=None, hidden=True)
-@click.option("--project", default=None, hidden=True)
-@click.option("--project-id", default=None, hidden=True)
-@click.option(
-    "--manager",
-    "--sprint-item",
-    "--orchestrator",
-    "manager",
-    cls=CompatibilityOption,
-    default=None,
-    hidden=True,
-)
-@click.option(
-    "--blocked-by",
-    "blocked_by_ticket_ids",
-    multiple=True,
-    hidden=True,
-)
-@click.option("--kickoff-note", default=None, hidden=True)
-@click.option(
-    "--kickoff-note-file",
-    default=None,
-    hidden=True,
-)
-@click.option("--ceiling", default=None, hidden=True)
-@click.option("--holder", default=None, hidden=True)
 @json_option
-def ticket_create(
-    input_json: str | None,
-    locale: str | None,
-    title: str | None,
-    worker_type: str | None,
-    employee_backend: str | None,
-    employee_launch_model: str | None,
-    deadline: str | None,
-    project: str | None,
-    project_id: str | None,
-    manager: str | None,
-    blocked_by_ticket_ids: tuple[str, ...],
-    kickoff_note: str | None,
-    kickoff_note_file: str | None,
-    ceiling: str | None,
-    holder: str | None,
-    as_json: bool,
-) -> None:
+def ticket_create(input_json: str, locale: str | None, as_json: bool) -> None:
     """Create one Ticket from one JSON object through the existing atomic writer."""
-    legacy_values = (
-        title,
-        worker_type,
-        employee_backend,
-        employee_launch_model,
-        deadline,
-        project,
-        project_id,
-        manager,
-        kickoff_note,
-        kickoff_note_file,
-        ceiling,
-        holder,
-    )
-    legacy_used = any(value is not None for value in legacy_values) or bool(blocked_by_ticket_ids)
-    if input_json is not None:
-        if legacy_used:
-            http.fail_validation(
-                "--input-json cannot be combined with legacy Ticket create options",
-                as_json,
-            )
-        structured_body = _read_json_object(input_json, as_json, "Ticket create input")
-        if locale is not None:
-            if "locale" in structured_body:
-                http.fail_validation("locale accepts one input source", as_json)
-            structured_body["locale"] = locale
-        data = http.send("POST", "/api/tickets", as_json=as_json, json_body=structured_body)
-        http.emit(data, as_json, f"{data['id']} {data['stage']}\n{data['supervision_receipt']}")
-        return
-    if title is None or worker_type is None:
-        http.fail_validation(
-            "Ticket creation requires --input-json "
-            "(legacy calls require --title and --worker-type)",
-            as_json,
-        )
-    body: dict[str, Any] = {"title": title, "worker_type": worker_type}
+    body = _read_json_object(input_json, as_json, "Ticket create input")
     if locale is not None:
+        if "locale" in body:
+            http.fail_validation("locale accepts one input source", as_json)
         body["locale"] = locale
-    if ceiling is not None:
-        body["ceiling"] = ceiling
-    if holder is not None:
-        body["ceiling_holder"] = resolve_holder(holder, as_json)
-    if employee_backend is not None:
-        body["employee_backend"] = employee_backend
-    if employee_launch_model is not None:
-        body["employee_launch_model"] = employee_launch_model
-    if kickoff_note is not None and kickoff_note_file is not None:
-        http.fail_validation("kickoff note accepts only one note option", as_json)
-    if kickoff_note_file is not None:
-        body["brief"] = _read_source(kickoff_note_file, as_json)
-    elif kickoff_note is not None:
-        body["brief"] = kickoff_note
-    if deadline is not None:
-        body["deadline"] = deadline
-    add_project_selectors(
-        body, project=project, project_id=project_id, required=False, as_json=as_json
-    )
-    if manager is not None:
-        body["manager"] = {"kind": "manager", "id": manager}
-    if blocked_by_ticket_ids:
-        body["blocked_by_ticket_ids"] = list(blocked_by_ticket_ids)
-    data = http.send(
-        "POST",
-        "/api/tickets",
-        as_json=as_json,
-        json_body=body,
-    )
+    data = http.send("POST", "/api/tickets", as_json=as_json, json_body=body)
     http.emit(data, as_json, f"{data['id']} {data['stage']}\n{data['supervision_receipt']}")
 
 
@@ -1326,38 +906,30 @@ def ticket_show(ticket_id: str | None, part_names: str | None, as_json: bool) ->
 
 @ticket.command("backlog")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option(
-    "--expected-record-sha256", default=None, help="Refuse if this stored record changed."
-)
 @json_option
-def ticket_backlog(
-    ticket_id: str | None, expected_record_sha256: str | None, as_json: bool
-) -> None:
+def ticket_backlog(ticket_id: str | None, as_json: bool) -> None:
     """Defer automatic worker steps while preserving the Ticket's work."""
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/backlog",
         as_json=as_json,
-        json_body=_drop_none({"expected_record_sha256": expected_record_sha256}),
+        json_body={},
     )
     http.emit(data, as_json, "Ticket backlogged.")
 
 
 @ticket.command("resume")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option(
-    "--expected-record-sha256", default=None, help="Refuse if this stored record changed."
-)
 @json_option
-def ticket_resume(ticket_id: str | None, expected_record_sha256: str | None, as_json: bool) -> None:
+def ticket_resume(ticket_id: str | None, as_json: bool) -> None:
     """Resume automatic steps under the Ticket's existing gates."""
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/resume",
         as_json=as_json,
-        json_body=_drop_none({"expected_record_sha256": expected_record_sha256}),
+        json_body={},
     )
     http.emit(data, as_json, "Ticket resumed.")
 
@@ -1365,22 +937,14 @@ def ticket_resume(ticket_id: str | None, expected_record_sha256: str | None, as_
 @ticket.command("delete")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option(
-    "--yes",
-    is_flag=True,
-    default=False,
-    help="Permanently delete the ticket and all of its working history.",
-)
-@click.option(
     "--force",
     is_flag=True,
     default=False,
     help="Delete even a ticket that still looks running, for a stuck ticket status.",
 )
 @json_option
-def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) -> None:
+def ticket_delete(ticket_id: str | None, force: bool, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    if not yes:
-        http.fail_validation("permanent deletion requires --yes", as_json)
     data = http.send(
         "DELETE",
         f"/api/tickets/{tid}",
@@ -1494,43 +1058,6 @@ def ticket_edit(ticket_id: str | None, input_json: str, as_json: bool) -> None:
     http.emit(data, as_json, f"{data['id']} edited")
 
 
-@ticket.command("set", hidden=True)
-@click.argument("ticket_id")
-@click.argument("field", type=click.Choice(sorted(_TICKET_SET_FIELDS)))
-@click.option("--value", default=None, help="Set the field to this value.")
-@click.option("--body-file", default=None, help="Read field text from this file, or - for stdin.")
-@click.option("--clear", is_flag=True, default=False, help="Clear nullable fields.")
-@json_option
-def ticket_set(
-    ticket_id: str,
-    field: str,
-    value: str | None,
-    body_file: str | None,
-    clear: bool,
-    as_json: bool,
-) -> None:
-    api_field = _TICKET_SET_FIELDS[field]
-    new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "ceiling", "ceiling-holder"} and new_value is None:
-        http.fail_validation(f"{field} cannot be cleared", as_json)
-    if field == "kickoff-note" and new_value is None:
-        new_value = ""
-    body: dict[str, Any]
-    if field == "kickoff-note":
-        body = {"field_values": {BRIEF_FIELD_ID: new_value}}
-    elif field == "ceiling-holder":
-        body = {api_field: resolve_holder(str(new_value), as_json)}
-    else:
-        body = {api_field: new_value}
-    data = http.send(
-        "PATCH",
-        f"/api/tickets/{ticket_id}",
-        as_json=as_json,
-        json_body=body,
-    )
-    http.emit(data, as_json, f"{data['id']} {field} set")
-
-
 @ticket.command("complete")
 @click.argument("ticket_id")
 @click.argument("field")
@@ -1553,80 +1080,6 @@ def ticket_complete(
         json_body={"body": body},
     )
     http.emit(data, as_json, f"{data['id']} {field} completed")
-
-
-@ticket.command("set-value", hidden=True)
-@click.argument("ticket_id")
-@click.argument("field")
-@click.option("--value", default=None, help="Set the field to this value.")
-@click.option("--body-file", default=None, help="Read field text from this file, or - for stdin.")
-@json_option
-def ticket_set_value(
-    ticket_id: str,
-    field: str,
-    value: str | None,
-    body_file: str | None,
-    as_json: bool,
-) -> None:
-    """Correct a value the Ticket has already passed."""
-    body = read_value_or_file(value, body_file, False, as_json, field)
-    data = http.send(
-        "PATCH",
-        f"/api/tickets/{ticket_id}",
-        as_json=as_json,
-        json_body={"field_values": {field: body}},
-    )
-    http.emit(data, as_json, f"{data['id']} {field} set")
-
-
-@ticket.command("place", hidden=True)
-@click.argument("ticket_id")
-@click.option("--project", default=None, help="Project name.")
-@click.option("--project-id", default=None, help="Project id.")
-@click.option(
-    "--manager",
-    "--sprint-item",
-    "--orchestrator",
-    cls=CompatibilityOption,
-    default=None,
-    help="Optional Manager classification.",
-)
-@click.option(
-    "--clear-manager",
-    "--clear-sprint-item",
-    cls=CompatibilityOption,
-    is_flag=True,
-    default=False,
-    help="Remove classification.",
-)
-@json_option
-def ticket_place(
-    ticket_id: str,
-    project: str | None,
-    project_id: str | None,
-    manager: str | None,
-    clear_manager: bool,
-    as_json: bool,
-) -> None:
-    if manager is not None and clear_manager:
-        http.fail_validation("--manager and --clear-manager are mutually exclusive", as_json)
-    body: dict[str, Any] = {}
-    add_project_selectors(
-        body, project=project, project_id=project_id, required=False, as_json=as_json
-    )
-    if manager is not None:
-        body["manager"] = {"kind": "manager", "id": manager}
-    elif clear_manager:
-        body["manager"] = {"kind": "chief", "id": "chief"}
-    if not body:
-        http.fail_validation("placement requires at least one selection", as_json)
-    data = http.send(
-        "PATCH",
-        f"/api/tickets/{ticket_id}",
-        as_json=as_json,
-        json_body=body,
-    )
-    http.emit(data, as_json, f"{data['id']} placement set")
 
 
 @ticket.command("employee-configuration", hidden=True)
@@ -1736,39 +1189,6 @@ def _approve_ticket_proposal(
     http.emit(data, as_json, f"{data['id']} approved {field}")
 
 
-@ticket.command("approve", hidden=True)
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--ceiling", default=None, help="Next ceiling stage or none.")
-@click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
-@click.option(
-    "--holder",
-    default=None,
-    help="Who holds the next ceiling: me, chief, a Manager id, or a Ticket id. "
-    "Absent, you keep it.",
-)
-@click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
-@click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
-@json_option
-def ticket_approve(
-    ticket_id: str | None,
-    ceiling: str | None,
-    edit_file: str | None,
-    holder: str | None,
-    kickoff_title: str | None,
-    kickoff_note_file: str | None,
-    as_json: bool,
-) -> None:
-    _approve_ticket_proposal(
-        ticket_id,
-        ceiling,
-        edit_file,
-        holder,
-        kickoff_title,
-        kickoff_note_file,
-        as_json,
-    )
-
-
 def _revise_ticket_proposal(
     ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool
 ) -> None:
@@ -1783,18 +1203,6 @@ def _revise_ticket_proposal(
         json_body={"message": text},
     )
     http.emit(data, as_json, f"{tid} proposal rejected")
-
-
-@ticket.command("reject", hidden=True)
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--message", default=None, help="Focused revision guidance.")
-@click.option("--body-file", default=None, help="Read revision guidance from this file, or -.")
-@json_option
-def ticket_reject(
-    ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool
-) -> None:
-    """Reject the proposal parked on this Ticket, with focused guidance."""
-    _revise_ticket_proposal(ticket_id, message, body_file, as_json)
 
 
 @ticket.command("history")
@@ -1934,19 +1342,6 @@ def ticket_unblock(ticket_id: str, blocker_id: str, as_json: bool) -> None:
         as_json=as_json,
     )
     http.emit(data, as_json, f"{ticket_id} unblocked from {blocker_id}")
-
-
-@ticket.command("copy", hidden=True)
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@json_option
-def ticket_copy(ticket_id: str | None, as_json: bool) -> None:
-    tid = resolve_ticket_id(ticket_id, as_json)
-    text = http.send_text(
-        "GET",
-        f"/api/tickets/{tid}/copy-text",
-        as_json=as_json,
-    )
-    http.emit({"text": text}, as_json, text)
 
 
 # --- sprint -------------------------------------------------------------------
@@ -2306,6 +1701,9 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
         as_json=as_json,
     )
     header, parts = _ticket_record(data, part_names, as_json=as_json)
+    native_skills = os.environ.get("PLAN_NATIVE_SKILLS_DIR")
+    if native_skills and "worker" in data:
+        header["worker_skill_path"] = str(Path(native_skills) / data["worker"] / "SKILL.md")
     _emit_record(header, parts, part_names, as_json)
 
 

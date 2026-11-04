@@ -113,7 +113,7 @@ def create_schema(conn: sqlite3.Connection, *, schema_version: int = 3) -> None:
 
 def _priority_source_shape(conn: sqlite3.Connection) -> bool:
     """Recognize the two accepted canonical histories before changing any rows."""
-    tables = ("projects", "managers", "tickets", "scheduled_ticket_schedules")
+    tables = ("projects", "managers", "tickets")
     shapes = []
     for table in tables:
         columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -543,7 +543,9 @@ def _derive(
             value = {
                 "title": goal["title"],
                 "active": bool(goal["active"]),
-                "completed": effective_completion(
+                "completed": bool(goal.get("completion_date"))
+                if goal.get("kind") == "quantitative" and goal.get("completion_rule") is not None
+                else effective_completion(
                     bool(goal["completed"]),
                     cast(PageDocument, json.loads(goal["page"])),
                     # Navigation rebuilds also run before this column's migration.

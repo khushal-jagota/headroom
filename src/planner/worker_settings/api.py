@@ -20,7 +20,6 @@ from planner.core.authctx import (
     request_context,
     require_owner_or_chief,
 )
-from planner.core.authority import owner_only, require_above
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
@@ -74,7 +73,6 @@ def _skills_home_json(home: SkillsHome) -> JsonDict:
 def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
     payload: JsonDict = {
         "worker_type": settings.worker_type,
-        "requires_macos": settings.requires_macos,
         "specialist_skill": _skill_json(settings.specialist_skill),
         "launch_defaults": _launch_defaults_json(settings.launch_defaults),
     }
@@ -86,7 +84,6 @@ def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
 def _summary_json(summary: WorkerManagementSummary) -> JsonDict:
     return {
         "worker_type": summary.worker_type,
-        "requires_macos": summary.requires_macos,
         "label": summary.label,
         "specialist_skill_name": summary.specialist_skill_name,
         "launch_defaults": _launch_defaults_json(summary.launch_defaults),
@@ -227,7 +224,6 @@ async def list_skills(conn: DbConn) -> JsonDict:
 async def apply_skills(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("skills"))
     applied = service.apply_skills(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -243,7 +239,6 @@ async def get_skill(skill_name: str, conn: DbConn) -> JsonDict:
 async def patch_skill(
     skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("skills"))
     skill = service.save_skill(
         conn,
         skill_name,
@@ -269,7 +264,6 @@ async def put_chief_recap(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDi
 async def put_chief_launch_defaults(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"))
     del config
     raw = await _resolve_launch_defaults(conn, raw)
     return _chief_json(service.update_chief_launch_defaults(conn, raw))
@@ -279,7 +273,6 @@ async def put_chief_launch_defaults(
 async def put_chief_skill(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"))
     settings = service.save_chief_skill(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -290,7 +283,6 @@ async def put_chief_skill(
 async def patch_chief_skill(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"))
     settings = service.save_chief_skill(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -305,7 +297,6 @@ async def put_worker_launch_defaults(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"))
     raw = await _resolve_launch_defaults(conn, raw)
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_worker_launch_defaults(
@@ -329,7 +320,6 @@ async def put_worker_skill(
     config: Cfg,
     clk: Clk,
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"))
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_specialist_skill(
         conn,
@@ -351,7 +341,6 @@ async def patch_worker_skill(
     config: Cfg,
     clk: Clk,
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"))
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_specialist_skill(
         conn,
@@ -384,7 +373,6 @@ async def post_worker_type(
     block carries the specialist skill, so declaring a new Worker and declaring the skill
     it names are one act.
     """
-    require_above(conn, ctx.principal, owner_only("worker_types"))
     record = dict(raw)
     skill = record.pop("skill", None)
     definition = store.definition_from_json(json.dumps(record))
@@ -396,20 +384,3 @@ async def post_worker_type(
     result = cast(JsonDict, json.loads(store.definition_to_json(definition)))
     result["migrations"] = [asdict(migration) for migration in migrations]
     return result
-
-
-@router.patch("/workers/{worker_type}/requirements")
-async def patch_worker_requirements(
-    worker_type: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker settings"))
-    if set(raw) != {"requires_macos"} or type(raw["requires_macos"]) is not bool:
-        raise PlannerError(ErrorCode.validation, "requirements need one requires_macos boolean", {})
-    settings = service.update_worker_requirements(
-        conn,
-        configured_worker_runtime_definitions().worker_type_registry,
-        worker_type,
-        requires_macos=raw["requires_macos"],
-        now=clk.now_unix(),
-    )
-    return _settings_json(settings)

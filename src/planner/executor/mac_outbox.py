@@ -51,7 +51,6 @@ from planner.executor.protocol import (
     as_object,
     encode_message,
     encode_value,
-    envelope_payload_digest,
     payload_child,
     type_adapter,
 )
@@ -350,15 +349,6 @@ class MacOutbox:
         files = type_adapter(tuple[FileManifest, ...]).validate_python(value["files"])
         payload: JsonObject = type_adapter(JsonObject).validate_python(value["payload"])
         kind = EnvelopeKind(row["kind"])
-        digest = envelope_payload_digest(
-            payload,
-            files,
-            sender_id=self.sender_id,
-            conversation_id=row["conversation_id"],
-            sequence=row["sequence"],
-            submission_id=row["submission_id"],
-            kind=kind,
-        )
         return QueuedEnvelope(
             self.sender_id,
             row["conversation_id"],
@@ -366,7 +356,6 @@ class MacOutbox:
             row["submission_id"],
             kind,
             payload,
-            digest,
             files,
         )
 
@@ -438,10 +427,7 @@ class MacOutbox:
             if row is None:
                 return
             envelope = row.envelope
-            if (receipt.sender_id, receipt.payload_sha256) != (
-                self.sender_id,
-                envelope.payload_sha256,
-            ):
+            if receipt.sender_id != self.sender_id:
                 raise ValueError("receipt identity mismatch")
             with self._db:
                 if receipt.disposition is not ReceiptDisposition.accepted:

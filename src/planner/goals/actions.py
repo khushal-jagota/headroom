@@ -9,14 +9,14 @@ from dataclasses import asdict, replace
 from datetime import date
 from typing import Any, cast, get_type_hints
 
-from planner.core import authority
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.datasets.data import read_dataset
 from planner.goals import data
+from planner.goals.calendar import server_date
 from planner.goals.contracts import GOAL_REQUIRED_TEXT, ChartBlock, Goal, GoalWriteFields
 from planner.goals.logic.categories import validate_category_references
-from planner.goals.logic.completion import prepare_completion
+from planner.goals.logic.completion import completion_date_after_edit, prepare_completion
 from planner.goals.logic.documents import (
     blocks,
     charts,
@@ -26,6 +26,7 @@ from planner.goals.logic.documents import (
     prepare_document,
     validate_chart,
 )
+from planner.goals.rule_evaluation import evaluate_completion_date, parse_completion_rule
 from planner.measures.contracts import MeasureOrigin
 from planner.measures.data import read_definitions, read_measure, transaction
 from planner.measures.logic.formulas import validate_graph
@@ -35,9 +36,10 @@ _EDITABLE = set(get_type_hints(GoalWriteFields, include_extras=True))
 
 
 def _accepted(
-    conn: sqlite3.Connection, current: Goal, body: dict[str, Any], *, creating: bool = False
+    conn: sqlite3.Connection, current: Goal, body: dict[str, Any], *,
+    now: int, creating: bool = False
 ) -> Goal:
-    if set(body) - _EDITABLE - {"expected_revision"}:
+    if set(body) - _EDITABLE:
         raise ValueError("unknown goal field")
     changes = {key: value for key, value in body.items() if key in _EDITABLE and key != "completed"}
     if "completed" in body and type(body["completed"]) is not bool:
@@ -54,7 +56,11 @@ def _accepted(
         if chart["placement"] != "primary":
             raise ValueError("primary chart must have primary placement")
         changes["primary_chart"] = chart
+    if "completion_rule" in changes and changes["completion_rule"] is not None:
+        changes["completion_rule"] = parse_completion_rule(conn, changes["completion_rule"])
     result = replace(current, **changes)
+    if current.kind != result.kind and result.kind == "binary":
+        result = replace(result, completion_rule=None)
     for key in GOAL_REQUIRED_TEXT:
         value = getattr(result, key)
         if not isinstance(value, str) or not value.strip():
@@ -80,8 +86,17 @@ def _accepted(
         creating=creating,
         selection_explicit="primary_checklist_block_id" in body,
         chart_explicit="primary_chart" in body,
-        completed=body.get("completed"),
+        completed=None if result.completion_rule is not None else body.get("completed"),
     )
+    if result.kind == "binary" and result.completion_rule is not None:
+        raise ValueError("completion_rule applies only to quantitative goals")
+    if result.kind == "quantitative" and result.completion_rule is None:
+        if creating or current.kind != "quantitative" or current.completion_rule is not None:
+            operation = "create" if creating else "edit"
+            raise ValueError(
+                "completion_rule is required for quantitative goals; "
+                f"inspect panels goal schema {operation} --json"
+            )
     if result.deadline is not None:
         if (
             not isinstance(result.deadline, str)
@@ -115,6 +130,17 @@ def _accepted(
             and read_measure(conn, chart["measure_id"]).origin is not MeasureOrigin.manual
         ):
             raise ValueError("manual controls require a manual-origin measure")
+    if result.completion_rule is not None:
+        if creating or result.completion_rule != current.completion_rule or "completed" in body:
+            completion_date = evaluate_completion_date(conn, result.completion_rule, now=now)
+            result = replace(result, completion_date=completion_date)
+        if "completed" in body and body["completed"] != (result.completion_date is not None):
+            raise ValueError("completion follows the goal's completion_rule")
+    else:
+        result = replace(result, completion_date=completion_date_after_edit(
+            current, result, today=server_date(now),
+            creating=creating,
+        ))
     return result
 
 
@@ -125,6 +151,9 @@ def _values(goal: Goal) -> dict[str, Any]:
     values["primary_chart"] = (
         json.dumps(goal.primary_chart, separators=(",", ":")) if goal.primary_chart else None
     )
+    values["completion_rule"] = (
+        json.dumps(goal.completion_rule, separators=(",", ":")) if goal.completion_rule else None
+    )
     return values
 
 
@@ -132,7 +161,6 @@ def create_goal(
     conn: sqlite3.Connection, body: dict[str, Any], *, principal: Principal, now: int
 ) -> Goal:
     with transaction(conn):
-        authority.require_above(conn, principal, authority.owner_only("goals"))
         defaults = read_chief_settings(conn).launch_defaults
         title = body.get("title", "")
         current = Goal(
@@ -161,7 +189,7 @@ def create_goal(
             employee_launch_reasoning_effort=defaults.employee_launch_reasoning_effort,
         )
         try:
-            accepted = _accepted(conn, current, body, creating=True)
+            accepted = _accepted(conn, current, body, now=now, creating=True)
         except (ValueError, TypeError) as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc
         values = _values(accepted)
@@ -178,18 +206,10 @@ def update_goal(
 ) -> Goal:
     with transaction(conn):
         current = data.read_goal(conn, goal_id)
-        authority.require_above_or_self(conn, principal, authority.goal(goal_id))
-        if (
-            type(body.get("expected_revision")) is not int
-            or body["expected_revision"] != current.revision
-        ):
-            raise PlannerError(
-                ErrorCode.stale_claim,
-                "goal changed; read the accepted document before editing again",
-            )
         try:
             accepted = replace(
-                _accepted(conn, current, body), revision=current.revision + 1, updated_at=now
+                _accepted(conn, current, body, now=now),
+                revision=current.revision + 1, updated_at=now
             )
         except (ValueError, TypeError) as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc

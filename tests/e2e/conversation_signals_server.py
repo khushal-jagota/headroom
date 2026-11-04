@@ -44,7 +44,7 @@ from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.measure_sources.runtime import Runtime
-from planner.scheduled_tickets.registry import build_participants
+from planner.measure_sources.registry import build_participants
 from planner.server_lifecycle.application import ChangeStreamClosingServer
 from planner.tickets import data as ticket_data
 

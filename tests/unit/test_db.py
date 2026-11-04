@@ -1226,7 +1226,6 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         "conversations",
         "ticket_conversations",
         "ticket_blocks",
-        "scheduled_ticket_occurrences",
         "manager_wake_batch_members",
         "managed_skill_versions",
     )
@@ -1305,7 +1304,6 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         "UPDATE tickets SET manager_kind='sprint_item' WHERE id='t_item'",
         "UPDATE tickets SET manager_kind='chief' WHERE id='t_item'",
         "UPDATE manager_wakes SET target_kind='sprint_item' WHERE id=41",
-        "UPDATE scheduled_ticket_schedules SET manager_kind='chief' WHERE id='assigned'",
         "UPDATE notification_preferences SET subject_key='sprint_item_supervisors'",
     ):
         with pytest.raises(sqlite3.IntegrityError):
@@ -1432,4 +1430,72 @@ def test_workspace_policy_migration_keeps_legacy_conversation_home_mapping(
     assert tuple(row) == ("/home/vps/projects", "home_relative")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE conversations SET workspace_path_policy = 'guess'")
+    conn.close()
+
+
+def test_feedback_removal_upgrade_keeps_ticket_revision_feedback(
+    tmp_db: sqlite3.Connection,
+) -> None:
+    """A database upgrade drops the inbox without deleting the separate review channel."""
+    conn = tmp_db
+    conn.execute("CREATE TABLE feedback_notes(id TEXT PRIMARY KEY, text TEXT)")
+    conn.execute("CREATE INDEX idx_feedback_notes_state_created ON feedback_notes(text)")
+    conn.execute("CREATE INDEX idx_feedback_notes_ticket_id ON feedback_notes(id)")
+    conn.execute("INSERT INTO feedback_notes VALUES ('old-note', 'Unused note')")
+    conn.execute("UPDATE alembic_version SET version_num='remove_ticket_approvers'")
+    conn.execute(
+        "INSERT INTO tickets (id,title,worker_type,employee_backend,ceiling,field_values,"
+        "worker_step_claim,stage,created_at,updated_at) "
+        "VALUES ('t_feedback_kept','Keep','coding','hermes','needs_brief','{}',"
+        "'none','needs_brief',1,1)"
+    )
+    conn.execute(
+        "INSERT INTO ticket_revision_feedback VALUES "
+        "('t_feedback_kept','needs_success','{\"feedback\":\"Keep this review\"}',1,1,1)"
+    )
+    before = list(conn.execute("SELECT * FROM tickets"))
+    reviews = list(conn.execute("SELECT * FROM ticket_revision_feedback"))
+    create_schema(conn)
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE name IN "
+        "('feedback_notes','idx_feedback_notes_state_created','idx_feedback_notes_ticket_id')"
+    ).fetchall() == []
+    assert list(conn.execute("SELECT * FROM tickets")) == before
+    assert list(conn.execute("SELECT * FROM ticket_revision_feedback")) == reviews
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_skill_binding_removal_preserves_skill_history_and_conversation_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    _migration_tree_through(tmp_path, monkeypatch, "goal_outcomes")
+    conn = connect(str(tmp_path / "skill-bindings.db"))
+    create_schema(conn)
+    conn.execute(
+        "INSERT INTO managed_skill_versions VALUES('version','panels',?,?)",
+        ("0" * 64, b"Exact saved skill bytes"),
+    )
+    conn.execute(
+        "INSERT INTO worker_step_skill_bindings VALUES('message','orientation','version','final')"
+    )
+    conn.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) "
+        "VALUES('kept','codex','/tmp/workspace','workspace_write',1)"
+    )
+    conn.execute("INSERT INTO conversation_events VALUES('kept',2,'agent_message','{}',1)")
+    conn.execute("INSERT INTO conversation_expired_ranges VALUES('kept',1,1,1,1,1)")
+    conn.commit()
+    retained = (
+        "managed_skill_versions",
+        "conversations",
+        "conversation_events",
+        "conversation_expired_ranges",
+    )
+    before = {table: list(conn.execute(f'SELECT * FROM "{table}"')) for table in retained}
+    monkeypatch.setattr(db_module, "MIGRATIONS_DIRECTORY", shipped)
+    create_schema(conn)
+    assert "worker_step_skill_bindings" not in _schema_objects(conn)
+    for table in retained:
+        assert list(conn.execute(f'SELECT * FROM "{table}"')) == before[table]
     conn.close()

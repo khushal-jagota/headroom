@@ -10,7 +10,7 @@
   import { queries } from "../lib/queryCatalogue";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { navigationConversationSignal, type NavigationTicketMasthead } from "../lib/navigation/presentation";
-  import { admitTicketSection, ticketSectionDetailMatches, ticketSectionFacts, ticketSectionHeading, ticketSectionRunLabel, ticketSectionFieldState, type TicketSection } from "../lib/ticketSection";
+  import { ticketSection, ticketSectionDetailMatches, ticketSectionFacts, ticketSectionHeading, ticketSectionRunLabel, ticketSectionFieldState } from "../lib/ticketSection";
   import { ticketCommandImpact, ticketMastheadImpact, ticketSectionImpact } from "../lib/ticketNavigationImpact";
   import { ticketSectionDomMatches } from "../lib/ticketSectionDom";
   import { ticketMastheadDomMatches } from "../lib/ticketMastheadDom";
@@ -115,32 +115,9 @@
     )
   );
   let canonicalTicket=$derived(currentView ? navigation.presentationFor(currentView).rawTicketsById.get(stableId) : undefined);
-  let sectionConfiguration=$derived(manifest.data?.worker_types.find(item=>item.worker_type===canonicalTicket?.value.worker_type));
-  let admittedSection=$derived(admitTicketSection(currentView,canonicalTicket,healthyTicket,sectionConfiguration));
-  let section=$state.raw<TicketSection | undefined>(undefined);
-  $effect(()=>{if(brokenTicket) section=undefined; else if(admittedSection) section=admittedSection;});
+  let sectionConfiguration=$derived(manifest.data?.worker_types.find(item=>item.worker_type===healthyTicket?.worker_type));
+  let section=$derived(ticketSection(healthyTicket,sectionConfiguration));
   let sectionFacts=$derived(section ? ticketSectionFacts(section,currentView) : undefined);
-  // A changed public control tuple needs its matching exact detail/configuration.
-  // One request per mismatch avoids a repeated refetch for an incompatible manifest.
-  let refreshedMismatch='';
-  $effect(()=>{
-    if(!canonicalTicket || admittedSection || !healthyTicket || !manifest.data) return;
-    const key=JSON.stringify([canonicalTicket.value,healthyTicket.record_sha256,sectionConfiguration]);
-    if(key===refreshedMismatch) return;
-    refreshedMismatch=key;
-    void ticket.refetch();
-    void manifest.refetch();
-  });
-  function assertCurrentSection():void {
-    // The owner keeps its coherent accepted view during the selector handoff.
-    // Runtime uncertainty does not change structural action authority.
-    const view = navigation.state.effective;
-    const record = view ? navigation.presentationFor(view).rawTicketsById.get(stableId) : undefined;
-    if(!section || !record || !ticketSectionDetailMatches(record,section.detail) || !admitTicketSection(view,record,healthyTicket,
-      manifest.data?.worker_types.find(item=>item.worker_type===healthyTicket?.worker_type))) {
-      throw {code:'validation',message:'the Ticket changed; read it again before this action'};
-    }
-  }
   let conversationId=$state<string | null>(null);
   let selectedPastConversationId=$state<string | null>(null);
   let shownConversationId=$derived(selectedPastConversationId ?? conversationId);
@@ -259,7 +236,6 @@
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
-    assertCurrentSection();
     return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'scope'),responseMetadata=>mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body,responseMetadata }));
   }
 
@@ -274,14 +250,12 @@
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    assertCurrentSection();
     return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'private'),responseMetadata=>mutateJson(`/api/tickets/${stableId}`, {
       method: "PATCH", body: { field_values: { [field]: body } },responseMetadata
     }));
   }
 
   function completeGate(field: string, body: string): Promise<unknown> {
-    assertCurrentSection();
     return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'stage'),responseMetadata=>mutateJson(`/api/tickets/${stableId}/complete/${field}`, {
       method: "POST", body: { body },responseMetadata
     }));
@@ -290,14 +264,12 @@
   function saveEmployeeConfiguration(
     configuration: EmployeeConfigurationSnapshot
   ): Promise<TicketDetail> {
-    assertCurrentSection();
     return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'configuration'),responseMetadata=>mutateJson<TicketDetail>(`/api/tickets/${stableId}/employee-configuration`, {
       method: "PUT", body: configuration,responseMetadata
     }));
   }
 
   function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
-    assertCurrentSection();
     return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'stage'),responseMetadata=>mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body,responseMetadata }));
   }
 
@@ -319,7 +291,6 @@
       Boolean(section.detail.employee_configuration_editable)
   );
   function returnProposal(message:string):Promise<unknown> {
-    assertCurrentSection();
     return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'stage'),responseMetadata=>mutateJson(`/api/tickets/${stableId}/reject`,{method:"POST",body:{message},responseMetadata}));
   }
 
@@ -402,7 +373,7 @@
   $effect(()=>{
     const view=currentView,shown=section,root=sectionElement,header=mastheadElement,generation=navigation.state.generation;
     sectionDisclosureVersion;
-    if(!view?.runtimeCurrent || !shown || !admittedSection || shown!==admittedSection || !root || !header) return;
+    if(!view?.runtimeCurrent || !shown || !canonicalTicket || !ticketSectionDetailMatches(canonicalTicket,shown.detail) || !root || !header) return;
     const token=sectionObserver.observeSelectors(view.publication,generation);
     let obsolete=false;
     void tick().then(()=>{
@@ -462,7 +433,7 @@
             <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
           </div>
           <div class="ticket-title-row">
-            <div class="ticket-title" data-feedback-page-title>
+            <div class="ticket-title">
               <InlineEdit
                 value={masthead.title}
                 placeholder="Untitled"
@@ -491,7 +462,7 @@
             {/snippet}
             </RecapSlot>
           </div>
-          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)}>
+          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)}>
             {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
           </TicketLifecycleControls>{/if}
           {#if detail.blocker_summary?.blocked_by.length}
