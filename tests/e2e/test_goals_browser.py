@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, expect
-from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
+from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle, capture_success
 from tests.support.server_fixtures import signal_server as signal_server
 
 
@@ -75,6 +75,12 @@ def test_formula_expectation_projection_and_correction_reach_mounted_chart(
             "project_id": project["id"],
             "title": "Follow the phased expectation",
             "kind": "quantitative",
+            "completion_rule": {
+                "actual": {"op": "reference", "measure_id": actual["id"], "day_offset": 0},
+                "target": {"op": "constant", "value": 999},
+                "direction": "atleast",
+                "first_date": "2026-07-01",
+            },
             "deadline": "2026-07-08",
             "primary_chart": {
                 "type": "chart",
@@ -795,6 +801,15 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             "project_id": project["id"],
             "title": "Record the published guides",
             "kind": "quantitative",
+            "completion_rule": {
+                "actual": {
+                    "op": "reference", "measure_id": manual_snapshot["id"], "day_offset": 0
+                },
+                # This milestone differs from the chart's daily quota of 12.
+                "target": {"op": "constant", "value": 12000},
+                "direction": "atleast",
+                "first_date": "2026-07-01",
+            },
             "primary_chart": {
                 "type": "chart",
                 "id": "preview-manual",
@@ -955,3 +970,151 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     page.reload()
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"
+
+
+def test_goal_outcomes_refresh_across_page_and_overview(
+    server: ServerHandle,
+    api: ApiHelper,
+    cli: Callable[..., JsonObject],
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
+    """Prove accepted completion facts reach mounted Svelte pages and aggregates.
+
+    Engine tests prove automatic reconciliation without a GET. Renderer tests prove
+    individual labels. Neither proves API wire names and resource invalidation reach
+    both mounted surfaces. Reuse the ordinary server and browser host for one case.
+    """
+    project = api.direct_post(server, "/api/projects", {"name": "Goal outcome proof"})
+    measure = api.direct_post(
+        server,
+        "/api/measures",
+        {
+            "project_id": project["id"],
+            "name": "Monthly recurring revenue",
+            "unit": "USD",
+            "origin": "manual",
+            "kind": "reading",
+            "timezone": "UTC",
+        },
+    )
+    # The later decline must not erase the dated milestone.
+    for day, value in (("2026-07-02", 9000), ("2026-07-03", 10000), ("2026-07-04", 8000)):
+        state = api.get(server, f"/api/measures/{measure['id']}/manual-state?date={day}")
+        api.direct_post(
+            server,
+            f"/api/measures/{measure['id']}/manual-writes",
+            {
+                "request_id": f"mrr:{day}",
+                "date": day,
+                "basis": "date",
+                "operation": "replace",
+                "value": value,
+                "expected_definition_revision": state["definition_revision"],
+                "expected_write_revision": state["write_revision"],
+            },
+        )
+    rule: JsonObject = {
+        "actual": {"op": "reference", "measure_id": measure["id"], "day_offset": 0},
+        "target": {"op": "constant", "value": 10000},
+        "direction": "atleast",
+        "first_date": "2026-07-01",
+    }
+    goal = api.direct_post(
+        server,
+        "/api/goals",
+        {
+            "project_id": project["id"],
+            "title": "Reach $10,000 MRR",
+            "kind": "quantitative",
+            "deadline": "2026-07-02",
+            "completion_rule": rule,
+            "primary_chart": {
+                "type": "chart",
+                "kind": "number",
+                "title": "Monthly recurring revenue",
+                "measure_id": measure["id"],
+                "target": 10000,
+                "format": {"prefix": "$"},
+            },
+        },
+    )
+    api.direct_post(
+        server,
+        "/api/goals",
+        {
+            "project_id": project["id"],
+            "title": "Publish the pricing page",
+            "kind": "binary",
+            "primary_checklist_block_id": None,
+            "deadline": "2026-07-04",
+            "completed": True,
+            "active": False,
+        },
+    )
+    path = f"/api/goals/{goal['id']}"
+    assert goal["completed"] is True
+    assert goal["completion_date"] == "2026-07-03"
+    assert goal["outcome"] == "miss"
+    assert cli(server, "goal", "show", goal["id"]) == api.get(server, path)
+    assert api.get(server, "/api/goals")["outcome_summary"] == {
+        "hits": 1, "misses": 1, "rate": 0.5,
+    }
+
+    context = context_factory()
+    page = open_page(context, server, f"#/workspace/goal/{goal['id']}", "[data-goal-page]")
+    page.emulate_media(reduced_motion="reduce")
+    outcome = page.locator('[data-goal-page] [aria-label="Completion and result"]')
+    expect(outcome).to_contain_text("Completed Jul 3, 2026", timeout=WAIT_MS)
+    expect(outcome.locator('[data-outcome="miss"]')).to_have_text("Miss", timeout=WAIT_MS)
+    expect(
+        page.locator("[data-goal-page]").get_by_role("button", name="Mark done", exact=True)
+    ).to_have_count(0)
+    capture_success(page, "goal-outcome-late-desktop.png")
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(outcome).to_be_visible(timeout=WAIT_MS)
+    capture_success(page, "goal-outcome-late-phone.png")
+
+    overview = open_page(context, server, "#/workspace/goals", ".goals-overview")
+    rate = overview.locator('[aria-label="Overall goal hit rate"]')
+    expect(rate).to_contain_text("50%", timeout=WAIT_MS)
+    expect(rate).to_contain_text("1 hit · 1 miss", timeout=WAIT_MS)
+    overview.get_by_role("button", name="State filter", exact=True).click(timeout=WAIT_MS)
+    state_filter = overview.get_by_role("dialog", name="State filter", exact=True)
+    state_filter.get_by_label("State", exact=True).select_option("active", timeout=WAIT_MS)
+    state_filter.get_by_role("button", name="Apply", exact=True).click(timeout=WAIT_MS)
+    expect(overview.locator(".goals-overview tbody tr")).to_have_count(1, timeout=WAIT_MS)
+    # The inactive hit remains in the server aggregate after the local filter.
+    expect(rate).to_contain_text("50%", timeout=WAIT_MS)
+
+    page.locator("[data-goal-page]").evaluate("node => node.dataset.outcomeProof = 'retained'")
+    current = api.get(server, path)
+    changed = httpx.patch(
+        server.base + path,
+        headers={"X-Plan-Actor": "owner"},
+        json={
+            "expected_revision": current["revision"],
+            "completion_rule": {**rule, "target": {"op": "constant", "value": 9000}},
+        },
+        timeout=10,
+    )
+    assert changed.is_success, changed.text
+    assert changed.json()["completion_date"] == "2026-07-02"
+    assert changed.json()["outcome"] == "hit"
+    expect(outcome).to_contain_text("Completed Jul 2, 2026", timeout=WAIT_MS)
+    expect(outcome.locator('[data-outcome="hit"]')).to_have_text("Hit", timeout=WAIT_MS)
+    expect(page.locator("[data-goal-page]")).to_have_attribute(
+        "data-outcome-proof", "retained", timeout=WAIT_MS
+    )
+    expect(rate).to_contain_text("100%", timeout=WAIT_MS)
+    expect(rate).to_contain_text("2 hits · 0 misses", timeout=WAIT_MS)
+    expect(overview.locator(".goals-overview tbody tr")).to_contain_text(
+        "Completed Jul 2, 2026", timeout=WAIT_MS
+    )
+    assert cli(server, "goal", "list")["outcome_summary"] == {
+        "hits": 2, "misses": 0, "rate": 1.0,
+    }
+    capture_success(overview, "goal-outcome-overview-desktop.png")
+    page.reload()
+    expect(outcome).to_contain_text("Completed Jul 2, 2026", timeout=WAIT_MS)
+    expect(outcome.locator('[data-outcome="hit"]')).to_have_text("Hit", timeout=WAIT_MS)
