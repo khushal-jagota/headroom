@@ -294,8 +294,13 @@ def run(browser, urls):
 
     def smooth(samples, label):
         heights = [sample["height"] for sample in samples]
-        low, high = min(heights), max(heights)
-        assert high - low > 10, (label, samples)
+        low, high = sorted((heights[0], heights[-1]))
+        # Refresh hint removal changes the cards' intrinsic heights. Prove motion
+        # between distinct endpoints beyond the existing one-pixel tolerance,
+        # rather than require the old copy's ten-pixel height difference.
+        assert high - low > 2, (label, samples)
+        assert any(sample["heightEffects"] > 0 for sample in samples), (label, samples)
+        assert samples[-1]["heightEffects"] == 0, (label, samples[-4:])
         between = sum(low + 1 < value < high - 1 for value in heights)
         assert between >= 3, (label, between, samples)
         assert all(abs(current["height"] - previous["height"]) < 6
