@@ -4,12 +4,12 @@ A Ticket is one piece of work small enough to hand to a single AI Worker. It is 
 
 ## What a Ticket is made of
 
-- **A Worker type and its ladder.** The type is chosen at creation and never changes. It declares the stages, from Brief to Done, and which stages are collaborative. See [Worker types](worker-types.md).
+- **Its own workflow.** The Ticket holds its ordered stages, result fields, ownership, and guidance. Creation copies a [preset](worker-types.md) or accepts a custom workflow.
 - **Stage text.** Each stage before Done has one blank. Filling it, and having that fill settle, moves the Ticket one stage forward. Brief holds the intake: the original ask, its boundaries, and advice that should stay readable beside the later stages.
 - **A ceiling and a holder.** The ceiling is the stage at which the Worker's proposals start waiting for a person. The holder is who that person is.
 - **An assignment** to Chief or one ordinary Manager. This is who the work sits under.
 - **A conversation**, the Worker's only input. See [Conversations](conversations.md).
-- **A launch setup**: backend, model, and reasoning, copied from the Worker type at creation and fixed once the conversation exists.
+- **A launch setup**: backend, model, and reasoning, copied from a selected preset or explicitly chosen for custom work, and fixed once the conversation exists.
 - **A locale**: the VPS or Khushal's Mac, chosen at creation.
 - **Blockers**, other Tickets that must be Done before this one may start a step.
 - **A recap**, the Worker's short status for a person, and **artifacts**, the plans, documents, images, and prototypes the work produced.
@@ -68,12 +68,12 @@ The locale is chosen at creation and does not change. A VPS Ticket's agent runs 
 
 ## Where it shows up
 
-The Ticket page is the inspector: the stage ladder, the current gate with its proposal card, blockers, artifacts, and the conversation beside them. The Workspace rail and each Manager page list Tickets by the attention they need. Creation happens from the command line, the API, or by asking Chief or a Manager. The browser has no new-Ticket form.
+The Ticket page is the inspector: the stage ladder, the current gate with its proposal card, blockers, artifacts, and the conversation beside them. The Workspace rail and each Manager page list Tickets by the attention they need. Creation happens from the Workspace, command line, API, or by asking Chief or a Manager. The creation editor starts from a preset or custom stages. Changes to that draft belong to the new Ticket.
 
 ## Decisions that shape it
 
 - **The ceiling is the product choice.** A person decides, Ticket by Ticket and gate by gate, how much the Worker may do alone.
-- **One door moves a stage.** The resolver is the only stage writer in normal operation. The one exception is a Worker type amendment, which may move Tickets backward when their stage is removed. See [Worker types](worker-types.md).
+- **One door moves a stage.** The resolver moves the Ticket through its saved stages. A preset amendment never moves an existing Ticket.
 - **Status is derived, not stored.** The claim, a parked proposal, and live blockers are enough to say what a Ticket is doing.
 - **Holding a review is not authority.** The holder says who must look. It grants no private approval route, and a Worker, which stands above nothing, can never decide its own proposal.
 

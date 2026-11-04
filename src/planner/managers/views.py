@@ -20,7 +20,7 @@ from planner.managers.contracts import (
 from planner.runtime import conversation_start
 from planner.tickets import derivation
 from planner.tickets.logic.recap import recap_preview
-from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.store import workflow_from_row
 
 # --- serializers ---------------------------------------------------------------
 
@@ -73,14 +73,13 @@ def manager_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
         (item_id,),
     ).fetchall()
     result: list[JsonDict] = []
-    registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     for r in rows:
         stage = str(r["stage"])
         facts = derivation.derive_ticket_facts(
             derivation.stored_facts_from_row(r, has_live_blocker=str(r["id"]) in blocked_ticket_ids)
         )
-        worker_type_definition = registry.require(str(r["worker_type"]))
+        worker_type_definition = workflow_from_row(r)
         gating_field = worker_type_definition.gating_field(stage)
         result.append(
             {
@@ -105,7 +104,7 @@ def manager_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                 "gating_field": gating_field,
                 "blocked": facts.blocked,
                 "employee_backend": str(r["employee_backend"]),
-                "worker_type": str(r["worker_type"]),
+                "worker_type": r["worker_type"],
             }
         )
     return result

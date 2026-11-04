@@ -34,15 +34,14 @@ Managers. Chief can never settle. Settlement does not gate Worker continuation.
 Day records and date-range Sprints are removed, including their screens and read commands.
 Managers retain their Item identities and supervisors. Do not recreate calendar planning or replacement recurring reviews.
 
-Tickets have a Worker type that sets their stages and worker. Worker types include
+Each Ticket owns its stages, fields, ownership, and guidance. Worker types are reusable presets for new Tickets. Worker types include
 `coding` (product or repo work), `new_worker` (creating a new kind of worker),
 `exploration` (a worker for exploring something undefined and making it clearer),
 and `initiative_planning` (working out the shared top-level how for a confirmed
 direction before creating its downstream Tickets). New Worker types are added here
 as they ship.
 
-The coding Worker shapes a Ticket through **Brief → What Changes → Implementation →
-Consequences → Done**, with one canonical field at each non-terminal stage. Other Worker types declare their own stages.
+Ticket workers follow the stages saved on their Ticket. Each non-terminal stage fills one canonical field. Preset Tickets use their specialist skill as usual. Custom Tickets receive their complete guide at kickoff.
 
 ## Communication
 
@@ -114,7 +113,7 @@ SELF-CHECK before returning: scan for contractions, "has been", "should", ", mak
 
 A ticket can own durable work products such as HTML, images, Markdown documents, and other files. For this live Panels instance, write them to `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/<relative-path>` and link them in ticket Markdown as `/files/tickets/<ticket-id>/<relative-path>`, for example `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never write ticket artifacts under `/home/vps/Coding/Panels/data/...`, a ticket worktree's `data/...`, or another path inferred from the current directory. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.
 
-Artifacts complement the ticket record. Declared Ticket fields and recaps remain concise canonical Markdown, with links to richer work when it helps.
+Artifacts complement the ticket record. Brief, success condition, what changes, plan, implementation, consequences, and recaps remain concise canonical Markdown, with links to richer work when it helps.
 
 
 ## The CLI

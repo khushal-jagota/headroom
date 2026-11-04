@@ -13,6 +13,7 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from contextlib import closing
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
@@ -37,7 +38,7 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.database_modules import attach
-from planner.runtime import worker_step_readiness
+from planner.runtime import conversation_start, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     MEMORY_LOSS_NOTICE,
 )
@@ -51,6 +52,8 @@ from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback, worker_restart
 from planner.tickets.contracts import Ticket, TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import TicketWorkflowDefinition
+from planner.worker_types.store import workflow_from_preset
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
 BOUNDARY_HOUR = 5
@@ -88,11 +91,13 @@ class _World:
         worker_type: str = "coding",
         conversation_id: str | None = None,
         next_ceiling: str = "none",
+        workflow: TicketWorkflowDefinition | None = None,
     ) -> str:
         with closing(self.connect()) as conn:
             ticket = tickets_data.create_ticket(
                 conn,
                 worker_type=worker_type,
+                workflow=workflow,
                 title=title,
                 brief=brief,
                 principal=OWNER_PRINCIPAL,
@@ -829,10 +834,23 @@ class _QueueingConversationSystem(_RetirementDelegate):
         return await self._system.has_pending_permission_ask(conversation_id)
 
 
+@pytest.mark.parametrize("custom", [False, True])
 def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_a_wake(
     world: _World,
+    custom: bool,
 ) -> None:
-    ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-mid-step")
+    workflow = (
+        replace(
+            workflow_from_preset(configured_worker_type_registry().require("coding")),
+            specialist_skill=None,
+            guidance="CUSTOM RECOVERY GUIDE",
+        )
+        if custom
+        else None
+    )
+    ticket_id = world.ready_ticket(
+        title="Ship it", conversation_id="conv-mid-step", workflow=workflow
+    )
     world.start_conversation("conv-mid-step")
     assert world.start_step(ticket_id).started is True
     assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
@@ -857,7 +875,8 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
 
     notice = world.conversations.backend_prompt_writes("conv-mid-step")[1]
     assert MEMORY_LOSS_NOTICE in notice.text
-    assert "Re-read your Ticket with panels worker my-ticket brief," in notice.text
+    assert "Re-read your Ticket with panels worker my-ticket brief" in notice.text
+    assert ("CUSTOM RECOVERY GUIDE" in notice.text) is custom
     assert f"part-way through a step on ticket {ticket_id}" in notice.text
     assert notice.mode is PromptDeliveryMode.queue
     # The step keeps its claim: the worker was never sent away, only told.
@@ -934,7 +953,7 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
     with closing(sqlite3.connect(world.db_path)) as raw:
         attach(raw)
         raw.execute("BEGIN")
-        raw.execute("UPDATE tickets SET worker_type='removed_worker' WHERE id=?", (broken,))
+        raw.execute("UPDATE tickets SET workflow_json='{}' WHERE id=?", (broken,))
         raw.commit()
     with closing(world.connect()) as conn:
         tickets_data.audit_ticket_registry_integrity(conn, startup=True)
@@ -1162,3 +1181,65 @@ def test_definite_start_failure_cannot_erase_a_newer_claim(
     assert world.start_step(ticket_id).delivery_fate == "refused"
     assert world.ticket(ticket_id) == newer[0]
     assert newer[0].worker_step_claim is WorkerStepClaim.out
+
+
+@pytest.mark.parametrize("first_sender", ["loop", "owner"])
+def test_custom_guidance_reaches_first_payload_but_not_later_stage(
+    world: _World, first_sender: str
+) -> None:
+    workflow = replace(
+        workflow_from_preset(configured_worker_type_registry().require("coding")),
+        specialist_skill=None,
+        guidance="CUSTOM KICKOFF GUIDE",
+    )
+    ticket_id = world.ready_ticket(workflow=workflow, next_ceiling="done")
+    if first_sender == "loop":
+        assert world.start_step(ticket_id).started
+    else:
+
+        async def owner_kickoff() -> None:
+            async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+                with closing(world.connect()) as conn:
+                    await conversation_start.send_to_ticket_conversation(
+                        cast(ConversationSystem, world.conversations),
+                        conn,
+                        ticket_id,
+                        text_message_content("First owner message"),
+                        conversation_id=None,
+                        sender_label="owner",
+                        sender=OWNER_PRINCIPAL,
+                        recipient=Principal(PrincipalKind.ticket, ticket_id),
+                        now=world.clock.now_unix(),
+                    )
+
+        asyncio.run(owner_kickoff())
+    conversation_id = world.ticket(ticket_id).conversation_id
+    assert conversation_id is not None
+    assert (
+        "CUSTOM KICKOFF GUIDE" in world.conversations.backend_prompt_writes(conversation_id)[0].text
+    )
+    first = world.conversations.backend_prompt_writes(conversation_id)[0].text
+    if first_sender == "owner":
+        assert first.startswith("[Authenticated Panels reply requirement]")
+        assert first.endswith("owner:\nFirst owner message")
+        assert first.index("CUSTOM KICKOFF GUIDE") < first.index("owner:\nFirst owner message")
+    world.conversations.complete_running_turn(conversation_id)
+    with closing(world.connect()) as conn:
+        tickets_data.file_current_proposal(
+            conn,
+            ticket_id,
+            body="The changes.",
+            principal=Principal(PrincipalKind.ticket, ticket_id),
+            now=world.clock.now_unix(),
+        )
+        bindings = conn.execute(
+            "SELECT DISTINCT skill_role FROM worker_step_skill_bindings"
+        ).fetchall()
+        assert {row[0] for row in bindings} == (
+            {"orientation", "shared_worker"} if first_sender == "loop" else set()
+        )
+    assert world.start_step(ticket_id).started
+    assert (
+        "CUSTOM KICKOFF GUIDE"
+        not in world.conversations.backend_prompt_writes(conversation_id)[1].text
+    )

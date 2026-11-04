@@ -23,6 +23,7 @@ export type ManifestStage = {
   gating_field: string | null;
   is_terminal: boolean;
   ownership_mode: StageOwnershipMode | null;
+  instructions?: string;
 };
 
 export type ManifestField = {
@@ -30,16 +31,21 @@ export type ManifestField = {
   label: string;
 };
 
-export type WorkerTypeManifest = {
-  creatable?: boolean;
-  worker_type: string;
+export type WorkflowManifest = {
+  worker_type: string | null;
   label: string;
   stages: ManifestStage[];
   advance: Record<string, string>;
   fields: ManifestField[];
+  guidance?: string;
   ceiling_range: string[];
   default_ceiling: string;
-  worker_profile_id: string;
+  worker_profile_id: string | null;
+};
+
+export type WorkerTypeManifest = WorkflowManifest & {
+  creatable?: boolean;
+  worker_type: string;
   default_backend: string;
   default_model: string | null;
   default_reasoning_effort: string | null;
@@ -52,7 +58,7 @@ export type WorkerTypesResponse = {
 // --- the derived per-type lifecycle --------------------------------------------
 
 export type Lifecycle = {
-  workerType: string;
+  workerType: string | null;
   workerTypeLabel: string; // == m.label — the worker pill text
   fieldIds: string[]; // == FIELD_NAMES
   stageOrder: string[]; // includes done
@@ -66,7 +72,7 @@ export type Lifecycle = {
   stageIsTerminal: Record<string, boolean>;
 };
 
-export function buildLifecycle(m: WorkerTypeManifest): Lifecycle {
+export function buildLifecycle(m: WorkflowManifest | WorkerTypeManifest): Lifecycle {
   const gatingField: Record<string, string> = {};
   const gatedStage: Record<string, string> = {};
   const stageLabel: Record<string, string> = {};

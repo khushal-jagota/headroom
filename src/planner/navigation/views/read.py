@@ -181,7 +181,7 @@ def continuity(conn: sqlite3.Connection) -> Continuity:
     return {
         "scope": row[0],
         "schema_version": row[1],
-        "semantics": "attention-knowledge-v9-review-messages",
+        "semantics": "attention-knowledge-v10-ticket-workflows",
         "epoch": row[2],
         "revision": str(row[3]),
     }

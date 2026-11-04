@@ -98,8 +98,8 @@ def journal_db(tmp_path: Path) -> Path:
 def continuity(revision: str = "0") -> Continuity:
     return {
         "scope": "workspace",
-        "schema_version": 9,
-        "semantics": "attention-knowledge-v9-review-messages",
+        "schema_version": 10,
+        "semantics": "attention-knowledge-v10-ticket-workflows",
         "epoch": "epoch",
         "revision": revision,
     }

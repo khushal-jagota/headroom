@@ -26,7 +26,7 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 from uuid import uuid4
@@ -74,6 +74,7 @@ from planner.worker_settings.service import (
     read_worker_launch_defaults_for_ticket_creation,
 )
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.guidance import render_workflow_guide
 from planner.worker_types.registry import WorkerTypeRegistry
 
 if TYPE_CHECKING:
@@ -141,15 +142,27 @@ def worker_resolve(
     registry = worker_type_registry
     if registry is None:
         registry = configured_worker_type_registry()
-    launch_defaults = read_worker_launch_defaults_for_ticket_creation(registry, ticket.worker_type)
-    selected_workspace, workspace_policy = _worker_workspace(conn, ticket, workspace_folder)
-    values = resolve_worker_conversation_start(
-        ticket_id=ticket.id,
-        worker_type_launch_defaults=ConversationStartConfiguration(
+    if ticket.employee_launch_model is not None:
+        defaults_configuration = ConversationStartConfiguration(
+            backend_key=ConversationBackendKey(ticket.employee_backend),
+            model=ticket.employee_launch_model,
+            reasoning_effort=ticket.employee_launch_reasoning_effort,
+        )
+    else:
+        if ticket.worker_type is None:
+            raise PlannerError(ErrorCode.validation, "custom Ticket requires a launch model")
+        launch_defaults = read_worker_launch_defaults_for_ticket_creation(
+            registry, ticket.worker_type
+        )
+        defaults_configuration = ConversationStartConfiguration(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),
             model=launch_defaults.employee_launch_model,
             reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
-        ),
+        )
+    selected_workspace, workspace_policy = _worker_workspace(conn, ticket, workspace_folder)
+    values = resolve_worker_conversation_start(
+        ticket_id=ticket.id,
+        worker_type_launch_defaults=defaults_configuration,
         ticket_last_chosen=(
             None
             if ticket.employee_launch_model is None
@@ -163,6 +176,17 @@ def worker_resolve(
         workspace_folder=selected_workspace,
         workspace_path_policy=workspace_policy,
     )
+    if ticket.workflow.specialist_skill is None:
+        values = replace(
+            values,
+            role_materials=replace(
+                values.role_materials,
+                role_text=values.role_materials.role_text
+                + "\n\n[Ticket workflow guidance]\n"
+                + render_workflow_guide(ticket.workflow)
+                + "\n[/Ticket workflow guidance]",
+            ),
+        )
     locale_configuration.require_locale_backend_compatibility(
         ticket.locale, values.backend_key.value
     )

@@ -31,8 +31,8 @@ from planner.tickets.contracts import TicketStatus, WorkerStepClaim
 from planner.tickets.derivation import StoredTicketFacts, derive_ticket_status
 from planner.tickets.logic.fields_codec import proposal_from_json
 from planner.tickets.logic.recap import recap_preview
-from planner.worker_types.contracts import WorkerTypeDefinition
-from planner.worker_types.store import definition_from_json
+from planner.worker_types.contracts import WorkerTypeDefinition, WorkflowDefinition
+from planner.worker_types.store import definition_from_json, workflow_from_json
 
 type Key = tuple[str, str]
 type TicketOwners = dict[str, dict[str, dict[str, Any]]]
@@ -366,9 +366,13 @@ def _derive(
         deps.add(("tickets", identity))
         version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
         priority_column = "t.priority," if version < PREPARED_SCHEMA_VERSION else ""
+        snapshots_present = any(
+            column[1] == "workflow_json" for column in conn.execute("PRAGMA table_info(tickets)")
+        )
+        snapshot_column = "t.workflow_json," if snapshots_present else ""
         found = rows(
             conn,
-            "SELECT t.title,t.worker_type,t.stage,t.deadline,t.manager_kind,"
+            "SELECT " + snapshot_column + "t.title,t.worker_type,t.stage,t.deadline,t.manager_kind,"
             "t.manager_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,"
             "t.pending_proposal,t.is_backlogged,t.ceiling_holder,t.pending_proposal_revision,"
             "t.updated_at,t.created_at,t.recap,"
@@ -380,7 +384,8 @@ def _derive(
         if not found:
             return [], deps
         t = found[0]
-        deps.add(("worker_types", t["worker_type"]))
+        if not snapshots_present:
+            deps.add(("worker_types", t["worker_type"]))
         if t["manager_id"]:
             deps.add(("managers", t["manager_id"]))
         blockers = rows(
@@ -434,16 +439,21 @@ def _derive(
         )
         if version <= 2 and t["stage"] == "cancelled":
             status = TicketStatus.empty
-        definition = None if definitions is None else definitions.get(t["worker_type"])
-        if definition is None:
-            definition_row = conn.execute(
-                "SELECT definition_json FROM worker_types WHERE worker_type=?", (t["worker_type"],)
-            ).fetchone()
-            if definition_row is None:
-                raise RuntimeError("navigation Ticket names a missing Worker type")
-            definition = definition_from_json(str(definition_row[0]))
-            if definitions is not None:
-                definitions[t["worker_type"]] = definition
+        definition: WorkflowDefinition | None
+        if snapshots_present:
+            definition = workflow_from_json(t["workflow_json"])
+        else:
+            definition = None if definitions is None else definitions.get(t["worker_type"])
+            if definition is None:
+                definition_row = conn.execute(
+                    "SELECT definition_json FROM worker_types WHERE worker_type=?",
+                    (t["worker_type"],),
+                ).fetchone()
+                if definition_row is None:
+                    raise RuntimeError("navigation Ticket names a missing Worker type")
+                definition = definition_from_json(str(definition_row[0]))
+                if definitions is not None:
+                    definitions[t["worker_type"]] = definition
         stage = definition.stage_definition(t["stage"])
         proposal = None if t["pending_proposal"] is None else json.loads(t["pending_proposal"])
         value = {
@@ -472,6 +482,8 @@ def _derive(
             terminal=stage.is_terminal,
             stage_ownership=None if stage.ownership_mode is None else stage.ownership_mode.value,
         )
+        if snapshots_present:
+            value.update(stage_label=stage.label, workflow_label=definition.label)
         if version >= 3:
             validated_proposal = proposal_from_json(t["pending_proposal"])
             value.update(
@@ -616,7 +628,7 @@ def _derive(
             value["lifecycle"] = lifecycle_payload(conn, identity)
         else:
             value["lifecycle_summary"] = read_summary(conn, identity)
-        if version == 4 or version == SCHEMA_VERSION:
+        if version == 4 or version >= 9:
             from planner.navigation.signal_publication import read_current_attention
 
             deps.add(("navigation_signal_publications", identity))
