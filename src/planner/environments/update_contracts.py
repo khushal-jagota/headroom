@@ -6,17 +6,24 @@ AppManifest remains the authority for the installed application's identity.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
 from planner.environments.app import AppManifest
+from planner.environments.deployment_lifecycle import DeploymentPhase
 
 SUPPORTED_UPDATE_SCHEMA_FLOOR = "video_upload_ledger"
 UPDATE_ARTIFACT_RETENTION_DAYS = 30
 
 type UpdateMode = Literal["now", "idle"]
 type UpdateActivity = Literal["idle", "busy", "unknown"]
+type UpdateExperienceState = Literal[
+    "up_to_date", "available", "waiting", "updating", "restarting", "failed", "complete"
+]
+type UpdateAction = Literal["update", "cancel", "update_now", "retry"]
 type UpdateRequestState = Literal[
     "pending", "dispatched", "applying", "applied", "cancelled", "failed"
 ]
@@ -42,6 +49,9 @@ class OwnerUpdateRequest:
     created_at: str
     detail: str | None = None
     confirm_activity: bool = False
+    dispatched_at: str | None = None
+    deadline_at: str | None = None
+    deployment_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +61,12 @@ class UpdateStatus:
     request: OwnerUpdateRequest | None
     activity: UpdateActivity
     detail: str | None = None
+    state: UpdateExperienceState = "up_to_date"
+    allowed_actions: tuple[UpdateAction, ...] = ()
+    phase: DeploymentPhase | None = None
+    app_sha: str | None = None
+    deadline_at: str | None = None
+    restart_deadline_at: str | None = None
 
 
 class UpdateProvider(Protocol):
@@ -70,6 +86,15 @@ class UpdateRequestStore(Protocol):
 
     def create(self, request: OwnerUpdateRequest) -> OwnerUpdateRequest: ...
 
+    def promote(self, request_id: str, *, confirm_activity: bool) -> OwnerUpdateRequest: ...
+
+    def installation_guard(self, request_id: str) -> AbstractContextManager[None]: ...
+
+    def settle(
+        self,
+        decide: Callable[[OwnerUpdateRequest], tuple[UpdateRequestState, str] | None],
+    ) -> OwnerUpdateRequest | None: ...
+
     def transition(
         self,
         request_id: str,
@@ -77,4 +102,5 @@ class UpdateRequestStore(Protocol):
         state: UpdateRequestState,
         *,
         detail: str | None = None,
+        deployment_id: str | None = None,
     ) -> OwnerUpdateRequest: ...

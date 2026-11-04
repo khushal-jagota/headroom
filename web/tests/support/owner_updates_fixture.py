@@ -6,6 +6,7 @@ import tempfile
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 from fastapi import FastAPI
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 from planner.conversation.contracts import ConversationSystem
 from planner.core.db import connect, create_schema
 from planner.environments.app import AppManifest
+from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_api import router
 from planner.environments.update_contracts import (
@@ -63,6 +65,7 @@ class OwnerUpdatesFixture:
         self.provider = FakeProvider()
         self.activity = ActivityProbe()
         self.current_sha = "a" * 40
+        self.lifecycle = DeploymentLifecycleStore(Path(self.directory.name) / "deployment-lifecycle.json")
         self.store = FileUpdateRequestStore(Path(self.directory.name) / "request.json")
         database_path = Path(self.directory.name) / "planner.db"
         with closing(connect(str(database_path))) as connection:
@@ -73,9 +76,12 @@ class OwnerUpdatesFixture:
             lambda: cast(ConversationSystem, self.activity),
             connection_factory=lambda: connect(str(database_path)),
             current_app_sha=self.current_sha,
+            lifecycle_store=self.lifecycle,
         )
         app = FastAPI()
         app.state.updates = self.service
+        self.mac_status: dict[str, object] | None = None
+        app.state.executor_endpoint = SimpleNamespace(health=lambda: self.mac_status)
         app.include_router(router, prefix="/api")
 
         @app.get("/api/meta")

@@ -46,14 +46,22 @@ let sourceIdentity = 0;
 };
 class QuietEventSource {
   onopen = null; onmessage = null; onerror = null;
-  listeners = new Map(); closed = false;
+  listeners = new Map(); closed = false; readyState = 0;
   url: string;
   id = ++sourceIdentity; generation = 0;
   constructor(url: string) {
     this.url = url;
-    if (ownerUpdates && url === '/api/changes') {
+    if (url === '/api/changes') {
       (globalThis as any).__ownerUpdatesSignal = () => (this.onmessage as any)?.({data:''});
-      queueMicrotask(() => (this.onopen as any)?.());
+      (globalThis as any).__ownerUpdatesDisconnect = () => {
+        (globalThis as any).__ownerUpdatesOffline = true;
+        this.readyState = 2;
+        (this.onerror as any)?.();
+      };
+      queueMicrotask(() => {
+        if ((globalThis as any).__ownerUpdatesOffline) { this.readyState = 2; (this.onerror as any)?.(); }
+        else { this.readyState = 1; (this.onopen as any)?.(); }
+      });
       return;
     }
     if (!url.startsWith('/api/navigation/view/events')) { if (overlay) return new ReaderSource(url); return; }
