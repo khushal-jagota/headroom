@@ -82,14 +82,35 @@ def test_work_is_kept_and_reported(tmp_path: Path) -> None:
     _git(unpushed, "commit", "-q", "--allow-empty", "-m", "local only")
     # A deleted Ticket's folder holds the worktree of a live Ticket.
     _worktree(layout, task_tmp / "t_eeeeeeee" / "source", "ticket/t_ffffffff")
+    # A clone's unpushed commit sits on a branch that is not checked out.
+    clone = task_tmp / "t_hhhhhhhh"
+    subprocess.run(["git", "clone", "-q", str(layout.repository), str(clone)], check=True)
+    _git(clone, "checkout", "-q", "-b", "side")
+    _git(
+        clone,
+        "-c",
+        "user.email=t@e",
+        "-c",
+        "user.name=T",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "local only",
+    )
+    _git(clone, "checkout", "-q", "-")
 
-    result = _clean(layout, {"t_cccccccc": DONE, "t_dddddddd": DONE, "t_ffffffff": LIVE})
+    result = _clean(
+        layout,
+        {"t_cccccccc": DONE, "t_dddddddd": DONE, "t_ffffffff": LIVE, "t_hhhhhhhh": DONE},
+    )
 
     assert dirty.is_dir() and unpushed.is_dir() and (task_tmp / "t_eeeeeeee").is_dir()
     reasons = {Path(item["path"]).name: item["reason"] for item in result.skipped}
     assert reasons["t_cccccccc"].startswith("uncommitted changes")
     assert reasons["t_dddddddd"].startswith("commits that no remote has")
     assert reasons["t_eeeeeeee"].startswith("holds the worktree")
+    assert reasons["t_hhhhhhhh"].startswith("commits that no remote has")
     assert "feature/goal-holders" in _git(layout.repository, "branch")
 
 
@@ -101,3 +122,11 @@ def test_a_ticket_inside_its_settle_period_is_left_alone(tmp_path: Path) -> None
 
     assert (layout.folders[0] / "t_gggggggg").is_dir()
     assert result.removed == []
+
+
+def test_scratch_belongs_only_to_its_own_database(tmp_path: Path) -> None:
+    live = str(tmp_path / "live.db")
+
+    assert ticket_scratch.layout_for(tmp_path, live, live) is not None
+    assert ticket_scratch.layout_for(tmp_path, live, str(tmp_path / "ticket.db")) is None
+    assert ticket_scratch.layout_for(tmp_path, None, live) is None

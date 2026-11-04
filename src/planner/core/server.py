@@ -54,6 +54,7 @@ from planner.core.web_assets import WebAssets
 from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
 from planner.datasets.api import router as datasets_router
+from planner.environments import ticket_scratch
 from planner.environments.deployment_attention import DeploymentAttentionObserver
 from planner.environments.deployment_configuration import DEPLOYMENT_ATTENTION_POLL_SECONDS
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
@@ -391,9 +392,12 @@ def create_app(
                     app.state.conversation = conversation
                     await asyncio.to_thread(video_uploads.recover_and_cleanup)
                     video_cleanup_task = asyncio.create_task(_clean_video_uploads())
-                    if config.ticket_scratch_root is not None and not config.test_mode:
+                    scratch_layout = ticket_scratch.layout_for(
+                        config.ticket_scratch_root, config.ticket_scratch_database, config.db_path
+                    )
+                    if scratch_layout is not None and not config.test_mode:
                         ticket_scratch_task = asyncio.create_task(
-                            _clean_ticket_scratch(config.ticket_scratch_root)
+                            _clean_ticket_scratch(scratch_layout)
                         )
                     # Worker tests can supply a held conversation system.
                     # Production always uses the real system.
@@ -487,10 +491,7 @@ def create_app(
                     if admitted:
                         await asyncio.to_thread(video_uploads.recover_and_cleanup)
 
-    async def _clean_ticket_scratch(root: Path) -> None:
-        from planner.environments import ticket_scratch
-
-        layout = ticket_scratch.ScratchLayout.under(root)
+    async def _clean_ticket_scratch(layout: ticket_scratch.ScratchLayout) -> None:
         already_kept: set[str] = set()
         logger = logging.getLogger(__name__)
         while True:

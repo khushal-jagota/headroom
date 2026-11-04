@@ -25,7 +25,9 @@ MERGE_TARGET = "origin/staging"
 # A Ticket's last Worker step can still be ending when the Ticket reaches done.
 SETTLE_SECONDS = 600
 
-_TICKET_ID = re.compile(r"t_[a-z0-9]{8}(?![a-z0-9])")
+_TICKET_ID = re.compile(r"t_[0-9abcdefghjkmnpqrstuvwxyz]{8}(?![a-z0-9])")
+# Report untracked files and submodule changes whatever the checkout's own git config says.
+_STATUS_OPTIONS = ("--untracked-files=normal", "--ignore-submodules=none")
 _NOT_DESCENDED = frozenset({".git", ".venv", "node_modules"})
 
 
@@ -36,12 +38,26 @@ class ScratchLayout:
 
     @classmethod
     def under(cls, root: Path, home: Path | None = None) -> ScratchLayout:
-        home = Path.home() if home is None else home
+        root = root.resolve()
+        home = (Path.home() if home is None else home).resolve()
         return cls(
             repository=root / "repository",
             folders=tuple(root / name for name in SCRATCH_FOLDERS)
             + tuple(home / name for name in LEGACY_HOME_FOLDERS),
         )
+
+
+def layout_for(root: Path | None, database: str | None, db_path: str) -> ScratchLayout | None:
+    """The layout, only for the one database that the scratch belongs to.
+
+    Every other database would count the live Tickets as deleted. A Ticket server can
+    inherit the live configuration, so the database path decides, not the configuration.
+    """
+    if root is None or database is None:
+        return None
+    if Path(database).expanduser().resolve() != Path(db_path).expanduser().resolve():
+        return None
+    return ScratchLayout.under(root)
 
 
 @dataclass(frozen=True)
@@ -170,7 +186,7 @@ def remove_ticket_scratch(
     states: Mapping[str, tuple[str, int]],
     now: int,
 ) -> ScratchResult:
-    """Remove the named scratch, checking each entry again just before removal."""
+    """Remove the named scratch. Each entry's checkouts are checked just before removal."""
     result = ScratchResult()
     scratches = list(scratches)
     worktrees = list_worktrees(layout.repository)
@@ -184,10 +200,14 @@ def remove_ticket_scratch(
             if reason is not None:
                 result.skipped.append({"path": str(entry), "reason": reason})
                 continue
-            if entry.is_dir() and not entry.is_symlink():
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
+            try:
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+            except OSError as error:
+                result.skipped.append({"path": str(entry), "reason": f"removal failed: {error}"})
+                continue
             result.removed.append(str(entry))
     _git(layout.repository, "worktree", "prune")
     checked_out = {worktree.branch for worktree in list_worktrees(layout.repository)}
@@ -216,17 +236,20 @@ def _reason_to_keep(
         return None
     registered = [worktree for worktree in worktrees if _inside(worktree.path, entry)]
     for worktree in registered:
-        owner = ticket_id_of_branch(worktree.branch)
-        if owner is not None and not finished(owner, states, now):
-            return f"holds the worktree {worktree.path} of a live Ticket"
+        for owner in (_ticket_id_of_path(worktree.path), ticket_id_of_branch(worktree.branch)):
+            if owner is not None and not finished(owner, states, now):
+                return f"holds the worktree {worktree.path} of a live Ticket"
     checkouts = {worktree.path for worktree in registered} | set(_git_checkouts(entry))
     for checkout in sorted(checkouts):
-        status = _git(checkout, "status", "--porcelain")
+        status = _git(checkout, "status", "--porcelain", *_STATUS_OPTIONS)
         if status.returncode != 0:
             return f"git cannot read the checkout {checkout}"
         if status.stdout.strip():
             return f"uncommitted changes in {checkout}"
-        unpushed = _git(checkout, "rev-list", "-n", "1", "HEAD", "--not", "--remotes")
+        # A linked worktree shares the main repository's refs, so only its HEAD is its own.
+        # A standalone clone owns every ref it has, its stash included.
+        own_refs = "--all" if (checkout / ".git").is_dir() else "HEAD"
+        unpushed = _git(checkout, "rev-list", "-n", "1", own_refs, "--not", "--remotes")
         if unpushed.returncode != 0:
             return f"git cannot compare {checkout} with its remotes"
         if unpushed.stdout.strip():
@@ -275,7 +298,7 @@ CLEANUP_INTERVAL_SECONDS = 600
 def clean_finished_ticket_scratch(
     layout: ScratchLayout, db_path: str, now: int, already_kept: set[str]
 ) -> ScratchResult:
-    """One server pass. An entry kept once is not checked again until restart."""
+    """One server pass. A kept entry is checked again after restart or by the daily cleanup."""
     states = read_ticket_states_from(db_path)
     scratches = [
         TicketScratch(

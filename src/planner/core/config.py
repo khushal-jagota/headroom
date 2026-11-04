@@ -58,8 +58,10 @@ class Config:
     credential_key_path: str = "data/credential-secrets/key"
     measure_source_timeout_seconds: int = 30
     workspace_root: Path | None = None
-    # Where Ticket worktrees and scratch live. Unset: no Ticket scratch is ever removed.
+    # Where Ticket worktrees and scratch live, and the one database whose Tickets own it.
+    # Both unset: no Ticket scratch is ever removed.
     ticket_scratch_root: Path | None = None
+    ticket_scratch_database: str | None = None
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -291,6 +293,9 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         workspace_root=_workspace_root_value(cfg, env),
         ticket_scratch_root=_existing_directory_value(
             cfg, env, "ticket_scratch_root", "PLAN_TICKET_SCRATCH_ROOT"
+        ),
+        ticket_scratch_database=_optional_str_value(
+            cfg, env, "ticket_scratch_database", "PLAN_TICKET_SCRATCH_DATABASE"
         ),
         credential_key_path=credential_key_path,
         measure_source_timeout_seconds=_positive_int_value(

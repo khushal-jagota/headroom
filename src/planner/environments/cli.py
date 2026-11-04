@@ -129,8 +129,10 @@ def cleanup(apply: bool, as_json: bool) -> None:
     )
     payload: dict[str, object] = {"dry_run": not apply, **inventory.as_dict()}
     scratches: list[ticket_scratch.TicketScratch] = []
-    if config.ticket_scratch_root is not None:
-        layout = ticket_scratch.ScratchLayout.under(config.ticket_scratch_root)
+    layout = ticket_scratch.layout_for(
+        config.ticket_scratch_root, config.ticket_scratch_database, config.db_path
+    )
+    if layout is not None:
         states = ticket_scratch.read_ticket_states_from(config.db_path)
         now = int(time.time())
         scratches = ticket_scratch.collect_ticket_scratch(layout, states, now)
@@ -138,7 +140,7 @@ def cleanup(apply: bool, as_json: bool) -> None:
     scratch_result: ticket_scratch.ScratchResult | None = None
     if apply:
         payload["result"] = apply_cleanup_inventory(inventory).as_dict()
-        if scratches:
+        if layout is not None:
             scratch_result = ticket_scratch.remove_ticket_scratch(layout, scratches, states, now)
             payload["ticket_scratch_result"] = scratch_result.as_dict()
     if as_json:
