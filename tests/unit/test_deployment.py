@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import shutil
 import time
 from collections.abc import Callable
@@ -82,9 +83,9 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
     events: list[str] = []
     lifecycle: list[tuple[str, dict[str, object]]] = []
     snapshot = tmp_path / "snapshot"
-    # An older rollback copy and interrupted attempts must not accumulate.
+    # Rotate the previous release, but preserve unrelated copies and recovery material.
     _app(current / "app-previous", "c" * 40, "older")
-    stale = [
+    unrelated = [
         current / name
         for name in (
             ".app-candidate-old",
@@ -93,9 +94,18 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
             "app-mutated-before-old",
         )
     ]
-    for app in stale:
+    for app in unrelated:
         app.mkdir()
-        (app / "old-copy").write_text("obsolete")
+        (app / "old-copy").write_text("unrelated")
+    protected = [
+        current / "recovery" / "snapshot",
+        current / "restore-proof.json",
+        current.parent / "quarantine" / "evidence",
+        current.parent / "deployment-runner" / "runner",
+    ]
+    for sentinel in protected:
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text("protected")
 
     health = FakeHealth(events, {SHA_B})
 
@@ -133,8 +143,10 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
     assert candidate.is_dir()
     assert (current / "app-previous" / "old").is_file()
     assert not (current / "app-previous" / "older").exists()
-    assert not any(app.exists() for app in stale)
-    assert list(current.glob(".app-*")) == []
+    assert all((app / "old-copy").read_text() == "unrelated" for app in unrelated)
+    assert all(sentinel.read_text() == "protected" for sentinel in protected)
+    assert not (current / f".app-candidate-{os.getpid()}").exists()
+    assert not (current / f".app-fallback-{os.getpid()}").exists()
 
 
 def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) -> None:

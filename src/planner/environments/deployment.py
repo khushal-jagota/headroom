@@ -283,7 +283,6 @@ def deploy_app(
             _publish_lifecycle(
                 lifecycle_transition, "app_healthy", serving_sha=prior_manifest.app_sha
             )
-            _remove_obsolete_apps(root)
             return DeploymentResult(
                 "unchanged", candidate_manifest.app_sha, prior_manifest.app_sha, None
             )
@@ -454,7 +453,6 @@ def deploy_app(
                 if previous.exists():
                     shutil.rmtree(previous)
                 os.replace(fallback, previous)
-                _remove_obsolete_apps(root)
             except OSError as exc:
                 _publish_lifecycle(
                     lifecycle_transition,
@@ -530,19 +528,10 @@ def _install_first_app(
         _publish_lifecycle(
             lifecycle_transition, "app_healthy", serving_sha=candidate_manifest.app_sha
         )
-        _remove_obsolete_apps(current_app.parent)
         return DeploymentResult("succeeded", candidate_manifest.app_sha, None, None)
     finally:
         if staged.exists() and not staged.is_symlink():
             shutil.rmtree(staged)
-
-
-def _remove_obsolete_apps(root: Path) -> None:
-    """Successful adoption needs only app and app-previous, not scratch copies."""
-    for pattern in (".app-candidate-*", ".app-failed-*", ".app-fallback-*", "app-mutated-before-*"):
-        for app in root.glob(pattern):
-            if app.is_dir() and not app.is_symlink():
-                shutil.rmtree(app)
 
 
 def _validate_current_root(root: Path) -> None:

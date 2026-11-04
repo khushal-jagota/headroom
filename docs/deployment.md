@@ -29,7 +29,7 @@ owner asks (now or when idle) → pinned request → host runner → admit → s
 └── logs/
 ```
 
-Replacement changes `app`. After success, `app-previous` keeps the preceding release for rollback. The deploy deletes older rollback copies and obsolete candidate, failed, fallback, and mutated-before app copies. Data and logs stay. Backups taken on this path include the database and the managed configuration roots. They exclude uploads and Ticket artifacts under `data/files`. See [Backups](backups.md).
+Replacement changes `app`. After success, `app-previous` keeps the preceding release for rollback. The deploy replaces the old `app-previous` and removes only its own temporary app copies. Unrelated app copies remain. Recovery material, restore proofs, quarantine, and the deployment runner remain untouched. Data and logs stay. Backups taken on this path include the database and the managed configuration roots. They exclude uploads and Ticket artifacts under `data/files`. See [Backups](backups.md).
 
 ## What a release needs from the host
 
@@ -89,7 +89,7 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 - `src/planner/environments/deployment.py`: replacement and the restore boundary. `update_runner.py`: the host-side install.
 - `src/planner/environments/update_service.py`, `update_requests.py`, `update_admission.py`: the owner request and admission hold.
 - `src/planner/environments/runtime_packaging.py`, `runtime_contracts.py`, `runtime_admission.py`, and `scripts/runtime_target_proof.py`: the private runtime and host contract.
-- `src/planner/environments/deployment_lifecycle.py`, `deployment_attention.py`, `scripts/deployment_finalize.py`: evidence and reporting.
+- `src/planner/environments/deployment_lifecycle.py`, `scripts/deployment_finalize.py`: evidence and reporting.
 - `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the owner's actions.
 - `scripts/dev`, `scripts/development_safety/`: the worktree guard.
 - `ops/panels-environments/`: user units and runner setup.
