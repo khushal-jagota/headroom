@@ -7,7 +7,7 @@ A measure is a dated number that belongs to a Project: monthly revenue, events p
 - **Measures.** A name, unit, Project, and timezone. Kind (reading, running total, period count) and period are descriptive. They do not restrict arithmetic.
 - **Sources.** A saved Python script that collects values for a Project, run on a schedule or on request. A source has a responsible Chief, Manager, or goal. That owner, and Workers it authorizes, edit and run it. A goal agent can manage a source for its own goal and no other.
 - **Datasets.** A retained table owned by a source: rows by date, with category dimensions and numeric fields. A measure is one number per date. A dataset is a breakdown, such as events by team. Goal charts read both.
-- **Credentials.** Named API keys that scripts look up by name. The names are descriptive and reusable, not owned by a Project. Values are stored encrypted in the database, with the key in a separate file that is backed up alongside it. A missing key fails loudly and never resets records. An agent asks for a key through a card in its conversation, and the owner saves it there. A secret never travels as a chat message.
+- **Credentials.** Named API keys that scripts look up by name. [Credentials](credentials.md) owns how they are stored and requested.
 
 ## Three kinds of measure
 
