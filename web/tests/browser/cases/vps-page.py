@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -56,9 +57,11 @@ def run(browser, urls):
         document.documentElement?.setAttribute('data-vps-test-idle', String(active === 0));
       };
       window.__vpsMetricsIdle = true;
+      window.__vpsMetricsStarted = 0;
       window.fetch = async (...args) => {
         if (!String(args[0]).includes('/api/vps-metrics/')) return originalFetch(...args);
         active++;
+        window.__vpsMetricsStarted++;
         window.__vpsMetricsIdle = false;
         document.documentElement?.setAttribute('data-vps-test-idle', 'false');
         let completed = false;
@@ -121,6 +124,14 @@ def run(browser, urls):
         expect(page.locator('html')).to_have_attribute('data-vps-test-idle', 'true')
         assert page.evaluate('window.__vpsMetricsIdle')
         assert not pending, [request.url for request in pending]
+
+    def until(condition, failure):
+        # Route and request events reach Python while it waits on the browser. One
+        # message turn per check lets them arrive without passing fixed time.
+        deadline = time.monotonic() + 5
+        while not condition():
+            assert time.monotonic() < deadline, failure
+            page.evaluate("() => new Promise(resolve => { const channel = new MessageChannel(); channel.port1.onmessage = resolve; channel.port2.postMessage(null); })")
 
     def tick(milliseconds=2100):
         drain()
@@ -208,7 +219,7 @@ def run(browser, urls):
         # Window cancellation must prevent a late old generation from replacing 5m.
         mode["hold"] = True
         root.locator('[data-vps-window="24h"]').click()
-        page.wait_for_timeout(30)
+        until(lambda: held, "Minute history did not start")
         assert held, "Minute history did not start"
         root.locator('[data-vps-window="5m"]').click()
         mode["hold"] = False
@@ -245,10 +256,10 @@ def run(browser, urls):
         # A hidden pane stops both reads and activity. Resume renews both.
         mode['hold_latest'] = True
         tick()
-        page.wait_for_timeout(20)
+        until(lambda: held_latest, "Latest read was not held")
         assert held_latest
         page.evaluate("window.__vpsVisible(false)")
-        page.wait_for_timeout(20)
+        until(lambda: any('/api/vps-metrics/latest' in request for request in cancelled), cancelled)
         assert any('/api/vps-metrics/latest' in request for request in cancelled), cancelled
         mode['hold_latest'] = False
         for route in held_latest:
@@ -257,26 +268,38 @@ def run(browser, urls):
             except Exception:
                 pass
         held_latest.clear()
-        page.wait_for_timeout(20)
+        drain()
         before = len(calls)
         tick(10000)
-        page.evaluate("dispatchEvent(new Event('focus')); dispatchEvent(new Event('online'))")
-        page.wait_for_timeout(20)
+        # The paused clock fires no timer. A read either handler starts is counted when
+        # fetch is called, so one message turn after the events covers their reactions.
+        started = page.evaluate("""() => {
+          const before = window.__vpsMetricsStarted;
+          dispatchEvent(new Event('focus')); dispatchEvent(new Event('online'));
+          return new Promise(resolve => {
+            const channel = new MessageChannel();
+            channel.port1.onmessage = () => resolve(window.__vpsMetricsStarted - before);
+            channel.port2.postMessage(null);
+          });
+        }""")
+        assert started == 0, started
         assert len(calls) == before, calls[before:]
         page.evaluate("window.__vpsVisible(true)")
         expect(cpu).to_contain_text("29")
-        page.wait_for_timeout(20)
+        until(lambda: all(any(path.endswith(read) for path, _ in calls[before:]) for read in ('/activity', '/latest')), calls[before:])
+        drain()
         assert any(path.endswith('/activity') for path, _ in calls[before:])
         assert any(path.endswith('/latest') for path, _ in calls[before:])
 
         # Browser visibility is independent of pane visibility.
         page.evaluate("Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'}); document.dispatchEvent(new Event('visibilitychange'))")
-        page.wait_for_timeout(20)
+        drain()
         before = len(calls)
         tick(10000)
         assert len(calls) == before, calls[before:]
         page.evaluate("Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'}); document.dispatchEvent(new Event('visibilitychange'))")
-        page.wait_for_timeout(20)
+        until(lambda: len(calls) > before, "Visible browser did not resume reads")
+        drain()
         assert len(calls) > before
         page.evaluate("window.__vpsMount(false)")
         expect(root).to_have_count(0)
