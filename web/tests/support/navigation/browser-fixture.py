@@ -246,5 +246,4 @@ def scoped_navigation_response(response: FixtureObject, view: FixtureObject) -> 
         "mode": response["mode"],
         "authority": response["authority"],
         "content": content,
-        "proof": response["proof"],
     }
