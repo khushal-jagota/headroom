@@ -74,3 +74,59 @@ Claude homes. They contain no `User=` switch, privileged ownership choreography,
 tmpfiles rules, or root-owned environment-manager path.
 
 Backup and restore instructions are in [backup-restore.md](backup-restore.md).
+
+## Worker resource units
+
+Linux Ticket agents run in transient user services under `panels-workers.slice`.
+Their tools inherit that unit. Each service limits memory to 6 GiB and stops its
+whole cgroup on OOM. The slice limits all Workers to 24 GiB and gives them
+CPU weight 10. Its parent `panels.slice` also uses weight 10, below the
+foreground `app.slice`. Panels uses weight 100 and a 1 GiB memory reservation.
+`MemoryLow` protects memory under pressure only when every ancestor supplies
+the same protection. It does not preallocate RAM.
+
+Worker temporary files use a private `~/.pw-XXXXXXXX/t` directory on disk for the agent process
+lifetime, including successive conversation turns. Shutdown removes the directory
+after the tools stop. Worker OOM errors appear in the existing conversation error
+path. The unit boundary controls resources, not access to files or credentials.
+Worker units retain `NoNewPrivileges=yes` from the previous live-service launch path.
+
+The operator must install `panels.slice` and `panels-workers.slice` alongside `panels-live.service`
+before activation. The operator then reloads the user manager and restarts Panels.
+Workers must not reload or restart the live service. Existing agents remain in
+their original units until the operator restarts Panels. The operator must check
+that no old Worker tools remain before activation.
+
+The scratch verification record for the containment change records measured peaks
+and the selected budgets. These limits leave about 7 GiB plus swap outside the Worker
+budget on the 31 GiB VPS. Future changes must preserve headroom for Panels and
+the host.
+
+For activation, the operator runs these commands from this directory after the
+application release is ready:
+
+```sh
+# Reserve one GiB through the full cgroup hierarchy on this UID-1000 VPS.
+sudo systemctl set-property user.slice MemoryLow=1G
+sudo systemctl set-property user-1000.slice MemoryLow=1G
+sudo systemctl set-property user@1000.service MemoryLow=1G
+systemctl --user set-property app.slice MemoryLow=1G
+cp panels.slice panels-workers.slice panels-live.service "$HOME/.config/systemd/user/"
+systemctl --user daemon-reload
+systemctl --user restart panels-live.service
+```
+
+These commands stop the live app and its existing children. Do not run them from
+a Worker. Keep the prepared files with the release until the operator selects
+the activation time.
+
+The three system-manager commands set resource protection on existing ancestors.
+They do not create another service or account. The user-manager command protects
+the foreground slice. Each command persists its property. These host changes
+require operator authority. Without them, the live unit's `MemoryLow` alone
+does not supply an effective reservation. The independent Worker memory cap
+still preserves headroom.
+
+After activation, the operator checks `memory.low` along the ancestor chain and
+checks that each Worker cgroup is outside `panels-live.service`. The operator
+also checks `memory.max`, `memory.oom.group`, CPU weights, and disk `TMPDIR`.

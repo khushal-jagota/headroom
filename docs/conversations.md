@@ -59,6 +59,14 @@ Held messages live in memory, so a restart loses anything not yet delivered.
 
 New conversation ends the running turn, discards held work, and links a fresh conversation. The old notebook stays as history, and only the active conversation accepts sends. After a deploy interrupts sessions, eligible conversations get one recovery prompt through the ordinary send path, and nothing is replayed. See [Deployment](deployment.md).
 
+## Worker resources on Linux
+
+Each Claude or Codex Ticket agent and its tools run in a separate systemd user service. Memory exhaustion stops that Worker unit and reports the cause in its conversation. Other Workers and Panels stay available.
+
+Each Worker receives a disk directory for temporary files. The directory survives across turns until the agent process stops. Unit shutdown stops its tools before cleanup. Account and login probes keep their separate lifetime. Non-Linux platforms retain their existing launch path.
+
+The host must supply the Worker slice and its CPU and memory limits before Linux Workers can start. A missing budget stops the launch with an error. The [user-service inputs](../ops/panels-environments/README.md#worker-resource-units) describe installation and the operator-owned restart.
+
 ## Models and asks
 
 A model or reasoning change rides the next message that is actually delivered. Codex and Hermes switch in place. Claude starts a new child on the new model and carries the session across. The backend itself is fixed once the conversation exists. The picker reads the model list from the machine that runs the conversation and shows only the newest version of each Claude and Codex model. A model disabled in the [Usage](usage.md) catalog is refused when a Ticket is created or saved and when a message is dispatched, and a refused dispatch stays in the notebook with its reason. A Ticket's saved starting choice belongs to [Tickets](tickets.md).

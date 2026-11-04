@@ -20,6 +20,10 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
 PrivateTmp=yes
+OOMPolicy=continue
+MemoryAccounting=yes
+MemoryLow=1G
+CPUWeight=100
 
 [Install]
 WantedBy=default.target
