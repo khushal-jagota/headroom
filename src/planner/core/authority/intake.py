@@ -198,7 +198,9 @@ def admit_command(
 
 async def request_admission(request: Request) -> None:
     """FastAPI runs this once after route matching and before the command handler."""
-    route = request.scope['route'].path
+    # Included FastAPI routes expose the unprefixed template. Admission needs
+    # the served path, including /api, for resource and command families.
+    route = request.url.path
     if request.method in ('GET', 'HEAD', 'OPTIONS'):
         protected = (
             route in ('/api/resource-body', '/api/resource-versions')

@@ -19,6 +19,13 @@ def upgrade() -> None:
 
 
 def migrate(conn: sqlite3.Connection) -> None:
+    # Offline migrations have no producer lease or runtime SQL functions. Reinstall
+    # canonical capture declarations after the retained source rows cross the rename.
+    source_triggers = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'signal_source_%'"
+    ).fetchall()
+    for (name,) in source_triggers:
+        conn.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
     for row in conn.execute("SELECT agent_key,conversation_id FROM agents").fetchall():
         key, conversation_id = row
         if not key.startswith("sprint_item_supervisor_"):
@@ -65,17 +72,6 @@ def migrate(conn: sqlite3.Connection) -> None:
                 "UPDATE tickets SET field_approvals=? WHERE id=?",
                 (json.dumps(approvals), ticket_id),
             )
-    # The producer creates these tables at runtime, after schema migration. Fresh
-    # databases have no receipts, while occupied databases can retain old owners.
-    if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' "
-        "AND name='signal_publication_associations'"
-    ).fetchone():
-        conn.execute(
-            "UPDATE signal_publication_associations SET value="
-            "json_set(value,'$.owner_kind','manager') "
-            "WHERE json_extract(value,'$.owner_kind')='orchestrator'"
-        )
     from planner.navigation.data import rebuild
 
     previous_factory = conn.row_factory
@@ -84,6 +80,10 @@ def migrate(conn: sqlite3.Connection) -> None:
         rebuild(conn)
     finally:
         conn.row_factory = previous_factory
+
+    from planner.conversation.publication.persistence import install_migration_source_triggers
+
+    install_migration_source_triggers(conn)
 
 
 def downgrade() -> None:

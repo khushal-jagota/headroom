@@ -11,7 +11,8 @@ from planner.runtime.logic.conversation_start_resolution import MANAGER_ROLE_TEX
 
 @pytest.mark.parametrize("producer_installed", [False, True])
 def test_manager_identity_migration_preserves_links_and_authored_bytes(
-    monkeypatch: pytest.MonkeyPatch, producer_installed: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    producer_installed: bool,
 ) -> None:
     # Reuse the migration directly with only its input tables. Navigation has its own
     # existing occupied-database coverage; this case isolates retained identity bytes.
@@ -22,7 +23,6 @@ def test_manager_identity_migration_preserves_links_and_authored_bytes(
         CREATE TABLE conversations(conversation_id TEXT PRIMARY KEY,
             identity_environment_variables TEXT,role_text TEXT);
         CREATE TABLE tickets(id TEXT PRIMARY KEY,field_approvals TEXT);
-        CREATE TABLE signal_publication_associations(value TEXT);
         CREATE TABLE conversation_events(payload TEXT);
     """)
     conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_si_kept','conversation_kept')")
@@ -42,14 +42,13 @@ def test_manager_identity_migration_preserves_links_and_authored_bytes(
         }
     }
     conn.execute("INSERT INTO tickets VALUES('ticket_kept',?)", (json.dumps(approval),))
-    conn.execute(
-        "INSERT INTO signal_publication_associations VALUES(?)",
-        (json.dumps({"owner_kind": "orchestrator", "owner_id": "si_kept"}),),
-    )
-    if not producer_installed:
-        conn.execute("DROP TABLE signal_publication_associations")
     authored = "  old sprint_item_supervisor bytes \n"
     conn.execute("INSERT INTO conversation_events VALUES(?)", (authored,))
+    if producer_installed:
+        from planner.conversation.publication import persistence
+
+        persistence.create_schema(conn)
+        persistence.install_migration_source_triggers(conn)
     migrate(conn)
     assert conn.execute("SELECT * FROM agents").fetchall() == [
         ("manager_si_kept", "conversation_kept")
@@ -64,5 +63,12 @@ def test_manager_identity_migration_preserves_links_and_authored_bytes(
     assert after["brief"]["display_label"] == approval["brief"]["display_label"]
     assert conn.execute("SELECT payload FROM conversation_events").fetchone()[0] == authored
     if producer_installed:
-        receipt = conn.execute("SELECT value FROM signal_publication_associations").fetchone()[0]
-        assert json.loads(receipt)["owner_kind"] == "manager"
+        # Offline migration restored canonical capture and retained its authority
+        # boundary. No runtime functions or lease exist on this bare connection.
+        trigger = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name='signal_source_agents_insert'"
+        ).fetchone()[0]
+        assert "manager_" in trigger
+        assert "sprint_item_supervisor_" not in trigger
+        with pytest.raises(sqlite3.OperationalError, match="signal_publication_admitted"):
+            conn.execute("INSERT INTO agents VALUES('manager_other','conversation_other')")

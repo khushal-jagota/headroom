@@ -157,7 +157,7 @@ def test_feedback_write_permissions_follow_direct_worker_and_supervisor_scope(
     }
     supervisor_headers = {
         "X-Plan-Actor": "manager",
-        "X-Plan-Sprint-Item-ID": str(first_item["id"]),
+        "X-Plan-Manager-ID": str(first_item["id"]),
     }
 
     assert feedback_client.get("/api/feedback", headers=worker_headers).status_code == 200

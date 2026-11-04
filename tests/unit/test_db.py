@@ -933,7 +933,14 @@ def _database_before_calendar_removal(
 ) -> tuple[sqlite3.Connection, Path]:
     shipped = db_module.MIGRATIONS_DIRECTORY
     tree = _migration_tree_through(tmp_path, monkeypatch, "diagnostic_expiry_metadata")
-    conn = connect(str(tmp_path / "before-calendar-removal.db"))
+    # Historical fixtures must not run current transaction participants against
+    # their old schema. The migration itself installs its matching projections.
+    conn = sqlite3.connect(str(tmp_path / "before-calendar-removal.db"))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    from planner.core.migrations.historical_navigation.data import attach
+
+    attach(conn)
     create_schema(conn)
     seed_historical_coding_definition(conn)
     project_id = str(conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0])
@@ -1222,18 +1229,22 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         conn.execute(f"SELECT {ticket_columns} FROM tickets WHERE id='t_item'").fetchone()
     )
     unchanged_tables = (
-        "agents",
         "conversations",
         "ticket_conversations",
         "ticket_blocks",
-        "scheduled_ticket_occurrences",
         "manager_wake_batch_members",
         "managed_skill_versions",
     )
-    # Compare retained columns. The independent workspace migration appends its
-    # explicit legacy policy without changing the previously stored values.
+    agents = [tuple(row) for row in conn.execute("SELECT * FROM agents")]
+    # The integrated migration changes Manager identity and role, while the
+    # workspace migration appends its policy. All other stored values remain.
     retained_columns = {
-        table: ",".join(f'"{row[1]}"' for row in conn.execute(f'PRAGMA table_info("{table}")'))
+        table: ",".join(
+            f'"{row[1]}"'
+            for row in conn.execute(f'PRAGMA table_info("{table}")')
+            if table != "conversations"
+            or row[1] not in {"identity_environment_variables", "role_text"}
+        )
         for table in unchanged_tables
     }
     unchanged = {
@@ -1244,6 +1255,25 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
     }
     create_schema(conn)
     assert _revision(conn) == head_revision()
+    assert [tuple(row) for row in conn.execute("SELECT * FROM agents")] == [
+        (key.replace("sprint_item_supervisor_", "manager_", 1), conversation_id)
+        for key, conversation_id in agents
+    ]
+    identity, role = conn.execute(
+        "SELECT identity_environment_variables,role_text FROM conversations "
+        "WHERE conversation_id='kept-conversation'"
+    ).fetchone()
+    assert dict(json.loads(identity)) == {
+        "PLAN_ACTOR": "manager",
+        "PLAN_MANAGER_ID": "si_kept",
+    }
+    from planner.runtime.logic.conversation_start_resolution import MANAGER_ROLE_TEXT
+
+    assert role == MANAGER_ROLE_TEXT
+    for table in ("scheduled_ticket_schedules", "scheduled_ticket_occurrences"):
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone() is None
     assert conn.execute("SELECT count(*) FROM manager_wake_suppressions").fetchone()[0] == 0
     assert (
         tuple(conn.execute(f"SELECT {ticket_columns} FROM tickets WHERE id='t_item'").fetchone())
@@ -1305,7 +1335,6 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         "UPDATE tickets SET manager_kind='sprint_item' WHERE id='t_item'",
         "UPDATE tickets SET manager_kind='chief' WHERE id='t_item'",
         "UPDATE manager_wakes SET target_kind='sprint_item' WHERE id=41",
-        "UPDATE scheduled_ticket_schedules SET manager_kind='chief' WHERE id='assigned'",
         "UPDATE notification_preferences SET subject_key='sprint_item_supervisors'",
     ):
         with pytest.raises(sqlite3.IntegrityError):
