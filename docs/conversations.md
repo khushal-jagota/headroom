@@ -31,7 +31,7 @@ A message to the owner is a notebook row for Khushal. It does not invoke the bac
 
 A Ticket agent and its tools run in a separate systemd user service. Memory exhaustion stops that Worker unit and reports the cause in its conversation. Other Workers and Panels stay available.
 
-Each Claude or Codex Worker receives a disk directory for temporary files. The directory survives across turns until the agent process stops. Unit shutdown stops its tools before cleanup. Account and login probes keep their separate lifetime. Platforms without systemd retain their existing launch path.
+Each Claude or Codex Worker receives a disk directory for temporary files. The directory survives across turns until the agent process stops. Unit shutdown stops its tools before cleanup. Account and login probes keep their separate lifetime. Non-Linux platforms retain their existing launch path.
 
 The host must supply the Worker slice and its CPU and memory limits before Linux Workers can start. A missing budget stops the launch with an error. The [user-service inputs](../ops/panels-environments/README.md#worker-resource-units) describe installation and the operator-owned restart.
 
