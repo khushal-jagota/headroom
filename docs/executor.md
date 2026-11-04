@@ -261,16 +261,19 @@ persistence also requests `F_FULLFSYNC` after `fsync`. Directory entries are syn
 after publication or removal. Actual power-loss durability still requires a real
 Mac and storage that honor these flush requests.
 
-Every permanent refusal is a receipt. A refused queued Panels write also appears
-as a failed Panels tool row in its source transcript. Telling the running agent
-about that later refusal remains a follow-up; no database row is a prompt.
+Envelopes and receipts use sender IDs, submission IDs, and sequence numbers without
+payload fingerprints. File manifests keep their hashes and destination checks.
+
+Every permanent refusal is a receipt. Refused queued Panels writes do not add
+synthetic tool rows to the source transcript. Telling the running agent about a
+later refusal remains a follow-up; no database row is a prompt.
 A Mac-authored message records `dispatching` before calling its recipient. If a
 repeat finds that state without an outcome, it returns the reserved `uncertain` receipt
 and sends nothing. Reservations and final receipts use the same inbox position writer.
 A known delivery outcome commits with the recipient's conversation event, preserving
 the original target and reply credit even if the caller loses the result.
 
-Code paths: `src/planner/executor/mac_outbox.py`, `store.py`, `refusals.py`,
+Code paths: `src/planner/executor/mac_outbox.py`, `store.py`,
 `vps_agent_writes.py`, `ipc_client.py`, `src/planner/cli/http.py`.
 The Mac client translates CLI routes into named operations in `ipc_client.py`.
 The VPS applies those operations through canonical writers in `vps_agent_writes.py`.
