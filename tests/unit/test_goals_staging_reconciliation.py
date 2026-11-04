@@ -71,7 +71,7 @@ def _seed_staging(conn: sqlite3.Connection) -> tuple[str, ...]:
 @pytest.mark.parametrize(
     "previous_head", [
         None, "ticket_application_previews", "scalar_observation_coverage",
-        "goals_staging_reconciliation", "attention_history",
+        "goals_staging_reconciliation", "attention_history", "remove_macos_requirements",
     ]
 )
 def test_combined_schema_preserves_fresh_and_each_accepted_branch(
@@ -88,14 +88,16 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
             VALUES('retained-project','Retained project',1,1)""")
         tables: tuple[str, ...] = ("projects",)
         if previous_head in {
-            "scalar_observation_coverage", "goals_staging_reconciliation", "attention_history",
+            "scalar_observation_coverage", "goals_staging_reconciliation",
+            "attention_history", "remove_macos_requirements",
         }:
             tables += _seed_goals(conn)
         if previous_head in {
-            "ticket_application_previews", "goals_staging_reconciliation", "attention_history",
+            "ticket_application_previews", "goals_staging_reconciliation",
+            "attention_history", "remove_macos_requirements",
         }:
             tables += _seed_staging(conn)
-        if previous_head == "attention_history":
+        if previous_head in {"attention_history", "remove_macos_requirements"}:
             conn.execute("""INSERT INTO attention_approval_events
                 (ticket_id,field,actor_kind,actor_id,method,occurred_at,destination_json)
                 VALUES('fixture-ticket','brief','owner','owner','explicit_accept',10,'{}')""")
@@ -135,6 +137,13 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
                     assert {key: saved[key] for key in previous} == previous
                     assert saved["completion_rule"] is None
                     assert saved["completion_date"] is None
+            elif table == "projects":
+                # Staging intentionally removes only this obsolete requirement.
+                assert all("requires_macos" not in saved for saved in current)
+                assert current == [
+                    {key: value for key, value in previous.items() if key != "requires_macos"}
+                    for previous in rows
+                ]
             else:
                 assert current == rows
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
