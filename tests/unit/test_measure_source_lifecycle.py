@@ -91,7 +91,8 @@ def test_assigned_worker_saves_tests_and_collects_without_daily_schedule(
                 "X-Plan-Sprint-Item-ID": other_manager,
             },
         )
-        assert denied.status_code == 403, denied.text
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
     assert data.read_source(tmp_db, source.id).active_script == source.active_script
     candidate = CandidateObservation(
         measure.id,

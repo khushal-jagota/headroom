@@ -286,7 +286,8 @@ def test_manual_authority_validation_and_http_state_contract(tmp_db: Connection)
             denied = client.post(
                 f"/api/measures/{measure.id}/manual-writes", json=request, headers=headers
             )
-            assert denied.status_code == 403, denied.text
+            assert denied.status_code == 400, denied.text
+            assert denied.json()["error"]["code"] == "agent_forbidden"
         initial_key = f"/api/measures/{measure.id}/manual-state"
         initial = client.get(initial_key)
         assert initial.status_code == 200, initial.text

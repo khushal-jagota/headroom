@@ -438,12 +438,14 @@ def test_assigned_worker_can_manage_taken_definitions(
             },
             headers=headers,
         )
-        assert denied.status_code == 403, denied.text
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
         denied = client.patch(
             f"/api/measures/{measure.id}",
             json={"expected_revision": 1, "name": "Other"}, headers=headers,
         )
-        assert denied.status_code == 403, denied.text
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
         changed = actions.update_measure(
             tmp_db,
             measure.id,
@@ -453,7 +455,8 @@ def test_assigned_worker_can_manage_taken_definitions(
         )
         assert changed.name == "Repaired"
         denied = client.delete(f"/api/measures/{measure.id}", headers=headers)
-        assert denied.status_code == 403, denied.text
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
         assert data.read_measure(tmp_db, measure.id).name == "Repaired"
     actions.delete_measure(tmp_db, measure.id, principal=worker, now=NOW)
     assert tmp_db.execute("SELECT 1 FROM measures WHERE id=?", (measure.id,)).fetchone() is None

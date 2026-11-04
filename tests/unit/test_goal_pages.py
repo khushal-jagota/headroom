@@ -130,7 +130,8 @@ def test_saved_page_race_and_independent_completion_activation(tmp_db: Connectio
             f"/api/goals/{other.id}", json={"active": False},
             headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal.id},
         )
-        assert denied.status_code == 403, denied.text
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
     assert data.read_goal(tmp_db, other.id).active
 
 

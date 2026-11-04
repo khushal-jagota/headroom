@@ -85,7 +85,8 @@ def test_backlog_accepts_same_second_changes_and_authority_is_unchanged(
             f"/api/tickets/{tid}/backlog", json={},
             headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
         )
-        assert denied.status_code == 403, denied.text
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
     assert dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone()) == before
     assert data.read_ticket(tmp_db, tid).stage == "needs_brief"
 

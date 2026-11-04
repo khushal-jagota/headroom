@@ -456,12 +456,15 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "bar",
             "gauge",
         )
-        # Empty objects were deliberate setup probes, not failed valid product operations.
+        # Required-field probes retain valid assignment context where intake needs it.
         invalid(
             client.post("/api/measure-sources", json={}, headers=headers),
             "$.responsible: expected an object with kind and id",
         )
-        invalid(client.post("/api/measures", json={}, headers=headers), "required")
+        invalid(
+            client.post("/api/measures", json={"source_id": source_id}, headers=headers),
+            "$.origin", "required",
+        )
         invalid(
             client.patch(
                 f"/api/goals/{goal_id}",

@@ -285,12 +285,14 @@ def test_source_authority_project_agreement_and_revisions(
             {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": other_ticket},
         ):
             denied = client.post("/api/datasets", json=body, headers=headers)
-            assert denied.status_code == 403, denied.text
+            assert denied.status_code == 400, denied.text
+            assert denied.json()["error"]["code"] == "agent_forbidden"
             denied = client.patch(
                 f"/api/datasets/{item.id}",
                 json={"expected_revision": 1, "name": "No"}, headers=headers,
             )
-            assert denied.status_code == 403, denied.text
+            assert denied.status_code == 400, denied.text
+            assert denied.json()["error"]["code"] == "agent_forbidden"
     assert sources.read_source(tmp_db, source_id).source_revision == before + 1
     with pytest.raises(PlannerError, match="Projects differ"):
         actions.create_dataset(
