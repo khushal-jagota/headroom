@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from tests.unit.test_db import _migration_tree_through
 from tests.unit.test_goal_completion import page
+from tests.unit.test_goal_pages import numeric_rule
 from tests.unit.test_measure_persistence import NOW
 
 from planner.core import db
@@ -25,6 +26,8 @@ from planner.goals.logic.completion import effective_completion, selected_checkl
 
 
 def create(conn: Connection, **extra: Any) -> Goal:
+    if extra.get("kind") == "quantitative" and "completion_rule" not in extra:
+        extra["completion_rule"] = numeric_rule(conn)
     checklist: ChecklistBlock = {
         "type": "checklist",
         "id": "delivery",
@@ -187,6 +190,7 @@ def test_selection_end_snapshots_previous_effective_completion(
     elif transition == "quantitative":
         changes["kind"] = "quantitative"
         changes["primary_chart"] = {"type": "chart", "kind": "number"}
+        changes["completion_rule"] = numeric_rule(tmp_db)
     else:
         changes["primary_checklist_block_id"] = None
         if transition == "explicit_binary":
