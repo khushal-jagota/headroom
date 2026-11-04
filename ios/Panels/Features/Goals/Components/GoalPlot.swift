@@ -77,7 +77,17 @@ struct GoalPlot: View {
     }
     private func lineGradient(_ key: String, index: Int) -> LinearGradient {
         let fallback = color(key, index: index)
-        guard key != "target", keys.filter({ $0 != "target" }).count == 1, !data.isEmpty else { return LinearGradient(colors: [fallback, fallback], startPoint: .leading, endPoint: .trailing) }
+        guard key != "target", index == 0, block["binding"].isNull, data.contains(where: { $0.values["target"] != nil }) else { return LinearGradient(colors: [fallback, fallback], startPoint: .leading, endPoint: .trailing) }
+        if block["measure_id"].isNull && block["expectation"].isNull {
+            let actual = samples(key), target = samples("target")
+            let stops = actual.0.values.indices.map { at -> Gradient.Stop in
+                let comparable = actual.1[at] && target.1[at]
+                let good = GoalChartPresentation.direction(block) == "atmost" ? actual.0.values[at] <= target.0.values[at] : actual.0.values[at] >= target.0.values[at]
+                let tone = comparable ? good ? PanelsTheme.success : PanelsTheme.Goal.tone(block["below_target_tone"].string ?? "bad") : PanelsTheme.muted
+                return .init(color: tone, location: Double(at) / Double(max(1, actual.0.values.count - 1)))
+            }
+            return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
+        }
         let stops = data.enumerated().map { index, datum in
             Gradient.Stop(color: color(key, index: 0, datum: datum), location: datum.position ?? Double(index) / Double(max(1, data.count - 1)))
         }
@@ -119,6 +129,13 @@ struct GoalPlot: View {
                             let x = (datum.position ?? Double(index) / Double(max(1, data.count - 1))) * max(0, geometry.size.width - 32)
                             Rectangle().fill(PanelsTheme.Goal.reference.opacity(0.5)).frame(width: 1).offset(x: x)
                                 .animation(reduceMotion ? nil : PanelsTheme.Goal.snappy, value: x)
+                            ForEach(Array(keys.enumerated()), id: \.element) { seriesIndex, key in
+                                if let value = datum.values[key], !hidden.contains(key) {
+                                    Circle().fill(color(key, index: seriesIndex, datum: datum)).frame(width: 6, height: 6)
+                                        .position(x: x, y: (1 - (value - bounds.0) / (bounds.1 - bounds.0)) * max(0, geometry.size.height - 22))
+                                        .animation(reduceMotion ? nil : PanelsTheme.Goal.snappy, value: active)
+                                }
+                            }.allowsHitTesting(false)
                         }
                     }
                     if let datum = data.first(where: { $0.id == active }) {
@@ -154,6 +171,7 @@ struct GoalPlot: View {
             if !manual { legend }
             if data.isEmpty { Text("No readings yet").font(.footnote).foregroundStyle(PanelsTheme.Goal.faint) }
         }
+        .background { if active != nil { GoalInspectionDismissal { active = nil } } }
         .onScrollVisibilityChange(threshold: 0.3) { visible in if visible { reveal() } }
         .onAppear { if manual || reduceMotion { reveal() } }
     }

@@ -25,7 +25,9 @@ private struct GoalDetailContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                AgentPageControls {
+                AgentPageControls(beforeBack: {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }) {
                     Menu {
                         Button("Files", systemImage: "folder") { files = true }
                         Button("Copy link", systemImage: "link") {

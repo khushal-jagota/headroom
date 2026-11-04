@@ -637,7 +637,7 @@ they do not establish a combined Mac/VPS usage total. Deployment status distingu
 an unconfirmed installation from an installed app whose final report is unconfirmed.
 Broken Ticket records stay diagnostic rather than preventing the whole list from
 loading. A diagnostic detail never offers lifecycle writes. Goal-owned Review messages
-link to the web; native Goal pages and their conversation flow are not implemented.
+open native Goal pages and the shared conversation controls.
 A Ticket's existing Goal reviewer is retained when editing approval limits.
 
 Push registration remains disabled. Dock previews and inline attachment parity

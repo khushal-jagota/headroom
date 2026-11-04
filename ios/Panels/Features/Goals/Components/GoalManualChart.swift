@@ -20,18 +20,19 @@ struct GoalManualValue: View {
     let block: GoalJSON
     var centered = false
     @FocusState private var editing: Bool
+    @State private var submitting = false
     private var current: Double? { editor.state?.value(cumulative: editor.cumulative) }
     var body: some View {
         VStack(alignment: centered ? .center : .leading, spacing: 6) {
             if editing || editor.draft != nil {
-                TextField("Reading", text: Binding(get: { editor.draft ?? current.map { String($0) } ?? "" }, set: { editor.draft = $0 }))
-                    .keyboardType(.numbersAndPunctuation).font(.system(size: 32, weight: .medium)).monospacedDigit()
-                    .multilineTextAlignment(centered ? .center : .leading).focused($editing).onSubmit { save() }
-                    .accessibilityLabel(block["title"].string ?? "Reading")
                 HStack(spacing: 16) {
                     Button("Save", action: save).disabled(Double(editor.draft ?? "")?.isFinite != true || editor.busy || editor.pending != nil)
                     Button("Cancel") { Task { await editor.discard(); editing = false } }
                 }.font(.footnote)
+                TextField("Reading", text: Binding(get: { editor.draft ?? current.map { String($0) } ?? "" }, set: { editor.draft = $0 }))
+                    .keyboardType(.numbersAndPunctuation).font(.system(size: 32, weight: .medium)).monospacedDigit()
+                    .multilineTextAlignment(centered ? .center : .leading).focused($editing).onSubmit { save() }
+                    .accessibilityLabel(block["title"].string ?? "Reading")
             } else {
                 Button { editor.beginEditing(); editing = true } label: {
                     GoalManualCounter(block: block, value: current)
@@ -41,14 +42,18 @@ struct GoalManualValue: View {
                     .accessibilityIdentifier("goal-manual-value-" + block.id).accessibilityHint("Edit reading")
             }
         }.onChange(of: editing) { old, focused in
-            if old && !focused && editor.draft != nil && editor.pending == nil { Task { _ = await editor.prepare() } }
+            if old && !focused && !submitting && editor.draft != nil && editor.pending == nil { Task { _ = await editor.prepare() } }
+        }.onDisappear {
+            if editor.draft != nil, !submitting { Task { _ = await editor.prepare() } }
         }.toolbar {
-            if editing { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Done") { save() } } }
+            ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Done") { save() }.disabled(!editing || submitting) }
         }
     }
     private func save() {
         guard let value = Double(editor.draft?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""), value.isFinite else { return }
-        Task { await editor.write(value: value); editing = false }
+        submitting = true
+        editing = false
+        Task { await editor.write(value: value); submitting = false }
     }
 }
 
@@ -59,6 +64,7 @@ struct GoalManualChart: View {
     var preview = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var active: String?
+    @State private var bodyVisible = false
     private var editor: GoalManualEditor { session.manual(block) }
     private var preference: GoalChartPreference { session.preference(block.id) }
     private var supporting: Bool { block["placement"].text == "supporting" }
@@ -125,10 +131,16 @@ struct GoalManualChart: View {
                             }
                         }))
                     }
-                }.transition(.opacity)
+                }.opacity(!supporting || bodyVisible || reduceMotion ? 1 : 0).transition(.opacity)
             }
             GoalManualFailure(editor: editor)
         }.modifier(GoalChartContainer(framed: !integrated || supporting))
+            .task(id: preference.expanded) {
+                let open = preference.expanded
+                if open { try? await Task.sleep(for: .seconds(reduceMotion ? 0 : PanelsTheme.Goal.delay)) }
+                guard !Task.isCancelled else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: open ? PanelsTheme.Goal.standardDuration : PanelsTheme.Goal.instantDuration)) { bodyVisible = open }
+            }
             .task(id: session.readings?.revision) { await editor.refresh() }
     }
     private var title: some View { Text(block["title"].string ?? "Reading").panelsScaledFont(size: supporting ? 14 : 17, weight: .medium).foregroundStyle(supporting ? PanelsTheme.Goal.faint : PanelsTheme.strong) }

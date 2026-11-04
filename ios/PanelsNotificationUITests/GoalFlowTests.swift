@@ -22,6 +22,8 @@ final class GoalFlowTests: XCTestCase {
         }
         let words = app.buttons["workspace-goal-words"]
         XCTAssertTrue(words.waitForExistence(timeout: 15))
+        let (_, recording) = try await URLSession.shared.data(from: URL(string: base + "/proof/start/goals-native-motion")!)
+        XCTAssertEqual((recording as? HTTPURLResponse)?.statusCode, 200)
         capture("goals-workspace")
         app.buttons["Chief of Staff"].tap()
         XCTAssertTrue(app.buttons["detail-back"].waitForExistence(timeout: 10))
@@ -60,19 +62,26 @@ final class GoalFlowTests: XCTestCase {
         if app.menuItems["Select All"].exists { app.menuItems["Select All"].tap() }
         else { input.tap(withNumberOfTaps: 3, numberOfTouches: 1) }
         input.typeText("750.25")
+        capture("goal-before-save")
+        XCTAssertTrue(app.buttons["Save"].isHittable)
+        XCTAssertFalse(app.buttons["Save"].frame.intersects(app.buttons["conversation-line"].frame))
         app.buttons["Save"].tap()
+        capture("goal-after-save")
         try await Task.sleep(for: .seconds(0.5))
         let replacement = try await writes()
         XCTAssertTrue(replacement.compactMap { $0["body"] as? [String: Any] }.contains { ($0["value"] as? Double) == 750.25 })
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
-        app.scrollViews.firstMatch.swipeDown()
+        XCTAssertFalse(app.buttons["conversation-actions"].exists, "Saving a Goal reading must leave the Goal page open")
+        if !app.buttons["detail-back"].isHittable { app.scrollViews["goal-screen"].swipeDown() }
         capture("goals-manual-daily")
         capture("goal-before-back")
         XCTAssertTrue(app.buttons["detail-back"].isHittable)
         XCTAssertTrue(app.frame.contains(app.buttons["detail-back"].frame))
         app.buttons["detail-back"].tap()
         capture("goal-after-back")
-        XCTAssertTrue(app.buttons["workspace-goal-release"].waitForExistence(timeout: 8))
+        let firstBackReturned = app.buttons["workspace-goal-release"].waitForExistence(timeout: 3)
+
+        XCTAssertTrue(firstBackReturned, "Back must return on the first tap after editing")
         app.buttons["workspace-goal-release"].tap()
         XCTAssertTrue(app.buttons["goal-check-first"].waitForExistence(timeout: 10))
         capture("goals-checklist-open")
@@ -97,8 +106,9 @@ final class GoalFlowTests: XCTestCase {
         let support = element("goal-chart-activation").buttons.firstMatch
         for _ in 0..<18 {
             if support.exists && support.isHittable { break }
-            app.scrollViews.firstMatch.swipeUp()
+            app.scrollViews["goal-screen"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65)).press(forDuration: 0.01, thenDragTo: app.scrollViews["goal-screen"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)))
         }
+        capture("goals-supporting-scroll-position")
         XCTAssertTrue(support.isHittable)
         XCTAssertEqual(support.value as? String, "Collapsed")
         support.tap()
@@ -112,7 +122,7 @@ final class GoalFlowTests: XCTestCase {
         capture("goals-chart-catalogue")
         for _ in 0..<18 {
             if app.buttons["detail-back"].isHittable { break }
-            app.scrollViews.firstMatch.swipeDown()
+            app.scrollViews["goal-screen"].swipeDown()
         }
         app.buttons["detail-back"].tap()
         app.buttons["Chief of Staff"].tap()
@@ -120,10 +130,19 @@ final class GoalFlowTests: XCTestCase {
         app.buttons["All goals"].tap()
         XCTAssertTrue(element("all-goals-screen").waitForExistence(timeout: 10))
         capture("goals-all-filters")
-        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["Goal"].tap()
+        let filter = app.textFields["Goal contains"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 3)); filter.tap(); filter.typeText("release")
+        app.buttons["Apply"].tap()
+        XCTAssertTrue(app.staticTexts["Release the app"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["Write 1,000 words"].exists)
+        app.buttons["Goal"].tap(); app.buttons["Clear"].tap(); app.buttons["Apply"].tap()
+        XCTAssertTrue(app.staticTexts["Write 1,000 words"].waitForExistence(timeout: 3))
+        if app.buttons["BackButton"].exists { app.buttons["BackButton"].tap() }
+        else { app.navigationBars.buttons.firstMatch.tap() }
         // Review must load Goal messages and the shared composer natively.
         app.buttons["detail-back"].firstMatch.tap()
-        app.tabBars.buttons["Review"].tap()
+        app.buttons["Review"].tap()
         XCTAssertTrue(app.buttons["review.openConversation"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.links["Open on web"].exists)
         capture("goals-review-message")

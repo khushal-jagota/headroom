@@ -122,3 +122,42 @@ struct GoalPanel: ViewModifier {
             .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(PanelsTheme.Goal.border))
     }
 }
+
+/// The web clears retained touch inspection when the next tap lands outside the
+/// chart. Observe that tap without cancelling the destination control's action.
+struct GoalInspectionDismissal: UIViewRepresentable {
+    let clear: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(clear: clear) }
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe(); view.isUserInteractionEnabled = false
+        context.coordinator.probe = view
+        view.changedWindow = { [weak coordinator = context.coordinator] in coordinator?.attach() }
+        return view
+    }
+    func updateUIView(_ view: Probe, context: Context) { context.coordinator.clear = clear; context.coordinator.attach() }
+    static func dismantleUIView(_ view: Probe, coordinator: Coordinator) { coordinator.detach() }
+    final class Probe: UIView {
+        var changedWindow: (() -> Void)?
+        override func didMoveToWindow() { super.didMoveToWindow(); changedWindow?() }
+    }
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var clear: () -> Void
+        weak var probe: Probe?
+        weak var window: UIWindow?
+        lazy var tap = UITapGestureRecognizer(target: self, action: #selector(outsideTap))
+        init(clear: @escaping () -> Void) { self.clear = clear }
+        func attach() {
+            guard window !== probe?.window else { return }
+            detach(); window = probe?.window
+            tap.delegate = self; tap.cancelsTouchesInView = false
+            window?.addGestureRecognizer(tap)
+        }
+        func detach() { window?.removeGestureRecognizer(tap); window = nil }
+        @objc func outsideTap() { clear() }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let probe, let window else { return false }
+            return !probe.convert(probe.bounds, to: window).contains(touch.location(in: window))
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+    }
+}

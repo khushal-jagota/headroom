@@ -26,16 +26,17 @@ struct GoalChecklist: View {
                         Circle().stroke(PanelsTheme.Goal.meter, lineWidth: 2)
                         Circle().trim(from: 0, to: items.isEmpty ? 0 : Double(doneCount) / Double(items.count)).stroke(allDone ? PanelsTheme.success : PanelsTheme.muted, style: .init(lineWidth: 2, lineCap: .round)).rotationEffect(.degrees(-90))
                             .animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: doneCount)
-                        if allDone { Image(systemName: "checkmark").font(.system(size: 12)).foregroundStyle(PanelsTheme.success).transition(.opacity) }
+                        ChecklistTick().trim(from: 0, to: allDone ? 1 : 0).stroke(PanelsTheme.success, style: .init(lineWidth: 1.5, lineCap: .round, lineJoin: .round)).frame(width: 24, height: 24)
+                            .animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: allDone)
                     }.frame(width: 32, height: 32)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(allDone ? block["doneTitle"].string ?? "All items done" : block["title"].string ?? "Checklist")
-                            .id(allDone).panelsScaledFont(size: 17, weight: .medium).foregroundStyle(PanelsTheme.strong).transition(.offset(y: 6).combined(with: .opacity))
+                            .id(allDone).panelsScaledFont(size: 17, weight: .medium).foregroundStyle(PanelsTheme.strong).transition(.asymmetric(insertion: .offset(y: reduceMotion ? 0 : 6).combined(with: .opacity).animation(.easeOut(duration: 0.22)), removal: .offset(y: reduceMotion ? 0 : -6).combined(with: .opacity).animation(.easeOut(duration: 0.15))))
                         Text("\(doneCount) of \(items.count) done").id(doneCount).panelsScaledFont(size: 12).foregroundStyle(PanelsTheme.Goal.faint)
-                            .transition(.offset(y: 8).combined(with: .opacity))
+                            .transition(.asymmetric(insertion: .offset(y: reduceMotion ? 0 : 8).combined(with: .opacity).animation(.easeOut(duration: 0.22)), removal: .offset(y: reduceMotion ? 0 : -8).combined(with: .opacity).animation(.easeOut(duration: 0.14))))
                     }
                     Spacer(minLength: 4)
-                    Image(systemName: "chevron.up").font(.system(size: 12)).rotationEffect(.degrees(opened ? 0 : 180)).foregroundStyle(PanelsTheme.Goal.faint)
+                    Image(systemName: "chevron.up").font(.system(size: 12)).rotationEffect(.degrees(opened ? 0 : 180)).foregroundStyle(PanelsTheme.Goal.faint).animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: opened)
                 }.padding(supplementary ? 16 : 24).contentShape(Rectangle())
             }.buttonStyle(.plain).accessibilityValue(opened ? "Expanded" : "Collapsed")
             if opened {
@@ -43,7 +44,7 @@ struct GoalChecklist: View {
                     ForEach(remaining, id: \.id) { item in row(item, filed: false).transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top))) }
                     if !complete.isEmpty {
                         Button {
-                            withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Goal.panelCollapse)) { completedOpen.toggle() }
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Goal.completedCollapse)) { completedOpen.toggle() }
                         } label: {
                             HStack { Text("\(complete.count) completed").contentTransition(.numericText()); Spacer(); Image(systemName: "chevron.down").rotationEffect(.degrees(completedOpen ? 180 : 0)) }.font(.system(size: 13)).foregroundStyle(PanelsTheme.Goal.faint).frame(minHeight: 44)
                         }.buttonStyle(.plain)
@@ -103,10 +104,11 @@ struct GoalChecklist: View {
     private func tick(_ item: GoalJSON, done: Bool) {
         guard !preview, !session.busy else { return }
         withAnimation(reduceMotion ? nil : PanelsTheme.Goal.standard) { optimistic[item.id] = done; if done { held.insert(item.id) } }
+        let started = ContinuousClock.now
         Task {
             await session.updateBlock(block.id) { old in old.setting("items", .array(old["items"].array.map { $0.id == item.id ? $0.setting("state", .string(done ? "done" : "open")) : $0 })) }
             guard session.saveError == nil else { optimistic[item.id] = nil; held.remove(item.id); return }
-            if done { try? await Task.sleep(for: .seconds(reduceMotion ? 0 : PanelsTheme.Goal.checkedHold)) }
+            if done, !reduceMotion { try? await Task.sleep(until: started.advanced(by: .seconds(PanelsTheme.Goal.checkedHold)), clock: .continuous) }
             guard !Task.isCancelled else { return }
             withAnimation(reduceMotion ? nil : .easeOut(duration: PanelsTheme.Goal.itemCollapse)) {
                 optimistic[item.id] = nil; held.remove(item.id)

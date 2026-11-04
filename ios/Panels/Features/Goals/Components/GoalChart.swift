@@ -90,12 +90,11 @@ struct GoalChart: View {
                 var next = preference; next.range = first.0; session.remember(block.id, next)
             }
         }
-        .onChange(of: preference.expanded) { _, open in
-            Task {
-                if open { try? await Task.sleep(for: .seconds(reduceMotion ? 0 : PanelsTheme.Goal.delay)) }
-                guard !Task.isCancelled else { return }
-                withAnimation(reduceMotion ? nil : .easeOut(duration: open ? PanelsTheme.Goal.standardDuration : PanelsTheme.Goal.instantDuration)) { bodyVisible = open }
-            }
+        .task(id: preference.expanded) {
+            let open = preference.expanded
+            if open { try? await Task.sleep(for: .seconds(reduceMotion ? 0 : PanelsTheme.Goal.delay)) }
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: open ? PanelsTheme.Goal.standardDuration : PanelsTheme.Goal.instantDuration)) { bodyVisible = open }
         }
     }
     private var title: some View { Text(block["title"].string ?? "Reading").panelsScaledFont(size: supporting ? 14 : 17, weight: .medium).foregroundStyle(supporting ? PanelsTheme.Goal.faint : PanelsTheme.strong) }

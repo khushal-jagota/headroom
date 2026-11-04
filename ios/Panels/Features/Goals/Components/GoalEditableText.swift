@@ -38,6 +38,7 @@ struct GoalEditableText: View {
                 session.textDrafts[key] = nil; session.submittedTextKey = nil; focused = false
             }
         }
+        .onDisappear { if draft != nil, session.saveError == nil { commit() } }
         .onChange(of: focused) { old, current in if old && !current && draft != nil && session.saveError == nil { commit() } }
     }
     private func begin() {

@@ -91,6 +91,7 @@ struct GoalGauge: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
             }
+            .background { if inspecting { GoalInspectionDismissal { inspecting = false } } }
             .animation(reduceMotion ? nil : PanelsTheme.Goal.snappy, value: inspecting)
             .accessibilityElement(children: manual == nil ? .ignore : .contain)
             .accessibilityLabel(GoalChartPresentation.format(block, headline.value) + ", " + GoalChartPresentation.comparison(block, headline: headline))
@@ -210,6 +211,7 @@ struct GoalRing: View {
                 }
             }.frame(maxWidth: .infinity)
         }.animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: active)
+            .background { if active != nil { GoalInspectionDismissal { active = nil } } }
     }
     private func legendValue(_ index: Int) -> String {
         if block["allocation_mode"].text == "percentage" {

@@ -86,7 +86,8 @@ import Observation
         if pendingPatch == nil, let preparePatch { pendingPatch = try await preparePatch(); self.preparePatch = nil }
         guard let patch = pendingPatch else { return }
         let next = try await api.saveGoal(id, patch: patch)
-        goal = next; pendingPatch = nil; saveError = nil
+        if next.id == id, next.revision >= (goal?.revision ?? -1) { goal = next }
+        pendingPatch = nil; saveError = nil
         // Read failure after acceptance must never become Retry save.
         await refresh()
     }
