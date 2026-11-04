@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import NamedTuple
 
-from planner.commands import admit
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
@@ -205,7 +204,6 @@ def update_manager_launch_configuration(
     explicit_choice: bool = False,
 ) -> Manager:
     """Save a Manager choice, and distinguish explicit intent from historical metadata."""
-    admit(conn, principal, "managers.update_manager_launch_configuration", item_id)
     _load_manager(conn, item_id)
     with _tx(conn):
         if (
@@ -236,7 +234,6 @@ def update_manager(
     *,
     edits: dict[str, str | None],
     clock: Clock,
-    admit: Callable[[], None] | None = None,
 ) -> Manager:
     """Validate references and apply one compound Manager patch atomically."""
     invalid_fields = sorted(set(edits) - _ITEM_PLAIN_FIELDS)
@@ -249,8 +246,6 @@ def update_manager(
     stored_edits = dict(edits)
     now = clock.now_unix()
     with _tx(conn):
-        if admit is not None:
-            admit()
         _load_manager(conn, item_id)
         project_id = stored_edits.get("project_id")
         if "project_id" in stored_edits and (

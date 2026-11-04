@@ -4,7 +4,6 @@ from functools import partial
 
 from fastapi import APIRouter
 
-from planner.commands import admit
 from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
@@ -20,7 +19,6 @@ router = APIRouter()
 
 @router.get("/goals/{goal_id}/conversation/start-values")
 async def start_values(goal_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
-    admit(conn, ctx.principal, "goals.start_values", goal_id)
     values = resolve_goal(conn, goal_id)
     return {
         "backend_key": values.backend_key.value,
@@ -39,7 +37,6 @@ async def send(
     message_files: MessageFiles,
     clk: Clk,
 ) -> JsonDict:
-    admit(conn, ctx.principal, "goals.send", goal_id)
     read_goal(conn, goal_id)
     delivered = await send_message(
         conversations,
@@ -71,7 +68,6 @@ async def send(
 
 @router.post("/goals/{goal_id}/conversation/reset")
 async def reset(goal_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations) -> JsonDict:
-    admit(conn, ctx.principal, "goals.reset", goal_id)
     read_goal(conn, goal_id)
     await conversation_start.reset_agent_conversation(conversations, conn, goal_agent_key(goal_id))
     return {"conversation_id": None}

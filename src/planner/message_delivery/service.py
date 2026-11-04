@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 
-from planner.commands.service import admit_message
 from planner.conversation.contracts import (
     ConversationMessageContent,
     ConversationSystem,
@@ -103,12 +102,6 @@ def _sender_conversation_link_key(conn: sqlite3.Connection, sender: Principal) -
         item = managers_data.read_manager(conn, sender.id).item
         return f"agent:{item.manager_agent_key}"
     raise ValueError("the owner has no sender conversation link")
-
-
-
-
-def require_reach(conn: sqlite3.Connection, caller: Principal, recipient: Principal) -> None:
-    admit_message(conn, caller, recipient)
 
 
 async def send_message(

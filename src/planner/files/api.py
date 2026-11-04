@@ -15,7 +15,6 @@ from starlette.datastructures import Headers
 from starlette.responses import Response
 from starlette.staticfiles import NotModifiedResponse
 
-from planner.commands import admit
 from planner.core.authctx import request_context
 from planner.core.contracts import JsonDict
 from planner.core.db import connect
@@ -104,8 +103,6 @@ async def get_manager_file(
     request: Request, manager_id: str, file_path: str
 ) -> Response:
     _reject_raw_encoded_unsafe_path(request, "Manager file not found")
-    with connect(request.app.state.config.db_path) as conn:
-        admit(conn, request_context(request).principal, "files.get_manager_file", manager_id)
     try:
         managed_file = (
             resolve_html_navigation(

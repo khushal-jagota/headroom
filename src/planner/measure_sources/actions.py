@@ -9,11 +9,6 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import new_id
 from planner.measure_sources import data
-from planner.measure_sources.authority import (
-    require_assignment,
-    require_author,
-    require_owner_or_chief,
-)
 from planner.measure_sources.contracts import (
     MeasureSource,
     SourceCreate,
@@ -52,7 +47,6 @@ def _responsibility(conn: sqlite3.Connection, principal: Principal) -> None:
 def create_source(
     conn: sqlite3.Connection, request: SourceCreate, *, principal: Principal, now: int
 ) -> MeasureSource:
-    require_assignment(conn, principal, request.responsible)
     if (
         not request.name.strip()
         or len(request.name) > 200
@@ -104,7 +98,6 @@ def set_schedule(
     local_time = None if body["local_time"] is None else validate_local_time(body["local_time"])
     with transaction(conn):
         source = data.read_source(conn, source_id)
-        require_author(conn, principal, source)
         _revision(source, body["expected_revision"])
         if body["enabled"] and (source.active_script is None or local_time is None):
             raise PlannerError(ErrorCode.validation, "daily collection needs a script and schedule")
@@ -125,7 +118,6 @@ def set_responsible(
     principal: Principal,
     now: int,
 ) -> MeasureSource:
-    require_owner_or_chief(conn, principal)
     with transaction(conn):
         source = data.read_source(conn, source_id)
         if source.responsibility_revision != expected_responsibility_revision:
@@ -162,7 +154,6 @@ def submit_script(
         raise PlannerError(ErrorCode.validation, "source script is empty")
     with transaction(conn):
         source = data.read_source(conn, source_id)
-        require_author(conn, principal, source)
         _revision(source, body["expected_revision"])
         conn.execute(
             "UPDATE measure_sources SET active_script=?,"
@@ -187,7 +178,6 @@ def submit_script(
 def delete_source(conn: sqlite3.Connection, source_id: str, *, principal: Principal) -> None:
     with transaction(conn):
         source = data.read_source(conn, source_id)
-        require_author(conn, principal, source)
         if (
             conn.execute(
                 "SELECT 1 FROM measures WHERE source_id=? LIMIT 1", (source_id,)

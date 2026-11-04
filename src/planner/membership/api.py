@@ -1,12 +1,10 @@
 """The one way to put a thing in a collection, and the one way to take it out.
 
-The collection is a parameter, not an address. Both routes look the collection up, ask
-its one authority rule, and hand the work to the code that owns that collection.
+The collection is a parameter, not an address. Both routes look the collection up and
+hand the work to the code that owns that collection.
 """
 
 from __future__ import annotations
-
-from functools import partial
 
 from fastapi import APIRouter
 
@@ -38,7 +36,6 @@ def _prepare(
         container_id=resolved_container,
         member_id=member_id,
         now=clk.now_unix(),
-        admit=partial(entry.rule, conn, ctx, resolved_container, member_id),
     )
     return entry, write
 

@@ -9,7 +9,6 @@ from dataclasses import asdict, replace
 from datetime import date
 from typing import Any, cast, get_type_hints
 
-from planner.commands import admit
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.datasets.data import read_dataset
@@ -162,7 +161,6 @@ def create_goal(
     conn: sqlite3.Connection, body: dict[str, Any], *, principal: Principal, now: int
 ) -> Goal:
     with transaction(conn):
-        admit(conn, principal, "goals.create_goal", "goals")
         defaults = read_chief_settings(conn).launch_defaults
         title = body.get("title", "")
         current = Goal(
@@ -208,7 +206,6 @@ def update_goal(
 ) -> Goal:
     with transaction(conn):
         current = data.read_goal(conn, goal_id)
-        admit(conn, principal, "goals.update_goal", goal_id)
         if (
             type(body.get("expected_revision")) is not int
             or body["expected_revision"] != current.revision

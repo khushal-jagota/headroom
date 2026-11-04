@@ -15,7 +15,7 @@ from time import monotonic as _monotonic
 from typing import Any, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -561,7 +561,9 @@ def create_app(
     event_stream_patterns: list[re.Pattern[str]] = []
 
     def include_router(router: APIRouter, prefix: str = "") -> None:
-        app.include_router(router, prefix=prefix)
+        from planner.core.authority.intake import request_admission
+
+        app.include_router(router, prefix=prefix, dependencies=[Depends(request_admission)])
         event_stream_patterns.extend(event_stream_route_patterns(router.routes, prefix))
 
     for domain_router in (

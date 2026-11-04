@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 
-from planner.commands import admit
 from planner.conversation.contracts import ConversationSystem
 from planner.core.contracts import Principal
 from planner.files.lifecycle import (
@@ -36,7 +35,6 @@ async def delete_manager(
     principal: Principal,
 ) -> ManagerDeletion:
     """Stop the Manager and delete its childless item as one guarded action."""
-    admit(conn, principal, "managers.delete_manager", item_id)
     async with manager_lifecycle_lock(item_id):
         managers_data._require_manager_can_delete(conn, item_id)
         quarantined = None

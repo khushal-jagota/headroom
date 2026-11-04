@@ -8,7 +8,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.routing import APIRoute
 
-from planner.commands import admit
 from planner.conversation.api import (
     OwnerSendBody,
     conversation_message_content,
@@ -99,7 +98,6 @@ async def put_manager_launch_defaults(raw: dict[str, Any], conn: DbConn, ctx: Ct
 
 @router.get("/managers/{item_id}/launch-defaults")
 async def get_manager_launch_configuration(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
-    admit(conn, ctx.principal, "managers.get_manager_launch_configuration", item_id)
     return launch_configuration_json(
         managers_data.read_manager(conn, item_id).item.manager_launch_configuration
     )
@@ -109,7 +107,6 @@ async def get_manager_launch_configuration(item_id: str, conn: DbConn, ctx: Ctx)
 async def put_manager_launch_configuration(
     item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    admit(conn, ctx.principal, "managers.put_manager_launch_configuration", item_id)
     configuration = parse_launch_configuration(raw)
     async with managers_service.manager_lifecycle_lock(item_id):
         validate_launch_configuration(conn, configuration)
@@ -210,7 +207,6 @@ async def read_managers(
 async def get_manager_workspace_content(
     item_id: str, conn: DbConn, ctx: Ctx, response: Response
 ) -> ManagerWorkspaceContent:
-    admit(conn, ctx.principal, "managers.get_manager_workspace_content", item_id)
     document = managers_views.manager_workspace_document(conn, item_id)
     result: ManagerWorkspaceContent = {**document}
     response.headers["Cache-Control"] = "no-store"
@@ -235,7 +231,6 @@ async def get_manager_workspace(
     know *which* agent holds one reads ``ceiling_holder`` on the row — the holder is an
     address, and this is the read of it.
     """
-    admit(conn, ctx.principal, "managers.get_manager_workspace", item_id)
     result = managers_views.manager_workspace(conn, item_id)
     await add_work_attention(
         conn,
@@ -258,7 +253,6 @@ async def get_item_conversation_start_values(item_id: str, conn: DbConn, ctx: Ct
     lost claimed an authority it never used: this admits Khushal and the Chief, and the
     Manager reading its own start values, exactly as before.
     """
-    admit(conn, ctx.principal, "managers.get_item_conversation_start_values", item_id)
     values = conversation_start.manager_resolve(
         conn, managers_data.read_manager(conn, item_id).item
     )
@@ -286,7 +280,6 @@ async def send_to_item_conversation(
     a principal. This is the door a person types at: it carries the browser's own message
     name, the files attached to it, and what the conversation is to run on.
     """
-    admit(conn, ctx.principal, "managers.send_to_item_conversation", item_id)
     return await _send_to_manager(
         item_id, body, request, conn, ctx, conversations, message_files, clk
     )
@@ -364,7 +357,6 @@ async def reset_item_conversation(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     """Cut this Manager's agent loose from its conversation. This is what New does."""
-    admit(conn, ctx.principal, "managers.reset_item_conversation", item_id)
     async with managers_service.manager_lifecycle_lock(item_id):
         item = managers_data.read_manager(conn, item_id).item
         await conversation_start.reset_agent_conversation(
@@ -377,7 +369,6 @@ async def reset_item_conversation(
 async def delete_manager(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
-    admit(conn, ctx.principal, "managers.delete_manager", item_id)
     deleted = await managers_service.delete_manager(
         conversations, conn, item_id, principal=ctx.principal
     )
@@ -422,7 +413,6 @@ async def patch_item(
         item_id,
         edits=edits,
         clock=clk,
-        admit=lambda: admit(conn, ctx.principal, "managers.patch_item", item_id, *edits),
     )
     return managers_views.manager_detail(conn, item_id)
 

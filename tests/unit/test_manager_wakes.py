@@ -39,6 +39,7 @@ from planner.conversation.logic.conversation_start_resolution import (
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.core import change_signal
+from planner.core.authority.intake import admit_command
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
@@ -555,6 +556,10 @@ def test_moving_a_parked_proposal_wakes_the_new_manager_and_removes_old_authorit
         (new_item.id, 2),
     ]
     with pytest.raises(PlannerError) as forbidden:
+        admit_command(
+            tmp_db, old_manager, "POST", "/api/tickets/{ticket_id}/accept/{field}",
+            {"ticket_id": ticket_id, "field": "what_changes"}, {},
+        )
         tickets_data.accept_proposal(
             tmp_db,
             ticket_id,

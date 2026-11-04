@@ -42,25 +42,21 @@ def test_ticket_classification_preserves_existing_authority(
     # A Ticket classifies itself, and no longer any Ticket that happens to exist.
     stale_worker = _classify("worker", stale.id)
     with pytest.raises(PlannerError):
+        require_above_or_self(tmp_db, worker.principal, authority.ticket(stale.id))
         tickets.classify_ticket(
             tmp_db,
             stale.id,
             manager_id=other.id,
             principal=worker.principal,
             now=3,
-            admit=lambda: require_above_or_self(
-                tmp_db, worker.principal, authority.ticket(stale.id)
-            ),
         )
+    require_above_or_self(tmp_db, stale_worker.principal, authority.ticket(stale.id))
     tickets.classify_ticket(
         tmp_db,
         stale.id,
         manager_id=other.id,
         principal=stale_worker.principal,
         now=3,
-        admit=lambda: require_above_or_self(
-            tmp_db, stale_worker.principal, authority.ticket(stale.id)
-        ),
     )
     assert tickets.read_ticket(tmp_db, stale.id).manager_id == other.id
     supervisor = _classify("manager", None, manager.id)

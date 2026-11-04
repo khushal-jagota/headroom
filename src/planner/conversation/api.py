@@ -28,7 +28,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from planner.commands import admit
 from planner.conversation.backend_state import (
     BackendStateStore,
     resolve_usage_model_scopes,
@@ -816,7 +815,6 @@ async def read_scoped_backends(
     ):
         raise PlannerError(ErrorCode.validation, "ticket_id is required", {})
     with closing(connect(runtime.database_path)) as conn:
-        admit(conn, ctx.principal, "conversation.read_scoped_backends", raw["ticket_id"])
         ticket = ticket_data.read_ticket(conn, raw["ticket_id"])
     from planner.conversation.model_resolution.contracts import RemoteCatalogSource
 

@@ -11,7 +11,6 @@ import sqlite3
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from planner.commands import admit
 from planner.conversation.contracts import ConversationSystem
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
@@ -45,7 +44,6 @@ def require_restartable(
     is dead, from the conversation history they can already read, and the checks here
     bound what that decision can reach.
     """
-    admit(conn, principal, "tickets.require_restartable", ticket_id)
     ticket = tickets_data.read_ticket(conn, ticket_id)
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
     ownership_mode = machine.stage_ownership_mode(

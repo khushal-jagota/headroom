@@ -4,20 +4,32 @@ from __future__ import annotations
 
 import sqlite3
 
-from planner.commands import admit
-from planner.commands.service import admit_source_assignment
-from planner.core.contracts import Principal
+from planner.core import authority
+from planner.core.contracts import Principal, PrincipalKind
+from planner.core.errors import ErrorCode, PlannerError
 from planner.measure_sources.contracts import MeasureSource
+from planner.tickets import data as tickets_data
 
 
 def require_owner_or_chief(conn: sqlite3.Connection, principal: Principal) -> None:
-    admit(conn, principal, "measure_sources.require_owner_or_chief", "measure_sources")
+    authority.require_above(conn, principal, authority.owner_only("measure_sources"))
 
 
 def require_assignment(
     conn: sqlite3.Connection, principal: Principal, responsible: Principal
 ) -> None:
-    admit_source_assignment(conn, principal, responsible)
+    if responsible.kind is PrincipalKind.goal:
+        authority.require_above_or_self(conn, principal, authority.goal(responsible.id))
+        return
+    if responsible.kind is PrincipalKind.manager:
+        authority.require_in_chain(conn, principal, authority.manager(responsible.id))
+        return
+    if principal.kind is PrincipalKind.ticket:
+        ticket = tickets_data.read_ticket(conn, principal.id)
+        if ticket.manager_kind == "chief":
+            return
+        raise PlannerError(ErrorCode.agent_forbidden, "source belongs to another assignment")
+    require_owner_or_chief(conn, principal)
 
 
 def require_author(conn: sqlite3.Connection, principal: Principal, source: MeasureSource) -> None:

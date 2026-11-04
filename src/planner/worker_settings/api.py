@@ -10,7 +10,6 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends
 
-from planner.commands import admit
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import ConversationSystem, require_conversation_backend_key
 from planner.conversation.logic.signals import conversation_signal
@@ -225,7 +224,6 @@ async def list_skills(conn: DbConn) -> JsonDict:
 async def apply_skills(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    admit(conn, ctx.principal, "worker_settings.apply_skills", "skills")
     applied = service.apply_skills(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -241,7 +239,6 @@ async def get_skill(skill_name: str, conn: DbConn) -> JsonDict:
 async def patch_skill(
     skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    admit(conn, ctx.principal, "worker_settings.patch_skill", "skills")
     skill = service.save_skill(
         conn,
         skill_name,
@@ -267,7 +264,6 @@ async def put_chief_recap(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDi
 async def put_chief_launch_defaults(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
 ) -> JsonDict:
-    admit(conn, ctx.principal, "worker_settings.put_chief_launch_defaults", "worker_settings")
     del config
     raw = await _resolve_launch_defaults(conn, raw)
     return _chief_json(service.update_chief_launch_defaults(conn, raw))
@@ -277,7 +273,6 @@ async def put_chief_launch_defaults(
 async def put_chief_skill(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    admit(conn, ctx.principal, "worker_settings.put_chief_skill", "worker_settings")
     settings = service.save_chief_skill(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -288,7 +283,6 @@ async def put_chief_skill(
 async def patch_chief_skill(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    admit(conn, ctx.principal, "worker_settings.patch_chief_skill", "worker_settings")
     settings = service.save_chief_skill(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -303,7 +297,6 @@ async def put_worker_launch_defaults(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    admit(conn, ctx.principal, "worker_settings.put_worker_launch_defaults", "worker_settings")
     raw = await _resolve_launch_defaults(conn, raw)
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_worker_launch_defaults(
@@ -327,7 +320,6 @@ async def put_worker_skill(
     config: Cfg,
     clk: Clk,
 ) -> JsonDict:
-    admit(conn, ctx.principal, "worker_settings.put_worker_skill", "worker_settings")
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_specialist_skill(
         conn,
@@ -349,7 +341,6 @@ async def patch_worker_skill(
     config: Cfg,
     clk: Clk,
 ) -> JsonDict:
-    admit(conn, ctx.principal, "worker_settings.patch_worker_skill", "worker_settings")
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_specialist_skill(
         conn,
@@ -382,7 +373,6 @@ async def post_worker_type(
     block carries the specialist skill, so declaring a new Worker and declaring the skill
     it names are one act.
     """
-    admit(conn, ctx.principal, "worker_settings.post_worker_type", "worker_types")
     record = dict(raw)
     skill = record.pop("skill", None)
     definition = store.definition_from_json(json.dumps(record))

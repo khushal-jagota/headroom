@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from planner.commands import admit
 from planner.core.contracts import Principal
 from planner.files import managed_files
 from planner.files.logic.listing import entries_as_json, fold_directory
@@ -20,7 +19,6 @@ def list_files(
     conn: sqlite3.Connection, principal: Principal, manager_id: str, db_path: str
 ) -> list[dict[str, object]]:
     """Every managed file this Manager keeps, by the path that reads it back."""
-    _require_manager(conn, principal, manager_id)
     root = _item_root(db_path, manager_id, create=False)
     if root is None:
         return []
@@ -40,7 +38,6 @@ def list_artifact_entries(
     path. A person does not: a linked site of two dozen files is one thing to open. Both
     read the same directory, and the paths here are the same paths that read a file back.
     """
-    _require_manager(conn, principal, manager_id)
     root = _item_root(db_path, manager_id, create=False)
     if root is None:
         return []
@@ -56,7 +53,6 @@ def write_file(
     relative_path: str,
     content: str,
 ) -> dict[str, object]:
-    _require_manager(conn, principal, manager_id)
     root = _item_root(db_path, manager_id, create=True)
     assert root is not None
     managed_files.write_text(root, relative_path, content, "Manager")
@@ -74,14 +70,9 @@ def delete_file(
     db_path: str,
     relative_path: str,
 ) -> dict[str, object]:
-    _require_manager(conn, principal, manager_id)
     root = _item_root(db_path, manager_id, create=False)
     managed_files.delete(root, relative_path, "Manager")
     return {"ok": True, "manager_id": manager_id, "path": relative_path}
-
-
-def _require_manager(conn: sqlite3.Connection, principal: Principal, manager_id: str) -> None:
-    admit(conn, principal, "files._require_manager", manager_id)
 
 
 def _item_root(db_path: str, manager_id: str, *, create: bool) -> Path | None:

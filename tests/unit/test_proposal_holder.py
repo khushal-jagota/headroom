@@ -12,6 +12,7 @@ import pytest
 
 from planner.core import authority
 from planner.core.authority import service as authority_service
+from planner.core.authority.intake import admit_command
 from planner.core.clock import Clock
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
@@ -79,6 +80,10 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
     # And it could not decide one if the column somehow said it held it. Nothing is
     # below itself, so a Ticket never stands above the Ticket it is.
     with pytest.raises(PlannerError) as forbidden:
+        admit_command(
+            tmp_db, self_principal, "POST", "/api/tickets/{ticket_id}/accept/{field}",
+            {"ticket_id": ticket.id, "field": "what_changes"}, {},
+        )
         data.accept_proposal(
             tmp_db,
             ticket.id,

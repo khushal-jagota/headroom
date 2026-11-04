@@ -55,7 +55,7 @@ A refused call is the product surface: a Worker that tries to approve, a Manager
 
 ## Pointers
 
-`src/planner/commands/service.py` admits commands from HTTP routes and direct Python writers. It selects each operation’s target and rank relation in one place. Creation, edits, source assignment, and messages use their existing special policies there. Admission stays within the existing transaction and validation sequence.
+`src/planner/core/authority/intake.py` checks HTTP requests and Mac commands at intake. It derives the target and relation from the route and method. Rank uses the assignment and responsibility at intake time, so a concurrent change can precede the write. Owner-addressed approvals and the Worker's ceiling restriction keep their exact rules.
 
 `src/planner/core/authority/logic.py` is the rank rule. `src/planner/core/authority/service.py` supplies its database facts. `src/planner/core/authctx.py` turns a request into a principal.
 
