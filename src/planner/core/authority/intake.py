@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from fastapi import Request
+from starlette._utils import get_route_path
 
 from planner.core import authority
 from planner.core.authctx import request_context
@@ -204,7 +205,9 @@ def admit_command(
 
 async def request_admission(request: Request) -> None:
     """FastAPI runs this once after route matching and before the command handler."""
-    route = request.scope['route'].path
+    # Included routers expose their original local APIRoute in scope["route"].
+    # Use the same complete path that routing matches, with its inclusion prefixes.
+    route = get_route_path(request.scope)
     if request.method in ('GET', 'HEAD', 'OPTIONS'):
         protected = (
             route in ('/api/resource-body', '/api/resource-versions')
