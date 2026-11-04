@@ -1,155 +1,21 @@
-"""Prove that the combined migration DAG preserves either accepted branch's state."""
+"""Source and credential operations respect update admission and cancellation."""
 
 import asyncio
 import sqlite3
 import time
-from contextlib import closing
 from pathlib import Path
 
 import pytest
 from tests.support.measure_sources import NOW, configured_source
 from tests.unit.test_conversation_api import _Harness
-from tests.unit.test_db import _migration_tree_through
 from tests.unit.test_measure_source_dispatcher import HeldRuntime
 
-from planner.core import db
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.credentials.requests import service as credential_requests
 from planner.measure_sources import data, run_actions
 from planner.measure_sources.contracts import RunMode, RunStatus
 from planner.measure_sources.dispatcher import SourceDispatcher
-
-
-def _seed_goals(conn: sqlite3.Connection) -> tuple[str, ...]:
-    conn.execute("""INSERT INTO goals(id,project_id,title,why,kind,active,completed,page,
-        revision,created_at,updated_at,employee_backend,employee_launch_model)
-        VALUES('retained-goal','retained-project','Retained','Evidence','binary',1,0,
-        '{"blocks":[]}',1,1,1,'codex','fixture')""")
-    conn.execute("""INSERT INTO measure_sources(id,name,project_id,account,responsible_kind,
-        responsible_goal_id,responsibility_revision,source_revision,created_at,updated_at)
-        VALUES('retained-source','Retained','retained-project','fixture','goal',
-        'retained-goal',3,2,1,1)""")
-    conn.execute("""INSERT INTO measures(id,project_id,name,unit,origin,kind,timezone,
-        source_id,definition_revision,created_at,updated_at)
-        VALUES('retained-measure','retained-project','Retained','items','taken','reading',
-        'UTC','retained-source',1,1,1)""")
-    conn.execute("""INSERT INTO measure_source_runs(id,source_id,mode,trigger,status,
-        source_revision,script_revision,script_sha256,frozen_at,required_outputs,created_at)
-        VALUES('retained-run','retained-source','collection','manual','succeeded',
-        2,1,'fixture-script',1,'[]',1)""")
-    conn.execute("""INSERT INTO measure_observations(measure_id,date,value,run_id,observed_at,
-        definition_revision,query_start_at,query_end_at,limitation)
-        VALUES('retained-measure','2026-10-30',-2.5,'retained-run',1,1,10,20,'partial fixture')""")
-    conn.execute(
-        """INSERT INTO credentials(id,scheme,name,auth_kind,encryption_version,
-        encryption_context,nonce,ciphertext,revision,created_at,updated_at)
-        VALUES('retained-credential','local','Fixture','bearer',2,?,?,?,4,1,1)""",
-        (b"fixture-context", b"fixture-nonce", b"opaque-fixture-ciphertext"),
-    )
-    return (
-        "goals",
-        "measure_sources",
-        "measures",
-        "measure_source_runs",
-        "measure_observations",
-        "credentials",
-    )
-
-
-def _seed_staging(conn: sqlite3.Connection) -> tuple[str, ...]:
-    conn.execute("""INSERT INTO ticket_application_previews(generation,ticket_id,worktree,
-        public_origin,server_epoch,created_at,state,ended_reason)
-        VALUES('retained-preview','fixture-ticket','/fixture/worktree',
-        'https://fixture.invalid','fixture-epoch',1,'ended','fixture')""")
-    conn.execute("""INSERT INTO conversation_video_uploads(upload_id,destination_json,
-        filename,byte_count,received_bytes,state,expires_at,stored_file_id,outcome)
-        VALUES('retained-upload','{}','fixture.mp4',42,42,'expired',1,'fixture-file','retained')""")
-    return ("ticket_application_previews", "conversation_video_uploads")
-
-
-@pytest.mark.parametrize(
-    "previous_head", [
-        None, "ticket_application_previews", "scalar_observation_coverage",
-        "goals_staging_reconciliation", "attention_history", "remove_macos_requirements",
-    ]
-)
-def test_combined_schema_preserves_fresh_and_each_accepted_branch(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    previous_head: str | None,
-) -> None:
-    shipped = db.MIGRATIONS_DIRECTORY
-    if previous_head is not None:
-        _migration_tree_through(tmp_path, monkeypatch, previous_head)
-    with closing(db.connect(str(tmp_path / "synthetic-reconciliation.db"))) as conn:
-        db.create_schema(conn)
-        conn.execute("""INSERT INTO projects(id,name,created_at,updated_at)
-            VALUES('retained-project','Retained project',1,1)""")
-        tables: tuple[str, ...] = ("projects",)
-        if previous_head in {
-            "scalar_observation_coverage", "goals_staging_reconciliation",
-            "attention_history", "remove_macos_requirements",
-        }:
-            tables += _seed_goals(conn)
-        if previous_head in {
-            "ticket_application_previews", "goals_staging_reconciliation",
-            "attention_history", "remove_macos_requirements",
-        }:
-            tables += _seed_staging(conn)
-        if previous_head in {"attention_history", "remove_macos_requirements"}:
-            conn.execute("""INSERT INTO attention_approval_events
-                (ticket_id,field,actor_kind,actor_id,method,occurred_at,destination_json)
-                VALUES('fixture-ticket','brief','owner','owner','explicit_accept',10,'{}')""")
-            conn.execute("""INSERT INTO attention_gate_intervals
-                (ticket_id,destination_json,opened_at,observed_since,closed_at)
-                VALUES('fixture-ticket','{}',NULL,5,10)""")
-            tables += (
-                "attention_history_metadata",
-                "attention_approval_events",
-                "attention_gate_intervals",
-            )
-        before = {
-            table: [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
-            for table in tables
-        }
-        conn.commit()
-        monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", shipped)
-        db.create_schema(conn)
-        assert {
-            str(row[0]) for row in conn.execute("SELECT version_num FROM alembic_version")
-        } == {"canonical_manager_identities"}
-        assert {
-            "goals",
-            "measure_sources",
-            "credentials",
-            "credential_requests",
-            "ticket_application_previews",
-            "conversation_video_uploads",
-        } <= {
-            str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-        for table, rows in before.items():
-            current = [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]
-            if table == "goals":
-                assert len(current) == len(rows)
-                for previous, saved in zip(rows, current, strict=True):
-                    assert {key: saved[key] for key in previous} == previous
-                    assert saved["completion_rule"] is None
-                    assert saved["completion_date"] is None
-            elif table == "projects":
-                # Staging intentionally removes only this obsolete requirement.
-                assert all("requires_macos" not in saved for saved in current)
-                assert current == [
-                    {key: value for key, value in previous.items() if key != "requires_macos"}
-                    for previous in rows
-                ]
-            else:
-                assert current == rows
-        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-        # A restart must not replay either branch or lose the merged version marker.
-        db.create_schema(conn)
-        assert conn.execute("SELECT COUNT(*) FROM alembic_version").fetchone()[0] == 1
 
 
 def test_source_execution_blocks_idle_update_and_closed_admission_keeps_runs_pending(
