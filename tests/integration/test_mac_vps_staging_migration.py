@@ -22,7 +22,7 @@ from tests.integration.test_navigation_cumulative_migration import (
 from planner.core import db
 from planner.core.db import _alembic_config, _migration_engine
 
-FINAL_HEAD = "manager_launch_defaults"
+FINAL_HEAD = "remove_navigation_proof"
 SENTINELS: dict[str, tuple[object, ...]] = {
     "mac_inbox_positions": (
         "sender",
@@ -77,6 +77,10 @@ def _assert_sentinels(conn: sqlite3.Connection, seeded: set[str]) -> None:
 
 def _assert_join(conn: sqlite3.Connection) -> None:
     _assert_canonical(conn)
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE name IN "
+        "('navigation_commit_witnesses', 'navigation_proof_identity')"
+    ).fetchall() == []
     assert conn.execute("SELECT 1 FROM ticket_application_previews LIMIT 1").fetchall() == []
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert [tuple(row) for row in conn.execute("SELECT version_num FROM alembic_version")] == [
@@ -88,7 +92,7 @@ def _assert_join(conn: sqlite3.Connection) -> None:
     "source_head",
     [
         "scheduled_ticket_locale", "owner_message_preview", "video_upload_ledger",
-        "ticket_application_previews",
+        "ticket_application_previews", "manager_launch_defaults",
     ],
 )
 def test_retained_source_heads_join_without_losing_authority(

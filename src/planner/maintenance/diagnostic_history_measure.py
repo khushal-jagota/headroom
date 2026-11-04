@@ -409,7 +409,6 @@ def verify_removal(
             "signal_publication_dirty",
             "navigation_meta",
             "navigation_journal",
-            "navigation_commit_witnesses",
             "navigation_view_meta",
             "navigation_view_changes",
             "sqlite_sequence",
@@ -506,34 +505,8 @@ def _verify_publication_effects(connection: sqlite3.Connection, removed: set[Eve
             raise ValueError("Wrong navigation journal continuity")
     if previous_journal != actual_journal:
         raise ValueError("Existing navigation journal changed")
-    witnesses = list(
-        connection.execute("SELECT * FROM main.navigation_commit_witnesses ORDER BY sequence")
-    )
-    actual_witnesses = list(
-        connection.execute("SELECT * FROM after.navigation_commit_witnesses ORDER BY sequence")
-    )
-    if removed:
-        maximum = max((r[0] for r in witnesses), default=0) + 1
-        new = [r for r in actual_witnesses if r not in witnesses]
-        if (
-            len(new) != 1
-            or new[0][0] != maximum
-            or len(new[0][1]) != 64
-            or any(character not in "0123456789abcdef" for character in new[0][1])
-        ):
-            raise ValueError("Unexpected commit witness insertion")
-        from planner.navigation.proof_limits import RETAINED_WITNESSES
-
-        if actual_witnesses != [r for r in witnesses if r[0] > maximum - RETAINED_WITNESSES] + new:
-            raise ValueError("Unexpected commit witness pruning")
-    elif witnesses != actual_witnesses:
-        raise ValueError("No-op expiry changed witnesses")
     before_sequences = dict(connection.execute("SELECT * FROM main.sqlite_sequence"))
     after_sequences = dict(connection.execute("SELECT * FROM after.sqlite_sequence"))
-    if removed:
-        before_sequences["navigation_commit_witnesses"] = max(
-            (r[0] for r in actual_witnesses), default=0
-        )
     if before_sequences != after_sequences:
         raise ValueError("Unexpected SQLite sequence watermark change")
 

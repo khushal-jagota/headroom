@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -122,20 +121,11 @@ def delivery_router(runtime: DeliveryRuntime) -> APIRouter:
     async def snapshot_route(
         response: Response,
         ctx: Annotated[RequestContext, Depends(request_context)],
-        fence: str | None = None,
     ) -> Response:
         require_ready()
         response.headers["Cache-Control"] = "no-store"
-        proof: object = None
-        if fence is not None:
-            if len(fence.encode()) > runtime.config.proof_request_bytes:
-                raise HTTPException(413, "navigation proof request is too large")
-            try:
-                proof = json.loads(fence)
-            except (ValueError, RecursionError) as exc:
-                raise HTTPException(400, "invalid navigation fence") from exc
         try:
-            value, read = await runtime.current_snapshot(proof)
+            value, read = await runtime.current_snapshot()
         except DeliveryUnavailable as exc:
             raise HTTPException(503, "navigation publication is not ready") from exc
         return FencedJSONResponse(

@@ -288,9 +288,9 @@ def test_actual_current_and_degraded_snapshots_keep_canonical_durable_facts(
         == current["authority"]["availability"]["generation"]
     )
     host.composition.coordinator.invalidate("publication_failed")
-    degraded, _ = asyncio.run(host.delivery.current_snapshot({"not": "a proof request"}))
+    degraded, _ = asyncio.run(host.delivery.current_snapshot())
     assert degraded["mode"] == "degraded"
-    assert degraded["cursor"] is None and degraded["proof"] is None
+    assert degraded["cursor"] is None
     assert degraded["authority"]["permit"] is None
     record = next(
         value for value in degraded["snapshot"]["records"] if value["kind"] == "conversation"

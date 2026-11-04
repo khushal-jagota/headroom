@@ -54,7 +54,7 @@ def _assert_upgrade_to_current(
     monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", shipped)
     db.create_schema(conn)
     assert [row[0] for row in conn.execute("SELECT version_num FROM alembic_version")] == [
-        "manager_launch_defaults"
+        "remove_navigation_proof"
     ]
     for table, rows in before.items():
         current = [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]

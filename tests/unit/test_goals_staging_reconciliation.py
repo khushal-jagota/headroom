@@ -100,7 +100,7 @@ def test_combined_schema_preserves_fresh_and_each_accepted_branch(
         db.create_schema(conn)
         assert {
             str(row[0]) for row in conn.execute("SELECT version_num FROM alembic_version")
-        } == {"manager_launch_defaults"}
+        } == {"remove_navigation_proof"}
         assert {
             "goals",
             "measure_sources",

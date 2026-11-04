@@ -21,7 +21,6 @@ from planner.navigation.delivery import (
 )
 from planner.navigation.delivery_authority import DeliveryAccess, DeliveryUnavailable
 from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuthority
-from planner.navigation.proof import certify
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.contracts import (
     VIEW_PROJECTION_VERSION,
@@ -63,10 +62,9 @@ def _snapshot(
     value: ViewRequest,
     availability: SignalAvailability,
     access: DeliveryAccess,
-    fence: object,
     inventory: tuple[str, ...],
     config: ViewConfig,
-) -> tuple[Continuity, ViewContent, Any]:
+) -> tuple[Continuity, ViewContent]:
     with contextlib.closing(_read_connection(parent.path)) as conn:
         conn.execute("BEGIN")
         # FIRST source read occurs under the producer gate, before SQL establishes its snapshot.
@@ -98,10 +96,7 @@ def _snapshot(
                 _require_current_knowledge(row["value"]["attention"], durable)
             else:
                 row["value"]["attention"] = {"current": None, "durable": durable}
-        proof = (
-            certify(conn, fence) if fence is not None and availability.state == "current" else None
-        )
-        return coverage, content, proof
+        return coverage, content
 
 
 def _notice(
@@ -249,7 +244,6 @@ class ScopedDeliveryRuntime:
     async def snapshot(
         self,
         value: ViewRequest,
-        fence: object = None,
         *,
         captured: tuple[SignalAvailability, DeliveryAccess, CurrentAuthority | DegradedAuthority]
         | None = None,
@@ -259,8 +253,8 @@ class ScopedDeliveryRuntime:
             inventory = await asyncio.to_thread(
                 _candidate, self.parent, value, available.state == "current", self.config
             )
-            coverage, content, proof = await asyncio.to_thread(
-                _snapshot, self.parent, value, available, access, fence, inventory, self.config
+            coverage, content = await asyncio.to_thread(
+                _snapshot, self.parent, value, available, access, inventory, self.config
             )
             await asyncio.to_thread(self.parent.admission.validate, access)
         except (
@@ -284,7 +278,6 @@ class ScopedDeliveryRuntime:
             "mode": "current" if available.state == "current" else "degraded",
             "authority": authority,
             "content": content,
-            "proof": proof,
         }
         return cast(ViewSnapshot, result), access
 

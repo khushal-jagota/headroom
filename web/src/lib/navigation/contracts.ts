@@ -265,23 +265,6 @@ export interface JournalPage {
   has_more: boolean;
 }
 
-export interface Fence {
-  version: 1;
-  scope: string;
-  schema_version: number;
-  semantics: string;
-  epoch: string;
-  revision: string;
-  coverage: "complete" | "unknown";
-  witnesses: Array<string>;
-  signature: string;
-}
-
-export interface ProofResult {
-  status: "included" | "no_op" | "unknown";
-  reason: string | null;
-}
-
 export type ResetReason = "invalid_cursor" | "incompatible_continuity" | "expired_history" | "future_cursor" | "journal_gap" | "subscriber_overflow";
 
 export interface Cursor {
@@ -330,7 +313,6 @@ export interface CurrentSnapshotResponse {
   authority: CurrentAuthority;
   cursor: string;
   snapshot: Snapshot;
-  proof: ProofResult | null;
 }
 
 export interface DegradedSnapshotResponse {
@@ -339,7 +321,6 @@ export interface DegradedSnapshotResponse {
   authority: DegradedAuthority;
   cursor: null;
   snapshot: Snapshot;
-  proof: null;
 }
 
 export type SnapshotResponse = CurrentSnapshotResponse | DegradedSnapshotResponse;
@@ -564,7 +545,6 @@ export interface CurrentViewSnapshot {
   mode: "current";
   authority: CurrentAuthority;
   content: ViewContent;
-  proof: ProofResult | null;
 }
 
 export interface DegradedViewSnapshot {
@@ -579,7 +559,6 @@ export interface DegradedViewSnapshot {
   mode: "degraded";
   authority: DegradedAuthority;
   content: ViewContent;
-  proof: null;
 }
 
 export type ViewSnapshot = CurrentViewSnapshot | DegradedViewSnapshot;
@@ -1523,65 +1502,6 @@ export const wireDescriptors: Record<string, unknown> = {
       }
     }
   },
-  "Fence": {
-    "object": {
-      "version": {
-        "literal": [
-          1
-        ]
-      },
-      "scope": {
-        "primitive": "string"
-      },
-      "schema_version": {
-        "primitive": "integer"
-      },
-      "semantics": {
-        "primitive": "string"
-      },
-      "epoch": {
-        "primitive": "string"
-      },
-      "revision": {
-        "primitive": "string"
-      },
-      "coverage": {
-        "literal": [
-          "complete",
-          "unknown"
-        ]
-      },
-      "witnesses": {
-        "array": {
-          "primitive": "string"
-        }
-      },
-      "signature": {
-        "primitive": "string"
-      }
-    }
-  },
-  "ProofResult": {
-    "object": {
-      "status": {
-        "literal": [
-          "included",
-          "no_op",
-          "unknown"
-        ]
-      },
-      "reason": {
-        "union": [
-          {
-            "primitive": "string"
-          },
-          {
-            "primitive": "null"
-          }
-        ]
-      }
-    }
-  },
   "ResetReason": {
     "literal": [
       "invalid_cursor",
@@ -1718,16 +1638,6 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       "snapshot": {
         "ref": "Snapshot"
-      },
-      "proof": {
-        "union": [
-          {
-            "ref": "ProofResult"
-          },
-          {
-            "primitive": "null"
-          }
-        ]
       }
     }
   },
@@ -1751,9 +1661,6 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       "snapshot": {
         "ref": "Snapshot"
-      },
-      "proof": {
-        "primitive": "null"
       }
     }
   },
@@ -2644,16 +2551,6 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       "content": {
         "ref": "ViewContent"
-      },
-      "proof": {
-        "union": [
-          {
-            "ref": "ProofResult"
-          },
-          {
-            "primitive": "null"
-          }
-        ]
       }
     }
   },
@@ -2699,9 +2596,6 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       "content": {
         "ref": "ViewContent"
-      },
-      "proof": {
-        "primitive": "null"
       }
     }
   },

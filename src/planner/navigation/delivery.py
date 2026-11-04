@@ -50,7 +50,6 @@ from planner.navigation.delivery_contracts import (
     encode_cursor,
     reset_frame,
 )
-from planner.navigation.proof_contracts import ProofResult
 from planner.navigation.retention import prune
 
 
@@ -66,28 +65,22 @@ class StoredSnapshot(TypedDict):
 
     cursor: str
     snapshot: Snapshot
-    proof: ProofResult | None
 
 
 def read_snapshot(
     path: Path,
-    fence: object = None,
     admission: DeliveryAdmission | None = None,
     read: DeliveryRead | None = None,
 ) -> StoredSnapshot:
-    from planner.navigation.proof import certify
-
     with contextlib.closing(_read_connection(path)) as conn:
         conn.execute("BEGIN")
         try:
             if admission is not None:
                 admission.validate_snapshot(conn, read)
             value = snapshot(conn)
-            proof = certify(conn, fence) if fence is not None else None
             return {
                 "cursor": encode_cursor(value),
                 "snapshot": value,
-                "proof": proof,
             }
         finally:
             conn.rollback()
@@ -233,10 +226,7 @@ def _knowledge_snapshot(
     availability: SignalAvailability,
     admission: DeliveryAdmission,
     read: DeliveryAccess,
-    fence: object,
 ) -> StoredSnapshot:
-    from planner.navigation.proof import certify
-
     try:
         with contextlib.closing(_read_connection(path)) as conn:
             conn.execute("BEGIN")
@@ -298,8 +288,7 @@ def _knowledge_snapshot(
                         record["value"]["attention"] = {"current": None, "durable": durable}
                 if covered != set(actual):
                     raise DeliveryUnavailable("stored navigation omits an extant conversation")
-                proof = certify(conn, fence) if fence is not None else None
-                return {"cursor": encode_cursor(value), "snapshot": value, "proof": proof}
+                return {"cursor": encode_cursor(value), "snapshot": value}
             finally:
                 conn.rollback()
     except DeliveryUnavailable:
@@ -436,9 +425,7 @@ class DeliveryRuntime:
             await self._retention_task
             self._retention_task = None
 
-    async def current_snapshot(
-        self, fence: object = None
-    ) -> tuple[SnapshotResponse, DeliveryAccess]:
+    async def current_snapshot(self) -> tuple[SnapshotResponse, DeliveryAccess]:
         source = self._require_source()
         inventory = await asyncio.to_thread(_inventory, self.path)
         availability = self._availability()
@@ -455,7 +442,6 @@ class DeliveryRuntime:
                 availability,
                 self.admission,
                 read,
-                fence,
             )
             result: SnapshotResponse = {
                 "wire_version": 2,
@@ -463,7 +449,6 @@ class DeliveryRuntime:
                 "authority": authority,
                 "cursor": value["cursor"],
                 "snapshot": value["snapshot"],
-                "proof": value["proof"],
             }
         else:
             read = self.admission.capture_degraded(lambda: self._validate_profile(availability))
@@ -475,7 +460,6 @@ class DeliveryRuntime:
                 availability,
                 self.admission,
                 read,
-                None,
             )
             result = {
                 "wire_version": 2,
@@ -491,7 +475,6 @@ class DeliveryRuntime:
                 },
                 "cursor": None,
                 "snapshot": value["snapshot"],
-                "proof": None,
             }
         self.admission.validate(read)
         return result, read
