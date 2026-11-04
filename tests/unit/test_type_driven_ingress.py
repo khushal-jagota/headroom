@@ -19,6 +19,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -35,7 +36,7 @@ from tests.support.probe import (
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.core import authority
-from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
+from planner.core.authority import service as authority_service
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import OWNER_PRINCIPAL, PlannerError
@@ -188,7 +189,15 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(
         )
         assert assigned.status_code == 200, assigned.text
         # General authority and review authority do not permit another Ticket's proposal.
-        monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "probe", (authority.ticket(target),))
+        original_chain_facts = authority_service.chain_facts
+        monkeypatch.setattr(
+            authority_service,
+            "chain_facts",
+            lambda conn, caller, scope_target: replace(
+                original_chain_facts(conn, caller, scope_target),
+                caller_declared_targets=(authority.ticket(target),),
+            ),
+        )
         scoped = client.post(
             f"/api/tickets/{target}/accept/brief",
             json={

@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import Protocol
@@ -1002,17 +1002,6 @@ def create_ticket(
         launch_configuration = creation_context.launch_configuration
         project_id = creation_context.project_id
         _validate_ceiling_holder(conn, ceiling_holder)
-        # The one rule, asked here where the write happens, exactly as edit_ticket asks
-        # it. Making a Ticket acts on nothing that exists, so nothing refuses that. The
-        # three things creation arrives with each act on something, and each is asked
-        # about separately: putting work under a Manager, and stating the two canonical
-        # values PATCH reserves for a caller above the Ticket.
-        if manager_id is not None:
-            authority.require_in_chain(conn, principal, authority.manager(manager_id))
-        if stated_ceiling is not None or stated_holder is not None:
-            authority.require_above_a_ticket_being_created(
-                conn, principal, ticket_id=ticket_id, parent_manager_id=manager_id
-            )
         _validate_review_holder(
             conn,
             ceiling_holder,
@@ -1434,7 +1423,6 @@ def accept_proposal(
     Ticket is addressed to once it moves on.
     """
     with _txn(conn):
-        authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
@@ -1509,7 +1497,6 @@ def require_reject(
     has_guidance: bool,
 ) -> Ticket:
     """Run every current authorization check without sending or writing."""
-    authority.require_above(conn, principal, authority.ticket(ticket_id))
     ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
         conn, ticket_id
     )
@@ -1534,7 +1521,6 @@ def reject_proposal(
     if message is not None:
         admission.validate_revision_guidance(message)
     with _txn(conn):
-        authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
@@ -1591,7 +1577,6 @@ def delete_ticket(
     is there.
     """
     with _txn(conn):
-        authority.require_above(conn, principal, authority.ticket(ticket_id))
         _load_ticket_for_write(conn, ticket_id)
         return delete_ticket_records(
             conn, ticket_id, now=now, even_while_running=even_while_running
@@ -1765,13 +1750,6 @@ def edit_ticket(
     admission.TICKET_FIELDS_ONLY_FROM_ABOVE are not, and need a caller above the Ticket.
     """
     with _txn(conn):
-        target = authority.ticket(ticket_id)
-        if set(edit) & admission.TICKET_FIELDS_ONLY_FROM_ABOVE:
-            authority.require_above(conn, principal, target)
-        else:
-            authority.require_above_or_self(conn, principal, target)
-        if admission.TICKET_FIELD_THAT_MOVES_THE_PARENT in edit or "manager" in edit:
-            authority.refuse_manager_re_parenting(principal, ticket_id)
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
@@ -1986,11 +1964,8 @@ def classify_ticket(
     principal: Principal,
     now: int,
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
-    admit: Callable[[], None] | None = None,
 ) -> Ticket:
     with _txn(conn):
-        if admit is not None:
-            admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         item = conn.execute(
             "SELECT project_id FROM managers WHERE id = ?", (manager_id,)
@@ -2027,11 +2002,8 @@ def unclassify_ticket(
     principal: Principal,
     now: int,
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
-    admit: Callable[[], None] | None = None,
 ) -> Ticket:
     with _txn(conn):
-        if admit is not None:
-            admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         item = conn.execute(
             "SELECT project_id FROM managers WHERE id = ?", (manager_id,)
@@ -2088,7 +2060,6 @@ def set_ticket_backlog(
 ) -> Ticket:
     """Defer automatic steps without taking ownership from any delivered turn."""
     with _txn(conn):
-        authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket, definition = _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         if definition.is_terminal(ticket.stage):
             raise PlannerError(ErrorCode.validation, "terminal Tickets cannot change backlog state")

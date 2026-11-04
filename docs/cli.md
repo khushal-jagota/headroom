@@ -14,11 +14,11 @@ The command name grants nothing. The process environment says who is calling: He
   - `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md).
   - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).
 - **The Worker group**, hidden from ordinary help: read my Ticket, file a proposal, set a recap, request help. A Worker can file a proposal. Accepting one is `ticket proposal`, for a caller who stands above the Ticket.
-- **Hidden groups** that a specialist skill or an operator names when needed: `serve`, `skill`, `worker-type`, and `feedback`.
+- **Hidden groups** that a specialist skill or an operator names when needed: `serve`, `skill`, and `worker-type`.
 
 ## How reads and writes work
 
-A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. Backlog and resume need no record fingerprint. `ticket delete` needs no confirmation flag, but a running Ticket still needs `--force`. `ticket create --input-json FILE` sends one object through the ordinary create route, which validates the whole Ticket before one write.
+A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. Backlog and resume need no record fingerprint. `ticket delete` needs no confirmation flag, but a running Ticket still needs `--force`. `ticket create --input-json FILE` sends one object to the same create route as the browser, which validates the whole Ticket before one write.
 
 ## What the CLI feeds
 

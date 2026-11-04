@@ -7,7 +7,7 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 - **The skill row.** The text of each skill lives in the database. The row is the authority.
 - **The published copies.** Headroom writes each row out as a skill file whenever a database opens and whenever a skill is saved. Every Hermes, Codex, and Claude home links to those copies, and a server with an explicit workspace links it there too.
 - **The seed.** The skill tree packaged with the code fills a database that has no skills yet. Nothing reads it after that.
-- **Skill history.** Each saved version is kept. Worker steps do not record skill versions.
+- **Skill history.** The editor keeps saved versions in the database. Worker steps do not record skill versions.
 - **The editor and the command.** One editor in Settings opens every role's skill. `panels skill list`, `show`, `edit`, and `apply` reach the same writer.
 
 ```
@@ -20,7 +20,7 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 
 Khushal and the Chief stand above skills, so both may edit them. A Worker or a Manager that wants a skill changed hands the exact text to the owner or the Chief. A reviewed batch applies in one transaction.
 
-The specialist named on a [Worker type](worker-types.md) decides which skill a Worker step uses. General discovery excludes historical personal and calendar specialists. An assigned historical Worker still receives its own specialist. A saved skill reaches an agent the next time it loads the skill. A turn already running keeps what it read. Saving a skill sends no prompt, so the conversation notebook does not change.
+The specialist named on a [Worker type](worker-types.md) decides which skill a Worker step uses. General discovery excludes the historical personal and calendar specialists. Their rows and copies stay intact, and an assigned Worker still receives its specialist. A saved skill reaches an agent the next time it loads the skill. A turn already running keeps what it read. Saving a skill sends no prompt, so the conversation notebook does not change.
 
 `panels skill check` reports a skill that names a command, stage, or skill this build lacks. It reports and does not rewrite.
 
@@ -32,7 +32,7 @@ The specialist named on a [Worker type](worker-types.md) decides which skill a W
 
 ## Code
 
-- `src/planner/managed_skills.py`: rows and published copies. `src/planner/skill_versions.py`: saved skill history.
+- `src/planner/managed_skills.py`: rows and published copies. `src/planner/skill_versions.py`: saved history.
 - `src/planner/worker_settings/`: the HTTP writers.
 - `src/planner/skills/`: the seed.
 - `web/src/components/RoleSkillEditor.svelte`: the editor.

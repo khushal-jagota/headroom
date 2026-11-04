@@ -54,7 +54,8 @@ Reading Tickets and Managers is open to every caller. The rule guards writes.
 ## Code
 
 - `src/planner/core/authority/logic.py`: the rule, the own-record check, and who may hold a review.
-- `src/planner/core/authority/service.py`: the door routes call.
+- `src/planner/core/authority/intake.py`: checks requests and Mac commands against the target and relation at intake.
+- `src/planner/core/authority/service.py`: supplies the database facts for the rank rule.
 - `src/planner/core/authctx.py`: turns a request into a caller, and holds the owner-only doors.
 
 _Last verified: 2026-11-04._

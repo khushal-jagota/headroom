@@ -47,6 +47,8 @@ The commit is the boundary.
 
 If the runner disappears before the commit, work stays closed. Expired evidence becomes an unconfirmed installation that needs Chief review. Expiry never reopens the app or restores data, and no maximum outage is promised. Unresolved evidence reaches Chief once, as a real prompt through the ordinary conversation path.
 
+The browser offers a refresh when its loaded app differs from the server. Each write carries the loaded page version, and the server rejects an outdated version.
+
 A finalizer records the installed commit, application health, and each later check separately. It runs from checked-out source with the host's own Python, never from the app it judges. Missing evidence stays uncertain.
 
 Each browser write carries the version of the loaded page. The server rejects an outdated version without a separate version request before each save.

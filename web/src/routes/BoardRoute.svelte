@@ -36,7 +36,7 @@
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
 
   import type { Snippet } from "svelte";
-  let { address, externalPane, railFoot, onDismissed = () => undefined }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet; onDismissed?: (noteId: string) => void } = $props();
+  let { address, externalPane, railFoot }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet } = $props();
   const navigation = (() => {
     const context = navigationApplication();
     if (!context) throw new Error("Workspace requires the application navigation owner");
@@ -64,11 +64,10 @@
       case "usage": return cachedImport("./BackendsRoute.svelte", () => import("./BackendsRoute.svelte"));
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./SettingsRoute.svelte"));
       case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./IdeasRoute.svelte"));
-      case "feedback": return cachedImport("./FeedbackRoute.svelte", () => import("./FeedbackRoute.svelte"));
       default: return null;
     }
   });
-  let paneShape = $derived(opening.markedUtility === "usage" || opening.markedUtility === "ideas" || opening.markedUtility === "feedback" ? "rows" as const : "document" as const);
+  let paneShape = $derived(opening.markedUtility === "usage" || opening.markedUtility === "ideas" ? "rows" as const : "document" as const);
   // The screen's own position, read the same way its standalone page reads it. The
   // address is parsed before it reaches here, so a placement is always present.
   let placement = $derived(
@@ -401,12 +400,6 @@
           {:else if placement.utility === "ideas"}
             {#await import("./IdeasRoute.svelte") then view}
 <view.default />
-{:catch error}
-<ErrorLine {error} />
-{/await}
-          {:else if placement.utility === "feedback"}
-            {#await import("./FeedbackRoute.svelte") then view}
-<view.default {onDismissed} />
 {:catch error}
 <ErrorLine {error} />
 {/await}

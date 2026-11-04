@@ -15,7 +15,7 @@ from time import monotonic as _monotonic
 from typing import Any, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -73,7 +73,6 @@ from planner.environments.vps_status import (
     collect_vps_status,
     collect_vps_status_summary,
 )
-from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
@@ -548,7 +547,9 @@ def create_app(
     event_stream_patterns: list[re.Pattern[str]] = []
 
     def include_router(router: APIRouter, prefix: str = "") -> None:
-        app.include_router(router, prefix=prefix)
+        from planner.core.authority.intake import request_admission
+
+        app.include_router(router, prefix=prefix, dependencies=[Depends(request_admission)])
         event_stream_patterns.extend(event_stream_route_patterns(router.routes, prefix))
 
     for domain_router in (
@@ -571,7 +572,6 @@ def create_app(
         credentials_router,
         credential_requests_router,
         notifications_router,
-        feedback_router,
         worker_settings_router,
         message_delivery_router,
         membership_router,

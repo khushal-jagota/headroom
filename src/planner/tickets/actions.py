@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Callable
 
 from planner.conversation.contracts import ConversationSystem
 from planner.core import ticket_blocks
@@ -72,15 +71,12 @@ def add_ticket_block(
     blocked_ticket_id: str,
     *,
     now: int,
-    admit: Callable[[], None] | None = None,
 ) -> None:
-    """Create a Ticket block under admission, in one transaction.
+    """Create a Ticket block in one transaction.
 
     Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
     """
     with tickets_data._txn(conn):
-        if admit is not None:
-            admit()
         ticket_blocks.add_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
 
 
@@ -90,15 +86,12 @@ def remove_ticket_block(
     blocked_ticket_id: str,
     *,
     now: int,
-    admit: Callable[[], None] | None = None,
 ) -> None:
-    """Remove a Ticket block under admission, in one transaction.
+    """Remove a Ticket block in one transaction.
 
     Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
     """
     with tickets_data._txn(conn):
-        if admit is not None:
-            admit()
         ticket_blocks.remove_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
 
 

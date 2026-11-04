@@ -290,7 +290,6 @@ class GoalFixture:
         else:
             result = {
                 "/api/worker-types": {"worker_types": []},
-                "/api/feedback/count": {"open_count": 0},
                 "/api/review": {"items": [], "running_worker_count": 0},
                 "/api/meta": {"test_mode": True, "app_sha": "fixture"},
                 "/api/conversation/backends": {"backends": []},

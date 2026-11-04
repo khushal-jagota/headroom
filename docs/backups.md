@@ -13,7 +13,7 @@ The database and the folders are copied back to back, not at one transactional i
 
 ## How snapshots are made and kept
 
-A snapshot is written to a temporary folder and published only after the database integrity check and the file checksums pass. A failure leaves earlier snapshots untouched. Only the newest few verified snapshots are kept. Two callers take them, both through the installed app: the nightly timer described in [Environments](environments.md), and [Deployment](deployment.md) just before it replaces the app. If the deployment backup fails, the live app is not replaced. A mismatch with the install record logs a warning and does not prevent the backup. Installation keeps its strict file check.
+A snapshot is written to a temporary folder and published only after the database integrity check and the file checksums pass. A failure leaves earlier snapshots untouched. Only the newest few verified snapshots are kept. Two callers take them, both through the installed app: the nightly timer described in [Environments](environments.md), and [Deployment](deployment.md) just before it replaces the app. If the deployment backup fails, the live app is not replaced. A mismatch against the installed app record logs a warning and does not block a backup. The strict file check at install time stays.
 
 ## Restore
 

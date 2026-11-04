@@ -43,6 +43,7 @@ from planner.conversation.backends.codex_app_server.login import (
     codex_home,
     logins_hold_the_same_credential,
 )
+from planner.conversation.worker_unit import WorkerUnit, WorkerUnitError
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
 
@@ -172,6 +173,8 @@ class CodexAppServerClient:
             else consumed_notifications
         )
         self._process: asyncio.subprocess.Process | None = None
+        self._worker_unit: WorkerUnit | None = None
+        self._end_reason: str | None = None
         self._request_ids = itertools.count(1)
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._reader: asyncio.Task[None] | None = None
@@ -194,20 +197,31 @@ class CodexAppServerClient:
         argv: Sequence[str],
         environment: Mapping[str, str],
         working_directory: Path,
+        worker_ticket_id: str | None = None,
     ) -> None:
         """Spawn the child and begin reading it. Raises ``CodexChildWouldNotStart``."""
         try:
+            if worker_ticket_id:
+                self._worker_unit = await WorkerUnit.create(
+                    {**environment, "PLAN_TICKET_ID": worker_ticket_id}, working_directory
+                )
+            unit = self._worker_unit
             process = await asyncio.create_subprocess_exec(
-                *argv,
+                *(argv if unit is None else unit.argv(argv)),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=dict(environment),
+                env=dict(environment) if unit is None else unit.environment,
                 cwd=str(working_directory),
                 limit=CHILD_OUTPUT_LINE_LIMIT_BYTES,
             )
-        except OSError as would_not_spawn:
-            raise CodexChildWouldNotStart(str(would_not_spawn)) from would_not_spawn
+        except BaseException as would_not_spawn:
+            if self._worker_unit is not None:
+                await self._worker_unit.stop()
+                self._worker_unit = None
+            if isinstance(would_not_spawn, (OSError, WorkerUnitError)):
+                raise CodexChildWouldNotStart(str(would_not_spawn)) from would_not_spawn
+            raise
         self._process = process
         self._reader = asyncio.create_task(
             self._read_messages(), name=f"planner.conversation.codex.read.{self._description}"
@@ -234,6 +248,10 @@ class CodexAppServerClient:
         self._standard_error_reader = None
         self._child_watcher = None
         self._fail_everything_pending("this child is being shut down")
+        unit = self._worker_unit
+        if unit is not None:
+            await unit.stop()
+            self._worker_unit = None
         process = self._process
         self._process = None
         if process is None:
@@ -251,6 +269,10 @@ class CodexAppServerClient:
                     process.kill()
                 with suppress(Exception):
                     await process.wait()
+
+    @property
+    def end_reason(self) -> str | None:
+        return self._end_reason
 
     @property
     def is_alive(self) -> bool:
@@ -539,12 +561,20 @@ class CodexAppServerClient:
     async def _watch_for_the_child_ending(self, process: asyncio.subprocess.Process) -> None:
         """Wait for the process to go, then stop everything that is waiting on its wire."""
         await process.wait()
+        unit = self._worker_unit
+        if unit is not None:
+            try:
+                self._end_reason = await unit.finish()
+            except (WorkerUnitError, TimeoutError) as cleanup_failed:
+                self._end_reason = f"Worker stopped, but its unit cleanup failed: {cleanup_failed}"
+            else:
+                self._worker_unit = None
         # The pipes reach EOF separately. Finish draining stderr before the adapter
         # classifies the turn that ended with the child.
         if self._standard_error_reader is not None:
             await self._standard_error_reader
         self._wire_broken = True
-        self._fail_everything_pending("the codex process ended")
+        self._fail_everything_pending(self._end_reason or "the codex process ended")
         await self._handler.on_child_ended()
 
     def _fail_everything_pending(self, why: str) -> None:

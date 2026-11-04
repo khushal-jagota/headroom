@@ -42,12 +42,10 @@ from planner.conversation.contracts import (
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.video_uploads.contracts import UploadDestination
-from planner.core import authority
 from planner.core.authctx import (
     RequestContext,
     request_context,
 )
-from planner.core.authority import require_above, require_above_or_self, require_self
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import (
@@ -791,7 +789,6 @@ async def put_ticket_employee_configuration(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     required_keys = {
         "employee_backend",
         "employee_launch_model",
@@ -844,7 +841,6 @@ async def restart_ticket_worker(
     proved before even that: no caller can configure or restart a Ticket it does
     not stand above.
     """
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     backend = body_opt_str(raw, "employee_backend")
     model = body_opt_str(raw, "employee_launch_model")
     if (backend is None) != (model is None):
@@ -896,7 +892,6 @@ async def delete_ticket(
     conversations: Conversations,
     force: Annotated[bool, Query()] = False,
 ) -> JsonDict:
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     # A Manager deletes its own child Ticket outright, and force is how the user reaches
     # the same place. Both walk past the running guards, so the Ticket's turn is killed
     # here instead: a Worker must never outlive the Ticket it belongs to.
@@ -947,11 +942,6 @@ def write_patch_ticket(
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
-    # The floor: a stranger is refused here, before any of this body is looked at. Which
-    # of these fields need a caller above the Ticket rather than the Ticket itself is
-    # edit_ticket's question, asked once, where the write happens.
-    require_above_or_self(conn, ctx.principal, authority.ticket(ticket_id))
-
     edit = TicketEdit()
     if "title" in body:
         edit["title"] = body_str(body, "title")
@@ -1163,7 +1153,6 @@ async def send_to_chief_conversation(
     — which it can only recognise by the name it minted. A door that takes the name and
     does not pass it on leaves that browser drawing a message the record already has.
     """
-    require_above(conn, ctx.principal, authority.owner_only("chief conversation"))
     created_conversation_id = conversation_start.new_conversation_id()
     runs_under = _what_this_message_runs_under(body)
     admission = video_send_admission(
@@ -1205,7 +1194,6 @@ async def reset_chief_conversation(
     conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     """Cut the Chief loose from its conversation. This is what New does."""
-    require_above(conn, ctx.principal, authority.owner_only("chief conversation"))
     await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
     return {"conversation_id": None}
 
@@ -1245,7 +1233,6 @@ async def send_to_ticket_conversation(
     Chief's door gives: a browser recognises its own message coming back by the name it
     minted, and a name this door drops is one the record can never hand back.
     """
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     created_conversation_id = conversation_start.new_conversation_id()
     admission = video_send_admission(
         request,
@@ -1298,7 +1285,6 @@ async def reset_ticket_conversation(
     is started here: the Ticket now has no conversation, which is the state the start door
     above already knows how to answer.
     """
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     now = clk.now_unix()
     await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
     return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
@@ -1321,7 +1307,6 @@ async def complete_user_owned_gate(
     approval otherwise has.
     """
     body = GateCompletionBody(body=body_str(raw, "body"))
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
@@ -1346,7 +1331,6 @@ async def request_help(
     clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
-    require_self(conn, ctx.principal, authority.ticket(ticket_id))
     if set(body) - {"message", "recipient"}:
         raise PlannerError(ErrorCode.validation, "unknown help request field", {})
     message = body_str(body, "message")
@@ -1354,11 +1338,6 @@ async def request_help(
         raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
     ticket = tickets_data.read_ticket(conn, ticket_id)
     named = _parse_principal(body.get("recipient"), "recipient", allow_ticket=True)
-    if named is not None:
-        # The same question Send Message asks. Without it this is a second, open door
-        # into any conversation in Panels. The default below is not asked, because the
-        # ceiling holder is the principal Panels itself addressed this Ticket to.
-        message_delivery_service.require_reach(conn, ctx.principal, named)
     recipient = named or ticket.ceiling_holder
     delivered = await message_delivery_service.send_message(
         conversations, conn, clk, ctx, recipient, message

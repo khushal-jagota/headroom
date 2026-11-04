@@ -29,6 +29,8 @@ Deployment status and the "this app is older than the server" prompt ride the sa
 
 A screen that is not mounted keeps its last body until it opens. A file written straight into a Ticket's artifact folder has no database revision, so the artifact list refreshes when that Ticket is selected, not because a commit named the file.
 
+The browser uses server messages directly, with TypeScript types during development and no second runtime validation table. The Ticket screen uses its loaded detail and Worker configuration. The server checks saves and approvals.
+
 ## Decisions that shape it
 
 - The signal carries no payload. A screen always shows what a fresh read returned, never a guess built from an event.
