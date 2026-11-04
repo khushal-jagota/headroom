@@ -178,14 +178,12 @@ def test_failed_lifecycle_observer_still_completes_real_lifespan_cleanup(
         original_finish_writes = runtime.store.finish_writes
 
         def blocked_write() -> None:
-            with runtime.store._publication_connection() as (conn, _admission):
+            with runtime.store._publication_connection() as (conn, _mutation):
                 conn.execute("BEGIN IMMEDIATE")
                 conn.execute("UPDATE conversations SET model=model WHERE conversation_id='live'")
-                runtime.store._record_signal_result(conn, None)
                 conn.execute("COMMIT")
-            # Hold the tracked operation after canonical SQL and its producer gate
-            # close. Holding the gate until child stop would deadlock shutdown's
-            # preceding invalidation. This proves operation drain, not active SQL.
+            # Hold the tracked operation after its SQL transaction closes.
+            # This proves operation drain, not active SQL.
             writer_started.set()
             if not writer_release.wait(10):
                 raise RuntimeError("synthetic writer release timed out")
