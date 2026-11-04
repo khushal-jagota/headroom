@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.support.migration_head import shipped_migration_head
 from tests.support.ticket_workflows import preset_workflow_json
 from tests.unit.test_db import _migration_tree_through
 
@@ -533,7 +534,10 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
     _run(exercise)
 
 
-@pytest.mark.parametrize("schema_revision", ["mac_vps_execution", "executor_default_workspace"])
+@pytest.mark.parametrize(
+    "schema_revision",
+    ["mac_vps_execution", "executor_default_workspace", shipped_migration_head()],
+)
 def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
     archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, schema_revision: str,
 ) -> None:
