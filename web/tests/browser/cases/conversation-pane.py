@@ -2707,11 +2707,23 @@ def _overlay_menu_bounds(browser, url):
     output = Path(os.environ.get("PANELS_MENU_ARTIFACT_DIR", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/tmp/panels-menu-proof")))
     output.mkdir(parents=True, exist_ok=True)
     page = browser.new_page(viewport={"width": 1100, "height": 900})
+    # A real on-screen keyboard is up only while a text field has focus. Focus on a
+    # button closes it, so the simulated keyboard follows focus in the same way.
     page.add_init_script("""(() => {
       const viewport = new EventTarget();
       Object.assign(viewport, {offsetTop:0,offsetLeft:0,width:1100,height:900});
       Object.defineProperty(window,'visualViewport',{value:viewport,configurable:true});
-      window.__keyboardBounds=(top,height)=>{Object.assign(viewport,{offsetTop:top,height});viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));};
+      let keyboard = null;
+      const textEntry = el => el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['button','checkbox','file','radio','submit'].includes(el.type)) || (el instanceof HTMLElement && el.isContentEditable);
+      const apply = focused => {
+        const bounds = keyboard && textEntry(focused) ? keyboard : {top:0,height:900};
+        if (viewport.offsetTop === bounds.top && viewport.height === bounds.height) return;
+        Object.assign(viewport,{offsetTop:bounds.top,height:bounds.height});
+        viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));
+      };
+      document.addEventListener('focusin', event => apply(event.target), true);
+      document.addEventListener('focusout', event => apply(event.relatedTarget), true);
+      window.__keyboardBounds=(top,height)=>{keyboard={top,height};apply(document.activeElement);};
     })()""")
     proof = {"nativeKeyboard":"Not tested: visualViewport reduction and displacement are simulated.", "states":[], "actions":[]}
     def settle():
