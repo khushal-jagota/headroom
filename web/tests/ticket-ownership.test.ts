@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  feedbackLabel,
   managerHeading,
   ticketFacts,
   ticketPageMark,
@@ -18,7 +17,6 @@ describe("a Stage the worker owns", () => {
   it("is never named as the owner's work", () => {
     expect(workspaceHeading(workerOwned)).not.toBe("Yours");
     expect(managerHeading(workerOwned)).not.toBe("Yours");
-    expect(feedbackLabel(workerOwned)).not.toBe("Yours");
     expect(ticketPageMark(workerOwned)).not.toBe("current-assigned");
   });
 
@@ -34,13 +32,11 @@ describe("a Stage the owner owns", () => {
   it("reads as his on every screen that says so", () => {
     expect(workspaceHeading(userOwned)).toBe("Yours");
     expect(managerHeading(userOwned)).toBe("Yours");
-    expect(feedbackLabel(userOwned)).toBe("Yours");
     expect(ticketPageMark(userOwned)).toBe("current-assigned");
   });
 
   it("still yields to a proposal he has to approve", () => {
     const parked = ticketFacts({ assigned: true, awaiting_approval: true });
     expect(workspaceHeading(parked)).toBe("Needs your approval");
-    expect(feedbackLabel(parked)).toBe("Needs your approval");
   });
 });

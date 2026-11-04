@@ -43,7 +43,7 @@
   <div class="screen" data-screen="vps" data-current={loading ? undefined : !current.stale} aria-busy={loading}>
     <header class="screen-header">
       <div class="screen-header-row">
-        <div class="screen-header-title"><h1 class="screen-header-title" data-feedback-page-title>VPS</h1>
+        <div class="screen-header-title"><h1 class="screen-header-title">VPS</h1>
           {#if loading}<div class="machine"><VpsSkeleton shape="detail" /></div>{:else if sample}<p class="machine">{machineDescription(sample)}</p>{/if}
         </div>
         <div class="screen-header-meta">

@@ -13,13 +13,13 @@ const done = (itemId: string) => (block: ChecklistBlock): ChecklistBlock => ({ .
 
 describe('goal writes across control lifetimes', () => {
   it('serializes editors for the captured goal, applies fresh documents, and lets another goal proceed', async () => {
-    const saved = new Map([['first', goal('first')], ['second', goal('second')]]), gate = deferred<void>();
+    const saved = new Map([['first', goal('first')], ['second', goal('second')]]), gate = deferred<void>(), firstStarted = deferred<void>();
     const writes: Array<[string, GoalEditBody]> = [];
     const io = {
       read: async (id: string) => saved.get(id)!,
       write: async (id: string, body: GoalEditBody) => {
         writes.push([id, body]);
-        if (writes.length === 1) await gate.promise;
+        if (writes.length === 1) { firstStarted.resolve(); await gate.promise; }
         const accepted = { ...saved.get(id)!, ...body, revision: saved.get(id)!.revision + 1 };
         saved.set(id, accepted); return accepted;
       }, refresh: async () => undefined,
@@ -27,6 +27,7 @@ describe('goal writes across control lifetimes', () => {
     const first = createGoalEditor('first', io), reopened = createGoalEditor('first', io);
     const one = first.updateBlock('steps', block => done('one')(block as ChecklistBlock));
     const two = reopened.updateBlock('steps', block => done('two')(block as ChecklistBlock));
+    await firstStarted.promise;
     await createGoalEditor('second', io).write({ completed: true });
     expect(writes.map(([id]) => id)).toEqual(['first', 'second']);
     gate.resolve(); await Promise.all([one, two]);

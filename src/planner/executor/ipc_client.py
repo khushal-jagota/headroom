@@ -33,8 +33,6 @@ from planner.executor.protocol import (
 
 def cli_mutation(method: str, path: str, body: Any) -> tuple[str, JsonObject]:
     """Translate a supported CLI route into a registry operation, never a proxy route."""
-    if method == "POST" and path == "/api/feedback/use":
-        return "feedback.use", {"body": body}
     blocker = re.fullmatch(r"/api/collections/blockers/([^/]+)/([^/]+)", path)
     if blocker and method in ("PUT", "DELETE"):
         return "ticket.block" if method == "PUT" else "ticket.unblock", {

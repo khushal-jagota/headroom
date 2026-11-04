@@ -73,7 +73,6 @@ from planner.environments.vps_status import (
     collect_vps_status,
     collect_vps_status_summary,
 )
-from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
@@ -579,7 +578,6 @@ def create_app(
         credentials_router,
         credential_requests_router,
         notifications_router,
-        feedback_router,
         worker_settings_router,
         message_delivery_router,
         membership_router,

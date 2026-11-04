@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { correctedWorkspaceAddress, parseWorkspaceAddress, whatTheAddressOpens, workspaceAddress } from "../src/lib/workspaceAddress";
 
 describe("workspace utility addresses", () => {
-  it.each(["usage", "settings", "ideas", "feedback"] as const)(
+  it.each(["usage", "settings", "ideas"] as const)(
     "round trips %s as a selected workspace utility",
     (utility) => {
       const href = workspaceAddress({ kind: "utility", utility, path: [] });

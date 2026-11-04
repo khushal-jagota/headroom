@@ -1,7 +1,6 @@
 import { render } from "svelte/server";
 import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
 import { describe, expect, it, vi } from "vitest";
-import { feedbackPageContext, feedbackPageHref } from "../src/lib/feedback";
 import { canonicalShellHash } from "../src/lib/shellRouting";
 import { nestedHref, parseUtilityPath, prefixHref } from "../src/lib/utilityAddress";
 
@@ -33,20 +32,6 @@ describe("historical shell addresses", () => {
     expect(canonicalShellHash("#/config/unknown/detail")).toBe("#/settings/config/unknown/detail");
     expect(canonicalShellHash("#/agents/unknown")).toBe("#/agents/unknown");
   });
-});
-
-it("records Settings feedback against its actual section address", () => {
-  for (const [hash, label] of [["#/settings", "Settings · Config"], ["#/settings/config/workers/coding", "Settings · Config"], ["#/settings/notifications", "Settings · Notifications"]]) {
-    expect(feedbackPageContext(hash)).toEqual({address: hash, label});
-  }
-});
-
-it("captures new feedback on Chief and retains saved historical links", () => {
-  expect(feedbackPageHref("#/day/2026-07-29")).toBe("#/day/2026-07-29");
-  expect(feedbackPageHref("#/sprint?sprint=old")).toBe("#/sprint?sprint=old");
-  for (const hash of ["", "#", "#/workspace/chief-of-staff"]) {
-    expect(feedbackPageContext(hash)).toEqual({ address: "#/workspace/chief-of-staff", label: "Chief of Staff" });
-  }
 });
 
 it("uses the unavailable screen for archived calendar routes", () => {
@@ -95,8 +80,7 @@ describe("where a utility screen can be", () => {
     ["settings", ["notifications", "detail"]],
     ["settings", ["config", "unknown"]],
     ["usage", ["unknown"]],
-    ["ideas", ["anything"]],
-    ["feedback", ["anything"]]
+    ["ideas", ["anything"]]
   ] as const)("refuses %s/%j", (utility, path) => {
     expect(parseUtilityPath(utility, path as unknown as string[])).toBeNull();
   });
