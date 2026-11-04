@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TicketDetail } from '../src/lib/types';
 import type { WorkerTypeManifest } from '../src/lib/lifecycle';
 import type { TicketRecord } from '../src/lib/navigation/contracts';
-import { createNavigationCollection } from '../src/lib/navigation/collection';
+import { createNavigationCollection } from './support/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
 import { ticketSection, ticketSectionFacts, ticketSectionHeading, ticketSectionFieldState } from '../src/lib/ticketSection';
 import { currentSnapshot, continuity, conversation } from './support/navigation/fixtures';

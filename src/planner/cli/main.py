@@ -41,7 +41,6 @@ from planner.environments.cli import environment as environment_group
 from planner.executor.cli import executor_group
 from planner.goals.cli import goal as goal_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
-from planner.maintenance.cli import maintenance as maintenance_group
 from planner.measure_sources.cli import measure_source as measure_source_group
 from planner.measures.cli import measure as measure_group
 from planner.message_delivery.contracts import MessageDeliveryMode
@@ -440,7 +439,6 @@ def main() -> None:
 
 main.add_command(executor_group)
 main.add_command(environment_group)
-main.add_command(maintenance_group)
 main.add_command(credential_group)
 main.add_command(goal_group)
 main.add_command(measure_group)

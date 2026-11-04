@@ -18,7 +18,7 @@ Ordinary help shows the roots a person or a Manager uses:
 
 Workers use a separate `worker` group that ordinary help hides: show my Ticket, file a proposal, set a recap, request help. Those commands read the Worker identity from the environment. Proposal bodies come from stdin. A Worker can file. A Worker cannot accept. Acceptance is `ticket proposal` for a principal who stands above the Ticket.
 
-Other groups stay hidden until a skill or an operator needs them: `serve`, `skill`, `worker-type`, `feedback`, `preview`, `environment`, and maintenance. A specialist skill names the one it is allowed to use. On the production host, `~/.local/bin/panels` follows the deployed app, not whatever checkout happens to be on `PATH`.
+Other groups stay hidden until a skill or an operator needs them: `serve`, `skill`, `worker-type`, `feedback`, `preview`, and `environment`. A specialist skill names the one it is allowed to use. On the production host, `~/.local/bin/panels` follows the deployed app, not whatever checkout happens to be on `PATH`.
 
 ## Reads and the writes people repeat
 
@@ -36,7 +36,7 @@ A Worker’s `propose` feeds the proposal resolver. `send-message` feeds a conve
 
 ## Where it shows up
 
-Workers see the CLI as the tool inside their skill. Khushal sees it for creation, repair, and host operations the browser does not offer, including delete and the maintenance commands. The browser remains the place Review, the rail, and the conversation pane live.
+Workers see the CLI as the tool inside their skill. Khushal sees it for creation, repair, and host operations the browser does not offer, including delete. The browser remains the place Review, the rail, and the conversation pane live.
 
 ## API key requests
 

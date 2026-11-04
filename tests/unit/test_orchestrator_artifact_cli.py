@@ -12,9 +12,9 @@ import httpx
 import pytest
 from click.testing import CliRunner, Result
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.cli.main import main
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect

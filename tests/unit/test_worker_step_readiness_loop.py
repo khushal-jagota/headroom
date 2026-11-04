@@ -19,6 +19,7 @@ from time import monotonic, sleep
 from typing import cast
 
 import pytest
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import (
@@ -30,7 +31,6 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryUncertain,
 )
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind

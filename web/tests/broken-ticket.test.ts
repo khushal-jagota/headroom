@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { createNavigationCollection } from '../src/lib/navigation/collection';
+import { createNavigationCollection } from './support/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
 import { navigationWorkspacePresentation } from '../src/lib/navigation/presentation';
 import { currentSnapshot, continuity } from './support/navigation/fixtures';

@@ -20,6 +20,8 @@ Models can be enabled or disabled in the catalog the composers use. A disabled m
 
 ## What feeds the page
 
+Recorded usage comes from one local server. The browser calculates its totals and charts directly from that server’s summary.
+
 Provider responses feed allowance. Transcript files on the host feed recorded usage. The managed backend catalog feeds which models can be chosen. Config edits on this page are the same skill and Worker-type writes as Settings. They feed future conversations and future Tickets, not the chart behind them.
 
 ## Where it shows up

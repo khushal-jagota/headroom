@@ -13,7 +13,7 @@
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import { lifecycleFor } from "../lib/lifecycle";
   import type { RenderObserver } from "../lib/navigation/visibility";
-  import type { NavigationPublication } from "../lib/navigation/collection";
+  import type { NavigationPublication } from "../lib/navigation/publication";
   import { railDomMatches, hoverDomMatches } from "../lib/workspaceRailDom";
   import { workspaceRailImpact, workspaceHoverImpact, managerSettleImpact } from "../lib/workspaceNavigationImpact";
   import { createRailMotionController, type WorkspaceRailPresentation } from "../lib/workspaceRailMotion";

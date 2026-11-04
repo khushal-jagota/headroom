@@ -63,16 +63,7 @@ Deployment attention stays beside the lifecycle, outside database snapshots and 
 
 ## An older database that still has cancelled Tickets
 
-An upgrade refuses a database that contains cancelled Tickets, or that would create them while replaying historical migrations. The refusal leaves the schema and the rows alone. Stop the service, then archive those Tickets with the release you are installing. Run as the owner, with no Worker identity, and with an archive directory whose parent already exists:
-
-```sh
-systemctl --user stop panels-live.service
-PLAN_DB_PATH=/absolute/path/to/planner.db \
-  panels maintenance archive-cancelled-tickets \
-  --archive-dir /absolute/path/to/cancelled-ticket-archive --yes
-```
-
-The command first stores a verified snapshot of the whole database. Keep that directory as private as the database. Some older files need historical migrations before the cancelled rows exist. This command prepares those migrations and stops before the retirement-removal migration. It does not start the server. Deletion and that preparation share one transaction. Failure rolls both back. Ticket files on disk stay where they are. The archive keeps references, not copies. After it succeeds, retry the upgrade.
+An upgrade refuses a database that contains cancelled Tickets. Resolve these records through the prior supported version before retry.
 
 ## Development must not share the deployed tree
 

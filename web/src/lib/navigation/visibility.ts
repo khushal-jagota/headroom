@@ -1,5 +1,5 @@
 import type { Fence, ProofResult } from './contracts';
-import type { NavigationPublication } from './collection';
+import type { NavigationPublication } from './publication';
 import { compareRevision, sameAuthority } from './identity';
 import { navigationConfiguration } from './configuration';
 

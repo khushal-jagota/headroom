@@ -1,11 +1,6 @@
-import { WIRE_VERSION } from './contracts';
-import type { Continuity, CurrentAuthority, DegradedAuthority } from './contracts';
+import type { CurrentAuthority, DegradedAuthority } from './contracts';
 
 export function compareRevision(left: string, right: string): number { const a = BigInt(left), b = BigInt(right); return a < b ? -1 : a > b ? 1 : 0; }
-export function encodeCursor(value: Continuity): string {
-  const text = JSON.stringify({epoch:value.epoch, revision:value.revision, schema_version:value.schema_version, scope:value.scope, semantics:value.semantics, wire_version:WIRE_VERSION});
-  return btoa(String.fromCharCode(...new TextEncoder().encode(text))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/, '');
-}
 export function sameAuthority(left: CurrentAuthority | DegradedAuthority, right: CurrentAuthority | DegradedAuthority): boolean {
   return left.delivery_session_id === right.delivery_session_id
     && left.availability.state === right.availability.state
