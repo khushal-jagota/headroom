@@ -20,10 +20,7 @@
     Reconnecting: { word: "Reconnecting", state: "changing", action: null },
     "Deployment outcome unknown": { word: "Deployment outcome unknown", state: "settled", action: null, sentence: true },
     Problem: { word: "Problem", state: "wrong", action: null },
-    "update-ready": { word: "New version ready", state: "settled", action: "Refresh page" },
-    // A held update states its own reason, so it carries no control. The sentence
-    // wraps, because a truncated one cannot be read.
-    "update-held": { word: "Page refresh waits until this message is safe", state: "changing", action: null, sentence: true }
+    "update-ready": { word: "New version ready", state: "settled", action: "Refresh page" }
   };
 
   let { connectionState, navigationHealth = null }: { connectionState: ConnectionStatus; navigationHealth?: NavigationHealth } = $props();

@@ -152,7 +152,7 @@ def historical_sources(
                 "import sys; from pathlib import Path; "
                 f"sys.path.insert(0, {str(repository / 'scripts')!r}); "
                 "import tree_environment; "
-                f"diagnosis = tree_environment.preflight(Path({str(source)!r}), ask_planner=True); "
+                f"diagnosis = tree_environment.preflight(Path({str(source)!r})); "
                 "assert not diagnosis, diagnosis",
             ],
         )
