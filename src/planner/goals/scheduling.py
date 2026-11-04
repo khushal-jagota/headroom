@@ -3,6 +3,7 @@
 import sqlite3
 from datetime import datetime
 
+from planner.goals.calendar import server_date
 from planner.goals.outcomes import reconcile_completions
 from planner.measures.data import transaction
 from planner.resource_versions.data import source_revision
@@ -23,7 +24,7 @@ class GoalCompletionParticipant:
     ) -> list[ScheduledTicketOccurrence]:
         if self._stopped:
             return []
-        today = datetime.fromtimestamp(now).astimezone().date().isoformat()
+        today = server_date(now)
 
         def revision() -> tuple[str, str, str]:
             return (

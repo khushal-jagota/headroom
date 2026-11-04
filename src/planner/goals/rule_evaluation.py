@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from planner.goals import configuration as limits
+from planner.goals.calendar import server_date
 from planner.goals.contracts import GoalCompletionRule
 from planner.goals.logic.rule_evaluation import rule_satisfied
 from planner.measures import data
@@ -46,7 +47,7 @@ def evaluate_completion_date(
     no achievement. The caller can therefore preserve its last accepted facts.
     """
     first = calendar_date(rule["first_date"])
-    last = datetime.fromtimestamp(now).astimezone().date()
+    last = calendar_date(server_date(now))
     if first > last:
         return None
     length = (last - first).days + 1

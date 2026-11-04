@@ -25,6 +25,7 @@ from planner.measures.contracts import (
     FormulaExpression,
     MeasureKind,
     MeasureOrigin,
+    UpdateMeasureBody,
 )
 from planner.measures.data import transaction
 from planner.scheduled_tickets.runtime import ScheduledTicketLoop
@@ -148,6 +149,45 @@ def test_collected_formula_evidence_uses_the_finish_line_and_first_date(tmp_db: 
     assert evaluate_completion_date(tmp_db, rule, now=NOW) == "2026-10-26"
     rule["direction"] = "atmost"
     assert evaluate_completion_date(tmp_db, rule, now=NOW) is None
+
+    # A definition edit changes a bound formula without any goal edit or GET.
+    # The participant's automatic-measures stamp must invalidate its old result.
+    assembled = measure_actions.create_measure(
+        tmp_db,
+        CreateMeasureBody(
+            project_id="project_vylo",
+            name="Twice the collected value",
+            unit="items",
+            origin=MeasureOrigin.assembled,
+            kind=MeasureKind.reading,
+            timezone="UTC",
+            period=None,
+            source_id=None,
+            formula=actual,
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    goal = numeric_goal(tmp_db, finish_line(assembled.id))
+    assert goal.completion_date == "2026-10-25"
+    participant = GoalCompletionParticipant()
+    current = datetime.fromtimestamp(NOW, UTC)
+    participant.poll(tmp_db, local_now=current, now=NOW)
+    measure_actions.update_measure(
+        tmp_db,
+        assembled.id,
+        UpdateMeasureBody(
+            expected_revision=assembled.definition_revision,
+            formula={"op": "reference", "measure_id": measure.id, "day_offset": 0},
+        ),
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    participant.poll(tmp_db, local_now=current, now=NOW)
+    corrected = data.read_goal(tmp_db, goal.id)
+    assert corrected.completion_date is None
+    assert corrected.completion_rule == goal.completion_rule
+    assert corrected.revision == goal.revision + 1
 
 
 def test_constants_and_future_references_cannot_fabricate_past_achievement(
