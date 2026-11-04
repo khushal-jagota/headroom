@@ -9,7 +9,7 @@
  import {chartData,chartHeadline,selectedTarget} from '../../lib/charts/presentation';
  import {goalQueries} from '../../lib/goals/queries';
  import {createGoalRequestSessions} from '../../lib/goals/requestSessions';
- import {goalStatusText,refreshAtBoundary,goalDateText,deadlineTone,deadlineColor} from '../../lib/goals/presentation';
+ import {goalStatusText,refreshAtBoundary,goalDateText,goalDeadlineTone,deadlineColor} from '../../lib/goals/presentation';
  import {workspaceAddress} from '../../lib/workspaceAddress';
  import GoalReading from './GoalReading.svelte';
  import {formatReading} from '../../lib/charts/presentation';
@@ -45,7 +45,7 @@
  {#if goals.error}<ErrorLine error={goals.error}/>{/if}
  {#if goals.data?.outcome_summary}<GoalHitRate summary={goals.data.outcome_summary}/>{/if}
  {#if all}
- <div class="table-scroll"><table><thead><tr>{#each columns as [key,label]}<th scope="col" class:numeric={key==='current'||key==='target'}><GoalFilter column={key} {label} {filters} projects={projects.data?.projects??[]} onApply={next=>filters=next}/></th>{/each}</tr></thead><tbody>{#each filtered as goal(goal.id)}<tr><td><a href={workspaceAddress({kind:'goal',id:goal.id})}>{goal.title}</a><div class="title-outcome"><GoalOutcome {goal}/></div></td><td class="numeric"><GoalReading {goal} reading/></td><td class="numeric target-cell">{targetText(goal)}</td><td>{projectName(goal.project_id)||'—'}</td><td data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{goalDateText(goal.deadline)??'—'}</td><td class="state-cell">{goal.active?'Active':'Inactive'}</td></tr>{:else}{#if goals.data?.goals.length}<tr><td colspan="6"><div class="empty">No matching goals<button onclick={()=>filters=emptyFilters()}>Clear filters</button></div></td></tr>{/if}{/each}</tbody></table></div>
+ <div class="table-scroll"><table><thead><tr>{#each columns as [key,label]}<th scope="col" class:numeric={key==='current'||key==='target'}><GoalFilter column={key} {label} {filters} projects={projects.data?.projects??[]} onApply={next=>filters=next}/></th>{/each}</tr></thead><tbody>{#each filtered as goal(goal.id)}<tr><td><a href={workspaceAddress({kind:'goal',id:goal.id})}>{goal.title}</a><div class="title-outcome"><GoalOutcome {goal}/></div></td><td class="numeric"><GoalReading {goal} reading/></td><td class="numeric target-cell">{targetText(goal)}</td><td>{projectName(goal.project_id)||'—'}</td><td data-deadline-tone={goalDeadlineTone(goal)} style:color={deadlineColor(goalDeadlineTone(goal))}>{goalDateText(goal.deadline)??'—'}</td><td class="state-cell">{goal.active?'Active':'Inactive'}</td></tr>{:else}{#if goals.data?.goals.length}<tr><td colspan="6"><div class="empty">No matching goals<button onclick={()=>filters=emptyFilters()}>Clear filters</button></div></td></tr>{/if}{/each}</tbody></table></div>
  <span class="sr-only" role="status">{filtered.length} goals match the filters</span>
  {:else}<div class="goals-grid">{#each goals.data?.goals.filter(g=>g.active)??[] as goal(goal.id)}<GoalCard {goal} {sessions} projectName={projectName(goal.project_id)}/>{/each}</div>{/if}
 </section>

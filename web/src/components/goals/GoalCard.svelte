@@ -1,6 +1,6 @@
 <script lang="ts">
  import {setContext,untrack} from 'svelte';
- import {refreshAtBoundary,goalDateText,deadlineTone,deadlineColor} from '../../lib/goals/presentation';
+ import {refreshAtBoundary,goalDateText,goalDeadlineTone,deadlineColor} from '../../lib/goals/presentation';
  import {createQuery} from '@tanstack/svelte-query';
  import type {GoalResponse} from '../../lib/goals/contracts';
  import {goalQueries} from '../../lib/goals/queries';
@@ -25,7 +25,7 @@
  },{updateBlock:editor.updateBlock}));
 </script>
 <article class="goal-card" data-goal-card={goal.id}>
- <header class="card-head"><div class="goal-meta"><span>{projectName}</span>{#if projectName&&goal.deadline}<span aria-hidden="true">·</span>{/if}<span data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{goal.deadline?`By ${goalDateText(goal.deadline)}`:'No deadline'}</span></div>
+ <header class="card-head"><div class="goal-meta"><span>{projectName}</span>{#if projectName&&goal.deadline}<span aria-hidden="true">·</span>{/if}<span data-deadline-tone={goalDeadlineTone(goal)} style:color={deadlineColor(goalDeadlineTone(goal))}>{goal.deadline?`By ${goalDateText(goal.deadline)}`:'No deadline'}</span></div>
   <h2><a href={workspaceAddress({kind:'goal',id:goal.id})}>{goal.title}</a></h2>
   <GoalOutcome {goal}/>
  </header>
