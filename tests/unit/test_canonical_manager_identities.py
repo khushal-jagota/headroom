@@ -5,6 +5,7 @@ import sqlite3
 from types import SimpleNamespace
 
 import pytest
+from alembic import op
 
 from planner.core.migrations.versions.canonical_manager_identities import migrate
 from planner.runtime.logic.conversation_start_resolution import MANAGER_ROLE_TEXT
@@ -61,11 +62,11 @@ def test_manager_identity_migration_preserves_links_and_authored_bytes(
     conn.execute("CREATE TABLE navigation_commit_witnesses(id TEXT)")
     conn.execute("CREATE TABLE navigation_proof_identity(id TEXT)")
     monkeypatch.setattr(
-        remove_navigation_proof.op,
+        op,
         "get_bind",
         lambda: SimpleNamespace(connection=SimpleNamespace(driver_connection=conn)),
     )
-    monkeypatch.setattr(remove_navigation_proof.op, "execute", conn.execute)
+    monkeypatch.setattr(op, "execute", conn.execute)
     remove_navigation_proof.upgrade()
     migrate(conn)
     assert (
