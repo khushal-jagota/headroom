@@ -55,6 +55,13 @@ enum GoalChartPresentation {
         let ranges = projection["ranges"].array
         return ranges.first { $0.id == range } ?? ranges.first { $0.id == "all" } ?? .null
     }
+    static func hasCountAxis(_ block: GoalJSON, projection: GoalJSON, range: String) -> Bool {
+        let binding = block["binding"]
+        guard binding.kind == "dataset", let field = binding["metric"]["field"].string, projection.kind == "category" else { return false }
+        let selected = categoryRange(projection, range)
+        let results = projection["dataset_results"].array.filter { $0["dataset_id"] == binding["dataset_id"] && $0["date"].text >= selected["first_date"].text && $0["date"].text <= selected["last_date"].text }
+        return !results.isEmpty && results.allSatisfy { $0["output"]["fields"].array.first { $0["name"].text == field }?["kind"].text == "count" }
+    }
     static func validNumber(_ value: GoalJSON) -> Double? { value["status"].text == "value" ? value["value"].number : nil }
     static func selectedSeries(_ block: GoalJSON, range: String, projection: GoalJSON = .null) -> [GoalJSON] {
         if !block["binding"].isNull {

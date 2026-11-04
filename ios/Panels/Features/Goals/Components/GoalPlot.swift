@@ -38,6 +38,7 @@ struct GoalPlot: View {
     let series: [GoalJSON]
     let range: String
     @Binding var active: String?
+    var integerTicks = false
     var manual = false
     var select: ((String) -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -57,16 +58,19 @@ struct GoalPlot: View {
         let scale = GoalLineGeometry.scale(low: values.min() ?? 0, high: values.max() ?? 1)
         return (scale.0, scale.1)
     }
-    private var ticks: [Double] {
+    private var ticks: [Double] { allTicks.filter { !integerTicks || abs($0.rounded() - $0) < 1e-8 } }
+    private var allTicks: [Double] {
         let explicit = GoalChartPresentation.domain(block, range: range)
         if explicit.count == 2, explicit[1] > explicit[0] { return (0...4).map { explicit[0] + (explicit[1] - explicit[0]) * Double($0) / 4 } }
         return GoalLineGeometry.scale(low: bounds.0, high: bounds.1).2
     }
     private func color(_ key: String, index: Int, datum: GoalChartDatum? = nil) -> Color {
         if key == "target" { return PanelsTheme.Goal.reference }
-        if keys.filter({ $0 != "target" }).count > 1 || block.kind == "allocation" || block["stacked"].bool == true { return PanelsTheme.Goal.seriesColor(series.indices.contains(index) ? series[index]["color"].string : nil, index: index, composed: true) }
+        if block["stacked"].bool == true || index > 0 || !block["binding"].isNull && block.kind != "bar" {
+            return PanelsTheme.Goal.seriesColor(series.indices.contains(index) ? series[index]["color"].string : nil, index: index, composed: block.kind == "bar")
+        }
         if !block["expectation"].isNull || !block["binding"].isNull {
-            return datum?.comparison.map { $0 ? PanelsTheme.success : PanelsTheme.Goal.tone(block["below_target_tone"].string ?? "bad") } ?? PanelsTheme.accent
+            return datum?.comparison.map { $0 ? PanelsTheme.success : PanelsTheme.Goal.tone(block["below_target_tone"].string ?? "bad") } ?? PanelsTheme.muted
         }
         let headline = GoalChartPresentation.headline(block, data: data, active: datum?.id, range: range)
         return headline.target == nil ? PanelsTheme.accent : PanelsTheme.Goal.tone(GoalChartPresentation.tone(block, headline: headline))
@@ -125,17 +129,20 @@ struct GoalPlot: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .padding(.leading, 32).padding(.bottom, 22)
+                .padding(.trailing, 32).padding(.bottom, 22)
                 .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: block.kind == "bar" ? 12 : 0).onChanged { value in
+                .simultaneousGesture(DragGesture(minimumDistance: block.kind == "bar" ? 12 : 0).onChanged { value in
                     guard block.kind != "bar", !data.isEmpty else { return }
-                    let fraction = max(0, min(1, (value.location.x - 32) / max(1, geometry.size.width - 32)))
+                    if abs(value.translation.height) > 12 && abs(value.translation.height) > abs(value.translation.width) { active = nil; return }
+                    let fraction = max(0, min(1, value.location.x / max(1, geometry.size.width - 32)))
                     active = data.enumerated().min { abs(($0.element.position ?? Double($0.offset) / Double(max(1, data.count - 1))) - fraction) < abs(($1.element.position ?? Double($1.offset) / Double(max(1, data.count - 1))) - fraction) }?.element.id
-                }.onEnded { _ in
+                }.onEnded { value in
+                    guard block.kind != "bar" else { return }
+                    defer { active = nil }
+                    guard abs(value.translation.height) <= 12 || abs(value.translation.width) >= abs(value.translation.height) else { return }
                     if let active, let select { select(active) }
-                    if block.kind != "bar" { active = nil }
                 })
-                .overlay(alignment: .bottom) { axisLabels.padding(.leading, 32) }
+                .overlay(alignment: .bottom) { axisLabels.padding(.trailing, 32) }
             }.frame(height: CGFloat(block["plot_height"].number ?? Double(PanelsTheme.Goal.plotHeight)))
                 .accessibilityElement(children: .contain).accessibilityLabel(block["title"].string ?? "Reading chart")
                 .accessibilityIdentifier("goal-plot-\(block.id)")
@@ -161,8 +168,8 @@ struct GoalPlot: View {
                 Group {
                     Rectangle().fill(PanelsTheme.Goal.grid).frame(height: 1).offset(y: geometry.size.height * fraction)
                     Text(GoalChartPresentation.axisTick(block, tick))
-                        .font(.system(size: 9)).foregroundStyle(PanelsTheme.faint).frame(width: 30, alignment: .trailing)
-                        .offset(x: -34, y: geometry.size.height * fraction - 6)
+                        .font(.system(size: 9)).foregroundStyle(PanelsTheme.faint).frame(width: 30, alignment: .leading)
+                        .offset(x: geometry.size.width + 6, y: geometry.size.height * fraction - 6)
                 }.transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: reduceMotion ? 0 : 0.24)), removal: .opacity.animation(.easeOut(duration: reduceMotion ? 0 : 0.12))))
             }
         }.animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: bounds.1)

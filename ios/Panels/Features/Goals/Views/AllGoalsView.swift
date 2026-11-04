@@ -44,7 +44,7 @@ struct AllGoalsView: View {
                 if loaded, goals.isEmpty { Text("No goals").foregroundStyle(PanelsTheme.Goal.faint) }
                 if loaded, !goals.isEmpty, !goals.contains(where: { let values = readings($0); return filters.matches($0, current: values.0, target: values.1) }) { Text("No goals match these filters").foregroundStyle(PanelsTheme.Goal.faint) }
             }.padding(24)
-        }.panelsScreen().panelsNavigationTitle("All goals").navigationBarTitleDisplayMode(.inline)
+        }.panelsScreen().panelsNavigationTitle("All goals").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
             .screenLoadState("goals", hasContent: loaded, error: error) { await load() }
             .panelsRefreshable { await load() }
             .task(id: "\(store.baseURL):\(store.revision):\(scenePhase == .active)") { if scenePhase == .active { await load() } }

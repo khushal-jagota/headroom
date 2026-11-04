@@ -51,6 +51,9 @@ import XCTest
         XCTAssertEqual(changed.first?["title"].text, "Steps")
         XCTAssertEqual(changed.first?["views"].array.first?["label"].text, "Plan")
         XCTAssertEqual(GoalPresentation.checklists(changed).first?["title"].text, "Changed")
+        let order = try json(#"{"items":[{"id":"a","state":"open"},{"id":"b","state":"done"},{"id":"c","state":"blocked"}]}"#)
+        XCTAssertEqual(GoalPresentation.nextChecklistItem(order, after: "b"), "c")
+        XCTAssertEqual(GoalPresentation.nextChecklistItem(order, after: "c"), "a")
         let roundTrip = try APIClient.decoder().decode(GoalRecord.self, from: JSONEncoder().encode(original))
         XCTAssertEqual(roundTrip.page, original.page)
     }
@@ -93,6 +96,8 @@ import XCTest
         XCTAssertEqual(GoalChartPresentation.suffix(try json(#"{"unit":"words","format":{"suffix":"x"}}"#)), "x")
         let manual = GoalChartPresentation.manualDisplayBlock(chart, value: 2.125)
         XCTAssertEqual(GoalChartPresentation.format(manual, 2.125), "2.125")
+        XCTAssertEqual(GoalChartPresentation.format(GoalChartPresentation.manualDisplayBlock(chart, value: 400), 400), "400")
+        XCTAssertEqual(GoalChartPresentation.manualLiteral(chart, value: 1e-25), "1e-25")
     }
     func testFiltersCombineReadingAvailabilityCompletionAndUndatedGoals() throws {
         var record = try goal(); var filter = GoalFilters()
@@ -135,6 +140,10 @@ import XCTest
         GoalProtocol.state.reset(try goal())
         let editor = GoalManualEditor(measureID: "m", cumulative: true, api: client())
         await editor.refresh()
+        editor.beginEditing(); editor.draft = "invalid"
+        let prepared = await editor.prepare()
+        XCTAssertFalse(prepared)
+        XCTAssertTrue(GoalProtocol.state.manualWrites().isEmpty)
         editor.beginEditing()
         let changed = GoalProtocolState.manualState.replacingOccurrences(of: "\"write_revision\":1", with: "\"write_revision\":2")
         editor.accept(try APIClient.decoder().decode(GoalManualState.self, from: Data(changed.utf8)))

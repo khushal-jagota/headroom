@@ -172,7 +172,7 @@ struct GoalRing: View {
         return max(0, min(1, (entries[index].1 ?? 0) / total))
     }
     var body: some View {
-        VStack(spacing: 12) {
+        HStack(spacing: 16) {
             ZStack {
                 Circle().stroke(PanelsTheme.Goal.meter, lineWidth: PanelsTheme.Goal.ringWidth)
                 ForEach(entries.indices, id: \.self) { index in
@@ -183,15 +183,15 @@ struct GoalRing: View {
                         .animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: fraction(index))
                 }
                 VStack(spacing: 5) {
-                    GoalCounter(block: displayBlock, value: display, size: 32)
+                    GoalCounter(block: displayBlock, value: display, size: 32).minimumScaleFactor(0.6).lineLimit(1)
                     Text(active.flatMap { entries.indices.contains($0) ? entries[$0].0 : nil } ?? (block.kind == "time-budget" ? "Spent" : block["total_label"].string ?? "Total"))
                         .font(.footnote).foregroundStyle(PanelsTheme.Goal.faint)
                 }
-            }.padding(20).frame(width: PanelsTheme.Goal.ringSize, height: PanelsTheme.Goal.ringSize)
+            }.padding(14).frame(width: 144, height: 144)
                 .contentShape(Circle())
                 .onTapGesture { point in
-                    let dx = point.x - 100, dy = point.y - 100
-                    guard hypot(dx, dy) > 60 else { active = nil; return }
+                    let dx = point.x - 72, dy = point.y - 72
+                    guard hypot(dx, dy) > 44 else { active = nil; return }
                     let angle = (atan2(dy, dx) / (2 * .pi) + 1.25).truncatingRemainder(dividingBy: 1)
                     var sum = 0.0
                     for index in entries.indices { sum += fraction(index); if angle <= sum { inspect(index); return } }
@@ -208,7 +208,7 @@ struct GoalRing: View {
                             .opacity(active == nil || active == index ? 1 : 0.5)
                     }.buttonStyle(.plain).accessibilityAddTraits(active == index ? .isSelected : [])
                 }
-            }
+            }.frame(maxWidth: .infinity)
         }.animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: active)
     }
     private func legendValue(_ index: Int) -> String {

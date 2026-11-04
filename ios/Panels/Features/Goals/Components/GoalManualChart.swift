@@ -3,10 +3,15 @@ import SwiftUI
 private struct GoalManualCounter: View {
     let block: GoalJSON
     let value: Double?
+    var size: CGFloat = 32
+    private var displayBlock: GoalJSON {
+        guard block["manual"]["model"].text != "individual_readings" else { return block }
+        return block.setting("unit", .string("")).setting("format", (block["format"].isNull ? .object([:]) : block["format"]).setting("suffix", .string("")))
+    }
     var body: some View {
-        if let literal = GoalChartPresentation.manualLiteral(block, value: value) {
-            Text(literal).font(.system(size: 32, weight: .medium)).monospacedDigit()
-        } else { GoalCounter(block: GoalChartPresentation.manualDisplayBlock(block, value: value), value: value, size: 32) }
+        if let literal = GoalChartPresentation.manualLiteral(displayBlock, value: value) {
+            Text(literal).font(.system(size: size, weight: .medium)).monospacedDigit()
+        } else { GoalCounter(block: GoalChartPresentation.manualDisplayBlock(displayBlock, value: value), value: value, size: size) }
     }
 }
 
@@ -90,7 +95,7 @@ struct GoalManualChart: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { title; Spacer(); Image(systemName: "chevron.down").rotationEffect(.degrees(preference.expanded ? 180 : 0)) }
-                        GoalManualCounter(block: block, value: current)
+                        GoalManualCounter(block: block, value: current, size: 28)
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityValue(preference.expanded ? "Expanded" : "Collapsed")
             } else { title }
@@ -126,15 +131,15 @@ struct GoalManualChart: View {
         }.modifier(GoalChartContainer(framed: !integrated || supporting))
             .task(id: session.readings?.revision) { await editor.refresh() }
     }
-    private var title: some View { Text(block["title"].string ?? "Reading").panelsScaledFont(size: 17, weight: .medium).foregroundStyle(PanelsTheme.strong) }
+    private var title: some View { Text(block["title"].string ?? "Reading").panelsScaledFont(size: supporting ? 14 : 17, weight: .medium).foregroundStyle(supporting ? PanelsTheme.Goal.faint : PanelsTheme.strong) }
     @ViewBuilder private var increments: some View {
         if !preview {
             HStack(spacing: 8) {
                 ForEach(Array(block["manual"]["increments"].array.enumerated()), id: \.offset) { _, entry in
                     if let delta = entry.number {
                         Button((delta > 0 ? "+" : "") + GoalChartPresentation.number(delta, decimals: 6, trim: true)) {
-                            Task { await editor.write(delta: delta); await session.refresh() }
-                        }.buttonStyle(.bordered).font(.footnote).disabled(editor.state == nil || editor.busy || editor.pending != nil || editor.draft != nil)
+                            Task { guard await editor.prepare() else { return }; await editor.write(delta: delta); await session.refresh() }
+                        }.buttonStyle(.bordered).font(.footnote).disabled(editor.state == nil || editor.busy || editor.pending != nil)
                     }
                 }
             }

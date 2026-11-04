@@ -51,6 +51,21 @@ final class GoalFlowTests: XCTestCase {
         let manualWrites = try await writes()
         let bodies = manualWrites.compactMap { $0["body"] as? [String: Any] }
         XCTAssertEqual(bodies.filter { ($0["delta"] as? Int) == 100 }.count, 2)
+        let valueButton = element("goal-manual-value-words").buttons.firstMatch
+        valueButton.tap()
+        let input = app.textFields["Words written"]
+        XCTAssertTrue(input.waitForExistence(timeout: 3))
+        input.tap()
+        input.press(forDuration: 1)
+        if app.menuItems["Select All"].exists { app.menuItems["Select All"].tap() }
+        else { input.tap(withNumberOfTaps: 3, numberOfTouches: 1) }
+        input.typeText("750.25")
+        app.buttons["Save"].tap()
+        try await Task.sleep(for: .seconds(0.5))
+        let replacement = try await writes()
+        XCTAssertTrue(replacement.compactMap { $0["body"] as? [String: Any] }.contains { ($0["value"] as? Double) == 750.25 })
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        app.scrollViews.firstMatch.swipeDown()
         capture("goals-manual-daily")
         capture("goal-before-back")
         XCTAssertTrue(app.buttons["detail-back"].isHittable)
@@ -61,7 +76,12 @@ final class GoalFlowTests: XCTestCase {
         app.buttons["workspace-goal-release"].tap()
         XCTAssertTrue(app.buttons["goal-check-first"].waitForExistence(timeout: 10))
         capture("goals-checklist-open")
-        app.buttons["goal-check-first"].tap()
+        let firstCircle = app.buttons["goal-check-first"]
+        XCTAssertGreaterThanOrEqual(firstCircle.frame.width, 36)
+        XCTAssertGreaterThanOrEqual(firstCircle.frame.height, 44)
+        XCTAssertTrue(firstCircle.isHittable)
+        firstCircle.tap()
+        capture("goals-checklist-after-tick")
         XCTAssertTrue(app.staticTexts["Explain the change."].waitForExistence(timeout: 8))
         capture("goals-checklist-next-item")
         let checklistWrites = try await writes()
@@ -73,12 +93,27 @@ final class GoalFlowTests: XCTestCase {
         app.buttons["workspace-goal-kit"].tap()
         XCTAssertTrue(element("goal-chart-trend").waitForExistence(timeout: 10))
         capture("goals-primary-completion-and-kit")
-        // The page includes the exact web sample blocks; open and remember one smallest chart.
-        for _ in 0..<12 {
-            if app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Conversion rate")).firstMatch.isHittable { break }
-            app.swipeUp()
+        // A supporting chart opens in place and retains its range and open state.
+        let support = element("goal-chart-activation").buttons.firstMatch
+        for _ in 0..<18 {
+            if support.exists && support.isHittable { break }
+            app.scrollViews.firstMatch.swipeUp()
         }
+        XCTAssertTrue(support.isHittable)
+        XCTAssertEqual(support.value as? String, "Collapsed")
+        support.tap()
+        XCTAssertEqual(support.value as? String, "Expanded")
+        let week = element("goal-chart-activation").buttons["Week"]
+        XCTAssertTrue(week.waitForExistence(timeout: 3)); week.tap()
+        support.tap()
+        XCTAssertEqual(support.value as? String, "Collapsed")
+        support.tap()
+        XCTAssertTrue(week.isSelected)
         capture("goals-chart-catalogue")
+        for _ in 0..<18 {
+            if app.buttons["detail-back"].isHittable { break }
+            app.scrollViews.firstMatch.swipeDown()
+        }
         app.buttons["detail-back"].tap()
         app.buttons["Chief of Staff"].tap()
         XCTAssertTrue(app.buttons["All goals"].waitForExistence(timeout: 10))

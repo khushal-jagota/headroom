@@ -32,6 +32,12 @@ enum GoalPresentation {
             return checklists(block["blocks"].array) + block["views"].array.flatMap { checklists($0["blocks"].array) }
         }
     }
+    static func nextChecklistItem(_ block: GoalJSON, after id: String) -> String? {
+        let items = block["items"].array
+        guard !items.isEmpty else { return nil }
+        let current = items.firstIndex { $0.id == id } ?? -1
+        return (1...items.count).map { items[(current + $0) % items.count] }.first { $0["state"].text != "done" }?.id
+    }
     static func primaryChecklist(_ goal: GoalRecord) -> GoalJSON? {
         guard goal.kind == "binary", let id = goal.primaryChecklistBlockId else { return nil }
         return checklists(goal.page["blocks"].array).first { $0.id == id }

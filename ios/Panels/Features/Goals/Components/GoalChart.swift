@@ -49,7 +49,7 @@ struct GoalChart: View {
                             Image(systemName: "chevron.down").font(.system(size: 12)).rotationEffect(.degrees(preference.expanded ? 180 : 0))
                                 .animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: preference.expanded)
                         }
-                        GoalCounter(block: block, value: headline.value, size: PanelsTheme.Goal.compactReading)
+                        GoalCounter(block: block, value: headline.value, size: 28)
                         comparison
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityValue(preference.expanded ? "Expanded" : "Collapsed")
@@ -58,7 +58,10 @@ struct GoalChart: View {
                 if !["gauge", "time-budget", "allocation"].contains(block.kind) {
                     VStack(alignment: .leading, spacing: 8) {
                         if block.kind == "progress" { Text("Completed").font(.caption).foregroundStyle(PanelsTheme.Goal.faint) }
-                        GoalCounter(block: block, value: headline.value, size: PanelsTheme.Goal.compactReading)
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            GoalCounter(block: block, value: headline.value, size: PanelsTheme.Goal.compactReading)
+                            if block.kind == "progress", let target = headline.target, target > 0 { Text("of " + GoalChartPresentation.format(block, target)).font(.body).foregroundStyle(PanelsTheme.Goal.faint) }
+                        }
                         comparison
                     }
                 }
@@ -95,12 +98,12 @@ struct GoalChart: View {
             }
         }
     }
-    private var title: some View { Text(block["title"].string ?? "Reading").panelsScaledFont(size: 17, weight: .medium).foregroundStyle(PanelsTheme.strong) }
+    private var title: some View { Text(block["title"].string ?? "Reading").panelsScaledFont(size: supporting ? 14 : 17, weight: .medium).foregroundStyle(supporting ? PanelsTheme.Goal.faint : PanelsTheme.strong) }
     private var comparison: some View {
         let split = block.kind == "allocation" ? GoalChartPresentation.allocationSummary(block, data: data, projection: projection, range: preference.range) : nil
-        let text = split ?? (headline.value == nil ? (supporting ? "Current reading unavailable" : data.contains { !$0.values.filter { $0.key != "target" }.isEmpty } ? "No reading for \(headline.label ?? "this range")" : "No readings yet") : !block["expectation"].isNull && headline.target == nil ? "Expected reading unavailable" : GoalChartPresentation.comparison(block, headline: headline))
+        let text = block["stacked"].bool == true ? "\(GoalChartPresentation.selectedSeries(block, range: preference.range, projection: projection).count) " + (block["total_label"].string ?? "categories") : split ?? (headline.value == nil ? (supporting ? "Current reading unavailable" : data.contains { !$0.values.filter { $0.key != "target" }.isEmpty } ? "No reading for \(headline.label ?? "this range")" : "No readings yet") : !block["expectation"].isNull && headline.target == nil ? "Expected reading unavailable" : GoalChartPresentation.comparison(block, headline: headline))
         return Text(text + (block["aggregate"].text == "sum" && headline.label == nil && headline.value != nil && headline.missingCount > 0 ? " · \(headline.missingCount) missing readings" : ""))
-            .font(.footnote).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
+            .font(supporting ? .caption : .footnote).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
     }
     @ViewBuilder private var plot: some View {
         switch block.kind {
@@ -110,7 +113,7 @@ struct GoalChart: View {
         case "progress": GoalProgressMeter(block: block, headline: headline)
         case "time-budget", "allocation": GoalRing(block: block, data: data, series: GoalChartPresentation.selectedSeries(block, range: preference.range, projection: projection), headline: headline, projection: projection, range: preference.range)
         case "number": EmptyView()
-        default: GoalPlot(block: block, data: data, series: GoalChartPresentation.selectedSeries(block, range: preference.range, projection: projection), range: preference.range, active: $active)
+        default: GoalPlot(block: block, data: data, series: GoalChartPresentation.selectedSeries(block, range: preference.range, projection: projection), range: preference.range, active: $active, integerTicks: GoalChartPresentation.hasCountAxis(block, projection: projection, range: preference.range))
         }
     }
     private func toggle() {
