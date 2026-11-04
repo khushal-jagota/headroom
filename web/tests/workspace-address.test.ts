@@ -23,7 +23,7 @@ describe("a position inside a utility the pane is showing", () => {
   it.each([
     ["#/workspace/utility/usage/tokens", "usage", ["tokens"]],
     ["#/workspace/utility/usage/config/workers/coding", "usage", ["config", "workers", "coding"]],
-    ["#/workspace/utility/settings/scheduled-tasks", "settings", ["scheduled-tasks"]],
+    ["#/workspace/utility/settings/notifications", "settings", ["notifications"]],
     ["#/workspace/utility/settings/config/chief-of-staff", "settings", ["config", "chief-of-staff"]]
   ] as const)("round trips %s, so a reload or a paste lands where the click did", (href, utility, path) => {
     const address = parseWorkspaceAddress(href);

@@ -46,7 +46,8 @@ def test_startup_keeps_broken_ticket_visible_and_healthy_ticket_usable(tmp_path:
 
 
 def test_empty_database_starts_with_a_seeded_registry(tmp_path: Path) -> None:
-    from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+    from tests.support.in_memory_conversation_system import InMemoryConversationSystem
+
     from planner.core.clock import build_clock
     from planner.core.config import load_config
     from planner.core.server import create_app

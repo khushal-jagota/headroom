@@ -11,7 +11,7 @@ from pathlib import Path
 import click
 
 from planner.core.config import Config, load_config
-from planner.environments.app import build_exported_app, validate_app_manifest
+from planner.environments.app import build_exported_app, validate_app_manifest, validate_app_sha
 from planner.environments.backup import create_database_backup, restore_database_snapshot
 from planner.environments.contracts import (
     DynamicEnvironmentPort,
@@ -192,9 +192,14 @@ def app_identity(app: Path) -> None:
     required=True,
 )
 def backup_current(source_db: Path, backup_dir: Path, current_app: Path) -> None:
-    """Validate the current app and back up the database and file tree with its identity."""
+    """Back up the database and files even when the installed app files changed."""
     try:
-        revision = validate_app_manifest(current_app / "manifest.json").app_sha
+        manifest_path = current_app / "manifest.json"
+        revision = validate_app_sha(json.loads(manifest_path.read_text())["app_sha"])
+        try:
+            validate_app_manifest(manifest_path)
+        except (OSError, ValueError) as exc:
+            click.echo(f"Warning: {exc}. Backup will continue.", err=True)
         snapshot = create_database_backup(source_db, backup_dir, revision)
     except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc

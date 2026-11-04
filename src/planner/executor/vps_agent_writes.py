@@ -21,6 +21,7 @@ from planner.conversation.events import (
 )
 from planner.conversation.storage import ConversationStore
 from planner.core.authctx import RequestContext
+from planner.core.authority.intake import admit_command
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.core.db import connect
@@ -60,6 +61,21 @@ def write_ticket_mutation(
     body = args.get("body")
     if not isinstance(body, dict):
         raise PlannerError(ErrorCode.validation, "ticket mutation needs a body", {})
+    ticket_id = args.get("ticket_id")
+    params = {"ticket_id": ticket_id}
+    route, method = "/api/tickets/{ticket_id}", "PATCH"
+    if write.operation == "ticket.create":
+        route, method, params = "/api/tickets", "POST", {}
+    elif write.operation == "ticket.propose":
+        route, method = route + "/propose", "POST"
+    elif write.operation in ("ticket.block", "ticket.unblock"):
+        route = "/api/collections/{collection}/{container_id}/{member_id}"
+        method = "PUT" if write.operation == "ticket.block" else "DELETE"
+        params = {
+            "collection": "blockers", "container_id": ticket_id,
+            "member_id": args.get("blocker_id"),
+        }
+    admit_command(connection, principal, method, route, params, body)
     if write.operation in ("ticket.block", "ticket.unblock"):
         from planner.membership.collections import ENTRIES, MembershipWrite
         from planner.membership.contracts import Collection
@@ -75,7 +91,6 @@ def write_ticket_mutation(
             container_id=ticket_id,
             member_id=blocker_id,
             now=clock.now_unix(),
-            admit=partial(entry.rule, connection, RequestContext(principal), ticket_id, blocker_id),
         )
         (entry.add if write.operation == "ticket.block" else entry.remove)(membership)
         return {
@@ -253,7 +268,12 @@ class AgentWrites:
             else:
                 default = self._help_recipient(conn, write, principal)
                 recipient = api._principal(body["recipient"]) if body.get("recipient") else default
-            service.require_reach(conn, principal, recipient)
+            admit_command(
+                conn, principal, "POST",
+                ("/api/messages/send" if write.operation == "message.send"
+                 else "/api/tickets/{ticket_id}/request-help"),
+                {"ticket_id": write.arguments.get("ticket_id")}, body,
+            )
             self.store.install_files(envelope.file_dependencies)
             result: JsonObject = {
                 "target": {"kind": recipient.kind.value, "id": recipient.id},

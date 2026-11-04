@@ -184,7 +184,7 @@ def test_skill_apply_sends_exact_reviewed_manifest(
 ) -> None:
     manifest = {
         "skills": [
-            {"name": "custom-skill", "source_text": "exact\nbytes\n", "expected_sha256": None}
+            {"name": "custom-skill", "source_text": "exact\nbytes\n"}
         ]
     }
     result = CliRunner().invoke(main, ["skill", "apply", "--json"], input=json.dumps(manifest))

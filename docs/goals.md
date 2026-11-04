@@ -42,7 +42,7 @@ A missing value stays missing. Headroom does not show an older reading as curren
 
 ## Who edits a goal
 
-Khushal, Chief, and the goal's agent all edit through one writer. Each edit names the revision it started from. If someone else saved first, the edit fails and the draft stays for a retry. A stale edit never overwrites newer work. The goal agent changes its own page, completion, and active state without an approval step. Goals have no Ticket stages.
+Khushal, Chief, and the goal's agent all edit through one writer. Each edit applies to the current saved record. A failed edit retains its draft for an explicit retry. The goal agent changes its own page, completion, and active state without an approval step. Goals have no Ticket stages.
 
 Khushal edits most text on the page in place. Checklist wording belongs to the agent. Checklist items can carry their own deadlines, which Khushal sets from the page. Item deadlines are colored, but they do not change the goal's own deadline or result.
 
@@ -58,7 +58,7 @@ Khushal edits most text on the page in place. Checklist wording belongs to the a
 - A chart and a finish line are different things. A chart shows progress. Only the completion rule decides whether the goal is done.
 - Checklist state is page content, not a measurement.
 - Deadline status follows the server's calendar, not the browser's timezone.
-- One revision-checked writer for every editor, so concurrent edits fail visibly instead of overwriting each other.
+- One writer for every editor, with each edit applied to the current saved record.
 
 ## Code
 

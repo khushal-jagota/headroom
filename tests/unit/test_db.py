@@ -1444,7 +1444,7 @@ def test_feedback_removal_upgrade_keeps_ticket_revision_feedback(
     conn.execute("CREATE INDEX idx_feedback_notes_state_created ON feedback_notes(text)")
     conn.execute("CREATE INDEX idx_feedback_notes_ticket_id ON feedback_notes(id)")
     conn.execute("INSERT INTO feedback_notes VALUES ('old-note', 'Unused note')")
-    conn.execute("UPDATE alembic_version SET version_num='goal_outcomes'")
+    conn.execute("UPDATE alembic_version SET version_num='remove_ticket_approvers'")
     conn.execute(
         "INSERT INTO tickets (id,title,worker_type,employee_backend,ceiling,field_values,"
         "worker_step_claim,stage,created_at,updated_at) "
@@ -1465,3 +1465,39 @@ def test_feedback_removal_upgrade_keeps_ticket_revision_feedback(
     assert list(conn.execute("SELECT * FROM tickets")) == before
     assert list(conn.execute("SELECT * FROM ticket_revision_feedback")) == reviews
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_skill_binding_removal_preserves_skill_history_and_conversation_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    _migration_tree_through(tmp_path, monkeypatch, "goal_outcomes")
+    conn = connect(str(tmp_path / "skill-bindings.db"))
+    create_schema(conn)
+    conn.execute(
+        "INSERT INTO managed_skill_versions VALUES('version','panels',?,?)",
+        ("0" * 64, b"Exact saved skill bytes"),
+    )
+    conn.execute(
+        "INSERT INTO worker_step_skill_bindings VALUES('message','orientation','version','final')"
+    )
+    conn.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) "
+        "VALUES('kept','codex','/tmp/workspace','workspace_write',1)"
+    )
+    conn.execute("INSERT INTO conversation_events VALUES('kept',2,'agent_message','{}',1)")
+    conn.execute("INSERT INTO conversation_expired_ranges VALUES('kept',1,1,1,1,1)")
+    conn.commit()
+    retained = (
+        "managed_skill_versions",
+        "conversations",
+        "conversation_events",
+        "conversation_expired_ranges",
+    )
+    before = {table: list(conn.execute(f'SELECT * FROM "{table}"')) for table in retained}
+    monkeypatch.setattr(db_module, "MIGRATIONS_DIRECTORY", shipped)
+    create_schema(conn)
+    assert "worker_step_skill_bindings" not in _schema_objects(conn)
+    for table in retained:
+        assert list(conn.execute(f'SELECT * FROM "{table}"')) == before[table]
+    conn.close()

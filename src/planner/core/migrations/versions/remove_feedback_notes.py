@@ -3,7 +3,7 @@
 from alembic import op
 
 revision = "remove_feedback_notes"
-down_revision = "goal_outcomes"
+down_revision = "remove_ticket_approvers"
 branch_labels = None
 depends_on = None
 

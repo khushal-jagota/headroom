@@ -209,8 +209,8 @@ class GoalFixture:
         else:
             identity = path.split("/")[3]
             goal = self.goals[identity]
-            assert body["expected_revision"] == goal["revision"], body
-            goal.update({key: value for key, value in body.items() if key != "expected_revision"})
+            assert "expected_revision" not in body, body
+            goal.update(body)
             goal["revision"] += 1
             if goal["primary_checklist_block_id"]:
                 items = goal["page"]["blocks"][0]["items"]
@@ -439,8 +439,7 @@ def late_failure_sessions(page, fixture):
         page.wait_for_function("async () => await window.__fixturePendingWrites() === 1")
         assert len(fixture.held) == 1
         fixture.reject_held()
-        # Publish newer accepted data before reopening. Changing it after the
-        # mount read starts instead creates a legitimate stale-revision conflict.
+        # Publish newer accepted data before reopening.
         fixture.goals["checklist"]["revision"] += 1
         fixture.goals["checklist"]["page"]["blocks"][0]["items"][0]["label"] = (
             "A newer accepted draft"
@@ -2174,19 +2173,8 @@ class NativeGoalEditFixture(GoalFixture):
             )
             return
         goal = self.goals[path.split("/")[3]]
-        if body["expected_revision"] != goal["revision"]:
-            route.fulfill(
-                status=409,
-                json={
-                    "error": {
-                        "code": "conflict",
-                        "message": "Goal changed. Discard the draft before another edit.",
-                    }
-                },
-            )
-            return
         goal.update(
-            copy.deepcopy({key: value for key, value in body.items() if key != "expected_revision"})
+            copy.deepcopy(body)
         )
         goal["revision"] += 1
         self.version += 1
@@ -2306,7 +2294,7 @@ def native_goal_edits(browser, url):
                     urlsplit(response.url).path == f"/api/goals/{goal_id}"
                     and response.request.method == "PATCH"
                     and response.request.post_data_json == {
-                        field: value, "expected_revision": revision
+                        field: value
                     }
                 )
             ) as response:
@@ -2334,7 +2322,7 @@ def native_goal_edits(browser, url):
             assert len(fixture.writes) == before + 1, fixture.writes[before:]
             path, body = fixture.writes[-1]
             assert path == f"/api/goals/{goal_id}", (path, body)
-            assert body == {field: value, "expected_revision": revision}, body
+            assert body == {field: value}, body
             for key, accepted in configuration.items():
                 assert fixture.goals[goal_id][key] == accepted, (field, key)
 
@@ -2504,7 +2492,6 @@ def native_goal_edits(browser, url):
                 if not phone:
                     # Preserve a focused draft through a background accepted refresh.
                     title.fill("Local draft after refresh")
-                    original_revision = fixture.goals[identity]["revision"]
                     fixture.goals[identity]["title"] = "Remote accepted title"
                     fixture.goals[identity]["why"] = "Remote accepted purpose"
                     fixture.goals[identity]["revision"] += 1
@@ -2514,15 +2501,13 @@ def native_goal_edits(browser, url):
                     expect(title).to_have_text("Local draft after refresh")
                     count = len(fixture.writes)
                     title.press("Enter")
-                    expect(goal.locator(".error-line").first).to_contain_text("Goal changed")
-                    assert fixture.writes[-1][1] == {
-                        "title": "Local draft after refresh",
-                        "expected_revision": original_revision,
-                    }
+                    wait_writes(count + 1)
+                    expect(goal.locator(".error-line")).to_have_count(0)
+                    assert fixture.writes[-1][1] == {"title": "Local draft after refresh"}
                     assert len(fixture.writes) == count + 1
                     expect(title).to_have_text("Local draft after refresh")
                     title.press("Escape")
-                    expect(title).to_have_text("Remote accepted title")
+                    expect(title).to_have_text("Local draft after refresh")
 
                     # Failed structured drafts retain their selected value. Explicit
                     # retry uses the same payload; discard restores accepted data.
@@ -2549,18 +2534,13 @@ def native_goal_edits(browser, url):
                     expect(state).to_have_value("true")
                     assert len(fixture.writes) == count
 
-                    # The same binary metadata snapshot also rejects stale selects.
+                    # Background changes do not require a revision token for this edit.
                     state.focus()
-                    revision = fixture.goals[identity]["revision"]
                     fixture.goals[identity]["revision"] += 1
                     fixture.version += 1
-                    state.select_option("false")
-                    expect(goal.locator(".error-line").first).to_contain_text("Goal changed")
-                    assert fixture.writes[-1][1] == {"active": False, "expected_revision": revision}
+                    field_write("active", False, lambda: state.select_option("false"))
                     expect(state).to_have_value("false")
-                    assert fixture.goals[identity]["active"] is True
-                    goal.get_by_role("button", name="Discard edit", exact=True).click()
-                    expect(state).to_have_value("true")
+                    assert fixture.goals[identity]["active"] is False
 
                     # A held receipt must retain the old goal identity after routing
                     # reuses the workspace for another goal.
@@ -3181,23 +3161,24 @@ def checklist_deadline_controls(browser, url):
                 date_control(panel).get_by_role("button", name="Discard edit", exact=True).click()
                 expect(native).to_have_value("2026-11-04")
                 # An external edit invalidates the focused draft. Recovery refreshes
-                # accepted data, but only a new explicit edit can use that revision.
+                # accepted data, and the next edit keeps neighboring content.
                 native.fill("2026-11-06")
                 accepted_item("review")["detail"] = "Accepted neighboring context"
                 fixture.goals["checklist"]["revision"] += 1
                 fixture.version += 1
-                external_revision = fixture.goals["checklist"]["revision"]
                 native.press("Enter")
-                expect(date_control(panel).get_by_role("alert")).to_contain_text("Goal changed")
-                assert accepted_item()["deadline"] == "2026-11-04"
-                date_control(panel).get_by_role("button", name="Discard edit", exact=True).click()
+                wait_fixture(
+                    lambda: accepted_item().get("deadline") == "2026-11-06",
+                    "Date edit after external change",
+                )
+                expect(date_control(panel).get_by_role("alert")).to_have_count(0)
                 native.fill("2026-11-07")
                 native.press("Enter")
                 wait_fixture(
                     lambda: accepted_item().get("deadline") == "2026-11-07",
-                    "New explicit edit after conflict",
+                    "New explicit edit",
                 )
-                assert fixture.writes[-1][1]["expected_revision"] == external_revision
+                assert "expected_revision" not in fixture.writes[-1][1]
                 assert accepted_item("review")["detail"] == "Accepted neighboring context"
                 expect(date_control(panel).get_by_role("alert")).to_have_count(0)
                 if output:

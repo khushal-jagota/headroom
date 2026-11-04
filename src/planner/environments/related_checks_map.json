@@ -10,39 +10,29 @@
   ],
   "domains": [
     {
-      "name": "scheduled Tickets and default API/CLI handoff",
+      "name": "Worker readiness and default API/CLI handoff",
       "patterns": [
-        "src/planner/scheduled_tickets/*",
-        "web/src/lib/scheduledTasks.ts",
-        "web/src/*/ScheduledTasksRoute.svelte",
         "tests/unit/test_worker_step_readiness_loop.py",
         "tests/unit/test_worker_step_readiness.py",
-        "tests/unit/test_scheduled_tickets.py",
         "tests/unit/test_cli_verbs_in_process.py",
         "tests/unit/test_supported_worker_catalog.py",
-        "tests/unit/test_schedule_locale.py",
         "tests/integration/test_ticket_locale.py",
-        "web/tests/scheduled-tasks.test.ts",
-        "web/tests/configuration-schedules-browser.test.mjs",
-        "tests/unit/test_authority_matrix.py"
+        "tests/unit/test_authority_matrix.py",
+        "web/tests/configuration-browser.test.mjs"
       ],
       "tests": {
         "unit": [
           "tests/unit/test_authority_matrix.py",
           "tests/unit/test_cli_verbs_in_process.py",
-          "tests/unit/test_schedule_locale.py",
-          "tests/unit/test_scheduled_tickets.py",
           "tests/unit/test_supported_worker_catalog.py",
           "tests/unit/test_worker_step_readiness.py",
           "tests/unit/test_worker_step_readiness_loop.py",
           "tests/unit/test_ticket_locale_creation.py"
         ],
         "integration": [],
-        "vitest": [
-          "web/tests/scheduled-tasks.test.ts"
-        ],
+        "vitest": [],
         "browser": [
-          "web/tests/configuration-schedules-browser.test.mjs"
+          "web/tests/configuration-browser.test.mjs"
         ]
       }
     },

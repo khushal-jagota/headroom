@@ -9,7 +9,6 @@ from dataclasses import asdict, replace
 from datetime import date
 from typing import Any, cast, get_type_hints
 
-from planner.core import authority
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.datasets.data import read_dataset
@@ -40,7 +39,7 @@ def _accepted(
     conn: sqlite3.Connection, current: Goal, body: dict[str, Any], *,
     now: int, creating: bool = False
 ) -> Goal:
-    if set(body) - _EDITABLE - {"expected_revision"}:
+    if set(body) - _EDITABLE:
         raise ValueError("unknown goal field")
     changes = {key: value for key, value in body.items() if key in _EDITABLE and key != "completed"}
     if "completed" in body and type(body["completed"]) is not bool:
@@ -162,7 +161,6 @@ def create_goal(
     conn: sqlite3.Connection, body: dict[str, Any], *, principal: Principal, now: int
 ) -> Goal:
     with transaction(conn):
-        authority.require_above(conn, principal, authority.owner_only("goals"))
         defaults = read_chief_settings(conn).launch_defaults
         title = body.get("title", "")
         current = Goal(
@@ -208,15 +206,6 @@ def update_goal(
 ) -> Goal:
     with transaction(conn):
         current = data.read_goal(conn, goal_id)
-        authority.require_above_or_self(conn, principal, authority.goal(goal_id))
-        if (
-            type(body.get("expected_revision")) is not int
-            or body["expected_revision"] != current.revision
-        ):
-            raise PlannerError(
-                ErrorCode.stale_claim,
-                "goal changed; read the accepted document before editing again",
-            )
         try:
             accepted = replace(
                 _accepted(conn, current, body, now=now),

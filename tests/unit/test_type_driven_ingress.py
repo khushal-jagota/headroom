@@ -19,12 +19,14 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.probe import (
     install_probe_registry,
     seed_probe_worker_type,
@@ -32,10 +34,9 @@ from tests.support.probe import (
 )
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.core import authority
-from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
+from planner.core.authority import service as authority_service
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import OWNER_PRINCIPAL, PlannerError
@@ -188,7 +189,15 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(
         )
         assert assigned.status_code == 200, assigned.text
         # General authority and review authority do not permit another Ticket's proposal.
-        monkeypatch.setitem(STANDS_ABOVE_BY_WORKER_TYPE, "probe", (authority.ticket(target),))
+        original_chain_facts = authority_service.chain_facts
+        monkeypatch.setattr(
+            authority_service,
+            "chain_facts",
+            lambda conn, caller, scope_target: replace(
+                original_chain_facts(conn, caller, scope_target),
+                caller_declared_targets=(authority.ticket(target),),
+            ),
+        )
         scoped = client.post(
             f"/api/tickets/{target}/accept/brief",
             json={
@@ -337,7 +346,6 @@ def test_ticket_fingerprint_tracks_integrity_marks_and_clearance_without_admitti
     with pytest.raises(PlannerError, match="Ticket integrity failure"):
         tickets_data.set_ticket_backlog(
             tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
-            expected_record_sha256=marked_hash,
         )
     tmp_db.execute(
         "UPDATE tickets SET integrity_error_reason=? WHERE id=?", ("changed fault", ticket.id)
@@ -348,10 +356,7 @@ def test_ticket_fingerprint_tracks_integrity_marks_and_clearance_without_admitti
     tmp_db.execute("UPDATE tickets SET integrity_error_reason=NULL WHERE id=?", (ticket.id,))
     tmp_db.commit()
     assert tickets_data.ticket_record_sha256(tmp_db, ticket.id) == clean_hash
-    for stale_hash in (marked_hash, changed_hash):
-        with pytest.raises(PlannerError, match="the Ticket changed"):
-            tickets_data.set_ticket_backlog(
-                tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
-                expected_record_sha256=stale_hash,
-            )
-    assert not tickets_data.read_ticket(tmp_db, ticket.id).is_backlogged
+    updated = tickets_data.set_ticket_backlog(
+        tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
+    )
+    assert updated.is_backlogged

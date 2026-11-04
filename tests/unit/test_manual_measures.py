@@ -10,7 +10,7 @@ from threading import Barrier
 import pytest
 from fastapi.testclient import TestClient
 from tests.unit.test_measure_persistence import NOW, source, taken
-from tests.unit.test_scheduled_ticket_authority import _app
+from tests.support.api_app import _app
 
 from planner.core import db
 from planner.core.clock import TestClock as FakeClock

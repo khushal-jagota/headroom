@@ -1,4 +1,4 @@
-import type { NavigationPublication } from './collection';
+import type { NavigationPublication } from './publication';
 
 export type DurableFact = 'message_for_owner' | 'last_turn_failed';
 export type FactProvenance = {

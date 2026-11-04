@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import NamedTuple
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.core import authority
-from planner.core.authority import require_above
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
@@ -206,7 +204,6 @@ def update_manager_launch_configuration(
     explicit_choice: bool = False,
 ) -> Manager:
     """Save a Manager choice, and distinguish explicit intent from historical metadata."""
-    require_above(conn, principal, authority.manager(item_id))
     _load_manager(conn, item_id)
     with _tx(conn):
         if (
@@ -237,7 +234,6 @@ def update_manager(
     *,
     edits: dict[str, str | None],
     clock: Clock,
-    admit: Callable[[], None] | None = None,
 ) -> Manager:
     """Validate references and apply one compound Manager patch atomically."""
     invalid_fields = sorted(set(edits) - _ITEM_PLAIN_FIELDS)
@@ -250,8 +246,6 @@ def update_manager(
     stored_edits = dict(edits)
     now = clock.now_unix()
     with _tx(conn):
-        if admit is not None:
-            admit()
         _load_manager(conn, item_id)
         project_id = stored_edits.get("project_id")
         if "project_id" in stored_edits and (
@@ -271,17 +265,11 @@ def update_manager(
                 (*values, now, item_id),
             )
             if "project_id" in stored_edits:
-                item = _load_manager(conn, item_id)
                 conn.execute(
                     "UPDATE tickets SET updated_at = ? WHERE manager_id = ?",
                     (now, item_id),
                 )
-                conn.execute(
-                    "UPDATE scheduled_ticket_schedules SET project_id = ?, "
-                    "updated_at = ? "
-                    "WHERE manager_id = ?",
-                    (item.project_id, now, item_id),
-                )
+
     return _load_manager(conn, item_id)
 
 

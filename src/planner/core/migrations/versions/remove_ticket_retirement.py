@@ -19,10 +19,7 @@ def upgrade() -> None:
         names = ", ".join(f"{row[0]} ({row[1]})" for row in cancelled)
         raise RuntimeError(
             "Upgrade refused without changes: cancelled Tickets remain: " + names + ". "
-            "Stop Panels, then as owner run: panels maintenance archive-cancelled-tickets "
-            "--archive-dir PATH --yes. This archives and verifies before deleting records; "
-            "Ticket artifacts under /files/tickets survive. Retry the upgrade afterwards. "
-            "Alternatively resolve them through the prior supported version."
+            "Resolve them through the prior supported version before retrying the upgrade."
         )
     # Custom definitions must never become invalid as a side effect of cleanup.
     # Refuse before editing any row; choosing a replacement Stage is an owner decision.

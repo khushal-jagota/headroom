@@ -9,7 +9,6 @@ describe("historical shell addresses", () => {
     ["#/backlog", "#/workspace"],
     ["#/backlog?project=old", "#/workspace"],
     ["#/notifications", "#/settings/notifications"],
-    ["#/scheduled-tasks", "#/settings/scheduled-tasks"],
     ["#/config", "#/settings/config"],
     ["#/config/workers/type%2Fwith%20space", "#/settings/config/workers/type%2Fwith%20space"],
     ["#/config/chief-of-staff", "#/settings/config/chief-of-staff"],
@@ -64,12 +63,12 @@ it("preserves the bare Home redirect to Chief", () => {
 // The Settings rules used to live inline in the shell router, where the pane could not
 // reach them. They moved so both roots read one copy, and they had no test of their own.
 describe("where a utility screen can be", () => {
-  it("defaults Settings to Config and accepts its two flat sections", () => {
+  it("defaults Settings to Config and accepts Notifications", () => {
     expect(parseUtilityPath("settings", [])).toEqual({
       utility: "settings", settings: { section: "config", roleKind: "index" }
     });
-    expect(parseUtilityPath("settings", ["scheduled-tasks"])).toEqual({
-      utility: "settings", settings: { section: "scheduled-tasks", roleKind: "index" }
+    expect(parseUtilityPath("settings", ["notifications"])).toEqual({
+      utility: "settings", settings: { section: "notifications", roleKind: "index" }
     });
     expect(parseUtilityPath("settings", ["config", "workers", "coding"])).toEqual({
       utility: "settings", settings: { section: "config", roleKind: "worker", roleId: "coding" }
