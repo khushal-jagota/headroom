@@ -42,10 +42,6 @@ One accent color, currently the soft steel in `assets/tokens.css`, means needs t
 
 `managed_skills` is the authority for skill text. The files under `data/skills/` are copies written from those rows. The packaged tree under `src/planner/skills/` seeds an empty database and is not read again. An edit in the package changes a fresh install only.
 
-## A schedule creates a Ticket and stops
-
-A due schedule writes an ordinary Ticket and an occurrence receipt for that local minute. It does not start the Worker. Readiness does, after the commit. Missed minutes are not backfilled.
-
 ## Gates are workflow, not a sandbox
 
 Ticket stages, ceilings, and authority decide who may advance the work record. They do not confine a process to a folder, a network, or a credential. Preview links are trusted same-origin content for that reason. See [Previews](previews.md).

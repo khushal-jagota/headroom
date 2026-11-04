@@ -22,12 +22,11 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.measure_sources.contracts import SourceRuntime
+from planner.measure_sources.participants import SlotParticipant
+from planner.measure_sources.registry import build_participants
+from planner.measure_sources.schedule_loop import SourceScheduleLoop
 from planner.measure_sources.scheduling import SourceScheduleParticipant
 from planner.runtime.lock import ensure_machine_lock
-from planner.scheduled_tickets.contracts import ScheduledTicketOccurrence
-from planner.scheduled_tickets.participants import SlotParticipant, TicketScheduleParticipant
-from planner.scheduled_tickets.registry import build_participants
-from planner.scheduled_tickets.runtime import ScheduledTicketLoop
 
 
 def _assert_lock(path: str, *, held: bool) -> None:
@@ -61,9 +60,9 @@ def test_explicit_registered_participants_share_admission_and_one_lifespan(tmp_p
     admission = WorkspaceAdmission()
     factory_admissions: list[WorkspaceAdmission] = []
     registered: tuple[SlotParticipant, ...] = ()
-    starts = [0, 0]
-    stops = [0, 0]
-    polls = [0, 0]
+    starts = [0]
+    stops = [0]
+    polls = [0]
     deadlines: list[float | None] = []
     source_polled = threading.Event()
 
@@ -76,15 +75,12 @@ def test_explicit_registered_participants_share_admission_and_one_lifespan(tmp_p
             starts[self.position] += 1
             self.participant.start()
 
-        def poll(
-            self, conn: sqlite3.Connection, *, local_now: datetime, now: int
-        ) -> list[ScheduledTicketOccurrence]:
+        def poll(self, conn: sqlite3.Connection, *, local_now: datetime, now: int) -> None:
             assert admission.active
             polls[self.position] += 1
-            result = self.participant.poll(conn, local_now=local_now, now=now)
-            if self.position == 1:
+            self.participant.poll(conn, local_now=local_now, now=now)
+            if self.position == 0:
                 source_polled.set()
-            return result
 
         def stop(self, *, deadline: float | None = None) -> None:
             stops[self.position] += 1
@@ -110,12 +106,11 @@ def test_explicit_registered_participants_share_admission_and_one_lifespan(tmp_p
         cfg, clock, workspace_admission=admission, participants_factory=participants_factory
     )
     assert factory_admissions == [admission]
-    assert len(registered) == 2
-    assert isinstance(registered[0], TicketScheduleParticipant)
-    assert isinstance(registered[1], SourceScheduleParticipant)
+    assert len(registered) == 1
+    assert isinstance(registered[0], SourceScheduleParticipant)
     assert owner.worker_step_readiness_loop is None
     assert owner.notification_loop is None and owner.manager_wake_loop is None
-    scheduler = owner.scheduled_ticket_loop
+    scheduler = owner.source_schedule_loop
     assert scheduler is not None
 
     async def run() -> None:
@@ -123,18 +118,18 @@ def test_explicit_registered_participants_share_admission_and_one_lifespan(tmp_p
         deadline = monotonic() + 5
         try:
             assert await asyncio.to_thread(source_polled.wait, 2)
-            assert starts == [1, 1] and stops == [0, 0]
+            assert starts == [1] and stops == [0]
         finally:
             await owner.stop(deadline=deadline)
         await owner.stop(deadline=deadline)
-        assert stops == [1, 1]
-        assert deadlines == [deadline, deadline]
+        assert stops == [1]
+        assert deadlines == [deadline]
         assert scheduler._thread is None
         assert not admission.active
         # Closed admission blocks both participant polls, not only source execution.
         assert admission.claim(lambda: None, idle=lambda: True, require_idle=True)
         before = list(polls)
-        assert scheduler.poll_once() == []
+        assert scheduler.poll_once() is None
         assert polls == before
 
     asyncio.run(run())
@@ -178,7 +173,7 @@ def test_stop_drains_siblings_retains_live_schedule_and_retries_lock_release(
                 raise later_error
 
     cfg = load_config(path=None, env={"PLAN_TEST_MODE": "1"})
-    scheduler = ScheduledTicketLoop(
+    scheduler = SourceScheduleLoop(
         str(tmp_path / "unused.db"),
         build_clock(cfg),
         participants=cast(tuple[SlotParticipant, ...], (Participant(), LaterParticipant())),
@@ -195,7 +190,7 @@ def test_stop_drains_siblings_retains_live_schedule_and_retries_lock_release(
     owner = loops.BackgroundLoops(
         cast(Any, Sibling("worker")),
         lock_path,
-        scheduled_ticket_loop=scheduler,
+        source_schedule_loop=scheduler,
         notification_loop=cast(Any, Sibling("notification")),
         manager_wake_loop=cast(Any, Sibling("manager")),
     )
@@ -283,7 +278,7 @@ def test_legacy_failure_returns_inert_owner_and_releases_every_candidate(
             raise AssertionError("failed startup cannot subscribe to change wakes")
 
     for candidate in (
-        "ScheduledTicketLoop",
+        "SourceScheduleLoop",
         "WorkerStepReadinessLoop",
         "NotificationLoop",
         "ManagerWakeLoop",
@@ -343,11 +338,11 @@ def test_legacy_failure_returns_inert_owner_and_releases_every_candidate(
                 assert "synthetic rollback failure" in caught.value.__notes__[0]
                 running = loops._active
                 assert running is not None and not running._stopped
-                assert running.scheduled_ticket_loop is not None
+                assert running.source_schedule_loop is not None
             else:
                 running = start()
                 assert running.worker_step_readiness_loop is None
-                assert running.scheduled_ticket_loop is None
+                assert running.source_schedule_loop is None
                 assert running.notification_loop is None
                 assert running.manager_wake_loop is None
             assert loops._active is running

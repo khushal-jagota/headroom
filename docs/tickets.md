@@ -40,7 +40,7 @@ Delete removes the Ticket’s record. Files under the Ticket’s file tree survi
 
 Each Ticket stores a locale, `vps` or `macos`. Creation uses an explicit locale when one is given. Otherwise a Mac requirement on the effective Project or the Worker type selects `macos`, and everything else selects `vps`. The chosen backend is checked against that locale before the Ticket exists. The Mac compatibility set starts empty, so Mac creation refuses until that configuration allows a backend. The VPS refuses to start a Ticket whose locale is somewhere else.
 
-`panels ticket move` changes the locale of an idle Ticket: no Worker step, active turn, or accepted message may still need the current machine. The conversation and history stay. Repository files do not travel. Later edits to a Project or Worker requirement do not move Tickets or stored schedule locales that already exist.
+`panels ticket move` changes the locale of an idle Ticket: no Worker step, active turn, or accepted message may still need the current machine. The conversation and history stay. Repository files do not travel. Later edits to a Project or Worker requirement do not move Tickets that already exist.
 
 ## Assignment
 
@@ -48,7 +48,7 @@ A Ticket names Chief or one ordinary Manager. That assignment is who the work si
 
 ## What feeds a Ticket, and what it feeds
 
-People, Chief, Managers, and due schedules create Tickets. Blockers are named at creation or added later. The readiness loop feeds the conversation its next opener when the Ticket reads empty. The Worker feeds proposals. The resolver feeds settled stage text and the next stage. Attention flags feed Review and notifications. Artifacts land in the Ticket file tree and open in the viewer.
+People, Chief, and Managers create Tickets. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate from Ticket creation. Blockers are named at creation or added later. The readiness loop feeds the conversation its next opener when the Ticket reads empty. The Worker feeds proposals. The resolver feeds settled stage text and the next stage. Attention flags feed Review and notifications. Artifacts land in the Ticket file tree and open in the viewer.
 
 Settled fields remember who approved the current text. Explicit approval says Approved by Khushal, Chief, or the Manager’s title. A field that settled below the ceiling says Auto-accepted, including a Brief that settled at creation. Older rows and some direct completions say Approval unknown. Unknown is not auto-accepted. An edit that changes the text clears the approval. An identical edit keeps it.
 

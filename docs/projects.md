@@ -6,7 +6,7 @@ A repository can live inside that folder. The folder is not implied by the Proje
 
 ## How classification works
 
-Managers, Ideas, and standalone Tickets store a project id. A Ticket that sits under a Manager takes its effective Project from that Manager. Moving the Manager moves the children’s effective Project, and it updates schedule templates assigned to that Manager so later occurrences follow. Writes accept a project id or the legacy display name. Sending both, pointed at different rows, is rejected.
+Managers, Ideas, and standalone Tickets store a project id. A Ticket that sits under a Manager takes its effective Project from that Manager. Moving the Manager moves the children’s effective Project. Writes accept a project id or the legacy display name. Sending both, pointed at different rows, is rejected.
 
 There is no delete and no archive. The catalog grows by create and changes by editing the name, summary, or folder.
 
@@ -18,7 +18,7 @@ The removed global Workers page used to filter by Project. Workspace now groups 
 
 ## Where it shows up
 
-Selectors on Idea capture, Ticket and Manager editing, and schedule templates. `panels project` and `/api/projects` are the same catalog. A list read must say whether it wants a summary or the full record.
+Project selectors appear in Idea capture and the Ticket and Manager editors. `panels project` and `/api/projects` are the same catalog. A list read must say whether it wants a summary or the full record.
 
 ## Pointers
 
