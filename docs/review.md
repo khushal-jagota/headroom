@@ -6,7 +6,7 @@ Review is the pass through everything that needs Khushal, oldest first, without 
 
 One card at a time. Skip defers a card for this visit. Open jumps to the Ticket or the conversation in the Workspace. Opening Review does not mark messages read. Marking read, sending a reply, or resolving the proposal clears only what that card showed.
 
-A managed artifact link opens the file beside its owner's conversation. The recipient stays visible, even when another Ticket owns the Review card. The conversation starts at rest. File navigation does not approve a proposal, reply, mark messages read, or advance Review. Close or Escape returns to the same card, draft, and place in the pass. Review shortcuts stay inactive while the artifact covers the card.
+A managed artifact link opens the file beside its owner's conversation. The recipient stays visible, even when another Ticket owns the Review card. The conversation starts at rest. File navigation does not approve a proposal, reply, mark messages read, or advance Review. The file has its own address, and Review is no longer selected. Review, browser Back, Close, or Escape returns to the same card, draft, and place in the pass. Review keeps this place for the current application session, without a promise of recovery after a reload. If another action resolves the card, Review returns to the current eligible queue. Review shortcuts apply only within Review.
 
 A shared standalone preview link uses the same viewer. Ticket, Manager, and goal files each use their owner's current conversation. If that owner is unavailable, the file remains readable without a message box. Raw file URLs and downloads remain ordinary file access.
 
