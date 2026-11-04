@@ -1,47 +1,60 @@
 # Environments
 
-Headroom runs as one Unix user on the VPS, the existing `vps` account. Live, staging, and Ticket servers are separated by directories and by the environment they are launched with. They are not separated by Linux accounts. Provider logins stay that user’s real Hermes, Codex, and Claude homes. Headroom does not copy those homes into a role account.
+An environment is one running Headroom server with its own state: a database, files, logs, locks, and a loopback port. Headroom has three kinds on the VPS: live, staging, and Ticket servers. A local checkout on any machine is the same shape. This page says which servers exist, what separates them, and who runs what on the host.
+
+All of them run as one Unix user, the existing `vps` account. They are separated by directories and by the environment they are launched with, not by Linux accounts. Provider logins stay in that user's real Hermes, Codex, and Claude homes. Headroom does not copy them into role accounts.
 
 ```text
-~/Deployments/Panels/current/{app,data,logs}     live, Git-free
-~/projects/Panels/Panels/                        source, and staging state under data/environments/staging
-<ticket worktree>/data/                          one Ticket server’s private state
+~/Deployments/Panels/current/{app,data,logs}   live: the installed release, no Git
+~/projects/Panels/Panels/                      source; staging state under data/environments/staging
+<ticket worktree>/data/                        one Ticket server's private state
+<any checkout>/data/                           a local server's state
 ```
 
-Live listens on loopback port 8767, behind the existing Tailscale Serve route. Staging and Ticket servers take a free loopback port and run only while someone needs them. The user units under `ops/panels-environments/` cover live, the deployment runner, and backups. There is no staging unit.
+## What each one is
 
-## Live
+- **Live.** The installed release from [Deployment](deployment.md), run by a systemd user service on loopback port 8767 behind the existing Tailscale Serve route. Only the verified service manager can stop it by signal. Workers never stop the server that hosts them. The interactive `panels` command on the host follows the installed app.
+- **Staging.** A foreground server from the source checkout with fake data that persists between runs. It runs only while someone needs it and has no service. `panels environment prepare`, `run`, and `reset` manage it.
+- **Ticket servers.** A Worker's own `panels serve` from its isolated git worktree, with every `PLAN_*` path pointing into that worktree. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends and removes its state at Consequences.
+- **A local checkout.** One source checkout, one Python environment, one loopback server, and one SQLite file under `data/`. It runs the source, not a sealed release. The install steps are in the repository README.
 
-Prepare records the live contract. It does not pre-create `current/data` or `current/logs`. The first exact-app deployment has to be able to create that layout in one transaction. The user service runs `current/app/bin/panels-launcher serve` with explicit live paths. `systemctl --user` starts and stops it. Interactive commands use `current/app/bin/panels`, which the `panels` wrapper on the host follows.
+Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the worktree and its `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
 
-A supervisor started by systemd records that parent and accepts SIGINT or SIGTERM only from the verified manager. If Linux hides the manager’s executable, the supervisor checks the D-Bus owner and the process start time, and it checks again before it honors a signal. An unknown sender is refused. systemd’s own stop timeout then uses SIGKILL. That delay is intentional. Workers stop their own Ticket servers by the PID recorded at launch, and only that PID.
+## How a server is configured
 
-Renaming the account, moving host state, or changing Tailscale Serve is separate operator work. A code change does not do it.
+Defaults live in `config.yaml`. Every value there can be overridden by the matching `PLAN_*` environment variable. Test-only switches are environment-only on purpose. A server with dispatch enabled owns the readiness, schedule, and manager-wake loops behind one machine lock, so a second server on the same lock never becomes a second scheduler.
 
-## Staging
+A server can also be given a default workspace folder for new agent conversations. It links the managed skills into that folder and refuses to start rather than overwrite anything already there. How a conversation picks its folder is in [Conversations](conversations.md).
 
-Staging is a foreground process from the source checkout. Its fake database, files, and logs persist under `data/environments/staging`. `panels environment prepare --kind staging` records the roots and a credentials file. `panels environment run --kind staging` prints the loopback URL it actually bound. Stop it when the work is done. `environment reset` restores the fake fixture and keeps the prepared paths.
+Agent backends need their CLIs installed and logged in outside Headroom. On the VPS, the sealed release carries the Claude Code and Codex CLIs.
 
-## Ticket servers
+Live and staging launches rebuild the process environment from a fixed allowlist instead of inheriting the caller's. Live passes only named settings and provider keys from its service environment. Staging keeps the user's home, locale, terminal, and path, drops stray `PLAN_*` values, adds validated credentials from its own file, and sets the paths it owns. Credentials are never written into a manifest or printed.
 
-A Ticket server runs from an isolated git worktree. Its database, files, logs, locks, and sockets stay in that worktree’s `data/`. Confirm the imported package and every printed `PLAN_*` path point at that worktree before serving. Headroom does not publish a Ticket server through the live app. Something Khushal must review is a file in the live Ticket tree, or a [preview](previews.md) registered against a trusted dev server. Stop the Ticket server when the active work ends. Remove its state, worktree, and branch at Consequences.
+## Host automation
 
-## What a launch is allowed to see
+The user units in `ops/panels-environments/` cover the live service, the deployment runner, and two daily timers:
 
-Every environment launch rebuilds the process environment from an allowlist. It keeps the user’s normal home, locale, terminal, path, and temp directories, adds validated provider credentials, and sets the `PLAN_*` paths the contract owns. Ambient `PLAN_*` values are not forwarded. Live, staging, and Ticket roots may not nest inside each other. Credential contents are never written into a manifest or printed by inspect.
+- **Backup.** Takes a verified snapshot of live data with the installed app. See [Backups](backups.md).
+- **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized logs, removes expired backup temporaries, and prunes old verified backups. It re-proves every target when it runs and never stops a process or removes a worktree, environment, or the installed app.
 
-Tests follow the same idea with synthetic homes. The suite freezes the real skill-link targets before collection and points Codex, Claude, and Hermes at fresh private homes. The tripwire against copying a real login into one of those homes, and the cases it cannot see, are documented on `tests/unit/test_no_codex_credential_copies.py` and in [Conversations](conversations.md).
+Renaming the account, moving host state, or changing Tailscale Serve is operator work outside this code.
 
-Building the Python package needs ICU headers, `pkg-config`, and a C++ compiler, because the indexed ordering uses PyICU. On Debian that is `libicu-dev`, `pkg-config`, and `build-essential`. The runtime needs the matching ICU libraries. The sealed production archive carries its own, which is [Archive runtime](archive-runtime.md).
+## Status
 
-## Status and cleanup
+`panels environment status` reads the local filesystem and process list without calling the server. The browser's smaller summary carries the installed commit, the last deployment outcome, CPU, memory, disk, and the age of the latest verified backup. A missing value is reported as unavailable. The graphs are a separate system, [VPS](vps.md).
 
-`panels environment status --json` reads the local filesystem and process list without calling the HTTP server. `GET /api/vps-status` keeps that response for compatibility. The browser’s smaller summary, `GET /api/vps-status-summary`, carries the deployed SHA, the deployment outcome, CPU, RAM, disk, and the age of the latest verified backup. Missing measurements come back as an explicit unavailable value. The graphs on the VPS page are the separate metrics store. See [VPS](vps.md).
+## Decisions that shape it
 
-`panels environment cleanup` is a dry run until `--apply`. Apply re-reads the inventory and re-proves every target. It can rotate oversized logs, remove expired backup temporaries, and prune verified backups past the three that are kept. It does not kill a process, and it does not remove a worktree, a cache, an environment, or the deployed app.
+- One Unix user and real provider homes. Separation is by directory and launch environment.
+- Live is the installed release, never a checkout.
+- Staging and Ticket servers run only while needed.
+- Launches rebuild their environment from an allowlist rather than inheriting stray settings.
 
-## Pointers
+## Code
 
-`src/planner/environments/` and `ops/panels-environments/`. The live service and backup timer are described with [Backups](backups.md) and [Deployment](deployment.md).
+- `src/planner/environments/`: the registry, launch environments, status, and cleanup. `logic/validation.py` and `logic/launch_env.py` hold the rules.
+- `src/planner/core/config.py`: configuration and `PLAN_*` overrides. `src/planner/skill_sources.py`: the workspace skills link.
+- `src/planner/server_lifecycle/`: who may stop a server.
+- `ops/panels-environments/`: user units, timers, and the host wrapper.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._

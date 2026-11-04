@@ -349,6 +349,7 @@ class _Message:
     recording_receipt: NativeMessageOperation | None = None
 
     reasoning_effort_is_set: bool = False
+    system_generated: bool = False
 
     def same_message_as(self, other: object) -> bool:
         """Compare the identity facts retained at the other message's stage.
@@ -377,6 +378,7 @@ def _prompt_row(message: _Message, mode: PromptDeliveryMode) -> PromptEventPaylo
         sender=message.sender,
         recipient=message.recipient,
         recovery_references=message.recovery_references,
+        system_generated=message.system_generated,
         mode=mode,
     )
 
@@ -821,6 +823,7 @@ class SqliteProcessConversationSystem:
 
         message = _Message(
             held_prompt_id="",
+            system_generated=sender is None,
             snapshot_sent_at_unix_milliseconds=0,
             queue_reason=PromptQueueReason.requested,
             acknowledge_owner_on_failure=acknowledge_owner_on_failure,
@@ -2418,6 +2421,7 @@ class SqliteProcessConversationSystem:
                 drain_after_delivery_exception=False,
                 message=_Message(
                     held_prompt_id="",
+                    system_generated=True,
                     snapshot_sent_at_unix_milliseconds=0,
                     queue_reason=PromptQueueReason.requested,
                     model_change=None,

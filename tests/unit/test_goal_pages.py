@@ -21,7 +21,15 @@ from planner.core.clock import RealClock
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, PlannerError, Principal, PrincipalKind
 from planner.goals import actions, category_reads, data, views
-from planner.goals.contracts import ChartBlock, ChecklistBlock, Goal, GoalsResponse, SegmentedBlock
+from planner.goals import calendar as goal_calendar
+from planner.goals.contracts import (
+    ChartBlock,
+    ChecklistBlock,
+    Goal,
+    GoalCompletionRule,
+    GoalsResponse,
+    SegmentedBlock,
+)
 from planner.goals.logic.documents import prepare_document
 from planner.goals.logic.status import (
     calendar_projection,
@@ -57,7 +65,22 @@ def page() -> JsonDict:
     }
 
 
+def numeric_rule(conn: Connection, measure_id: str | None = None) -> GoalCompletionRule:
+    """Chart tests use an explicit separate finish line, not chart progress targets."""
+    identifier = measure_id or manual_measure(conn).id
+    return {
+        "actual": {"op": "reference", "measure_id": identifier, "day_offset": 0},
+        "target": {"op": "constant", "value": 1e99},
+        "direction": "atleast",
+        "first_date": datetime.fromtimestamp(NOW).astimezone().date().isoformat(),
+    }
+
+
 def create(conn: Connection, **extra: Any) -> Goal:
+    if extra.get("kind") == "quantitative" and "completion_rule" not in extra:
+        extra["completion_rule"] = numeric_rule(
+            conn, extra.get("primary_chart", {}).get("measure_id")
+        )
     return actions.create_goal(
         conn,
         {"project_id": "project_vylo", "title": "Ship the guide", "kind": "binary",
@@ -226,7 +249,7 @@ def test_goal_calendar_uses_process_tz_before_localtime_fallback(
 
         return SimpleNamespace(open=open_localtime)
 
-    monkeypatch.setattr(views, "Path", localtime_path)
+    monkeypatch.setattr(goal_calendar, "Path", localtime_path)
     monkeypatch.setenv("TZ", ":Pacific/Honolulu")
     configured = views.calendar_now(clock)
     assert configured.isoformat() == "2026-03-28T14:30:00-10:00"
