@@ -25,6 +25,31 @@ _state_barriers = runpy.run_path(str(Path(__file__).resolve().parents[1] / "supp
 establish_scrollback = _state_barriers["establish_scrollback"]
 refresh_projection = _state_barriers["refresh_projection"]
 
+# Every layout writer these checks wait on runs from an observer, a timer that marks
+# its element while pending, or an animation frame. Settled means none of those marks
+# remain, no finite animation runs, and the named boxes and scroll offsets read the
+# same on consecutive animation frames.
+_SETTLED = """([token, selectors, frames]) => {
+  const busy = document.querySelector('[data-rail-motion-busy], .rail-wash--leaving, [data-conversation-motion], '
+    + '[data-conversation-dock-transition], [data-recap-slot][style*="overflow: hidden"]')
+    || document.getAnimations().some(a => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity);
+  const key = JSON.stringify(selectors.flatMap(selector => [...document.querySelectorAll(selector)].map(node => {
+    const r = node.getBoundingClientRect();
+    return [r.x, r.y, r.width, r.height, node.scrollTop, node.scrollHeight];
+  })));
+  const state = window[token] ??= {key: null, count: 0};
+  state.count = !busy && key === state.key ? state.count + 1 : 0;
+  state.key = key;
+  return state.count >= frames;
+}"""
+_settle_tokens = iter(range(1 << 30))
+
+
+def wait_settled(page, *selectors, frames=3):
+    token = f"__settled{next(_settle_tokens)}"
+    page.wait_for_function(_SETTLED, arg=[token, list(selectors), frames], polling="raf")
+    page.evaluate("token => delete window[token]", token)
+
 
 def run(browser, urls):
     url = urls[0]
@@ -278,18 +303,7 @@ def run(browser, urls):
     vps_evidence = Path(os.environ.get('PANELS_VPS_ARTIFACT_DIR', os.environ['PANELS_SIDEBAR_ARTIFACT_DIR']))
     vps_evidence.mkdir(parents=True, exist_ok=True)
     page.screenshot(animations="disabled", path=str(vps_evidence / 'vps-shell-pane.png'))
-    page.evaluate("location.hash='#/settings'")
-    expect(pane.locator('[data-settings]')).to_be_visible()
-    before = len(metrics_calls)
-    page.wait_for_timeout(2200)
-    page.evaluate("dispatchEvent(new Event('focus')); dispatchEvent(new Event('online'))")
-    page.wait_for_timeout(30)
-    assert len(metrics_calls) == before, metrics_calls[before:]
-    page.evaluate("location.hash='#/vps'")
-    expect(pane.locator('[data-vps-metric="cpu"]')).to_contain_text("27")
-    assert '/api/vps-metrics/latest' in metrics_calls[before:]
-    assert '/api/vps-metrics/activity' in metrics_calls[before:]
-    assert rail.evaluate("node => node === window.__persistentRail")
+    # Leaving the route is proved at the end of this host, under the browser clock.
 
     # Preview's own full-height document styles must remain inside the same pane.
     page.route("**/files/tickets/t_fixture/artifacts/wide.html", lambda route: route.fulfill(
@@ -366,6 +380,7 @@ def run(browser, urls):
     verify_rail_pagination(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
     verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
+    verify_vps_route_leave(page, url, pane, rail, metrics_calls)
     verify_owner_updates(browser, url)
     verify_conversation_overlay(browser, url)
 
@@ -374,6 +389,35 @@ def run(browser, urls):
     assert not unwanted, unwanted
     context.close()
     metrics.close()
+
+
+def verify_vps_route_leave(page, url, pane, rail, metrics_calls):
+    """The real App route owns the live page. Leaving it stops reads and lease renewals.
+
+    The poll is a 2000 ms timer. The browser clock runs 2200 ms of timers without
+    waiting for them. It is installed last on this host because it also replaces
+    animation frames, which every earlier motion proof here samples in real time.
+    """
+    page.clock.install()
+    page.goto(url + "#/vps", wait_until="domcontentloaded")
+    # A reload starts the App, and so every timer it creates, under the installed clock.
+    page.reload(wait_until="domcontentloaded")
+    expect(pane.locator('[data-vps-metric="cpu"]')).to_contain_text("27")
+    rail.evaluate("node => window.__persistentRail = node")
+    page.evaluate("location.hash='#/settings'")
+    expect(pane.locator('[data-settings]')).to_be_visible()
+    before = len(metrics_calls)
+    page.clock.run_for(2200)
+    page.evaluate("dispatchEvent(new Event('focus')); dispatchEvent(new Event('online'))")
+    page.clock.run_for(30)
+    # A read started above reaches the route before this later one completes.
+    page.evaluate("() => fetch('/api/meta').then(response => response.json())")
+    assert len(metrics_calls) == before, metrics_calls[before:]
+    page.evaluate("location.hash='#/vps'")
+    expect(pane.locator('[data-vps-metric="cpu"]')).to_contain_text("27")
+    assert '/api/vps-metrics/latest' in metrics_calls[before:]
+    assert '/api/vps-metrics/activity' in metrics_calls[before:]
+    assert rail.evaluate("node => node === window.__persistentRail")
 
 
 def verify_settled_fold(page, url, fixture, evidence):
@@ -453,7 +497,8 @@ def verify_settled_fold(page, url, fixture, evidence):
 
     # The body survives until the close completes, even when the source changes.
     start("close-with-refresh", duration=650)
-    page.wait_for_timeout(70)
+    # The source changes while the close is moving.
+    page.wait_for_function("document.querySelector('.settled').getAnimations().length > 0")
     fixture["count"] = 5
     page.evaluate("void window.__refreshNavigation()")
     samples = finish()
@@ -807,24 +852,34 @@ def capture_card_motion(browser, url, fixture, respond, evidence):
             expect(page.locator('[data-ticket-id="clip_two"]')).to_be_visible()
             page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
             page.mouse.move(1000, 650)
-            page.wait_for_timeout(250)
+            # The clip opens on a still rail: the pointer's hover has left it.
+            wait_settled(page, ".manager-card")
+
+            def published(page=page):
+                # The fixture refresh resolves after snapshot delivery. One frame lets
+                # Svelte commit, so the motion controller has marked any travel.
+                page.evaluate("async () => { await window.__refreshNavigation(); await new Promise(requestAnimationFrame); }")
+
+            def played(page=page):
+                # Each change plays to its end at ordinary speed before the next.
+                published(page)
+                wait_settled(page, ".manager-card")
+
             for approval in [True, False]:
                 two["awaiting_approval"] = approval
-                page.evaluate("void window.__refreshNavigation()")
-                page.wait_for_timeout(650)
+                played()
             arriving = {**one, "id": "clip_arriving", "title": "A new Worker appears"}
             rows.append(arriving)
-            page.evaluate("void window.__refreshNavigation()")
-            page.wait_for_timeout(650)
+            played()
             arriving.update(stage="done", ticket_status="done")
-            page.evaluate("void window.__refreshNavigation()")
-            page.wait_for_timeout(750)
+            played()
+            # Rapid changes each arrive while the previous one still moves.
             for approval in [True, False, True]:
                 two["awaiting_approval"] = approval
-                page.evaluate("void window.__refreshNavigation()")
-                page.wait_for_timeout(90)
+                published()
             page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
-            page.wait_for_timeout(300)
+            # The recording holds the final state over consecutive painted frames.
+            wait_settled(page, ".manager-card")
         finally:
             video = page.video
             context.close()
@@ -1187,6 +1242,11 @@ def verify_conversation_overlay(browser, url):
         box = page.locator('[data-conversation-input]')
         document = page.locator('.ticket-doc' if ticket_host else '.chief-workspace .manager-doc')
         final_text = 'Final document paragraph.' if ticket_host else 'Overlay document row 35'
+        def settle(page=page):
+            # Reduced motion: each layout below lands through observers and frames.
+            wait_settled(page, '[data-conversation-pane]', '.conversation-layer', '[data-conversation-thread]',
+                         '[data-conversation-input]', '.ticket-doc, .manager-doc', '.ticket-page, .manager-page',
+                         '.ticket-artifact-body')
         try:
             expect(box).to_be_visible()
         except AssertionError:
@@ -1199,7 +1259,7 @@ def verify_conversation_overlay(browser, url):
             page.mouse.down()
             page.mouse.move(width - 440, grip_box['y'] + grip_box['height']/2, steps=5)
             page.mouse.up()
-            page.wait_for_timeout(100)
+            settle()
         expect(document.get_by_text(final_text, exact=True)).to_have_count(1)
         # Initial selection stays product-owned. Choose dock state for this proof.
         if pane.get_attribute('data-conversation-state') == 'opened':
@@ -1208,7 +1268,7 @@ def verify_conversation_overlay(browser, url):
         box.click()
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         box.fill("Draft keeps its place.\n" * 6)
-        page.wait_for_timeout(250)
+        settle()
         doc_before = document.bounding_box()
         dock_before = page.locator('.conversation-layer').bounding_box()
         assert doc_before['y'] + doc_before['height'] <= dock_before['y'] + 1, (name, doc_before, dock_before)
@@ -1216,7 +1276,7 @@ def verify_conversation_overlay(browser, url):
         scroll_before = document.evaluate('e=>e.scrollTop')
         page.locator('[data-conversation-expand]').click()
         expect(pane).to_have_attribute('data-conversation-state', 'opened')
-        page.wait_for_timeout(250)
+        settle()
         doc_open = document.bounding_box()
         card_open = pane.bounding_box()
         title = document.locator('.ticket-title' if ticket_host else '.manager-workspace-title').bounding_box()
@@ -1263,11 +1323,11 @@ def verify_conversation_overlay(browser, url):
             assert measured and measured['text'] == anchor['text'] and abs(measured[coordinate] - anchor[coordinate]) <= 2, (name,label,anchor,measured)
             return measured
         box.fill('A shorter draft')
-        page.wait_for_timeout(250)
+        settle()
         assert box.input_value() == 'A shorter draft'
         assert_anchor('composer shrink')
         box.fill('Draft grows again.\n' * 6)
-        page.wait_for_timeout(250)
+        settle()
         assert_anchor('composer growth')
         # Collapse cannot remove document scroll range or clamp the reader.
         document.evaluate('e=>e.scrollTop=e.scrollHeight')
@@ -1275,62 +1335,68 @@ def verify_conversation_overlay(browser, url):
         collapse_before = {'thread':transcript_bounds(),'anchor':anchor}
         page.locator('[data-conversation-collapse]').click()
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
-        page.wait_for_timeout(250)
+        settle()
         assert not thread.is_visible()
         assert document.evaluate('e=>e.scrollHeight') >= highwater
         assert document.evaluate('e=>e.scrollTop') == end_scroll
         # Dock state keeps the mounted reader and its full-conversation anchor.
         page.locator('[data-conversation-expand]').click()
-        page.wait_for_timeout(250)
+        expect(pane).to_have_attribute('data-conversation-state', 'opened')
+        settle()
         assert_anchor('return from dock')
         collapse_after = {'thread':transcript_bounds(),'anchor':anchor}
         page.locator('[data-conversation-collapse]').click()
-        page.wait_for_timeout(250)
+        expect(pane).to_have_attribute('data-conversation-state', 'rest')
+        settle()
         box.click()
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         final = document.get_by_text(final_text, exact=True)
         document.evaluate('e=>e.scrollTop=e.scrollHeight')
-        page.wait_for_timeout(100)
+        settle()
         card_peek = pane.bounding_box()
         final_box = final.bounding_box()
         # Wheel over uncovered document space above the full-column card.
         uncovered_point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + card_peek['y'])/2}
         assert page.evaluate('point=>Boolean(document.elementFromPoint(point.x,point.y)?.closest(".ticket-doc,.manager-doc"))', uncovered_point), (name, uncovered_point)
         page.mouse.move(uncovered_point['x'], uncovered_point['y'])
+        page.evaluate("() => { window.__overlayWheel = false; addEventListener('wheel', () => { window.__overlayWheel = true; }, {capture: true, once: true, passive: true}); }")
         page.mouse.wheel(0, final_box['y'] + final_box['height'] - card_peek['y'] + 24)
-        page.wait_for_timeout(180)
+        page.wait_for_function('window.__overlayWheel')
+        settle()
         final_box = final.bounding_box()
         assert final_box['y'] >= host['y'], (name, final_box, host, page.evaluate('''([x,y])=>document.elementFromPoint(x,y)?.outerHTML.slice(0,500)''',[uncovered_point['x'],uncovered_point['y']]),document.evaluate('e=>e.scrollTop'))
         assert final_box['y'] + final_box['height'] <= card_peek['y'] + 1, (name, final_box, card_peek)
         page.screenshot(path=str(evidence / f'{name}-document-tail.png'), animations='disabled')
         # Simulated keyboard reduction plus displacement stays inside the host intersection.
         page.evaluate('window.__keyboardViewport(100, 420)')
-        page.wait_for_timeout(250)
+        settle()
         card_keyboard = pane.bounding_box()
         assert card_keyboard['y'] >= max(host['y'], 100) - 1, (name, card_keyboard, host)
         assert card_keyboard['y'] + card_keyboard['height'] <= min(host['y'] + host['height'], 520) + 1, (name, card_keyboard, host)
         # Full conversation follows the displaced viewport without losing scrollback.
         page.locator('[data-conversation-expand]').click()
-        page.wait_for_timeout(250)
+        expect(pane).to_have_attribute('data-conversation-state', 'opened')
+        settle()
         assert_anchor('keyboard reduction and displacement')
         thread.evaluate('e=>e.scrollTop=e.scrollHeight')
-        page.wait_for_timeout(100)
+        settle()
         expect(tail).to_be_in_viewport()
         keyboard_transcript = transcript_bounds()
         assert keyboard_transcript['tail']['bottom'] <= keyboard_transcript['bottom'] + 1, (name, keyboard_transcript)
         page.screenshot(path=str(evidence / f'{name}-keyboard.png'), animations='disabled')
         page.evaluate('window.__keyboardViewport(0, innerHeight)')
         document.evaluate('e=>e.scrollTop=0')
-        page.wait_for_timeout(250)
+        settle()
         thread.evaluate('e=>e.scrollTop=e.scrollHeight')
-        page.wait_for_timeout(100)
+        settle()
         page.screenshot(path=str(evidence / f'{name}.png'), animations='disabled')
         page.locator('[data-conversation-collapse]').click()
-        page.wait_for_timeout(250)
+        expect(pane).to_have_attribute('data-conversation-state', 'rest')
+        settle()
         artifact_proof = None
         if ticket_host:
             page.evaluate('window.__keyboardViewport(0, innerHeight)')
-            page.wait_for_timeout(200)
+            settle()
             doc_scroll_before_artifact = document.evaluate('e=>e.scrollTop')
             page.evaluate("location.hash='#/workspace/t_overlay0?source=ticket&ticket=t_overlay0&path=overlay.html'")
             artifact = page.locator('[data-ticket-artifact]')
@@ -1339,23 +1405,26 @@ def verify_conversation_overlay(browser, url):
             expect(artifact.locator('[data-ticket-artifact-close]')).to_be_in_viewport()
             frame_before = frame.bounding_box()
             page.locator('[data-conversation-expand]').click()
-            page.wait_for_timeout(250)
+            expect(pane).to_have_attribute('data-conversation-state', 'opened')
+            settle()
             assert frame.bounding_box() == frame_before
             page.locator('[data-conversation-collapse]').click()
-            page.wait_for_timeout(250)
+            expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            settle()
             artifact_scroll = artifact.locator('.ticket-artifact-body')
             card = pane.bounding_box()
             frame_tail = frame.bounding_box()
             assert frame_tail['y'] + frame_tail['height'] <= card['y'] + 1, (frame_tail, card)
             assert frame_tail['height'] == frame_before['height']
             artifact.frame_locator('iframe').locator('#end').evaluate('e=>e.ownerDocument.defaultView.scrollTo(0,e.ownerDocument.documentElement.scrollHeight)')
-            page.wait_for_timeout(100)
+            artifact.locator('iframe').element_handle().content_frame().wait_for_function(
+                '() => scrollY + innerHeight >= document.documentElement.scrollHeight - 1')
             artifact_end = artifact.frame_locator('iframe').locator('#end').bounding_box()
             assert artifact_end['y'] + artifact_end['height'] <= card['y'] + 1, (artifact_end,card)
             assert artifact_end['y'] >= artifact_scroll.bounding_box()['y'], (artifact_end,artifact_scroll.bounding_box())
             page.screenshot(path=str(evidence / 'narrow-ticket-artifact-tail.png'), animations='disabled')
             artifact_scroll.evaluate('e=>e.scrollTop=0')
-            page.wait_for_timeout(100)
+            settle()
             expect(artifact.locator('[data-ticket-artifact-refresh]')).to_be_in_viewport()
             page.screenshot(path=str(evidence / 'narrow-ticket-artifact.png'), animations='disabled')
             artifact_proof = {'frameOriginal':frame_before,'frameTail':frame_tail,'finalParagraph':artifact_end,'scrollHeight':artifact_scroll.evaluate('e=>e.scrollHeight'),'clientHeight':artifact_scroll.evaluate('e=>e.clientHeight')}
@@ -2046,10 +2115,15 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
         refresh_projection(target_page, required_content=required,
                            required_recaps=[{"id": worker["id"], "text": worker["recap"]}])
 
+    def panel_settled(target_page=page):
+        # The panel's fade and the slot's height transition have ended, and the slot's
+        # settle timer has released its overflow.
+        wait_settled(target_page, '[data-rail-hover-panel]', '[data-recap-slot]')
+
     def open_panel():
         row.hover()
         expect(panel).to_have_attribute("aria-hidden", "false")
-        page.wait_for_timeout(300)
+        panel_settled()
         panel.hover()
 
     def leave():
@@ -2145,7 +2219,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
             assert row.bounding_box()["y"] > 450
         open_panel()
         three = set_lines(3)
-        page.wait_for_timeout(300)
+        panel_settled()
         if not reduced and not lower:
             page.screenshot(path=str(evidence / "recap-floor-initial-three-lines.png"))
         floor = panel.bounding_box()["height"]
@@ -2174,7 +2248,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
         # A delayed response or no response cannot retain the old floor after exit.
         worker["recap"] = three
         refresh()
-        page.wait_for_timeout(300)
+        panel_settled()
         panel.hover()
         sample_change(tag + '-no-reply', request, floor)
         leave()
@@ -2186,11 +2260,11 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
         # Retarget while the shared panel is already open. Its old floor must not
         # leak into the next Worker, even without an intervening hide.
         set_lines(5)
-        page.wait_for_timeout(300)
+        panel_settled()
         page.keyboard.press('Tab')
         page.locator('[data-ticket-id="recap_neighbor"]').focus()
         expect(panel.locator('.title')).to_contain_text('Other recap')
-        page.wait_for_timeout(300)
+        panel_settled()
         assert panel.bounding_box()["height"] < floor - 10
         proof["sessions"].append({"name": tag, "threeLines": floor, "largest": grown,
                                   "twoLinesAfterExit": natural, "emptyAfterExit": empty})
@@ -2204,7 +2278,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     row.focus()
     expect(panel).to_have_attribute('aria-hidden', 'false')
     set_lines(3)
-    page.wait_for_timeout(300)
+    panel_settled()
     before = panel.bounding_box()["height"]
     keyboard_request()
     refresh()
@@ -2222,7 +2296,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     row.focus()
     expect(panel).to_have_attribute('aria-hidden', 'false')
     set_lines(3)
-    page.wait_for_timeout(300)
+    panel_settled()
     full = panel.bounding_box()["height"]
     def pause_shrink():
         # Pause the browser-owned CSS transition at a known intermediate time.
@@ -2285,7 +2359,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
         touch_panel.get_by_role('button', name='Ask for a recap', exact=True).tap()
     refresh(touch_page)
     expect(touch_panel.locator('[data-recap-text]')).to_have_count(0)
-    touch_page.wait_for_timeout(380)
+    panel_settled(touch_page)
     after = touch_panel.bounding_box()["height"]
     assert after < before - 20, (before, after)
     proof["sessions"].append({"name": "touch", "before": before, "after": after})
@@ -2320,10 +2394,16 @@ def verify_selection_washes(page, url, fixture, evidence):
     row = page.locator('.worker-row[data-ticket-id="wash_one"]')
     expect(row).to_be_visible()
     page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+
+    def selection_settled(selector):
+        # The selected control carries the route, and every wash and ghost has landed.
+        expect(page.locator(selector)).to_have_attribute("aria-current", "page")
+        wait_settled(page, selector, ".rail-wash")
+
     # Warm the intended selected route before any frame-level checks.
     page.locator('[data-manager="wash_a"] .item-head').click()
     page.mouse.move(1300, 950)
-    page.wait_for_timeout(350)
+    selection_settled('[data-manager="wash_a"] .item-head')
     page.evaluate("""() => {
       window.__washProof=[];
       window.__washSample=selector=>{
@@ -2374,7 +2454,8 @@ def verify_selection_washes(page, url, fixture, evidence):
     def capture(name, selector, change):
         page.evaluate("selector=>window.__washCapture(selector)", selector)
         change()
-        page.wait_for_timeout(70)
+        # The midpoint frame: the recorder has sampled the first 70 ms of the change.
+        page.wait_for_function("window.__washProof.at(-1).frames.at(-1)?.ms >= 70")
         page.screenshot(path=str(evidence / f"selection-wash-{name}-midpoint.png"))
         page.wait_for_function("window.__washDone")
         frames = page.evaluate("window.__washProof.at(-1).frames")
@@ -2391,7 +2472,7 @@ def verify_selection_washes(page, url, fixture, evidence):
         expect(grip).to_have_attribute('aria-valuenow', str(width))
         row.click()
         page.mouse.move(1300, 950)
-        page.wait_for_timeout(350)
+        selection_settled(selector)
         frame = sample(selector)
         aligned(frame)
         assert all(abs(frame['context'][key] - frame['group'][key]) < 1.6 for key in ['x', 'y', 'width', 'height']), frame
@@ -2412,7 +2493,7 @@ def verify_selection_washes(page, url, fixture, evidence):
 
     # The selected row changes bucket while its real WAAPI transform moves it.
     row.evaluate('node=>node.click()')
-    page.wait_for_timeout(300)
+    selection_settled(selector)
     page.mouse.move(1300, 950)
     def move_bucket():
         one['awaiting_approval'] = True
@@ -2441,7 +2522,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     expect(hover).not_to_have_attribute('hidden', '')
     row.click()
     page.mouse.move(1300, 950)
-    page.wait_for_timeout(450)
+    selection_settled(selector)
     expect(hover).to_have_attribute('hidden', '')
     page.keyboard.press("Tab")
     row.focus()
@@ -2469,7 +2550,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     expect(goal_row).to_be_visible()
     goal_row.click()
     page.mouse.move(1300, 950)
-    page.wait_for_timeout(350)
+    selection_settled('[data-goal-id="wash_goal"]')
     aligned(sample('[data-goal-id="wash_goal"]'))
     fixture["goals"] = []
 
@@ -2479,10 +2560,10 @@ def verify_selection_washes(page, url, fixture, evidence):
     settled_selector = '[data-settled-item="wash_settled"] .settled-title'
     page.locator(settled_selector).click()
     page.mouse.move(1300, 950)
-    page.wait_for_timeout(350)
+    selection_settled(settled_selector)
     aligned(sample(settled_selector), grouped=False)
     page.locator('.rail-utilities [aria-label="Settings"]').click()
-    page.wait_for_timeout(350)
+    selection_settled('.rail-utilities [aria-label="Settings"]')
     aligned(sample('.rail-utilities [aria-label="Settings"]'), grouped=False)
 
     # Rapid reversal cannot leave a stale target or fading ghost behind.
@@ -2493,7 +2574,7 @@ def verify_selection_washes(page, url, fixture, evidence):
       await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
       document.querySelector('.worker-row[data-ticket-id="wash_two"]').click();
     }""")
-    page.wait_for_timeout(450)
+    selection_settled('.worker-row[data-ticket-id="wash_two"]')
     aligned(sample('.worker-row[data-ticket-id="wash_two"]'))
     expect(page.locator('.rail-wash--leaving')).to_have_count(0)
     page.emulate_media(reduced_motion='reduce')
