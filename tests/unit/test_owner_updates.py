@@ -467,7 +467,7 @@ def test_runner_refuses_unknown_schema_before_any_shutdown(tmp_path: Path) -> No
     database = tmp_path / "schema.db"
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE alembic_version (version_num TEXT)")
-        conn.execute("INSERT INTO alembic_version VALUES ('video_upload_ledger')")
+        conn.execute("INSERT INTO alembic_version VALUES ('canonical_manager_identities')")
     validate_schema_ancestry(database)
     with sqlite3.connect(database) as conn:
         conn.execute("UPDATE alembic_version SET version_num = 'unknown_migration'")
@@ -575,8 +575,6 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     from dataclasses import asdict
     from typing import Any
 
-    from alembic.script import ScriptDirectory
-
     from planner.core.db import MIGRATIONS_DIRECTORY
     from planner.environments import update_runner
     from planner.environments.app import (
@@ -592,11 +590,12 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     history = candidate / "src" / "planner" / "core" / "migrations"
     (history / "versions").mkdir(parents=True)
     shutil.copy(MIGRATIONS_DIRECTORY / "env.py", history / "env.py")
-    # Copy only the predecessor chain, regardless of later shipped descendants.
-    for revision in ScriptDirectory(str(MIGRATIONS_DIRECTORY)).walk_revisions(
-        base="base", head="owner_message_preview"
-    ):
-        shutil.copy(revision.path, history / "versions" / Path(revision.path).name)
+    # This candidate cannot read the current database's revision.
+    (history / "versions" / "older.py").write_text(
+        'revision = "older_candidate"\ndown_revision = None\n'
+        'branch_labels = depends_on = None\n'
+        'def upgrade(): pass\ndef downgrade(): pass\n'
+    )
     manifest_path = candidate / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["source_digest"] = digest_app_source(candidate)
@@ -611,7 +610,7 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     database.parent.mkdir()
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE alembic_version (version_num TEXT)")
-        conn.execute("INSERT INTO alembic_version VALUES ('video_upload_ledger')")
+        conn.execute("INSERT INTO alembic_version VALUES ('canonical_manager_identities')")
     update_runner.validate_schema_ancestry(database)
     store = FileUpdateRequestStore(database.parent / "owner-update-request.json")
     store.create(OwnerUpdateRequest("request", offered, "idle", "installing", "now"))
