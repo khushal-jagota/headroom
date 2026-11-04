@@ -2350,9 +2350,18 @@ def native_goal_edits(browser, url):
 
         def refresh(goal_id=identity):
             key = f"/api/goals/{goal_id}"
+            # A route or mutation can leave a read in flight. Wait for cache
+            # admission before focus requests a distinct authoritative read.
+            page.wait_for_function(
+                "id => { const state = window.__goalQueryState(id); "
+                "return state.fetchStatus === 'idle' && state.status === 'success'; }",
+                arg=goal_id,
+            )
+            accepted = page.evaluate("id => window.__goalQueryState(id)", goal_id)
             before = fixture.reads.get(key, 0)
+            revision = fixture.goals[goal_id]["revision"]
             with page.expect_response(
-                lambda response: (
+                lambda response: response.request.method == "GET" and (
                     urlsplit(response.url).path == key
                     or parse_qs(urlsplit(response.url).query).get("key", [None])[0] == key
                 )
@@ -2361,6 +2370,12 @@ def native_goal_edits(browser, url):
                     "document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))"
                 )
             assert fixture.reads.get(key, 0) > before
+            page.wait_for_function(
+                "({id, count, revision}) => { const state = window.__goalQueryState(id); "
+                "return state.fetchStatus === 'idle' && state.status === 'success' "
+                "&& state.dataUpdateCount > count && state.revision === revision; }",
+                arg={"id": goal_id, "count": accepted["dataUpdateCount"], "revision": revision},
+            )
 
         try:
             page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
