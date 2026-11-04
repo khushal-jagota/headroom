@@ -243,6 +243,11 @@ REJECTED_COMMAND_LIFECYCLE_STATES: Final[frozenset[str]] = frozenset(
 # Claude is doing. 15.0 seconds is what codex and hermes allow a wait of this kind.
 CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS: Final[float] = 15.0
 
+# How long claude must keep running after it reports a background task stopped before
+# that stop counts as the task's own end. A claude being terminated stops its tasks and
+# exits within a second; one that is still up after this has survived the stop.
+STOPPED_BACKGROUND_TASK_PROOF_OF_LIFE_SECONDS: Final[float] = 10.0
+
 # Stop must not leave a queued steering command behind. A missing cancel receipt is a
 # failed cancellation, which makes the core discard this child and resume its session on
 # the next prompt.
@@ -877,6 +882,7 @@ class ClaudeAgentSdkBackendChild:
         # still going. When claude itself is terminated it stops every task on its way
         # out, and those tasks did not end on their own: they ended with the session.
         self._stopped_background_tasks_awaiting_proof_of_life: dict[str, str] = {}
+        self._proof_of_life_waits: set[asyncio.Task[None]] = set()
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -1310,6 +1316,8 @@ class ClaudeAgentSdkBackendChild:
     async def stop(self) -> None:
         """Close the exact child, retaining cleanup handles until each step succeeds."""
         self._wire_broken = True
+        for wait in tuple(self._proof_of_life_waits):
+            wait.cancel()
         turn = self._turn
         self._turn = None
         self._last_ended_turn = None
@@ -1578,8 +1586,9 @@ class ClaudeAgentSdkBackendChild:
         """Report a background task starting or ending. True when the message was that.
 
         A task that completed or failed has ended on its own. A stopped or killed task
-        is held until the child next shows model activity, which a child being
-        terminated never does; the stream ending first means the task died with it.
+        is held until the child next shows model activity or is still running a short
+        while later. A child being terminated does neither; the stream ending first
+        means the task died with it.
         """
         if isinstance(message, (AssistantMessage, UserMessage, ResultMessage, StreamEvent)):
             await self._report_the_stops_the_child_survived()
@@ -1605,10 +1614,18 @@ class ClaudeAgentSdkBackendChild:
                     self._stopped_background_tasks_awaiting_proof_of_life[message.task_id] = (
                         task_status
                     )
+                    wait = asyncio.create_task(self._report_the_stop_if_the_child_lives_on())
+                    self._proof_of_life_waits.add(wait)
+                    wait.add_done_callback(self._proof_of_life_waits.discard)
                     return True
                 await self._report_the_background_task_ended(message.task_id, task_status)
                 return True
         return False
+
+    async def _report_the_stop_if_the_child_lives_on(self) -> None:
+        await asyncio.sleep(STOPPED_BACKGROUND_TASK_PROOF_OF_LIFE_SECONDS)
+        if not self._wire_broken:
+            await self._report_the_stops_the_child_survived()
 
     async def _report_the_stops_the_child_survived(self) -> None:
         stopped = self._stopped_background_tasks_awaiting_proof_of_life

@@ -3420,7 +3420,8 @@ def test_a_background_task_lost_with_its_session_is_told_to_the_agent(
         await _start(harness, backend_key=ConversationBackendKey.claude)
         await harness.system.send("c", text_message_content("run the suite"), sender_label="o")
         await _report_background_task_started(harness, "c", "task-1", "Run the test suite")
-        await harness.complete_turn("c")
+        if how != "killed":
+            await harness.complete_turn("c")
         system = harness.system
         if how == "stream_ended":
             sink = harness.backend("c").sink
@@ -3440,6 +3441,8 @@ def test_a_background_task_lost_with_its_session_is_told_to_the_agent(
             system = restarted.system
             await system.tell_agents_of_background_tasks_lost_at_restart()
         else:
+            # A cancel that fails makes the kill stop the child itself, mid-kill.
+            harness.backend("c").cancels_raise_something_unnamed = True
             await system.kill("c")
         await system.wait_until_quiescent()
 

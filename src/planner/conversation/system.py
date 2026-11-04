@@ -510,6 +510,9 @@ class _ConversationState:
     retiring_child: BackendChild | None = None
     next_turn_number: int = 1
     has_delivered_prompt: bool = False
+    # Set for the whole of a kill. Nothing runs in a killed conversation until someone
+    # sends again, so a background task lost while it is killed goes without a prompt.
+    being_killed: bool = False
     last_touched_monotonic: float = 0.0
     # When this conversation last said its model was thinking. Kept per conversation
     # because the rate it may be said at is about one browser watching one conversation.
@@ -1208,6 +1211,21 @@ class SqliteProcessConversationSystem:
         state = await self._conversation_state(conversation_id)
         if state is None:
             return
+        state.being_killed = True
+        try:
+            await self._kill_owned(state)
+        finally:
+            try:
+                # A task the killed child reported on its way out is dropped too. Shutdown
+                # keeps every row for the next start.
+                if not self._shutting_down:
+                    await self._persist(
+                        state, partial(self._store.take_background_tasks, conversation_id)
+                    )
+            finally:
+                state.being_killed = False
+
+    async def _kill_owned(self, state: _ConversationState) -> None:
         state.last_touched_monotonic = self._monotonic_now()
         if await self._kill_initial_delivery(state):
             return
@@ -1227,11 +1245,6 @@ class SqliteProcessConversationSystem:
                     await self._cancel_and_end_running_turn(state, running)
                 # Inventory can replace the proxy while cancellation releases the lock.
                 child = state.child
-                # Nothing runs in a killed conversation until someone sends again, so its
-                # background tasks go without a prompt. The lock keeps a new one out.
-                await self._persist(
-                    state, partial(self._store.take_background_tasks, conversation_id)
-                )
                 if child is not None:
                     await self._discard_child(state, child)
             finally:
@@ -2027,14 +2040,22 @@ class SqliteProcessConversationSystem:
         left_behind = self._background_tasks_left_by_previous_process
         self._background_tasks_left_by_previous_process = {}
         for conversation_id, task_ids in sorted(left_behind.items()):
-            state = await self._conversation_state(conversation_id)
-            if state is None:
-                continue
-            lost = await self._persist(
-                state,
-                partial(self._store.take_background_tasks, conversation_id, task_ids=task_ids),
-            )
-            self._tell_agent_about_lost_background_tasks(state, lost)
+            try:
+                state = await self._conversation_state(conversation_id)
+                if state is None:
+                    continue
+                lost = await self._persist(
+                    state,
+                    partial(self._store.take_background_tasks, conversation_id, task_ids=task_ids),
+                )
+                self._tell_agent_about_lost_background_tasks(state, lost)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOGGER.exception(
+                    "conversation %s could not hear about background tasks lost at restart",
+                    conversation_id,
+                )
 
     async def shutdown(self) -> None:
         """Own complete cleanup, retaining the database lease if the caller leaves."""
@@ -3962,6 +3983,8 @@ class SqliteProcessConversationSystem:
             )
             return False
         state.local_child_retirement_proven = True
+        # News still queued from the stopped child is not about any child that follows.
+        state.child_event_sink = None
         await self._background_tasks_ended_with_child(state)
         return True
 
@@ -3969,14 +3992,15 @@ class SqliteProcessConversationSystem:
         """The child is gone, and every background task it was running went with it.
 
         Server shutdown never comes here: it detaches, and keeps the rows so the next
-        start tells the agent. A kill forgets the tasks before it stops the child.
+        start tells the agent. A kill forgets the tasks without a prompt.
         """
         if self._shutting_down:
             return
         lost = await self._persist(
             state, partial(self._store.take_background_tasks, state.record.conversation_id)
         )
-        self._tell_agent_about_lost_background_tasks(state, lost)
+        if not state.being_killed:
+            self._tell_agent_about_lost_background_tasks(state, lost)
 
     def _tell_agent_about_lost_background_tasks(
         self, state: _ConversationState, task_descriptions: tuple[str, ...]
@@ -4312,6 +4336,7 @@ class SqliteProcessConversationSystem:
             state.child = None
             state.retained_child_reference = None
             state.child_is_quarantined = False
+            await self._background_tasks_ended_with_child(state)
             if state.reserved_turn is not None:
                 state.last_ended_turn_token = state.reserved_turn.token
                 state.reserved_turn.resolved.set()
@@ -4691,7 +4716,9 @@ class SqliteProcessConversationSystem:
             register_capture_task(drain)
         return result
 
-    def _note_background_task_news(self, state: _ConversationState, args: BackendEventValue) -> None:
+    def _note_background_task_news(
+        self, state: _ConversationState, args: BackendEventValue
+    ) -> None:
         """One line per background task fact, and the idle clock restarts at a task's end."""
         conversation_id = state.record.conversation_id
         if isinstance(args, BackgroundTaskStarted):

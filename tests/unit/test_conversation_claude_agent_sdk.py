@@ -44,6 +44,7 @@ from tests.support.conversation_claude_agent_sdk_bench import (
     _write,
 )
 
+from planner.conversation.backends import claude_agent_sdk
 from planner.conversation.backends.claude_agent_sdk import (
     _ClaudeCleanupTransport,
     _ClaudeProtocolTransport,
@@ -153,7 +154,7 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
 
 
 def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_end_them(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Task news arrives when no turn runs. Claude stops every task while it is terminated,
     and those tasks ended with the session, not on their own.
@@ -191,6 +192,10 @@ def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_
             session_id=SESSION_ID,
         )
 
+    monkeypatch.setattr(
+        claude_agent_sdk, "STOPPED_BACKGROUND_TASK_PROOF_OF_LIFE_SECONDS", 0.01
+    )
+
     async def exercise() -> None:
         start = _start_request(workspace_folder=tmp_path)
         child, sink, clients = _bench(start)
@@ -203,6 +208,13 @@ def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_
             started("b"),
             updated("b", "killed"),
             _assistant(TextBlock(text="stopped it")),
+            # Stopped between turns: the child is still up a while later.
+            started("d"),
+            notified("d", "stopped"),
+        )
+        await clients[0].until_taken_in()
+        await asyncio.sleep(0.05)
+        clients[0].say(
             # Stopped while claude itself is being terminated: the stream ends next.
             started("c"),
             notified("c", "stopped"),
@@ -216,6 +228,8 @@ def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_
             BackgroundTaskEnded(task_id="a", task_status="completed"),
             BackgroundTaskStarted(task_id="b", task_description="sleep for b"),
             BackgroundTaskEnded(task_id="b", task_status="killed"),
+            BackgroundTaskStarted(task_id="d", task_description="sleep for d"),
+            BackgroundTaskEnded(task_id="d", task_status="stopped"),
             BackgroundTaskStarted(task_id="c", task_description="sleep for c"),
             BackendStreamEnded(),
         ]
