@@ -220,12 +220,12 @@ class MacService:
 
     async def _connected(self) -> None:
         self.phase = ConnectionPhase.app_connect
+        self.connection.identity = advance_generation(self.identity)
         # Recovery does not depend on a successful work-protocol handshake.
         with contextlib.suppress(OSError, ValueError, ConnectionError, aiohttp.ClientError):
             await self.updates.check()
         if self._stop.is_set():
             return
-        self.connection.identity = advance_generation(self.identity)
         self.connection.state = ConnectionState.reconciling
         await self._serve()
 
