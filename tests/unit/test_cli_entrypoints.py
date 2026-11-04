@@ -21,6 +21,8 @@ def test_explicit_ticket_parts_read_only_the_named_retained_field(
     record: dict[str, Any] = {
         "id": ticket_id,
         "worker_type": "coding",
+        "worker": "panels-worker-coding",
+        "worker_skill_path": "/canonical/skills/panels-worker-coding/SKILL.md",
         "field_values": {"brief": "Current brief"},
     }
 
@@ -43,6 +45,9 @@ def test_explicit_ticket_parts_read_only_the_named_retained_field(
         calls.clear()
         manifest = runner.invoke(cli_main.main, [*command, "--json"])
         assert manifest.exit_code == 0, manifest.output
+        assert json.loads(manifest.output)["header"]["worker_skill_path"] == (
+            "/canonical/skills/panels-worker-coding/SKILL.md"
+        )
         assert "retired field" not in json.loads(manifest.output)["manifest"]
         assert body_path not in calls
 

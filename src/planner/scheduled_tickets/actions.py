@@ -29,7 +29,6 @@ from planner.scheduled_tickets.logic import (
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
-from planner.tickets.logic.admission import require_creatable_worker_type
 from planner.tickets.logic.locale import require_ticket_locale
 from planner.worker_types.contracts import RETIRED_WORKER_TYPES
 
@@ -54,7 +53,6 @@ def _validate_template(
     *,
     model_source_is_historical: bool = False,
 ) -> ScheduledTicketTemplate:
-    require_creatable_worker_type(template.worker_type)
     if template.manager_kind not in {"chief", "manager"} or (
         (template.manager_kind == "manager") != (template.manager_id is not None)
     ):

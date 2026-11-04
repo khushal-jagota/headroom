@@ -16,7 +16,7 @@ Khushal and Chief stand above skills, so both may edit them. A Worker or a Manag
 
 ## What a skill feeds
 
-The copies feed every agent home that links to them. The specialist name on a Worker type decides which skill a Worker step binds. Publishing updates the copy the agent homes link to. A turn already in flight has whatever it already read. The next load of the skill reads the published copy. The conversation notebook does not gain a row merely because the skill row changed. Workers that must change a skill hand the exact text to the owner or Chief.
+Agent homes and workspace discovery expose the current general skills through links to the managed copies. The four historical specialists for personal tasks and calendar plans stay outside that general catalog. Their database rows and canonical copies remain intact. An assigned personal Worker still receives its specialist in its canonical snapshot. Other Workers do not receive it. The specialist name on a Worker type decides which skill a Worker step binds. Publishing updates the copy the agent homes link to. A turn already in flight has whatever it already read. The next load of the skill reads the published copy. The conversation notebook does not gain a row merely because the skill row changed. Workers that must change a skill hand the exact text to the owner or Chief.
 
 ## Where it shows up
 

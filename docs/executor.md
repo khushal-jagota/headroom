@@ -129,7 +129,8 @@ Code paths: `src/planner/runtime/worker_step_readiness_loop.py`,
 
 ## Native skills and artifact paths
 
-Each new Mac Worker start receives the current canonical skills from the VPS database.
+Each new Mac Worker start receives the current general skills and its assigned specialist from the VPS database.
+Historical personal and calendar specialists stay outside other Workers’ snapshots.
 The Mac exposes their exact text through the selected provider's skills home before the backend starts.
 Codex uses its resolved home. Hermes uses the same home as its native launch.
 Claude uses inherited `CLAUDE_CONFIG_DIR`, or the account's ordinary `.claude` directory.
