@@ -94,7 +94,7 @@ struct GoalChart: View {
             let open = preference.expanded
             if open { try? await Task.sleep(for: .seconds(reduceMotion ? 0 : PanelsTheme.Goal.delay)) }
             guard !Task.isCancelled else { return }
-            withAnimation(reduceMotion ? nil : .easeOut(duration: open ? PanelsTheme.Goal.standardDuration : PanelsTheme.Goal.instantDuration)) { bodyVisible = open }
+            withAnimation(reduceMotion ? nil : PanelsTheme.Goal.easeInOut(open ? PanelsTheme.Goal.standardDuration : PanelsTheme.Goal.instantDuration)) { bodyVisible = open }
         }
     }
     private var title: some View { Text(block["title"].string ?? "Reading").panelsScaledFont(size: supporting ? 14 : 17, weight: .medium).foregroundStyle(supporting ? PanelsTheme.Goal.faint : PanelsTheme.strong) }

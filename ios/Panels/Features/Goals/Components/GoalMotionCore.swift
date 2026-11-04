@@ -10,6 +10,16 @@ struct GoalCubicInOut: CustomAnimation {
     }
 }
 
+/// Svelte's `cubicOut`: 1 − (1 − t)³.
+struct GoalCubicOut: CustomAnimation {
+    let duration: TimeInterval
+    func animate<V: VectorArithmetic>(value: V, time: TimeInterval, context: inout AnimationContext<V>) -> V? {
+        guard time < duration else { return nil }
+        let t = time / duration
+        return value.scaled(by: 1 - pow(1 - t, 3))
+    }
+}
+
 /// A spring written the way the web's line chart writes it (`physical()` in
 /// line-chart-integrated.tsx): Motion's visual duration as stiffness and damping,
 /// with explicit rest thresholds.

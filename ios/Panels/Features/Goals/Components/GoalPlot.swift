@@ -140,7 +140,8 @@ struct GoalPlot: View {
     private var lineSeries: [GoalLineSeries] {
         keys.enumerated().map { index, key in
             let label = key == "target" ? (!block["expectation"].isNull ? "Expected" : "Target") : series.indices.contains(index) ? series[index]["name"].text : (block["series"].array.first?["name"].string ?? (manual ? "Reading" : "Current"))
-            return GoalLineSeries(key: key, label: label, color: color(key, index: index), stops: lineStops(key, index: index), dashed: key == "target", area: index == 0 && key != "target",
+            // A manual reading line keeps the accent as its own colour; comparisons colour only the stroke.
+            return GoalLineSeries(key: key, label: label, color: manual && key != "target" ? PanelsTheme.accent : key == "target" && manual ? PanelsTheme.faint : color(key, index: index), stops: lineStops(key, index: index), dashed: key == "target", area: index == 0 && key != "target",
                                   smooth: key != "target" || block["expectation"].isNull, values: data.map { $0.values[key] }, breaks: data.map { key == "target" && $0.breakBefore })
         }
     }

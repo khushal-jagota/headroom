@@ -259,6 +259,10 @@ extension PanelsTheme {
         static func easeInOut(_ duration: Double) -> Animation { .timingCurve(0.42, 0, 0.58, 1, duration: duration) }
         static func standardEase(_ duration: Double) -> Animation { .timingCurve(0.22, 1, 0.36, 1, duration: duration) }
         static func enter(_ duration: Double) -> Animation { .timingCurve(0.16, 1, 0.3, 1, duration: duration) }
+        /// The app curve in assets/tokens.css (`--motion-ease`).
+        static func appEase(_ duration: Double) -> Animation { .timingCurve(0.2, 0.7, 0.3, 1, duration: duration) }
+        /// Svelte's `cubicOut`, used by the checklist's grow and fly transitions.
+        static func cubicOut(_ duration: Double) -> Animation { Animation(GoalCubicOut(duration: duration)) }
         /// Chart.js `easeInOutCubic`, the read-only bar chart's 0.6 s update.
         static let bars = Animation(GoalCubicInOut(duration: barDuration))
         static let reveal = Animation.timingCurve(0.65, 0, 0.35, 1, duration: lineReveal)

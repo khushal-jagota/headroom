@@ -143,7 +143,7 @@ struct GoalManualChart: View {
     private var data: [GoalChartDatum] {
         dates.map { day in
             let observation = history.first { $0["measure_id"].text == editor.measureID && $0["date"].text == day }
-            var point = GoalChartDatum(id: day, label: day == editor.state?.currentDate ? "Today" : GoalPresentation.date(day))
+            var point = GoalChartDatum(id: day, label: GoalManualBars.dayMonth(day))
             point.values["actual"] = observation?["value"].number
             point.values["target"] = block["reference"].array.isEmpty ? target : GoalChartPresentation.reference(block, date: day)
             return point
@@ -159,7 +159,7 @@ struct GoalManualChart: View {
                     }
                 } label: {
                     VStack(alignment: .leading, spacing: 10) {
-                        HStack { title; Spacer(); Image(systemName: "chevron.down").rotationEffect(.degrees(preference.expanded ? 180 : 0)) }
+                        HStack { title; Spacer(); Image(systemName: "chevron.down").font(.system(size: 12)).rotationEffect(.degrees(preference.expanded ? 180 : 0)).animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: preference.expanded) }
                         GoalManualCounter(block: block, value: current, size: 28)
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityValue(preference.expanded ? "Expanded" : "Collapsed")
@@ -167,8 +167,12 @@ struct GoalManualChart: View {
             if !supporting || preference.expanded {
                 VStack(alignment: .leading, spacing: 16) {
                     if editor.cumulative {
-                        GoalGauge(block: block, headline: .init(value: current, target: target), manual: preview ? nil : editor)
-                        increments
+                        GoalManualGauge(block: block, editor: editor, current: current, target: target, preview: preview)
+                        HStack(spacing: 12) {
+                            Text(completion).font(.system(size: 11)).foregroundStyle(GoalManualBars.toneColor(block, current, target))
+                            Spacer(minLength: 0)
+                            increments
+                        }.frame(minHeight: 40)
                     } else {
                         HStack(alignment: .center, spacing: 8) {
                             if preview { GoalManualCounter(block: block, value: current, size: 40) }
@@ -200,9 +204,16 @@ struct GoalManualChart: View {
                 let open = preference.expanded
                 if open { try? await Task.sleep(for: .seconds(reduceMotion ? 0 : PanelsTheme.Goal.delay)) }
                 guard !Task.isCancelled else { return }
-                withAnimation(reduceMotion ? nil : .easeOut(duration: open ? PanelsTheme.Goal.standardDuration : PanelsTheme.Goal.instantDuration)) { bodyVisible = open }
+                withAnimation(reduceMotion ? nil : PanelsTheme.Goal.easeInOut(open ? PanelsTheme.Goal.standardDuration : PanelsTheme.Goal.instantDuration)) { bodyVisible = open }
             }
             .task(id: session.readings?.revision) { await editor.refresh() }
+    }
+    /// The web's completion line under a cumulative gauge.
+    private var completion: String {
+        guard let current, let target, GoalChartPresentation.tone(block, headline: .init(value: current, target: target)) == "good" else { return "" }
+        if current == target { return "Target reached" }
+        if GoalChartPresentation.direction(block) == "atmost" { return GoalChartPresentation.comparison(block, headline: .init(value: current, target: target)) }
+        return GoalChartPresentation.number(current - target, decimals: 20, trim: true) + " beyond target"
     }
     private var title: some View { Text(block["title"].string ?? "Reading").panelsScaledFont(size: supporting ? 14 : 17, weight: .medium).foregroundStyle(supporting ? PanelsTheme.Goal.faint : PanelsTheme.strong) }
     @ViewBuilder private var increments: some View {
@@ -275,6 +286,11 @@ struct GoalManualBars: View {
             return GoalChartPresentation.number(scaled, decimals: abs(scaled) < 10 ? 1 : 0, trim: true) + suffix
         }
         return GoalChartPresentation.number(number, decimals: magnitude < 10 ? 1 : 0, trim: true)
+    }
+    /// The web's manual dates: "29 Oct".
+    static func dayMonth(_ day: String) -> String {
+        let parts = GoalPresentation.date(day).split(separator: " ")
+        return parts.count == 2 ? "\(parts[1]) \(parts[0])" : day
     }
     static func toneColor(_ block: GoalJSON, _ value: Double?, _ target: Double?) -> Color {
         switch GoalChartPresentation.tone(block, headline: .init(value: value, target: target)) {
@@ -353,7 +369,7 @@ struct GoalManualBars: View {
     private func inspection(_ datum: GoalChartDatum) -> some View {
         let value = datum.values["actual"], target = datum.values["target"]
         return VStack(alignment: .leading, spacing: 4) {
-            Text(GoalPresentation.date(datum.id)).font(.system(size: 11)).foregroundStyle(PanelsTheme.text).padding(.bottom, 2)
+            Text(Self.dayMonth(datum.id)).font(.system(size: 11)).foregroundStyle(PanelsTheme.text).padding(.bottom, 2)
             row(title, value.map { GoalChartPresentation.format(block, $0) } ?? "No reading", Self.toneColor(block, value, target), dashed: false)
             if let target { row("Target", GoalChartPresentation.format(block, target), PanelsTheme.faint, dashed: true) }
         }
@@ -371,4 +387,47 @@ struct GoalManualBars: View {
             Text(value).fontWeight(.medium).foregroundStyle(PanelsTheme.strong).monospacedDigit()
         }.font(.system(size: 13))
     }
+}
+
+/// The web's cumulative ring (GaugeVisual, `.radial`): the fill runs along the dial on
+/// the smooth spring, changing colour with it, around the inline value.
+private struct GoalManualGauge: View {
+    let block: GoalJSON
+    let editor: GoalManualEditor
+    let current: Double?
+    let target: Double?
+    let preview: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var fraction: Double {
+        guard let target else { return 0 }
+        return target == 0 ? (current == 0 ? 1 : 0) : (current ?? 0) / target
+    }
+    var body: some View {
+        GeometryReader { geometry in
+            let scale = geometry.size.width / 100
+            ZStack(alignment: .top) {
+                GoalGaugeArcShape().stroke(PanelsTheme.accent.opacity(0.13), style: StrokeStyle(lineWidth: 9 * scale, lineCap: .round))
+                GoalGaugeArcShape().trim(from: 0, to: max(0, min(1, fraction)))
+                    .stroke(GoalManualBars.toneColor(block, current, target), style: StrokeStyle(lineWidth: 9 * scale, lineCap: .round))
+                    .opacity(current == nil || target == nil || fraction <= 0 ? 0 : 1)
+                    .animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: fraction)
+                    .animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: GoalChartPresentation.tone(block, headline: .init(value: current, target: target)))
+                VStack(spacing: 4) {
+                    Group {
+                        if preview { GoalManualCounter(block: block, value: current, size: 40) }
+                        else { GoalManualValue(editor: editor, block: block, centered: true) }
+                    }.frame(maxWidth: geometry.size.width * 0.65)
+                    if let target { Text("of " + GoalChartPresentation.number(target, decimals: 20, trim: true)).font(.system(size: 13)).foregroundStyle(PanelsTheme.faint) }
+                }.frame(width: geometry.size.width, height: geometry.size.width)
+            }
+        }
+        .aspectRatio(100 / 90, contentMode: .fit)
+        .frame(maxWidth: 232)
+        .padding(.vertical, 24)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct GoalGaugeArcShape: Shape {
+    func path(in rect: CGRect) -> Path { GoalGaugeGeometry.arc(1, scale: rect.width / 100) }
 }
