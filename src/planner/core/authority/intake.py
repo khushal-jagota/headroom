@@ -16,6 +16,7 @@ from fastapi import Request
 from planner.core import authority
 from planner.core.authctx import request_context
 from planner.core.contracts import Principal, PrincipalKind
+from planner.core.errors import ErrorCode, PlannerError
 
 
 def admit_message(conn: sqlite3.Connection, caller: Principal, recipient: Principal) -> None:
@@ -36,6 +37,25 @@ def admit_message(conn: sqlite3.Connection, caller: Principal, recipient: Princi
         if authority.is_above(conn, recipient, own):
             return
     authority.require_above(conn, caller, target)
+
+
+def _admit_source_assignment(
+    conn: sqlite3.Connection, principal: Principal, responsible: Principal
+) -> None:
+    if responsible.kind is PrincipalKind.goal:
+        authority.require_above_or_self(conn, principal, authority.goal(responsible.id))
+        return
+    if responsible.kind is PrincipalKind.manager:
+        authority.require_in_chain(conn, principal, authority.manager(responsible.id))
+        return
+    if principal.kind is PrincipalKind.ticket:
+        from planner.tickets import data as tickets_data
+
+        ticket = tickets_data.read_ticket(conn, principal.id)
+        if ticket.manager_kind == "chief":
+            return
+        raise PlannerError(ErrorCode.agent_forbidden, "source belongs to another assignment")
+    authority.require_above(conn, principal, authority.owner_only("measure_sources"))
 
 
 def admit_command(
@@ -139,7 +159,6 @@ def admit_command(
         target = authority.owner_only('credentials')
     elif (family in ('measure-sources', 'measures', 'datasets')
           and writing and not route.endswith('/read')):
-        from planner.measure_sources import authority as sources_authority
         from planner.measure_sources import data as sources
         from planner.measures import data as measures
         from planner.datasets import data as datasets
@@ -151,7 +170,7 @@ def admit_command(
             elif source_id is None:
                 from planner.measure_sources.api import principal as source_principal
 
-                sources_authority.require_assignment(
+                _admit_source_assignment(
                     conn, principal, source_principal(body.get('responsible'))
                 )
                 return
@@ -170,7 +189,9 @@ def admit_command(
             if source_id is None and target is None:
                 target = authority.owner_only('measures')
         if target is None and source_id is not None:
-            sources_authority.require_author(conn, principal, sources.read_source(conn, source_id))
+            _admit_source_assignment(
+                conn, principal, sources.read_source(conn, source_id).responsible
+            )
             return
     if target is not None:
         (authority.require_above_or_self if own else authority.require_above)(conn, principal, target)
