@@ -58,7 +58,9 @@ the server's authenticated owner access. Removing that registration stops future
 to that token. Revocation remains available if the Apple key is later removed. The
 server stores tokens in its database; private Apple keys stay in server secrets.
 
-App registration is disabled by default. The remaining deployment inputs and the
+The native bundle `com.khushaljagota.panels` has Push Notifications enabled under
+Blue Door Labs; Release signing requests production APNs. App registration is
+still disabled by default. The remaining deployment inputs and the
 registration and notification contracts are in [the native notification guide](../ios/NOTIFICATIONS.md).
 Actual Apple delivery and signed physical-device behavior still need live testing.
 
