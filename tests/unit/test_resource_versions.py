@@ -59,7 +59,7 @@ def test_source_counters_are_atomic_narrow_and_reads_emit_no_change(
         assert signals == []
         conn.execute("UPDATE chief_settings SET recap='a'")
         updated = source_revision(conn, "chief-settings", "chief_of_staff")
-        conn.execute("UPDATE chief_settings SET updated_at=updated_at+1")
+        conn.execute("UPDATE chief_settings SET recap=recap")
         assert source_revision(conn, "chief-settings", "chief_of_staff") == updated
         snapshot = provider.capture(conn, request(), key)
         assert snapshot is not None
