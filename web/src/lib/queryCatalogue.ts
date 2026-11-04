@@ -3,7 +3,6 @@ import { MACHINE_HEALTH_POLL_MS } from "./machines/config";
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
-import type { FeedbackCountResponse, FeedbackResponse } from "./feedback";
 import { readBackends, readScopedBackends, type ConversationStartValues, type BackendSnapshot } from "./conversation/wire";
 import { usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import type { WorkerTypesResponse } from "./lifecycle";
@@ -83,9 +82,6 @@ export const queries = {
       `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&manager_kind=${principal.kind}${principal.kind === "manager" ? `&manager_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : "&is_backlogged=false"}`
     ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
-  feedback: () => jsonQuery<FeedbackResponse>(["feedback"], "/api/feedback"),
-  feedbackCount: () =>
-    versionedJsonQuery<FeedbackCountResponse>(["feedback-count"], "/api/feedback/count"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects?detail=full"),
   managers: () => jsonQuery<ManagersResponse>(["managers"], "/api/managers?detail=full"),
   managerWorkspaceContent: (itemId: string) =>

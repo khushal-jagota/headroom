@@ -97,7 +97,8 @@ async function runSelected(entries, options, receipt, requiredCompanions) {
     receipt.timing.prepareSeconds = (performance.now() - prepareStarted) / 1000;
     const output = join(temporary, "dist");
     const buildStarted = performance.now();
-    await build({root: webRoot, base: "/", configFile: false, resolve: { alias: usageAliases }, logLevel: "warn", plugins: [svelte()], worker: { plugins: markdownWorkerPlugins },
+    // Keep host imports relative to web when the scratch directory is a symlink.
+    await build({root: webRoot, base: "/", configFile: false, resolve: { alias: usageAliases, preserveSymlinks: true }, logLevel: "warn", plugins: [svelte()], worker: { plugins: markdownWorkerPlugins },
       build: {outDir: output, emptyOutDir: true, rollupOptions: {input: prepared.flatMap(case_ => case_.inputs)}}});
     receipt.timing.sharedBuildSeconds = (performance.now() - buildStarted) / 1000;
     const serverStarted = performance.now();

@@ -3,7 +3,6 @@ import type { ConversationSignal } from "../../src/lib/conversationSignal";
 //
 // Each helper returns the words or the mark a reader actually sees, so a test here
 // fails when a screen changes what it says — not when a function is renamed.
-import { feedbackTicketStateLabel } from "../../src/lib/feedback";
 import {
   buildLifecycle,
   fieldStageVisualStateFor,
@@ -160,22 +159,6 @@ export function workspaceHeading(facts: TicketFacts): string {
 export function managerHeading(facts: TicketFacts): string {
   const key = workItemTicketGroupKey({ id: "", title: "", ...facts });
   return WORK_ITEM_TICKET_GROUPS.find((group) => group.key === key)?.label ?? key;
-}
-
-/** The state label beside the Ticket in the Feedback inbox. */
-export function feedbackLabel(facts: TicketFacts): string {
-  return feedbackTicketStateLabel({
-    id: "t_reading",
-    title: "One Ticket",
-    stage: facts.stage,
-    ticket_status: facts.ticket_status,
-    awaiting_reply: facts.awaiting_reply,
-    awaiting_answer: facts.awaiting_answer,
-    awaiting_approval: facts.awaiting_approval,
-    awaiting_agent_approval: facts.awaiting_agent_approval,
-    assigned: facts.assigned,
-    agent_state: facts.agent_state
-  });
 }
 
 /** The mark on the Ticket's own page, against the field its Stage is gated on. */

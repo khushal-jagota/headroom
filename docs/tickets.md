@@ -60,6 +60,8 @@ An errored claim stops automatic progress. Restarting the Worker is the explicit
 
 Backlog pauses the next automatic Worker step. The stage, any parked proposal, the conversation, and the artifacts stay. Messages and approvals still work, and a turn already running keeps running. Resume clears the pause and nothing else.
 
+Tickets come from Khushal, Chief, or Managers. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate.
+
 Delete removes the Ticket's record and leaves its files. It is available from the command line and the API, not the browser, to anyone who stands above the Ticket. It refuses while the Worker is still busy, unless the caller forces it or is the Ticket's own Manager. Then the Worker is stopped first, so it never outlives its Ticket.
 
 ## Where the Worker runs

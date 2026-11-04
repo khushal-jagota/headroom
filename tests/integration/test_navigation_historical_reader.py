@@ -4,7 +4,7 @@ Risk: a current migration fixture cannot prove compatibility with real retained
 source or its canonical readers. One subprocess-backed case crosses that missing
 boundary. The Manager rename is forward-only and makes old direct Ticket readers
 unavailable. A matched backup restores their schema and their original facts.
-Existing runtime proofs own obsolete cursors and lost command witnesses.
+Existing runtime tests cover obsolete cursors.
 All databases, homes, skill files and producer leases stay under tmp_path.
 """
 

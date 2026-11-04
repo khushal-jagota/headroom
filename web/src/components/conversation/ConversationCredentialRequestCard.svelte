@@ -151,7 +151,7 @@
 </section>
 
 <style>
-  .key-request{align-self:flex-start;width:100%;max-width:calc(var(--feedback-capture-width) + var(--space-7)*2);min-width:0;box-sizing:border-box;background:var(--surface-2);border:0;border-radius:var(--radius-lg);padding:var(--space-5);font-size:var(--type-sm);overflow-wrap:anywhere}
+  .key-request{align-self:flex-start;width:100%;max-width:calc(var(--credential-request-width) + var(--space-7)*2);min-width:0;box-sizing:border-box;background:var(--surface-2);border:0;border-radius:var(--radius-lg);padding:var(--space-5);font-size:var(--type-sm);overflow-wrap:anywhere}
   form{display:grid;gap:var(--space-4);margin:0;min-width:0}
   .stacked-fields{display:grid;gap:var(--space-3)}
   .key-name,.fixed-name{box-sizing:border-box;min-width:0;width:100%;padding:var(--space-3);min-height:var(--space-7);background:var(--surface-input);border:0;border-radius:var(--radius-md);color:var(--text-default);font-family:var(--font-ui);font-size:var(--type-input);line-height:1.5}

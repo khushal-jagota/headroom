@@ -6,7 +6,6 @@ def run(browser, urls):
     import runpy
     from pathlib import Path
 
-    from planner.navigation.contracts import SCHEMA_VERSION, SUPPORTED_SEMANTICS
     from planner.navigation.delivery_contracts import encode_cursor
 
     fixture = runpy.run_path(
@@ -591,46 +590,15 @@ def run(browser, urls):
                     placement_writes.append(body)
                     ticket.update(body)
             result = ticket
-            if route.request.method == "PATCH" and "title" in route.request.post_data_json:
-                fence = {
-                    "version": 1,
-                    "epoch": "fixture-navigation",
-                    "scope": "fixture-navigation-scope",
-                    "schema_version": SCHEMA_VERSION,
-                    "semantics": SUPPORTED_SEMANTICS,
-                    "revision": str(navigation_response.__globals__["_navigation_revision"] + 1),
-                    "coverage": "complete",
-                    "witnesses": ["a" * 64],
-                    "signature": "synthetic",
-                }
-                route.fulfill(
-                    status=200,
-                    content_type="application/json",
-                    headers={"Panels-Navigation-Fence": json.dumps(fence)},
-                    body=json.dumps(result),
-                )
-                return
         elif path in ["tickets/t_review/backlog", "tickets/t_review/resume"]:
             assert route.request.method == "POST"
             backlog_writes.append(
                 {"action": path.rsplit("/", 1)[1], "body": route.request.post_data_json}
             )
             ticket["is_backlogged"] = path.endswith("/backlog")
-            fence = {
-                "version": 1,
-                "epoch": "fixture-navigation",
-                "scope": "fixture-navigation-scope",
-                "schema_version": SCHEMA_VERSION,
-                "semantics": SUPPORTED_SEMANTICS,
-                "revision": str(navigation_response.__globals__["_navigation_revision"] + 1),
-                "coverage": "complete",
-                "witnesses": ["a" * 64],
-                "signature": "synthetic",
-            }
             route.fulfill(
                 status=200,
                 content_type="application/json",
-                headers={"Panels-Navigation-Fence": json.dumps(fence)},
                 body=json.dumps(ticket),
             )
             return
@@ -793,34 +761,26 @@ def run(browser, urls):
     )
     expect(page.locator("[data-project-fact]")).to_have_text("One")
     expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding · VPS")
-    assert page.evaluate("window.__wait()")["status"] == "included"
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Review ticket")
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.locator("[data-ticket-backlog-action]").click()
-    page.wait_for_function("window.__commandWait==='pending'")
     assert backlog_writes == [{"action": "backlog", "body": {}}]
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.evaluate("window.__batch()")
     expect(page.locator("[data-ticket-backlogged]")).to_have_text("Backlogged")
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Resume ticket")
-    page.wait_for_function("window.__commandWait==='included'")
     page.locator("[data-ticket-backlog-action]").click()
-    page.wait_for_function("window.__commandWait==='pending'")
     assert backlog_writes[-1] == {"action": "resume", "body": {}}
     page.evaluate(
         "() => {\n      const control=document.querySelector('[data-ticket-lifecycle]');\n      window.__heldLifecycle={control,parent:control.parentNode,next:control.nextSibling};control.remove();\n    }"
     )
     page.evaluate("window.__batch()")
-    assert page.evaluate("window.__wait()")["status"] == "unknown", (
-        "detached lifecycle controls cannot certify section paint"
-    )
     page.evaluate(
         "() => {\n      const held=window.__heldLifecycle;held.parent.insertBefore(held.control,held.next);\n    }"
     )
     page.evaluate("window.__batch()")
     expect(page.locator("[data-ticket-backlogged]")).to_have_count(0)
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
-    page.wait_for_function("window.__commandWait==='included'")
     page.locator("[data-stage-fold]").evaluate("(element)=>element.open=true")
     page.locator("[data-stage-fold] [data-field=brief]").evaluate("(element)=>element.open=true")
     original = dict(ticket)
@@ -848,9 +808,6 @@ def run(browser, urls):
         "data-conversation-signal", "message"
     )
     expect(page.locator("[data-approval-block] [contenteditable]")).to_have_text("A result")
-    assert page.evaluate("window.__wait()")["status"] == "unknown", (
-        "a new header cannot certify the retained old section"
-    )
     expect(page.locator("[data-ticket-section]")).to_have_attribute(
         "data-section-stage", "needs_success_condition"
     )
@@ -901,7 +858,6 @@ def run(browser, urls):
     expect(page.locator("[data-approval-block]")).to_have_count(0)
     assert page.locator("[data-stage-fold]").evaluate("(element)=>element.open")
     assert page.locator("[data-stage-fold] [data-field=brief]").evaluate("(element)=>element.open")
-    assert page.evaluate("window.__wait()")["status"] == "included"
     ticket["conversation_signal"]["message_for_owner"] = False
     page.evaluate("window.__batch()")
     expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_attribute(
@@ -910,9 +866,6 @@ def run(browser, urls):
     source_deleted = True
     page.evaluate("window.__batch()")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
-    assert page.evaluate("window.__wait()")["status"] == "unknown", (
-        "retained deleted header cannot certify current paint"
-    )
     expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
     snapshot_unavailable = True
     page.evaluate("window.__refresh()")
@@ -1112,12 +1065,8 @@ def run(browser, urls):
     title_editor = page.locator(".ticket-title [contenteditable]")
     title_editor.fill("Local masthead edit")
     page.evaluate("window.__batch()")
-    assert page.evaluate("window.__wait()")["status"] == "unknown"
     title_editor.press("Enter")
-    page.wait_for_function("window.__commandWait==='pending'")
-    assert len(page.evaluate("window.__commandObservers.map(observer=>observer.id)")) == 1
     page.evaluate("window.__batch()")
-    page.wait_for_function("window.__commandWait==='included'")
     expect(title_editor).to_have_text("Local masthead edit")
     composer = page.locator("[data-conversation-input]")
     composer.fill("Ticket pointer continuation")
@@ -1252,7 +1201,6 @@ def run(browser, urls):
     page.evaluate("window.__showTicket('t_done')")
     page.locator('[data-ticket-id="t_done"]').wait_for()
     expect(page.locator("[data-ticket-backlog-action], [data-ticket-backlogged]")).to_have_count(0)
-    assert page.evaluate("window.__wait()")["status"] == "included"
     assert page.locator("[data-copy]").count() == 0
     assert page.locator(".ticket-operating").count() == 0
     page.evaluate("window.__showTicket('t_personal_pending')")
@@ -1382,8 +1330,6 @@ def run(browser, urls):
     held_details.clear()
     expect(page.locator("[data-approval-block]")).to_contain_text("Replacement body")
     expect(page.locator("[data-approval-block]")).not_to_contain_text("A result")
-    proof = page.evaluate("window.__wait()")
-    assert proof["status"] == "included", proof
     server_revision = 4
     approve_row = page.locator("[data-approval-block]")
     approve_row.locator("[data-accept]").click()

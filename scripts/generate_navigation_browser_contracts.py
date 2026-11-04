@@ -12,7 +12,6 @@ from typing import Literal, TypeAliasType, get_args, get_origin, get_type_hints,
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = (
     "contracts",
-    "proof_contracts",
     "delivery_contracts",
     "views.contracts",
     "review_contracts",

@@ -10,11 +10,11 @@ Four tabs: Limits, Tokens, Cost, and Config.
 - **Tokens and Cost** are recorded spend: what the agents have used.
 - **Config** is the same editor as Settings, so model availability and skill text sit next to the limits they affect. [Skills](skills.md) owns the editor.
 
-The two numbers come from different places and do not mix.
+The two numbers come from different places and do not mix. Recorded usage comes from one local server. The browser calculates its totals and charts directly from that server's summary.
 
 ```
  provider login ──► Limits (saved observation, refreshed on request)
- local transcripts ─► Tokens and Cost (totalled on the server)
+ local transcripts ─► server summary ─► browser totals and charts
 ```
 
 ## Allowance and spend

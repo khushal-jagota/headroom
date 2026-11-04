@@ -12,10 +12,7 @@
   import { stabilizeWorkspaceRail } from "../lib/workspaceRail";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import { lifecycleFor } from "../lib/lifecycle";
-  import type { RenderObserver } from "../lib/navigation/visibility";
   import type { NavigationPublication } from "../lib/navigation/publication";
-  import { railDomMatches, hoverDomMatches } from "../lib/workspaceRailDom";
-  import { workspaceRailImpact, workspaceHoverImpact, managerSettleImpact } from "../lib/workspaceNavigationImpact";
   import { createRailMotionController, type WorkspaceRailPresentation } from "../lib/workspaceRailMotion";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -39,7 +36,7 @@
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
 
   import type { Snippet } from "svelte";
-  let { address, externalPane, railFoot, onDismissed = () => undefined }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet; onDismissed?: (noteId: string) => void } = $props();
+  let { address, externalPane, railFoot }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet } = $props();
   const navigation = (() => {
     const context = navigationApplication();
     if (!context) throw new Error("Workspace requires the application navigation owner");
@@ -58,10 +55,7 @@
       displayedPublication = effective.publication;
     }
   });
-  const railObserver = navigation.registerRenderBoundary(`workspace-rail:${crypto.randomUUID()}`,impact => {
-    const view=navigation.state.effective;return workspaceRailImpact(impact,view ? navigation.presentationFor(view) : undefined,rail,settledOpen);
-  });
-  onDestroy(() => navigation.disposeRenderBoundary(railObserver));
+
   let opening = $derived(whatTheAddressOpens(address));
   const selectedPaneModule = $derived.by(() => {
     if (opening.markedTicketId) return cachedImport("./TicketRoute.svelte", () => import("./TicketRoute.svelte"));
@@ -70,11 +64,10 @@
       case "usage": return cachedImport("./BackendsRoute.svelte", () => import("./BackendsRoute.svelte"));
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./SettingsRoute.svelte"));
       case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./IdeasRoute.svelte"));
-      case "feedback": return cachedImport("./FeedbackRoute.svelte", () => import("./FeedbackRoute.svelte"));
       default: return null;
     }
   });
-  let paneShape = $derived(opening.markedUtility === "usage" || opening.markedUtility === "ideas" || opening.markedUtility === "feedback" ? "rows" as const : "document" as const);
+  let paneShape = $derived(opening.markedUtility === "usage" || opening.markedUtility === "ideas" ? "rows" as const : "document" as const);
   // The screen's own position, read the same way its standalone page reads it. The
   // address is parsed before it reaches here, so a placement is always present.
   let placement = $derived(
@@ -162,7 +155,7 @@
   let settleError = $state("");
   let hoverVisible = $state(false);
   let hoverElement = $state<HTMLDivElement | null>(null);
-  let hoverObserver = $state.raw<RenderObserver | null>(null);
+
   let hoverInstant = $state(false);
   let hoverTarget = $state<HTMLElement | null>(null);
   let hoverTitle = $state("");
@@ -322,69 +315,11 @@
   function hoverWorkerRow(target: HTMLElement, worker: WorkItemTicketFacts, immediate = false): void {
     enterHover({ target, title:worker.title, kicker:"Worker", worker }, immediate);
   }
-  $effect(() => {
-    const publication = displayedPublication;
-    const effective = navigation.selectors.effective;
-    const generation = navigation.state.generation;
-    const root = railElement;
-    const target = stabilizeWorkspaceRail(desiredRail, rail);
-    const chief = workspace?.chief;
-    const open = settledOpen;
-    // The observer never credits retained knowledge or a deferred motion structure.
-    if (!publication || !root || !effective?.runtimeCurrent || effective.publication !== publication) return;
-    const observation = railObserver.observeSelectors(publication, generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (obsolete || !root.isConnected || displayedPublication !== publication
-        || navigation.state.generation !== generation || navigation.selectors.effective !== effective) return;
-      if (railDomMatches(root,target,chief,open,workspace?.globalCounts?.settled)) railObserver.acknowledgeRender(publication,observation);
-    });
-    return () => { obsolete = true; };
-  });
-  $effect(() => {
-    if (!hoverVisible || hoverGoalId || !hoverElement || !(hoverWorkerId || hoverItemId || hoverChief)) return;
-    const observer = navigation.registerRenderBoundary(`workspace-hover:${crypto.randomUUID()}`,impact => {
-      const kind=hoverWorkerId ? 'ticket' : hoverItemId ? 'manager' : 'chief';
-      const id=hoverWorkerId ?? hoverItemId ?? 'chief';
-      const view=navigation.state.effective;
-      return workspaceHoverImpact(impact,kind,id,hoverWorker?.conversation_id ?? hoverConversationId,view ? navigation.presentationFor(view) : undefined,
-        kind==='chief' || kind==='manager' && !hoveredItem?.recap?.trim());
-    });
-    hoverObserver = observer;
-    return () => { navigation.disposeRenderBoundary(observer); hoverObserver = null; };
-  });
-  $effect(() => {
-    const publication = displayedPublication;
-    const effective = navigation.selectors.effective;
-    const generation = navigation.state.generation;
-    const root = hoverElement;
-    const observer = hoverObserver;
-    const target = hoverTarget;
-    const sourceKind = hoverWorkerId ? 'ticket' : hoverItemId ? 'manager' : hoverChief ? 'chief' : null;
-    const sourceId = hoverWorkerId ?? hoverItemId;
-    const sourceExists = sourceKind !== null && publication?.records.some(record => record.kind === sourceKind && (sourceKind === 'chief' || record.id === sourceId));
-    const worker = hoverWorker;
-    const title = currentHoverTitle;
-    const kicker = currentHoverKicker;
-    const recap = worker ? worker.recap ?? '' : hoverRecap;
-    const stage = worker ? workspaceWorkerStageSentence(worker,lifecycleFor(manifests.data,worker.worker_type)) : '';
-    const signal = worker?.conversation_signal ?? hoverSignal;
-    const conversation = worker?.conversation_id ?? hoverConversationId;
-    if (!hoverVisible || hoverGoalId || !root || !target?.isConnected || !sourceExists || !observer || !publication || !effective?.runtimeCurrent || effective.publication !== publication) return;
-    const observation = observer.observeSelectors(publication,generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (obsolete || !root.isConnected || !target.isConnected || hoverTarget !== target || !hoverVisible || displayedPublication !== publication
-        || navigation.state.generation !== generation || navigation.selectors.effective !== effective) return;
-      if (hoverDomMatches(root,title,recap,stage,signal,conversation,kicker)) observer.acknowledgeRender(publication,observation);
-    });
-    return () => { obsolete = true; };
-  });
+
   async function settle(item: WorkspaceRailItem, settled: boolean): Promise<void> {
     busyItem = item.id; settleError = ""; dismissHover();
     try {
-      await navigation.runCommand(managerSettleImpact(item.id),responseMetadata =>
-        mutateJson(`/api/managers/${encodeURIComponent(item.id)}/settled`, {method:"PATCH",body:{settled},responseMetadata}),"set manager settled");
+      await mutateJson(`/api/managers/${encodeURIComponent(item.id)}/settled`, {method:"PATCH",body:{settled}});
     }
     catch (error) { settleError = error instanceof Error ? error.message : "The manager could not be updated."; }
     finally { busyItem = null; }
@@ -465,12 +400,6 @@
           {:else if placement.utility === "ideas"}
             {#await import("./IdeasRoute.svelte") then view}
 <view.default />
-{:catch error}
-<ErrorLine {error} />
-{/await}
-          {:else if placement.utility === "feedback"}
-            {#await import("./FeedbackRoute.svelte") then view}
-<view.default {onDismissed} />
 {:catch error}
 <ErrorLine {error} />
 {/await}

@@ -170,7 +170,6 @@ from planner.conversation.storage import (
 )
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core import change_signal
-from planner.core.commit_capture import register_capture_task
 from planner.core.contracts import Principal, PrincipalKind
 from planner.execution_identity import ChildReference
 
@@ -3326,7 +3325,6 @@ class SqliteProcessConversationSystem:
         if asyncio.current_task() in state.settlement_tasks:
             return await operation
         task = self._settle_in_background(state, operation)
-        register_capture_task(task)
         return await asyncio.shield(task)
 
     def _runtime_turn(self, conversation_id: str) -> object | None:
@@ -4558,8 +4556,7 @@ class SqliteProcessConversationSystem:
         if should_drain:
             # Return this event's committed result before the next prompt's provider I/O.
             # Register now so shutdown and quiescence also own the scheduled drain.
-            drain = self._settle_in_background(state, self._drain_held_prompts(state))
-            register_capture_task(drain)
+            self._settle_in_background(state, self._drain_held_prompts(state))
         return result
 
     # --- shared internals ---------------------------------------------------------------

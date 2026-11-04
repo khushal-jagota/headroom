@@ -16,7 +16,7 @@ The folder is where a Worker's conversation starts. On the VPS, an existing fold
 
 ## Where it shows up
 
-Project selectors appear in Idea capture and the Ticket and Manager editors. `panels project` and `/api/projects` read and write the same catalog.
+Project selectors on Idea capture and Ticket and Manager editing. `panels project` and `/api/projects` read and write the same catalog.
 
 ## Code
 

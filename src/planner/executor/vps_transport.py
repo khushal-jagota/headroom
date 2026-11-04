@@ -243,7 +243,6 @@ class VpsExecutor:
                 "/api/projects",
                 "/api/worker-types",
                 "/api/skills",
-                "/api/feedback",
                 "/files/sprint-items/",
                 "/files/managers/",
             )

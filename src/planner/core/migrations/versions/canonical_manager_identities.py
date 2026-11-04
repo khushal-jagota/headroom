@@ -9,7 +9,7 @@ from alembic import op
 from planner.runtime.logic.conversation_start_resolution import MANAGER_ROLE_TEXT
 
 revision = "canonical_manager_identities"
-down_revision = "remove_ticket_approvers"
+down_revision = "remove_navigation_proof"
 branch_labels = None
 depends_on = None
 

@@ -2,7 +2,7 @@
   import type { Snippet } from 'svelte';
   import type { NavigationReviewTicketItem } from '../lib/types';
   import { navigationApplication } from '../lib/navigation/application.svelte';
-  import { ticketCommandImpact } from '../lib/ticketNavigationImpact';
+
   import { mutateJson } from '../lib/mutate';
   import { workspaceAddress } from '../lib/workspaceAddress';
   import { selectedRecap } from '../lib/navigation/views/recap.svelte';
@@ -16,8 +16,7 @@
   const recapBody=selectedRecap(()=>record && 'recap_reference' in record ? record.recap_reference as import('../lib/navigation/contracts').ViewContentReference|null : null,()=>true);
   let recap=$derived(recapBody.body ?? record?.recap ?? '');
   async function saveTitle(title:string):Promise<unknown> {
-    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,item.ticket_id,'title'),responseMetadata=>
-      mutateJson(`/api/tickets/${item.ticket_id}`,{method:'PATCH',responseMetadata,body:{title}}),'review ticket title');
+    return mutateJson(`/api/tickets/${item.ticket_id}`,{method:'PATCH',body:{title}});
   }
 </script>
 <div data-review-ticket-card data-review-item-type="ticket" data-ticket-id={item.ticket_id}>
