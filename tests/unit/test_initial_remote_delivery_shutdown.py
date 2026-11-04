@@ -186,7 +186,6 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
         QueuedEnvelope,
         ReceiptDisposition,
         encode_value,
-        envelope_payload_digest,
     )
 
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
@@ -207,15 +206,6 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
     def envelope(outcome: CommandOutcome, *, sequence: int) -> QueuedEnvelope:
         payload = cast(JsonObject, encode_value(outcome))
         submission_id = f"native-result-{sequence}"
-        digest = envelope_payload_digest(
-            payload,
-            (),
-            sender_id="native",
-            conversation_id=reference.conversation_id,
-            sequence=sequence,
-            submission_id=submission_id,
-            kind=EnvelopeKind.child_stopped,
-        )
         return QueuedEnvelope(
             "native",
             reference.conversation_id,
@@ -223,7 +213,6 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
             submission_id,
             EnvelopeKind.child_stopped,
             payload,
-            digest,
         )
 
     async def run() -> None:

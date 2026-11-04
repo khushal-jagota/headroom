@@ -30,7 +30,6 @@ from planner.executor.protocol import (
     QueuedEnvelope,
     decode_event_arguments,
     encode_value,
-    envelope_payload_digest,
 )
 from planner.executor.vps_inbox import InboxStore
 
@@ -45,15 +44,6 @@ def _envelope(sequence: int, kind: EnvelopeKind, value: object) -> QueuedEnvelop
         submission,
         kind,
         payload,
-        envelope_payload_digest(
-            payload,
-            (),
-            sender_id="native",
-            conversation_id="c",
-            sequence=sequence,
-            submission_id=submission,
-            kind=kind,
-        ),
     )
 
 
