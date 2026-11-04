@@ -1,7 +1,7 @@
 import { createTransaction } from '@tanstack/db';
 import { describe, expect, it } from 'vitest';
 import { createNavigationCollection } from '../src/lib/navigation/collection';
-import { encodeCursor } from '../src/lib/navigation/validation';
+import { encodeCursor } from '../src/lib/navigation/identity';
 import type { Snapshot, TicketRecord } from '../src/lib/navigation/contracts';
 import { railTicketEligible } from '../src/lib/workspaceRail';
 import { currentSnapshot, degradedSnapshot, envelope } from './support/navigation/fixtures';

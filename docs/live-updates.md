@@ -8,6 +8,10 @@ Every normal database commit announces that something was written. The announcem
 
 Navigation is the other half, for the surfaces that are derived indexes rather than raw records: the Workspace rail, Review membership and order, attention marks, masthead signals. Those indexes update so a list can be honest without loading every conversation body into it. Message text still comes from the conversation when a card or a pane opens. Skip and return on Review are visit state on top of that index.
 
+The browser uses server messages directly. TypeScript types describe those messages during development. Runtime description tables do not validate them again.
+
+The Ticket screen uses its loaded detail and Worker configuration without a second admission check against the navigation index. Saves go to the server, which checks actions and approvals.
+
 Drafts, outgoing messages, and the text the person is currently composing sit outside the bounded cache. A hidden tab defers its refetch until it is visible again. A dropped connection shows Reconnecting on the shell status, and a reconnect reconciles.
 
 A few writers stay silent on purpose. Managed skill history, and the conversation rows that only an open conversation is reading, do not need to wake every screen. The open pane is handed its tail directly.
@@ -26,4 +30,4 @@ The shell status pill is the visible connection. Review’s count, the rail’s 
 
 `src/planner/core/change_signal.py` announces commits. `src/planner/core/db.py` is the connection door, including the quiet commit used where a screen is not waiting. `src/planner/core/sse.py` is the browser stream. The client probe lives under `web/src/lib/resourceVersions/`. The navigation index is `src/planner/navigation/`.
 
-_Last verified: 2026-10-30._
+_Last verified: 2026-11-04._

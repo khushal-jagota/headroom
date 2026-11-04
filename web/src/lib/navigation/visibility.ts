@@ -1,6 +1,6 @@
 import type { Fence, ProofResult } from './contracts';
 import type { NavigationPublication } from './collection';
-import { compareRevision, parseFence, sameAuthority } from './validation';
+import { compareRevision, sameAuthority } from './identity';
 import { navigationConfiguration } from './configuration';
 
 export type VisibilityResult = { status: 'included' | 'no_op' | 'unknown'; reason: string | null };
@@ -154,8 +154,8 @@ export function createVisibilityTracker(certify: (fence: Fence) => Promise<Certi
     },
     waitForVisibility(value: unknown, options: { requiredObservers: readonly RenderObserver[]; timeoutMs?: number }): Promise<VisibilityResult> {
       if (disposed) return Promise.resolve(unknown('disposed'));
-      let fence: Fence;
-      try { fence = parseFence(value); } catch { return Promise.resolve(unknown('missing_or_invalid_fence')); }
+      const fence = value as Fence | null;
+      if (!fence) return Promise.resolve(unknown('missing_or_invalid_fence'));
       if (fence.coverage !== 'complete') return Promise.resolve(unknown('incomplete_capture'));
       const required = options.requiredObservers.map((handle) => observers.get(handle));
       if (required.length === 0 || required.some((observer) => !observer?.active)) return Promise.resolve(unknown('missing_observer'));
