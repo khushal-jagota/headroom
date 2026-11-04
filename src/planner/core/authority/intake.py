@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from email.message import Message
 from collections.abc import Mapping
 from contextlib import closing
+from email.message import Message
 from typing import Any
 from urllib.parse import unquote
 
@@ -158,9 +158,9 @@ def admit_command(
         target = authority.owner_only('credentials')
     elif (family in ('measure-sources', 'measures', 'datasets')
           and writing and not route.endswith('/read')):
+        from planner.datasets import data as datasets
         from planner.measure_sources import data as sources
         from planner.measures import data as measures
-        from planner.datasets import data as datasets
 
         source_id = path_params.get('source_id')
         if family == 'measure-sources':
@@ -193,7 +193,8 @@ def admit_command(
             )
             return
     if target is not None:
-        (authority.require_above_or_self if own else authority.require_above)(conn, principal, target)
+        check_rank = authority.require_above_or_self if own else authority.require_above
+        check_rank(conn, principal, target)
 
 
 async def request_admission(request: Request) -> None:
