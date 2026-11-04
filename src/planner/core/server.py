@@ -507,8 +507,8 @@ def create_app(
             except Exception:
                 logger.exception("Ticket scratch cleanup failed")
                 continue
-            if result.removed or result.deleted_branches or result.skipped:
-                logger.info("Ticket scratch cleanup: %s", result.as_dict())
+            for kept in result.skipped:
+                logger.warning("Ticket scratch kept: %s (%s)", kept["path"], kept["reason"])
 
     navigation_delivery = create_delivery_runtime(config.db_path)
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
