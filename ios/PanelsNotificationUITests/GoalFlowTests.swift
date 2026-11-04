@@ -114,7 +114,17 @@ final class GoalFlowTests: XCTestCase {
         support.tap()
         XCTAssertEqual(support.value as? String, "Expanded")
         let week = element("goal-chart-activation").buttons["Week"]
-        XCTAssertTrue(week.waitForExistence(timeout: 3)); week.tap()
+        XCTAssertTrue(week.waitForExistence(timeout: 3))
+        // The scroll view's frame extends behind its conversation inset. Keep
+        // the footer above that inset before delivering the range tap.
+        for _ in 0..<6 {
+            if week.frame.maxY < app.buttons["conversation-line"].frame.minY && week.isHittable { break }
+            let scroll = app.scrollViews["goal-screen"]
+            scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).press(forDuration: 0.01, thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
+        }
+        XCTAssertLessThan(week.frame.maxY, app.buttons["conversation-line"].frame.minY)
+        week.tap()
+        XCTAssertTrue(week.isSelected)
         support.tap()
         XCTAssertEqual(support.value as? String, "Collapsed")
         support.tap()
