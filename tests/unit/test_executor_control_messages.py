@@ -104,7 +104,7 @@ def test_shared_link_matches_nested_replies_refuses_items_and_fails_waiters_on_l
 
 
 @pytest.mark.usefixtures("executor_transport_home")
-@pytest.mark.parametrize("reply", ["wrong_kind", "changed_identity"])
+@pytest.mark.parametrize("reply", ["wrong_kind", "changed_identity", "version_refused"])
 def test_mac_refuses_invalid_hello_reply_before_reconciliation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reply: str
 ) -> None:
@@ -131,6 +131,9 @@ def test_mac_refuses_invalid_hello_reply_before_reconciliation(
                 kind = WireMessageKind.hello_accepted
                 if reply == "wrong_kind":
                     kind = WireMessageKind.health
+                elif reply == "version_refused":
+                    kind = WireMessageKind.protocol_refused
+                    identity = {"reason": "Mac needs update"}
                 else:
                     identity["connection_generation"] = 999
                 self.feed_data(encode_message(WireMessage(kind, message.request_id, identity)))
@@ -151,6 +154,14 @@ def test_mac_refuses_invalid_hello_reply_before_reconciliation(
         try:
             await asyncio.wait_for(disconnected.wait(), 1)
             assert service.connection.link is None
+            if reply == "version_refused":
+                from planner.executor.protocol import IpcOperation, IpcRequest
+
+                response = await service.gateway.handle(
+                    IpcRequest("status", IpcOperation.health, None, None, {})
+                )
+                assert response.result is not None
+                assert response.result["refusal"] == {"reason": "Mac needs update"}
             assert stream.is_closing()
             assert [decode_message(body).kind for body in stream.sent] == [WireMessageKind.hello]
         finally:

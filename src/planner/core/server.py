@@ -272,7 +272,12 @@ def create_app(
             from planner.executor.routing import LocaleBackendChildFactory
             from planner.executor.vps_transport import VpsExecutor
 
-            executor_endpoint = VpsExecutor(config.db_path, clock, machine_id=config.executor_id)
+            executor_endpoint = VpsExecutor(
+                config.db_path,
+                clock,
+                machine_id=config.executor_id,
+                application_revision=config.app_sha or "unknown",
+            )
             backend_factories = {
                 key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.runs)
                 for key, local in backend_factories.items()
@@ -661,7 +666,8 @@ def create_app(
     @app.get("/api/deployment-status")
     async def deployment_status() -> dict[str, object]:
         projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha,
+            deployment_lifecycle_store.project,
+            config.app_sha,
             admission_open=deployment_admission_open(),
         )
         payload = projection.to_public_dict()
@@ -686,7 +692,8 @@ def create_app(
     @app.get("/api/vps-status-summary")
     async def vps_status_summary() -> dict[str, object]:
         projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha,
+            deployment_lifecycle_store.project,
+            config.app_sha,
             admission_open=deployment_admission_open(),
         )
         summary = await asyncio.to_thread(

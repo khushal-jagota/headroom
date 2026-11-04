@@ -25,6 +25,7 @@ export type OwnerUpdateRequest = {
 };
 
 export type UpdateStatus = {
+  mac_status?: import("../ticketMachines").MacStatus;
   configured: boolean;
   available: PublishedUpdate | null;
   request: OwnerUpdateRequest | null;

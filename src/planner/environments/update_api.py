@@ -36,7 +36,10 @@ def _service(request: Request) -> UpdateService:
 
 @router.get("")
 async def status(request: Request) -> dict[str, object]:
-    return asdict(await asyncio.to_thread(_service(request).status))
+    result = asdict(await asyncio.to_thread(_service(request).status))
+    endpoint = getattr(request.app.state, "executor_endpoint", None)
+    result["mac_status"] = None if endpoint is None else endpoint.health()
+    return result
 
 
 @router.post("/requests")

@@ -69,7 +69,11 @@ class AgentGateway:
     async def handle(self, request: IpcRequest) -> IpcResponse:
         try:
             if request.operation == IpcOperation.health:
-                return IpcResponse(request.request_id, as_object(self.connection.health()), None)
+                return IpcResponse(
+                    request.request_id,
+                    {**as_object(self.connection.health()), "refusal": self.connection.refusal},
+                    None,
+                )
             if request.operation == IpcOperation.quiesce:
                 return await self._quiesce(request)
             child = self.runner.authenticate(request.child_id, request.capability)

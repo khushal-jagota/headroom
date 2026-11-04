@@ -7,6 +7,7 @@
   import { queries } from "../lib/queryCatalogue";
   import { releaseState, requestReleaseReload } from "../lib/releaseMonitor";
   import UpdateActions from "./UpdateActions.svelte";
+  import MacStatus from "./machines/MacStatus.svelte";
   import { activeUpdateRequest, usableUpdate } from "../lib/updates/logic/actions";
   import { RAIL_MOTION } from "../lib/workspaceRailMotion";
 
@@ -33,7 +34,7 @@
   const statusState = $derived(resolveDeploymentStatus(deployment.data, connectionState, clock));
   const statusDetail = $derived(deploymentStatusDetail(deployment.data, statusState));
   const baseStatusWord = $derived(resolveStatusCard(statusState, $releaseState));
-  const hasOwnerUpdate = $derived(activeUpdateRequest(updates.data?.request) ||
+  const hasOwnerUpdate = $derived(Boolean(updates.data?.mac_status?.connection_state === "disconnected" && updates.data.mac_status.refusal) || activeUpdateRequest(updates.data?.request) ||
     (updates.data?.configured && usableUpdate(updates.data.available, clock)) || ["failed", "cancelled"].includes(updates.data?.request?.state ?? ""));
   const statusWord = $derived(baseStatusWord ?? (hasOwnerUpdate ? "owner-update" : null));
   const statusKey = $derived(statusWord ?? (navigationHealth ? "navigation" : null));
@@ -201,6 +202,7 @@
         <!-- Update eligibility belongs to UpdateActions, independent of the notice label. -->
         {#if updates.data}
           <UpdateActions status={updates.data} now={clock} />
+          <MacStatus health={updates.data.mac_status} />
         {/if}
         {#if displayedHealth}
           <div class="navigation-health" data-navigation-health={displayedHealth.state} data-state={displayedHealth.state === "degraded" ? "wrong" : "changing"}>

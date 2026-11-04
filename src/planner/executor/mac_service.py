@@ -149,6 +149,7 @@ class MacService:
         ):
             link.close()
             raise ProtocolRefused("handshake identity changed")
+        self.connection.refusal = None
         self.connection.link = link
         self.phase = ConnectionPhase.reconnect_ask
         response = await link.request(
@@ -185,6 +186,8 @@ class MacService:
                 for task in done:
                     await task
             finally:
+                if link is not None and link.refusal is not None:
+                    self.connection.refusal = link.refusal
                 self.connection.lost()
                 for task in tasks:
                     task.cancel()
