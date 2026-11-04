@@ -28,13 +28,13 @@ private struct GaugeFrame: View, @MainActor Animatable {
     let manual: GoalManualEditor?
     var displayed: Double
     var settled: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var animatableData: Double { get { displayed } set { displayed = newValue } }
     private var limits: (Double, Double) {
         let domain = block["domain"].array.compactMap(\.number)
         return (domain.first ?? (manual == nil ? 0 : min(0, headline.value ?? 0)), manual != nil ? headline.target ?? 100 : domain.count == 2 ? domain[1] : 100)
     }
     private var fraction: Double { max(0, min(1, (displayed - limits.0) / max(0.000001, limits.1 - limits.0))) }
-    private var live: GoalChartHeadline { var next = headline; next.value = displayed; return next }
     private var label: String {
         guard let target = headline.target else { return "" }
         if manual != nil { return "of " + GoalChartPresentation.number(target, decimals: 6, trim: true) }
@@ -57,7 +57,12 @@ private struct GaugeFrame: View, @MainActor Animatable {
             }
             VStack(spacing: 4) {
                 if let manual { GoalManualValue(editor: manual, block: block, centered: true) }
-                else { Text(GoalChartPresentation.format(block, displayed, trim: true)).font(.system(size: 32, weight: .medium)).monospacedDigit().foregroundStyle(PanelsTheme.strong) }
+                else {
+                    Text(GoalChartPresentation.format(block, headline.value, trim: true)).hidden()
+                        .overlay(alignment: .trailing) { Text(GoalChartPresentation.format(block, displayed, trim: true)) }
+                        .panelsScaledFont(size: 32, relativeTo: .largeTitle, weight: .medium).monospacedDigit().foregroundStyle(PanelsTheme.strong)
+                        .animation(reduceMotion ? nil : PanelsTheme.Goal.smooth, value: GoalChartPresentation.format(block, headline.value, trim: true))
+                }
                 if headline.target != nil {
                     Text(label).id(label).font(.footnote).foregroundStyle(tone).opacity(settled ? 1 : 0)
                         .transition(.offset(y: 5).combined(with: .opacity).combined(with: .blurReplace))
