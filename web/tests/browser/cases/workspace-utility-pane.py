@@ -1491,10 +1491,9 @@ def verify_rail_overflow(page, fixture, evidence):
     fixture["release_sha"] = "fixture-next"
     page.evaluate("dispatchEvent(new Event('pageshow'))")
     status_samples = []
-    for state, word in [("ready", "New version ready"), ("held", "Page refresh waits until this message is safe")]:
-        if state == "held":
+    for state, word in [("ready", "New version ready"), ("composing", "New version ready")]:
+        if state == "composing":
             page.evaluate("document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))")
-            page.locator("[data-shell-refresh]:visible").click()
         for viewport_width in [721, 720]:
             page.set_viewport_size({"width": viewport_width, "height": 700})
             expect(rail).to_be_visible()
@@ -1505,7 +1504,7 @@ def verify_rail_overflow(page, fixture, evidence):
                 expect(grip).to_have_attribute("aria-valuenow", "232")
             bounds = status_geometry(word)
             status = page.locator(".status-card:visible")
-            assert status.locator(".status-action").count() == (1 if state == "ready" else 0)
+            assert status.locator(".status-action").count() == 1
             values = []
             for scroller, selector in [(active, ".manager-card:not(.chief) .settle"), (settled, ".reopen")]:
                 dimensions = geometry(scroller)
@@ -1529,6 +1528,12 @@ def verify_rail_overflow(page, fixture, evidence):
                 values.append(dimensions)
             status_samples.append({"state": state, "viewportWidth": viewport_width, "status": bounds, "scrollers": values})
             page.screenshot(path=str(evidence / f"rail-overflow-status-{state}-{viewport_width}.png"))
+    # Composition no longer holds a requested refresh. Keep both geometry modes
+    # actionable, then cross the real reload boundary before later fixture work.
+    page.evaluate("window.__beforeStatusRefreshDocument = document")
+    with page.expect_navigation(wait_until="domcontentloaded"):
+        page.locator("[data-shell-refresh]:visible").click()
+    assert page.evaluate("document !== window.__beforeStatusRefreshDocument")
     (evidence / "rail-overflow-status-geometry.json").write_text(json.dumps(status_samples, indent=2))
     (evidence / "rail-overflow-geometry.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "samples": proof,
@@ -1541,7 +1546,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
     The provider records external dispatch only. The Problem composition must keep
     confirmation, retry, and cancellation usable beside the failure explanation.
     The narrow problem_only path skips unrelated recovery and cutover checks.
-    A synthetic SHA change proves refresh hold, not deployment or database migration.
+    A synthetic SHA change proves immediate refresh and retained drafts, not deployment.
     """
     from dataclasses import replace
 
@@ -1962,8 +1967,8 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card.get_by_role("button", name="Cancel update", exact=True)).to_have_count(0)
         assert len(backend.provider.dispatched) == 4
 
-        # The application version changes synthetically. The retained App and its
-        # actual composer keep the unsent draft until the owner clears it.
+        # The application version changes synthetically. A requested refresh
+        # replaces the document immediately and restores the actual composer draft.
         draft = "Keep this unsent draft across the installed revision change."
         box.fill(draft)
         page.evaluate("window.__beforeUpdateDocument = document")
@@ -1982,16 +1987,14 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card.locator("[data-shell-refresh]")).to_be_visible()
         assert page.evaluate("document === window.__beforeUpdateDocument")
         page.screenshot(path=str(evidence / "navigation-with-refresh-control.png"))
-        card.locator("[data-shell-refresh]").click()
-        expect(card.get_by_text("Page refresh waits until this message is safe", exact=True)).to_be_visible()
+        with page.expect_navigation(wait_until="domcontentloaded"):
+            card.locator("[data-shell-refresh]").click()
+        assert page.evaluate("document !== window.__beforeUpdateDocument")
+        expect(box).to_be_visible()
         expect(box).to_have_value(draft)
-        assert page.evaluate("document === window.__beforeUpdateDocument")
-        assert len(documents) == 1
+        assert documents == ["a" * 40, "b" * 40]
         page.screenshot(path=str(evidence / "refresh-keeps-draft.png"))
         box.fill("")
-        page.wait_for_function("document !== window.__beforeUpdateDocument")
-        expect(box).to_be_visible()
-        assert documents == ["a" * 40, "b" * 40]
         expect(page.get_by_text("Refresh page", exact=True)).to_have_count(0)
         assert errors == [], errors
         (evidence / "proof.json").write_text(json.dumps({
