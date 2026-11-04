@@ -58,7 +58,7 @@ A preset Ticket reads its saved specialist skill reference as usual. A custom Ti
 
 ## Where it shows up
 
-A running turn shows a working mark, and that mark comes from the conversation, not the claim. An idle Ticket with its claim out can look quiet while it waits for a proposal. An errored claim shows as an error, which is how a supervisor learns that automatic progress has stopped. Restarting the Worker is the explicit repair. The loop never does it by itself.
+A running turn or a running background task shows a working mark, and that mark comes from the conversation, not the claim. An idle Ticket with its claim out can look quiet while it waits for a proposal. An errored claim shows as an error, which is how a supervisor learns that automatic progress has stopped. Restarting the Worker is the explicit repair. The loop never does it by itself.
 
 ## Decisions that shape it
 

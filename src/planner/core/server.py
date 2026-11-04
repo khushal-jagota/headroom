@@ -380,6 +380,8 @@ def create_app(
                                 await run_automatic_recovery(
                                     conversation.system, conversation.store
                                 )
+                                system = conversation.system
+                                await system.tell_agents_of_background_tasks_lost_at_restart()
 
                     recovery_task = asyncio.create_task(recover_conversations())
                     app.state.conversation = conversation

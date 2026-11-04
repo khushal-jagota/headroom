@@ -192,7 +192,9 @@ class BackendEventSink(Protocol):
 
     Session cursor and composer catalog reports carry no turn token. The cursor is the
     conversation's durable session identity, and it has to be kept
-    whatever turn happened to be running when it changed.
+    whatever turn happened to be running when it changed. Background task reports and
+    the end of the child's stream carry none either: they are facts about the session,
+    and they usually arrive when no turn is running at all.
     """
 
     async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
@@ -610,6 +612,41 @@ class ComposerCatalogReported:
     composer_catalog: tuple[ComposerCatalogEntry, ...]
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BackgroundTaskStarted:
+    """The agent started a task that can keep running after its turn has ended.
+
+    No turn token: the task belongs to the session, not to the turn that started it.
+    ``task_description`` is the backend's own one-line description of the task.
+    """
+
+    task_id: str
+    task_description: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BackgroundTaskEnded:
+    """A background task reached a terminal status while its session was still alive.
+
+    ``task_status`` is the backend's own word for how it ended. A task that ends because
+    its whole session went away is not reported here; ``BackendStreamEnded`` covers it.
+    """
+
+    task_id: str
+    task_status: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BackendStreamEnded:
+    """The child's message stream ended on its own: the process exited or its wire broke.
+
+    Reported whether or not a turn was running, and never for a stop the core asked
+    for. Anything the child was still running ended with it.
+    """
+
+    pass
+
+
 type BackendEventValue = (
     AgentMessageDelta
     | ModelThinkingHappened
@@ -626,4 +663,7 @@ type BackendEventValue = (
     | TurnEnded
     | VendorSessionCursorRebound
     | ComposerCatalogReported
+    | BackgroundTaskStarted
+    | BackgroundTaskEnded
+    | BackendStreamEnded
 )

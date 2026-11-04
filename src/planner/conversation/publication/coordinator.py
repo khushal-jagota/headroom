@@ -329,7 +329,10 @@ class SignalPublicationCoordinator:
             turn.pending_permission_ask_ids or turn.pending_user_input_questions
         )
         return ConversationAttention(
-            {"working": turn is not None, "message_for_owner": durable.message_for_owner},
+            {
+                "working": turn is not None or durable.has_live_background_task,
+                "message_for_owner": durable.message_for_owner,
+            },
             awaiting,
             durable.last_turn_failed,
         )

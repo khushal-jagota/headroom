@@ -73,6 +73,7 @@ from typing import Any, Final, Protocol, cast
 
 from anyio.abc import Process
 from claude_agent_sdk import (
+    TERMINAL_TASK_STATUSES,
     AssistantMessage,
     CanUseToolShadowedWarning,
     ClaudeAgentOptions,
@@ -89,6 +90,9 @@ from claude_agent_sdk import (
     ResultMessage,
     StreamEvent,
     SystemMessage,
+    TaskNotificationMessage,
+    TaskStartedMessage,
+    TaskUpdatedMessage,
     TextBlock,
     ThinkingBlock,
     ToolPermissionContext,
@@ -113,7 +117,10 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendSteerUncertain,
+    BackendStreamEnded,
     BackendUserInputRequest,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     ComposerCatalogReported,
     ContextCompacted,
     ModelThinkingHappened,
@@ -864,6 +871,12 @@ class ClaudeAgentSdkBackendChild:
         self._standard_error: deque[str] = deque()
         self._asks_raised = 0
         self._available_command_names: frozenset[str] = frozenset()
+        # Background tasks this child has reported started and not yet reported ended.
+        self._live_background_task_ids: set[str] = set()
+        # Tasks claude said were stopped or killed, held until the child shows it is
+        # still going. When claude itself is terminated it stops every task on its way
+        # out, and those tasks did not end on their own: they ended with the session.
+        self._stopped_background_tasks_awaiting_proof_of_life: dict[str, str] = {}
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -1502,11 +1515,23 @@ class ClaudeAgentSdkBackendChild:
             await self._fail_the_running_turn(
                 self._with_the_standard_error(str(stream_failed))
             )
+            await self._report_the_stream_ended()
         else:
             self._wire_broken = True
             await self._fail_the_running_turn(
                 self._with_the_standard_error("the backend's message stream ended")
             )
+            await self._report_the_stream_ended()
+
+    async def _report_the_stream_ended(self) -> None:
+        """Say the child is gone. A stop the core asked for cancels the reader instead.
+
+        Stops still awaiting proof of life are not reported as ended: the child did not
+        survive them, so those tasks ended with the session.
+        """
+        self._live_background_task_ids.clear()
+        self._stopped_background_tasks_awaiting_proof_of_life.clear()
+        await self._sink.report(None, BackendStreamEnded())
 
     async def _take_in(self, message: Message) -> None:
         """One piece of the agent's news, turned into what the core keeps or shows."""
@@ -1514,6 +1539,10 @@ class ClaudeAgentSdkBackendChild:
         if session_id is not None:
             await self._note_the_session_id(session_id)
         if self._wire_broken:
+            return
+        # Background tasks belong to the session, and their news usually arrives when no
+        # turn is running, so it is taken before anything that needs one.
+        if await self._take_in_background_task_news(message):
             return
         turn = self._turn
         if turn is None:
@@ -1544,6 +1573,56 @@ class ClaudeAgentSdkBackendChild:
                     self._resolved_start.conversation_id,
                     type(message).__name__,
                 )
+
+    async def _take_in_background_task_news(self, message: Message) -> bool:
+        """Report a background task starting or ending. True when the message was that.
+
+        A task that completed or failed has ended on its own. A stopped or killed task
+        is held until the child next shows model activity, which a child being
+        terminated never does; the stream ending first means the task died with it.
+        """
+        if isinstance(message, (AssistantMessage, UserMessage, ResultMessage, StreamEvent)):
+            await self._report_the_stops_the_child_survived()
+        match message:
+            case TaskStartedMessage():
+                self._live_background_task_ids.add(message.task_id)
+                await self._sink.report(
+                    None,
+                    BackgroundTaskStarted(
+                        task_id=message.task_id, task_description=message.description
+                    ),
+                )
+                return True
+            case TaskNotificationMessage() | TaskUpdatedMessage():
+                task_status = message.status
+                if (
+                    task_status is None
+                    or task_status not in TERMINAL_TASK_STATUSES
+                    or message.task_id not in self._live_background_task_ids
+                ):
+                    return True
+                if task_status in ("stopped", "killed"):
+                    self._stopped_background_tasks_awaiting_proof_of_life[message.task_id] = (
+                        task_status
+                    )
+                    return True
+                await self._report_the_background_task_ended(message.task_id, task_status)
+                return True
+        return False
+
+    async def _report_the_stops_the_child_survived(self) -> None:
+        stopped = self._stopped_background_tasks_awaiting_proof_of_life
+        self._stopped_background_tasks_awaiting_proof_of_life = {}
+        for task_id, task_status in stopped.items():
+            await self._report_the_background_task_ended(task_id, task_status)
+
+    async def _report_the_background_task_ended(self, task_id: str, task_status: str) -> None:
+        if task_id not in self._live_background_task_ids:
+            return
+        self._live_background_task_ids.discard(task_id)
+        await self._sink.report(
+            None, BackgroundTaskEnded(task_id=task_id, task_status=task_status)
+        )
 
     async def _note_the_session_id(self, session_id: str) -> None:
         """Keep the session this conversation resumes from, and refuse a substitute.

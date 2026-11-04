@@ -24,7 +24,14 @@ from uuid import UUID
 
 import pytest
 from anyio.abc import Process
-from claude_agent_sdk import ClaudeAgentOptions, CLINotFoundError, TextBlock
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    CLINotFoundError,
+    TaskNotificationMessage,
+    TaskStartedMessage,
+    TaskUpdatedMessage,
+    TextBlock,
+)
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from tests.support.conversation_claude_agent_sdk_bench import (
     ANOTHER_SESSION_ID,
@@ -44,6 +51,9 @@ from planner.conversation.backends.claude_agent_sdk import (
 )
 from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
+    BackendStreamEnded,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     NeedsRebind,
     SessionLoadFailed,
     TurnToken,
@@ -137,6 +147,78 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
         assert len(clients[0].prompts) == 1
         assert "Panels" in clients[0].prompts[0]
         assert "Review the manager wake." in clients[0].prompts[0]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_end_them(
+    tmp_path: Path,
+) -> None:
+    """Task news arrives when no turn runs. Claude stops every task while it is terminated,
+    and those tasks ended with the session, not on their own.
+    """
+
+    def started(task_id: str) -> TaskStartedMessage:
+        return TaskStartedMessage(
+            subtype="task_started",
+            data={},
+            task_id=task_id,
+            description=f"sleep for {task_id}",
+            uuid=f"u-{task_id}",
+            session_id=SESSION_ID,
+        )
+
+    def notified(task_id: str, status: str) -> TaskNotificationMessage:
+        return TaskNotificationMessage(
+            subtype="task_notification",
+            data={},
+            task_id=task_id,
+            status=status,  # type: ignore[arg-type]
+            output_file="/tmp/out",
+            summary="",
+            uuid=f"n-{task_id}",
+            session_id=SESSION_ID,
+        )
+
+    def updated(task_id: str, status: str) -> TaskUpdatedMessage:
+        return TaskUpdatedMessage(
+            subtype="task_updated",
+            data={},
+            task_id=task_id,
+            patch={"status": status},
+            status=status,  # type: ignore[arg-type]
+            session_id=SESSION_ID,
+        )
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=SESSION_ID)
+        clients[0].say(
+            started("a"),
+            updated("a", "completed"),
+            notified("a", "completed"),
+            # Stopped by the agent: the session goes on, which proves it survived the stop.
+            started("b"),
+            updated("b", "killed"),
+            _assistant(TextBlock(text="stopped it")),
+            # Stopped while claude itself is being terminated: the stream ends next.
+            started("c"),
+            notified("c", "stopped"),
+            updated("c", "killed"),
+        )
+        clients[0].end_the_stream()
+        await clients[0].until_taken_in()
+
+        assert sink.session_news == [
+            BackgroundTaskStarted(task_id="a", task_description="sleep for a"),
+            BackgroundTaskEnded(task_id="a", task_status="completed"),
+            BackgroundTaskStarted(task_id="b", task_description="sleep for b"),
+            BackgroundTaskEnded(task_id="b", task_status="killed"),
+            BackgroundTaskStarted(task_id="c", task_description="sleep for c"),
+            BackendStreamEnded(),
+        ]
         await child.stop()
 
     _run(exercise)

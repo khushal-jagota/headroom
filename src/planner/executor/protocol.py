@@ -24,6 +24,9 @@ from planner.conversation.backends.contracts import (
     AgentMessageDelta,
     BackendEventValue,
     BackendPromptAccepted,
+    BackendStreamEnded,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     ComposerCatalogReported,
     ContextCompacted,
     ModelThinkingHappened,
@@ -286,6 +289,9 @@ class BackendEventMethod(StrEnum):
     turn_ended = "turn_ended"
     vendor_session_cursor_rebound = "vendor_session_cursor_rebound"
     composer_catalog_reported = "composer_catalog_reported"
+    background_task_started = "background_task_started"
+    background_task_ended = "background_task_ended"
+    backend_stream_ended = "backend_stream_ended"
 
 
 LIVE_BACKEND_EVENT_METHODS = frozenset(
@@ -653,6 +659,9 @@ _BACKEND_EVENT_TYPES: dict[BackendEventMethod, type[BackendEventValue]] = {
     BackendEventMethod.turn_ended: TurnEnded,
     BackendEventMethod.vendor_session_cursor_rebound: VendorSessionCursorRebound,
     BackendEventMethod.composer_catalog_reported: ComposerCatalogReported,
+    BackendEventMethod.background_task_started: BackgroundTaskStarted,
+    BackendEventMethod.background_task_ended: BackgroundTaskEnded,
+    BackendEventMethod.backend_stream_ended: BackendStreamEnded,
 }
 _BACKEND_EVENT_METHODS = {event_type: method for method, event_type in _BACKEND_EVENT_TYPES.items()}
 

@@ -25,10 +25,11 @@ async def read_conversation_signals(
             conversation_system.has_pending_permission_ask(conversation_id),
             conversation_system.has_pending_user_input(conversation_id),
         )
-        fact = durable.get(conversation_id, ConversationAttentionFacts(False, False))
+        fact = durable.get(conversation_id, ConversationAttentionFacts(False, False, False))
         return conversation_id, ConversationAttention(
             signal=conversation_signal(
-                is_running=running,
+                turn_is_running=running,
+                has_live_background_task=fact.has_live_background_task,
                 unread_message_to_owner=fact.unread_message_to_owner,
             ),
             awaiting_answer=permission or question,
