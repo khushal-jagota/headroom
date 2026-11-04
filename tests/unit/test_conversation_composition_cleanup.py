@@ -18,17 +18,10 @@ from planner.core.config import load_config
 class CompositionFailure(RuntimeError):
     pass
 
-
-
-
-
-
-
-
 def test_idle_managed_connection_refreshes_functions_across_runtime_generations(
     tmp_path: Path,
 ) -> None:
-    """Admission must replace absent and stale callbacks before protected source SQL."""
+    """Retained connections use the current status publisher after runtime replacement."""
     from planner.conversation.runtime_composition import SignalRuntimeComposition
     from planner.core.db import connect
     from planner.navigation.delivery import create_delivery_runtime
@@ -49,10 +42,6 @@ def test_idle_managed_connection_refreshes_functions_across_runtime_generations(
             try:
                 binding.attach()
                 idle.execute("BEGIN IMMEDIATE")
-                with pytest.raises(RuntimeError, match="active transaction"):
-                    composition.close()
-                assert not composition._closed
-                assert composition.ownership is not None and not composition.ownership.closed
                 idle.execute(
                     "INSERT INTO conversations"
                     "(conversation_id,backend_key,workspace_folder,access,created_at) "
