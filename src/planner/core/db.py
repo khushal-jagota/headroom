@@ -493,6 +493,9 @@ def create_schema(
             "run on their own connection and would wait on this one's lock"
         )
     _upgrade_to_current_schema(_main_database_path(conn), _busy_timeout_ms(conn))
+    # Migrations use another connection. Refresh this connection's cached schema
+    # before its first write prepares triggers that migrations just removed.
+    conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
     if startup_audit is not None:
         # Startup must mark invalid Tickets before any ordinary seed commit asks the
         # shared projections to interpret them. A new database needs its registry first.

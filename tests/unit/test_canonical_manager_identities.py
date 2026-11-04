@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -49,7 +50,29 @@ def test_manager_identity_migration_preserves_links_and_authored_bytes(
 
         persistence.create_schema(conn)
         persistence.install_migration_source_triggers(conn)
+    # A pre-sweep installed database still has the admission fence, but offline
+    # migrations do not register its retired runtime function.
+    conn.execute("""CREATE TRIGGER navigation_agents_insert BEFORE INSERT ON agents
+        WHEN navigation_transaction_active() = 0
+        BEGIN SELECT RAISE(ABORT, 'retired admission fence'); END""")
+    from planner.core.migrations.versions import remove_navigation_proof
+
+    conn.execute("CREATE TABLE navigation_commit_witnesses(id TEXT)")
+    conn.execute("CREATE TABLE navigation_proof_identity(id TEXT)")
+    monkeypatch.setattr(
+        remove_navigation_proof.op,
+        "get_bind",
+        lambda: SimpleNamespace(connection=SimpleNamespace(driver_connection=conn)),
+    )
+    monkeypatch.setattr(remove_navigation_proof.op, "execute", conn.execute)
+    remove_navigation_proof.upgrade()
     migrate(conn)
+    assert (
+        conn.execute(
+            "SELECT name FROM sqlite_master WHERE name='navigation_agents_insert'"
+        ).fetchone()
+        is None
+    )
     assert conn.execute("SELECT * FROM agents").fetchall() == [
         ("manager_si_kept", "conversation_kept")
     ]

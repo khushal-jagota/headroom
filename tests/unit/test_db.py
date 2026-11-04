@@ -1541,3 +1541,26 @@ def test_skill_binding_removal_preserves_skill_history_and_conversation_rows(
     for table in retained:
         assert list(conn.execute(f'SELECT * FROM "{table}"')) == before[table]
     conn.close()
+
+
+def test_startup_refreshes_removed_trigger_before_seed_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "removed-trigger.db"
+    conn = connect(str(database))
+    create_schema(conn)
+    conn.execute("""CREATE TRIGGER obsolete_startup_admission BEFORE INSERT ON projects
+        WHEN retired_startup_function() = 0
+        BEGIN SELECT RAISE(ABORT, 'obsolete admission'); END""")
+    conn.execute("SELECT name FROM sqlite_master").fetchall()
+    upgrade = db_module._upgrade_to_current_schema
+
+    def remove_trigger(db_path: str, busy_timeout_ms: int) -> None:
+        upgrade(db_path, busy_timeout_ms)
+        with sqlite3.connect(db_path) as migration_connection:
+            migration_connection.execute("DROP TRIGGER obsolete_startup_admission")
+
+    monkeypatch.setattr(db_module, "_upgrade_to_current_schema", remove_trigger)
+    create_schema(conn)
+    assert conn.execute("SELECT count(*) FROM projects").fetchone()[0] > 0
+    conn.close()
