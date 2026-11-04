@@ -127,31 +127,6 @@ def test_rejection_rolls_back_feedback_proposal_and_claim_together(
     assert revision_feedback.snapshot(tmp_db, ticket.id) is None
 
 
-def test_a_ticket_holder_cannot_be_deleted_while_another_ticket_uses_it(
-    tmp_db: Connection,
-) -> None:
-    holder = data.create_ticket(
-        tmp_db,
-        title="Holder",
-        principal=OWNER_PRINCIPAL,
-        now=10,
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="coding",
-        brief=None,
-    )
-    held = data.create_ticket(
-        tmp_db, title="Historical held", principal=OWNER_PRINCIPAL, now=11,
-        title_max_chars=TITLE_MAX_CHARS, worker_type="coding", brief=None,
-    )
-    # Old records remain readable and keep referential deletion protection.
-    tmp_db.execute(
-        "UPDATE tickets SET ceiling_holder=? WHERE id=?",
-        (json.dumps({"kind": "ticket", "id": holder.id}), held.id),
-    )
-    with pytest.raises(PlannerError, match="holds another Ticket ceiling"):
-        data.delete_ticket(tmp_db, holder.id, principal=OWNER_PRINCIPAL, now=12)
-
-
 def test_the_holder_moves_while_a_proposal_is_parked(tmp_db: Connection) -> None:
     ticket = _park(tmp_db, CHIEF_PRINCIPAL)
     assert ticket.pending_proposal is not None

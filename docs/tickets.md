@@ -34,7 +34,7 @@ Backlog is an explicit pause of the next automatic Worker step. The stage, the p
 
 The Ticket page offers Backlog ticket and Resume ticket. Each has one writer. The browser sends a hash of the record it displayed, and a stale request is refused inside the write.
 
-Delete removes the Ticket’s record. Files under the Ticket’s file tree survive. The browser does not offer delete. `panels ticket delete` does, and it refuses while a Worker step or a live turn still needs the Ticket, unless the caller forces it or a Manager is deleting its own child. A Ticket that is another Ticket’s ceiling holder cannot be deleted out from under that review.
+Delete removes the Ticket’s record. Files under the Ticket’s file tree survive. The browser does not offer delete. `panels ticket delete` does, and it refuses while a Worker step or a live turn still needs the Ticket, unless the caller forces it or a Manager is deleting its own child.
 
 ## Where the Worker may run
 

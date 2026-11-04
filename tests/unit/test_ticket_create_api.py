@@ -296,10 +296,13 @@ def test_create_refuses_holders_without_authority_before_kickoff_routing(
         assert refused.status_code == 400, refused.text
         error = refused.json()["error"]
         assert error["code"] == "validation"
-        assert error["message"] == (
-            "ceiling holder must be the user or the Ticket's direct manager; "
-            "name an eligible holder explicitly"
-        )
-        assert error["detail"]["holder"] == holder
-        assert error["detail"]["ticket_id"]
+        if holder["kind"] == "ticket":
+            assert error["message"] == "ceiling_holder kind must be owner, chief, or manager"
+        else:
+            assert error["message"] == (
+                "ceiling holder must be the user or the Ticket's direct manager; "
+                "name an eligible holder explicitly"
+            )
+            assert error["detail"]["holder"] == holder
+            assert error["detail"]["ticket_id"]
         assert _snapshot(db_path) == before

@@ -89,22 +89,15 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   an unresolved link or mount. If valid independent dependencies receive a false refusal,
   fix the detector and add a regression check. If evidence is unavailable, restore the
   evidence or fix its acquisition before retry. See `docs/deployment.md` for diagnostics.
-- `mypy` with this tree's config and any `pytest` that collects under `tests/` check
-  deployment safety, then environment identity, then installed distributions against applicable exact
-  pins in `requirements.txt`. The dependency check runs before `planner` imports.
-  Extra installed distributions and this tree's editable install are valid.
-  A dependency refusal names the required and installed versions, active interpreter,
-  and a repair command anchored to this tree. Missing or unusable `packaging` reports
-  a parser bootstrap failure. A foreign or moved virtualenv needs a rebuild.
-  A pin change makes old environments stale, so refusal is expected until their
-  installed dependencies match. No environment variable or flag skips this check.
-  Restore the pinned dependency versions to pass it.
-  These hooks cannot cover failures before pytest or mypy loads them. They do not
-  cover `ruff`, pytest outside `tests/`, or arbitrary `.venv/bin` commands.
+- `mypy` with this tree's config and `pytest` under `tests/` use one source path
+  check. The imported `planner` package must resolve inside this checkout's `src`.
+  If it resolves elsewhere, reinstall this checkout with `.venv/bin/python -m pip install --editable .`.
+  Keep development dependencies and runtime state independent of the deployment.
+  The separate development safety launcher checks deployment sharing before tools start.
   Direct invocations outside guarded entry points can still write into the deployment.
   General prevention and race-free filesystem containment remain uncommissioned.
   Development and verification run in independent worktrees, never the installed tree.
-  Startup checks do not contain running processes or prevent writes after the check.
+  Startup checks do not contain running processes or prevent later writes.
   The artifact digest detects damage after a write. Do not add cache exclusions.
   If a write reaches the installed tree, report it and leave it in place. Do not clean it.
   Repository review or merge does not install enforcement into the deployed release.

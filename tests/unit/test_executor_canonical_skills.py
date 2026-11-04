@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from planner.executor.configuration import ExecutorPaths
 from planner.executor.protocol import CanonicalSkillSnapshot, CanonicalSkillSource
 from planner.executor.skills import (
     install_native_skill_snapshot,
+    read_canonical_skill_snapshot,
 )
 
 
@@ -191,3 +193,42 @@ def test_tampered_generation_refuses_instead_of_rewriting(tmp_path: Path) -> Non
         install_native_skill_snapshot(_snapshot(), paths=paths, native_home=tmp_path / "second")
     assert changed.read_bytes() == b"tampered"
     assert not (tmp_path / "second").exists()
+
+
+def test_worker_snapshot_omits_retired_specialists_except_its_assigned_personal_skill(
+    tmp_db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    from tests.support.retired_workers import seed_historical_worker_type
+
+    from planner.core.contracts import OWNER_PRINCIPAL
+    from planner.skill_sources import WORKER_ONLY_SKILL_NAMES
+    from planner.tickets import data
+
+    ticket = data.create_ticket(
+        tmp_db,
+        title="Current worker",
+        worker_type="coding",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        employee_backend="codex",
+        employee_launch_model="scripted",
+    )
+    ordinary = read_canonical_skill_snapshot(tmp_db, ticket.id)
+    assert not ({source.skill_name for source in ordinary.sources} & WORKER_ONLY_SKILL_NAMES)
+    # Restore a historical fixture directly. New personal creation stays forbidden.
+    seed_historical_worker_type(tmp_db, "personal")
+    tmp_db.execute("UPDATE tickets SET worker_type='personal' WHERE id=?", (ticket.id,))
+    before = tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone()
+    personal = read_canonical_skill_snapshot(tmp_db, ticket.id)
+    assert {source.skill_name for source in personal.sources} & WORKER_ONLY_SKILL_NAMES == {
+        "panels-worker-personal-task"
+    }
+    home = tmp_path / "account"
+    paths = ExecutorPaths(tmp_path / "executor")
+    personal_generation = install_native_skill_snapshot(personal, paths=paths, native_home=home)
+    assert (home / "skills/panels-worker-personal-task/SKILL.md").is_file()
+    install_native_skill_snapshot(ordinary, paths=paths, native_home=home)
+    assert not (home / "skills/panels-worker-personal-task").exists()
+    assert (personal_generation / "skills/panels-worker-personal-task/SKILL.md").is_file()
+    assert tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone() == before

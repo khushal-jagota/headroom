@@ -195,7 +195,7 @@ def run(browser, urls):
 
     # The update prompt is now an occupant of this same slot, so only the rendered
     # surface can show which card wins, that the action is reachable, and that the
-    # held sentence changes the rail foot's height without disturbing the rail.
+    # unknown outcome sentence changes the rail foot's height without disturbing the rail.
     # The deploy fixture has already expired above, so the slot starts empty.
     expect(status).to_have_count(0)
     page.evaluate("window.__release('shipped')")
@@ -211,46 +211,12 @@ def run(browser, urls):
     expect(status.locator(".status-action")).to_have_text("Refresh page")
     page.screenshot(animations="disabled", path=str(evidence / "update-ready-desktop.png"))
 
-    # Asking for the reload while a message is composed holds it, and says why.
-    page.evaluate(
-        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
-    )
-    status.locator("[data-shell-refresh]").click()
-    expect(status).to_contain_text("Page refresh waits until this message is safe")
-    expect(status.locator(".status-action")).to_have_count(0)
-    assert status.evaluate("node => node.tagName") == "DIV"
-    # The long copy wraps inside the rail rather than widening or truncating it.
-    rail = page.locator(".board-workspace-left")
-    assert rail.evaluate("node => node.scrollWidth <= node.clientWidth"), "Held update widened the rail"
-    assert status.evaluate(
-        "node => node.scrollWidth <= node.clientWidth + 1"
-    ), "Held update truncated its own sentence"
-    # The taller card pushes the rail foot open rather than overlapping its neighbour.
-    page.wait_for_function("""() => {
-      const utilities=document.querySelector('.rail-utilities')?.getBoundingClientRect();
-      const card=document.querySelector('.rail-foot .status-card')?.getBoundingClientRect();
-      return utilities && card && card.bottom <= utilities.top + 1;
-    }""")
-    page.screenshot(animations="disabled", path=str(evidence / "update-held-desktop.png"))
-
-    # Both breakpoints: on mobile the same card is a band inside the bottom bar.
-    page.set_viewport_size({"width": 390, "height": 844})
-    band = page.locator(".compact-bar .status-card")
-    expect(band).to_contain_text("Page refresh waits until this message is safe")
-    bar = page.locator(".compact-bar-row").bounding_box()
-    box = band.bounding_box()
-    assert box and bar and box["y"] + box["height"] <= bar["y"] + 1, (box, bar)
-    assert box["width"] >= 389, box
-    page.screenshot(animations="disabled", path=str(evidence / "update-held-mobile.png"))
-
-    # The hold releases the moment the message is safe, and only then.
-    page.evaluate("window.__heldPage = true")
+    # A refresh request takes effect even if an old composer emits its former hold event.
+    page.evaluate("window.__oldPage = true")
+    page.evaluate("document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))")
     with page.expect_navigation(wait_until="networkidle"):
-        page.evaluate(
-            "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"
-        )
-    page.wait_for_function("() => window.__heldPage === undefined")
-    # A new window clears the marker before its module installs the drivers.
+        status.locator("[data-shell-refresh]").click()
+    page.wait_for_function("() => window.__oldPage === undefined")
     page.wait_for_function("() => typeof window.__deployment === 'function'")
 
     # The approved plan's evidence: every state of the one slot, at both breakpoints.
@@ -268,22 +234,8 @@ def run(browser, urls):
             )
             expect(shown).to_be_visible()
             page.screenshot(animations="disabled", path=str(evidence / f"state-{label}-{breakpoint_}.png"))
-    # Held needs the action, which only the visible breakpoint's card carries.
-    page.evaluate(
-        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
-    )
-    for breakpoint_, size in [("desktop", (1280, 844)), ("mobile", (390, 844))]:
-        page.set_viewport_size({"width": size[0], "height": size[1]})
-        shown = page.locator(
-            ".rail-foot .status-card" if breakpoint_ == "desktop" else ".compact-bar .status-card"
-        )
-        if shown.locator("[data-shell-refresh]").count():
-            shown.locator("[data-shell-refresh]").click()
-        expect(shown).to_contain_text("Page refresh waits until this message is safe")
-        page.screenshot(animations="disabled", path=str(evidence / f"state-update-held-{breakpoint_}.png"))
-
     # A swap between two open occupants holds the slot at grid-template-rows:1fr, so the
-    # row glide cannot carry it. At the rail's minimum width the held sentence wraps the
+    # row glide cannot carry it. At the rail's minimum width the unknown outcome sentence wraps the
     # most, which is where an unanimated intrinsic height change is worst.
     page.set_viewport_size({"width": 1280, "height": 844})
     page.evaluate("localStorage.setItem('panels.workspace.rail-width','232')")
@@ -291,10 +243,7 @@ def run(browser, urls):
     page.locator(".rail-foot").wait_for()
     page.evaluate("""() => {
       window.__slotActions = {
-        held: () => {
-          document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}));
-          document.querySelector('.rail-foot [data-shell-refresh]').click();
-        },
+        unknown: () => window.__deployment('unknown'),
         problem: () => window.__deployment('problem'),
         ready: () => window.__release('shipped'),
         close: () => { window.__deployment('idle'); window.__release('booted'); },
@@ -366,20 +315,20 @@ def run(browser, urls):
     status = page.locator(".rail-foot .status-card")
     expect(status).to_contain_text("New version ready")
     page.screenshot(animations="disabled", path=str(evidence / "narrow-update-ready-desktop.png"))
-    ready_to_held = swap("held")
-    expect(status).to_contain_text("Page refresh waits until this message is safe")
-    smooth(ready_to_held, "ready-to-held")
-    page.screenshot(animations="disabled", path=str(evidence / "narrow-update-held-desktop.png"))
+    ready_to_unknown = swap("unknown")
+    expect(status).to_contain_text("Deployment outcome unknown")
+    smooth(ready_to_unknown, "ready-to-unknown")
+    page.screenshot(animations="disabled", path=str(evidence / "narrow-update-unknown-desktop.png"))
 
-    held_to_problem = swap("problem")
+    unknown_to_problem = swap("problem")
     expect(status).to_have_text("Problem")
-    smooth(held_to_problem, "held-to-problem")
+    smooth(unknown_to_problem, "unknown-to-problem")
     page.screenshot(animations="disabled", path=str(evidence / "narrow-problem-desktop.png"))
 
-    # Reduced motion keeps the same occupants and the same hold, without a timed effect.
+    # Reduced motion keeps the same occupants and the same status, without a timed effect.
     page.emulate_media(reduced_motion="reduce")
-    page.evaluate("window.__deployment('idle')")
-    expect(status).to_contain_text("Page refresh waits until this message is safe")
+    page.evaluate("window.__deployment('unknown')")
+    expect(status).to_contain_text("Deployment outcome unknown")
     reduced = swap("problem", duration=200)
     expect(status).to_have_text("Problem")
     assert all(sample["heightEffects"] == 0 for sample in reduced), reduced
@@ -395,13 +344,13 @@ def run(browser, urls):
         return page.evaluate("window.__slotFrames")
 
     interrupted: dict[str, object] = {}
-    # Clear the earlier hold and the Problem card, so this starts from a ready update.
+    # Clear the earlier status and the Problem card, so this starts from a ready update.
     page.evaluate("window.__release('booted'); window.__deployment('idle')")
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
     page.evaluate("window.__release('shipped')")
     expect(status).to_contain_text("New version ready")
     closed_at = 260
-    overlapped = overlap([[0, "held"], [120, "problem"], [closed_at, "close"]])
+    overlapped = overlap([[0, "unknown"], [120, "problem"], [closed_at, "close"]])
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
     # The close boundary itself, not only the tail. Cancelling the running height used
     # to reveal the taller intrinsic row here, which showed as a jump up before the fall.
@@ -425,8 +374,8 @@ def run(browser, urls):
     # intermediate size, which it would then snap away from when the effect ended.
     page.evaluate("window.__release('booted'); window.__deployment('idle')")
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
-    entering = overlap([[0, "ready"], [80, "held"]], duration=1200)
-    expect(status).to_contain_text("Page refresh waits until this message is safe")
+    entering = overlap([[0, "ready"], [80, "unknown"]], duration=1200)
+    expect(status).to_contain_text("Deployment outcome unknown")
     card = status.bounding_box()
     assert card and abs(entering[-1]["height"] - (card["height"] + 8)) < 1.5, (card, entering[-1])
     # rAF samples span different time intervals across displays. Match the
@@ -478,7 +427,7 @@ def run(browser, urls):
         page.evaluate("window.__release('shipped')")
         expect(status).to_contain_text("New version ready")
         page.wait_for_function(settled_open)
-        frames = overlap([[0, "held"], [120, "close"], [at, "returning"]], duration=1200)
+        frames = overlap([[0, "unknown"], [120, "close"], [at, "returning"]], duration=1200)
         expect(status).to_have_text("Problem")
         continuous(frames, label, at)
         interrupted[label] = frames
@@ -491,7 +440,7 @@ def run(browser, urls):
     page.emulate_media(reduced_motion="reduce")
     page.evaluate("window.__release('shipped')")
     expect(status).to_contain_text("New version ready")
-    reduced_overlap = overlap([[0, "held"], [120, "problem"], [260, "close"]], duration=700)
+    reduced_overlap = overlap([[0, "unknown"], [120, "problem"], [260, "close"]], duration=700)
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
     assert all(sample["heightEffects"] == 0 for sample in reduced_overlap), reduced_overlap
     assert reduced_overlap[-1]["height"] < 1, reduced_overlap[-4:]
@@ -516,23 +465,18 @@ def run(browser, urls):
 
     (evidence / "status-slot-frames.json").write_text(json.dumps({
         "railWidth": 232,
-        "readyToHeld": ready_to_held,
-        "heldToProblem": held_to_problem,
-        "reducedMotionHeldToProblem": reduced,
+        "readyToUnknown": ready_to_unknown,
+        "unknownToProblem": unknown_to_problem,
+        "reducedMotionUnknownToProblem": reduced,
         "overlappingSwapsThenClose": overlapped,
         "reducedMotionOverlap": reduced_overlap,
         **interrupted,
     }, indent=2))
 
-    # The hold survives every swap, including the overlapping ones above: the reload
-    # lands only once the message is safe. This discards the page, so it runs last.
-    page.evaluate(
-        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
-    )
-    status.locator("[data-shell-refresh]").click()
-    expect(status).to_contain_text("Page refresh waits until this message is safe")
-    page.evaluate("window.__heldNarrow = true")
-    page.evaluate(
-        "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"
-    )
-    page.wait_for_function("() => window.__heldNarrow === undefined")
+    # Refresh remains immediate after the status swaps.
+    page.evaluate("window.__deployment('idle'); window.__release('shipped')")
+    expect(status).to_contain_text("New version ready")
+    page.evaluate("window.__oldNarrow = true")
+    with page.expect_navigation(wait_until="networkidle"):
+        status.locator("[data-shell-refresh]").click()
+    page.wait_for_function("() => window.__oldNarrow === undefined")
