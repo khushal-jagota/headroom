@@ -372,10 +372,14 @@ def test_metadata_batches_stop_on_failure_and_cache_expires_only_on_a_hint(tmp_p
             reads = scripted.all_sent("app/read")
             assert [len(read["params"]["appIds"]) for read in reads] == [100, 100, 1]
             reports = len(scripted.sink.composer_catalog_reports)
+            installed_before_hint = coordinator.installed
             coordinator.hint_apps()
             now[0] += 1
             coordinator.wake()
             await _until(lambda: len(scripted.all_sent("app/installed")) == 2)
+            # Wait for the reply, not only the request: applying it asks for metadata,
+            # and that refresh must read the clock before the clock jumps below.
+            await _until(lambda: coordinator.installed is not installed_before_hint)
             await _until(lambda: not coordinator._lanes["metadata"].pending)
             assert len(scripted.all_sent("app/read")) == 3
             assert len(scripted.sink.composer_catalog_reports) == reports
