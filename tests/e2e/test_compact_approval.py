@@ -40,7 +40,7 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     project = api.direct_post(server, "/api/projects", {"name": "Approval proof"})
     item = api.direct_post(
         server,
-        "/api/items",
+        "/api/managers",
         {"title": "Named orchestrator must not appear", "project_id": project["id"]},
     )
     ticket = api.direct_post(

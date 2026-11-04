@@ -126,8 +126,8 @@ def _seed(db_path: Path) -> Seed:
     create_schema(conn)
     conn.close()
     with TestClient(_app_on(db_path)) as client:
-        item_a = _ok(client.post("/api/items", json={"title": "A", "project_id": "project_vylo"}))
-        item_b = _ok(client.post("/api/items", json={"title": "B", "project_id": "project_vylo"}))
+        item_a = _ok(client.post("/api/managers", json={"title": "A", "project_id": "project_vylo"}))
+        item_b = _ok(client.post("/api/managers", json={"title": "B", "project_id": "project_vylo"}))
         ticket_a = _ok(
             client.post(
                 "/api/tickets",
@@ -368,20 +368,20 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         lambda s: Call("DELETE", f"/files/sprint-items/{s.item_a}/artifacts/note.md"),
     ),
     (
-        "GET    /items/{i}/conversation/start-values",
-        lambda s: Call("GET", f"/api/items/{s.item_a}/conversation/start-values"),
+        "GET    /managers/{i}/conversation/start-values",
+        lambda s: Call("GET", f"/api/managers/{s.item_a}/conversation/start-values"),
     ),
     (
-        "POST   /items/{i}/conversation/reset",
-        lambda s: Call("POST", f"/api/items/{s.item_a}/conversation/reset"),
+        "POST   /managers/{i}/conversation/reset",
+        lambda s: Call("POST", f"/api/managers/{s.item_a}/conversation/reset"),
     ),
-    ("GET    /items/{i}/workspace", lambda s: Call("GET", f"/api/items/{s.item_a}/workspace")),
+    ("GET    /managers/{i}/workspace", lambda s: Call("GET", f"/api/managers/{s.item_a}/workspace")),
     # --- an Outcome, through its ordinary address
     (
-        "PATCH  /items/{i}",
-        lambda s: Call("PATCH", f"/api/items/{s.item_a}", {"title": "A renamed"}),
+        "PATCH  /managers/{i}",
+        lambda s: Call("PATCH", f"/api/managers/{s.item_a}", {"title": "A renamed"}),
     ),
-    ("DELETE /items/{i}", lambda s: Call("DELETE", f"/api/items/{s.item_b}")),
+    ("DELETE /managers/{i}", lambda s: Call("DELETE", f"/api/managers/{s.item_b}")),
     # --- collections
     (
         # item_b, not item_a. Into its existing Outcome the write short-circuits, so the
