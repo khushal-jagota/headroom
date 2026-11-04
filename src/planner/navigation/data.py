@@ -91,12 +91,7 @@ def remove_source_admission_triggers(conn: sqlite3.Connection) -> None:
 
 def install_source_triggers(conn: sqlite3.Connection) -> None:
     """Restore source change capture after schema preparation."""
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
-        from planner.core.migrations.historical_navigation import data as historical_data
-
-        historical_data._install_source_triggers(conn)
-    else:
-        _install_source_triggers(conn)
+    _install_source_triggers(conn)
 
 
 def _priority_source_shape(conn: sqlite3.Connection) -> bool:

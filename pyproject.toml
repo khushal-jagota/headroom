@@ -39,10 +39,6 @@ planner = [
   "core/migrations/env.py",
   "core/migrations/script.py.mako",
   "core/migrations/versions/*.py",
-  "core/migrations/planning_retirement_cohort.json",
-  "core/migrations/planning_retirement_reconciliation.json",
-  "core/migrations/planning_retirement_skill_corrections.json",
-  "core/migrations/planning_retirement_skill_appendices.json",
   "worker_types/shipped_worker_types.json",
   "environments/related_checks_map.json",
   "skills/*/SKILL.md",
@@ -65,8 +61,6 @@ select = ["E", "F", "W", "I", "UP", "B"]
 "src/planner/core/migrations/versions/*.py" = ["E501"]
 # The same reason, for the skill text one revision replaces. It is the owner's rows
 # quoted exactly as they stand, so rewrapping it would stop it matching them.
-"src/planner/core/migrations/skill_row_correction_data.py" = ["E501"]
-"src/planner/core/migrations/skill_ladder_correction_data.py" = ["E501"]
 # The generator that writes that module holds the same quoted rows before it writes them.
 
 [tool.mypy]
