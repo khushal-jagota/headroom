@@ -78,6 +78,31 @@ def test_brief_persists_as_a_proposal_or_settled_field_for_the_creation_ceiling(
         assert created["field_values"]["brief"] == brief
 
 
+def test_create_refuses_done_ceiling_without_persisting_a_ticket_or_proposal(
+    create_api: tuple[TestClient, Path],
+) -> None:
+    client, db_path = create_api
+    with connect(str(db_path)) as conn:
+        before = list(conn.execute("SELECT * FROM tickets ORDER BY id"))
+    response = client.post(
+        "/api/tickets",
+        json={
+            "title": "Do not run through Done",
+            "worker_type": "coding",
+            "brief": "Do not settle this Brief or create its Ticket.",
+            "ceiling": "done",
+        },
+    )
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "validation"
+    assert error["message"] == (
+        "A new Ticket cannot use Done as its ceiling. Choose an earlier stage."
+    )
+    with connect(str(db_path)) as conn:
+        assert list(conn.execute("SELECT * FROM tickets ORDER BY id")) == before
+
+
 def test_create_accepts_and_preserves_the_supported_optional_keys(
     create_api: tuple[TestClient, Path],
     monkeypatch: pytest.MonkeyPatch,
