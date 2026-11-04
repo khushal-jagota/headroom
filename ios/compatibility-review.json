@@ -1,6 +1,6 @@
 {
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "contract_sha256": "43e2bf1c75d09139886d010d6855a2525d33efc5216e75307a595e229d81c84b",
-  "evidence": "Build 1 source compatibility review after rebase onto feature/make-updates-work at f7c81350c. The Mac status change adds mac_status to the updates response; native deployment reads and existing decoder contracts remain unchanged. Native migration now follows mac_contact_status. Focused combined gate/APNs/Mac tests and full merged-tree mypy provide integration evidence. Prior native CI on 1cf0a07d0 passed 65 host tests including old-store migration and unsigned Simulator build; native source is unchanged by this rebase. Signed TestFlight, live Tailscale ingress, and actual Apple delivery remain owner checks."
+  "contract_sha256": "88e6ebae1ee3ce0efb7f5945a7c8aa0d9aae7ea51a7b00cb1cc92e9a28d5cd94",
+  "evidence": "Independent source review of merged server a6a574863 keeps build 1 compatible. Native APIClient consumes unchanged /api/deployment-status and SSE contracts, not the additive /api/updates fields or actions. Native Swift, build-gate, draft, and outbox sources are unchanged. Combined server checks passed: 91 focused update/Mac/iOS-gate unit cases, cutover and native-gate integration, and full mypy on 1039 files. Paused startup still refuses ordinary native actions; unsupported builds cannot execute them. Native host/build CI runs on this review refresh. Signed-device behavior, live ingress/reconnect, and Apple delivery remain owner checks."
 }
