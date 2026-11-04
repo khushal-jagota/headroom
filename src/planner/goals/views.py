@@ -26,8 +26,9 @@ from planner.goals.contracts import (
     GoalsResponse,
     ScalarChartProjection,
 )
-from planner.goals.logic.completion import effective_completion
+from planner.goals.logic.completion import goal_completed
 from planner.goals.logic.documents import charts, dataset_ids, expectation_measure_ids, measure_ids
+from planner.goals.logic.outcomes import goal_outcome, outcome_summary
 from planner.goals.logic.projection import (
     projection_bounds,
     projection_point,
@@ -79,9 +80,7 @@ def goal_json(conn: sqlite3.Connection, goal: Goal, now: datetime) -> GoalRespon
     agent = conn.execute(
         "SELECT conversation_id FROM agents WHERE agent_key=?", (f"goal_{goal.id}",)
     ).fetchone()
-    completed = effective_completion(
-        goal.binary_checked, goal.page, goal.primary_checklist_block_id
-    )
+    completed = goal_completed(goal)
     return {
         "id": goal.id,
         "project_id": goal.project_id,
@@ -90,6 +89,9 @@ def goal_json(conn: sqlite3.Connection, goal: Goal, now: datetime) -> GoalRespon
         "kind": goal.kind,
         "active": goal.active,
         "completed": completed,
+        "completion_date": goal.completion_date,
+        "completion_rule": goal.completion_rule,
+        "outcome": goal_outcome(goal, today),
         "primary_checklist_block_id": goal.primary_checklist_block_id,
         "deadline": goal.deadline,
         "primary_chart": goal.primary_chart,
@@ -117,11 +119,15 @@ def list_json(
     project_id: str | None = None,
 ) -> GoalsResponse:
     today, midnight = calendar_projection(now)
+    all_goals = data.list_goals(conn)
     return {
         "goals": [
             goal_json(conn, row, now)
-            for row in data.list_goals(conn, active=active, project_id=project_id)
+            for row in all_goals
+            if (active is None or row.active == active)
+            and (project_id is None or row.project_id == project_id)
         ],
+        "outcome_summary": outcome_summary(all_goals, today),
         "status_date": today,
         "next_refresh_at": midnight,
     }
@@ -373,9 +379,7 @@ def readings_json(
                     known_values.add(identity)
         if goal.kind == "binary":
             status = goal_status(
-                effective_completion(
-                    goal.binary_checked, goal.page, goal.primary_checklist_block_id
-                ),
+                goal_completed(goal),
                 goal.deadline,
                 today,
             )
