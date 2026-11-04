@@ -10,7 +10,6 @@ from typing import Literal, cast
 
 from planner.conversation import events as event
 from planner.conversation.contracts import AnswerFate, ConversationBackendKey
-from planner.conversation.retention.read import sequence_expired
 from planner.conversation.views.configuration import (
     BODY_CHUNK_BYTES,
     HISTORY_PAGE_BODY_BYTES,
@@ -34,6 +33,7 @@ from planner.conversation.views.contracts import (
     ViewRowKind,
 )
 from planner.conversation.views.logic.bodies import row_body
+from planner.conversation.views.omissions import sequence_expired
 from planner.core.errors import ErrorCode, PlannerError
 
 

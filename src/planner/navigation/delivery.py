@@ -1,53 +1,26 @@
-"""Durable, bounded navigation replay. Wakes accelerate polling but never replace it."""
+"""Shared authority and retention for scoped navigation delivery."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import sqlite3
-import time
 import uuid
-from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Literal, TypedDict, cast
 
 from planner.conversation.contracts import (
     SignalAvailability,
     SignalPublicationSource,
     SignalReadPermit,
 )
-from planner.core import change_signal
-from planner.core.sse import register_open_stream_closer
 from planner.navigation.configuration import DeliveryConfig
-from planner.navigation.contracts import (
-    SCHEMA_VERSION,
-    SUPPORTED_SEMANTICS,
-    Continuity,
-    RevisionBatch,
-    Snapshot,
-    parse_revision,
-)
-from planner.navigation.data import snapshot
 from planner.navigation.delivery_authority import (
-    DeliveryAccess,
     DeliveryAdmission,
     DeliveryRead,
     DeliveryUnavailable,
 )
-from planner.navigation.delivery_contracts import (
-    CurrentAuthority,
-    Cursor,
-    ReplayPage,
-    ResetRequired,
-    SnapshotResponse,
-    batch_frame,
-    decode_cursor,
-    encode_cursor,
-    reset_frame,
-)
-from planner.navigation.proof_contracts import ProofResult
+from planner.navigation.delivery_contracts import CurrentAuthority
 from planner.navigation.retention import prune
 
 
@@ -58,136 +31,8 @@ def _read_connection(path: Path) -> sqlite3.Connection:
     return conn
 
 
-class StoredSnapshot(TypedDict):
-    """SQL provenance only; this is not a public transport response."""
-
-    cursor: str
-    snapshot: Snapshot
-    proof: ProofResult | None
-
-
-def read_snapshot(
-    path: Path,
-    fence: object = None,
-    admission: DeliveryAdmission | None = None,
-    read: DeliveryRead | None = None,
-) -> StoredSnapshot:
-    from planner.navigation.proof import certify
-
-    with contextlib.closing(_read_connection(path)) as conn:
-        conn.execute("BEGIN")
-        try:
-            if admission is not None:
-                admission.validate_snapshot(conn, read)
-            value = snapshot(conn)
-            proof = certify(conn, fence) if fence is not None else None
-            return {
-                "cursor": encode_cursor(value),
-                "snapshot": value,
-                "proof": proof,
-            }
-        finally:
-            conn.rollback()
-
-
-def read_page(
-    path: Path,
-    cursor: Cursor,
-    config: DeliveryConfig,
-    admission: DeliveryAdmission | None = None,
-    read: DeliveryRead | None = None,
-    authority: CurrentAuthority | None = None,
-) -> ReplayPage:
-    with contextlib.closing(_read_connection(path)) as conn:
-        conn.execute("BEGIN")
-        try:
-            if admission is not None:
-                admission.validate_snapshot(conn, read)
-            scope, schema, epoch, current = conn.execute(
-                "SELECT scope,schema_version,epoch,revision FROM navigation_meta"
-            ).fetchone()
-            continuity: Continuity = {
-                "scope": scope,
-                "schema_version": schema,
-                "semantics": cast(
-                    Literal["attention-knowledge-v9-review-messages"], SUPPORTED_SEMANTICS
-                ),
-                "epoch": epoch,
-                "revision": str(current),
-            }
-            # Validate EVERY continuity field before duplicate/future/expired decisions.
-            if (
-                any(
-                    dict(cursor)[key] != dict(continuity)[key]
-                    for key in ("scope", "schema_version", "semantics", "epoch")
-                )
-                or schema != SCHEMA_VERSION
-            ):
-                raise ResetRequired("incompatible_continuity")
-            after = parse_revision(cursor["revision"])
-            if after > current:
-                raise ResetRequired("future_cursor")
-            floor_row = conn.execute(
-                "SELECT epoch,floor_revision FROM navigation_delivery_retention WHERE singleton=1"
-            ).fetchone()
-            floor = int(floor_row[1]) if floor_row and floor_row[0] == epoch else 0
-            if after < floor:
-                raise ResetRequired("expired_history")
-            if after == current:
-                return {"batches": [], "has_more": False}
-            # Inspect size before fetching bodies, including individually oversized batches.
-            entries = conn.execute(
-                "SELECT revision,length(CAST(body AS BLOB)) FROM navigation_journal "
-                "WHERE revision>? ORDER BY revision LIMIT ?",
-                (after, config.page_batch_count),
-            ).fetchall()
-            batches: list[RevisionBatch] = []
-            used = 0
-            expected = after + 1
-            for revision, body_bytes in entries:
-                if revision != expected:
-                    raise ResetRequired("journal_gap")
-                if body_bytes > config.frame_bytes:
-                    if batches:
-                        break
-                    raise ResetRequired("subscriber_overflow")
-                row = conn.execute(
-                    "SELECT body FROM navigation_journal WHERE revision=?", (revision,)
-                ).fetchone()
-                batch = cast(RevisionBatch, json.loads(row[0]))
-                if any(
-                    dict(batch)[key] != dict(continuity)[key]
-                    for key in ("scope", "schema_version", "semantics", "epoch")
-                ) or (batch["base_revision"], batch["revision"]) != (
-                    str(revision - 1),
-                    str(revision),
-                ):
-                    raise ResetRequired("journal_gap")
-                # Pure SQL callers inspect provenance, without inventing wire authority.
-                # Current delivery always supplies its exact framed profile.
-                frame_bytes = (
-                    len(batch_frame(batch, authority)) if authority is not None else body_bytes
-                )
-                if frame_bytes > config.frame_bytes:
-                    if batches:
-                        break
-                    raise ResetRequired("subscriber_overflow")
-                if used + frame_bytes > config.page_bytes:
-                    break
-                batches.append(batch)
-                used += frame_bytes
-                expected += 1
-            if not batches:
-                raise ResetRequired("journal_gap")
-            return {"batches": batches, "has_more": expected <= current}
-        finally:
-            conn.rollback()
-
-
 class DeliveryRuntime:
     def __init__(self, path: str | Path, config: DeliveryConfig | None = None) -> None:
-        from planner.navigation.api import delivery_router
-
         self.path = Path(path)
         self.config = config or DeliveryConfig()
         self.ready = False
@@ -196,8 +41,6 @@ class DeliveryRuntime:
         self._source: SignalPublicationSource | None = None
         self._closing = asyncio.Event()
         self._retention_task: asyncio.Task[None] | None = None
-        self._stream_closers: dict[asyncio.Event, asyncio.Event] = {}
-        self.router = delivery_router(self)
 
     def bind_signal_source(self, source: SignalPublicationSource) -> None:
         if self._source is not None and self._source is not source:
@@ -303,113 +146,9 @@ class DeliveryRuntime:
         self.ready = False
         self.admission.invalidate()
         self._closing.set()
-        for closer in tuple(self._stream_closers):
-            closer.set()
-        drained = tuple(self._stream_closers.values())
-        if drained:
-            await asyncio.gather(*(done.wait() for done in drained))
         if self._retention_task is not None:
             await self._retention_task
             self._retention_task = None
-
-    async def current_snapshot(
-        self, fence: object = None
-    ) -> tuple[SnapshotResponse, DeliveryAccess]:
-        read, authority = self.current_read()
-        value = await asyncio.to_thread(read_snapshot, self.path, fence, self.admission, read)
-        result: SnapshotResponse = {
-            "wire_version": 2,
-            "mode": "current",
-            "authority": authority,
-            "cursor": value["cursor"],
-            "snapshot": value["snapshot"],
-            "proof": value["proof"],
-        }
-        self.admission.validate(read)
-        return result, read
-
-    async def stream(
-        self,
-        encoded_cursor: str,
-        read: DeliveryRead | None = None,
-        authority: CurrentAuthority | None = None,
-    ) -> AsyncIterator[bytes]:
-        if read is None:
-            read, authority = self.current_read()
-        if authority is None:
-            raise DeliveryUnavailable("navigation stream requires current authority")
-        self.admission.validate(read)
-        if authority != self._current_authority(read, self._availability()):
-            raise DeliveryUnavailable("navigation stream authority profile changed")
-        try:
-            cursor = decode_cursor(encoded_cursor, self.config.cursor_bytes)
-        except ResetRequired as exc:
-            yield reset_frame(exc.reason)
-            return
-        loop = asyncio.get_running_loop()
-        wake = asyncio.Event()
-        closed = asyncio.Event()
-        drained = asyncio.Event()
-        forget_invalidation = self.admission.watch(closed, read)
-        self._stream_closers[closed] = drained
-
-        def hint() -> None:
-            loop.call_soon_threadsafe(wake.set)
-
-        def close() -> None:
-            loop.call_soon_threadsafe(closed.set)
-
-        unsubscribe = change_signal.subscribe(hint)
-        forget = register_open_stream_closer(close)
-        last_frame = time.monotonic()
-        try:
-            while self.ready and not closed.is_set():
-                wake.clear()
-                try:
-                    page = await asyncio.to_thread(
-                        read_page, self.path, cursor, self.config, self.admission, read, authority
-                    )
-                    self.admission.validate(read)
-                except ResetRequired as exc:
-                    self.admission.validate(read)
-                    yield reset_frame(exc.reason)
-                    return
-                if closed.is_set() or not self.ready:
-                    return
-                for batch in page["batches"]:
-                    # Each yield owns one complete revision; there is no per-record progress.
-                    self.admission.validate(read)
-                    yield batch_frame(batch, authority)
-                    cursor = decode_cursor(encode_cursor(cast(Continuity, batch)))
-                    last_frame = time.monotonic()
-                    if closed.is_set() or not self.ready:
-                        return
-                if page["has_more"]:
-                    continue
-                if time.monotonic() - last_frame >= self.config.heartbeat_seconds:
-                    self.admission.validate(read)
-                    yield b": keep-alive\n\n"
-                    last_frame = time.monotonic()
-                waiter = asyncio.create_task(wake.wait())
-                closer = asyncio.create_task(closed.wait())
-                try:
-                    await asyncio.wait(
-                        (waiter, closer),
-                        timeout=self.config.poll_seconds,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                finally:
-                    waiter.cancel()
-                    closer.cancel()
-                    await asyncio.gather(waiter, closer, return_exceptions=True)
-        except DeliveryUnavailable:
-            return
-        finally:
-            self._stream_closers.pop(closed, None)
-            forget_invalidation()
-            forget()
-            unsubscribe()
-            drained.set()
 
 
 def create_delivery_runtime(

@@ -1,6 +1,6 @@
 <script lang="ts">
   // Mechanical View-to-div translation of T3 mobile UsageDailyChart.tsx.
-  import type { DailyTotals } from "../../lib/usage/usageMerge";
+  import type { DailyTotals } from "../../lib/usage/usageTotals";
   import { buildChartDays, type UsageChartMetric } from "../../lib/usage/usageChartData";
   import { PROVIDER_COLOR, PROVIDER_LABEL } from "../../lib/usage/usageProviders";
   import { formatTokens, formatUsd, formatDateTimeShort } from "../../lib/usage/usageFormat";

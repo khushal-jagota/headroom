@@ -9,21 +9,15 @@ from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.managers import data as sprints
 from planner.projects import data as projects
-from planner.tickets import data, locale_configuration, views
+from planner.tickets import data, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 
 
 @pytest.mark.parametrize("explicit", [None, "vps", "macos"])
 def test_creation_uses_explicit_locale_or_vps(
     tmp_db: Connection,
-    monkeypatch: pytest.MonkeyPatch,
     explicit: str | None,
 ) -> None:
-    monkeypatch.setitem(
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS,
-        TicketLocale.macos,
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS[TicketLocale.vps],
-    )
     project = projects.create_project(
         tmp_db,
         name="Mac project",
@@ -47,14 +41,7 @@ def test_creation_uses_explicit_locale_or_vps(
     assert data.read_ticket(tmp_db, ticket.id).locale.value == expected
 
 
-def test_inherited_project_keeps_vps_default(
-    tmp_db: Connection, fake_clock: ClockForTest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setitem(
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS,
-        TicketLocale.macos,
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS[TicketLocale.vps],
-    )
+def test_inherited_project_keeps_vps_default(tmp_db: Connection, fake_clock: ClockForTest) -> None:
     project = projects.create_project(
         tmp_db,
         name="Inherited project",
@@ -137,13 +124,13 @@ def test_locale_migration_preserves_entire_existing_rows(
     conn.close()
 
 
-def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
+def test_public_http_locale_refusals_override_and_noop(
     tmp_db: Connection, tmp_path: Path, fake_clock: ClockForTest
 ) -> None:
     """The socket-free HTTP boundary retains the retired locale host's contracts."""
     from fastapi.testclient import TestClient
+    from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
-    from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
     from planner.core.config import load_config
     from planner.core.db import connect
     from planner.core.server import create_app
@@ -212,26 +199,6 @@ def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
         detail = client.get(f"/api/tickets?detail=full&id={ticket_id}")
         assert detail.status_code == 200, detail.text
         assert detail.json()["locale"] == "vps"
-        schedule = client.post(
-            "/api/schedules",
-            json={
-                "title": "Locale schedule",
-                "worker_type": "coding",
-                "kickoff_note": "Scope.",
-                "project_id": project_id,
-                "locale": "vps",
-                "enabled": False,
-                "cadence": "daily",
-                "local_time": "23:59",
-            },
-        )
-        assert schedule.status_code == 200, schedule.text
-        schedule_id = schedule.json()["id"]
-        assert schedule.json()["locale"] == "vps"
-        assert client.get(f"/api/schedules/{schedule_id}").json()["locale"] == "vps"
-        edited = client.patch(f"/api/schedules/{schedule_id}", json={"title": "Edited title"})
-        assert edited.status_code == 200, edited.text
-        assert edited.json()["locale"] == "vps"
 
 
 def test_requirement_removal_migration_preserves_rows_and_locales(

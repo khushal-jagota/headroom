@@ -329,7 +329,6 @@ export interface GoalCreateFields {
   completed?: boolean;
   deadline?: string | null;
   page?: PageDocument;
-  expected_revision?: unknown;
 }
 
 export interface BinaryGoalCreateBody {
@@ -340,7 +339,6 @@ export interface BinaryGoalCreateBody {
   completed?: boolean;
   deadline?: string | null;
   page?: PageDocument;
-  expected_revision?: unknown;
   kind: "binary";
   primary_checklist_block_id: string | null;
   primary_chart?: ChartBlock | null;
@@ -354,7 +352,6 @@ export interface QuantitativeGoalCreateBody {
   completed?: boolean;
   deadline?: string | null;
   page?: PageDocument;
-  expected_revision?: unknown;
   completion_rule: GoalCompletionRule;
   kind: "quantitative";
   primary_chart: ChartBlock;
@@ -375,7 +372,6 @@ export interface GoalEditBody {
   kind?: "binary" | "quantitative";
   primary_checklist_block_id?: string | null;
   primary_chart?: ChartBlock | null;
-  expected_revision: number;
 }
 
 export interface GoalResponse {

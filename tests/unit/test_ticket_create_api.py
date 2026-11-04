@@ -9,9 +9,9 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -258,10 +258,6 @@ def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
     conflict = {"manager": assignment, "orchestrator": {"kind": "chief", "id": "chief"}}
     for endpoint, body in (
         ("/api/tickets", {**conflict, "title": "Conflict", "worker_type": "coding"}),
-        (
-            "/api/schedules",
-            {**conflict, "title": "Conflict", "worker_type": "coding", "local_time": "09:00"},
-        ),
     ):
         response = client.post(endpoint, json=body)
         assert response.status_code == 400, response.text
@@ -300,10 +296,13 @@ def test_create_refuses_holders_without_authority_before_kickoff_routing(
         assert refused.status_code == 400, refused.text
         error = refused.json()["error"]
         assert error["code"] == "validation"
-        assert error["message"] == (
-            "ceiling holder must be the user or the Ticket's direct manager; "
-            "name an eligible holder explicitly"
-        )
-        assert error["detail"]["holder"] == holder
-        assert error["detail"]["ticket_id"]
+        if holder["kind"] == "ticket":
+            assert error["message"] == "ceiling_holder kind must be owner, chief, or manager"
+        else:
+            assert error["message"] == (
+                "ceiling holder must be the user or the Ticket's direct manager; "
+                "name an eligible holder explicitly"
+            )
+            assert error["detail"]["holder"] == holder
+            assert error["detail"]["ticket_id"]
         assert _snapshot(db_path) == before

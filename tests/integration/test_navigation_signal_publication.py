@@ -13,16 +13,37 @@ import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from starlette.types import Message
 
 from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.core.sse import open_change_stream_count
-from planner.navigation import snapshot as navigation_snapshot
+from planner.navigation.contracts import Continuity
 from planner.navigation.delivery import DeliveryRuntime
-from planner.navigation.delivery_authority import DeliveryRead, DeliveryUnavailable
+from planner.navigation.delivery_authority import DeliveryAccess, DeliveryRead, DeliveryUnavailable
 from planner.navigation.signal_runtime import SignalNavigationBinding
+from planner.navigation.views.configuration import ViewConfig
+from planner.navigation.views.contracts import VIEW_PROJECTION_VERSION, ViewContent, ViewRequest
+from planner.navigation.views.delivery import ScopedDeliveryRuntime
+from planner.navigation.views.read import request
+
+
+def view_request(conversation_id: str | None = None) -> ViewRequest:
+    return request(
+        {
+            "projection_version": VIEW_PROJECTION_VERSION,
+            "scope_generation": 1,
+            "locale": "en-US",
+            "selected": None,
+            "selected_conversation_id": conversation_id,
+            "review_conversation_ids": [],
+            "review_skipped_keys": [],
+            "review_priority_keys": [],
+            "windows": [],
+        }
+    )
 
 
 @dataclass
@@ -31,6 +52,7 @@ class _ActualBinding:
     delivery: DeliveryRuntime
     binding: SignalNavigationBinding
     path: Path
+    scoped: ScopedDeliveryRuntime
 
 
 @pytest.fixture
@@ -54,7 +76,7 @@ def actual_binding(tmp_path: Path) -> Iterator[_ActualBinding]:
     delivery = DeliveryRuntime(path)
     binding = SignalNavigationBinding(composition.coordinator, delivery)
     try:
-        yield _ActualBinding(composition, delivery, binding, path)
+        yield _ActualBinding(composition, delivery, binding, path, ScopedDeliveryRuntime(delivery))
     finally:
         binding.close()
         composition.close()
@@ -63,24 +85,30 @@ def actual_binding(tmp_path: Path) -> Iterator[_ActualBinding]:
 def test_actual_domain_callback_invalidates_threaded_snapshot_across_reattachment(
     actual_binding: _ActualBinding, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from planner.navigation import delivery
+    from planner.navigation.views import delivery
 
     host = actual_binding
     host.binding.attach()
     pinned = threading.Event()
     release = threading.Event()
-    original = navigation_snapshot
+    original = delivery._snapshot
 
-    def blocked(conn: sqlite3.Connection) -> object:
-        result = original(conn)
+    def blocked(
+        parent: DeliveryRuntime,
+        value: ViewRequest,
+        access: DeliveryAccess,
+        fence: object,
+        config: ViewConfig,
+    ) -> tuple[Continuity, ViewContent, Any]:
+        result = original(parent, value, access, fence, config)
         pinned.set()
         assert release.wait(3), "snapshot worker was not released"
         return result
 
-    monkeypatch.setattr(delivery, "snapshot", blocked)
+    monkeypatch.setattr(delivery, "_snapshot", blocked)
 
     async def run() -> None:
-        pending = asyncio.create_task(host.delivery.current_snapshot())
+        pending = asyncio.create_task(host.scoped.snapshot(view_request()))
         try:
             assert await asyncio.to_thread(pinned.wait, 3)
             host.binding.close()
@@ -89,7 +117,7 @@ def test_actual_domain_callback_invalidates_threaded_snapshot_across_reattachmen
             release.set()
         with pytest.raises(DeliveryUnavailable):
             await pending
-        await host.delivery.current_snapshot()
+        await host.scoped.snapshot(view_request())
 
     asyncio.run(run())
 
@@ -135,10 +163,11 @@ def test_actual_domain_callback_closes_pending_stream_across_reattachment(
 
     async def run() -> None:
         baseline = open_change_stream_count()
-        value, read = await host.delivery.current_snapshot()
+        value, read = await host.scoped.snapshot(view_request())
         assert value["mode"] == "current" and isinstance(read, DeliveryRead)
         host.delivery.ready = True
-        stream = host.delivery.stream(value["cursor"], read, value["authority"])
+        stream = host.scoped.stream(view_request(), await host.scoped.capture())
+        assert b"event: snapshot" in await anext(stream)
         pending = asyncio.ensure_future(anext(stream))
         try:
             for _ in range(50):
@@ -151,7 +180,7 @@ def test_actual_domain_callback_closes_pending_stream_across_reattachment(
             with pytest.raises(StopAsyncIteration):
                 await asyncio.wait_for(pending, 3)
             assert open_change_stream_count() == baseline
-            await host.delivery.current_snapshot()
+            await host.scoped.snapshot(view_request())
         finally:
             if not pending.done():
                 pending.cancel()

@@ -1,11 +1,11 @@
 import { VIEW_PROJECTION_VERSION } from "../contracts";
 import type {Fence,ViewRequest,ViewSnapshot,ViewFrame,ViewWindowRequest,ViewOwner,CurrentAuthority} from '../contracts';
-import type {NavigationPublication} from '../collection';
+import type {NavigationPublication} from '../publication';
 import type {NavigationHealth,ScopedNavigationOwnerState} from '../owner';
 import {createNavigationKnowledge,type DurableFact} from '../knowledge';
 import {createVisibilityTracker,type Certification} from '../visibility';
-import {compareRevision,sameAuthority} from '../validation';
-import {applyFrame,sameDomain} from './validation';
+import {compareRevision,sameAuthority} from '../identity';
+import {applyFrame,sameDomain} from './applyFrame';
 import {createViewTransport,type ViewTransport} from './transport';
 import {NavigationRequestError} from '../transport';
 

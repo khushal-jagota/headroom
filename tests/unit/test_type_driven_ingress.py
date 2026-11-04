@@ -25,6 +25,7 @@ from sqlite3 import Connection
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.probe import (
     install_probe_registry,
     seed_probe_worker_type,
@@ -32,7 +33,6 @@ from tests.support.probe import (
 )
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.core import authority
 from planner.core.authority.declarations import STANDS_ABOVE_BY_WORKER_TYPE
@@ -337,7 +337,6 @@ def test_ticket_fingerprint_tracks_integrity_marks_and_clearance_without_admitti
     with pytest.raises(PlannerError, match="Ticket integrity failure"):
         tickets_data.set_ticket_backlog(
             tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
-            expected_record_sha256=marked_hash,
         )
     tmp_db.execute(
         "UPDATE tickets SET integrity_error_reason=? WHERE id=?", ("changed fault", ticket.id)
@@ -348,10 +347,7 @@ def test_ticket_fingerprint_tracks_integrity_marks_and_clearance_without_admitti
     tmp_db.execute("UPDATE tickets SET integrity_error_reason=NULL WHERE id=?", (ticket.id,))
     tmp_db.commit()
     assert tickets_data.ticket_record_sha256(tmp_db, ticket.id) == clean_hash
-    for stale_hash in (marked_hash, changed_hash):
-        with pytest.raises(PlannerError, match="the Ticket changed"):
-            tickets_data.set_ticket_backlog(
-                tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
-                expected_record_sha256=stale_hash,
-            )
-    assert not tickets_data.read_ticket(tmp_db, ticket.id).is_backlogged
+    updated = tickets_data.set_ticket_backlog(
+        tmp_db, ticket.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=1,
+    )
+    assert updated.is_backlogged

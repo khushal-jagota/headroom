@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.navigation_current import current_navigation_database
+from tests.support.real_provider_application import navigation_query
 
 from planner.core.db import commit_without_change_signal, connect, create_schema
 from planner.navigation import proof
@@ -190,9 +191,12 @@ def test_real_application_command_families_and_store_writes(
             assert moved["ceiling_holder"] == {"kind": "owner", "id": "owner"}
             assert moved["pending_proposal"] == previous["pending_proposal"]
             projected = client.get(
-                "/api/navigation/snapshot",
+                "/api/navigation/view/snapshot",
                 params={
                     "fence": response.headers[FENCE_HEADER.decode()],
+                    "view": json.dumps(
+                        {**navigation_query(), "selected": {"kind": "ticket", "id": ticket["id"]}}
+                    ),
                 },
             )
             assert projected.status_code == 200, projected.text
@@ -200,7 +204,7 @@ def test_real_application_command_families_and_store_writes(
             assert body["proof"]["status"] == "included"
             value = next(
                 record["value"]
-                for record in body["snapshot"]["records"]
+                for record in body["content"]["records"]
                 if record["kind"] == "ticket" and record["id"] == ticket["id"]
             )
             assert value["ceiling_holder"] == moved["ceiling_holder"]
@@ -262,9 +266,10 @@ def test_real_application_command_families_and_store_writes(
             ),
             commits=False,
         )
-        assert client.post(
-            f"/api/tickets/{ticket['id']}/move", json={"locale": "vps"}
-        ).status_code == 404
+        assert (
+            client.post(f"/api/tickets/{ticket['id']}/move", json={"locale": "vps"}).status_code
+            == 404
+        )
         accepted(client.delete(f"/api/tickets/{ticket['id']}"))
         # Real conversation routes use the runtime's actual store, not the injected
         # worker facade. Creation and owner-read use shielded thread writes.
@@ -289,7 +294,11 @@ def test_real_application_command_families_and_store_writes(
         accepted(sent)
         assert len(fence(sent)["witnesses"]) >= 2
         proof_response = client.get(
-            "/api/navigation/snapshot", params={"fence": sent.headers[FENCE_HEADER.decode()]}
+            "/api/navigation/view/snapshot",
+            params={
+                "fence": sent.headers[FENCE_HEADER.decode()],
+                "view": json.dumps(navigation_query()),
+            },
         )
         assert proof_response.status_code == 200
         assert proof_response.json()["proof"]["status"] == "included"
@@ -326,9 +335,9 @@ def test_manager_mutations_remain_in_the_navigation_command_inventory() -> None:
                 for method in route.methods & {"POST", "PATCH", "PUT", "DELETE"}:
                     path = "/api" + route.path
                     # Each write has exactly one reviewed classification.
-                    assert is_navigation_command(method, path) != (
-                        (method, path) in excluded
-                    ), route.path
+                    assert is_navigation_command(method, path) != ((method, path) in excluded), (
+                        route.path
+                    )
     assert ("POST", "/api/skills/apply") in excluded
     for method in ("PUT", "DELETE"):
         assert (method, "/files/managers/{manager_id}/{file_path:path}") in excluded

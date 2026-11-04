@@ -5,7 +5,7 @@
   let { principal, tickets, publication, onHover = undefined, onLeave = () => undefined }: {
     principal: ManagerPrincipal;
     tickets?: readonly (WorkItemTicketFacts & {is_backlogged:boolean})[];
-    publication?: import("../lib/navigation/collection").NavigationPublication;
+    publication?: import("../lib/navigation/publication").NavigationPublication;
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave?: () => void;
   } = $props();
