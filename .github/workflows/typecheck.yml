@@ -2,7 +2,7 @@ name: Pull request type check
 
 on:
   pull_request:
-    branches: [staging, main]
+    branches: [staging, main, feature/make-updates-work]
     types: [opened, synchronize, reopened, ready_for_review, edited]
 
 permissions:
