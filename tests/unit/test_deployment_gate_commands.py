@@ -234,7 +234,10 @@ await run(['gate']);
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(("PLAN_", "PANELS_REAL_"))
                    and key not in ("HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR",
-                                   *SCENARIO_SELECTORS)}
+                                   *SCENARIO_SELECTORS)
+                   # The suite's real npm cache costs the npm guard seconds to scan. Its
+                   # check is proved by test_shared_npm_cache_requires_independent_storage.
+                   and key != "npm_config_cache"}
     environment.update({
         "PANELS_CANDIDATE_SOURCE": str(source), "PANELS_GATE_DIR": str(gate),
         "PANELS_REPORT_DIR": str(reports), "PANELS_CODEX_TOOLS": str(temporary / "tools"),
@@ -284,27 +287,29 @@ def test_actual_suite_commands_admit_real_proof_and_refuse_controlled_faults(
 
     # A prior passed receipt must not rescue selector refusal. Both routes stop
     # before requested JavaScript executes, including old shared source above.
+    # One selector per route proves this wiring. Every selector and value is
+    # refused by the shared check in test_browser_runner_contract.py.
     receipt_path = gate.gate / "reports/browser.json"
     passed_receipt = receipt_path.read_bytes()
     assert json.loads(passed_receipt)["outcome"] == "passed"
-    for browser_format in ("shared-v1", "legacy"):
+    for browser_format, key in (
+        ("shared-v1", SCENARIO_SELECTORS[0]), ("legacy", SCENARIO_SELECTORS[-1]),
+    ):
         gate.selection["browser_format"] = browser_format
-        for key in SCENARIO_SELECTORS:
-            for value in ("private-value", "0", " "):
-                for marker in ("GATE_LEGACY_MARKER", "GATE_RUNNER_MARKER"):
-                    Path(gate.environment[marker]).unlink(missing_ok=True)
-                gate.environment[key] = value
-                try:
-                    result = gate.run(SUITES[-1])
-                    assert result.returncode != 0, result.stdout + result.stderr
-                    assert f"scenario selector: {key}" in result.stdout
-                    assert "private-value" not in result.stdout
-                    assert "ERR_MODULE_NOT_FOUND" not in result.stdout
-                    assert not Path(gate.environment["GATE_LEGACY_MARKER"]).exists()
-                    assert not Path(gate.environment["GATE_RUNNER_MARKER"]).exists()
-                    assert receipt_path.read_bytes() == passed_receipt
-                finally:
-                    gate.environment.pop(key)
+        for marker in ("GATE_LEGACY_MARKER", "GATE_RUNNER_MARKER"):
+            Path(gate.environment[marker]).unlink(missing_ok=True)
+        gate.environment[key] = "private-value"
+        try:
+            result = gate.run(SUITES[-1])
+            assert result.returncode != 0, result.stdout + result.stderr
+            assert f"scenario selector: {key}" in result.stdout
+            assert "private-value" not in result.stdout
+            assert "ERR_MODULE_NOT_FOUND" not in result.stdout
+            assert not Path(gate.environment["GATE_LEGACY_MARKER"]).exists()
+            assert not Path(gate.environment["GATE_RUNNER_MARKER"]).exists()
+            assert receipt_path.read_bytes() == passed_receipt
+        finally:
+            gate.environment.pop(key)
     gate.selection["browser_format"] = "shared-v1"
     selected_browser = gate.selection["browser"]
     gate.selection["browser"] = []
