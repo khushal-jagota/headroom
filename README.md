@@ -93,9 +93,9 @@ Headroom runs on one host and stores its work record there. Agents still use the
 The map, with one line for each page, is [docs/README.md](docs/README.md).
 
 - [The product](docs/product.md) — what Headroom is for, and how a piece of work moves.
-- [Tickets](docs/tickets.md) and [proposals](docs/proposals.md) — stages, ceilings, and the single approval door.
+- [Ticket lifecycle](docs/tickets.md) — stages, ceilings, and the single approval door.
 - [Conversations](docs/conversations.md) — the only path into an agent.
-- [Run locally](docs/running-locally.md) — what the server above actually is. The commands in this file are the install.
+- [Environments](docs/environments.md) — what the server above actually is. The commands in this file are the install.
 - [Deployment](docs/deployment.md) — publication, replacement, and recovery limits.
 
 ## Development

@@ -23,7 +23,7 @@ After the person acts, the reads that action touched refresh at once. Passive wa
 
 A few writers commit quietly on purpose: skill history, and conversation rows that only an open pane reads, which that pane already receives through its tail.
 
-Deployment status and the "this app is older than the server" prompt ride the same wake, then make a small status read. See [Updates](updates.md).
+Deployment status and the "this app is older than the server" prompt ride the same wake, then make a small status read. See [Deployment](deployment.md).
 
 ## What does not move by itself
 
