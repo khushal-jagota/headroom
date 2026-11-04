@@ -7,9 +7,12 @@ import SwiftData
     var server: String
     var kind: String
     var payload: Data
-    var updated: Date
+    // `updated` collides with Core Data's isUpdated KVC getter. Keep rename
+    // metadata so the existing store migrates without discarding user work.
+    @Attribute(originalName: "updated") var updatedAt: Date
+    var updated: Date { updatedAt }
     init(key: String, server: String, kind: String, payload: Data, updated: Date) {
-        self.key = key; self.server = server; self.kind = kind; self.payload = payload; self.updated = updated
+        self.key = key; self.server = server; self.kind = kind; self.payload = payload; self.updatedAt = updated
     }
 }
 
@@ -54,26 +57,14 @@ import SwiftData
     }
     func records(server: String, kind: String) throws -> [LocalRecord] {
         _ = workRevision
-        let context = kind == "cache" ? try cacheReadContext() : try self.context
-        let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.server == server && $0.kind == kind }, sortBy: [SortDescriptor(\.updated)]))
-        return withExtendedLifetime(context) { kind == "cache" ? rows.map(Self.cacheSnapshot) : rows }
+        return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.server == server && $0.kind == kind }, sortBy: [SortDescriptor(\.updatedAt)]))
     }
     func record(server: String, kind: String, id: String) throws -> LocalRecord? {
         let key = Self.key(server, kind, id)
-        // The cache writer uses another context. Read fresh values, then detach a
-        // snapshot before this temporary context dies. Returning its managed model
-        // leaves faults without a context when the caller reads the properties.
+        // The cache writer uses another context. A fresh read must not reuse a
+        // previously registered model with an old payload or freshness date.
         let context = kind == "cache" ? try cacheReadContext() : try self.context
-        guard let row = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first else { return nil }
-        return withExtendedLifetime(context) {
-            if kind == "cache", ["same", "0", "1", "new"].contains(id) {
-                print("CACHE read", id, row.updated.timeIntervalSince1970, row.payload.count)
-            }
-            return kind == "cache" ? Self.cacheSnapshot(row) : row
-        }
-    }
-    private static func cacheSnapshot(_ row: LocalRecord) -> LocalRecord {
-        LocalRecord(key: row.key, server: row.server, kind: row.kind, payload: row.payload, updated: row.updated)
+        return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first
     }
     nonisolated static func key(_ server: String, _ kind: String, _ id: String) -> String { [server, kind, id].joined(separator: "\u{1f}") }
     private func cacheReadContext() throws -> ModelContext {
@@ -97,14 +88,14 @@ import SwiftData
         let context = try context
         do {
             let key = Self.key(server, kind, id)
-            if let record = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first { record.payload = data; record.updated = .now }
+            if let record = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first { record.payload = data; record.updatedAt = .now }
             else { context.insert(LocalRecord(key: Self.key(server, kind, id), server: server, kind: kind, payload: data, updated: .now)) }
             if let (id, text) = draft {
-                if let row = try record(server: server, kind: "draft", id: id) { row.payload = Data(text.utf8); row.updated = .now }
+                if let row = try record(server: server, kind: "draft", id: id) { row.payload = Data(text.utf8); row.updatedAt = .now }
                 else { context.insert(LocalRecord(key: Self.key(server, "draft", id), server: server, kind: "draft", payload: Data(text.utf8), updated: .now)) }
             }
             if kind == "cache" {
-                let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == "cache" }, sortBy: [SortDescriptor(\.updated, order: .reverse)]))
+                let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == "cache" }, sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]))
                 var bytes = 0
                 for (index, row) in rows.enumerated() {
                     bytes += row.payload.count

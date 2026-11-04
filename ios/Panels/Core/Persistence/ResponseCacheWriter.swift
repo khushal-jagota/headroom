@@ -21,27 +21,20 @@ actor ResponseCacheWriter {
         }
         let key = LocalStore.key(server, "cache", id)
         do {
-            let diagnose = ["same", "0", "new", "large"].contains(id)
             let record = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first
             if let record {
                 if record.payload != data { record.payload = data }
-                record.updated = updated
-                if diagnose { print("CACHE update", id, "input", updated.timeIntervalSince1970, "model", record.updated.timeIntervalSince1970) }
+                record.updatedAt = updated
             } else {
                 context.insert(LocalRecord(key: key, server: server, kind: "cache", payload: data, updated: updated))
             }
-            let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == "cache" }, sortBy: [SortDescriptor(\.updated, order: .reverse)]))
-            if diagnose { print("CACHE sorted", id, rows.prefix(4).map { ($0.key, $0.updated.timeIntervalSince1970, $0.payload.count) }) }
+            let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == "cache" }, sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]))
             var bytes = 0
             for (index, row) in rows.enumerated() {
                 bytes += row.payload.count
                 if index >= LocalStore.cacheLimit || bytes > LocalStore.cacheByteLimit { context.delete(row) }
             }
             try context.save()
-            if diagnose {
-                let saved = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first
-                print("CACHE saved", id, saved?.updated.timeIntervalSince1970 as Any)
-            }
         } catch { context.rollback(); throw error }
     }
 }
