@@ -129,3 +129,15 @@ extension AnyTransition {
     /// Motion's presence for counter columns: width and opacity from zero.
     static var goalWidth: AnyTransition { .modifier(active: GoalWidthPresence(fraction: 0), identity: GoalWidthPresence(fraction: 1)) }
 }
+
+extension View {
+    /// Motion's `useInView({ once: true, amount })`: fires once the given share of this
+    /// view lies inside the visible part of its scroll view.
+    func goalInView(amount: Double, _ action: @escaping () -> Void) -> some View {
+        onGeometryChange(for: Bool.self) { proxy in
+            let frame = proxy.frame(in: .local)
+            guard frame.height > 0, let visible = proxy.bounds(of: .scrollView) else { return true }
+            return frame.intersection(visible).height / frame.height >= amount - 0.0001
+        } action: { shown in if shown { action() } }
+    }
+}

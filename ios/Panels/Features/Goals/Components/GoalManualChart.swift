@@ -4,9 +4,11 @@ private struct GoalManualCounter: View {
     let block: GoalJSON
     let value: Double?
     var size: CGFloat = 32
+    /// The folded summary keeps the unit in the counter; the inline value shows it beside the field.
+    var unit = false
     private var displayBlock: GoalJSON {
-        guard block["manual"]["model"].text != "individual_readings" else { return block }
-        return block.setting("unit", .string("")).setting("format", (block["format"].isNull ? .object([:]) : block["format"]).setting("suffix", .string("")))
+        // The web's inline counter carries no unit; a reading's unit sits beside it (`.unit`).
+        unit ? block : block.setting("unit", .string("")).setting("format", (block["format"].isNull ? .object([:]) : block["format"]).setting("suffix", .string("")))
     }
     var body: some View {
         if let literal = GoalChartPresentation.manualLiteral(displayBlock, value: value) {
@@ -44,9 +46,16 @@ struct GoalManualValue: View {
             GoalNumberField(text: Binding(get: { editor.draft ?? current.map(GoalChartPresentation.plainNumber) ?? "" }, set: { editor.draft = $0 }),
                             focused: $editing, size: size, centered: centered, label: block["title"].string ?? "Reading",
                             commit: save, cancel: { Task { await editor.discard(); editing = false } })
-                .frame(height: size * 1.2)
+                .frame(height: size * 1.2).fixedSize(horizontal: true, vertical: false)
                 .opacity(editingValue ? 1 : 0).allowsHitTesting(editingValue).accessibilityHidden(!editingValue)
-        }.onChange(of: editing) { old, focused in
+        }
+        .overlay(alignment: .trailing) {
+            if block["manual"]["model"].text == "individual_readings", !GoalChartPresentation.suffix(block).isEmpty {
+                Text(GoalChartPresentation.suffix(block)).font(.system(size: 20)).foregroundStyle(PanelsTheme.Goal.faint).fixedSize()
+                    .alignmentGuide(.trailing) { $0[.leading] }.offset(y: size * 0.12)
+            }
+        }
+        .onChange(of: editing) { old, focused in
             if old && !focused && !submitting && editor.draft != nil && editor.pending == nil { Task { _ = await editor.prepare() } }
         }.onDisappear {
             if editor.draft != nil, !submitting { Task { _ = await editor.prepare() } }
@@ -164,7 +173,7 @@ struct GoalManualChart: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { title; Spacer(); Image(systemName: "chevron.down").font(.system(size: 12)).rotationEffect(.degrees(preference.expanded ? 180 : 0)).animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: preference.expanded) }
-                        GoalManualCounter(block: block, value: current, size: 28)
+                        GoalManualCounter(block: block, value: current, size: 28, unit: true)
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityValue(preference.expanded ? "Expanded" : "Collapsed")
             } else { title }

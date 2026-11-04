@@ -29,6 +29,25 @@ private struct GaugeBand: Equatable { let from: Double; let tone: String; let la
     @ObservationIgnored private var digitsWidth: GoalSpringValue?
     @ObservationIgnored var bands: [GaugeBand] = []
     @ObservationIgnored private var revealed = false
+    /// The ring's colour crossfades over 0.24 s on the standard ease, as the web's CSS transition does.
+    @ObservationIgnored private var toneFrom: Color?
+    @ObservationIgnored private var toneTo: Color?
+    @ObservationIgnored private var toneMix = GoalTween(1)
+    func tone(_ next: Color, reduce: Bool) {
+        guard next != toneTo else { return }
+        let time = GoalLineMotion.now()
+        if let current = toneTo, !reduce {
+            toneFrom = current.mix(with: toneFrom ?? current, by: 1 - toneMix.value(at: time))
+            toneMix.jump(0); toneMix.animate(to: 1, at: time, duration: PanelsTheme.Goal.standardDuration, curve: GoalCurve.standard)
+            if !animating { animating = true }
+        } else { toneMix.jump(1) }
+        toneTo = next
+    }
+    func color(at time: Double, fallback: Color) -> Color {
+        guard let to = toneTo else { return fallback }
+        guard let from = toneFrom, !toneMix.resting else { return to }
+        return from.mix(with: to, by: toneMix.value(at: time))
+    }
     private static let reveal = GoalSpringSpec.visual(PanelsTheme.Goal.gaugeReveal)
     private static let morph = GoalSpringSpec.visual(0.42)
     private static let smooth = GoalSpringSpec.visual(0.4)
@@ -54,7 +73,7 @@ private struct GaugeBand: Equatable { let from: Double; let tone: String; let la
         let next = band(at: current)
         if filled, next != liveBand { schedule { self.liveBand = next } }
         else if !filled, revealed, abs(current - value) < 1 { schedule { self.filled = true; self.liveBand = next } }
-        let resting = sweep.settle(at: time) && count.settle(at: time) && (digitsWidth?.settle(at: time) ?? true)
+        let resting = sweep.settle(at: time) && count.settle(at: time) && (digitsWidth?.settle(at: time) ?? true) && toneMix.settle(at: time)
         if resting, animating { schedule { if self.sweep.resting && self.count.resting { self.animating = false } } }
         return (sweep.value(at: time), current, digitsWidth.map { CGFloat($0.value(at: time)) })
     }
@@ -96,14 +115,15 @@ struct GoalGauge: View {
         VStack(spacing: 10) {
             TimelineView(.animation(minimumInterval: nil, paused: !motion.animating)) { timeline in
                 let frame = motion.frame(at: timeline.date.timeIntervalSinceReferenceDate, value: value)
+                let ring = motion.color(at: timeline.date.timeIntervalSinceReferenceDate, fallback: tone)
                 GeometryReader { geometry in
                     let scale = geometry.size.width / 100
                     ZStack(alignment: .top) {
                         Canvas { context, _ in
                             let style = StrokeStyle(lineWidth: 9 * scale, lineCap: .round)
-                            context.stroke(GoalGaugeGeometry.arc(1, scale: scale), with: .color(tone.opacity(0.13)), style: style)
+                            context.stroke(GoalGaugeGeometry.arc(1, scale: scale), with: .color(ring.opacity(0.13)), style: style)
                             var fill = context; fill.opacity = min(1, max(0, frame.sweep / 0.02))
-                            if frame.sweep > 0 { fill.stroke(GoalGaugeGeometry.arc(frame.sweep, scale: scale), with: .color(tone), style: style) }
+                            if frame.sweep > 0 { fill.stroke(GoalGaugeGeometry.arc(frame.sweep, scale: scale), with: .color(ring), style: style) }
                             if let target = headline.target {
                                 let at = (target - limits.0) / (limits.1 - limits.0)
                                 if at >= 0, at <= 1 {
@@ -160,9 +180,10 @@ struct GoalGauge: View {
         .accessibilityLabel(GoalChartPresentation.format(block, headline.value) + (shownBand.map { ", " + $0.label } ?? ""))
         .accessibilityAction(named: "Inspect reading") { inspecting.toggle() }
         .onAppear { motion.bands = bands; if reduceMotion { motion.show(fraction: fraction, value: value, reduce: true) } }
-        .onScrollVisibilityChange(threshold: 0.5) { visible in if visible, !seen { seen = true; motion.show(fraction: fraction, value: value, reduce: reduceMotion) } }
+        .goalInView(amount: 0.5) { if !seen { seen = true; motion.show(fraction: fraction, value: value, reduce: reduceMotion) } }
         .onChange(of: value) { old, next in direction = next < old ? -1 : 1; motion.bands = bands; if seen || reduceMotion { motion.show(fraction: fraction, value: next, reduce: reduceMotion) } }
         .onChange(of: bands) { motion.bands = bands }
+        .onChange(of: tone, initial: true) { _, next in motion.tone(next, reduce: reduceMotion) }
     }
 }
 

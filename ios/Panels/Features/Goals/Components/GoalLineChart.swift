@@ -250,7 +250,7 @@ struct GoalLineChart: View {
         .onChange(of: pickEntries.map(\.0), initial: true) { old, _ in motion.setPicks(pickEntries, initial: old.isEmpty) }
         .onChange(of: activeIndex) { _, index in motion.inspect(index.map { positions[$0] }, reduce: reduceMotion) }
         .onChange(of: data.map(\.id)) { if active != nil { active = nil } }
-        .onScrollVisibilityChange(threshold: 0.3) { shown in if shown, !data.isEmpty { motion.reveal(reduce: reduceMotion) } }
+        .goalInView(amount: 0.3) { if !data.isEmpty { motion.reveal(reduce: reduceMotion) } }
         .accessibilityElement(children: .contain).accessibilityLabel(title)
         .accessibilityAdjustableAction { direction in
             guard !data.isEmpty else { return }
