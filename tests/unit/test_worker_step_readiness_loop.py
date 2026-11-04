@@ -433,7 +433,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
                 )
             )
 
-    assert raised.value.code is ErrorCode.already_running
+    assert raised.value.code is ErrorCode.validation
     ticket = world.ticket(ticket_id)
     assert ticket.pending_proposal is not None
     assert ticket.pending_proposal.body == "Completed while restart waited."
@@ -441,7 +441,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
     assert ticket.conversation_id == "conv-restart-race"
 
 
-def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _World) -> None:
+def test_restart_uses_the_current_errored_claim_generation_after_kill(world: _World) -> None:
     ticket_id = world.ready_ticket(conversation_id="conv-restart-error-race")
     world.start_conversation("conv-restart-error-race")
     assert world.start_step(ticket_id).started is True
@@ -471,33 +471,38 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
                 now=world.clock.now_unix(),
             )
 
-    async def unexpected_start() -> WorkerStepStartResult:
-        raise AssertionError("a moved Ticket must not start another worker step")
+    async def start_current_step() -> WorkerStepStartResult:
+        return await start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=cast(ConversationSystem, world.conversations),
+            worker_type_registry=configured_worker_type_registry(),
+            now=world.clock.now_unix,
+        )
 
     with closing(world.connect()) as conn:
-        with pytest.raises(PlannerError) as raised:
-            asyncio.run(
-                worker_restart.restart_worker(
-                    cast(
-                        ConversationSystem,
-                        _MutateOnKillConversationSystem(
-                            world.conversations,
-                            replace_errored_generation,
-                        ),
+        result = asyncio.run(
+            worker_restart.restart_worker(
+                cast(
+                    ConversationSystem,
+                    _MutateOnKillConversationSystem(
+                        world.conversations,
+                        replace_errored_generation,
                     ),
-                    conn,
-                    OWNER_PRINCIPAL,
-                    ticket_id,
-                    start_worker_step=unexpected_start,
-                    now=world.clock.now_unix,
-                )
+                ),
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                start_worker_step=start_current_step,
+                now=world.clock.now_unix,
             )
+        )
 
-    assert raised.value.code is ErrorCode.already_running
+    assert result["started"] is True
     ticket = world.ticket(ticket_id)
-    assert ticket.worker_step_claim is WorkerStepClaim.errored
+    assert ticket.worker_step_claim is WorkerStepClaim.out
     assert ticket.worker_step_claim_revision > admitted.worker_step_claim_revision
-    assert ticket.conversation_id == "conv-restart-error-race"
+    assert ticket.conversation_id != "conv-restart-error-race"
 
 
 def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) -> None:
@@ -560,7 +565,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
 
     restart_error, next_step = asyncio.run(run_race())
 
-    assert restart_error.code is ErrorCode.already_running
+    assert restart_error.code is ErrorCode.validation
     assert next_step.started is True
     ticket = world.ticket(ticket_id)
     assert ticket.stage == "needs_implementation"
