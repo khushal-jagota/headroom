@@ -21,6 +21,16 @@ owner asks (now or when idle) → pinned request → host runner → admit → s
 - **The owner's install request.** A small file beside the live data, outside the database and its snapshots, and the update actions in the shell status pill.
 - **The lifecycle record.** Durable evidence of each install attempt and how it ended. The status pill, the [VPS](vps.md) summary, and Chief read it.
 
+```text
+~/Deployments/Panels/current/
+├── app/     the executable release
+├── app-previous/  the preceding healthy release after a successful update
+├── data/    database, configuration, managed files, deployment records
+└── logs/
+```
+
+Replacement changes `app`. After success, `app-previous` keeps the preceding release for rollback. The deploy replaces the old `app-previous` and removes only its own temporary app copies. Unrelated app copies remain. Recovery material, restore proofs, quarantine, and the deployment runner remain untouched. Data and logs stay. Backups taken on this path include the database and the managed configuration roots. They exclude uploads and Ticket artifacts under `data/files`. See [Backups](backups.md).
+
 ## What a release needs from the host
 
 A release brings its own Python, so installation never runs a package installer and the host's Python does not matter. Packaging refuses a native library it cannot resolve; that is a broken release, not something the host repairs. Before publication, a separate proof runs the archive on a minimal Debian root with no Python 3.12 and no network.
@@ -31,11 +41,11 @@ The host supplies the glibc loader and a short named list of system libraries, N
 
 Khushal chooses **Start update** or **Update when idle** for a retained release. The request is pinned to that release and never slides forward. To move ahead or back, he picks another retained release; there is no rebuild and no arbitrary-commit rollback. Only the owner can ask. Chief, Managers, and Workers are refused. Without an update source configured on the host, owner updates are unavailable.
 
-The existing readiness loop asks GitHub to run the install job on the host runner, so there is no second scheduler. An uncertain dispatch is never resent on its own. Khushal can cancel until the runner claims the request, and that cancellation is neutral, not a failure.
+The existing readiness loop asks GitHub to run the install job on the host runner, so there is no second scheduler. An uncertain dispatch is never resent on its own. Khushal can cancel until installation starts. The request records cancellation as a terminal failure with a cancellation detail, and the browser shows it as canceled. The request states are requested, installing, done, and failed.
 
-The installer runs in its own short-lived user service, so stopping Headroom cannot kill it. While the old app still serves, it checks the download against the request, checks the runtime contract, and refuses a database whose schema history it does not recognise or that is too old. Then it asks the server for a final claim. The server rechecks workspace activity under the same barrier that guards new conversations and background work, and runs the startup Ticket integrity check. An idle request that finds work running goes back to waiting. A failed integrity check fails the request before any downtime.
+The installer runs in its own short-lived user service, so stopping Headroom cannot kill it. It downloads the archive from the owner request and checks its fingerprint once. It checks the runtime contract and database schema ancestry once before downtime. The schema floor is `video_upload_ledger`. It refuses older or unknown ancestry before the service stops. It does not download a separate proof, repeat the GitHub lookup, rebuild, or ask the live server for a claim. The separate process lock permits only one deploy at a time.
 
-Once claimed, the installer stops the service, captures interrupted agent sessions, and takes a verified [backup](backups.md). It keeps the prior app, moves the new one into place, restarts, and waits for the new app to report its exact commit. Meanwhile ordinary requests, CLI work, and background loops stay closed; only health and status answer. When the new app proves healthy, the runner records the commit and work reopens. Interrupted conversations then get one recovery prompt ([Conversations](conversations.md)). Last, the job refreshes the agents' skill links and checks the private HTTPS route over HTTP/2.
+The installer stops the service, captures interrupted agent sessions, and takes a verified [backup](backups.md). It keeps the prior app, moves the new one into place, restarts, and waits for the new app to report its exact commit. Meanwhile ordinary requests, CLI work, and background loops stay closed; only health and status answer. When the new app proves healthy, the runner records the commit and work reopens. Interrupted conversations then get one recovery prompt ([Conversations](conversations.md)). Last, the job refreshes the agents' skill links and checks the private HTTPS route over HTTP/2.
 
 ## What can be undone
 
@@ -45,7 +55,7 @@ The commit is the boundary.
 - **After the swap, before the commit.** If the new app fails its health proof, the runner restores the snapshot and the prior app, then proves the prior commit. A failed recovery is reported with what was kept, never as success.
 - **After the commit.** The database is never restored. A failed skill refresh or route check leaves the new app installed and the job incomplete, not the app unhealthy.
 
-If the runner disappears before the commit, work stays closed. Expired evidence becomes an unconfirmed installation that needs Chief review. Expiry never reopens the app or restores data, and no maximum outage is promised. Unresolved evidence reaches Chief once, as a real prompt through the ordinary conversation path.
+The deploy writes a plain status file at each step, with no lease or renewal. If the runner disappears before the commit, work stays closed and the file retains its last recorded step. The file does not admit traffic or restore data. Panels sends no unfinished-deploy alert. No maximum outage is promised. If the recorded commit matches the available app and admission is open, only the final report remains uncertain. That owner notice ends five minutes after the last status update.
 
 The browser offers a refresh when its loaded app differs from the server. Each write carries the loaded page version, and the server rejects an outdated version.
 
@@ -87,9 +97,9 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 
 - `.github/workflows/deploy.yml`: publication, rehearsal, and owner adoption. `recover-private-route.yml`: route repair.
 - `src/planner/environments/deployment.py`: replacement and the restore boundary. `update_runner.py`: the host-side install.
-- `src/planner/environments/update_service.py`, `update_requests.py`, `update_admission.py`: the owner request, final claim, and admission hold.
+- `src/planner/environments/update_service.py`, `update_requests.py`, `update_admission.py`: the owner request and admission hold.
 - `src/planner/environments/runtime_packaging.py`, `runtime_contracts.py`, `runtime_admission.py`, and `scripts/runtime_target_proof.py`: the private runtime and host contract.
-- `src/planner/environments/deployment_lifecycle.py`, `deployment_attention.py`, `scripts/deployment_finalize.py`: evidence and reporting.
+- `src/planner/environments/deployment_lifecycle.py`, `scripts/deployment_finalize.py`: evidence and reporting.
 - `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the owner's actions.
 - `scripts/dev`, `scripts/development_safety/`: the worktree guard.
 - `ops/panels-environments/`: user units and runner setup.

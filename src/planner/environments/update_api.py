@@ -76,14 +76,3 @@ async def cancel(request: Request, request_id: str) -> JSONResponse:
         return JSONResponse(asdict(service.cancel(request_id)))
     except UpdateConflict as exc:
         return JSONResponse({"detail": str(exc)}, status_code=409)
-
-
-@router.post("/requests/{request_id}/claim")
-async def claim(request: Request, request_id: str) -> JSONResponse:
-    service = _service(request)
-    try:
-        receipt = await service.claim(request_id)
-        request.app.state.update_admission_closed = True
-        return JSONResponse(asdict(receipt))
-    except UpdateConflict as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=409)

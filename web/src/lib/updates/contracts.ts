@@ -2,7 +2,7 @@
 export type UpdateMode = "now" | "idle";
 export type UpdateActivity = "idle" | "busy" | "unknown";
 export type UpdateRequestState =
-  | "pending" | "dispatched" | "applying" | "applied" | "cancelled" | "failed";
+  | "requested" | "installing" | "done" | "failed";
 
 export type PublishedUpdate = {
   publication_run_id: number;

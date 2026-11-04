@@ -9,11 +9,11 @@ export function needsActivityConfirmation(activity: UpdateActivity): boolean {
 }
 
 export function canCancelUpdate(request: OwnerUpdateRequest): boolean {
-  return request.state === "pending" || request.state === "dispatched";
+  return request.state === "requested";
 }
 
 export function activeUpdateRequest(request: OwnerUpdateRequest | null | undefined): boolean {
-  return !!request && ["pending", "dispatched", "applying"].includes(request.state);
+  return !!request && ["requested", "installing"].includes(request.state);
 }
 
 export function createUpdatePayload(release: PublishedUpdate, mode: UpdateMode, confirmActivity: boolean): CreateUpdateRequest {

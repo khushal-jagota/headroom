@@ -83,9 +83,12 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
     assert "systemd-run --user --wait --collect --pipe" in commands
     assert '--unit="panels-adoption-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in commands
     assert "app-build" not in commands and "pytest" not in commands
-    for key in ("REQUEST_ID", "PUBLICATION_RUN_ID", "ARTIFACT_ID", "PROOF_ARTIFACT_ID",
-                "APP_SHA", "ARTIFACT_DIGEST", "ARCHIVE_SHA256"):
-        assert f'"$UPDATE_{key}"' in commands
+    apply = next(step["run"] for step in adoption["steps"]
+                 if step.get("name") == "Apply pinned owner request")
+    assert '--request-id "$UPDATE_REQUEST_ID"' in apply
+    for option in ("--publication-run-id", "--artifact-id", "--proof-artifact-id",
+                   "--app-sha", "--artifact-digest", "--archive-sha256"):
+        assert option not in apply
 
 
 def test_publication_preserves_existing_isolated_suite_report_boundaries() -> None:
@@ -223,7 +226,7 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
 
     from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
     from planner.environments.update_contracts import OwnerUpdateRequest
-    from planner.environments.update_requests import FileUpdateRequestStore
+    from planner.environments.update_requests import CANCELLED_DETAIL, FileUpdateRequestStore
 
     root = tmp_path / "current"
     (root / "data").mkdir(parents=True)
@@ -231,7 +234,7 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
     path = root / "data" / "deployment-lifecycle.json"
     store = DeploymentLifecycleStore(path)
     requests = FileUpdateRequestStore(root / "data" / "owner-update-request.json")
-    request = OwnerUpdateRequest("first", release(), "now", "dispatched", "2026-10-30T00:00:00Z")
+    request = OwnerUpdateRequest("first", release(), "now", "requested", "2026-10-30T00:00:00Z")
     requests.create(request)
     if case != "replacement_no_lifecycle":
         store.start("123-1", sha, expected_deployment_id=None)
@@ -244,7 +247,7 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
         ), detail="Observed health or recovery failure.")
     elif case in {"cancelled", "replacement", "same_sha_stale",
                   "replacement_no_lifecycle", "missing_receipt"}:
-        requests.transition("first", frozenset({"dispatched"}), "cancelled")
+        requests.transition("first", frozenset({"requested"}), "failed", detail=CANCELLED_DETAIL)
         if case != "cancelled":
             requests.create(replace(request, request_id="replacement"))
         if case == "same_sha_stale":
@@ -312,7 +315,8 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
         assert report["status"] == "superseded"
         assert "Update canceled before installation" in report["detail"]
         archived = requests.read_for_reporting("first")
-        assert archived is not None and archived.state == "cancelled"
+        assert archived is not None and archived.state == "failed"
+        assert archived.detail == CANCELLED_DETAIL
         return
     assert recorded is not None
     if case == "missing_receipt":

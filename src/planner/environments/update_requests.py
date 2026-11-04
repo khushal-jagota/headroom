@@ -80,11 +80,12 @@ class FileUpdateRequestStore:
     def _prune_cancelled_reports(self) -> None:
         directory = self.path.parent / "cancelled-update-requests"
         reports = [
-            path for path in directory.glob("*.json")
+            path
+            for path in directory.glob("*.json")
             if re.fullmatch(r"[0-9a-f]{64}\.json", path.name) and not path.is_symlink()
         ]
         reports.sort(key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
-        for path in reports[MAX_CANCELLED_UPDATE_REPORTS - 1:]:
+        for path in reports[MAX_CANCELLED_UPDATE_REPORTS - 1 :]:
             path.unlink()
 
     def read_for_reporting(self, request_id: str) -> OwnerUpdateRequest | None:
@@ -94,8 +95,12 @@ class FileUpdateRequestStore:
             if current is not None and current.request_id == request_id:
                 return current
             archived = self._read_path(self._cancelled_path(request_id))
-            if (archived is not None and archived.request_id == request_id
-                    and archived.state == "cancelled"):
+            if (
+                archived is not None
+                and archived.request_id == request_id
+                and archived.state == "failed"
+                and archived.detail == CANCELLED_DETAIL
+            ):
                 return archived
         except (OSError, ValueError, KeyError, TypeError):
             pass
@@ -104,9 +109,13 @@ class FileUpdateRequestStore:
     def create(self, request: OwnerUpdateRequest) -> OwnerUpdateRequest:
         with _exclusive_lock(self.lock_path):
             current = self.read()
-            if current is not None and current.state in {"pending", "dispatched", "applying"}:
+            if current is not None and current.state in {"requested", "installing"}:
                 raise UpdateConflict("An update request already exists.")
-            if current is not None and current.state == "cancelled":
+            if (
+                current is not None
+                and current.state == "failed"
+                and current.detail == CANCELLED_DETAIL
+            ):
                 try:
                     self._prune_cancelled_reports()
                     _atomic_write(self._cancelled_path(current.request_id), asdict(current))
@@ -129,9 +138,7 @@ class FileUpdateRequestStore:
             current = self.read()
             if current is None or current.request_id != request_id or current.state not in expected:
                 raise UpdateConflict("The update request changed or application already began.")
-            updated = replace(
-                current, state=state, detail=CANCELLED_DETAIL if state == "cancelled" else detail
-            )
+            updated = replace(current, state=state, detail=detail)
             _atomic_write(self.path, asdict(updated))
             change_signal.emit()
             return updated
