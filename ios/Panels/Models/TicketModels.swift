@@ -4,7 +4,8 @@ struct TicketDetail: Codable, Identifiable, Sendable {
     var locale: String? = nil
     let id: String
     let title: String
-    let workerType: String
+    let workerType: String?
+    let workflow: TicketWorkflow
     let employeeBackend: String
     let employeeLaunchModel: String?
     let employeeLaunchReasoningEffort: String?
@@ -73,5 +74,31 @@ struct TicketRead: Decodable, Sendable {
             throw APIError(status: 0, message: "Broken Ticket: " + issue.reason)
         }
         detail = try TicketDetail(from: decoder)
+    }
+}
+
+/// The saved workflow served with this Ticket is the authority for its controls.
+struct TicketWorkflow: Codable, Sendable {
+    struct Stage: Codable, Identifiable, Sendable {
+        let id: String
+        let label: String
+        let gatingField: String?
+        let isTerminal: Bool
+        let ownershipMode: String?
+    }
+    struct Field: Codable, Identifiable, Sendable {
+        let id: String
+        let label: String
+    }
+    let workerType: String?
+    let label: String
+    let stages: [Stage]
+    let fields: [Field]
+    let advance: [String: String]
+    let ceilingRange: [String]
+
+    func approvalStages(after stage: String) -> [Stage] {
+        guard let next = advance[stage], let start = stages.firstIndex(where: { $0.id == next }) else { return [] }
+        return Array(stages[start...]).filter { ceilingRange.contains($0.id) }
     }
 }

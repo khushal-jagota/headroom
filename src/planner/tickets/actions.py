@@ -15,6 +15,7 @@ from planner.message_delivery import service as message_delivery_service
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket
 from planner.tickets.logic import admission
+from planner.worker_types.contracts import TicketWorkflowDefinition
 
 LOGGER = logging.getLogger(__name__)
 
@@ -26,7 +27,8 @@ def create_ticket(
     principal: Principal,
     now: int,
     title_max_chars: int,
-    worker_type: str,
+    worker_type: str | None,
+    workflow: TicketWorkflowDefinition | None = None,
     locale: str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
@@ -54,6 +56,7 @@ def create_ticket(
         manager_id=manager_id,
         manager_kind=manager_kind,
         worker_type=worker_type,
+        workflow=workflow,
         locale=locale,
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,

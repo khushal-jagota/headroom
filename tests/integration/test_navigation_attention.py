@@ -20,6 +20,7 @@ from planner.conversation.publication.reader import read_durable_facts
 from planner.conversation.runtime_composition import SignalRuntimeComposition, bind_admission
 from planner.navigation import journal, snapshot
 from planner.navigation.signal_publication import install, participate
+from planner.worker_types.store import read_definition, workflow_from_preset, workflow_to_json
 
 
 @dataclass
@@ -92,8 +93,9 @@ def prepared(tmp_path: Path) -> Iterator[Host]:
         )
         conn.execute(
             "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,field_values,"
-            "created_at,updated_at,conversation_id) "
-            "VALUES('t','Ticket','coding','codex','needs_implementation','done','{}',0,0,'c')"
+            "created_at,updated_at,conversation_id,workflow_json) "
+            "VALUES('t','Ticket','coding','codex','needs_implementation','done','{}',0,0,'c',?)",
+            (workflow_to_json(workflow_from_preset(read_definition(conn, "coding"))),),
         )
         conn.execute("INSERT INTO ticket_conversations VALUES('h','t')")
         conn.commit()

@@ -74,7 +74,6 @@ def _skills_home_json(home: SkillsHome) -> JsonDict:
 def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
     payload: JsonDict = {
         "worker_type": settings.worker_type,
-        "requires_macos": settings.requires_macos,
         "specialist_skill": _skill_json(settings.specialist_skill),
         "launch_defaults": _launch_defaults_json(settings.launch_defaults),
     }
@@ -86,7 +85,6 @@ def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
 def _summary_json(summary: WorkerManagementSummary) -> JsonDict:
     return {
         "worker_type": summary.worker_type,
-        "requires_macos": summary.requires_macos,
         "label": summary.label,
         "specialist_skill_name": summary.specialist_skill_name,
         "launch_defaults": _launch_defaults_json(summary.launch_defaults),
@@ -158,7 +156,11 @@ async def add_agent_conversation_signals(
         signal = (
             facts.signal
             if facts
-            else conversation_signal(is_running=False, unread_message_to_owner=False)
+            else conversation_signal(
+                turn_is_running=False,
+                has_live_background_task=False,
+                unread_message_to_owner=False,
+            )
         )
         agent["conversation_signal"] = signal
         agent["awaiting_reply"] = signal["message_for_owner"]
@@ -396,20 +398,3 @@ async def post_worker_type(
     result = cast(JsonDict, json.loads(store.definition_to_json(definition)))
     result["migrations"] = [asdict(migration) for migration in migrations]
     return result
-
-
-@router.patch("/workers/{worker_type}/requirements")
-async def patch_worker_requirements(
-    worker_type: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker settings"))
-    if set(raw) != {"requires_macos"} or type(raw["requires_macos"]) is not bool:
-        raise PlannerError(ErrorCode.validation, "requirements need one requires_macos boolean", {})
-    settings = service.update_worker_requirements(
-        conn,
-        configured_worker_runtime_definitions().worker_type_registry,
-        worker_type,
-        requires_macos=raw["requires_macos"],
-        now=clk.now_unix(),
-    )
-    return _settings_json(settings)

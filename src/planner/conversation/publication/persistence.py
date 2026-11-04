@@ -173,6 +173,7 @@ def _install_source_triggers(connection: sqlite3.Connection, *, require_admissio
         "conversation_events": "conversation_id",
         "conversation_error_acknowledgements": "conversation_id",
         "conversation_lifecycle_facts": "conversation_id",
+        "conversation_background_tasks": "conversation_id",
         "ticket_conversations": "conversation_id",
         "tickets": "conversation_id",
         "agents": "conversation_id",

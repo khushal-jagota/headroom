@@ -21,7 +21,9 @@ every destination has a separate source file.
 The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
 `/api/tickets/{id}/workspace` endpoint returned HTTP 500 for the sampled tickets;
 `/api/tickets?detail=full&id=…` succeeded. This adapter deliberately uses that
-working endpoint rather than inventing a new backend route.
+working endpoint rather than inventing a new backend route. Its saved `workflow`
+supplies Ticket and Review controls, stage names and approval gates. The nullable
+`worker_type` identifies the creation preset and never supplies those controls.
 
 ## Refresh work
 
@@ -295,7 +297,7 @@ the loaded window. Surviving rows retain order, and section changes fade instead
 Regrouping waits during scrolling and context previews; titles and marks stay live.
 Reduce Motion removes layout animation.
 
-Long press previews the full title, recap and manifest-derived stage sentence.
+Long press previews the full title, recap and saved-workflow stage sentence.
 Its menu opens the page, requests a recap, backlogs/resumes a ticket, or settles an
 orchestrator. These use existing endpoints. Failed or uncertain actions show an
 error; confirmed actions give success haptics. Pushes use the owner-approved light feedback; the Settled toggle gives

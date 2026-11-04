@@ -36,6 +36,7 @@ from planner.tickets.contracts import TicketStatus
 from planner.tickets.logic import fields_codec
 from planner.work_attention import ticket_assignment_from_values
 from planner.worker_settings.service import CHIEF_LABEL, CHIEF_SETTINGS_KEY
+from planner.worker_types.store import workflow_from_row
 
 
 def _b64url(raw: bytes) -> str:
@@ -277,7 +278,7 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
     conversations = attention_data.conversation_attention(conn)
     desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
     ticket_rows = conn.execute(
-        "SELECT id, title, stage, worker_type, worker_step_claim, pending_proposal, "
+        "SELECT id, title, stage, worker_type, workflow_json, worker_step_claim, pending_proposal, "
         "ceiling_holder, conversation_id, updated_at FROM tickets"
     ).fetchall()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
@@ -303,7 +304,8 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
             ),
             "assigned": ticket_assignment_from_values(
                 stage=str(row["stage"]),
-                worker_type=str(row["worker_type"]),
+                worker_type=row["worker_type"],
+                worker_type_definition=workflow_from_row(row),
             ),
             "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
         }

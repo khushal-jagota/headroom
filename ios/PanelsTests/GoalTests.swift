@@ -6,7 +6,7 @@ import XCTest
     private func goal() throws -> GoalRecord {
         try APIClient.decoder().decode(GoalRecord.self, from: Data(Self.goalWire.utf8))
     }
-    static let goalWire = #"{"id":"g","project_id":"project_personal","title":"Release","why":"Help people","kind":"binary","active":true,"completed":false,"primary_checklist_block_id":"chosen","deadline":"2026-11-04","primary_chart":null,"page":{"kind":"headroom.page","version":1,"title":"Release","summary":"","blocks":[{"type":"section","id":"section","title":"Steps","views":[{"id":"a","label":"Plan","blocks":[{"type":"checklist","id":"chosen","items":[{"id":"one","label":"First","state":"open"}]}]}]}]},"revision":5,"created_at":1,"updated_at":1,"employee_backend":"codex","employee_launch_model":"gpt-6","employee_launch_reasoning_effort":null,"conversation_id":"c","status":"attention","status_date":"2026-11-04","next_refresh_at":1793836800}"#
+    static let goalWire = #"{"id":"g","project_id":"project_personal","title":"Release","why":"Help people","kind":"binary","active":true,"completed":false,"completion_date":null,"completion_rule":null,"outcome":"pending","primary_checklist_block_id":"chosen","deadline":"2026-11-04","primary_chart":null,"page":{"kind":"headroom.page","version":1,"title":"Release","summary":"","blocks":[{"type":"section","id":"section","title":"Steps","views":[{"id":"a","label":"Plan","blocks":[{"type":"checklist","id":"chosen","items":[{"id":"one","label":"First","state":"open"}]}]}]}]},"revision":5,"created_at":1,"updated_at":1,"employee_backend":"codex","employee_launch_model":"gpt-6","employee_launch_reasoning_effort":null,"conversation_id":"c","status":"attention","status_date":"2026-11-04","next_refresh_at":1793836800}"#
 
     /// One corpus proof covers the cross-language presentation boundary using the
     /// current web's functions, not copied expectations or another browser host.
@@ -50,6 +50,9 @@ import XCTest
     }
     func testServerCalendarAndRecursiveChecklistProjectionKeepTheSavedDocument() throws {
         let original = try goal()
+        XCTAssertEqual(original.outcome, "pending")
+        XCTAssertNil(original.completionDate)
+        XCTAssertNil(original.completionRule)
         XCTAssertEqual(GoalPresentation.deadlineTone(original.deadline, completed: false, today: original.statusDate), "attention")
         XCTAssertEqual(GoalPresentation.deadlineTone("2026-11-03", completed: false, today: original.statusDate), "bad")
         XCTAssertEqual(GoalPresentation.deadlineTone(nil, completed: true, today: original.statusDate), "neutral")

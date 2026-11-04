@@ -12,12 +12,12 @@
    *
    * The Review screen (`ReviewRoute`) mounts the card.
    */
-  import { onMount, onDestroy, tick, type Snippet } from "svelte";
+  import { onMount, onDestroy, tick, untrack, type Snippet } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import { manifestWorkerTypeIsUnknown, queries } from "../lib/queryCatalogue";
-  import { lifecycleFor } from "../lib/lifecycle";
+  import { queries } from "../lib/queryCatalogue";
+  import { buildLifecycle } from "../lib/lifecycle";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { reviewProposalIdentity, reviewProposalDetailMatches } from "../lib/navigation/presentation";
   import { reviewProposalImpact } from "../lib/reviewNavigationImpact";
@@ -47,10 +47,18 @@
     onSkip,
     onResolved,
     footer,
-    embedded = false
+    embedded = false,
+    initialRevisionDraft = "",
+    onRevisionDraftChange,
+    initialEditedBody,
+    onEditedBodyChange
   }: {
     identity: NavigationReviewProposalItem;
     embedded?: boolean;
+    initialRevisionDraft?: string;
+    initialEditedBody?: string;
+    onEditedBodyChange?: (text: string) => void;
+    onRevisionDraftChange?: (text: string) => void;
     onRendered?: () => void;
     /** The Ticket whose proposal this is. */
     ticketId: string;
@@ -94,20 +102,7 @@
   let currentKey = $derived(reviewProposalIdentity(identity));
   let ticketHref = $derived(workspaceAddress({ kind: "ticket", id: ticketId }));
 
-  // Per-Worker-type lifecycle for this decision's detail. Null while the manifest or
-  // the detail is still loading OR when the detail's worker_type is absent from a
-  // loaded manifest; the markup tells those apart (Codex F3).
-  let detailWorkerType = $derived(
-    typeof healthyDetail?.worker_type === "string" ? (healthyDetail.worker_type as string) : null
-  );
-  // This card draws the stages of the one Worker type its proposal belongs to, so it
-  // asks for that one rather than the whole list of fourteen. Declared here because the
-  // type it needs comes from the detail above it.
-  const manifest = createQuery(() => ({
-    ...queries.workerTypeManifest(detailWorkerType ?? ""),
-    enabled: detailWorkerType !== null
-  }));
-  let lc = $derived(lifecycleFor(manifest.data, detailWorkerType));
+  let lc = $derived(healthyDetail?.workflow ? buildLifecycle(healthyDetail.workflow) : null);
   // Approving here sets the next ceiling, so the reviewer gets the same choice of holder
   // the Ticket page offers, including handing the Ticket back to its own Manager.
   let reviewManager = $derived(
@@ -120,16 +115,7 @@
   );
   let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, true));
 
-  // An unknown Worker type now arrives as the canonical not-found from the single-type
-  // manifest instead of as an absence from a list, and must keep reading the same way.
-  let manifestMissingWorkerType = $derived(
-    Boolean(
-      detailWorkerType &&
-        (manifestWorkerTypeIsUnknown(manifest.error) ||
-          (manifest.data &&
-            !manifest.data.worker_types.some((item) => item.worker_type === detailWorkerType)))
-    )
-  );
+  let manifestMissingWorkerType = $derived(Boolean(healthyDetail && !healthyDetail.workflow));
 
   /** The field to accept against, or null when this Ticket's Worker type has no
    *  such field — the decision is then not a Ticket field at all. */
@@ -179,8 +165,8 @@
 
   $effect(() => {
     if (currentKey !== decisionKey) {
+      revisionDraft = decisionKey === null ? initialRevisionDraft : "";
       decisionKey = currentKey;
-      revisionDraft = "";
       revisionError = null;
       revisionBusy = false;
 
@@ -188,6 +174,11 @@
       // The box — and anything being spoken into it — belongs to one proposal.
       voice?.cancel();
     }
+  });
+
+  $effect(() => {
+    const text = revisionDraft;
+    untrack(() => onRevisionDraftChange?.(text));
   });
 
   let reconciledMismatch: string | null = null;
@@ -255,7 +246,7 @@
   }
 </script>
 
-<SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !healthyDetail) || Boolean(healthyDetail && !manifest.error && !manifestMissingWorkerType && isStale(healthyDetail)))} loadingText="Loading approval...">
+<SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !healthyDetail) || Boolean(healthyDetail && !manifestMissingWorkerType && isStale(healthyDetail)))} loadingText="Loading approval...">
 {#if detail.error}
   <div>
     <ErrorLine error={detail.error} />
@@ -267,11 +258,11 @@
       <a data-open-ticket href={ticketHref}>open ticket</a>
     </div>
   </div>
-{:else if healthyDetail && (manifest.error || manifestMissingWorkerType)}
+{:else if healthyDetail && manifestMissingWorkerType}
   {@const ticketDetail = healthyDetail}
   <div data-review-manifest-error>
     <ErrorLine
-      error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${ticketDetail.worker_type}"` }}
+      error={{ code: "invalid_workflow", message: "The Ticket workflow is unavailable." }}
     />
     <div class="review-card-actions">
       {#if onSkip}
@@ -324,7 +315,7 @@
             {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
             <WorkerProposalCard proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
               ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} manager={reviewManager}
-              disabled={revisionBusy} canReturn={Boolean(ticketDetail.conversation_id)}
+              disabled={revisionBusy} {initialEditedBody} {onEditedBodyChange} initialReturnOpen={Boolean(initialRevisionDraft)} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body },"scope"); }}
               onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } },"stage"); announceResolved(); }}

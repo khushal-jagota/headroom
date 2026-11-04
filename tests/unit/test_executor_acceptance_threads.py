@@ -35,7 +35,6 @@ from planner.executor.protocol import (
     WireMessage,
     WireMessageKind,
     encode_value,
-    envelope_payload_digest,
 )
 from planner.executor.vps_inbox import InboxStore
 from planner.executor.vps_transport import VpsExecutor
@@ -72,18 +71,6 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
         payload = encode_value(outcome)
         assert isinstance(payload, dict)
         queued = replace(envelope(), kind=EnvelopeKind.child_stopped, payload=payload)
-        queued = replace(
-            queued,
-            payload_sha256=envelope_payload_digest(
-                queued.payload,
-                (),
-                sender_id=queued.sender_id,
-                conversation_id=queued.conversation_id,
-                sequence=queued.sequence,
-                submission_id=queued.submission_id,
-                kind=queued.kind,
-            ),
-        )
         start_holder, held, release, waiting = (threading.Event() for _ in range(4))
         loop_thread = threading.get_ident()
         sqlite_threads: list[int] = []

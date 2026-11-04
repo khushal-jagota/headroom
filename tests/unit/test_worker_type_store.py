@@ -20,7 +20,6 @@ from tests.support.probe import (
     seed_probe_worker_type,
 )
 
-from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import StageOwnershipMode
@@ -28,7 +27,7 @@ from planner.worker_types.configuration import (
     configured_worker_type_registry,
     load_worker_runtime_definitions,
 )
-from planner.worker_types.contracts import FieldDefinition, StageDefinition, WorkerTypeDefinition
+from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.store import (
     read_definition,
     write_definition,
@@ -109,325 +108,107 @@ def _probe_database(conn: sqlite3.Connection) -> None:
     load_worker_runtime_definitions(conn)
 
 
-def test_removed_field_text_survives_unrelated_dispatched_work(
+def test_preset_edit_never_rewrites_dispatched_ticket_or_pending_approval(
     database: sqlite3.Connection,
 ) -> None:
     _probe_database(database)
     ticket_id = _probe_ticket(database, "needs_beta")
-    text = json.dumps({"brief": "Kickoff", "alpha": "Work the owner wrote"})
+    values = json.dumps({"brief": "Kickoff", "alpha": "Owner text", "old_field": "Hidden"})
+    proposal = json.dumps(
+        {"field": "beta", "body": "Pending answer", "proposed_by": "worker", "created_at": 1}
+    )
     database.execute(
-        "UPDATE tickets SET field_values = ?, worker_step_claim = 'out' WHERE id = ?",
-        (text, ticket_id),
+        "UPDATE tickets SET field_values=?,pending_proposal=?,pending_proposal_revision=7,"
+        "worker_step_claim='out',worker_step_claim_revision=9,ceiling='needs_beta' WHERE id=?",
+        (values, proposal, ticket_id),
     )
     before = _row(database, ticket_id)
-    result = write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha"), now=2)
-    after = _row(database, ticket_id)
-    assert after["field_values"] == text
-    assert after["worker_step_claim"] == "out"
-    assert after["guidance"] == before["guidance"]
-    assert [(item.ticket_id, item.old_stage, item.new_stage) for item in result] == [
-        (ticket_id, "needs_beta", "needs_beta")
-    ]
-    assert "alpha" not in read_definition(database, "probe").field_ids()
+    assert (
+        write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha", "beta"), now=2)
+        == ()
+    )
+    assert _row(database, ticket_id) == before
+    load_worker_runtime_definitions(database)
+    ticket = tickets_data.read_ticket(database, ticket_id)
+    assert ticket.workflow.has_field("alpha")
+    assert ticket.workflow.has_field("beta")
+    assert ticket.pending_proposal is not None and ticket.pending_proposal.body == "Pending answer"
+    assert ticket.ceiling == "needs_beta"
+    tickets_data.audit_ticket_registry_integrity(database)
 
 
-def test_removed_stage_and_ceiling_move_back_and_discard_only_stage_feedback(
+def test_future_ticket_gets_replacement_preset_without_changing_existing_copy(
     database: sqlite3.Connection,
 ) -> None:
-    from planner.tickets import revision_feedback
-
     _probe_database(database)
-    ticket_id = _probe_ticket(database, "needs_beta")
-    database.execute("UPDATE tickets SET ceiling = 'needs_beta' WHERE id = ?", (ticket_id,))
-    revision_feedback.set_feedback(
+    ticket_id = _probe_ticket(database, "needs_alpha")
+    replacement = _without(PROBE_WORKER_TYPE_DEFINITION, "alpha")
+    write_definition(database, replacement, now=2)
+    load_worker_runtime_definitions(database)
+    future = tickets_data.create_ticket(
         database,
-        ticket_id,
-        stage="needs_beta",
-        sender=OWNER_PRINCIPAL,
-        message="Revise Beta",
-        now=1,
+        worker_type="probe",
+        title="Future",
+        principal=OWNER_PRINCIPAL,
+        now=3,
+        title_max_chars=200,
     )
-    # A stale opener at the destination must not become valid after a backward move.
-    database.execute(
-        "INSERT INTO ticket_paired_stage_openers (ticket_id, stage, opened_at) "
-        "VALUES (?, 'needs_alpha', 1)",
-        (ticket_id,),
-    )
-    before = _row(database, ticket_id)
-    result = write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "beta"), now=2)
-    after = _row(database, ticket_id)
-    assert after["stage"] == after["ceiling"] == "needs_alpha"
-    assert after["ceiling_holder"] == before["ceiling_holder"]
-    assert after["field_values"] == before["field_values"]
-    assert after["guidance"] == before["guidance"]
-    assert (
-        database.execute(
-            "SELECT 1 FROM ticket_revision_feedback WHERE ticket_id = ?", (ticket_id,)
-        ).fetchone()
-        is None
-    )
-    assert (
-        database.execute(
-            "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ?", (ticket_id,)
-        ).fetchone()
-        is None
-    )
-    assert [
-        (item.old_stage, item.new_stage, item.old_ceiling, item.new_ceiling) for item in result
-    ] == [("needs_beta", "needs_alpha", "needs_beta", "needs_alpha")]
+    assert not future.workflow.has_field("alpha")
+    assert tickets_data.read_ticket(database, ticket_id).workflow.has_field("alpha")
 
 
-def test_finished_ticket_migrates_removed_ceiling_and_preserves_history(
+def test_finished_ticket_retains_historical_ceiling_and_text(
     database: sqlite3.Connection,
 ) -> None:
     _probe_database(database)
     ticket_id = _probe_ticket(database, "done")
     database.execute(
-        "UPDATE tickets SET ceiling = 'needs_alpha', field_values = ? WHERE id = ?",
-        (json.dumps({"brief": "Kickoff", "alpha": "Historical text"}), ticket_id),
+        "UPDATE tickets SET ceiling='old_authority',field_values=? WHERE id=?",
+        (json.dumps({"alpha": "Historical text"}), ticket_id),
     )
     before = _row(database, ticket_id)
-    result = write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha"), now=2)
-    after = _row(database, ticket_id)
-    assert after["stage"] == "done"
-    assert after["ceiling"] == "needs_brief"
-    assert after["field_values"] == before["field_values"]
-    assert after["field_approvals"] == before["field_approvals"]
-    assert after["ceiling_holder"] == before["ceiling_holder"]
-    assert [
-        (item.old_stage, item.new_stage, item.old_ceiling, item.new_ceiling) for item in result
-    ] == [("done", "done", "needs_alpha", "needs_brief")]
-    # Saving cannot publish an uncommitted replacement into the runtime registry.
-    assert configured_worker_type_registry().require("probe") == PROBE_WORKER_TYPE_DEFINITION
+    write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha"), now=2)
+    assert _row(database, ticket_id) == before
     load_worker_runtime_definitions(database)
-    tickets_data.audit_ticket_registry_integrity(database)
-    historical = tickets_data.read_ticket(database, ticket_id)
-    assert historical.stage == "done"
-    assert historical.ceiling == "needs_brief"
+    ticket = tickets_data.read_ticket(database, ticket_id)
+    assert ticket.ceiling == "old_authority"
+    assert ticket.field_values["alpha"] == "Historical text"
 
 
-def test_no_earlier_destination_refuses_without_advancing(database: sqlite3.Connection) -> None:
+def test_preset_save_does_not_depend_on_ticket_update_triggers(
+    database: sqlite3.Connection,
+) -> None:
     _probe_database(database)
-    ticket_id = _probe_ticket(database, "needs_alpha")
+    ticket_id = _probe_ticket(database, "needs_beta")
     before = _row(database, ticket_id)
-    replacement = _without(PROBE_WORKER_TYPE_DEFINITION, "brief", "alpha")
-    with pytest.raises(PlannerError) as raised:
-        write_definition(database, replacement, now=2)
-    assert ticket_id in raised.value.detail["tickets"]
-    assert _row(database, ticket_id) == before
-    assert read_definition(database, "probe") == PROBE_WORKER_TYPE_DEFINITION
-
-
-def test_incompatible_proposal_refuses_without_losing_body(database: sqlite3.Connection) -> None:
-    _probe_database(database)
-    ticket_id = _probe_ticket(database, "needs_alpha")
     database.execute(
-        "UPDATE tickets SET pending_proposal = ? WHERE id = ?",
-        (
-            json.dumps(
-                {
-                    "field": "alpha",
-                    "body": "Unapproved draft",
-                    "proposed_by": "worker",
-                    "created_at": 1,
-                }
-            ),
-            ticket_id,
-        ),
+        "CREATE TRIGGER no_ticket_rewrite BEFORE UPDATE ON tickets "
+        "BEGIN SELECT RAISE(ABORT, 'Ticket must stay unchanged'); END"
     )
-    before = _row(database, ticket_id)
-    with pytest.raises(PlannerError) as raised:
-        write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha"), now=2)
-    assert ticket_id in raised.value.detail["tickets"]
-    assert raised.value.detail["failures"][0]["field"] == "pending_proposal"
+    replacement = _without(PROBE_WORKER_TYPE_DEFINITION, "beta")
+    write_definition(database, replacement, now=2)
     assert _row(database, ticket_id) == before
-
-
-def test_dispatched_step_cannot_be_moved_under_its_worker(database: sqlite3.Connection) -> None:
-    _probe_database(database)
-    ticket_id = _probe_ticket(database, "needs_alpha")
-    database.execute("UPDATE tickets SET worker_step_claim = 'out' WHERE id = ?", (ticket_id,))
-    before = _row(database, ticket_id)
-    with pytest.raises(PlannerError) as raised:
-        write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha"), now=2)
-    assert ticket_id in raised.value.detail["tickets"]
-    assert _row(database, ticket_id) == before
-
-
-def test_reordered_retained_stages_refuse_authority_changes(database: sqlite3.Connection) -> None:
-    _probe_database(database)
-    ticket_id = _probe_ticket(database, "needs_alpha")
-    before = _row(database, ticket_id)
-    original = PROBE_WORKER_TYPE_DEFINITION
-    replacement = replace(
-        original,
-        stages=(
-            original.stages[0],
-            original.stages[2],
-            original.stages[1],
-            *original.stages[3:],
-        ),
-    )
-    with pytest.raises(PlannerError) as raised:
-        write_definition(database, replacement, now=2)
-    assert ticket_id in raised.value.detail["tickets"]
-    assert _row(database, ticket_id) == before
-
-
-def test_save_rolls_back_all_tickets_when_a_later_write_fails(database: sqlite3.Connection) -> None:
-    _probe_database(database)
-    ticket_ids = sorted(_probe_ticket(database, "needs_beta") for _ in range(2))
-    before = {ticket_id: _row(database, ticket_id) for ticket_id in ticket_ids}
-    database.execute(
-        "CREATE TRIGGER reject_second_migration BEFORE UPDATE ON tickets "
-        "WHEN NEW.id = '"
-        + ticket_ids[1]
-        + "' BEGIN SELECT RAISE(ABORT, 'injected migration failure'); END"
-    )
-    with pytest.raises(sqlite3.IntegrityError, match="injected migration failure"):
-        write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "beta"), now=2)
-    assert {ticket_id: _row(database, ticket_id) for ticket_id in ticket_ids} == before
-    assert read_definition(database, "probe") == PROBE_WORKER_TYPE_DEFINITION
-    assert not database.in_transaction
+    assert read_definition(database, "probe") == replacement
 
 
 def test_nested_savepoint_stays_inside_callers_transaction(database: sqlite3.Connection) -> None:
     _probe_database(database)
+    replacement = _without(PROBE_WORKER_TYPE_DEFINITION, "beta")
+    database.execute("BEGIN IMMEDIATE")
+    write_definition(database, replacement, now=2)
+    assert database.in_transaction
+    database.rollback()
+    assert read_definition(database, "probe") == PROBE_WORKER_TYPE_DEFINITION
+
+
+def test_failed_commit_rolls_back_preset_and_preserves_ticket(
+    database: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _probe_database(database)
     ticket_id = _probe_ticket(database, "needs_beta")
     before = _row(database, ticket_id)
-    database.execute("BEGIN IMMEDIATE")
-    write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "beta"), now=2)
-    assert database.in_transaction
-    assert _row(database, ticket_id)["stage"] == "needs_alpha"
-    database.rollback()
-    assert _row(database, ticket_id) == before
-    assert read_definition(database, "probe") == PROBE_WORKER_TYPE_DEFINITION
-    assert configured_worker_type_registry().require("probe") == PROBE_WORKER_TYPE_DEFINITION
-
-
-def test_four_ticket_coding_amendment_copy_preserves_text_and_review_limit(
-    database: sqlite3.Connection,
-    tmp_path: Path,
-) -> None:
-    current = read_definition(database, "coding")
-    # This regression copies a historical six-field type, not the current default.
-    original = replace(
-        current,
-        fields=(
-            current.fields[0],
-            FieldDefinition("success_condition", "Success Condition"),
-            current.fields[1],
-            FieldDefinition("plan", "Plan"),
-            *current.fields[2:],
-        ),
-        stages=(
-            current.stages[0],
-            StageDefinition(
-                "needs_success_condition",
-                "Success Condition",
-                "success_condition",
-                False,
-                StageOwnershipMode.worker,
-            ),
-            current.stages[1],
-            StageDefinition(
-                "needs_plan",
-                "Plan",
-                "plan",
-                False,
-                StageOwnershipMode.worker,
-            ),
-            *current.stages[2:],
-        ),
-    )
-    write_definition(database, original, now=0)
-    load_worker_runtime_definitions(database)
-    ticket_ids = []
-    for index in range(4):
-        ticket = tickets_data.create_ticket(
-            database,
-            worker_type="coding",
-            title=f"Amendment copy Ticket {index}",
-            brief="Original brief",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-        )
-        database.execute(
-            "UPDATE tickets SET stage = 'needs_what_changes', "
-            "pending_proposal = NULL, ceiling = ?, "
-            "field_values = ? WHERE id = ?",
-            (
-                "needs_plan" if index == 0 else "needs_implementation",
-                json.dumps(
-                    {
-                        "brief": "Original brief",
-                        "plan": f"Plan {index}",
-                        "success_condition": f"Success {index}",
-                    }
-                ),
-                ticket.id,
-            ),
-        )
-        ticket_ids.append(ticket.id)
-    source_before = {ticket_id: _row(database, ticket_id) for ticket_id in ticket_ids}
-    copied = connect(str(tmp_path / "amendment-copy.db"))
-    database.backup(copied)
-    try:
-        result = write_definition(copied, _without(original, "plan", "success_condition"), now=2)
-        assert len(result) == 4
-        for ticket_id in ticket_ids:
-            after = _row(copied, ticket_id)
-            assert after["stage"] == "needs_what_changes"
-            assert after["field_values"] == source_before[ticket_id]["field_values"]
-            assert after["ceiling_holder"] == source_before[ticket_id]["ceiling_holder"]
-            assert after["guidance"] == source_before[ticket_id]["guidance"]
-        first = next(item for item in result if item.ticket_id == ticket_ids[0])
-        assert (first.old_ceiling, first.new_ceiling) == ("needs_plan", "needs_what_changes")
-        assert _row(copied, ticket_ids[0])["ceiling"] == "needs_what_changes"
-        assert {ticket_id: _row(database, ticket_id) for ticket_id in ticket_ids} == source_before
-        assert read_definition(database, "coding") == original
-    finally:
-        copied.close()
-
-
-def test_amendment_attention_uses_new_ownership_before_registry_publication(
-    database: sqlite3.Connection,
-) -> None:
-    seed_probe_worker_type(database)
-    load_worker_runtime_definitions(database)
-    ticket_id = _probe_ticket(database, "needs_alpha")
-    replacement = replace(
-        PROBE_WORKER_TYPE_DEFINITION,
-        stages=tuple(
-            replace(stage, ownership_mode=StageOwnershipMode.user)
-            if stage.id == "needs_alpha"
-            else stage
-            for stage in PROBE_WORKER_TYPE_DEFINITION.stages
-        ),
-    )
-    write_definition(database, replacement, now=2)
-    assert configured_worker_type_registry().require("probe") == PROBE_WORKER_TYPE_DEFINITION
-    state = database.execute(
-        "SELECT active FROM notification_attention_state "
-        "WHERE subject_kind='ticket' AND subject_id=? AND notification_type='assigned'",
-        (ticket_id,),
-    ).fetchone()
-    assert state[0] == 1
-
-
-def test_failed_commit_rolls_back_definition_and_ticket_position(
-    database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    seed_probe_worker_type(database)
-    load_worker_runtime_definitions(database)
-    ticket_id = _probe_ticket(database, "needs_beta")
-    before = tuple(database.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone())
-    replacement = replace(
-        PROBE_WORKER_TYPE_DEFINITION,
-        stages=tuple(s for s in PROBE_WORKER_TYPE_DEFINITION.stages if s.id != "needs_beta"),
-        fields=tuple(f for f in PROBE_WORKER_TYPE_DEFINITION.fields if f.id != "beta"),
-    )
+    replacement = _without(PROBE_WORKER_TYPE_DEFINITION, "beta")
 
     def fail_commit(self: sqlite3.Connection) -> None:
         raise sqlite3.OperationalError("injected commit failure")
@@ -438,86 +219,4 @@ def test_failed_commit_rolls_back_definition_and_ticket_position(
             write_definition(database, replacement, now=2)
     assert not database.in_transaction
     assert read_definition(database, "probe") == PROBE_WORKER_TYPE_DEFINITION
-    assert (
-        tuple(database.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone())
-        == before
-    )
-
-
-def test_finished_ceiling_without_backward_destination_refuses_entire_save(
-    database: sqlite3.Connection,
-) -> None:
-    _probe_database(database)
-    ticket_id = _probe_ticket(database, "done")
-    database.execute("UPDATE tickets SET ceiling = 'needs_brief' WHERE id = ?", (ticket_id,))
-    before = _row(database, ticket_id)
-    with pytest.raises(PlannerError) as raised:
-        write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "brief"), now=2)
-    assert raised.value.detail["failures"] == [
-        {
-            "ticket_id": ticket_id,
-            "title": before["title"],
-            "field": "ceiling",
-            "reason": "removed reference has no earlier surviving Stage",
-        }
-    ]
     assert _row(database, ticket_id) == before
-    assert read_definition(database, "probe") == PROBE_WORKER_TYPE_DEFINITION
-
-
-def test_post_migration_audit_rolls_back_trigger_created_invalid_ceiling(
-    database: sqlite3.Connection,
-) -> None:
-    _probe_database(database)
-    ticket_id = _probe_ticket(database, "needs_beta")
-    before = _row(database, ticket_id)
-    database.execute(
-        "CREATE TRIGGER corrupt_migrated_ceiling AFTER UPDATE OF stage ON tickets "
-        "BEGIN UPDATE tickets SET ceiling = 'removed_stage' WHERE id = NEW.id; END"
-    )
-    with pytest.raises(PlannerError, match="Ticket integrity check") as raised:
-        write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "beta"), now=2)
-    assert ticket_id in raised.value.detail["reason"]
-    assert "ceiling outside the type's range" in raised.value.detail["reason"]
-    assert _row(database, ticket_id) == before
-    assert read_definition(database, "probe") == PROBE_WORKER_TYPE_DEFINITION
-    assert configured_worker_type_registry().require("probe") == PROBE_WORKER_TYPE_DEFINITION
-
-
-@pytest.mark.parametrize("same_stage", [False, True])
-def test_amendment_discards_obsolete_step_context_without_losing_other_ticket_context(
-    database: sqlite3.Connection,
-    same_stage: bool,
-) -> None:
-    from planner.tickets import revision_feedback
-
-    _probe_database(database)
-    ticket_id = _probe_ticket(database, "needs_alpha")
-    untouched_id = _probe_ticket(database, "needs_landing")
-    for current_id, stage in ((ticket_id, "needs_alpha"), (untouched_id, "needs_landing")):
-        database.execute(
-            "INSERT INTO ticket_paired_stage_openers (ticket_id, stage, opened_at) "
-            "VALUES (?, ?, 1)",
-            (current_id, stage),
-        )
-        revision_feedback.set_feedback(
-            database, current_id, stage=stage, sender=OWNER_PRINCIPAL, message="Feedback", now=1
-        )
-    if same_stage:
-        replacement = replace(
-            PROBE_WORKER_TYPE_DEFINITION,
-            stages=tuple(
-                replace(stage, ownership_mode=StageOwnershipMode.user)
-                if stage.id == "needs_alpha"
-                else stage
-                for stage in PROBE_WORKER_TYPE_DEFINITION.stages
-            ),
-        )
-    else:
-        # The Ticket stays at Beta but auxiliary context still points at removed Alpha.
-        database.execute("UPDATE tickets SET stage = 'needs_beta' WHERE id = ?", (ticket_id,))
-        replacement = _without(PROBE_WORKER_TYPE_DEFINITION, "alpha")
-    write_definition(database, replacement, now=2)
-    for table in ("ticket_paired_stage_openers", "ticket_revision_feedback"):
-        assert database.execute(f"SELECT ticket_id FROM {table}").fetchall()[0][0] == untouched_id
-        assert database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 1

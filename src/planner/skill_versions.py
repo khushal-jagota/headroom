@@ -88,14 +88,13 @@ def reconcile_managed_skill_versions(conn: sqlite3.Connection) -> None:
 def bind_worker_step_skills(
     conn: sqlite3.Connection,
     sender_message_id: str,
-    specialist_skill_name: str,
+    specialist_skill_name: str | None,
 ) -> None:
     """Bind one worker-step message to its exact three managed skill versions."""
     selected = (
         (ORIENTATION_ROLE, ORIENTATION_SKILL_NAME),
         (SHARED_WORKER_ROLE, SHARED_WORKER_SKILL_NAME),
-        (SPECIALIST_ROLE, specialist_skill_name),
-    )
+    ) + (((SPECIALIST_ROLE, specialist_skill_name),) if specialist_skill_name is not None else ())
     contents = tuple(
         (role, skill_name, read_skill_source(conn, skill_name).encode("utf-8"))
         for role, skill_name in selected

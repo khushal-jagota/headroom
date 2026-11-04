@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct TicketStepRow: View {
-    let field: TicketWorkerType.Field
+    let field: TicketWorkflow.Field
     let presentation: TicketPresentation
     private var current: Bool { field.id == presentation.currentField }
     private var complete: Bool { presentation.isComplete(field.id) }
@@ -46,8 +46,8 @@ struct TicketStepMark: View {
 
 struct TicketStepPage: View {
     let ticketID: String
-    let field: TicketWorkerType.Field
-    let manifest: TicketWorkerType
+    let field: TicketWorkflow.Field
+    let manifest: TicketWorkflow
     @Environment(AppStore.self) private var store
     @State private var detail: TicketDetail?
     @State private var error: String?

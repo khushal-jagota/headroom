@@ -65,6 +65,8 @@ mount(Host,{target:document.getElementById('app')!});`);
     // The artifacts both conversations name. Each belongs to a Ticket that is not the
     // conversation's owner, which is the case the owner reported.
     resources: [
+      {path: "/files/goals/goal_fixture/notes.md", body: "# Goal notes\n", contentType: "text/markdown"},
+      {path: "/files/tickets/t_missing/artifacts/plan.md", body: "# Orphaned plan\n", contentType: "text/markdown"},
       {
         path: "/files/tickets/t_elsewhere/artifacts/plan.md",
         body: "# The rollout plan\n\nRead from the pane it was named in.\n",

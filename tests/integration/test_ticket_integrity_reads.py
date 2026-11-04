@@ -5,24 +5,31 @@ from contextlib import closing
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from tests.support.principals import OWNER_PRINCIPAL
 from tests.unit.test_sprint_item_supervisors import _app
 
 from planner.core.db import connect
 from planner.database_modules import attach
+from planner.tickets import data as tickets_data
 
 
 def test_startup_keeps_broken_ticket_visible_and_healthy_ticket_usable(tmp_path: Path) -> None:
     app, database = _app(tmp_path)
     with closing(connect(str(database))) as conn:
-        conn.executemany(
-            "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
-            "field_values,created_at,updated_at) VALUES (?,?,?,'codex',"
-            "'needs_brief','needs_brief','{}',1,1)",
-            (("broken", "Broken Ticket", "coding"), ("healthy", "Healthy Ticket", "coding")),
-        )
+        broken_id, healthy_id = [
+            tickets_data.create_ticket(
+                conn,
+                worker_type="coding",
+                title=title,
+                principal=OWNER_PRINCIPAL,
+                now=1,
+                title_max_chars=200,
+            ).id
+            for title in ("Broken Ticket", "Healthy Ticket")
+        ]
     with closing(sqlite3.connect(database)) as raw:
         attach(raw)
-        raw.execute("UPDATE tickets SET worker_type='missing_type' WHERE id='broken'")
+        raw.execute("UPDATE tickets SET workflow_json='{}' WHERE id=?", (broken_id,))
         raw.commit()
     with TestClient(app) as client:
         for path in (
@@ -30,18 +37,18 @@ def test_startup_keeps_broken_ticket_visible_and_healthy_ticket_usable(tmp_path:
             "/api/tickets?detail=summary",
             "/api/board",
             "/api/review",
-            "/api/tickets/broken/workspace",
-            "/api/tickets/healthy/workspace",
-            "/api/tickets?id=broken&detail=full",
+            f"/api/tickets/{broken_id}/workspace",
+            f"/api/tickets/{healthy_id}/workspace",
+            f"/api/tickets?id={broken_id}&detail=full",
         ):
             response = client.get(path)
             assert response.status_code == 200, (path, response.text)
-        broken = client.get("/api/tickets/broken/workspace").json()
+        broken = client.get(f"/api/tickets/{broken_id}/workspace").json()
         assert broken["ticket_status"] == "errored" and broken["integrity_error"]["reason"]
         assert "raw_values" not in broken["integrity_error"]
-        refused = client.patch("/api/tickets/broken", json={"title": "Must not change"})
+        refused = client.patch(f"/api/tickets/{broken_id}", json={"title": "Must not change"})
         assert refused.status_code == 400, refused.text
-        healthy = client.patch("/api/tickets/healthy", json={"title": "Still usable"})
+        healthy = client.patch(f"/api/tickets/{healthy_id}", json={"title": "Still usable"})
         assert healthy.status_code == 200, healthy.text
 
 

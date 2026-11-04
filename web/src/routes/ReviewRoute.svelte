@@ -1,5 +1,8 @@
 <script lang="ts">
   import { tick, onDestroy } from "svelte";
+  import { previewHashHref } from "../lib/filePreview";
+  import { rememberReviewVisit, takeReviewVisit, reviewVisitItemKey } from "../lib/review/visit";
+  import { artifactForPressOnThePage } from "../lib/managedArtifactPress";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { navigationWindow, reviewProposalIdentity } from "../lib/navigation/presentation";
   import { reviewQueueImpact, runtimeCountImpact } from "../lib/reviewNavigationImpact";
@@ -17,6 +20,7 @@
   import type {ReviewHistoryKey} from "../lib/navigation/contracts";
 
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review requires the application navigation owner"); return value; })();
+  const restoredVisit = takeReviewVisit(navigation);
   const observer = navigation.registerRenderBoundary(`review:${crypto.randomUUID()}`,impact => {
     const view=navigation.state.effective;return reviewQueueImpact(impact,view ? navigation.presentationFor(view) : undefined) || showFinal && runtimeCountImpact(impact,view ? navigation.presentationFor(view) : undefined);
   });
@@ -25,7 +29,7 @@
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
   let review = $derived(displayed ? navigation.presentationFor(displayed).review : null);
 
-  let reviewAnchor=$state<string|null>(null);
+  let reviewAnchor=$state<string|null>(restoredVisit?.anchor ?? null);
   let queueWindow=$derived(navigationWindow(displayed?navigation.presentationFor(displayed):undefined,'review'));
   let reviewRequest=$state.raw(navigation.owner.getRequest());
   function updateReviewDemand():void {
@@ -42,10 +46,25 @@
     finalLatched=true;
   }});
   onDestroy(()=>navigation.owner.setDemand('review',undefined));
+  function openArtifact(event: MouseEvent): void {
+    const file = artifactForPressOnThePage(event);
+    if (!file) return;
+    event.preventDefault();
+    const artifactHref = previewHashHref(file);
+    rememberReviewVisit(navigation, {
+      artifactHref, anchor: reviewAnchor, skipped: { ...skipped },
+      skippedHistory: [...skippedHistory], returnCohort: [...returnCohort],
+      currentKey: currentItem ? itemKey(currentItem) : null, finalLatched,
+      proposalDraft: proposalDraft ? { ...proposalDraft } : null
+    });
+    window.location.hash = artifactHref;
+  }
   let renderedBody = $state(0);
-  let skipped = $state<Record<string, boolean>>({});
-  let skippedHistory=$state<ReviewHistoryKey[]>([]);
-  let returnCohort=$state<ReviewHistoryKey[]>([]);
+  let skipped = $state<Record<string, boolean>>(restoredVisit?.skipped ?? {});
+  let skippedHistory=$state<ReviewHistoryKey[]>(restoredVisit?.skippedHistory ?? []);
+  let returnCohort=$state<ReviewHistoryKey[]>(restoredVisit?.returnCohort ?? []);
+  let resumeKey=$state<string|null>(restoredVisit?.currentKey ?? null);
+  let proposalDraft=$state<{identity:string;text:string;editedBody?:string}|null>(restoredVisit?.proposalDraft ?? null);
   let returnLabel=$derived.by(()=>{void reviewRequest;return reviewReturnLabel(displayed,navigation.owner.getRequest(),skippedHistory);});
   // The route's own element. The approve shortcut's lookup is scoped to it, so a
   // card mounted by another screen at the same time can never be the one a Review
@@ -53,13 +72,13 @@
   let screenElement = $state<HTMLElement | null>(null);
 
   function itemKey(item: ReviewItem): string {
-    return item.review_item_type === "message" ? `message:${item.conversation_id}` : `ticket:${item.ticket_id}`;
+    return reviewVisitItemKey(item);
   }
 
   let items = $derived(queueWindow ? queueWindow.members.flatMap(key=>(review?.items ?? []).filter(item=>key.kind===(item.review_item_type === 'message' ? 'address' : 'ticket') && key.id===(item.review_item_type === 'message' ? item.address_id : item.ticket_id))) : review?.items ?? []);
   let runningWorkerCount = $derived(displayed?.runtimeCurrent ? review?.runningConversationCount ?? null : null);
   let waitingCount = $derived(displayed?.runtimeCurrent ? navigation.presentationFor(displayed).globalCounts?.review ?? null : null);
-  let finalLatched = $state(false);
+  let finalLatched = $state(restoredVisit?.finalLatched ?? false);
   let returning = $state(false);
   let returnError = $state<unknown>(null);
   let busyConversations = $state<Record<string,boolean>>({});
@@ -87,7 +106,32 @@
     }
     return true;
   }
+  let restoring = $state(Boolean(restoredVisit));
+  let restoredScopeReady = $derived(Boolean(displayed?.runtimeCurrent && review && queueWindow
+    && displayed.publication.view?.scopeGeneration === reviewRequest.scope_generation
+    && reviewRequest.windows.find(window=>window.section==='review')?.anchor === reviewAnchor));
+  $effect(() => {
+    if (!restoring || !restoredScopeReady || !queueWindow) return;
+    const saved = items.find(item=>itemKey(item)===resumeKey && !skipped[itemKey(item)]);
+    if (resumeKey && !saved) {
+      if (queueWindow.next) {
+        // Earlier arrivals can push the saved card beyond this bounded page.
+        // Seek it in fresh pages, rather than replaying its old decision.
+        reviewAnchor = queueWindow.next;
+        return;
+      }
+      // The card left Review elsewhere. Rebase the pass onto the live first page.
+      resumeKey = null;
+      reviewAnchor = null;
+      return;
+    }
+    // The server can rebase an expired page anchor while the file is open.
+    reviewAnchor = queueWindow.request.anchor;
+    restoring = false;
+  });
+  let reviewReady = $derived(Boolean(review) && !restoring);
   let currentItem = $derived.by<ReviewItem | null>(() => {
+    if (!reviewReady) return null;
     if(heldCard && !skipped[itemKey(heldCard)]) {
       const current=items.find(item=>itemKey(item)===itemKey(heldCard!));
       if(heldCard.review_item_type==='message') {
@@ -101,19 +145,20 @@
         }
       }
     }
-    return items.find(item=>!skipped[itemKey(item)]) ?? null;
+    return items.find(item=>itemKey(item)===resumeKey && !skipped[itemKey(item)])
+      ?? items.find(item=>!skipped[itemKey(item)]) ?? null;
   });
   let messageBusy = $derived(currentItem?.review_item_type==='message' ? Boolean(busyConversations[currentItem.conversation_id]) : Boolean(currentItem?.messages.some(message=>busyConversations[message.conversation_id])));
   // Only a completed last window is terminal. An exhausted intermediate window
   // keeps the existing pagination path, and loading never admits the final screen.
-  let terminalWindow = $derived(Boolean(displayed?.runtimeCurrent && review && queueWindow
+  let terminalWindow = $derived(Boolean(reviewReady && displayed?.runtimeCurrent && queueWindow
     && queueWindow.request.anchor === reviewAnchor && !queueWindow.next && !currentItem));
   let showFinal = $derived(finalLatched || !returning && terminalWindow);
   $effect(() => {
     if (!returning && terminalWindow) finalLatched = true;
   });
   $effect(()=>{
-    if (finalLatched) return;
+    if (!reviewReady || finalLatched) return;
     if(!heldCard && currentItem && (currentItem.review_item_type==='message' || currentItem.messages.length))heldCard=currentItem;
     else if(heldCard?.review_item_type==='ticket' && currentItem?.review_item_type==='ticket' && heldCard.ticket_id===currentItem.ticket_id
       && currentItem.messages.some(message=>!heldCard || heldCard.review_item_type!=='ticket' || !heldCard.messages.some(held=>held.conversation_id===message.conversation_id && held.address_id===message.address_id)))heldCard=currentItem;
@@ -122,7 +167,7 @@
 
 
   $effect(()=>{
-    if(!showFinal && queueWindow?.next && items.length && items.every(item=>skipped[itemKey(item)])) {
+    if(reviewReady && !showFinal && queueWindow?.next && items.length && items.every(item=>skipped[itemKey(item)])) {
       reviewAnchor=queueWindow.next;
     }
   });
@@ -135,6 +180,7 @@
     reviewAnchor = null;
     skipped = {};
     heldCard = null;
+    resumeKey = null;
     try {
       // Let the reset window demand reach the owner before requesting a fresh view.
       // Keep the composer mounted until that read succeeds, even for an empty result.
@@ -155,6 +201,7 @@
 
   function skip(item: ReviewItem): void {
     if(messageBusy)return;
+    resumeKey=null;
     const key=reviewHistoryKey(item);
     if(!skippedHistory.some(previous=>previous.kind===key.kind && previous.id===key.id))skippedHistory=[...skippedHistory,key];
     skipped = { ...skipped, [itemKey(item)]: true };
@@ -195,7 +242,7 @@
     void bodyObservation;
     const count = runningWorkerCount;
     const finalCount = showFinal ? waitingCount : undefined;
-    if (!effective?.runtimeCurrent || !element) return;
+    if (!reviewReady || !effective?.runtimeCurrent || !element) return;
     const publication = effective.publication;
     const observation = observer.observeSelectors(publication,generation);
     let obsolete = false;
@@ -263,8 +310,10 @@
   </div>
 {/snippet}
 
-<section class="review-screen" class:review-screen-final={showFinal} data-screen="review" bind:this={screenElement}>
-  <ResourceState shape="block" loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<section class="review-screen" class:review-screen-final={showFinal} data-screen="review" bind:this={screenElement} onclick={openArtifact}>
+  <ResourceState shape="block" loading={!reviewReady} hasData={reviewReady} loadingText="Loading review...">
     {#if showFinal}
       <ReviewFinalState {returnLabel} {waitingCount} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
     {:else if currentItem}
@@ -282,7 +331,11 @@
               {@const proposal = ticket.proposal}
               {#key reviewProposalIdentity(proposal)}
                 <ReviewProposalCard identity={proposal} embedded ticketId={proposal.ticket_id} field={proposal.field}
-                  title={proposal.title} onResolved={proposalResolved} onRendered={()=>{renderedBody+=1;}}/>
+                  title={proposal.title} onResolved={proposalResolved} onRendered={()=>{renderedBody+=1;}}
+                  initialRevisionDraft={proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.text : ""}
+                  initialEditedBody={proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.editedBody : undefined}
+                  onEditedBodyChange={editedBody=>{proposalDraft={identity:reviewProposalIdentity(proposal),text:proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.text : "",editedBody};}}
+                  onRevisionDraftChange={text=>{proposalDraft={identity:reviewProposalIdentity(proposal),text,editedBody:proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.editedBody : undefined};}}/>
               {/key}
             {/if}
             {#each ticket.messages as message (message.conversation_id)}
@@ -299,6 +352,7 @@
     {/if}
   </ResourceState>
 </section>
+
 
 <style>
   .review-screen-final { max-width:calc(var(--measure-index) + var(--page-gutter)*2); }

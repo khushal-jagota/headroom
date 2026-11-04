@@ -15,52 +15,38 @@ Small skill-text edits are not this worker's job. The user makes those directly.
 
 ## Where a Worker lives
 
-A Worker is declared in the database, in one place, and an amendment takes effect at once. There is no repository change and no deployment.
+A Worker type is a reusable preset in the database. Each Ticket owns its copied stages. A preset amendment affects future Tickets.
 
-- **Structure** — stages, fields, ownership modes, runtime defaults. Read it with `panels worker-type show <type>`, which prints the record. It is written back with `panels worker-type save`, which reads the whole record on stdin.
-- **Skill text** — `panels worker-type skill <type> --description "..."`, with the markdown body on stdin. Panels writes the row, writes the file every agent reads, and records the exact bytes.
+Read the structured record with `panels worker-type show <type>`. Its `guidance` and stage `instructions` generate the specialist skill. The structured record is the editable source.
 
-You can read both. You cannot write either: both endpoints are owner-only, and no Ticket principal of any type can reach them. That is deliberate, not a fault to work around. Overriding your principal would be forging one. So you prepare the exact bytes and hand them up — see Consequences.
+Preset Tickets read that specialist skill as usual. Changes to its instructions reach those Workers when they read the skill again. Their saved stages do not change.
 
-Both take effect immediately. `src/planner/skills/` is only what a database with no skills in it is seeded from, so a shipped skill and a live one can differ, and the live one wins.
+Only the owner or Chief can save the preset. Prepare exact bytes and hand them up. Never override your principal.
 
-## needs_amendment — agree the change and its blast radius (user-owned)
+## needs_amendment — agree the change (user-owned)
 
-Read the current definition and skill before you say anything. Then agree with the user what changes, and report what it does to live tickets of that type.
+Read the current structured definition and specialist skill. Agree on the preset changes and the effect of shared specialist instructions on existing Workers.
 
-Look before you propose. `panels ticket list --json` names the live tickets and where they sit. Report three things:
+Preset stage edits never move existing Tickets, remove their fields, or change their approvals. Do not move Tickets to accommodate a preset edit. Active workflow replacement is outside this process.
 
-- Tickets sitting in a Stage that is being removed. Panels refuses the save while any of them is unfinished, and names them. Agree with the user where each one goes first.
-- Tickets holding text in a field that is being removed. Panels refuses that save too, for the same reason: the text would be dropped.
-- Everything else, which is fine — including finished Tickets holding content in a removed field. That content goes dark. That is accepted loss. Do not rewrite history.
+## needs_drafting — prepare the revised record
 
-Give the count and the ids. "Some tickets may be affected" is not a blast radius.
+Write the revised structured record as a Ticket artifact. Put instructions beside their stages and common guidance in `guidance`. Include a generated skill preview. Do not edit the specialist body independently.
 
-The user decides what happens to anything in the way. That decision belongs in this field.
+Show the meaningful changes. Preserve the instructions that the user did not change. Nothing is saved in this stage.
 
-## needs_drafting — write the revised record
+## needs_consequences — hand up the save and verify it
 
-Write the revised record, and the revised skill text if the skill changes, as Ticket artifacts. Nothing is saved in this Stage.
+1. Validate the prepared record against the current workflow and preset rules.
+2. Hand the owner or Chief `panels worker-type save` with the exact approved record.
+3. Record the artifact digest for comparison with the approved bytes.
+4. Read back the definition and generated specialist skill.
+5. Confirm that existing Ticket stages and approvals remain intact.
+6. Update the repository seed and relevant documentation through the ordinary branch route.
 
-The point is that the exact stages get read before they take effect, not after. Show what changed, not the whole record, when the change is small.
+The structured record and generated skill save together. Do not use a second specialist-body write.
 
-Skill text is instruction for a capable agent, not documentation. Amending a skill is more often deleting than adding.
-
-## needs_consequences — get it saved, then verify it
-
-The two writes are not yours to make. Hand them up and verify the result.
-
-1. Move any Ticket the user agreed to move, before the save. Panels refuses a save that would strand one.
-2. Prove the record before you hand it over. The refusal arrives before the record is ever looked at, so you cannot learn from it that the record would have been accepted. Parse the prepared record with the deployed validator, and re-run the strand conditions read-only, so whoever runs the save is not running it blind. Report both results.
-3. Hand your supervisor, or the Chief if you have none, the two commands to run back to back, in this order: `panels worker-type save` with the approved record on stdin, then `panels worker-type skill <type> --description "..."` with the skill body on stdin, when the skill text changed. Record first, then skill — a skill that describes fewer Stages than the record still gates would deny a Stage that is live.
-4. Give the sha256 of each artifact you prepared, so whoever runs it can confirm they ran what was approved, and so you can confirm it afterwards.
-5. Read it back yourself with `panels worker-type show <type>`, and read the stored skill bytes. Write Consequences from what the live store returns, never from what was sent.
-6. Update `src/planner/skills/panels-worker-<name>/SKILL.md` in the repository when the skill text changed, so a fresh install is seeded with the current text. This is a repository change with no effect on this Panels, and it goes through the ordinary branch and staging route.
-7. Update `docs/worker-types.md` when the set of types or their shape changed.
-
-A seeding pass on a fresh deploy will not apply your amendment: seeding declines a table that already holds rows. Only the explicit save does it.
-
-A good Consequences is short and verified: what changed, what `panels worker-type show` reports now, who ran the save, and what if anything is waiting on a repository change.
+Write a short, verified Consequences report from the saved result.
 
 ## Boundaries
 

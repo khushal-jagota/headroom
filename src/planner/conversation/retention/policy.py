@@ -19,12 +19,16 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "reconcile_native_recovery",
         "reconcile_native_main",
         "reconcile_native_mac_release",
+        "reconcile_native_staging",
         "video_upload_ledger",
         "mac_vps_execution",
         # This workspace CHECK expansion leaves diagnostics and mac_runs unchanged.
         "executor_default_workspace",
         # Ticket audit reasons and navigation dirtiness leave diagnostics and views unchanged.
         "ticket_integrity_reason",
+        # Manager launch choices leave diagnostic events and view schemas unchanged.
+        "manager_launch_defaults",
+        "goal_outcomes",
         "automatic_project_measures",
         # Goal storage/history adds no changes to diagnostic event or view schemas.
         # Goal identities remain ineligible under the existing owner classifier.
@@ -41,6 +45,11 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "goal_source_responsibility",
         "scalar_observation_coverage",
         "goals_staging_reconciliation",
+        # Attention history, the macOS flag removal, and saved Ticket workflows
+        # leave diagnostic events and conversation view schemas unchanged.
+        "attention_history",
+        "remove_macos_requirements",
+        "ticket_owned_workflows",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

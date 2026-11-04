@@ -1,39 +1,63 @@
 # Managers and Chief
 
-A Manager is a stable place to hold a direction and the Tickets that serve it. It has a goal, a recap, an optional project, child Tickets, artifacts, and its own conversation. The Manager agent commissions and steers Workers. It has no private API. It calls the same routes everyone else calls, and authority limits it to its own record and its current children.
+A Manager is an agent that holds one direction and the Tickets that serve it. It exists so a line of work has a stable home and a supervisor: someone who commissions Workers, reads their results, decides the proposals addressed to it, and keeps a short status a person can read. Chief is the top-level agent above all of them.
 
-Chief is the special case: an assignment target and a global principal who stands above everything, with a retained conversation and settings. Chief is not stored as an ordinary Manager row. Chief never settles.
+## What a Manager is made of
 
-Assignment, ceiling holder, and Chief’s global reach are three different facts. A Ticket can be assigned to a Manager, park its proposal for Khushal, and still be approvable by Chief because Chief stands above it.
+- **A goal**: the sentence that says why this Manager exists. This is a field on the Manager, not a [goal](goals.md) with a deadline and a page.
+- **A recap**: the current status line. Each new recap replaces the old one.
+- **An optional project.** A Manager's project is also the project of its Tickets and of the schedules assigned to it.
+- **Child Tickets**: the Tickets assigned to it.
+- **Artifacts** and **its own conversation**, on the ordinary [conversation system](conversations.md).
+- **A launch setup**: the backend, model, and reasoning its conversation uses.
 
-## Goal, recap, and settlement
+## Chief
 
-The goal is why the Manager exists. A non-blank goal can start the Manager conversation as a queued message. That message does not create a reply debt. The recap is the current status line. A new recap replaces the old one. The owner and the Manager may edit both. Cards show the recap. An empty recap falls back to the child count. It does not fall back to the goal. Chief has a recap and no goal band.
+Chief is the special case. It is a global principal that stands above everything, with its own retained conversation and settings. Tickets can be assigned to Chief directly. Chief is not stored as an ordinary Manager, has no goal field, and can never be settled.
 
-Settlement is an owner-only control on an ordinary Manager. It changes presentation: the Manager leaves the active rail and can be reopened from Settled. Workers keep running, Ticket approvals stay in Review, and messages can still be sent. The settled Manager’s own unread conversation leaves Review. Ticket messages under that Manager stay eligible until the Ticket is Done or backlogged. Children are not completed. Settled is the right destination for new work to avoid. Existing work may continue. Chief cannot be settled, and Chief cannot settle anyone. The settle writer checks for the owner directly, which is tighter than the usual “Chief stands above everything” rule.
+## What a Manager does
 
-## Children
+A Manager acts through the same routes as everyone else. It has no private API. [Authority](authority.md) limits it to its own record and its current children. It can create child Tickets, approve or send back their proposals, message them, delete them, and restart a Worker that errored. It cannot move a Ticket to another Manager. Only Khushal and Chief can.
 
-The Manager creates children through ordinary Ticket creation. The Workspace lists each child with its attention and its proposal holder, not the full stage bodies. Opening a row opens the Ticket. Deleting a child is permanent and can cut off a Worker mid-turn. A Manager may not re-parent a Ticket. Moving work to another Manager changes who stands above it, and that stays with Khushal and Chief. See [Who may act](authority.md).
-
-Backlogged and Done children are sections on the Manager page. The rail’s attention groups omit backlogged Tickets. Chief’s page shows Chief’s children beside Chief’s conversation, in pages.
+The owner, Chief, Managers, and Workers talk through Send Message, which delivers a real prompt into the recipient's conversation. Two Managers can message each other. That is speech, not authority over each other's Tickets.
 
 ## How a Manager hears about work
 
-Three kinds of durable wake become real queued prompts in the Chief or Manager conversation. They are recorded in the same transaction as the fact that caused them. A loop later delivers a batch, and it closes a wake only when that prompt is durably in the notebook. A stale proposal notice is dropped rather than sent. Replying to a wake does not approve anything. Approval is still the proposal resolver.
+Some events become durable **wakes**, real prompts queued into the responsible Chief or Manager conversation:
 
-- A proposal routed to Chief or to that Manager.
-- The worker-step claim becoming errored, for an ordinary Manager named on the Ticket. A Chief-assigned Ticket has no Manager id, so this particular wake is not created. The owner sees that failure through attention.
-- A Ticket turn that failed, when the ceiling holder is an agent. If the holder is Khushal, he is told through attention and notifications, not through this wake.
+- a Ticket proposal parked for that Manager or for Chief;
+- a worker step erroring on an ordinary Manager's child Ticket;
+- a Ticket turn failing when an agent holds that Ticket's review;
+- a [measure source](measures.md) failing when that Manager or Chief is responsible for it.
 
-The owner, Chief, and Managers talk to each other, and to Workers, through Send Message. Two Managers may message one another. That permission is speech. It does not put either above the other’s Tickets. Backend chatter inside a Manager’s own turn is not delivery to Khushal. Delivery is Send Message.
+Each wake is recorded in the same write as the event that caused it, then delivered by a loop, so a crash cannot lose it. A notice that has gone stale, such as a proposal already decided, is dropped rather than sent. Replying to a wake approves nothing. Proposals are decided only through the [Ticket lifecycle](tickets.md).
 
-## What feeds a Manager, and where it shows up
+When the event concerns Khushal rather than an agent, it reaches him through [Review](review.md) and [notifications](notifications.md) instead.
 
-Creation, goal and recap edits, child Ticket activity, and wakes feed the Manager. The Manager feeds child Tickets, messages, and its own recap. Workspace shows Chief first, then active Managers with their Workers grouped by attention, then a Settled fold. A Manager page is the header, the recap, the conversation, and the children. `#/workspace/chief-of-staff` opens Chief. `#/workspace/manager/<id>` opens a Manager. Older `#/workspace/item/…` and `#/agents/chief-of-staff` addresses still redirect.
+## Settlement
 
-## Pointers
+Settling a Manager is a presentation control, and only Khushal may do it. A settled Manager leaves the active part of the Workspace rail and can be reopened from Settled. Its children keep running, their approvals stay in Review, and messages still work. Settled means "don't put new work here", not "stop".
 
-`src/planner/managers/` is the record. Wakes live in `src/planner/manager_wakes/`. The screens are `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`.
+## Launch setup
 
-_Last verified: 2026-10-30._
+Khushal and Chief set the default backend, model, and reasoning for new Managers, and can change any one Manager's setup. A new Manager copies the defaults. A change applies to the next message and does not interrupt a running turn. An existing conversation keeps its backend. Switching backend means starting a new conversation.
+
+## Where it shows up
+
+The Workspace shows Chief first, then active Managers with their Tickets grouped by the attention they need, then the Settled fold. A Manager page has its header, recap, conversation, and children. When a Manager or Chief page opens, its children list shows a placeholder until its own data arrives, then draws once. `panels manager` reaches the same records.
+
+## Decisions that shape it
+
+- **No private API.** A Manager's power is exactly what the authority rule gives it over its current children.
+- **Assignment is not re-assignable by the assignee.** Handing a Ticket away would let a Manager give away authority it holds, so only Khushal and Chief move work.
+- **Wakes are written with their cause.** A supervisor is never told about something that did not commit, and never misses something that did.
+- **Settlement hides. It does not stop.** Work in flight always finishes or fails on its own terms.
+
+## Code
+
+- `src/planner/managers/`: the record, settlement, and launch settings.
+- `src/planner/manager_wakes/`: wake creation and delivery.
+- `src/planner/worker_settings/`: Chief's own settings.
+- `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`: the screens.
+
+_Last verified: 2026-11-04._

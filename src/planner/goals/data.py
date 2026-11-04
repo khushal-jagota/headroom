@@ -26,6 +26,11 @@ def _goal(row: sqlite3.Row) -> Goal:
         revision=row["revision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        completion_rule=(
+            json.loads(row["completion_rule"])
+            if "completion_rule" in row.keys() and row["completion_rule"] else None
+        ),
+        completion_date=row["completion_date"] if "completion_date" in row.keys() else None,
         employee_backend=row["employee_backend"],
         employee_launch_model=row["employee_launch_model"],
         employee_launch_reasoning_effort=row["employee_launch_reasoning_effort"],

@@ -25,7 +25,6 @@ from planner.tickets.contracts import (
     WorkerStepClaim,
 )
 from planner.tickets.logic import machine
-from planner.worker_types.configuration import configured_worker_type_registry
 
 if TYPE_CHECKING:
     from planner.runtime.worker_step_readiness_loop import WorkerStepStartResult
@@ -47,7 +46,7 @@ def require_restartable(
     """
     authority.require_above(conn, principal, authority.ticket(ticket_id))
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    worker_type_definition = ticket.workflow
     ownership_mode = machine.stage_ownership_mode(
         ticket.stage,
         worker_type_definition=worker_type_definition,
@@ -279,9 +278,7 @@ def _restart_result(
             else worker_step_readiness.worker_step_blocker(
                 conn,
                 restarted,
-                worker_type_definition=configured_worker_type_registry().require(
-                    restarted.worker_type
-                ),
+                worker_type_definition=restarted.workflow,
             )
         ),
     }

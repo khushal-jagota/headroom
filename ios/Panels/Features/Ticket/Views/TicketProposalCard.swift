@@ -34,7 +34,7 @@ struct TicketProposalCard: View {
                 }
                 Button("Approve") { approveOpen = true }
                     .buttonStyle(ReviewActionStyle(approval: true))
-                    .disabled(presentation.manifest.advance?[presentation.ticket.stage] == nil)
+                    .disabled(presentation.manifest.advance[presentation.ticket.stage] == nil)
             }
             if proposal.field != "brief" && presentation.ticket.conversationId == nil {
                 Text("No existing Worker conversation to send a revision to.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)

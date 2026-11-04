@@ -122,8 +122,8 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
     assert_prepared_rejected(path)
     with current_navigation_database(path) as conn:
         current = snapshot(conn)
-        assert current["schema_version"] == 9
-        assert current["semantics"] == "attention-knowledge-v9-review-messages"
+        assert current["schema_version"] == 10
+        assert current["semantics"] == "attention-knowledge-v10-ticket-workflows"
         assert current["scope"] == old["scope"]
         assert current["epoch"] != old["epoch"]
         assert source_facts(conn)["events"] == original["source"]["events"]
@@ -173,7 +173,7 @@ def test_review_projection_upgrade_resets_old_cursors_without_granting_authority
         with pytest.raises(RuntimeError, match="current schema"):
             snapshot(conn)
     with current_navigation_database(path) as conn:
-        assert snapshot(conn)["schema_version"] == 9
+        assert snapshot(conn)["schema_version"] == 10
         assert (
             conn.execute("SELECT ordering_generation FROM navigation_view_meta")
             .fetchone()[0]

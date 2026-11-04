@@ -227,6 +227,9 @@ class PromptEventPayload:
     recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
     # Reviewed receipt settlement can identify an earlier unminted uncertainty row.
     reconciles_sequence: int | None = None
+    # Set only by the canonical system writer for internal, unaddressed automation.
+    # Absent legacy provenance stays unknown. No send request accepts this field.
+    system_generated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -629,6 +632,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
+                **({"system_generated": True} if payload.system_generated else {}),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
                 **(
                     {
@@ -859,6 +863,9 @@ def _payload_from_json_object(
                     stored, "sent_at_unix_milliseconds"
                 ),
                 reconciles_sequence=_optional_whole_number(stored, "reconciles_sequence"),
+                system_generated=_boolean(stored, "system_generated")
+                if "system_generated" in stored
+                else False,
                 sender=_optional_principal(stored, "sender"),
                 recipient=_optional_principal(stored, "recipient"),
             )

@@ -1,14 +1,6 @@
 import Foundation
 
 extension APIClient {
-    func ticketWorkerType(_ workerType: String) async throws -> TicketWorkerType {
-        let response: TicketWorkerTypes = try await get("/api/worker-types/\(workerType)/manifest")
-        guard let manifest = response.workerTypes.first(where: { $0.workerType == workerType }) else {
-            throw APIError(status: 0, message: "This worker type is unavailable.")
-        }
-        return manifest
-    }
-
     func setTicketBacklogged(_ ticket: TicketDetail, backlogged: Bool) async throws {
         struct Body: Encodable { let expected_record_sha256: String }
         _ = try await ticketWrite("/api/tickets/\(ticket.id)/\(backlogged ? "backlog" : "resume")",

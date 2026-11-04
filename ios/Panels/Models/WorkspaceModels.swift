@@ -17,7 +17,7 @@ struct TicketSummary: Codable, Identifiable, Sendable {
     var locale: String? = nil
     let id: String
     let title: String
-    let workerType: String
+    let workerType: String?
     let stage: String
     let ticketStatus: String
     let isBacklogged: Bool
@@ -100,7 +100,7 @@ extension TicketSummary {
         locale = try c.decodeIfPresent(String.self, forKey: .locale)
         id = try required(String.self, .id, broken: "")
         title = try required(String.self, .title, broken: "")
-        workerType = try required(String.self, .workerType, broken: "")
+        workerType = try c.decodeIfPresent(String.self, forKey: .workerType)
         stage = try required(String.self, .stage, broken: "")
         ticketStatus = try required(String.self, .ticketStatus, broken: "")
         isBacklogged = try required(Bool.self, .isBacklogged, broken: false)
