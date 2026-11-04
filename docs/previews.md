@@ -26,7 +26,7 @@ Previews need trusted Tailscale ingress to be configured on the live host. Witho
 
 Preview pages run in Headroom's own browser origin. Their scripts can call Headroom's APIs and read its storage. The app already runs as the same Unix user as Headroom. The registration check proves where a process runs from. It does not prove who wrote it or contain it. Never put a vendor demo, a downloaded sample, or a page with third-party scripts behind a preview.
 
-The tailnet is the gate: only tailnet members reach the origin. It is not local authentication. Any process on the host can reach a loopback port. See [Invariants](invariants.md).
+The tailnet is the gate: only tailnet members reach the origin. It is not local authentication. Any process on the host can reach a loopback port.
 
 ## The load it places on Headroom
 

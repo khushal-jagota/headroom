@@ -4,7 +4,7 @@ A Worker type is a way of paying attention. Coding, research, debugging, and des
 
 ## What a type declares
 
-- **The ladder.** Every type starts at Brief and ends with Consequences, then Done. Consequences is where the follow-through happens: merge, deploy, follow-up Tickets, bookkeeping, and a report. The stages between are the type's own argument for how that kind of work should unfold.
+- **The ladder.** Every type starts at Brief and ends with Consequences, then Done. Consequences is where the follow-through happens: merge, follow-up Tickets, bookkeeping, and a report. Deployment stays a separate owner action. The stages between are the type's own argument for how that kind of work should unfold.
 - **Stage ownership.** A worker-owned stage is the Worker's to draft. A user-owned stage is collaborative: the Worker gets one automatic opening turn, then the person and the Worker continue in the same conversation until the gate is filled. Ownership does not decide whether a proposal waits. The [ceiling](tickets.md) does.
 - **A specialist skill**, the instructions this kind of Worker reads on top of the shared Worker skill. See [Skills](skills.md).
 - **Launch defaults**: the backend, model, and reasoning a new Ticket copies as its starting setup. Khushal can change them in Settings. A change affects future Tickets only.

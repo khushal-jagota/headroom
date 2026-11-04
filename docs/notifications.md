@@ -32,9 +32,7 @@ The flags are separate because the events are separate. Held as one flag, a mess
 
 A push carries a short title, a body such as "has a message for you", a link, and one replacement tag per subject, so a newer push replaces the older one on the device. It never carries the transcript, the prompt, or the text of an ask. The link opens the Ticket, Chief, goal, or Manager it is about.
 
-Changing a preference affects future edges and does not replay the past. Startup can clear a stale "needs an answer" flag when the notebook shows the turn already ended, and that correction raises no edge.
-
-When a parked review moves to an agent holder, Headroom tries to send that agent a courtesy message in its conversation. A review that moves to Khushal gets no arrival message.
+Changing a preference affects future edges and does not replay the past.
 
 Headroom can be installed from the browser. Pushes need HTTPS outside localhost, and on iPhone or iPad they work from the installed Home Screen app. The service worker only handles pushes. It does not cache the app, and there is no offline copy.
 
