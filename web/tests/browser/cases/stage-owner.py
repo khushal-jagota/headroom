@@ -1,4 +1,4 @@
-"""Prove structured preset saves and custom creation through the existing Config host.
+"""Prove structured preset saves through the existing Config host.
 
 This replaces the old immediate owner-save expectations. The product now saves a
 coherent draft, and specialist Markdown is generated from that structured draft.
@@ -54,7 +54,6 @@ def run(browser, urls):
         },
     }
     posts = []
-    created = []
     refuse_next = False
     errors = []
 
@@ -121,9 +120,6 @@ def run(browser, urls):
             result = {"managers": []}
         elif path == "/api/conversation/backends":
             result = {"backends": []}
-        elif path == "/api/tickets" and method == "POST":
-            created.append(route.request.post_data_json)
-            result = {"id": "created-ticket"}
         else:
             result = {}
         if resource_key:
@@ -167,38 +163,5 @@ def run(browser, urls):
     assert len(posts) == 3
     assert record["guidance"] == "Preserve this draft after refusal."
 
-    # The same editor customizes a copied preset during Ticket creation. No
-    # preset save occurs; only the final reviewed Ticket payload leaves the form.
-    page.goto(urls[0] + "?create=1")
-    dialog = page.locator("[data-create-ticket]")
-    expect(dialog).to_be_visible()
-    dialog.locator("[data-create-title]").fill("Inspect a concrete problem")
-    dialog.locator("[data-create-preset]").select_option("coding")
-    dialog.get_by_role("button", name="+ Add stage", exact=True).click()
-    new_stage = dialog.locator("[data-workflow-stage]").nth(1)
-    new_stage.get_by_label("Stage name").fill("Inspect evidence")
-    new_stage.get_by_label("Result", exact=True).fill("Evidence")
-    new_stage.get_by_label("Instructions").fill(
-        "Compare both reports and explain each discrepancy."
-    )
-    new_stage.get_by_label("Who does it").select_option("user")
-    dialog.locator("[data-review-ticket]").click()
-    expect(dialog.locator("[data-create-ticket-review]")).to_contain_text(
-        "Compare both reports and explain each discrepancy."
-    )
-    assert created == []
-    dialog.locator("[data-create-ticket-submit]").click()
-    expect(page.locator("[data-create-ticket]")).to_have_count(0)
-    assert len(posts) == 3, "Custom Ticket edits must not change the preset"
-    assert len(created) == 1
-    payload = created[0]
-    assert payload["worker_type"] == "coding"
-    assert payload["employee_launch_model"] == "fixture-model"
-    assert len(payload["workflow"]["stages"]) == 4
-    assert (
-        payload["workflow"]["stages"][1]["instructions"]
-        == "Compare both reports and explain each discrepancy."
-    )
-    assert payload["workflow"]["stages"][1]["ownership_mode"] == "user"
     assert errors == [], errors
     page.close()
