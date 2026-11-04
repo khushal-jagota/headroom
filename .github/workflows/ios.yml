@@ -9,18 +9,27 @@ on:
 permissions:
   contents: read
 jobs:
-  native:
+  host-tests:
+    name: Native ${{ matrix.suite }} host tests
+    runs-on: macos-26
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [system-models, offline]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Host tests
+        run: bash ios/scripts/test-${{ matrix.suite }}.sh
+  simulator:
+    name: Unsigned iOS Simulator build
     runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
-        run: xcodebuild -version && swift --version
-      - name: Native system host tests
-        run: bash ios/scripts/test-system-models.sh
-      - name: Native offline and conversation host tests
-        if: ${{ !cancelled() }}
-        run: bash ios/scripts/test-offline.sh
-      - name: Unsigned iOS Simulator build
-        if: ${{ !cancelled() }}
+        run: xcodebuild -version
+      - name: Build
         run: xcodebuild -project ios/Panels.xcodeproj -scheme Panels -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/panels-ios" -jobs 4 CODE_SIGNING_ALLOWED=NO build

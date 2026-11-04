@@ -65,7 +65,12 @@ import SwiftData
         // leaves faults without a context when the caller reads the properties.
         let context = kind == "cache" ? try cacheReadContext() : try self.context
         guard let row = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first else { return nil }
-        return withExtendedLifetime(context) { kind == "cache" ? Self.cacheSnapshot(row) : row }
+        return withExtendedLifetime(context) {
+            if kind == "cache", ["same", "0", "1", "new"].contains(id) {
+                print("CACHE read", id, row.updated.timeIntervalSince1970, row.payload.count)
+            }
+            return kind == "cache" ? Self.cacheSnapshot(row) : row
+        }
     }
     private static func cacheSnapshot(_ row: LocalRecord) -> LocalRecord {
         LocalRecord(key: row.key, server: row.server, kind: row.kind, payload: row.payload, updated: row.updated)
