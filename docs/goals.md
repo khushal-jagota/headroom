@@ -28,7 +28,7 @@ There are two kinds of goal.
 
 Headroom records the date a goal completes. For a numeric goal, the background clock checks the rule against retained measurements, without a page visit or an agent turn. It saves the earliest date the finish line was met, so a later dip does not undo the hit. A corrected measurement can move or clear that date.
 
-The completion date against the deadline gives the result. On or before the deadline is a hit. Later is a miss. An unfinished goal becomes a miss when its deadline passes. The overview shows the hit rate across all goals that have a result.
+The completion date against the deadline gives the result. On or before the deadline is a hit. Later is a miss. An unfinished goal becomes a miss when its deadline passes. `panels goal` and the API report each result and the hit rate across all goals that have one. The browser does not show them.
 
 Completion and active state are separate. A finished goal stays in Active goals until someone deactivates it. Reactivation keeps the completion.
 
@@ -50,7 +50,7 @@ Khushal edits most text on the page in place. Checklist wording belongs to the a
 
 - The **goal page**, with the goal's conversation beside it.
 - **Active goals** inside the Chief card in the rail. Hovering or holding a row opens a preview with the main display, which Khushal can check or edit from there.
-- The **goals overview**, with cards, a table, and the hit rate.
+- The **goals overview**, with cards and a table.
 - `panels goal` for agents: list, show, create, edit, read, and artifact commands. `panels goal schema` prints the accepted request shapes with examples, so agents read those before a write.
 
 ## Decisions that shape it

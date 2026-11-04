@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from fastapi import FastAPI
+from tests.support.ticket_workflows import preset_workflow_json
 
 from planner.conversation.deploy_interruptions.contracts import CapturedTurn, CaptureManifest
 from planner.conversation.deploy_interruptions.data import read_summary
@@ -54,14 +55,15 @@ def test_boot_import_uses_admission_exact_claim_and_publishes_no_runtime_turn(
             "INSERT INTO "
             "tickets(id,title,worker_type,employee_backend,stage,ceiling,field_values,cr"
             "eated_at,updated_at,conversation_id,worker_step_claim,worker_step_claim_rev"
-            "ision) VALUES "
+            "ision,workflow_json) VALUES "
             "(?,?,'coding','codex','needs_implementation','needs_implementation','{}',0,"
-            "0,?,'out',?)",
+            "0,?,'out',?,?)",
             (
                 identity,
                 identity,
                 "different" if identity == "stale_link" else identity,
                 8 if identity == "stale_claim" else 7,
+                preset_workflow_json(conn),
             ),
         )
     conn.execute("UPDATE tickets SET manager_kind='manager',manager_id='m'")
@@ -196,9 +198,10 @@ def _interrupted_server(
                 "tickets(id,title,worker_type,employee_backend,stage,ceiling,field_values,"
                 "created_at,updated_at,conversation_id,worker_step_claim,"
                 "worker_step_claim_revision,manager_kind,manager_id,project_id,"
-                "employee_launch_model) VALUES "
+                "employee_launch_model,workflow_json) VALUES "
                 "('t','Worker','coding','claude','needs_implementation',"
-                "'needs_implementation','{}',0,0,'interrupted','out',7,'manager','m','p','opus')"
+                "'needs_implementation','{}',0,0,'interrupted','out',7,'manager','m','p','opus',?)",
+                (preset_workflow_json(conn),),
             )
         conn.commit()
     write_manifest(

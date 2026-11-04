@@ -93,7 +93,7 @@ def diagnostic_projection(
     result: JsonDict = {
         "id": str(row["id"]),
         "title": str(row["title"]),
-        "worker_type": str(row["worker_type"]),
+        "worker_type": row["worker_type"],
         "stage": str(row["stage"]),
         "ticket_status": "errored",
         "integrity_error": {"reason": issue.reason},

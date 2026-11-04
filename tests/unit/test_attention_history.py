@@ -168,7 +168,6 @@ def test_activation_retains_unknown_opening_and_migration_has_one_head(
         str(Path(__file__).resolve().parents[2] / "src/planner/core/migrations")
     )
     assert len(script.get_heads()) == 1
-    assert "attention_history" in {revision.revision for revision in script.walk_revisions()}
 
 
 def test_automatic_acceptance_does_not_create_explicit_approval(

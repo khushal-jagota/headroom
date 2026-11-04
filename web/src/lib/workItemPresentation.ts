@@ -18,7 +18,8 @@ export type WorkItemTicketFacts = WorkItemAttentionFacts & {
   recap_preview?: string;
   blocked?: boolean;
   stage: string;
-  worker_type?: string;
+  stage_label?: string;
+  worker_type?: string | null;
   conversation_id?: string | null;
   ticket_status: string;
   is_backlogged?: boolean;

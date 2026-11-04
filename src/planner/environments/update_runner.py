@@ -20,7 +20,7 @@ from alembic.script import ScriptDirectory
 from alembic.script.revision import ResolutionError
 from alembic.util.exc import CommandError
 
-from planner.core.db import MIGRATIONS_DIRECTORY
+from planner.core.db import BASELINE_REVISION, MIGRATIONS_DIRECTORY
 from planner.environments.app import validate_app_manifest
 from planner.environments.backup import restore_database_snapshot
 from planner.environments.deployment import (
@@ -45,7 +45,7 @@ def validate_schema_ancestry(database: Path, migrations: Path = MIGRATIONS_DIREC
         graph = ScriptDirectory(str(migrations))
     except CommandError as exc:
         raise ValueError("The pinned application has no usable migration history.") from exc
-    floor = "video_upload_ledger"
+    floor = BASELINE_REVISION if graph.get_bases() == [BASELINE_REVISION] else "video_upload_ledger"
     try:
         with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as conn:
             revisions = [

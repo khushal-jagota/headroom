@@ -9,7 +9,7 @@ from pathlib import Path
 
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
-from planner.core.config import Config
+from planner.core.config import DB_BUSY_TIMEOUT_MS, Config
 from planner.core.errors import PlannerError
 from planner.measure_sources.contracts import RuntimeLimits, SourceRuntime
 from planner.measure_sources.dispatcher import SourceDispatcher
@@ -33,7 +33,7 @@ class SourceScheduleParticipant:
             clock,
             runtime,
             key_path=Path(config.credential_key_path),
-            busy_timeout_ms=config.db_busy_timeout_ms,
+            busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
             runtime_limits=RuntimeLimits(config.measure_source_timeout_seconds),
             workspace_admission=workspace_admission,
         )

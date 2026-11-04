@@ -11,7 +11,8 @@ because the second one waits for the first one's lock.
 The commit announces itself on the change signal only when the rows it wrote are ones a
 screen outside the conversation reads. See ``_commit_appended_rows``.
 
-Rows are written once. Nothing here updates or deletes a row it has written.
+Notebook rows are written once. Nothing here updates or deletes one. A live background
+task is the exception: its row says the task is running, and it goes when the task ends.
 """
 
 from __future__ import annotations
@@ -198,6 +199,7 @@ class ConversationAttentionFacts:
 
     unread_message_to_owner: bool
     last_turn_failed: bool
+    has_live_background_task: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -1033,8 +1035,97 @@ class ConversationStore:
     async def attention_facts(
         self, conversation_ids: Collection[str]
     ) -> dict[str, ConversationAttentionFacts]:
-        """Return owner-message and last-turn facts for a list of conversations."""
+        """Return owner-message, last-turn and background task facts for conversations."""
         return await asyncio.to_thread(self._attention_facts_sync, conversation_ids)
+
+    # --- background tasks ---
+    #
+    # A conversation's live background tasks are the ones its agent started and whose end
+    # has not been heard. Every write announces itself, because whether an agent is working
+    # is read by screens outside the conversation.
+
+    @staticmethod
+    def record_background_task_started_in_transaction(
+        conn: sqlite3.Connection, conversation_id: str, task_id: str, task_description: str
+    ) -> None:
+        conn.execute(
+            "INSERT OR REPLACE INTO conversation_background_tasks "
+            "(conversation_id, task_id, task_description) VALUES (?, ?, ?)",
+            (conversation_id, task_id, task_description),
+        )
+
+    @staticmethod
+    def record_background_task_ended_in_transaction(
+        conn: sqlite3.Connection, conversation_id: str, task_id: str
+    ) -> None:
+        conn.execute(
+            "DELETE FROM conversation_background_tasks WHERE conversation_id=? AND task_id=?",
+            (conversation_id, task_id),
+        )
+
+    @staticmethod
+    def take_background_tasks_in_transaction(
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        *,
+        task_ids: tuple[str, ...] | None = None,
+    ) -> tuple[str, ...]:
+        """Forget this conversation's live tasks and return their descriptions.
+
+        ``task_ids`` of ``None`` means every live task of the conversation.
+        """
+        rows = conn.execute(
+            "SELECT task_id, task_description FROM conversation_background_tasks "
+            "WHERE conversation_id=? ORDER BY rowid",
+            (conversation_id,),
+        ).fetchall()
+        taken = [row for row in rows if task_ids is None or str(row[0]) in task_ids]
+        conn.executemany(
+            "DELETE FROM conversation_background_tasks WHERE conversation_id=? AND task_id=?",
+            ((conversation_id, str(row[0])) for row in taken),
+        )
+        return tuple(str(row[1]) for row in taken)
+
+    async def take_background_tasks(
+        self, conversation_id: str, *, task_ids: tuple[str, ...] | None = None
+    ) -> tuple[str, ...]:
+        """Forget this conversation's live tasks in their own announced commit."""
+        return await self._write(self._take_background_tasks_sync, conversation_id, task_ids)
+
+    def _take_background_tasks_sync(
+        self, conversation_id: str, task_ids: tuple[str, ...] | None
+    ) -> tuple[str, ...]:
+        with self._publication_connection() as (conn, admission):
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                self._apply_signal_mutation(conn, admission)
+                taken = self.take_background_tasks_in_transaction(
+                    conn, conversation_id, task_ids=task_ids
+                )
+                self._commit_rows(conn, (), always_announce=bool(taken))
+                return taken
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+
+    async def conversation_ids_with_live_background_tasks(self) -> frozenset[str]:
+        return frozenset(await asyncio.to_thread(self.read_live_background_task_ids))
+
+    def read_live_background_task_ids(self) -> dict[str, tuple[str, ...]]:
+        """Every conversation with a live background task, and those tasks' ids."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT conversation_id, task_id FROM conversation_background_tasks "
+                "ORDER BY conversation_id, rowid"
+            ).fetchall()
+        finally:
+            conn.close()
+        live: dict[str, tuple[str, ...]] = {}
+        for row in rows:
+            live[str(row[0])] = (*live.get(str(row[0]), ()), str(row[1]))
+        return live
 
     async def has_delivered_prompt(self, conversation_id: str) -> bool:
         """Whether any prompt has ever reached this conversation's backend.
@@ -1599,6 +1690,8 @@ class ConversationStore:
             rows = conn.execute(
                 "SELECT c.conversation_id, c.owner_read_through_sequence, "
                 "e.latest_owner_message, "
+                "EXISTS (SELECT 1 FROM conversation_background_tasks b "
+                " WHERE b.conversation_id = c.conversation_id) AS has_live_background_task, "
                 "(SELECT CASE WHEN te.kind = 'turn_ended' "
                 " THEN json_extract(te.payload, '$.ending') ELSE NULL END "
                 " FROM conversation_events te "
@@ -1625,6 +1718,7 @@ class ConversationStore:
                     and int(row["latest_owner_message"]) > int(row["owner_read_through_sequence"])
                 ),
                 last_turn_failed=str(row["last_turn_ending"] or "") == "failed",
+                has_live_background_task=bool(row["has_live_background_task"]),
             )
             for row in rows
         }
@@ -1731,8 +1825,12 @@ class ConversationStore:
             [sqlite3.Connection], tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]
         ],
         in_commit: CommitParticipant | None,
+        *,
+        always_announce: bool = False,
     ) -> AcceptedEvent:
-        return await self._write(self._commit_backend_event_sync, writer, in_commit)
+        return await self._write(
+            self._commit_backend_event_sync, writer, in_commit, always_announce=always_announce
+        )
 
     def _commit_backend_event_sync(
         self,
@@ -1740,6 +1838,8 @@ class ConversationStore:
             [sqlite3.Connection], tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]
         ],
         in_commit: CommitParticipant | None,
+        *,
+        always_announce: bool = False,
     ) -> AcceptedEvent:
         with self._publication_connection() as (conn, admission):
             try:
@@ -1760,7 +1860,11 @@ class ConversationStore:
                 if outcome.taken:
                     self._apply_signal_mutation(conn, admission)
                 if in_commit is None:
-                    self._commit_rows(conn, tuple(row.payload for row in outcome.written))
+                    self._commit_rows(
+                        conn,
+                        tuple(row.payload for row in outcome.written),
+                        always_announce=always_announce,
+                    )
                 else:
                     conn.commit()
                 return outcome

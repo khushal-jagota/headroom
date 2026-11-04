@@ -3,7 +3,7 @@
 from alembic import op
 
 revision = "remove_worker_step_skill_bindings"
-down_revision = "goal_outcomes"
+down_revision = "conversation_background_tasks"
 branch_labels = None
 depends_on = None
 

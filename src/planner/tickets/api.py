@@ -47,7 +47,7 @@ from planner.core.authctx import (
     request_context,
 )
 from planner.core.clock import Clock
-from planner.core.config import Config
+from planner.core.config import DB_BUSY_TIMEOUT_MS, Config
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     JsonDict,
@@ -102,7 +102,8 @@ from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
 )
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
+from planner.worker_types.store import custom_workflow_from_dict
 
 router = APIRouter()
 
@@ -280,9 +281,11 @@ def body_str_list(body: JsonDict, key: str) -> list[str]:
 # Worker type (PLAN invariant 1); the Worker-type-specific middle Stages/fields are not.
 
 
-def _require_create_worker_type(raw: JsonDict) -> str:
+def _require_create_worker_type(raw: JsonDict) -> str | None:
     """A create's Worker type, required and known before any writer runs."""
-    worker_type = body_str(raw, "worker_type")
+    worker_type = body_opt_str(raw, "worker_type")
+    if worker_type is None and "workflow" in raw:
+        return None
     known = configured_worker_type_registry().supported_worker_types()
     if worker_type not in known:
         raise PlannerError(
@@ -295,19 +298,19 @@ def _require_create_worker_type(raw: JsonDict) -> str:
 
 def _ticket_and_worker_type_definition(
     conn: sqlite3.Connection, ticket_id: str
-) -> tuple[Ticket, WorkerTypeDefinition]:
+) -> tuple[Ticket, WorkflowDefinition]:
     """Load the Ticket and resolve its Worker type for workflow interpretation."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    return ticket, configured_worker_type_registry().require(ticket.worker_type)
+    return ticket, ticket.workflow
 
 
-def _validate_field(worker_type_definition: WorkerTypeDefinition, field: str) -> str:
+def _validate_field(worker_type_definition: WorkflowDefinition, field: str) -> str:
     """A field id validated against the type's declared fields; raises validation."""
     if not worker_type_definition.has_field(field):
         raise PlannerError(
             ErrorCode.validation,
             "unknown ticket field",
-            {"field": field, "worker_type": worker_type_definition.worker_type},
+            {"field": field, "workflow": worker_type_definition.label},
         )
     return field
 
@@ -354,6 +357,8 @@ def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicke
         ceiling=body_opt_str(raw, "ceiling"),
         ceiling_holder=raw.get("ceiling_holder"),
     )
+    if "workflow" in raw:
+        body["workflow"] = custom_workflow_from_dict(raw["workflow"])
     if "locale" in raw:
         from planner.tickets.logic.locale import require_ticket_locale
 
@@ -457,9 +462,7 @@ def _parse_required_principal(raw: object, field: str) -> Principal:
 # --- scope marshallers ---------------------------------------------------------
 
 
-def _parse_next_ceiling(
-    raw: str | None, worker_type_definition: WorkerTypeDefinition
-) -> str | None:
+def _parse_next_ceiling(raw: str | None, worker_type_definition: WorkflowDefinition) -> str | None:
     if raw is None:
         return None
     if raw == NO_FURTHER:
@@ -506,6 +509,7 @@ def write_create_ticket(
         manager_id=(manager.id if manager.kind is PrincipalKind.manager else None),
         manager_kind=manager.kind.value,
         worker_type=body["worker_type"],
+        workflow=body.get("workflow"),
         locale=body.get("locale"),
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
@@ -751,12 +755,8 @@ async def get_worker_self_ticket(
                 },
             )
     detail = _ticket_detail(conn, ticket.id, clk.now_unix())
-    detail["worker"] = (
-        configured_worker_type_registry()
-        .require(ticket.worker_type)
-        .worker_profile.specialist_skill
-    )
-    if ticket.locale == "vps":
+    detail["worker"] = ticket.workflow.specialist_skill
+    if ticket.locale == "vps" and detail["worker"] is not None:
         detail["worker_skill_path"] = str(
             Path(cfg.db_path).resolve().parent / "skills" / str(detail["worker"]) / "SKILL.md"
         )
@@ -849,7 +849,7 @@ async def restart_ticket_worker(
     async def start_worker_step() -> WorkerStepStartResult:
         return await start_ready_worker_step(
             ticket_id,
-            connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),
+            connect_database=lambda: connect(cfg.db_path, DB_BUSY_TIMEOUT_MS),
             conversation_system=conversations,
             worker_type_registry=configured_worker_type_registry(),
             now=clk.now_unix,

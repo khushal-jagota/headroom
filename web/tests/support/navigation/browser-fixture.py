@@ -100,6 +100,13 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                     "recap_preview": row.get("recap_preview", ""),
                     "recap": row.get("recap", row.get("recap_preview", "")),
                     "worker_type": row["worker_type"],
+                    "stage_label": row.get(
+                        "stage_label", row["stage"].removeprefix("needs_").replace("_", " ").title()
+                    ),
+                    "workflow_label": row.get(
+                        "workflow_label",
+                        (row.get("worker_type") or "Custom workflow").replace("_", " ").title(),
+                    ),
                     "stage": row["stage"],
                     "ticket_status": status,
                     "blocked": row.get("blocked", False),
@@ -130,8 +137,13 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
         )
         address("ticket", row["id"], conv, parent or "chief")
         if row.get("project_id"):
-            records.append({"kind": "project", "id": row["project_id"],
-                            "value": {"name": row.get("project") or ""}})
+            records.append(
+                {
+                    "kind": "project",
+                    "id": row["project_id"],
+                    "value": {"name": row.get("project") or ""},
+                }
+            )
     for row in summaries.values():
         conv = conversation(row)
         project_id = row.get("project_id") or "fixture-project"

@@ -11,7 +11,6 @@
   import { navigationWindow, type NavigationPresentation } from "../lib/navigation/presentation";
   import { stabilizeWorkspaceRail } from "../lib/workspaceRail";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
-  import { lifecycleFor } from "../lib/lifecycle";
   import type { NavigationPublication } from "../lib/navigation/publication";
   import { createRailMotionController, type WorkspaceRailPresentation } from "../lib/workspaceRailMotion";
   import { onMount } from "svelte";
@@ -42,7 +41,6 @@
     if (!context) throw new Error("Workspace requires the application navigation owner");
     return context;
   })();
-  const manifests = createQuery(() => queries.workerTypeManifests());
   // Chief recap is dedicated content outside navigation records, so the popover
   // reads it from the same settings query the Chief conversation pane already uses.
   const chiefSettings = createQuery(() => queries.chiefSettings());

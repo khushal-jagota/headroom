@@ -6,8 +6,6 @@ from typing import cast
 
 from alembic import op
 
-from planner.runtime.logic.conversation_start_resolution import MANAGER_ROLE_TEXT
-
 revision = "canonical_manager_identities"
 down_revision = "remove_navigation_proof"
 branch_labels = None
@@ -38,9 +36,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         )
         conn.execute("DELETE FROM agents WHERE agent_key=?", (key,))
     for row in conn.execute(
-        "SELECT conversation_id,identity_environment_variables FROM conversations"
+        "SELECT conversation_id,identity_environment_variables,role_text FROM conversations"
     ).fetchall():
-        conversation_id, identity_json = row
+        conversation_id, identity_json, role_text = row
         pairs = json.loads(identity_json)
         values = dict(pairs)
         if values.get("PLAN_ACTOR") not in {"sprint_item_supervisor", "manager"}:
@@ -55,7 +53,11 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE conversations SET identity_environment_variables=?,role_text=? "
             "WHERE conversation_id=?",
-            (json.dumps(canonical_pairs), MANAGER_ROLE_TEXT, conversation_id),
+            (
+                json.dumps(canonical_pairs),
+                role_text.replace("You are a Sprint Item supervisor.", "You are a Manager."),
+                conversation_id,
+            ),
         )
     for ticket_id, approvals_json in conn.execute(
         "SELECT id,field_approvals FROM tickets"
