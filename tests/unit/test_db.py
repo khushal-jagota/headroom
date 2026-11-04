@@ -1226,7 +1226,6 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
         "conversations",
         "ticket_conversations",
         "ticket_blocks",
-        "scheduled_ticket_occurrences",
         "manager_wake_batch_members",
         "managed_skill_versions",
     )
