@@ -158,7 +158,11 @@ async function runSelected(entries, options, receipt, requiredCompanions) {
     await mkdir(join(evidence, "logs"), {recursive: true});
     const queue = [...prepared].sort((left, right) => longestFirst(left.id) - longestFirst(right.id));
     await Promise.all(Array.from({length: Math.min(browserProcesses, queue.length)}, async () => {
-      while (queue.length) await runCase(queue.shift());
+      while (queue.length) {
+        const case_ = queue.shift();
+        // Every slot keeps going, so the run never tears down under a running case.
+        await runCase(case_).catch(error => processFailures.push(`${case_.id}: ${error.message}`));
+      }
     }));
     receipt.cases = prepared.filter(case_ => results.has(case_.id)).map(case_ => results.get(case_.id));
     receipt.timing.browserProcesses = Math.min(browserProcesses, prepared.length);
