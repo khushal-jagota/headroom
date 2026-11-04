@@ -614,6 +614,8 @@ class SqliteProcessConversationSystem:
                 or any(not task.done() for task in state.settlement_tasks)
             ):
                 return "busy"
+        if self._store.read_live_background_task_ids():
+            return "busy"
         return "idle"
 
     async def run_with_workspace_admission(

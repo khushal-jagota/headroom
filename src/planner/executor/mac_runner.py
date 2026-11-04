@@ -21,6 +21,9 @@ from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerRefused,
+    BackendStreamEnded,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     NeedsRebind,
     PermissionAskRaised,
     PromptWriteRefused,
@@ -151,6 +154,7 @@ class RunningChild:
     backend_key: ConversationBackendKey
     active_turn: TurnToken | None = None
     asks: dict[str, AskReference] = field(default_factory=dict)
+    background_task_ids: set[str] = field(default_factory=set)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     model: str | None = None
     reasoning_effort: str | None = None
@@ -811,6 +815,12 @@ class MacRunner:
             if child.active_turn == turn:
                 child.active_turn = None
                 child.asks.clear()
+        elif isinstance(event, BackgroundTaskStarted):
+            child.background_task_ids.add(event.task_id)
+        elif isinstance(event, BackgroundTaskEnded):
+            child.background_task_ids.discard(event.task_id)
+        elif isinstance(event, BackendStreamEnded):
+            child.background_task_ids.clear()
         method, arguments = encode_backend_event(event)
         wire_event = BackendEvent(reference, method, turn, arguments)
         await asyncio.to_thread(
@@ -897,7 +907,10 @@ class MacRunner:
         Normal maintenance still requires all receipts. A planned runtime swap
         transfers journal custody and only waits for local publication safety.
         """
-        if mode == "idle" and any(self._quiescence_counts()[:3]):
+        if mode == "idle" and (
+            any(self._quiescence_counts()[:3])
+            or any(child.background_task_ids for child in self._children.values())
+        ):
             return False
         # No await separates the idle observation from both admission gates.
         self.admission_stopped = True

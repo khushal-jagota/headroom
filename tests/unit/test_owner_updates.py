@@ -346,6 +346,53 @@ def test_background_admission_is_part_of_atomic_idle_claim(harness: _Harness) ->
     _run(exercise)
 
 
+def test_idle_update_waits_for_canonical_background_tasks(
+    tmp_path: Path, harness: _Harness,  # noqa: F811
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "background-work")
+        provider = Provider()
+        service = UpdateService(
+            provider, FileUpdateRequestStore(tmp_path / "request.json"),
+            lambda: cast(ConversationSystem, harness.system),
+            connection_factory=lambda: connect(str(harness.db_path)),
+        )
+        request = service.request(provider.offered, "idle", confirm_activity=False)
+        connection = connect(str(harness.db_path))
+        try:
+            with connection:
+                harness.store.record_background_task_started_in_transaction(
+                    connection, "background-work", "long_test", "Long test run",
+                )
+            assert harness.system.workspace_activity() == "busy"
+            assert not service.dispatch_pending()
+            assert provider.dispatched == []
+            with connection:
+                harness.store.record_background_task_ended_in_transaction(
+                    connection, "background-work", "long_test",
+                )
+            assert harness.system.workspace_activity() == "idle"
+            assert service.dispatch_pending()
+            assert provider.dispatched[0].request_id == request.request_id
+            with connection:
+                harness.store.record_background_task_started_in_transaction(
+                    connection, "background-work", "later_task", "Started before claim",
+                )
+            with pytest.raises(UpdateConflict, match="activity changed"):
+                await service.claim(request.request_id)
+            assert not harness.system.workspace_admission.closed
+            with connection:
+                harness.store.record_background_task_ended_in_transaction(
+                    connection, "background-work", "later_task",
+                )
+            assert service.dispatch_pending()
+            assert (await service.claim(request.request_id)).state == "applying"
+        finally:
+            connection.close()
+
+    _run(exercise)
+
+
 def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

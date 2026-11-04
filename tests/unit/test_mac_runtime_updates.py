@@ -21,7 +21,14 @@ from pydantic import TypeAdapter
 from tests.unit.test_executor_native_runtime import ScriptedChild, acknowledge_pending
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
 
+from planner.conversation.backends.contracts import (
+    BackendStreamEnded,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
+    TurnEnded,
+)
 from planner.conversation.contracts import PromptDeliveryMode
+from planner.conversation.events import ConversationTurnEnding
 from planner.environments.mac_runtime import extract_runtime
 from planner.execution_identity import TurnToken
 from planner.executor import runtime_bootstrap
@@ -199,6 +206,45 @@ def test_idle_update_closes_admission_before_awaited_native_stop(
         assert native.starts == 1
         release.set()
         assert await preparing
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("task_ending", ["task_ended", "stream_ended", "update_now"])
+def test_idle_update_waits_for_background_work_after_turn_ends(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch, task_ending: str,
+) -> None:
+    async def exercise() -> None:
+        runner, _, native, start = native_registry
+        await runner.run(start)
+        child = runner._children[start.child.child_id]
+        turn = TurnToken(start.child.conversation_id, 1)
+        child.active_turn = turn
+        stops: list[bool] = []
+
+        async def stop() -> None:
+            stops.append(True)
+
+        monkeypatch.setattr(native, "stop", stop)
+        assert native.sink is not None
+        await native.sink.report(
+            None, BackgroundTaskStarted(task_id="long_test", task_description="Long test run"),
+        )
+        await native.sink.report(turn, TurnEnded(ending=ConversationTurnEnding.completed))
+        assert runner._quiescence_counts()[0] == 0
+        assert not await runner.prepare_update("idle")
+        assert stops == []
+        assert not runner.admission_stopped and not runner.connection.admission_stopped
+        if task_ending == "update_now":
+            assert await runner.prepare_update("now")
+        else:
+            await native.sink.report(
+                None, BackgroundTaskEnded(task_id="long_test", task_status="completed")
+                if task_ending == "task_ended" else BackendStreamEnded(),
+            )
+            assert await runner.prepare_update("idle")
+        assert stops == [True]
 
     asyncio.run(exercise())
 
