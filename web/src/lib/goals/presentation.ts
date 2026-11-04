@@ -18,6 +18,17 @@ export function goalDateText(deadline:string|null|undefined):string|null {
  const date=new Date(deadline+'T12:00:00');
  return Number.isNaN(date.getTime())?deadline:date.toLocaleDateString('en-US',{month:'short',day:'numeric'});
 }
+/** Completion dates are saved calendar dates, not timestamps in the browser's zone. */
+export function goalCompletionText(goal:Pick<GoalResponse,'completed'|'completion_date'>):string {
+ if(!goal.completed)return 'Incomplete';
+ if(!goal.completion_date)return 'Complete · date unknown';
+ const date=new Date(goal.completion_date+'T12:00:00');
+ const label=Number.isNaN(date.getTime())?goal.completion_date:date.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+ return `Completed ${label}`;
+}
+export function goalOutcomeText(outcome:GoalResponse['outcome']):string {
+ return {hit:'Hit',miss:'Miss',pending:'Pending',undated:'No deadline',unknown:'Result unknown'}[outcome];
+}
 export function updatePageBlock(blocks:Block[],id:string,update:(block:Block)=>Block):Block[]{
  return blocks.map(block=>{
   if(block.id===id)return update(block);

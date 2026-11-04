@@ -12,6 +12,7 @@
  import {resolveGoalPrimaryDisplay} from '../../lib/goals/primaryDisplay';
  import {createGoalPageContext} from '../../lib/goals/pageContext';
  import {workspaceAddress} from '../../lib/workspaceAddress';
+ import GoalOutcome from './GoalOutcome.svelte';
  let {goal,projectName='',sessions}:{goal:GoalResponse;projectName?:string;sessions:ReturnType<typeof createGoalRequestSessions>}=$props();
  const goalId=untrack(()=>goal.id);
  const editor=createGoalEditor(goalId);
@@ -26,6 +27,7 @@
 <article class="goal-card" data-goal-card={goal.id}>
  <header class="card-head"><div class="goal-meta"><span>{projectName}</span>{#if projectName&&goal.deadline}<span aria-hidden="true">·</span>{/if}<span data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{goal.deadline?`By ${goalDateText(goal.deadline)}`:'No deadline'}</span></div>
   <h2><a href={workspaceAddress({kind:'goal',id:goal.id})}>{goal.title}</a></h2>
+  <GoalOutcome {goal}/>
  </header>
  <div class="card-progress">{#if checklist}{#key checklist.id}<PageChecklist block={checklist} presentation="normal"/>{/key}{:else if chart}<PageChart block={chart} projection={readings.data?.charts?.[chart.id]} values={readings.data?.values??[]} goalId={goal.id} completed={goal.completed} status={goal.status} compact integrated/>{:else}<p>No readings yet</p>{/if}</div>
 </article>
