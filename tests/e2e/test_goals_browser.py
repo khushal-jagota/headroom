@@ -1091,18 +1091,16 @@ def test_goal_outcomes_refresh_across_page_and_overview(
 
     page.locator("[data-goal-page]").evaluate("node => node.dataset.outcomeProof = 'retained'")
     current = api.get(server, path)
-    changed = httpx.patch(
-        server.base + path,
-        headers={"X-Plan-Actor": "owner"},
-        json={
+    changed = api.direct_patch(
+        server,
+        path,
+        {
             "expected_revision": current["revision"],
             "completion_rule": {**rule, "target": {"op": "constant", "value": 9000}},
         },
-        timeout=10,
     )
-    assert changed.is_success, changed.text
-    assert changed.json()["completion_date"] == "2026-07-02"
-    assert changed.json()["outcome"] == "hit"
+    assert changed["completion_date"] == "2026-07-02"
+    assert changed["outcome"] == "hit"
     expect(outcome).to_contain_text("Completed Jul 2, 2026", timeout=WAIT_MS)
     expect(outcome.locator('[data-outcome="hit"]')).to_have_text("Hit", timeout=WAIT_MS)
     expect(page.locator("[data-goal-page]")).to_have_attribute(
