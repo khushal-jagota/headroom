@@ -119,11 +119,13 @@ def test_native_receipt_binds_source_run_artifact_and_sealed_bytes(tmp_path: Pat
 
 def test_runtime_roots_use_exact_canonical_pins_without_development_tools(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\ndependencies=["aiohttp", "PyICU==2.16.2"]\n'
+        '[project]\ndependencies=["aiohttp", "httpx[http2]", "PyICU==2.16.2"]\n'
     )
     requirements = tmp_path / "requirements.txt"
-    requirements.write_text("aiohttp==3.14.3\nPyICU==2.16.2\npytest==9.1.1\n")
-    assert runtime_requirements(tmp_path) == ["aiohttp==3.14.3", "PyICU==2.16.2"]
+    requirements.write_text("aiohttp==3.14.3\nhttpx==0.28.1\nPyICU==2.16.2\npytest==9.1.1\n")
+    assert runtime_requirements(tmp_path) == [
+        "aiohttp==3.14.3", "httpx[http2]==0.28.1", "PyICU==2.16.2"
+    ]
     build_mac_runtime.validate_installed_pins(
         {"aiohttp": "3.14.3", "bootstrap": "1"}, {"aiohttp": "aiohttp==3.14.3"}, {"bootstrap": "1"}
     )

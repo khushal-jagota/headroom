@@ -78,13 +78,14 @@ def runtime_requirements(source: Path) -> list[str]:
     pins = canonical_pins(source)
     result = []
     for requirement in project["dependencies"]:
-        match = re.match(r"[A-Za-z0-9_.-]+", requirement)
+        match = re.match(r"([A-Za-z0-9_.-]+)(\[[A-Za-z0-9_,.-]+\])?", requirement)
         if match is None:
             raise ValueError("Invalid runtime dependency")
-        name = re.sub(r"[-_.]+", "-", match.group()).lower()
+        name = re.sub(r"[-_.]+", "-", match.group(1)).lower()
         if name not in pins:
             raise ValueError(f"Runtime dependency lacks a canonical pin: {name}")
-        result.append(pins[name])
+        pinned_name, version = pins[name].split("==", 1)
+        result.append(f"{pinned_name}{match.group(2) or ''}=={version}")
     return result
 
 
@@ -381,7 +382,9 @@ def build(source: Path, output: Path, revision: str, run_id: int) -> None:
             )
         )
         tools = builder / "tools"
-        run([sys.executable, "-m", "venv", str(tools)], cwd=builder, environment=environment)
+        # Build wheels with the runtime's arm64 sysconfig. The hosted Python can
+        # request universal2 extensions that cannot link the arm64-only ICU build.
+        run([str(python), "-m", "venv", str(tools)], cwd=builder, environment=environment)
         tool_python = str(tools / "bin/python")
         run(
             [
