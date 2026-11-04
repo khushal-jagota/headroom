@@ -6,7 +6,6 @@ def run(browser, urls):
     import runpy
     from pathlib import Path
 
-    from planner.navigation.contracts import SCHEMA_VERSION, SUPPORTED_SEMANTICS
     from planner.navigation.delivery_contracts import encode_cursor
 
     fixture = runpy.run_path(
