@@ -8,6 +8,7 @@ export type ThreadReading = {
   newestLineBottomPixels: number;
   remainingReservedSpacePixels: number;
   newestLineIsInSight: boolean;
+  newestLineIsBelowTheView: boolean;
 };
 
 export type ThreadGeometry = {
@@ -18,6 +19,7 @@ export type ThreadGeometry = {
     reservedSpacePixels: number
   ): ThreadReading;
   newestLineIsInSight(cachedNewestLineBottomPixels: number): boolean;
+  newestLineIsBelowTheView(cachedNewestLineBottomPixels: number): boolean;
   newestLineScrollTop(cachedNewestLineBottomPixels: number): number;
   sentMessage(messageId: string): Element | null;
   /** Where the thread must be for this element to sit at the top, clear of the fade. */
@@ -93,10 +95,13 @@ export function threadGeometry(
     );
   }
 
+  /** Only a newest line below the fold is reached by scrolling down. */
+  function newestLineIsBelowTheView(cachedNewestLineBottomPixels: number): boolean {
+    return newestLineScrollTop(cachedNewestLineBottomPixels) - thread.scrollTop > NEAR_NEWEST_LINE_PIXELS;
+  }
+
   function newestLineIsInSight(cachedNewestLineBottomPixels: number): boolean {
-    const beyondTheFold =
-      newestLineScrollTop(cachedNewestLineBottomPixels) - thread.scrollTop;
-    if (beyondTheFold > NEAR_NEWEST_LINE_PIXELS) return false;
+    if (newestLineIsBelowTheView(cachedNewestLineBottomPixels)) return false;
     return cachedNewestLineBottomPixels >= thread.scrollTop;
   }
 
@@ -123,7 +128,8 @@ export function threadGeometry(
     return {
       newestLineBottomPixels,
       remainingReservedSpacePixels,
-      newestLineIsInSight: newestLineIsInSight(newestLineBottomPixels)
+      newestLineIsInSight: newestLineIsInSight(newestLineBottomPixels),
+      newestLineIsBelowTheView: newestLineIsBelowTheView(newestLineBottomPixels)
     };
   }
 
@@ -144,6 +150,7 @@ export function threadGeometry(
     readFromNewestLineBottom,
 
     newestLineIsInSight,
+    newestLineIsBelowTheView,
     newestLineScrollTop,
 
     sentMessage(messageId: string): Element | null {

@@ -474,9 +474,11 @@ def test_ordinary_start_needs_correlated_response(
         script: dict[str, Any] = {"turns": [{"respond": respond, "actions": []}]}
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            # Shorten the wait only for the prompt under test. Set before the start, it
-            # also bounds the child's initialize handshake, which a busy machine can miss.
-            monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
+            if respond == "never":
+                # Only a reply that never comes must time out, so only it gets a short wait.
+                # The initialize handshake and the error reply keep the full wait, because a
+                # busy machine can take longer than 0.1 s to send either.
+                monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
             expected = PromptWriteFailed if respond == "never" else BackendPromptRejected
             with pytest.raises(expected):
                 await scripted.write_prompt(1, text_message_content("exact provider token"))
