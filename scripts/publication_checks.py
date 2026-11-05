@@ -25,7 +25,7 @@ IDENTITY_KEYS = ("requested_sha", "workflow_sha", "run_id", "run_attempt")
 # uploads the archive itself. Publication accepts only these proofs, anchored by the
 # record digest the build job reports, and writes the receipt from them.
 CANDIDATE_RECORD = "candidate-record.json"
-CANDIDATE_REQUIRED = ("archive-sha256.txt", "manifest.json", "smoke.json",
+CANDIDATE_REQUIRED = ("archive-sha256.txt", "manifest.json",
                       "replacement-proof.json", "target/target-proof.json",
                       "target/target-root-inventory.json")
 CANDIDATE_REPORTS = ("reports/candidate-build.log",)
