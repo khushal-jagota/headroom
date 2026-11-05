@@ -8,6 +8,9 @@ extension APIClient {
     }
 
     func goals() async throws -> GoalsResponse { try await get("/api/goals") }
+    func goalProjects() async throws -> GoalJSON {
+        try await get("/api/projects", query: [.init(name: "detail", value: "full")])
+    }
     func goal(_ id: String) async throws -> GoalRecord { try await get("/api/goals/\(id)") }
     func goalReadings(_ id: String) async throws -> GoalReadings { try await get("/api/goals/\(id)/readings") }
     func saveGoal(_ id: String, patch: GoalJSON) async throws -> GoalRecord {

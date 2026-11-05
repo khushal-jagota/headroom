@@ -140,7 +140,7 @@ struct AllGoalsView: View {
         do {
             async let response = api.goals()
             async let managerResponse = api.managers()
-            async let projectResponse: GoalJSON = api.get("/api/projects")
+            async let projectResponse = api.goalProjects()
             let (list, projects, managers) = try await (response, projectResponse, managerResponse); try Task.checkCancellation()
             guard api.baseURL == store.baseURL else { return }
             self.managers = managers.managers; goals = list.goals; nextRefreshAt = list.nextRefreshAt; self.projects = projects["projects"].array; loaded = true; error = nil

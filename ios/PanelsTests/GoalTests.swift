@@ -253,6 +253,17 @@ import XCTest
         catch { XCTAssertEqual((error as? APIError)?.status, 410) }
         XCTAssertEqual(GoalProtocol.state.requests(), [])
     }
+    func testGoalProjectsReadRequestsTheFullCatalogue() async throws {
+        GoalProtocol.state.reset(try goal())
+        let response = try await client().goalProjects()
+        let request = try XCTUnwrap(GoalProtocol.state.lastRequest())
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.url?.path, "/api/projects")
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems,
+                       [URLQueryItem(name: "detail", value: "full")])
+        XCTAssertEqual(response["projects"].array.first?["id"].text, "project_personal")
+    }
+
     private func client() -> APIClient {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [GoalProtocol.self]
         return APIClient(baseURL: URL(string: "https://goals-tests.example")!, session: URLSession(configuration: config))
@@ -277,12 +288,13 @@ private final class GoalProtocolState: @unchecked Sendable {
     private var goal: GoalRecord?
     private var goalWrites: [GoalJSON] = []
     private var commands: [GoalJSON] = []
-    private var paths: [String] = []
+    private var recordedRequests: [URLRequest] = []
     private var holderRevision = 4
     private var document: GoalJSON = .null
-    func requests() -> [String] { lock.lock(); defer { lock.unlock() }; return paths }
+    func requests() -> [String] { lock.lock(); defer { lock.unlock() }; return recordedRequests.compactMap { $0.url?.path } }
+    func lastRequest() -> URLRequest? { lock.lock(); defer { lock.unlock() }; return recordedRequests.last }
     static let manualState = #"{"measure_id":"m","definition_revision":1,"write_revision":1,"timezone":"UTC","current_date":"2026-11-04","date":"2026-11-04","observation":{"value":5},"latest_observation":{"value":5}}"#
-    func reset(_ value: GoalRecord) { lock.lock(); defer { lock.unlock() }; goal = value; goalWrites = []; commands = []; paths = []; holderRevision = 4; document = value.page }
+    func reset(_ value: GoalRecord) { lock.lock(); defer { lock.unlock() }; goal = value; goalWrites = []; commands = []; recordedRequests = []; holderRevision = 4; document = value.page }
     func conflictGoal() {
         lock.lock(); defer { lock.unlock() }
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -304,7 +316,8 @@ private final class GoalProtocolState: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         let path = request.url!.path
-        paths.append(path)
+        recordedRequests.append(request)
+        if path == "/api/projects" { return (200, Data(#"{"projects":[{"id":"project_personal","name":"Personal"}]}"#.utf8)) }
         if path == "/api/chief/conversation" { return (200, Data(#"{"conversation_id":"chief-current"}"#.utf8)) }
         if path == "/api/managers/holder-test/workspace" {
 #if SWIFT_PACKAGE
