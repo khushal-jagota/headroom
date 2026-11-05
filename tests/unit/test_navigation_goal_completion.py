@@ -77,7 +77,7 @@ def test_navigation_follows_selected_saved_checklist_on_commits(tmp_db: Connecti
         binary = actions.update_goal(
             conn,
             goal.id,
-            {"expected_revision": goal.revision, "primary_checklist_block_id": None},
+            {"primary_checklist_block_id": None},
             principal=OWNER_PRINCIPAL,
             now=2,
         )
@@ -86,7 +86,6 @@ def test_navigation_follows_selected_saved_checklist_on_commits(tmp_db: Connecti
             conn,
             goal.id,
             {
-                "expected_revision": binary.revision,
                 "primary_checklist_block_id": "selected",
                 "page": reopened,
             },

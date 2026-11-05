@@ -201,7 +201,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             project = await post("project", "/api/projects", {"name": "Isolated Luna proof"})
             item = await post(
                 "orchestrator",
-                "/api/items",
+                "/api/managers",
                 {"title": "Isolated Luna supervisor", "project_id": project["id"]},
             )
             brief = (
@@ -312,7 +312,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             )
             supervisor = await post(
                 "owner starts real supervisor",
-                f"/api/items/{item['id']}/conversation/send",
+                f"/api/managers/{item['id']}/conversation/send",
                 {
                     "content": [{"piece": "text", "text": supervisor_prompt}],
                     "sender_label": "owner",

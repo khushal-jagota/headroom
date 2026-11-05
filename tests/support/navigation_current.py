@@ -31,7 +31,6 @@ def current_navigation_database(path: Path) -> Iterator[sqlite3.Connection]:
             participate=participate,
             unavailable=lambda invalidation: None,
         )
-        composition.coordinator.admit_runtime()
         connection = composition.connect()
         yield connection
     finally:

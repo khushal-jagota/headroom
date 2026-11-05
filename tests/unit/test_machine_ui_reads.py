@@ -12,8 +12,8 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI, Request
 from tests.support.executor_control import MessageStream, message_link
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import TestClock as ClockForTest
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity

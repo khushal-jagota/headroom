@@ -8,7 +8,7 @@ A stable id, a display name, a summary, and an optional folder on disk. The summ
 
 ## How work is classified
 
-Managers, standalone Tickets, and Ideas each store a Project. A Ticket under a Manager takes its effective Project from that Manager. Moving a Manager moves its children, and its schedule templates, so later occurrences follow. Goals and measure sources are scoped to a Project too. A source's datasets must match its Project.
+Managers, standalone Tickets, and Ideas each store a Project. A Ticket under a Manager takes its effective Project from that Manager. Moving a Manager moves its children. Goals and measure sources are scoped to a Project too. A source's datasets must match its Project.
 
 ## What the folder does
 
@@ -16,7 +16,7 @@ The folder is where a Worker's conversation starts. On the VPS, an existing fold
 
 ## Where it shows up
 
-Project selectors on Idea capture, Ticket and Manager editing, and schedule templates. `panels project` and `/api/projects` read and write the same catalog.
+Project selectors on Idea capture and Ticket and Manager editing. `panels project` and `/api/projects` read and write the same catalog.
 
 ## Code
 

@@ -93,4 +93,3 @@ class SkillApplication:
 
     name: str
     source_text: str
-    expected_sha256: str | None

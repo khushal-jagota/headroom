@@ -30,7 +30,12 @@ def _create_ticket_conversation(
     title: str,
 ) -> str:
     ticket_id: str = cli(
-        server, "ticket", "create", "--worker-type", "coding", "--title", title,
+        server, "ticket", "create", "--input-json", "-",
+        stdin=json.dumps({
+            "worker_type": "coding", "title": title, "brief": "Agreed brief.",
+            "manager": {"kind": "chief", "id": "chief"},
+        }),
+        settle_brief=True,
     )["id"]
     _post(server, f"/api/test/signals/{conversation_id}/start")
     _bind(server, "ticket", ticket_id, conversation_id)
@@ -402,12 +407,14 @@ def test_private_credential_save_survives_reload_and_reaches_the_actual_wire(
     conversation_id = "e2e-ticket-private-credential"
     ticket_id = cli(
         server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Supply an API key",
+        "ticket", "create", "--input-json", "-",
+        stdin=json.dumps({
+            "worker_type": "coding",
+            "title": "Supply an API key",
+            "brief": "Agreed brief.",
+            "manager": {"kind": "chief", "id": "chief"},
+        }),
+        settle_brief=True,
     )["id"]
     _post(server, f"/api/test/signals/{conversation_id}/start", {"ticket_id": ticket_id})
     request_id = str(uuid.uuid4())

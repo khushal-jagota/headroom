@@ -356,7 +356,8 @@ def test_exited_adopted_child_is_reaped_before_owned_command_finishes(
         f"while [ ! -e {release} ]; do sleep 0.02; done\nexit 7\n",
     )
     processes.append(process)
-    wait_until(lambda: complete_line(pidfile))
+    # File creation precedes its write. The terminator marks a complete PID record.
+    wait_until(lambda: pidfile.exists() and pidfile.read_text().endswith("\n"))
     adopted_pid = int(pidfile.read_text())
     wait_until(lambda: not Path(f"/proc/{adopted_pid}").exists())
     assert process.poll() is None

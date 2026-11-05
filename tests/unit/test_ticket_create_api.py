@@ -9,9 +9,9 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -218,11 +218,11 @@ def effort_catalogue(create_api: tuple[TestClient, Path], monkeypatch: pytest.Mo
     )
 
 
-def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
+def test_manager_assignment_rejects_old_names(
     create_api: tuple[TestClient, Path],
 ) -> None:
     client, db_path = create_api
-    project = client.post("/api/projects", json={"name": "Compatibility"}).json()
+    project = client.post("/api/projects", json={"name": "Managers"}).json()
     manager = client.post(
         "/api/managers", json={"title": "Retained Manager", "project_id": project["id"]}
     ).json()
@@ -231,9 +231,9 @@ def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
     created = client.post(
         "/api/tickets",
         json={
-            "title": "Issued input",
+            "title": "Canonical input",
             "worker_type": "coding",
-            "orchestrator": issued,
+            "manager": assignment,
             "ceiling_holder": assignment,
         },
     )
@@ -247,23 +247,24 @@ def test_issued_assignment_inputs_emit_canonical_managers_and_refuse_conflicts(
         "/api/tickets",
         params={
             "detail": "summary",
-            "orchestrator_kind": "sprint_item",
-            "orchestrator_id": manager["id"],
+            "manager_kind": "manager",
+            "manager_id": manager["id"],
         },
     ).json()
     assert [row["id"] for row in listed["tickets"]] == [ticket["id"]]
     compatible = client.patch(
         f"/api/tickets/{ticket['id']}", json={"manager": assignment, "orchestrator": issued}
     )
-    assert compatible.status_code == 200, compatible.text
+    assert compatible.status_code == 400, compatible.text
+    old_kind = client.post(
+        "/api/tickets",
+        json={"title": "Old kind", "worker_type": "coding", "manager": issued},
+    )
+    assert old_kind.status_code == 400, old_kind.text
     before = _snapshot(db_path)
     conflict = {"manager": assignment, "orchestrator": {"kind": "chief", "id": "chief"}}
     for endpoint, body in (
         ("/api/tickets", {**conflict, "title": "Conflict", "worker_type": "coding"}),
-        (
-            "/api/schedules",
-            {**conflict, "title": "Conflict", "worker_type": "coding", "local_time": "09:00"},
-        ),
     ):
         response = client.post(endpoint, json=body)
         assert response.status_code == 400, response.text
@@ -302,10 +303,13 @@ def test_create_refuses_holders_without_authority_before_kickoff_routing(
         assert refused.status_code == 400, refused.text
         error = refused.json()["error"]
         assert error["code"] == "validation"
-        assert error["message"] == (
-            "ceiling holder must be the user or the Ticket's direct manager; "
-            "name an eligible holder explicitly"
-        )
-        assert error["detail"]["holder"] == holder
-        assert error["detail"]["ticket_id"]
+        if holder["kind"] == "ticket":
+            assert error["message"] == "ceiling_holder kind must be owner, chief, or manager"
+        else:
+            assert error["message"] == (
+                "ceiling holder must be the user or the Ticket's direct manager; "
+                "name an eligible holder explicitly"
+            )
+            assert error["detail"]["holder"] == holder
+            assert error["detail"]["ticket_id"]
         assert _snapshot(db_path) == before

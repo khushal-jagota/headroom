@@ -69,13 +69,17 @@ def _navigate_to_retained_history(page: Page, newest_sequence: int) -> None:
         page.mouse.wheel(0, -100000)
         page.wait_for_function(
             "oldest=>window.historyPagingBounds().oldest<oldest",
-            arg=bounds["oldest"], timeout=WAIT_MS,
+            arg=bounds["oldest"],
+            timeout=WAIT_MS,
         )
-        page.wait_for_function("""() => {
+        page.wait_for_function(
+            """() => {
           const streams=window.historyPagingStreams;
           return streams.length>0&&streams.at(-1).readyState===EventSource.OPEN
             &&window.historyPagingReads===0;
-        }""", timeout=WAIT_MS)
+        }""",
+            timeout=WAIT_MS,
+        )
     assert page.evaluate("window.historyPagingBounds().newest") < history_before
     page.evaluate("""()=>new Promise(resolve=>requestAnimationFrame(()=>
       requestAnimationFrame(resolve)))""")
@@ -328,7 +332,7 @@ def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers
     sender = Principal(PrincipalKind.ticket, identity)
     _message(server, conversation, sender, "Please answer this displayed message.")
     context = context_factory()
-    page = open_page(context, server, "#/review", '[data-review-card]')
+    page = open_page(context, server, "#/review", "[data-review-card]")
     page.set_default_timeout(WAIT_MS)
     page.set_viewport_size({"width": 1440, "height": 1000})
     ticket_card = page.locator(f'[data-review-ticket-card][data-ticket-id="{identity}"]')
@@ -418,12 +422,16 @@ def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers
             await new Promise(resolve => setTimeout(resolve, 50));
         }
         throw new Error('The exact reply did not reach the scripted backend');
-    }""", {"conversation": conversation, "timeout": WAIT_MS},
+    }""",
+        {"conversation": conversation, "timeout": WAIT_MS},
     )
     assert sum("The reply reaches this conversation once." in text for text in receipts) == 1
-    displayed_bound = int(card.locator("[data-review-message-sequence]").get_attribute(
-        "data-review-message-sequence",
-    ) or "0")
+    displayed_bound = int(
+        card.locator("[data-review-message-sequence]").get_attribute(
+            "data-review-message-sequence",
+        )
+        or "0"
+    )
     reads: list[dict[str, object]] = []
 
     def newer_message_before_read(route: Route) -> None:
@@ -431,13 +439,17 @@ def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers
         assert isinstance(body, dict)
         reads.append(body)
         _message(
-            server, conversation, sender, "This message arrives after the displayed read boundary.",
+            server,
+            conversation,
+            sender,
+            "This message arrives after the displayed read boundary.",
         )
         route.continue_()
 
     page.route(
         f"**/api/conversation/conversations/{conversation}/owner-read",
-        newer_message_before_read, times=1,
+        newer_message_before_read,
+        times=1,
     )
     with page.expect_response(
         lambda response: response.url.endswith(f"/conversations/{conversation}/owner-read")
@@ -484,17 +496,31 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
     """
     server = signal_server
     conversation = "history-read-credit-proof"
-    ticket = cli(server, "ticket", "create", "--worker-type", "coding",
-                 "--title", "History read credit proof")["id"]
+    ticket = cli(
+        server,
+        "ticket", "create", "--input-json", "-",
+        stdin=json.dumps({
+            "worker_type": "coding",
+            "title": "History read credit proof",
+            "brief": "Agreed brief.",
+            "manager": {"kind": "chief", "id": "chief"},
+        }),
+        settle_brief=True,
+    )["id"]
     _post(server, f"/api/test/signals/{conversation}/start")
     _bind(server, "ticket", ticket, conversation)
-    body = " ".join(f"line{i} of a worker report that is as long as a real one"
-                    for i in range(90))
+    body = " ".join(f"line{i} of a worker report that is as long as a real one" for i in range(90))
     for index in range(160):
-        _post(server, f"/api/test/signals/{conversation}/message", {
-            "label": "Worker", "kind": "ticket", "id": ticket,
-            "text": f"report {index}: {body}",
-        })
+        _post(
+            server,
+            f"/api/test/signals/{conversation}/message",
+            {
+                "label": "Worker",
+                "kind": "ticket",
+                "id": ticket,
+                "text": f"report {index}: {body}",
+            },
+        )
     _post(server, f"/api/test/signals/{conversation}/finish")
     context = context_factory()
     context.add_init_script("""window.creditFrames=[];window.creditStreams=0;
@@ -516,8 +542,12 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
         try{return await fetchOriginal(...args);}
         finally{if(read)window.creditPendingReads--;}
       };""")
-    page = open_page(context, server, f"#/workspace/{ticket}",
-                     f'[data-screen="ticket"][data-ticket-id="{ticket}"]')
+    page = open_page(
+        context,
+        server,
+        f"#/workspace/{ticket}",
+        f'[data-screen="ticket"][data-ticket-id="{ticket}"]',
+    )
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
     page.locator('[data-conversation-lens-choice="focus"]').click(timeout=WAIT_MS)
     thread = page.locator("[data-conversation-thread]")
@@ -525,17 +555,22 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
     assert page.evaluate("document.visibilityState === 'visible' && document.hasFocus()")
 
     def snapshot() -> JsonObject:
-        response = httpx.get(server.base + f"/api/conversation/conversations/{conversation}",
-                             timeout=10)
+        response = httpx.get(
+            server.base + f"/api/conversation/conversations/{conversation}", timeout=10
+        )
         assert response.is_success, response.text
         result: JsonObject = response.json()
         return result
 
     def wait_read(sequence: int) -> None:
-        page.wait_for_function("""async ({id,sequence}) => {
+        page.wait_for_function(
+            """async ({id,sequence}) => {
           const response=await fetch(`/api/conversation/conversations/${id}`);
           return (await response.json()).owner_read_through_sequence===sequence;
-        }""", arg={"id": conversation, "sequence": sequence}, timeout=WAIT_MS)
+        }""",
+            arg={"id": conversation, "sequence": sequence},
+            timeout=WAIT_MS,
+        )
 
     def anchor() -> object:
         return thread.evaluate("""t=>{
@@ -547,15 +582,26 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
         }""")
 
     def arrive(text: str) -> int:
-        _post(server, f"/api/test/signals/{conversation}/message", {
-            "label": "Worker", "kind": "ticket", "id": ticket, "text": text,
-        })
+        _post(
+            server,
+            f"/api/test/signals/{conversation}/message",
+            {
+                "label": "Worker",
+                "kind": "ticket",
+                "id": ticket,
+                "text": text,
+            },
+        )
         sequence = int(snapshot()["latest_sequence"])
-        page.wait_for_function("""sequence=>window.creditFrames.some(frame=>
+        page.wait_for_function(
+            """sequence=>window.creditFrames.some(frame=>
           frame.coverage.through_sequence>=sequence&&frame.upserts.some(row=>
             row.source_sequence===sequence)&&frame.scope_changes.some(scope=>
             scope.scope.kind==='timeline'&&scope.item_keys.includes(`e${sequence}`)))
-        """, arg=sequence, timeout=WAIT_MS)
+        """,
+            arg=sequence,
+            timeout=WAIT_MS,
+        )
         # Settle the Svelte effect and any owner-read fetch it starts.
         page.evaluate("""()=>new Promise(resolve=>requestAnimationFrame(()=>
           requestAnimationFrame(resolve)))""")
@@ -564,20 +610,36 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
 
     def unread_projection(expected: bool) -> None:
         board = httpx.get(server.base + "/api/board", timeout=10).json()
-        card = next(card for column in board["columns"] for card in column["cards"]
-                    if card["id"] == ticket)
+        card = next(
+            card for column in board["columns"] for card in column["cards"] if card["id"] == ticket
+        )
         assert card["conversation_signal"]["message_for_owner"] is expected
         assert card["awaiting_reply"] is expected
-        navigation = httpx.get(server.base + "/api/navigation/snapshot", timeout=10).json()
-        record = next(row["value"] for row in navigation["snapshot"]["records"]
-                      if row["kind"] == "conversation" and row["id"] == conversation)
+        from tests.support.real_provider_application import navigation_query
+
+        navigation = httpx.get(
+            server.base + "/api/navigation/view/snapshot",
+            params={"view": json.dumps(navigation_query(conversation))},
+            timeout=10,
+        ).json()
+        record = next(
+            row["value"]
+            for row in navigation["content"]["records"]
+            if row["kind"] == "conversation" and row["id"] == conversation
+        )
         assert record["attention"]["durable"]["message_for_owner"] is expected
         assert record["attention"]["current"]["signal"]["message_for_owner"] is expected
         review = httpx.get(server.base + "/api/review", timeout=10).json()
-        ticket_cards = [item for item in review["items"]
-                        if item["review_item_type"] == "ticket" and item["ticket_id"] == ticket]
-        assert sum(message["conversation_id"] == conversation
-                   for card in ticket_cards for message in card["messages"]) == int(expected)
+        ticket_cards = [
+            item
+            for item in review["items"]
+            if item["review_item_type"] == "ticket" and item["ticket_id"] == ticket
+        ]
+        assert sum(
+            message["conversation_id"] == conversation
+            for card in ticket_cards
+            for message in card["messages"]
+        ) == int(expected)
         badge = page.locator(".rail-foot [data-review-badge]")
         visible_marks = page.locator('[data-conversation-signal="message"]:visible')
         if expected:
@@ -594,8 +656,11 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
             timeout=WAIT_MS,
         )
         expect(thread).to_contain_text(text, timeout=WAIT_MS)
-        page.wait_for_function("""()=>{const t=document.querySelector('[data-conversation-thread]');
-          return t.scrollHeight-t.clientHeight-t.scrollTop<4;}""", timeout=WAIT_MS)
+        page.wait_for_function(
+            """()=>{const t=document.querySelector('[data-conversation-thread]');
+          return t.scrollHeight-t.clientHeight-t.scrollTop<4;}""",
+            timeout=WAIT_MS,
+        )
         wait_read(sequence)
         unread_projection(False)
 
@@ -607,8 +672,9 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
     first_sequence = arrive(first)
     assert first not in thread.inner_text()
     assert anchor() == before
-    expect(page.get_by_role("button", name="Jump to latest message", exact=True).first
-           ).to_be_visible(timeout=WAIT_MS)
+    expect(
+        page.get_by_role("button", name="Jump to latest message", exact=True).first
+    ).to_be_visible(timeout=WAIT_MS)
     actual = int(snapshot()["owner_read_through_sequence"])
     print(f"READ_CREDIT_REFUSAL initial={initial} unique={first_sequence} actual={actual}")
     assert actual == initial, "A refused row must not advance canonical owner read credit"

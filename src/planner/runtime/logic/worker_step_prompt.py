@@ -55,6 +55,7 @@ def compose_worker_step_prompt(
     worker_type_definition: WorkflowDefinition,
     revision_feedback: PendingRevisionFeedback | None,
     memory_was_lost: bool,
+    specialist_skill_path: str | None = None,
 ) -> WorkerStepPrompt:
     """Compose every Panels-owned input for one Ticket worker step.
 
@@ -105,6 +106,14 @@ def compose_worker_step_prompt(
             WorkerStepInput("Ticket workflow guidance", render_workflow_guide(ticket.workflow))
         )
     inputs.append(WorkerStepInput("stage instruction", step_instruction, quoted=False))
+    if specialist_skill_path is not None:
+        inputs.append(
+            WorkerStepInput(
+                "assigned specialist",
+                f"Read your assigned Worker skill at {specialist_skill_path}.",
+                quoted=False,
+            )
+        )
     if revision_feedback is not None:
         inputs.append(WorkerStepInput("Ticket revision feedback", revision_feedback.text))
     return WorkerStepPrompt(inputs=tuple(inputs))

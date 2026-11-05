@@ -1,15 +1,23 @@
-"""The fake clock is available only in explicit test mode."""
+"""Focused proof for the environment check and the real/test clock boundary."""
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from datetime import datetime
 from pathlib import Path
 
-from planner.core.clock import RealClock, build_clock
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+import tree_environment  # noqa: E402  # reached via sys.path.insert above
+
+from planner.core.clock import RealClock, build_clock  # noqa: E402
 from planner.core.clock import (
-    TestClock as _TestClock,  # aliased: pytest would try to collect a bare `TestClock`
+    TestClock as _TestClock,  # noqa: E402  aliased: pytest would try to collect a bare `TestClock`
 )
-from planner.core.config import load_config
+from planner.core.config import load_config  # noqa: E402
 
 
 def test_test_clock_is_used_only_in_test_mode(tmp_path: Path) -> None:
@@ -43,3 +51,32 @@ def test_test_clock_is_used_only_in_test_mode(tmp_path: Path) -> None:
     after = datetime.now().astimezone()
     assert before <= observed <= after
     assert observed != fake_aware
+
+
+def test_environment_checks_the_resolved_source_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from importlib.machinery import ModuleSpec
+
+    tree = tmp_path / "mine"
+    own_source = tree / "src" / "planner" / "__init__.py"
+    foreign_source = tmp_path / "live" / "src" / "planner" / "__init__.py"
+    linked_source = tree / "src" / "linked-planner"
+    linked_source.parent.mkdir(parents=True)
+    linked_source.symlink_to(foreign_source.parent, target_is_directory=True)
+    cases = (
+        (own_source, True),
+        (foreign_source, False),
+        (linked_source / "__init__.py", False),
+        (None, False),
+    )
+    for origin, accepted in cases:
+        spec = ModuleSpec("planner", loader=None, origin=str(origin) if origin else None)
+        monkeypatch.setattr(
+            importlib.util, "find_spec", lambda name, found=spec: found
+        )
+        diagnosis = tree_environment.preflight(tree)
+        assert (diagnosis is None) is accepted
+        if diagnosis:
+            assert "outside" in diagnosis
+            assert str(tree / "src") in diagnosis

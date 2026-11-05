@@ -1,7 +1,7 @@
 <script lang="ts">
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
   import { createQuery } from "@tanstack/svelte-query";
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import {hasTickets} from '../lib/pageKit/holderDocument';
@@ -20,11 +20,9 @@
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import type { EffectiveNavigationView } from "../lib/navigation/knowledge";
-  import { managerHeaderImpact, workspaceHoverImpact, managerEditImpact, managerSettleImpact, conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
-  import { hoverDomMatches } from "../lib/workspaceRailDom";
-  import { workspaceHeaderDomMatches } from "../lib/managerWorkspaceDom";
+
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
-  import type { RenderObserver } from "../lib/navigation/visibility";
+
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {
     readBackends,
@@ -76,10 +74,7 @@
     if(!context) throw new Error('ManagerWorkspace requires the application navigation owner');
     return context;
   })();
-  const headerObserver=navigation.registerRenderBoundary(`manager-header:${crypto.randomUUID()}`,impact => {
-    const view=navigation.state.effective;return managerHeaderImpact(impact,itemId,view ? navigation.presentationFor(view) : undefined);
-  });
-  onDestroy(()=>navigation.disposeRenderBoundary(headerObserver));
+
   let displayedView=$state.raw<EffectiveNavigationView | undefined>(undefined);
   $effect(()=>{const view=navigation.selectors.effective;if(view) displayedView=view;});
   let shared=$derived(displayedView ? navigation.presentationFor(displayedView) : undefined);
@@ -94,7 +89,7 @@
     error:fullRecap.error ?? content.error,isLoading:content.isLoading || !publicItem});
   let headerElement=$state<HTMLElement | null>(null);
   let hoverElement=$state<HTMLDivElement | null>(null);
-  let hoverObserver=$state.raw<RenderObserver | null>(null);
+
   const startValues = createQuery(() => queries.managerConversationStartValues(itemId));
   let conversationId = $state<string | null>(null);
   let selectedPastConversationId = $state<string | null>(null);
@@ -165,8 +160,7 @@
   });
 
   function saveItem(field: "title" | "recap", value: string): Promise<unknown> {
-    return navigation.runCommand(managerEditImpact(itemId,field),responseMetadata =>
-      mutateJson(`/api/managers/${encodeURIComponent(itemId)}`, {method:"PATCH",body:{[field]:value},responseMetadata}),`edit manager ${field}`);
+    return mutateJson(`/api/managers/${encodeURIComponent(itemId)}`, {method:"PATCH",body:{[field]:value}});
   }
 
   // No navigation record carries the goal: the rail and the board show the recap. So this
@@ -182,8 +176,7 @@
     settleBusy = true;
     settleError = "";
     try {
-      await navigation.runCommand(managerSettleImpact(itemId),responseMetadata =>
-        mutateJson(`/api/managers/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled},responseMetadata}),"set manager settled");
+      await mutateJson(`/api/managers/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled}});
     } catch (error) {
       settleError = error instanceof Error ? error.message : "The manager could not be updated.";
     } finally {
@@ -192,60 +185,17 @@
   }
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const view=navigation.state.effective;
-    const delivered = await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'manager',itemId),responseMetadata => mutateJson<DeliveredMessage>(
-      `/api/managers/${encodeURIComponent(itemId)}/conversation/send`, {method:"POST",body,responseMetadata}),"send manager message");
+    const delivered = await mutateJson<DeliveredMessage>(
+      `/api/managers/${encodeURIComponent(itemId)}/conversation/send`, {method:"POST",body});
     conversationId = delivered.conversation_id;
     return delivered;
   }
 
   async function newConversation(): Promise<void> {
-    const view=navigation.state.effective;
-    await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'manager',itemId),responseMetadata => mutateJson(
-      `/api/managers/${encodeURIComponent(itemId)}/conversation/reset`, {method:"POST",responseMetadata}),"reset manager conversation");
+    await mutateJson(
+      `/api/managers/${encodeURIComponent(itemId)}/conversation/reset`, {method:"POST"});
     conversationId = null;
   }
-
-  $effect(()=>{
-    const view=navigation.selectors.effective;
-    const generation=navigation.state.generation;
-    const root=headerElement;
-    const item=publicItem;
-    if(!view?.runtimeCurrent || view!==displayedView || !root || !item) return;
-    const observation=headerObserver.observeSelectors(view.publication,generation);
-    let obsolete=false;
-    void tick().then(()=>{
-      if(obsolete || !root.isConnected || navigation.state.generation!==generation || navigation.selectors.effective!==view) return;
-      if(workspaceHeaderDomMatches(root,item)) headerObserver.acknowledgeRender(view.publication,observation);
-    });
-    return ()=>{obsolete=true;};
-  });
-  $effect(()=>{
-    if(!hoverVisible || !hoverElement) return;
-    const observer=navigation.registerRenderBoundary(`manager-hover:${crypto.randomUUID()}`,impact => {
-      const view=navigation.state.effective;return hoverWorkerId!==null && workspaceHoverImpact(impact,'ticket',hoverWorkerId,hoverWorker?.conversation_id,view ? navigation.presentationFor(view) : undefined);
-    });
-    hoverObserver=observer;
-    return ()=>{navigation.disposeRenderBoundary(observer);hoverObserver=null;};
-  });
-  $effect(()=>{
-    const view=navigation.selectors.effective;
-    const generation=navigation.state.generation;
-    const root=hoverElement, target=hoverTarget,observer=hoverObserver,worker=hoverWorker;
-    const parent=publicItem;
-    const stage=worker ? workspaceWorkerStageSentence(worker) : '';
-    if(!view?.runtimeCurrent || view!==displayedView || !root || !target?.isConnected || !observer || !worker || !parent || !hoverVisible) return;
-    const observation=observer.observeSelectors(view.publication,generation);
-    let obsolete=false;
-    void tick().then(()=>{
-      if(obsolete || !root.isConnected || !target.isConnected || hoverTarget!==target || !hoverVisible
-        || navigation.state.generation!==generation || navigation.selectors.effective!==view) return;
-      if(hoverDomMatches(root,worker.title,worker.recap_preview ?? '',stage,worker.conversation_signal,worker.conversation_id,parent.title))
-        observer.acknowledgeRender(view.publication,observation);
-    });
-    return ()=>{obsolete=true;};
-  });
-
 
 </script>
 

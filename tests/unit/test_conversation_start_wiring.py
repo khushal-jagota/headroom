@@ -15,6 +15,9 @@ from sqlite3 import Connection
 from typing import Literal
 
 import pytest
+from tests.support.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backend_state import write_model_enablement
@@ -33,9 +36,6 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     WorkspacePathPolicy,
-)
-from planner.conversation.in_memory_conversation_system import (
-    InMemoryConversationSystem,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.workspace_admission import WorkspaceAdmission

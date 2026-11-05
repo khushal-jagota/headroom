@@ -11,9 +11,8 @@ export function createHolderEditor(holder:ManagerPrincipal){
  const path=holderPagePath(holder);
  return createPageEditor<HolderPage,{page:PageDocument}>(path,{
   read:async()=>(await queryClient.fetchQuery(holderPageQuery(holder))).body,
-  write:(patch,revision)=>fetchJson<HolderPage>(path,{method:'PATCH',body:{...patch,expected_revision:revision}}),
+  write:patch=>fetchJson<HolderPage>(path,{method:'PATCH',body:patch}),
   page:document=>document.page,
-  revision:document=>document.page_revision,
   pagePatch:page=>({page}),
   refresh:()=>queryClient.invalidateQueries(),
  });

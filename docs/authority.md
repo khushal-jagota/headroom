@@ -8,6 +8,8 @@ Khushal, Chief, Managers, Workers, and goal agents all call the same routes. The
 
 The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). Goals have no agent; old goal transcripts stay readable history. The browser and an ordinary `panels` call are the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
 
+Manager requests use the `manager` actor and `X-Plan-Manager-ID`. Old Sprint Item actors and identity headers do not establish authority.
+
 ## Position
 
 ```text
@@ -21,7 +23,7 @@ Ticket ─── nothing
 
 A Manager stands above a Ticket because the Ticket is assigned to it. Move the Ticket and the old Manager no longer stands above it. A Ticket stands above nothing, so its Worker cannot decide its own proposal. That is the rule answering, not an extra ban. (A Worker type could declare something its Tickets stand above. No current type does.)
 
-The same rule covers owner-level configuration: schedules, skills, Worker types, and projects sit at the top, so only Khushal and Chief stand above them. A Manager does not gain control of a schedule by being assigned the Tickets it creates.
+The same rule covers owner-level configuration: skills, Worker types, and projects sit at the top, so only Khushal and Chief stand above them.
 
 ## Your own record
 
@@ -53,7 +55,8 @@ Reading Tickets and Managers is open to every caller. The rule guards writes.
 ## Code
 
 - `src/planner/core/authority/logic.py`: the rule, the own-record check, and who may hold a review.
-- `src/planner/core/authority/service.py`: the door routes call.
+- `src/planner/core/authority/intake.py`: checks requests and Mac commands against the target and relation at intake.
+- `src/planner/core/authority/service.py`: supplies the database facts for the rank rule.
 - `src/planner/core/authctx.py`: turns a request into a caller, and holds the owner-only doors.
 
 _Last verified: 2026-11-04._

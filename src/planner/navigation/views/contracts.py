@@ -1,4 +1,4 @@
-"""Bounded navigation views over the existing canonical source and proof domain.
+"""Bounded navigation views over the existing canonical source.
 
 This is wire 3, not a filtered wire-2 replica. Source continuity stays canonical.
 All fields are generated into the existing browser contract module.
@@ -20,8 +20,7 @@ from planner.navigation.contracts import (
     RecordKey,
     TicketValue,
 )
-from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuthority
-from planner.navigation.proof_contracts import ProofResult
+from planner.navigation.delivery_contracts import CurrentAuthority
 
 VIEW_WIRE_VERSION = 3
 VIEW_PROJECTION_VERSION = 7
@@ -182,7 +181,7 @@ class ViewWindow(TypedDict):
 
 
 class ViewCounts(TypedDict):
-    running_conversations: int | None
+    running_conversations: int
     out_claims: int
     review: int
     unread: int
@@ -217,18 +216,9 @@ class CurrentViewSnapshot(ViewIdentity):
     mode: Literal["current"]
     authority: CurrentAuthority
     content: ViewContent
-    proof: ProofResult | None
 
 
-class DegradedViewSnapshot(ViewIdentity):
-    event: Literal["snapshot"]
-    mode: Literal["degraded"]
-    authority: DegradedAuthority
-    content: ViewContent
-    proof: None
-
-
-type ViewSnapshot = CurrentViewSnapshot | DegradedViewSnapshot
+type ViewSnapshot = CurrentViewSnapshot
 
 
 class ViewPatch(ViewIdentity):

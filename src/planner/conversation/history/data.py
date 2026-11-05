@@ -62,17 +62,11 @@ def install(conn: sqlite3.Connection) -> None:
         "json_extract(value,'$[0]')='PLAN_SPRINT_ITEM_ID' LIMIT 1)"
     )
     current_owner = legacy_owner.replace("PLAN_SPRINT_ITEM_ID", "PLAN_MANAGER_ID")
-    owner = f"coalesce({current_owner},{legacy_owner})" if current else legacy_owner
-    actors = "('manager','sprint_item_supervisor')" if current else "('sprint_item_supervisor')"
-    conflict = (
-        f" AND ({current_owner} IS NULL OR {legacy_owner} IS NULL "
-        f"OR {current_owner}={legacy_owner})"
-        if current
-        else ""
-    )
+    owner = current_owner if current else legacy_owner
+    actors = "('manager')" if current else "('sprint_item_supervisor')"
     select = (
         f"SELECT '{owner_kind}',{owner},conversation_id,created_at FROM conversations "
-        f"WHERE {actor} IN {actors} AND {owner} IS NOT NULL" + conflict
+        f"WHERE {actor} IN {actors} AND {owner} IS NOT NULL"
     )
     conn.execute("INSERT OR IGNORE INTO conversation_history_catalog " + select)
     for operation in ("INSERT", "UPDATE OF identity_environment_variables,created_at"):

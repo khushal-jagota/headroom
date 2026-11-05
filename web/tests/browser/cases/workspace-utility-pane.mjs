@@ -10,6 +10,15 @@ export async function prepare({ scratchRoot }) {
   // reload. Network sources use the case fixture through the real navigation transport.
   await writeFile(join(scratchRoot, host), `<script lang="ts">
 import AppWithQueryClient from '../src/AppWithQueryClient.svelte';
+import {queryClient} from '../src/lib/queryClient';
+import {goalQueries} from '../src/lib/goals/queries';
+// Observe cache admission without replacing or advancing the production query.
+(globalThis as any).__goalQueryState = (id: string) => {
+  const state = queryClient.getQueryState(goalQueries.detail(id).queryKey);
+  const data = state?.data as {body?: {revision?: number}} | undefined;
+  return {fetchStatus: state?.fetchStatus, status: state?.status,
+    dataUpdateCount: state?.dataUpdateCount, revision: data?.body?.revision};
+};
 import {Chart} from 'chart.js';
 // Canvas tooltips have no DOM node. Observe the production instance in this host.
 (globalThis as any).__goalCanvasInspection = (canvas: HTMLCanvasElement) => {
@@ -22,7 +31,7 @@ import {Chart} from 'chart.js';
       y: (chart.chartArea.top + chart.chartArea.bottom) / 2,
     } : null} : null;
 };
-import { railDomMatches } from '../src/lib/workspaceRailDom';
+import { railDomMatches } from '../tests/support/workspaceRailDom';
 import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 (globalThis as any).__railDomMatches = (cards, managers, chief) => railDomMatches(
   document.querySelector('.workspace-rail'), buildWorkspaceRail(cards, managers), chief, false,

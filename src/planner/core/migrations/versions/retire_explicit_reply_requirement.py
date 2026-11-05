@@ -21,6 +21,12 @@ depends_on = None
 
 def upgrade() -> None:
     conn = cast(sqlite3.Connection, op.get_bind().connection.driver_connection)
+    # The collapsed entry revision creates no tables on a fresh database.
+    # Its final-schema child creates the retired schema directly.
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone() is None:
+        return
     conn.execute("DROP TABLE conversation_reply_credits")
     pointing_at_deleted_rows = [
         row[0]

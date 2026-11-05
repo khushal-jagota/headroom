@@ -18,8 +18,7 @@ from planner.conversation.backend_event_contracts import AcceptedEvent, EventTak
 from planner.conversation.events import ConversationEventKind
 from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
-from planner.core.contracts import ErrorCode, PlannerError
-from planner.core.db import ChangeSignallingConnection, connect, create_schema
+from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
@@ -136,79 +135,6 @@ def test_worker_progress_and_cancellation_retain_lock_through_finalization(
                 release.set()
                 watchdog.cancel()
                 watchdog.join()
-
-    asyncio.run(asyncio.wait_for(exercise(), 10))
-
-
-@pytest.mark.parametrize("outcome", ["accepted", "replay", "refused"])
-def test_ambiguous_commit_recovers_typed_result_for_every_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
-) -> None:
-    async def exercise() -> None:
-        async with _case(tmp_path, True) as (harness, store, identity, event, envelope):
-
-            def accept(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
-                def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
-                    if outcome == "refused":
-                        take()  # The receipt savepoint must roll back an already-written effect.
-                        raise PlannerError(ErrorCode.validation, "controlled refusal", {})
-                    return take()
-
-                receipt, taken = store.accept_in_transaction(
-                    connection, envelope, effect, 1001, identity=identity
-                )
-                return AcceptedEvent(as_object(receipt), taken)
-
-            if outcome == "replay":
-                await _take_event(harness.system, event, envelope, accept)
-            coordinator = harness.store.signal_coordinator
-            assert coordinator is not None
-            original_record = coordinator.record_result
-            original_commit = ChangeSignallingConnection.commit
-            target: list[sqlite3.Connection] = []
-            seen: list[AcceptedEvent] = []
-            original_encode = harness.store._encode_signal_result
-
-            def encode(result: object) -> object:
-                if isinstance(result, AcceptedEvent):
-                    seen.append(result)
-                return original_encode(result)
-
-            def record(connection: sqlite3.Connection, result: object) -> None:
-                original_record(connection, result)
-                if isinstance(result, dict) and "accepted_event" in result and not target:
-                    target.append(connection)
-
-            def commit(connection: ChangeSignallingConnection) -> None:
-                original_commit(connection)
-                if target and connection is target[0]:
-                    target.clear()
-                    raise RuntimeError("caller lost the commit result")
-
-            with monkeypatch.context() as fault:
-                fault.setattr(coordinator, "record_result", record)
-                fault.setattr(harness.store, "_encode_signal_result", encode)
-                fault.setattr(ChangeSignallingConnection, "commit", commit)
-                task = asyncio.create_task(_take_event(harness.system, event, envelope, accept))
-                for _ in range(500):
-                    if harness.store.recording_failures("c"):
-                        break
-                    await asyncio.sleep(0.002)
-                assert harness.store.recording_failures("c")
-                assert not task.done()
-                # Disable the injected loss before explicit reconciliation resumes the owner.
-                fault.setattr(ChangeSignallingConnection, "commit", original_commit)
-                harness.store.resume_recording("c")
-                receipt = await asyncio.wait_for(task, 5)
-            assert receipt.disposition.value == ("refused" if outcome == "refused" else "accepted")
-            assert len(seen) == 1
-            assert seen[0].taken is (outcome == "accepted")
-            assert bool(seen[0].written) is (outcome == "accepted")
-            events = await harness.store.read_events_after("c", 0)
-            assert sum(row.kind is ConversationEventKind.tool_call_started for row in events) == (
-                0 if outcome == "refused" else 1
-            )
-            assert await _take_event(harness.system, event, envelope, accept) == receipt
 
     asyncio.run(asyncio.wait_for(exercise(), 10))
 

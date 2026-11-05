@@ -78,7 +78,7 @@ class ManagerWorkspaceContent(ManagerWorkspaceDocument):
 # keys carry the string form and are parsed against the contract enums in api.
 
 
-class CreateManagerBody(TypedDict, total=False):  # POST /items
+class CreateManagerBody(TypedDict, total=False):  # POST /managers
     title: str  # default ""
     project: str | None  # legacy project name; route requires project or project_id
     project_id: str | None

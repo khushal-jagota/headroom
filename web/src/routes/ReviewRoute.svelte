@@ -5,8 +5,7 @@
   import { artifactForPressOnThePage } from "../lib/managedArtifactPress";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { navigationWindow, reviewProposalIdentity } from "../lib/navigation/presentation";
-  import { reviewQueueImpact, runtimeCountImpact } from "../lib/reviewNavigationImpact";
-  import { reviewDomMatches } from "../lib/reviewDom";
+
   import { workspaceAddress } from "../lib/workspaceAddress";
   import type { NavigationReviewItem as ReviewItem } from "../lib/types";
   import { viewWindow } from "../lib/navigation/views/owner";
@@ -21,10 +20,6 @@
 
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review requires the application navigation owner"); return value; })();
   const restoredVisit = takeReviewVisit(navigation);
-  const observer = navigation.registerRenderBoundary(`review:${crypto.randomUUID()}`,impact => {
-    const view=navigation.state.effective;return reviewQueueImpact(impact,view ? navigation.presentationFor(view) : undefined) || showFinal && runtimeCountImpact(impact,view ? navigation.presentationFor(view) : undefined);
-  });
-  onDestroy(() => navigation.disposeRenderBoundary(observer));
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
   let review = $derived(displayed ? navigation.presentationFor(displayed).review : null);
@@ -59,7 +54,6 @@
     });
     window.location.hash = artifactHref;
   }
-  let renderedBody = $state(0);
   let skipped = $state<Record<string, boolean>>(restoredVisit?.skipped ?? {});
   let skippedHistory=$state<ReviewHistoryKey[]>(restoredVisit?.skippedHistory ?? []);
   let returnCohort=$state<ReviewHistoryKey[]>(restoredVisit?.returnCohort ?? []);
@@ -165,7 +159,6 @@
     if(heldCard && !(heldCard.review_item_type==='message' ? messageEligible(heldCard) : heldCard.messages.some(messageEligible)))heldCard=null;
   });
 
-
   $effect(()=>{
     if(reviewReady && !showFinal && queueWindow?.next && items.length && items.every(item=>skipped[itemKey(item)])) {
       reviewAnchor=queueWindow.next;
@@ -232,26 +225,6 @@
   function proposalResolved(): void {
     void navigation.owner.recover().catch(() => undefined);
   }
-
-  $effect(() => {
-    const effective = displayed;
-    const generation = navigation.state.generation;
-    const element = screenElement;
-    const selected = showFinal ? null : currentItem;
-    const bodyObservation = renderedBody;
-    void bodyObservation;
-    const count = runningWorkerCount;
-    const finalCount = showFinal ? waitingCount : undefined;
-    if (!reviewReady || !effective?.runtimeCurrent || !element) return;
-    const publication = effective.publication;
-    const observation = observer.observeSelectors(publication,generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (!obsolete && element.isConnected && navigation.state.generation === generation
-        && navigation.selectors.effective === effective && reviewDomMatches(element,selected,count,finalCount)) observer.acknowledgeRender(publication,observation);
-    });
-    return () => { obsolete = true; };
-  });
 
   // Global review shortcuts (approved addition): s = skip, o = open ticket,
   // Cmd/Ctrl+Enter = approve the current ask. They fire only when the keystroke
@@ -321,7 +294,7 @@
         {@const message = currentItem}
         {#key `${itemKey(message)}:${messageGenerations[message.conversation_id] ?? 0}`}
           <ReviewMessageCard item={message} onSkip={()=>skip(message)} onResolved={()=>messageResolved(message.conversation_id)}
-            onBusy={value=>messageBusyChanged(message.conversation_id,value)} onRendered={()=>{renderedBody+=1;}} footer={messageKeys}/>
+            onBusy={value=>messageBusyChanged(message.conversation_id,value)} footer={messageKeys}/>
         {/key}
       {:else}
         {@const ticket = currentItem}
@@ -331,7 +304,7 @@
               {@const proposal = ticket.proposal}
               {#key reviewProposalIdentity(proposal)}
                 <ReviewProposalCard identity={proposal} embedded ticketId={proposal.ticket_id} field={proposal.field}
-                  title={proposal.title} onResolved={proposalResolved} onRendered={()=>{renderedBody+=1;}}
+                  title={proposal.title} onResolved={proposalResolved}
                   initialRevisionDraft={proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.text : ""}
                   initialEditedBody={proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.editedBody : undefined}
                   onEditedBodyChange={editedBody=>{proposalDraft={identity:reviewProposalIdentity(proposal),text:proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.text : "",editedBody};}}
@@ -342,7 +315,7 @@
               {#key messageGenerations[message.conversation_id] ?? 0}
                 <ReviewMessageCard item={message} embedded onSkip={()=>skip(ticket)}
                   onResolved={()=>messageResolved(message.conversation_id)} onBusy={value=>messageBusyChanged(message.conversation_id,value)}
-                  onRendered={()=>{renderedBody+=1;}}/>
+                 />
               {/key}
             {/each}
             {#if ticket.proposal}{@render proposalKeys()}{:else}{@render messageKeys()}{/if}

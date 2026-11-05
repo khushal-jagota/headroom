@@ -72,6 +72,7 @@ def test_canonical_route_body_and_worker_actor(
     path: str,
     body: dict[str, Any] | None,
 ) -> None:
+    monkeypatch.delenv("PLAN_CONVERSATION_ID", raising=False)
     calls: list[tuple[str, str, dict[str, Any]]] = []
     reply = {"id": "run", "status": "pending", "collection_failure": {"code": "http_error"}}
 
@@ -229,7 +230,7 @@ def test_contract_guidance_is_discoverable_without_transport_or_stdin(
                 ("clear_checklist_deadline", None),
             ):
                 example = guidance["examples"][name]
-                assert example["expected_revision"] == 1
+                assert "expected_revision" not in example
                 assert example["page"]["blocks"][0]["items"][0]["deadline"] == deadline
     default = runner.invoke(main, ["measure-source", "schema", "--json"])
     explicit = runner.invoke(main, ["measure-source", "schema", "create", "--json"])

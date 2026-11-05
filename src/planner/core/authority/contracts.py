@@ -12,8 +12,8 @@ Four kinds cover every guarded operation in Panels:
 ``plan``
     A retained historical declaration. No current Worker type grants shared-plan authority.
 ``owner_only``
-    Everything else Khushal owns outright: projects, settings, skills, Worker types,
-    feedback. Khushal and the Chief stand above it and nothing else does. ``id`` names
+    Everything else Khushal owns outright: projects, settings, skills, and Worker types.
+    Khushal and the Chief stand above it and nothing else does. ``id`` names
     what it is, and is read only by a refusal.
 
 A Worker type declares the targets it stands above with the same type, so there is one

@@ -2,12 +2,12 @@
 
 from sqlite3 import Connection
 
-import pytest
+from fastapi.testclient import TestClient
+from tests.support.api_app import _app
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
-from planner.core.contracts import PlannerError
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
-from planner.tickets import data, views
+from planner.tickets import data
 from planner.tickets.contracts import Ticket, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -72,26 +72,22 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
 
 
 
-def test_hash_guard_detects_same_second_changes_and_authority_is_unchanged(
+def test_backlog_accepts_same_second_changes_and_authority_is_unchanged(
     tmp_db: Connection,
 ) -> None:
     tid = create(tmp_db)
-    snapshot = views.ticket_detail(tmp_db, tid, 10)
     tmp_db.execute("UPDATE tickets SET title='Changed in same second' WHERE id=?", (tid,))
     tmp_db.commit()
-    with pytest.raises(PlannerError, match="changed"):
-        data.set_ticket_backlog(
-            tmp_db,
-            tid,
-            is_backlogged=True,
-            principal=OWNER_PRINCIPAL,
-            now=20,
-            expected_record_sha256=snapshot["record_sha256"],
+    assert backlog(tmp_db, tid).is_backlogged
+    before = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone())
+    with TestClient(_app(tmp_db)) as client:
+        denied = client.post(
+            f"/api/tickets/{tid}/backlog", json={},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
         )
-    with pytest.raises(PlannerError):
-        data.set_ticket_backlog(
-            tmp_db, tid, is_backlogged=True, principal=ticket_principal(tid), now=20
-        )
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+    assert dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone()) == before
     assert data.read_ticket(tmp_db, tid).stage == "needs_brief"
 
 

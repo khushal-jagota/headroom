@@ -1088,7 +1088,11 @@ def _optional_principal(stored: dict[str, Any], field_name: str) -> Principal | 
     principal_id = value.get("id")
     if not isinstance(kind, str) or not isinstance(principal_id, str):
         raise ValueError(f"{field_name} must contain text kind and id")
-    return Principal(PrincipalKind(kind), principal_id)
+    # Archived event payloads retain their original sender bytes. This decoder is
+    # only for stored events, not request principals.
+    return Principal(
+        PrincipalKind.manager if kind == "sprint_item" else PrincipalKind(kind), principal_id
+    )
 
 
 def _text(stored: dict[str, Any], field_name: str) -> str:

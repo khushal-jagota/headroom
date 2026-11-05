@@ -4,7 +4,7 @@ import { updatePageBlock } from './presentation';
 import { goalQueries } from './queries';
 import type { Block, GoalEditBody, GoalResponse, PageDocument } from './contracts';
 
-type GoalPatch = Omit<GoalEditBody, 'expected_revision'>;
+type GoalPatch = GoalEditBody;
 type EditorIO = {
   read(id: string): Promise<GoalResponse>;
   write(id: string, body: GoalEditBody): Promise<GoalResponse>;
@@ -28,31 +28,27 @@ function enqueue<T>(id: string, command: () => Promise<T>): Promise<T> {
 
 export function createPageEditor<Document, Patch>(id: string, io: {
   read(): Promise<Document>;
-  write(patch: Patch, revision: number): Promise<Document>;
+  write(patch: Patch): Promise<Document>;
   page(document: Document): PageDocument | null;
-  revision(document: Document): number;
   pagePatch(page: PageDocument): Patch;
   refresh(): Promise<unknown>;
 }) {
-  async function accept(patch: Patch, revision: number) {
-    const accepted = await io.write(patch, revision);
+  async function accept(patch: Patch) {
+    const accepted = await io.write(patch);
     // A read failure after acceptance belongs to the mounted query, never Retry save.
     await io.refresh().catch(() => undefined);
     return accepted;
   }
   return {
     getAccepted: io.read,
-    write: (patch: Patch, revision?: number) => enqueue(id, async () => {
-      const document = await io.read();
-      return accept(patch, revision ?? io.revision(document));
-    }),
-    updateBlock: (blockId: string, update: (block: Block) => Block, revision?: number) => enqueue(id, async () => {
+    write: (patch: Patch) => enqueue(id, () => accept(patch)),
+    updateBlock: (blockId: string, update: (block: Block) => Block) => enqueue(id, async () => {
       const document = await io.read(), page = io.page(document);
       if (!page) throw new Error('This page no longer exists.');
       let found = false;
       const blocks = updatePageBlock(page.blocks, blockId, block => { found = true; return update(block); });
       if (!found) throw new Error('This block no longer exists. Refresh the page before another edit.');
-      return accept(io.pagePatch({ ...page, blocks }), revision ?? io.revision(document));
+      return accept(io.pagePatch({ ...page, blocks }));
     }),
   };
 }
@@ -65,9 +61,8 @@ export function createGoalEditor(goalId: string, io: EditorIO = http) {
       if (goal.id !== goalId) throw new Error('The accepted goal does not match this edit.');
       return goal;
     },
-    write: (patch, revision) => io.write(goalId, {...patch, expected_revision: revision}),
+    write: patch => io.write(goalId, patch),
     page: goal => goal.page,
-    revision: goal => goal.revision,
     pagePatch: page => ({page}),
     refresh: io.refresh,
   })};

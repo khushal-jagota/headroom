@@ -39,6 +39,7 @@ from planner.conversation.logic.conversation_start_resolution import (
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.core import change_signal
+from planner.core.authority.intake import admit_command
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
@@ -127,7 +128,7 @@ def _append_failed_turn(store: ConversationStore, conversation_id: str) -> None:
     )
 
 
-@pytest.mark.parametrize("holder_kind", ["chief", "manager", "ticket"])
+@pytest.mark.parametrize("holder_kind", ["chief", "manager"])
 def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
     tmp_db: Connection, fake_clock: FakeClock, holder_kind: str
 ) -> None:
@@ -135,17 +136,6 @@ def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
     holder_id = item_id
     if holder_kind == "chief":
         holder_id = "chief"
-    elif holder_kind == "ticket":
-        holder_id = tickets_data.create_ticket(
-            tmp_db,
-            title="Reviewing ticket",
-            principal=OWNER_PRINCIPAL,
-            now=2,
-            title_max_chars=TITLE_MAX_CHARS,
-            worker_type="coding",
-            brief="Start",
-            stated_ceiling="needs_what_changes",
-        ).id
     tmp_db.execute(
         "UPDATE tickets SET ceiling_holder=? WHERE id=?",
         (json.dumps({"kind": holder_kind, "id": holder_id}), ticket_id),
@@ -555,6 +545,10 @@ def test_moving_a_parked_proposal_wakes_the_new_manager_and_removes_old_authorit
         (new_item.id, 2),
     ]
     with pytest.raises(PlannerError) as forbidden:
+        admit_command(
+            tmp_db, old_manager, "POST", "/api/tickets/{ticket_id}/accept/{field}",
+            {"ticket_id": ticket_id, "field": "what_changes"}, {},
+        )
         tickets_data.accept_proposal(
             tmp_db,
             ticket_id,

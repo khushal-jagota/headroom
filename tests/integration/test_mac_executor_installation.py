@@ -77,7 +77,6 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
         "cli/main.py",
         "core/migrations/env.py",
         "core/migrations/script.py.mako",
-        "core/migrations/planning_retirement_cohort.json",
         "worker_types/shipped_worker_types.json",
         "py.typed",
         "skills/panels/SKILL.md",

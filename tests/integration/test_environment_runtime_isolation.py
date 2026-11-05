@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -23,7 +24,8 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 def test_staging_runs_on_demand_with_dynamic_port_and_persistent_state(
     tmp_path: Path,
 ) -> None:
-    environment_root = Path("/tmp") / f"panels-staging-e2e-{os.getpid()}-{tmp_path.name}"
+    digest = hashlib.sha1(str(tmp_path).encode("utf-8")).hexdigest()[:8]
+    environment_root = Path(os.environ.get("TMPDIR", "/tmp")) / f"se-{os.getpid()}-{digest}"
     shutil.rmtree(environment_root, ignore_errors=True)
     repository = _REPOSITORY_ROOT
     log_path = tmp_path / "staging.log"

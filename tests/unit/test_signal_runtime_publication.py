@@ -1,27 +1,18 @@
-"""Actual runtime mutations through an injected producer driver, without core cutover."""
+"""Actual runtime status publication through ordinary application saves."""
 
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
-from typing import Any
 
 import pytest
 from tests.unit import test_conversation_system as controlled
-from tests.unit.test_signal_publication import (
-    _bind_admission,
-    _callback_guard,
-    _InjectedConnection,
-)
 
 from planner.conversation.backends.contracts import (
-    BackendPermissionAsk,
     PermissionAnswerWriteFailed,
-    PermissionAskRaised,
     TurnEnded,
 )
 from planner.conversation.contracts import (
@@ -48,18 +39,17 @@ from planner.conversation.lifecycle import (
 from planner.conversation.lifecycle_storage import (
     ConversationRuntimeAlreadyOwned,
     acquire_runtime_ownership,
-    validate_runtime_ownership,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
 from planner.conversation.message_content import text_message_content
-from planner.conversation.publication import SignalPublicationCoordinator, persistence
+from planner.conversation.publication import SignalPublicationCoordinator
+from planner.conversation.runtime_composition import SignalRuntimeComposition, transaction_control
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
-from planner.database_modules import attach
 
 
 class _SignalHarness(controlled._Harness):
@@ -75,34 +65,6 @@ _EnabledRuntime = tuple[
 ]
 
 
-class _RuntimeConnection(_InjectedConnection):
-    """Add only SQL commit spellings used by the existing store to the shared fixture."""
-
-    uncertain_commit = False
-
-    def commit(self) -> None:
-        if not self.uncertain_commit:
-            return super().commit()
-        lease, self.lease = self.lease, None
-        assert lease is not None
-        self.coordinator.finalize_signal(self)
-        sqlite3.Connection.commit(self)
-        error = RuntimeError("fixture commit result is uncertain")
-        lease.settle("uncertain", error)
-        lease.release()
-        raise error
-
-    def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
-        control = sql.strip().upper()
-        if control in {"COMMIT", "END"}:
-            self.commit()
-            return super().execute("SELECT 1 WHERE 0")
-        if control == "ROLLBACK":
-            self.rollback()
-            return super().execute("SELECT 1 WHERE 0")
-        return super().execute(sql, parameters)
-
-
 @contextmanager
 def _enabled_runtime(
     tmp_path: Path,
@@ -115,59 +77,28 @@ def _enabled_runtime(
     connection.close()
     if seed is not None:
         seed(path)
-    ownership = acquire_runtime_ownership(str(path))
-    coordinator: SignalPublicationCoordinator | None = None
-
-    def source() -> _RuntimeConnection:
-        assert coordinator is not None
-        connection = sqlite3.connect(path, isolation_level=None, factory=_RuntimeConnection)
-        connection.row_factory = sqlite3.Row
-        connection.coordinator = coordinator
-        attach(connection)
-        coordinator.attach_connection(connection)
-        return connection
-
-    coordinator = SignalPublicationCoordinator(
+    composition = SignalRuntimeComposition(str(path), 1000)
+    composition.bootstrap()
+    ownership = composition.ownership
+    assert ownership is not None
+    coordinator = composition.coordinator
+    store = ConversationStore(
         str(path),
-        ownership,
-        connect=source,
-        authority_check=validate_runtime_ownership,
-        savepoint_depth=lambda connection: 0,
-        transaction_control=_callback_guard,
-        bind_admission=_bind_admission,
+        signal_coordinator=coordinator,
+        transaction_control_guard=transaction_control,
     )
-    with coordinator.bootstrap_authority(ownership) as bootstrap:
-        connection = source()
-        with _bind_admission(connection, bootstrap):
-            connection.execute("BEGIN IMMEDIATE")
-            persistence.create_schema(connection)
-            persistence.install_source_triggers(connection)
-            connection.commit()
-        connection.close()
-        initialization = coordinator.begin_initialization(bootstrap)
-        store = ConversationStore(
-            str(path),
-            signal_coordinator=coordinator,
-            bind_signal_admission=_bind_admission,
-            transaction_control_guard=_callback_guard,
-            runtime_reconciliation_admission=initialization,
+    monkeypatch.setattr(store, "_connect", composition.connect)
+    with monkeypatch.context() as patch:
+        patch.setattr(controlled, "ConversationStore", lambda *args, **kwargs: store)
+        patch.setattr(
+            controlled,
+            "SqliteProcessConversationSystem",
+            partial(SqliteProcessConversationSystem, runtime_ownership=ownership),
         )
-        monkeypatch.setattr(store, "_connect", source)
-        with monkeypatch.context() as patch:
-            patch.setattr(controlled, "ConversationStore", lambda *args, **kwargs: store)
-            patch.setattr(
-                controlled,
-                "SqliteProcessConversationSystem",
-                partial(SqliteProcessConversationSystem, runtime_ownership=ownership),
-            )
-            runtime = _SignalHarness(path)
-        assert runtime.system._runtime_ownership is ownership
-        connection = source()
-        with _bind_admission(connection, initialization):
-            connection.execute("BEGIN IMMEDIATE")
-            coordinator.initialize(connection)
-            connection.commit()
-        connection.close()
+        runtime = _SignalHarness(path)
+    assert runtime.system._runtime_ownership is ownership
+    composition.transfer_ownership()
+    composition.initialize()
     batches: list[SignalBatch] = []
     attachment = coordinator.attach_signal_publication(
         install=lambda connection, snapshot: setattr(runtime, "signal_snapshot", snapshot),
@@ -180,6 +111,7 @@ def _enabled_runtime(
             yield runtime, coordinator, batches, attachment, loop
         finally:
             loop.run(runtime.system.shutdown())
+            composition.close()
             assert ownership.closed
 
 
@@ -267,7 +199,7 @@ def test_status_reads_retain_signal_and_runtime_ownership_admission(
 
         async def exercise() -> None:
             await controlled._start(runtime)
-            coordinator.invalidate()
+            coordinator.invalidate("shutdown")
             for conversation_id in ("c", "missing"):
                 for read in (
                     runtime.system.is_running,
@@ -287,69 +219,6 @@ def test_status_reads_retain_signal_and_runtime_ownership_admission(
                 ):
                     with pytest.raises(RuntimeError, match="the conversation runtime is shut down"):
                         await read(conversation_id)
-
-        loop.run(asyncio.wait_for(exercise(), 8))
-
-
-def test_rejected_request_restores_actual_slot_fields_before_gate_release(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (
-        runtime,
-        coordinator,
-        batches,
-        attachment,
-        loop,
-    ):
-
-        async def exercise() -> None:
-            await controlled._start(runtime)
-            await runtime.system.send("c", text_message_content("work"), sender_label="owner")
-            state = runtime.system._conversations["c"]
-            running = state.running_turn
-            assert running is not None
-            pending, providers = running.pending_permission_ask_ids, running.permission_provider_ids
-            original = coordinator._participant
-
-            def reject(connection: sqlite3.Connection, batch: SignalBatch) -> None:
-                raise RuntimeError("reject candidate")
-
-            coordinator._participant = reject
-            task = asyncio.create_task(
-                runtime.system.take_backend_event(
-                    running.token,
-                    PermissionAskRaised(
-                        ask=BackendPermissionAsk("provider-ask", "Title", "Detail", ())
-                    ),
-                )
-            )
-            for _ in range(500):
-                if runtime.store.recording_failures("c"):
-                    break
-                await asyncio.sleep(0.002)
-            assert runtime.store.recording_failures("c")
-            assert running.pending_permission_ask_ids is pending
-            assert running.permission_provider_ids is providers
-            assert not pending and not providers
-            with pytest.raises(SignalUnavailable):
-                attachment.capture_permit()
-            connection = runtime.store._connect()
-            try:
-                sqlite3.Connection.execute(connection, "BEGIN")
-                with pytest.raises(SignalUnavailable):
-                    coordinator.confirm_repaired(connection)
-                sqlite3.Connection.rollback(connection)
-            finally:
-                connection.close()
-            coordinator._participant = original
-            runtime.store.resume_recording("c")
-            await asyncio.wait_for(task, 5)
-            recovered = state.running_turn
-            assert recovered is not None and recovered.token == running.token
-            assert recovered.pending_permission_ask_ids == {"1:permission:provider-ask"}
-            assert recovered.permission_provider_ids == {
-                "1:permission:provider-ask": "provider-ask"
-            }
 
         loop.run(asyncio.wait_for(exercise(), 8))
 
@@ -397,55 +266,6 @@ def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
             assert not await runtime.system.has_pending_permission_ask("c")
             assert await runtime.system.pending_permission_ask_ids("c") == frozenset()
             assert not _latest_attention(batches).awaiting_answer
-
-        loop.run(asyncio.wait_for(exercise(), 8))
-
-
-def test_uncertain_committed_prompt_recovers_result_without_provider_retry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (
-        runtime,
-        coordinator,
-        batches,
-        attachment,
-        loop,
-    ):
-        original = coordinator.record_result
-        failed = False
-
-        def uncertain_prompt(connection: sqlite3.Connection, result: object) -> None:
-            nonlocal failed
-            original(connection, result)
-            if not failed and isinstance(result, dict) and "events" in result:
-                failed = True
-                assert isinstance(connection, _RuntimeConnection)
-                connection.uncertain_commit = True
-
-        monkeypatch.setattr(coordinator, "record_result", uncertain_prompt)
-
-        async def exercise() -> None:
-            await controlled._start(runtime)
-            delivery = asyncio.create_task(
-                runtime.system.send(
-                    "c",
-                    text_message_content("only once"),
-                    sender_label="owner",
-                )
-            )
-            for _ in range(500):
-                if runtime.store.recording_failures("c"):
-                    break
-                await asyncio.sleep(0.002)
-            assert runtime.store.recording_failures("c")
-            with pytest.raises(SignalUnavailable):
-                attachment.capture_permit()
-            runtime.store.resume_recording("c")
-            await delivery
-            assert len(runtime.backend("c").writes) == 1
-            events = await runtime.events("c")
-            assert sum(event.kind.value == "prompt" for event in events) == 1
-            assert runtime.system._conversations["c"].running_turn is not None
 
         loop.run(asyncio.wait_for(exercise(), 8))
 

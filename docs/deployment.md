@@ -42,6 +42,12 @@ The existing readiness loop asks GitHub to run the install job on the host runne
 
 The publication also carries a prebuilt Mac runtime from the same source. One approval covers both machines, with separate progress for the Mac. **When work finishes** waits for turns and background tasks on both machines. The VPS keeps the approved Mac bytes before dispatch so a sleeping Mac can catch up after publication expiry. [The Mac executor](executor.md) owns its fixed launcher, runtime swap, and reversion rules. Older publications without a Mac runtime explicitly require a manual Mac update.
 
+A new database starts from one complete schema. An existing staging database upgrades directly to that schema in one startup transaction. No bridge installation is needed.
+
+The current entry revision is staging's `goal_holders`. The direct upgrade applies the sweep removals and Manager rename, preserves retained source records, and finishes at `canonical_manager_identities`. Fresh and upgraded databases have the same schema.
+
+Before the sweep merges, merge the latest staging into the sweep branch. Confirm staging's migration head and the live database revision with a read-only connection. If staging adds migrations, update the one supported entry revision and its direct transformation. Repeat the upgrade on a fresh copy of the live database. Compare every retained source record after the documented transformations, account for removed feature records, check integrity and foreign keys, and compare the complete schema with a fresh database. Keep the proof with the integration Ticket. Do not install the sweep until that proof passes.
+
 The installer runs in its own short-lived user service, so stopping Headroom cannot kill it. While the old app still serves, it checks the download against the request, checks the runtime contract, and refuses a database whose schema history it does not recognise or that is too old. Then it asks the server for a final claim. The server rechecks workspace activity under the same barrier that guards new conversations and background work, and runs the startup Ticket integrity check. An idle request that finds work running goes back to waiting. A failed integrity check fails the request before any downtime.
 
 Once claimed, the installer stops the service, captures interrupted agent sessions, and takes a verified [backup](backups.md). It keeps the prior app, moves the new one into place, restarts, and waits for the new app to report its exact commit. Meanwhile ordinary requests, CLI work, and background loops stay closed. Health, status, and owner update recovery remain available. When the new app proves healthy, the runner records the commit and work reopens. Interrupted conversations then get one recovery prompt ([Conversations](conversations.md)). Last, the job refreshes the agents' skill links and checks the private HTTPS route over HTTP/2.
@@ -62,6 +68,8 @@ One server answer supplies the update state and allowed actions. The sidebar car
 
 A finalizer records the installed commit, application health, and each later check separately. It runs from checked-out source with the host's own Python, never from the app it judges. Missing evidence stays uncertain.
 
+An upgrade refuses a database that still contains cancelled Tickets. Resolve those records through the prior supported version before retry.
+
 The deploy workflow never changes Tailscale Serve. A separate manual workflow restores the private route if it is lost.
 
 ## Decisions that shape it
@@ -71,6 +79,10 @@ The deploy workflow never changes Tailscale Serve. A separate manual workflow re
 - A release carries its own interpreter and dependencies. The host provides a declared, checked minimum.
 - Data is restorable only until the new app is proven. A later code rollback is a new install and does not rewind data.
 - Uncertain evidence stays uncertain. Nothing guesses success, re-dispatches, or replays a prompt.
+
+## Older cancelled Tickets
+
+An upgrade refuses a database that contains cancelled Tickets. Resolve these records through the prior supported version before retry.
 
 ## When `scripts/dev` refuses
 

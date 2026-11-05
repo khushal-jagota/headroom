@@ -3,10 +3,10 @@ import type { ConversationViewRow, ViewRowBody, ConversationViewTurn, Conversati
 import type { MessagePiece } from '../wire';
 import type { ViewMessagePiece } from './contracts';
 import type { TranscriptRow } from '../transcript';
-import { refusalSentence, workingSentence } from '../transcript';
+import { refusalSentence } from '../transcript';
 import type { ThreadItem } from '../threadLayout';
 import type { ConversationTaskProgress } from '../taskProgress';
-import { whatThisRowSays, toolCallSentence, type RestLine } from '../restLine';
+import { whatThisRowSays, toolCallSentence, restLineBodyFor, type RestLine } from '../restLine';
 import type { ConversationViewItem, ConversationViewPage, ViewHistoryScope, ViewPageCursor } from './contracts';
 
 export function transcriptHistoryEdges(pages: readonly Pick<ConversationViewPage, 'scope' | 'items' | 'older' | 'newer'>[], items: readonly ConversationViewItem[]): {
@@ -94,19 +94,16 @@ export function restFor(status: ConversationViewStatus, sender: string, readThro
     const facts = status.rest;
     const last = happened(facts.latest_happened, sender);
     const running = status.turn_running === true;
-    let line: Omit<RestLine, 'marks'>;
-    if (status.pending_permission !== null)
-        line = { who: null, text: facts.permission_title_excerpt ?? 'waiting for you', aside: null, taskProgress: null, waiting: true, workingSinceUnixMilliseconds: null };
-    else if (running && progress.currentEntry !== null)
-        line = { who: null, text: progress.currentEntry.text, aside: null, taskProgress: progress, waiting: false, workingSinceUnixMilliseconds: facts.latest_turn?.started_at_unix_milliseconds ?? null };
-    else if (running) {
-        const tool = facts.latest_tool;
-        const row = tool?.body.kind === 'inline' ? rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, tool.body.value) : null;
-        line = { who: tool === null ? last?.who ?? null : null, text: row?.kind === 'tool_call' ? toolCallSentence(row) : tool?.title ?? last?.text ?? workingSentence(null), aside: null, taskProgress: null, waiting: false, workingSinceUnixMilliseconds: facts.latest_turn?.started_at_unix_milliseconds ?? null };
-    }
-    else if (last !== null)
-        line = { ...last, aside: null, taskProgress: null, waiting: false, workingSinceUnixMilliseconds: null };
-    else
-        return null;
+    const tool = facts.latest_tool;
+    const row = tool?.body.kind === 'inline' ? rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, tool.body.value) : null;
+    const line = restLineBodyFor({
+        permissionTitle: status.pending_permission === null ? null : facts.permission_title_excerpt ?? 'waiting for you',
+        running,
+        startedAt: facts.latest_turn?.started_at_unix_milliseconds ?? null,
+        tool: row?.kind === 'tool_call' ? toolCallSentence(row) : tool?.title ?? null,
+        last,
+        progress
+    });
+    if (line === null) return null;
     return { ...line, marks: { running, unreadReply: facts.latest_owner_message_sequence > readThrough, failed: facts.last_boundary_failed } };
 }

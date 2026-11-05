@@ -236,11 +236,10 @@ def read_content(
     conn: sqlite3.Connection,
     value: ViewRequest,
     *,
-    current: bool,
     config: ViewConfig = DEFAULT_CONFIG,
 ) -> tuple[Continuity, ViewContent]:
     coverage = continuity(conn)
-    profile = "current" if current else "durable"
+    profile = "current"
     records: dict[Key, Any] = {}
     used = 0
     # Window requests, member keys and cursors are bounded too; reserve room before
@@ -270,11 +269,6 @@ def read_content(
                 config,
                 settled_only=not full,
             )
-            if row["kind"] == "conversation" and not current:
-                row["value"]["attention"] = {
-                    "current": None,
-                    "durable": raw["attention"]["durable"],
-                }
             found[item] = row
             if item[0] in ("ticket", "manager", "chief", "goal"):
                 if item[0] != "goal" and raw["conversation_id"]:
@@ -553,8 +547,6 @@ def read_content(
     counts = dict(conn.execute("SELECT name,value FROM navigation_view_globals"))
     if set(counts) != {"running_conversations", "out_claims", "review", "unread", "settled"}:
         raise DeliveryUnavailable("navigation aggregates are incomplete")
-    if not current:
-        counts["running_conversations"] = None
     content = cast(
         ViewContent,
         {
