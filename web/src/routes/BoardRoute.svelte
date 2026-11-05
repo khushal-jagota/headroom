@@ -544,9 +544,9 @@
   .board-workspace-right { position:relative; z-index:0; }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); border-right:0; }
   .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
-  /* The rail's lists scroll themselves, and their scrollbar bleeds into the rail padding.
-     A scrolling wrapper here would hide that scrollbar and let the rail slide sideways. */
-  .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:visible; }
+  /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
+     included, without becoming a scroller that a hover could slide sideways. */
+  .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
   .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
   .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
   .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
