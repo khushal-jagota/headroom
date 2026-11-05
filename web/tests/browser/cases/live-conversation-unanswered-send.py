@@ -158,7 +158,7 @@ def run_retirement(browser, urls, *, control=""):
     output = Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp"))
     output.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    page = browser.new_page(viewport={"width": 1100, "height": 800}, reduced_motion="no-preference", record_video_dir=str(output / "retirement-video"))
+    page = browser.new_page(viewport={"width": 1100, "height": 800}, reduced_motion="no-preference")
     page.set_default_timeout(6_000)
     samples = []
     checks = []
@@ -451,34 +451,25 @@ def run_retirement(browser, urls, *, control=""):
         assert incomplete['totalTail'] == 0 and not incomplete['latest'], incomplete
         assert abs(incomplete['top'] - (incomplete['scrollHeight'] - incomplete['clientHeight'])) <= 2, incomplete
 
-        # A gesture and then a new send supersede an in-flight Latest operation.
+        # Leftover answer room is below the newest line, so it does not call for Latest.
         accept('A later send owns its own answer room.')
         residual = wheel(-80, 'latest-residual-manual')
-        assert residual['totalTail'] > 0, residual
-        page.get_by_role('button', name='Jump to latest message').click()
-        _settle(page, _NOT_LATEST, label='residual-latest-arrived')
-        residual_arrival = sample('residual-latest-arrived')
-        residual_motion = frames_between(residual, residual_arrival)
-        assert residual_arrival['totalTail'] == 0 and not residual_arrival['latest'], residual_arrival
-        assert abs(residual_arrival['top'] - residual_arrival['scrollHeight'] + residual_arrival['clientHeight']) <= 2, residual_arrival
-        assert all(b['top'] <= a['top'] + 1 for a, b in zip(residual_motion, residual_motion[1:], strict=False)), residual_motion
-        assert all(frame['top'] >= residual_arrival['top'] - 1 for frame in residual_motion), residual_motion
-        residual_steps = [abs(b['top'] - a['top']) for a, b in zip(residual_motion, residual_motion[1:], strict=False)]
-        assert len([step for step in residual_steps if step > .5]) > 3, residual_motion
-        assert max(residual_steps) < abs(residual_arrival['top'] - residual['top']) * .45, residual_motion
+        assert residual['totalTail'] > 0 and not residual['latest'], residual
+        page.screenshot(path=str(output / 'latest-hidden-over-answer-room.png'))
+
+        # A gesture and then a new send supersede an in-flight Latest operation.
         accept('Cancel the next Latest motion with a real gesture.')
         page.locator('[data-conversation-thread]').hover()
-        # Reserved room retires with this displacement, so the native bottom gap
-        # can remain zero. Positive room and Latest establish the required range.
-        native_events.append({"kind": "gesture-setup", "barrier": establish_scrollback(page, lambda: page.mouse.wheel(0, -80), min_clearance=0)})
-        cancel_setup = sample('latest-residual-before-cancel')
-        assert cancel_setup['totalTail'] > 0 and cancel_setup['latest'] and cancel_setup['owner'] == 'manual', ('SETUP_LATEST_GEOMETRY', cancel_setup)
+        # Latest needs the newest line below the view. Reaching there retires the room.
+        native_events.append({"kind": "gesture-setup", "barrier": establish_scrollback(page, lambda: page.mouse.wheel(0, -900), min_clearance=0)})
+        cancel_setup = sample('latest-before-cancel')
+        assert cancel_setup['totalTail'] == 0 and cancel_setup['latest'] and cancel_setup['owner'] == 'manual', ('SETUP_LATEST_GEOMETRY', cancel_setup)
         _arm_motion(page, 'latest', suppress_wheel=control == 'broken-wheel')
         cancel_box = page.locator('[data-conversation-thread]').bounding_box()
         page.get_by_role('button', name='Jump to latest message').click()
         page.mouse.move(cancel_box['x'] + cancel_box['width'] / 2, cancel_box['y'] + cancel_box['height'] / 2)
         page.evaluate("window.__retirementPhase='latest-cancel-gesture'")
-        delta = -100000 if control == 'zero-tail' else -1 if control == 'positive-tail' else -120
+        delta = -100000 if control == 'zero-tail' else -120
         # Capture and emit together inside the admission callback. Python keeps
         # the original observations and checks after this atomic baseline task.
         consume = """()=>{
@@ -500,8 +491,6 @@ def run_retirement(browser, urls, *, control=""):
         native_events.append({"kind": "predecessor", "totalTail": predecessor['totalTail']})
         if control == 'zero-tail':
             assert predecessor['totalTail'] == 0, ('CONTROL_ZERO_TAIL', predecessor)
-        if control == 'positive-tail':
-            assert predecessor['totalTail'] > 0, ('CONTROL_POSITIVE_TAIL', predecessor)
         before = baseline['before']
         samples.append({"label": 'latest-canceled-notification-before', **before})
         _settle(page, label='latest-canceled-notification')
@@ -523,9 +512,9 @@ def run_retirement(browser, urls, *, control=""):
         # from the preceding gesture cancellation.
         accept('Establish independent room before send supersession.')
         page.locator('[data-conversation-thread]').hover()
-        native_events.append({"kind": "send-setup", "barrier": establish_scrollback(page, lambda: page.mouse.wheel(0, -80), min_clearance=0)})
+        native_events.append({"kind": "send-setup", "barrier": establish_scrollback(page, lambda: page.mouse.wheel(0, -900), min_clearance=0)})
         send_setup = sample('supersession-fresh-manual')
-        assert send_setup['totalTail'] > 0 and send_setup['latest'] and send_setup['owner'] == 'manual', ('SETUP_SEND_GEOMETRY', send_setup)
+        assert send_setup['totalTail'] == 0 and send_setup['latest'] and send_setup['owner'] == 'manual', ('SETUP_SEND_GEOMETRY', send_setup)
         page.evaluate("window.__delivery='http-first';window.__nativeAcceptance=[]")
         count = page.evaluate('window.__sends.length')
         page.locator('[data-conversation-input]').fill('This fresh send supersedes Latest.')
@@ -623,7 +612,6 @@ def run_retirement(browser, urls, *, control=""):
         data = page.evaluate('window.__retirementStop=true;({frames:window.__retirementFrames??[],events:window.__retirementEvents??[]})')
         data.update(samples=samples, checks=checks, errors=errors, seconds=round(time.perf_counter() - started, 3), newHosts=0)
         data['nativeControl'] = {'control': control, 'events': native_events, 'motion': page.evaluate('window.__nativeMotion?.events??[]')}
-        data['video'] = str(page.video.path())
         page.screenshot(path=str(output / 'retirement-final.png'))
         print('REPLY_SPACE_RETIREMENT_PROOF ' + json.dumps({'seconds':data['seconds'],'frames':len(data['frames']),'samples':len(samples)}), flush=True)
         page.close()
