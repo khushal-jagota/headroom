@@ -15,7 +15,7 @@
   import type { NavigationPublication } from "../lib/navigation/collection";
   import { railDomMatches, hoverDomMatches } from "../lib/workspaceRailDom";
   import { workspaceRailImpact, workspaceHoverImpact, managerSettleImpact } from "../lib/workspaceNavigationImpact";
-  import {goalsForHolder} from "../lib/goals/holders";
+  import {goalsForHolder,goalRailWindowLimit} from "../lib/goals/holders";
   import {refreshAtBoundary} from "../lib/goals/presentation";
   import {goalQueries} from "../lib/goals/queries";
   import { createRailMotionController, type WorkspaceRailPresentation } from "../lib/workspaceRailMotion";
@@ -157,7 +157,7 @@
     for(const goal of goalBodies.data?.goals??[]){const key=goal.holder_kind==='manager'?goal.holder_id!:'chief';held.set(key,(held.get(key)??0)+1);}
     for(const owner of [{kind:'chief' as const,id:'chief'},...desiredRail.items.map(item=>({kind:'manager' as const,id:item.id}))]){
       const count=held.get(owner.id)??0;
-      if(count)windows.push(viewWindow('goals',owner,{limit:Math.min(60,count),...railWindows[`goals:${owner.id}`]}));
+      if(count)windows.push(viewWindow('goals',owner,{limit:goalRailWindowLimit(count,navigationWindow(workspace,'goals',owner)),...railWindows[`goals:${owner.id}`]}));
     }
     if(requestedSettledOpen)windows.push(viewWindow('settled',null,{limit:60,...railWindows.settled}));
     navigation.owner.setDemand('workspace-rail',{windows});
@@ -197,7 +197,7 @@
   let goalHoverElement = $state<HTMLElement | null>(null);
   let hoverIntentTarget: HTMLElement | null = null;
   let restoringGoalFocus = false;
-  const goalPreviewInput = createGoalRailPreviewInput(() => hoverIntentTarget);
+  const goalPreviewInput = createGoalRailPreviewInput();
   let rawHoverWorker = $derived.by(() => {
     const ticket = allCards.find((card) => card.id === hoverWorkerId)
       ?? [...desiredRail.items,...desiredRail.settledItems].flatMap(item => item.tickets).find(ticket => ticket.id === hoverWorkerId);
@@ -274,7 +274,10 @@
     railWidth = readRailWidth(preferenceStorage());
     const outside = (event: PointerEvent) => {
       goalPreviewInput.clearTouch();
-      if (hoverGoalId && !goalHoverElement?.contains(event.target as Node) && !hoverTarget?.contains(event.target as Node)) dismissHover();
+      // A touch hold keeps every row preview after the finger lifts, so a press outside
+      // the preview and its row is what dismisses it.
+      const panel = hoverGoalId ? goalHoverElement : hoverElement;
+      if (hoverVisible && !panel?.contains(event.target as Node) && !hoverTarget?.contains(event.target as Node)) dismissHover();
     };
     const wheel = (event: WheelEvent) => { if (hoverGoalId && !goalHoverElement?.contains(event.target as Node)) dismissHover(); };
     const key = (event: KeyboardEvent) => {

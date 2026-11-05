@@ -100,7 +100,12 @@
       pointerVisit = { target, recapIdentity };
     onKeepOpen?.();
   }}
-  onpointerleave={() => { pointerVisit = null; onLeave?.(); }}
+  onpointerleave={(event) => {
+    pointerVisit = null;
+    // A finger lifting off a control inside is not leaving. The screen dismisses a
+    // touch preview on an outside press or a scroll, as it does for goal previews.
+    if (event.pointerType !== "touch") onLeave?.();
+  }}
   onfocusin={() => onKeepOpen?.()}
   onfocusout={(event) => {
     // Focus landing somewhere outside is someone leaving. Focus landing nowhere is the

@@ -168,6 +168,9 @@ def run(browser, urls):
             }.get(key)
             if key == "/api/projects" and card_fixture.get("goals"):
                 inner = {"projects": []}
+            if key == "/api/chief/conversation/start-values" and card_fixture.get("goals"):
+                # A Chief goal's page shows Chief's conversation, which reads its launch settings.
+                inner = {"backend_key": "codex", "model": None, "reasoning_effort": None}
             if key.startswith("/api/goals/") and card_fixture.get("goals"):
                 inner = {"goal_id": card_fixture["goals"][0]["id"], "values": [], "charts": {}, "sources": [],
                          "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400} if key.endswith("/readings") else card_fixture["goals"][0]
@@ -397,9 +400,7 @@ def run(browser, urls):
     verify_conversation_overlay(browser, url)
 
     assert not errors, errors
-    unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff",
-                                                                         # A Chief goal shows Chief's conversation.
-                                                                         "/api/chief/conversation"))]
+    unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
     assert not unwanted, unwanted
     context.close()
     metrics.close()
@@ -457,7 +458,11 @@ def verify_settled_fold(page, url, fixture, evidence):
             const body = section.querySelector('[data-settled-scroll]');
             const rows = [...section.querySelectorAll('[data-settled-item]')];
             const animations = section.getAnimations({subtree:true});
-            samples.push({ms:performance.now()-start, height:section.getBoundingClientRect().height,
+            // The final keyframe of the section's running height animation is where
+            // the fold says it will come to rest.
+            const target = section.getAnimations().map(a => a.effect?.getKeyframes().at(-1)?.height)
+              .filter(height => typeof height === 'string').map(parseFloat).at(-1) ?? null;
+            samples.push({ms:performance.now()-start, height:section.getBoundingClientRect().height, target,
               body:body?.getBoundingClientRect().height ?? 0, rows:rows.length,
               bodyPresent:!!body, expanded:section.querySelector('button').getAttribute('aria-expanded'),
               cap:parseFloat(getComputedStyle(section).maxHeight),
@@ -491,10 +496,16 @@ def verify_settled_fold(page, url, fixture, evidence):
         assert max(heights) - min(heights) > 20, samples
         low, high = min(heights), max(heights)
         assert sum(low + 2 < value < high - 2 for value in heights) >= 3, samples
-        # A stale animation target used to disappear and jump to intrinsic height.
-        assert all(abs(current["height"] - previous["height"]) < 2
-                   for previous, current in zip(samples, samples[1:], strict=False)
-                   if not current["sectionEffects"]), samples
+        # A stale animation target used to disappear and jump to intrinsic height. Once
+        # no animation runs, the height is the last target and stays there. This compares
+        # against the target, not the previous frame, so skipped frames cannot fail it.
+        target = None
+        for sample in samples:
+            if sample["sectionEffects"]:
+                target = sample["target"] if sample["target"] is not None else target
+            elif target is not None:
+                assert abs(sample["height"] - target) <= 1, (target, sample, samples)
+        assert target is not None and not samples[-1]["sectionEffects"], samples[-4:]
         assert abs(heights[-1] - heights[-3]) < 1, samples[-4:]
         assert all(sample["rowEffects"] == 0 for sample in samples), samples
         assert samples[-1]["expanded"] == ("true" if opening else "false"), samples[-1]
