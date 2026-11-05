@@ -15,7 +15,6 @@ from pathlib import Path
 import httpx
 import pytest
 from tests.support.server import (
-    BOOT_BUDGET_S,
     FAKE_NOW,
     PLAN_BIN,
     REPO_ROOT,
@@ -26,10 +25,44 @@ from tests.support.server import (
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+def _bind_loopback_listener(port: int = 0) -> socket.socket:
+    """Bind and listen on a loopback port for a server that has not started yet.
+
+    The server is handed this socket through ``PLAN_SERVER_LISTENER_FD`` and never binds
+    the port itself, so nothing else can take the port between choosing it and the server
+    starting. A connection made before the server is ready waits in the kernel's queue
+    instead of being refused.
+    """
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # A stopped server on this exact port can leave its connections in TIME_WAIT.
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", port))
+        listener.listen()
+    except BaseException:
+        listener.close()
+        raise
+    return listener
+
+
+def _first_meta_answer(base: str, log_path: Path, describe_server: Callable[[], str]) -> None:
+    """Wait for the first ``/api/meta`` answer from a server given a bound listener.
+
+    The request waits in the listener's queue until the server accepts it, however long
+    boot takes. Only the server's own processes hold the listener, so once they have all
+    exited the kernel resets the queued connection and the request fails at once. There
+    is no boot limit: the job's own timeout guards a real hang.
+    """
+    try:
+        response = httpx.get(f"{base}/api/meta", timeout=None)
+    except httpx.TransportError as error:
+        raise AssertionError(
+            f"{describe_server()} closed its listener without answering /api/meta: {error!r}\n"
+            f"--- server log tail ---\n{_log_tail(log_path)}"
+        ) from error
+    assert response.status_code == 200, f"/api/meta -> {response.status_code}: {response.text}"
+    meta = response.json()
+    assert meta["test_mode"] is True, meta
 
 
 def _scrubbed_env() -> dict[str, str]:
@@ -88,8 +121,6 @@ def _start_server(
     # panels serve only creates directories later, inside itself.
     srvdir.mkdir(parents=True, exist_ok=True)
 
-    port = _free_port() if port is None else port
-    base = f"http://127.0.0.1:{port}"
     db_path = srvdir / database_name
     log_path = srvdir / "server.log"
     from planner.core.db import connect, create_schema
@@ -102,51 +133,64 @@ def _start_server(
         if seed_db is not None:
             seed_db(db_path)
 
-    env = _scrubbed_env()
-    env.update(
-        {
-            "PLAN_TEST_MODE": "1",
-            "PLAN_DB_PATH": str(db_path),
-            "PLAN_PORT": str(port),
-            "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
-            "PLAN_LOGS_DIR": str(srvdir / "logs"),
-            "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
-        }
-    )
-    if app_sha is not None:
-        env["PLAN_APP_SHA"] = app_sha
-    if trusted_ingress_env is not None:
-        env.update(
-            trusted_ingress_env(base) if callable(trusted_ingress_env) else trusted_ingress_env
-        )
-
-    env.update(homes)
-
-    # The owner-read trace hook is a sitecustomize, so every interpreter started with it
-    # on PYTHONPATH imports FastAPI and the conversation store before doing anything else:
-    # about 1.5 CPU-seconds in each of the supervisor, its trampoline and the application.
-    # Only the one proof that reads the trace pays for it. Its hooks stay dormant until
-    # that proof activates its runtime scope marker; install them at the ordinary startup
-    # boundary and never restart or reset a server for tracing.
-    trace_hook_path: tuple[str, ...] = ()
-    if owner_read_trace:
-        env["PANELS_E2E_OWNER_READ_TRACE"] = str(srvdir / "owner-read-trace.jsonl")
-        trace_hook_path = (str(REPO_ROOT / "tests/e2e/approval_message_trace"),)
-    env["PYTHONPATH"] = os.pathsep.join(
-        filter(None, (*trace_hook_path, str(REPO_ROOT), env.get("PYTHONPATH", "")))
-    )
-
-    log = log_path.open("wb")
+    listener = _bind_loopback_listener(0 if port is None else port)
     try:
-        proc = subprocess.Popen(
-            ([sys.executable, "-m", server_module] if server_module else [str(PLAN_BIN), "serve"]),
-            cwd=str(REPO_ROOT),  # load-bearing: assets mount + config.yaml
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
+        port = int(listener.getsockname()[1])
+        base = f"http://127.0.0.1:{port}"
+        env = _scrubbed_env()
+        env.update(
+            {
+                "PLAN_TEST_MODE": "1",
+                "PLAN_DB_PATH": str(db_path),
+                "PLAN_PORT": str(port),
+                "PLAN_SERVER_LISTENER_FD": str(listener.fileno()),
+                "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
+                "PLAN_LOGS_DIR": str(srvdir / "logs"),
+                "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
+            }
         )
+        if app_sha is not None:
+            env["PLAN_APP_SHA"] = app_sha
+        if trusted_ingress_env is not None:
+            env.update(
+                trusted_ingress_env(base) if callable(trusted_ingress_env) else trusted_ingress_env
+            )
+
+        env.update(homes)
+
+        # The owner-read trace hook is a sitecustomize, so every interpreter started with
+        # it on PYTHONPATH imports FastAPI and the conversation store before doing anything
+        # else: about 1.5 CPU-seconds in each of the supervisor, its trampoline and the
+        # application. Only the one proof that reads the trace pays for it. Its hooks stay
+        # dormant until that proof activates its runtime scope marker; install them at the
+        # ordinary startup boundary and never restart or reset a server for tracing.
+        trace_hook_path: tuple[str, ...] = ()
+        if owner_read_trace:
+            env["PANELS_E2E_OWNER_READ_TRACE"] = str(srvdir / "owner-read-trace.jsonl")
+            trace_hook_path = (str(REPO_ROOT / "tests/e2e/approval_message_trace"),)
+        env["PYTHONPATH"] = os.pathsep.join(
+            filter(None, (*trace_hook_path, str(REPO_ROOT), env.get("PYTHONPATH", "")))
+        )
+
+        log = log_path.open("wb")
+        try:
+            proc = subprocess.Popen(
+                (
+                    [sys.executable, "-m", server_module]
+                    if server_module
+                    else [str(PLAN_BIN), "serve"]
+                ),
+                cwd=str(REPO_ROOT),  # load-bearing: assets mount + config.yaml
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                pass_fds=(listener.fileno(),),
+            )
+        finally:
+            log.close()  # the child keeps its own dup'd fd
     finally:
-        log.close()  # the child keeps its own dup'd fd
+        # The server holds the only other copies, so its exit closes the listener.
+        listener.close()
     from planner.server_lifecycle.control import resolve_server_control_socket_path
 
     control_socket_path = resolve_server_control_socket_path(port, env, REPO_ROOT)
@@ -159,34 +203,18 @@ def _start_server(
         control_socket_path=control_socket_path,
     )
 
-    deadline = time.time() + BOOT_BUDGET_S
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise AssertionError(
-                f"panels serve exited during boot (rc={proc.returncode})\n"
-                f"--- server log tail ---\n{_log_tail(log_path)}"
-            )
-        try:
-            resp: httpx.Response | None = httpx.get(f"{base}/api/meta", timeout=1.0)
-        except httpx.HTTPError:
-            resp = None
-        if resp is not None and resp.status_code == 200:
-            meta = resp.json()
-            assert meta["test_mode"] is True, meta
-            root = httpx.get(f"{base}/", timeout=1.0)
-            assert root.status_code == 200, root.status_code
-            assert "data-svelte-app" in root.text
-            with synthetic_home_environment(homes):
-                _adopt_the_worker_types_the_server_runs_on(db_path)
-            print(f"E2E_SERVER_START {srvdir.name} seconds={time.monotonic() - started_at:.3f}")
-            return handle
-        time.sleep(0.1)
-
-    proc.terminate()
-    raise AssertionError(
-        f"panels serve did not become ready within {BOOT_BUDGET_S}s\n"
-        f"--- server log tail ---\n{_log_tail(log_path)}"
-    )
+    try:
+        _first_meta_answer(base, log_path, lambda: f"panels serve (rc={proc.poll()})")
+        root = httpx.get(f"{base}/", timeout=None)
+        assert root.status_code == 200, root.status_code
+        assert "data-svelte-app" in root.text
+    except BaseException:
+        _stop_server(handle)
+        raise
+    with synthetic_home_environment(homes):
+        _adopt_the_worker_types_the_server_runs_on(db_path)
+    print(f"E2E_SERVER_START {srvdir.name} seconds={time.monotonic() - started_at:.3f}")
+    return handle
 
 
 @pytest.fixture

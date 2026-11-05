@@ -15,8 +15,10 @@ import re
 import stat
 import sys
 import tempfile
-from collections.abc import Callable
-from dataclasses import asdict, dataclass
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TextIO, cast
@@ -38,6 +40,12 @@ MAX_LIFECYCLE_BYTES = 16 * 1024
 MAX_DEPLOYMENT_ID_LENGTH = 128
 MAX_DETAIL_LENGTH = 500
 MAX_CODE_LENGTH = 64
+
+NONTERMINAL_TTL = timedelta(minutes=15)
+SUCCESS_TTL = timedelta(hours=24)
+PROBLEM_TTL = timedelta(days=30)
+RENEW_LOCK_TIMEOUT_SECONDS = 5.0
+RENEW_LOCK_POLL_SECONDS = 0.05
 
 DeploymentPhase = Literal[
     "preparing",
@@ -104,6 +112,7 @@ class DeploymentLifecycle:
     requested_sha: str
     phase: DeploymentPhase
     updated_at: datetime
+    expires_at: datetime
     prior_sha: str | None = None
     serving_sha: str | None = None
     detail: str | None = None
@@ -116,6 +125,7 @@ class DeploymentLifecycle:
             "requested_sha": self.requested_sha,
             "phase": self.phase,
             "updated_at": _format_time(self.updated_at),
+            "expires_at": _format_time(self.expires_at),
         }
         for name in ("prior_sha", "serving_sha", "detail", "code"):
             value = getattr(self, name)
@@ -142,6 +152,7 @@ class LifecycleProjection:
     target_sha: str | None
     outcome: DeploymentOutcome | None
     detail: str | None = None
+    valid_until: str | None = None
     success_display_until: str | None = None
     installation_confirmed: bool = False
     work_paused: bool = False
@@ -157,7 +168,7 @@ def lifecycle_path(current_root: Path) -> Path:
 
 
 class DeploymentLifecycleStore:
-    """Plain status for the deploy that owns the exclusive deployment lock."""
+    """Locked lifecycle transitions with deployment-id compare-and-swap."""
 
     def __init__(
         self,
@@ -166,6 +177,7 @@ class DeploymentLifecycleStore:
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.path = path
+        self.lock_path = path.with_name(f"{path.name}.lock")
         self._now = now
 
     def read(self) -> LifecycleRead:
@@ -186,32 +198,68 @@ class DeploymentLifecycleStore:
         _validate_optional_sha(prior_sha, "prior_sha")
         _validate_detail(detail)
         _validate_code(code)
-        current = _read_lifecycle(self.path)
-        current_id = (
-            current.lifecycle.deployment_id
-            if current.available and current.lifecycle is not None
-            else None
-        )
-        if current_id != expected_deployment_id:
-            raise DeploymentLifecycleConflict(
-                f"lifecycle changed: expected {expected_deployment_id!r}, "
-                f"found {current_id!r}"
+        with _exclusive_lock(self.lock_path):
+            current = _read_lifecycle(self.path)
+            current_id = (
+                current.lifecycle.deployment_id
+                if current.available and current.lifecycle is not None
+                else None
             )
-        if deployment_id == current_id:
-            raise DeploymentLifecycleConflict("a new deployment must use a new deployment_id")
-        now = _utc_now(self._now)
-        lifecycle = DeploymentLifecycle(
-            version=LIFECYCLE_VERSION,
-            deployment_id=deployment_id,
-            requested_sha=requested_sha,
-            prior_sha=prior_sha,
-            phase="preparing",
-            detail=detail,
-            code=code,
-            updated_at=now,
+            if current_id != expected_deployment_id:
+                raise DeploymentLifecycleConflict(
+                    f"lifecycle changed: expected {expected_deployment_id!r}, "
+                    f"found {current_id!r}"
+                )
+            if deployment_id == current_id:
+                raise DeploymentLifecycleConflict("a new deployment must use a new deployment_id")
+            now = _utc_now(self._now)
+            lifecycle = DeploymentLifecycle(
+                version=LIFECYCLE_VERSION,
+                deployment_id=deployment_id,
+                requested_sha=requested_sha,
+                prior_sha=prior_sha,
+                phase="preparing",
+                detail=detail,
+                code=code,
+                updated_at=now,
+                expires_at=now + NONTERMINAL_TTL,
+            )
+            _atomic_write(self.path, lifecycle.to_public_dict())
+            return lifecycle
+
+    def renew(
+        self,
+        deployment_id: str,
+        *,
+        lock_timeout_seconds: float = RENEW_LOCK_TIMEOUT_SECONDS,
+        lock_fd: int | None = None,
+    ) -> DeploymentLifecycle:
+        """Refresh active evidence without changing progress or reviving expired work."""
+        _validate_deployment_id(deployment_id)
+        lock = (
+            _exclusive_lock(self.lock_path, timeout_seconds=lock_timeout_seconds)
+            if lock_fd is None else _borrowed_lock(self.lock_path, lock_fd)
         )
-        _atomic_write(self.path, lifecycle.to_public_dict())
-        return lifecycle
+        with lock:
+            current_read = _read_lifecycle(self.path)
+            if not current_read.available or current_read.lifecycle is None:
+                raise DeploymentLifecycleConflict("there is no readable lifecycle to renew")
+            current = current_read.lifecycle
+            if current.deployment_id != deployment_id:
+                raise DeploymentLifecycleConflict(
+                    f"stale deployment {deployment_id!r}; current is "
+                    f"{current.deployment_id!r}"
+                )
+            if current.phase not in _NONTERMINAL_PHASES:
+                return current
+            now = _utc_now(self._now)
+            if now >= current.expires_at:
+                raise DeploymentLifecycleConflict("deployment lifecycle expired before renewal")
+            lifecycle = replace(
+                current, updated_at=now, expires_at=now + NONTERMINAL_TTL
+            )
+            _atomic_write(self.path, lifecycle.to_public_dict())
+            return lifecycle
 
     def transition(
         self,
@@ -229,39 +277,41 @@ class DeploymentLifecycleStore:
         _validate_optional_sha(serving_sha, "serving_sha")
         _validate_detail(detail)
         _validate_code(code)
-        current_read = _read_lifecycle(self.path)
-        if not current_read.available or current_read.lifecycle is None:
-            raise DeploymentLifecycleConflict("there is no readable lifecycle to transition")
-        current = current_read.lifecycle
-        if current.deployment_id != deployment_id:
-            raise DeploymentLifecycleConflict(
-                f"stale deployment {deployment_id!r}; current is "
-                f"{current.deployment_id!r}"
+        with _exclusive_lock(self.lock_path):
+            current_read = _read_lifecycle(self.path)
+            if not current_read.available or current_read.lifecycle is None:
+                raise DeploymentLifecycleConflict("there is no readable lifecycle to transition")
+            current = current_read.lifecycle
+            if current.deployment_id != deployment_id:
+                raise DeploymentLifecycleConflict(
+                    f"stale deployment {deployment_id!r}; current is "
+                    f"{current.deployment_id!r}"
+                )
+            if preserve_terminal and current.phase in {
+                "succeeded", "failed", "rolled_back", "cancelled", "unknown"
+            }:
+                return current
+            if phase not in _ALLOWED_TRANSITIONS[current.phase]:
+                raise DeploymentLifecycleError(
+                    f"invalid deployment transition: {current.phase} -> {phase}"
+                )
+            effective_serving_sha = serving_sha or current.serving_sha
+            _validate_serving_proof(current, phase, effective_serving_sha)
+            now = _utc_now(self._now)
+            lifecycle = DeploymentLifecycle(
+                version=LIFECYCLE_VERSION,
+                deployment_id=current.deployment_id,
+                requested_sha=current.requested_sha,
+                prior_sha=current.prior_sha,
+                serving_sha=effective_serving_sha,
+                phase=phase,
+                detail=detail,
+                code=code,
+                updated_at=now,
+                expires_at=now + _ttl_for_phase(phase),
             )
-        if preserve_terminal and current.phase in {
-            "succeeded", "failed", "rolled_back", "cancelled", "unknown"
-        }:
-            return current
-        if phase not in _ALLOWED_TRANSITIONS[current.phase]:
-            raise DeploymentLifecycleError(
-                f"invalid deployment transition: {current.phase} -> {phase}"
-            )
-        effective_serving_sha = serving_sha or current.serving_sha
-        _validate_serving_proof(current, phase, effective_serving_sha)
-        now = _utc_now(self._now)
-        lifecycle = DeploymentLifecycle(
-            version=LIFECYCLE_VERSION,
-            deployment_id=current.deployment_id,
-            requested_sha=current.requested_sha,
-            prior_sha=current.prior_sha,
-            serving_sha=effective_serving_sha,
-            phase=phase,
-            detail=detail,
-            code=code,
-            updated_at=now,
-        )
-        _atomic_write(self.path, lifecycle.to_public_dict())
-        return lifecycle
+            _atomic_write(self.path, lifecycle.to_public_dict())
+            return lifecycle
 
     def project(
         self, deployed_sha: str | None, *, admission_open: bool = False
@@ -292,18 +342,32 @@ class DeploymentLifecycleStore:
         )
         unknown_display_until = (
             _format_time(
-                lifecycle.updated_at
+                (lifecycle.updated_at if lifecycle.phase == "unknown" else lifecycle.expires_at)
                 + timedelta(seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS)
             )
             if installation_confirmed and lifecycle.phase in {"app_healthy", "unknown"}
             else None
         )
         now = _utc_now(self._now)
+        valid_until = _format_time(lifecycle.expires_at)
         success_display_until = (
             lifecycle.updated_at + timedelta(seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS)
             if lifecycle.phase == "succeeded"
             else None
         )
+        if lifecycle.phase in _NONTERMINAL_PHASES and now >= lifecycle.expires_at:
+            return LifecycleProjection(
+                state="unknown",
+                deployed_sha=deployed_sha,
+                target_sha=lifecycle.requested_sha,
+                outcome=None,
+                detail=_unknown_detail(
+                    lifecycle, deployed_sha, installation_confirmed, admission_open
+                ),
+                installation_confirmed=installation_confirmed,
+                work_paused=not admission_open,
+                unknown_display_until=unknown_display_until,
+            )
         if lifecycle.phase == "preparing":
             state = "preparing"
             outcome: DeploymentOutcome | None = None
@@ -314,7 +378,7 @@ class DeploymentLifecycleStore:
             outcome = "succeeded"
             if deployed_sha != lifecycle.requested_sha:
                 state = "problem"
-            elif success_display_until is not None and now < success_display_until:
+            elif now < lifecycle.expires_at:
                 state = "back_up"
             else:
                 state = "idle"
@@ -351,7 +415,12 @@ class DeploymentLifecycleStore:
                 if success_display_until is not None and state == "back_up"
                 else None
             ),
-
+            valid_until=(
+                valid_until
+                if lifecycle.phase in _NONTERMINAL_PHASES
+                or (lifecycle.phase == "succeeded" and state == "back_up")
+                else None
+            ),
         )
 
 
@@ -434,6 +503,9 @@ def _parse_lifecycle(payload: object) -> DeploymentLifecycle:
     _validate_detail(detail)
     _validate_code(code)
     updated_at = _parse_time(_required_string(payload, "updated_at"))
+    expires_at = _parse_time(_required_string(payload, "expires_at"))
+    if expires_at <= updated_at:
+        raise DeploymentLifecycleError("expires_at must follow updated_at")
     lifecycle = DeploymentLifecycle(
         version=version,
         deployment_id=deployment_id,
@@ -444,6 +516,7 @@ def _parse_lifecycle(payload: object) -> DeploymentLifecycle:
         detail=detail,
         code=code,
         updated_at=updated_at,
+        expires_at=expires_at,
     )
     _validate_stored_serving_sha(lifecycle)
     return lifecycle
@@ -469,6 +542,14 @@ def _validate_serving_proof(
         current.prior_sha is None or serving_sha != current.prior_sha
     ):
         raise DeploymentLifecycleError("rolled_back requires the prior serving SHA")
+
+
+def _ttl_for_phase(phase: DeploymentPhase) -> timedelta:
+    if phase in {"succeeded", "cancelled"}:
+        return SUCCESS_TTL
+    if phase in {"failed", "rolled_back", "unknown"}:
+        return PROBLEM_TTL
+    return NONTERMINAL_TTL
 
 
 def _required_string(payload: dict[object, object], name: str) -> str:
@@ -554,22 +635,143 @@ def _open_regular_readonly(path: Path) -> int:
 
 
 class _exclusive_lock:
-    """Serialize request file writes. The deploy uses its separate process lock."""
-
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self, path: Path, *, timeout_seconds: float | None = None,
+        check_active: Callable[[], None] | None = None,
+    ) -> None:
         self.path = path
+        self.timeout_seconds = timeout_seconds
+        self.check_active = check_active
         self.stream: TextIO | None = None
 
     def __enter__(self) -> int:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.stream = self.path.open("a+")
-        fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX)
-        return self.stream.fileno()
+        if self.path.is_symlink():
+            raise DeploymentLifecycleError("lifecycle lock must not be a symlink")
+        descriptor = os.open(
+            self.path,
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            os.close(descriptor)
+            raise DeploymentLifecycleError("lifecycle lock must be a regular file")
+        self.stream = os.fdopen(descriptor, "r+", encoding="utf-8")
+        try:
+            if self.timeout_seconds is None:
+                fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX)
+            else:
+                deadline = time.monotonic() + self.timeout_seconds
+                while True:
+                    if self.check_active is not None:
+                        self.check_active()
+                    try:
+                        fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise DeploymentLifecycleError(
+                                "timed out acquiring deployment lifecycle renewal lock"
+                            ) from None
+                        time.sleep(min(RENEW_LOCK_POLL_SECONDS, remaining))
+            if self.check_active is not None:
+                self.check_active()
+            return self.stream.fileno()
+        except BaseException:
+            self.stream.close()
+            raise
 
     def __exit__(self, *_: object) -> None:
         assert self.stream is not None
-        fcntl.flock(self.stream.fileno(), fcntl.LOCK_UN)
-        self.stream.close()
+        try:
+            fcntl.flock(self.stream.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.stream.close()
+
+
+def renewal_lock(
+    path: Path, *, check_active: Callable[[], None] | None = None,
+) -> _exclusive_lock:
+    """Keep the renewal lock in the supervisor until its receipt is accounted for."""
+    return _exclusive_lock(
+        path.with_name(f"{path.name}.lock"),
+        timeout_seconds=RENEW_LOCK_TIMEOUT_SECONDS, check_active=check_active,
+    )
+
+
+def open_renewal_baseline(path: Path) -> int:
+    """Pin the old inode until the renewal and any receipt recovery finish."""
+    return _open_regular_readonly(path)
+
+
+def parse_renewal_result(payload: object, deployment_id: str) -> DeploymentLifecycle:
+    """Validate a writer or recovery result before the supervisor logs a receipt."""
+    lifecycle = _parse_lifecycle(payload)
+    if lifecycle.deployment_id != deployment_id:
+        raise DeploymentLifecycleError("renewal result belongs to another deployment")
+    return lifecycle
+
+
+@contextmanager
+def _borrowed_lock(path: Path, descriptor: int) -> Iterator[int]:
+    """Close only our copy: LOCK_UN would release the supervisor's shared lock."""
+    borrowed = os.dup(descriptor)
+    try:
+        current = _open_regular_readonly(path)
+        try:
+            expected = os.fstat(current)
+            actual = os.fstat(borrowed)
+            if not stat.S_ISREG(actual.st_mode) or (
+                actual.st_dev, actual.st_ino
+            ) != (expected.st_dev, expected.st_ino):
+                raise DeploymentLifecycleError("inherited descriptor is not the lifecycle lock")
+        finally:
+            os.close(current)
+        # A correct inherited descriptor already owns this open-file-description lock.
+        # An unrelated contended descriptor must fail immediately, never wait.
+        fcntl.flock(borrowed, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield borrowed
+    finally:
+        os.close(borrowed)
+
+
+def recover_renewal_receipt(
+    path: Path, deployment_id: str, *, lock_fd: int, baseline_fd: int,
+) -> dict[str, object]:
+    """Prove this attempt's replacement under its retained lock, without renewing."""
+    _validate_deployment_id(deployment_id)
+    lock_path = path.with_name(f"{path.name}.lock")
+    with _borrowed_lock(lock_path, lock_fd):
+        current_fd = _open_regular_readonly(path)
+        try:
+            before = os.fstat(baseline_fd)
+            after = os.fstat(current_fd)
+            if (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino):
+                return {"committed": False}
+            baseline = _read_lifecycle_descriptor(baseline_fd)
+            current = _read_lifecycle_descriptor(current_fd)
+            if baseline.lifecycle is None or current.lifecycle is None:
+                raise DeploymentLifecycleError("cannot read renewal receipt evidence")
+            old = baseline.lifecycle
+            new = current.lifecycle
+            if (
+                old.deployment_id != deployment_id
+                or old.phase not in _NONTERMINAL_PHASES
+                or replace(new, updated_at=old.updated_at, expires_at=old.expires_at) != old
+            ):
+                raise DeploymentLifecycleError("replacement is not this deployment's renewal")
+            # The writer can die between replace and directory fsync. Complete that
+            # durability boundary in this killable helper before claiming a receipt.
+            os.fsync(current_fd)
+            directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            return {"committed": True, "lifecycle": new.to_public_dict()}
+        finally:
+            os.close(current_fd)
 
 
 def _atomic_write(path: Path, payload: dict[str, object]) -> None:
@@ -629,6 +831,17 @@ def _cli_parser() -> argparse.ArgumentParser:
     transition.add_argument("--code")
     transition.add_argument("--preserve-terminal", action="store_true")
 
+    renew = subparsers.add_parser("renew")
+    renew.add_argument("--path", type=Path, required=True)
+    renew.add_argument("--deployment-id", required=True)
+    renew.add_argument("--lock-fd", type=int, help=argparse.SUPPRESS)
+
+    recovery = subparsers.add_parser("recover-renewal-receipt", help=argparse.SUPPRESS)
+    recovery.add_argument("--path", type=Path, required=True)
+    recovery.add_argument("--deployment-id", required=True)
+    recovery.add_argument("--lock-fd", type=int, required=True)
+    recovery.add_argument("--baseline-fd", type=int, required=True)
+
     read = subparsers.add_parser("read")
     read.add_argument("--path", type=Path, required=True)
 
@@ -663,6 +876,15 @@ def main(argv: list[str] | None = None) -> int:
                 preserve_terminal=arguments.preserve_terminal,
             )
             payload = lifecycle.to_public_dict()
+        elif arguments.command == "renew":
+            payload = store.renew(
+                arguments.deployment_id, lock_fd=arguments.lock_fd,
+            ).to_public_dict()
+        elif arguments.command == "recover-renewal-receipt":
+            payload = recover_renewal_receipt(
+                arguments.path, arguments.deployment_id,
+                lock_fd=arguments.lock_fd, baseline_fd=arguments.baseline_fd,
+            )
         elif arguments.command == "read":
             read = store.read()
             payload = (

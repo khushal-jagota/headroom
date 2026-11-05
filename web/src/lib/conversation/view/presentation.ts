@@ -41,7 +41,6 @@ function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequ
         case 'prompt_uncertain':
         case 'prompt_discarded': return { ...base, kind: body.kind, content: pieces(body.content), senderLabel: body.sender_label, senderMessageId: item.sender_message_id ?? null };
         case 'agent_message': return { ...base, kind: body.kind, content: pieces(body.content), toOwner: body.to_owner };
-        case 'explicit_reply_missing': return { ...base, kind: body.kind, promptSender: body.prompt_sender };
         case 'tool_call': return { ...base, kind: body.kind, toolCallId: body.tool_call_id, title: body.title, toolKind: body.tool_kind, detail: body.detail, startedDetail: body.started_detail, cappedDetailSequence: body.capped_detail_sequence, status: body.status, progress: null };
         case 'permission_ask': return { ...base, kind: body.kind, askId: body.ask_id, title: body.title, detail: body.detail, options: body.options, state: body.state, deadReason: body.dead_reason, answeredOptionLabel: body.answered_option_label, answerFate:body.answer_fate };
         case 'user_input': return { ...base, kind: body.kind, requestId: body.request_id, questions: body.questions, state: body.state, deadReason: body.dead_reason, answers: body.answers === null ? null : Object.fromEntries(body.answers.map(a => [a.question_id, { answers: a.answers }])), failureDetail: body.failure_detail, answerFate:body.answer_fate };
@@ -87,7 +86,7 @@ function happened(event: ViewRestEvent | null, sender: string): {
         const text = event.kind === 'prompt_refused' ? `not delivered · ${refusalSentence(event.refusal_reason!, event.refusal_detail_excerpt)}` : event.kind === 'prompt_uncertain' ? 'delivery uncertain · do not resend' : 'discarded';
         return { who: event.sender_label === sender ? 'you' : event.sender_label, text };
     }
-    if (event.kind === 'explicit_reply_missing' || event.kind === 'turn_ended' || event.kind === 'context_compacted' || event.kind === 'turn_stopped')
+    if (event.kind === 'turn_ended' || event.kind === 'context_compacted' || event.kind === 'turn_stopped')
         return whatThisRowSays(rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, event), sender);
     return null;
 }

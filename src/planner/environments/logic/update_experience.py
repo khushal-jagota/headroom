@@ -1,19 +1,19 @@
 """Update outcomes and display decisions from one coherent server snapshot."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from planner.environments.deployment_lifecycle import DeploymentLifecycle
+from planner.environments.update_configuration import UPDATE_ATTEMPT_TIMEOUT_SECONDS
 from planner.environments.update_contracts import (
     OwnerUpdateRequest,
     PublishedUpdate,
     UpdateAction,
     UpdateExperienceState,
+    UpdateRequestState,
 )
 
-CANCELLED_DETAIL = "Update canceled before installation. The previous version stayed active."
-
-ACTIVE_STATES = frozenset({"requested", "installing"})
+ACTIVE_STATES = frozenset({"pending", "dispatched", "applying"})
 
 
 def instant(value: str) -> datetime:
@@ -23,14 +23,48 @@ def instant(value: str) -> datetime:
     return parsed
 
 
+def request_deadline(request: OwnerUpdateRequest) -> datetime | None:
+    if request.deadline_at is not None:
+        return instant(request.deadline_at)
+    if request.state in {"dispatched", "applying"}:
+        # Older receipts did not record dispatch. Their creation time is the only
+        # durable lower bound; never grant a fresh budget after each restart.
+        return instant(request.dispatched_at or request.created_at) + timedelta(
+            seconds=UPDATE_ATTEMPT_TIMEOUT_SECONDS
+        )
+    return None
+
+
 def matching_lifecycle(
     request: OwnerUpdateRequest, lifecycle: DeploymentLifecycle | None,
 ) -> bool:
     return bool(
         lifecycle is not None
-        and lifecycle.deployment_id == request.request_id
+        and lifecycle.deployment_id == (request.deployment_id or request.request_id)
         and lifecycle.requested_sha == request.release.manifest.app_sha
     )
+
+
+def settlement(
+    request: OwnerUpdateRequest, lifecycle: DeploymentLifecycle | None,
+    app_sha: str | None, now: datetime,
+) -> tuple[UpdateRequestState, str] | None:
+    if request.state not in ACTIVE_STATES:
+        return None
+    matches = matching_lifecycle(request, lifecycle)
+    if matches and lifecycle is not None:
+        target = request.release.manifest.app_sha
+        if (app_sha == target and lifecycle.serving_sha == target
+                and lifecycle.phase in {"app_healthy", "succeeded", "failed", "unknown"}):
+            return "applied", "The requested version is installed."
+        if lifecycle.phase in {"failed", "rolled_back", "cancelled"}:
+            return "failed", lifecycle.detail or "The update did not install."
+    if request.state == "pending" and instant(request.release.expires_at) <= now:
+        return "failed", "The update expired before installation."
+    deadline = request_deadline(request)
+    if deadline is not None and deadline <= now:
+        return "failed", "The update did not complete before its deadline. Try again."
+    return None
 
 
 def effective_request(
@@ -54,15 +88,14 @@ def experience(
     request = effective_request(request, lifecycle)
     relevant = lifecycle is not None and (
         request is None or matching_lifecycle(request, lifecycle)
-    ) and (request is None or request.detail != CANCELLED_DETAIL)
-    if (request is not None and request.state == "failed"
-            and request.detail != CANCELLED_DETAIL):
+    ) and (request is None or request.state != "cancelled")
+    if request is not None and request.state == "failed":
         return "failed", ("retry",) if usable else ()
-    if request is not None and request.state == "requested":
+    if request is not None and request.state == "pending":
         if request.mode == "idle":
             return "waiting", ("cancel", "update_now")
         return "updating", ()
-    if request is not None and request.state == "installing":
+    if request is not None and request.state in {"dispatched", "applying"}:
         if relevant and lifecycle is not None and lifecycle.phase in {
             "restarting", "verifying", "app_healthy",
         }:
@@ -77,5 +110,7 @@ def experience(
         if lifecycle.phase in {"failed", "rolled_back", "unknown"}:
             return "failed", ("retry",) if usable else ()
         if lifecycle.phase in {"preparing", "restarting", "verifying"}:
+            if lifecycle.expires_at <= now:
+                return "failed", ("retry",) if usable else ()
             return ("updating" if lifecycle.phase == "preparing" else "restarting"), ()
     return ("available", ("update",)) if usable else ("up_to_date", ())

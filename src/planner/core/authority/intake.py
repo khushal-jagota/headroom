@@ -144,7 +144,8 @@ def admit_command(
             if route.endswith('/settled'):
                 return  # Owner identity, rather than rank, governs settlement.
             protected_read = route.endswith((
-                '/launch-defaults', '/workspace', '/workspace-content', '/conversation/start-values'
+                '/launch-defaults', '/workspace', '/workspace-content',
+                '/conversation/start-values', '/page', '/page/readings'
             ))
             if writing or protected_read:
                 target = (authority.manager(identifier) if family == 'managers'
@@ -230,7 +231,8 @@ async def request_admission(connection: HTTPConnection) -> None:
             route in ('/api/resource-body', '/api/resource-versions')
             or ('/managers/' in route or '/goals/' in route)
             and route.endswith((
-                '/launch-defaults', '/workspace', '/workspace-content', '/conversation/start-values'
+                '/launch-defaults', '/workspace', '/workspace-content',
+                '/conversation/start-values', '/page', '/page/readings'
             ))
             or route.startswith('/files/')
             and ('manager_id' in request.path_params or 'goal_id' in request.path_params)

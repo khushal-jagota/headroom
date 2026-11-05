@@ -29,7 +29,11 @@ from planner.server_lifecycle.control import (
     resolve_server_control_socket_path,
     resolve_server_lifecycle_lease_path,
 )
-from planner.server_lifecycle.logic.shutdown import decide_shutdown
+from planner.server_lifecycle.logic.shutdown import (
+    adopt_rechecked_launch_policy,
+    decide_shutdown,
+    launch_parent_is_unverified,
+)
 from planner.server_lifecycle.process_identity import (
     capture_shutdown_policy,
     revalidate_manager_identity,
@@ -126,6 +130,14 @@ class ServerSupervisor:
         self._control_listener: socket.socket | None = None
         self._operator_shutdown_requested = False
         self._shutdown_policy = capture_shutdown_policy()
+        if launch_parent_is_unverified(self._shutdown_policy):
+            print(
+                "Panels supervisor could not verify its launch parent PID "
+                f"{self._shutdown_policy.launch_parent_pid} at startup. It will check "
+                "again when a shutdown signal arrives.",
+                file=sys.stderr,
+                flush=True,
+            )
         self._signals = SupervisorSignals()
 
     def run(self) -> int:
@@ -365,11 +377,19 @@ class ServerSupervisor:
         if signum not in {signal.SIGINT, signal.SIGTERM}:
             return
         policy = self._shutdown_policy
+        manager_identity = None
+        if launch_parent_is_unverified(policy):
+            # The launch check may have failed rather than answered, for example a busctl
+            # call that missed its limit under load. Check the same parent again now.
+            policy = adopt_rechecked_launch_policy(policy, capture_shutdown_policy())
+            self._shutdown_policy = policy
+            # The recheck has just read the manager, so it is also this signal's identity.
+            manager_identity = policy.authorized_manager
         manager = policy.authorized_manager
         current_parent_pid = os.getppid()
-        manager_identity = None
         if (
-            manager is not None
+            manager_identity is None
+            and manager is not None
             and sender_pid == manager.pid
             and current_parent_pid == policy.launch_parent_pid
         ):
@@ -399,7 +419,7 @@ class ServerSupervisor:
 
 
 def run_server_supervisor() -> int:
-    """Capture launch identity once and run the foreground supervisor."""
+    """Capture launch identity and run the foreground supervisor."""
     launch_root = resolve_planner_launch_root()
     interpreter = sys.executable
     environ = dict(os.environ)

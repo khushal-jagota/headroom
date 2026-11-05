@@ -22,11 +22,9 @@ from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backend_state import write_model_enablement
 from planner.conversation.contracts import (
-    AddressedPromptDeliveryReceipt,
     ConversationAccess,
     ConversationBackendKey,
     ConversationStartRequest,
-    ConversationTurnReference,
     DeploymentRecoveryReference,
     HeldPrompt,
     HeldPromptPromotionFate,
@@ -146,8 +144,8 @@ class _LinkWatchingConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
-        reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        record_refusal: bool = False,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         return await self._system.send(
@@ -163,45 +161,6 @@ class _LinkWatchingConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
-            recovery_references=recovery_references,
-            recording_receipt=recording_receipt,
-        )
-
-    async def send_with_receipt(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
-        model_change: str | None = None,
-        reasoning_effort_change: str | None = None,
-        reasoning_effort_is_set: bool = False,
-        owner_read_through_sequence: int | None = None,
-        sender_message_id: str | None = None,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-        reply_requested: bool = True,
-        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
-        record_refusal: bool = False,
-        recording_receipt: NativeMessageOperation | None = None,
-    ) -> AddressedPromptDeliveryReceipt:
-        return await self._system.send_with_receipt(
-            conversation_id,
-            content,
-            sender_label=sender_label,
-            mode=mode,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            reasoning_effort_is_set=reasoning_effort_is_set,
-            owner_read_through_sequence=owner_read_through_sequence,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
-            reply_requested=reply_requested,
             recovery_references=recovery_references,
             record_refusal=record_refusal,
             recording_receipt=recording_receipt,
@@ -217,7 +176,6 @@ class _LinkWatchingConversationSystem:
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
-        credit_explicit_reply: bool = True,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> None:
         await self._system.record_message_to_owner(
@@ -228,22 +186,8 @@ class _LinkWatchingConversationSystem:
             recipient=recipient,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            credit_explicit_reply=credit_explicit_reply,
             recording_receipt=recording_receipt,
         )
-
-    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
-        return await self._system.active_turn_reference(conversation_id)
-
-    async def turn_expects_reply(
-        self, turn: ConversationTurnReference, recipient: Principal
-    ) -> bool:
-        return await self._system.turn_expects_reply(turn, recipient)
-
-    async def record_explicit_reply(
-        self, turn: ConversationTurnReference, recipient: Principal
-    ) -> None:
-        await self._system.record_explicit_reply(turn, recipient)
 
     async def interrupt(self, conversation_id: str) -> None:
         await self._system.interrupt(conversation_id)
@@ -549,20 +493,18 @@ def test_first_spawn_refusal_retention_preserves_a_replacement_link(
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         watching = FailingStart(system, tmp_db, ticket.id)
-        # Simulate a replacement selected while the initial send awaits its receipt.
-        original_send = watching.send_with_receipt
+        # Simulate a replacement selected while the initial send awaits its fate.
+        original_send = watching.send
 
-        async def replace_then_refuse(
-            *args: object, **kwargs: object
-        ) -> AddressedPromptDeliveryReceipt:
-            receipt = await original_send(*args, **kwargs)  # type: ignore[arg-type]
+        async def replace_then_refuse(*args: object, **kwargs: object) -> PromptDeliveryFate:
+            fate = await original_send(*args, **kwargs)  # type: ignore[arg-type]
             tmp_db.execute(
                 "UPDATE tickets SET conversation_id = 'replacement' WHERE id = ?", (ticket.id,)
             )
             tmp_db.commit()
-            return receipt
+            return fate
 
-        watching.send_with_receipt = replace_then_refuse  # type: ignore[method-assign]
+        watching.send = replace_then_refuse  # type: ignore[method-assign]
         result = await send_to_ticket_conversation(
             watching,
             tmp_db,

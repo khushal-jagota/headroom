@@ -225,7 +225,6 @@ def test_native_worker_context_reaches_actual_provider_prompts(
                 sender_label="Chief",
                 sender=CHIEF_PRINCIPAL,
                 recipient=recipient,
-                reply_requested=True,
                 **options,
             )
 
@@ -245,7 +244,8 @@ def test_native_worker_context_reaches_actual_provider_prompts(
                 == PromptDeliveryInjected()
             )
             if backend is ConversationBackendKey.claude:
-                prompt_texts = clients[0].prompts + [
+                # The scripted client also lists a one-block streamed message as a prompt.
+                prompt_texts = [
                     "".join(block["text"] for block in message["message"]["content"])
                     for message in clients[0].streamed_messages
                 ]
@@ -265,7 +265,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
                 ),
                 strict=True,
             ):
-                assert prompt.startswith("[Authenticated Panels reply requirement]\n")
+                assert prompt.startswith(NATIVE_WORKER_CONTEXT)
                 assert prompt.count(NATIVE_WORKER_CONTEXT) == 1
                 assert prompt.index(NATIVE_WORKER_CONTEXT) < prompt.index("Chief:\n" + authored)
                 assert prompt.endswith("Chief:\n" + authored)

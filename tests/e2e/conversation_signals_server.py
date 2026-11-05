@@ -7,6 +7,7 @@ publication and owner-read use production code. No installed agent is invoked.
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import closing
 from typing import Any
 from unittest.mock import patch
@@ -238,7 +239,6 @@ def build_app(config: Config) -> FastAPI:
             conversation_id,
             text_message_content("Bounded proof turn"),
             sender_label="Owner",
-            reply_requested=False,
         )
         return {"ok": True}
 
@@ -266,7 +266,6 @@ def build_app(config: Config) -> FastAPI:
                 text_message_content(f"queued message {number}"),
                 sender_label="owner",
                 sender_message_id=f"sender-{number}",
-                reply_requested=False,
             )
         return {"ok": True}
 
@@ -298,7 +297,9 @@ def main() -> None:
     config = load_config("config.yaml")
     assert config.db_path.endswith("conversation-signals-proof.db")
     app = build_app(config)
-    ChangeStreamClosingServer(uvicorn.Config(app, host="127.0.0.1", port=config.port)).run()
+    # The fixture binds the port and hands the listener over, so nothing can take it.
+    listener_fd = int(os.environ["PLAN_SERVER_LISTENER_FD"])
+    ChangeStreamClosingServer(uvicorn.Config(app, fd=listener_fd)).run()
 
 
 if __name__ == "__main__":

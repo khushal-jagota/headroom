@@ -458,7 +458,11 @@ def verify_settled_fold(page, url, fixture, evidence):
             const body = section.querySelector('[data-settled-scroll]');
             const rows = [...section.querySelectorAll('[data-settled-item]')];
             const animations = section.getAnimations({subtree:true});
-            samples.push({ms:performance.now()-start, height:section.getBoundingClientRect().height,
+            // The final keyframe of the section's running height animation is where
+            // the fold says it will come to rest.
+            const target = section.getAnimations().map(a => a.effect?.getKeyframes().at(-1)?.height)
+              .filter(height => typeof height === 'string').map(parseFloat).at(-1) ?? null;
+            samples.push({ms:performance.now()-start, height:section.getBoundingClientRect().height, target,
               body:body?.getBoundingClientRect().height ?? 0, rows:rows.length,
               bodyPresent:!!body, expanded:section.querySelector('button').getAttribute('aria-expanded'),
               cap:parseFloat(getComputedStyle(section).maxHeight),
@@ -492,10 +496,16 @@ def verify_settled_fold(page, url, fixture, evidence):
         assert max(heights) - min(heights) > 20, samples
         low, high = min(heights), max(heights)
         assert sum(low + 2 < value < high - 2 for value in heights) >= 3, samples
-        # A stale animation target used to disappear and jump to intrinsic height.
-        assert all(abs(current["height"] - previous["height"]) < 2
-                   for previous, current in zip(samples, samples[1:], strict=False)
-                   if not current["sectionEffects"]), samples
+        # A stale animation target used to disappear and jump to intrinsic height. Once
+        # no animation runs, the height is the last target and stays there. This compares
+        # against the target, not the previous frame, so skipped frames cannot fail it.
+        target = None
+        for sample in samples:
+            if sample["sectionEffects"]:
+                target = sample["target"] if sample["target"] is not None else target
+            elif target is not None:
+                assert abs(sample["height"] - target) <= 1, (target, sample, samples)
+        assert target is not None and not samples[-1]["sectionEffects"], samples[-4:]
         assert abs(heights[-1] - heights[-3]) < 1, samples[-4:]
         assert all(sample["rowEffects"] == 0 for sample in samples), samples
         assert samples[-1]["expanded"] == ("true" if opening else "false"), samples[-1]
@@ -1056,16 +1066,25 @@ def verify_rail_pagination(page, url, fixture, evidence):
             'order':page.evaluate('window.__navigationOrder'),'held':page.evaluate('window.__heldNavigation.length'),
             'heldFrames':page.evaluate('window.__heldNavigationFrames'),
             'members':members('rail_tickets')},indent=2))
+        if queued:
+            # The exit fade lasts 160 ms, and a loaded runner can spend longer than that
+            # between seeing it start and delivering the wheel. Hold the fade paused from
+            # the moment it is created, so the wheel always lands while it is pending.
+            page.evaluate("""()=>{
+              const animate=Element.prototype.animate;
+              window.__restoreAnimate=()=>{Element.prototype.animate=animate;};
+              window.__heldExit=[];
+              Element.prototype.animate=function(frames,options){
+                const animation=animate.call(this,frames,options);
+                if(this.dataset?.ticketId==='page_worker_00' && Array.isArray(frames) && frames.some(k=>'opacity' in k)){
+                  animation.pause();window.__heldExit.push(animation);
+                }
+                return animation;
+              };
+            }""")
         page.mouse.move(900, 600)
         if queued:
-            # Hold the actual exit until native input starts. Driver round trips must
-            # not consume its short duration before the wheel reaches the browser.
-            page.wait_for_function("""()=>{
-              const exit=document.querySelector('[data-ticket-id="page_worker_00"]')?.getAnimations()
-                .find(a=>a.playState==='running' && a.effect?.getKeyframes().some(k=>'opacity' in k));
-              if(!exit)return false;
-              exit.pause();exit.currentTime=0;window.__heldOpacityExit=exit;return true;
-            }""")
+            page.wait_for_function('window.__heldExit.length>0')
             bounds = scroll.bounding_box()
             page.mouse.move(bounds['x']+1,bounds['y']+30)
             scroll.evaluate("""n=>{
@@ -1075,7 +1094,6 @@ def verify_rail_pagination(page, url, fixture, evidence):
                 if(!event.isTrusted)return;
                 n.removeEventListener('wheel',wheel,true);
                 window.__exitWheel={ms:performance.now(),trusted:event.isTrusted,before:n.scrollTop,deltaY:event.deltaY};
-                window.__heldOpacityExit.play();
               };
               n.addEventListener('wheel',wheel,{capture:true});
               const continued=event=>{
@@ -1085,7 +1103,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
                 n.removeEventListener('scroll',continued,true);
                 const row=document.querySelector('[data-ticket-id="page_worker_17"]');
                 const exit=document.querySelector('[data-ticket-id="page_worker_00"]');
-                const exitRunning=exit?.getAnimations().some(a=>a.playState==='running'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
+                const exitRunning=exit?.getAnimations().some(a=>a.playState!=='finished'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
                 window.__exitContinued={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,ms:performance.now(),
                   trusted:event.isTrusted,exitRunning,wheel:window.__exitWheel};
                 window.__exitScrollTake=()=>{
@@ -1104,6 +1122,8 @@ def verify_rail_pagination(page, url, fixture, evidence):
             continued = page.evaluate('window.__exitContinued')
             assert continued['exitRunning'] and continued['wheel']['trusted'] and continued['wheel']['deltaY']>0, continued
             assert continued['scrollTop']-continued['wheel']['before']>20 and continued['ms']>=continued['wheel']['ms'], continued
+            # Let the held fade finish, so the exit publishes under the continued scroll.
+            page.evaluate('window.__restoreAnimate();window.__heldExit.forEach(a=>a.play())')
         after_view = page_changed('rail_tickets', prior)
         if queued:
             page.evaluate('window.__exitScrollTake();window.__captureExitScroll=false')
@@ -1595,9 +1615,10 @@ def verify_rail_overflow(page, fixture, evidence):
     fixture["release_sha"] = "fixture-next"
     page.evaluate("window.__ownerUpdatesSignal(); dispatchEvent(new Event('pageshow'))")
     status_samples = []
-    for state, word in [("ready", "Update complete"), ("composing", "Update complete")]:
-        if state == "composing":
+    for state, word in [("ready", "Update complete"), ("held", "Refresh waits until this message is safe")]:
+        if state == "held":
             page.evaluate("document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))")
+            page.locator("[data-shell-refresh]:visible").click()
         for viewport_width in [721, 720]:
             page.set_viewport_size({"width": viewport_width, "height": 700})
             expect(rail).to_be_visible()
@@ -1608,7 +1629,7 @@ def verify_rail_overflow(page, fixture, evidence):
                 expect(grip).to_have_attribute("aria-valuenow", "232")
             bounds = status_geometry(word)
             status = page.locator(".status-card:visible")
-            assert status.locator(".status-action").count() == 1
+            assert status.locator(".status-action").count() == (1 if state == "ready" else 0)
             values = []
             for scroller, selector in [(active, ".manager-card:not(.chief) .settle"), (settled, ".reopen")]:
                 dimensions = geometry(scroller)
@@ -1632,12 +1653,6 @@ def verify_rail_overflow(page, fixture, evidence):
                 values.append(dimensions)
             status_samples.append({"state": state, "viewportWidth": viewport_width, "status": bounds, "scrollers": values})
             page.screenshot(path=str(evidence / f"rail-overflow-status-{state}-{viewport_width}.png"))
-    # Composition no longer holds a requested refresh. Keep both geometry modes
-    # actionable, then cross the real reload boundary before later fixture work.
-    page.evaluate("window.__beforeStatusRefreshDocument = document")
-    with page.expect_navigation(wait_until="domcontentloaded"):
-        page.locator("[data-shell-refresh]:visible").click()
-    assert page.evaluate("document !== window.__beforeStatusRefreshDocument")
     (evidence / "rail-overflow-status-geometry.json").write_text(json.dumps(status_samples, indent=2))
     (evidence / "rail-overflow-geometry.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "samples": proof,
@@ -1789,13 +1804,13 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         dialog.get_by_role("button", name="When work finishes", exact=True).click()
         expect(card).to_contain_text("Update waits for work to finish")
         pinned = backend.store.read()
-        assert pinned is not None and pinned.state == "requested" and pinned.mode == "idle"
+        assert pinned is not None and pinned.state == "pending" and pinned.mode == "idle"
         retained()
         capture("waiting")
         card.get_by_role("button").click()
         dialog.get_by_role("button", name="Cancel update", exact=True).click()
         expect(card).to_contain_text("Update available")
-        assert backend.store.read().state == "failed"
+        assert backend.store.read().state == "cancelled"
         expect(card).not_to_contain_text("canceled")
         retained()
 
@@ -1810,7 +1825,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card).to_contain_text("Updating Panels")
         receipt = backend.store.read()
         assert receipt is not None and receipt.request_id == pending.request_id
-        assert receipt.state == "installing" and receipt.mode == "now" and receipt.confirm_activity
+        assert receipt.state == "dispatched" and receipt.mode == "now" and receipt.confirm_activity
         assert posts[-1]["path"].endswith("/" + receipt.request_id + "/now")
         assert len(backend.provider.dispatched) == 1
         retained()
@@ -1832,8 +1847,31 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         assert len(backend.provider.dispatched) == 2
         retained()
 
+        # Candidate startup changed the running SHA, but no health commit exists.
+        # The old page must retain a supported same-SHA retry instead of a dead end.
+        previous = backend.lifecycle.read().lifecycle
+        backend.lifecycle.start(receipt.request_id, backend.provider.offered.manifest.app_sha, prior_sha=observed,
+                                expected_deployment_id=previous.deployment_id if previous else None)
+        backend.lifecycle.transition(receipt.request_id, "restarting")
+        backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "failed", detail="The candidate did not commit health.")
+        backend.current_sha = backend.provider.offered.manifest.app_sha
+        backend.service.current_app_sha = backend.current_sha
+        backend.service.recovery_admission = lambda: True
+        signal()
+        expect(card).to_contain_text("Update didn't install")
+        card.get_by_role("button").click()
+        expect(dialog).to_contain_text("The candidate did not commit health.")
+        dialog.get_by_role("button", name="Try again", exact=True).click()
+        expect(card).to_contain_text("Updating Panels")
+        receipt = backend.store.read()
+        assert receipt is not None
+        assert len(backend.provider.dispatched) == 3
+        assert posts[-1]["boot_sha"] == "b" * 40
+        assert page.evaluate("document.querySelector('meta[name=panels-app-sha]').content") == "a" * 40
+        retained()
+
         # A second failure with an expired publication has only Not now.
-        backend.store.transition(receipt.request_id, frozenset({"installing"}), "failed")
+        backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "failed")
         offered = backend.provider.offered
         backend.provider.offered = replace(offered, expires_at="2000-01-01T00:00:00Z")
         backend.service.refresh_available(force=True)
@@ -1860,6 +1898,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card).to_contain_text("Updating Panels")
         receipt = backend.store.read()
         assert receipt is not None
+        backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "applying")
         previous_lifecycle = backend.lifecycle.read().lifecycle
         backend.lifecycle.start(receipt.request_id, offered.manifest.app_sha, prior_sha=cutover.observed_sha(),
                                 expected_deployment_id=previous_lifecycle.deployment_id if previous_lifecycle else None)
@@ -1880,6 +1919,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         observed = cutover.apply(backend.store, backend.lifecycle, Path(backend.directory.name) / "planner.db")
         backend.current_sha = observed
         backend.service.current_app_sha = observed
+        backend.service.recovery_admission = lambda: False
         signal()
         expect(card).to_contain_text("Update complete")
         expect(page.locator(".board-workspace-right")).to_have_css("opacity", "1")
@@ -1894,6 +1934,13 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         health.click()
         assert page.evaluate("document === window.__beforeUpdateDocument")
         card.get_by_role("button").click()
+        expect(card).to_contain_text("Refresh waits until this message is safe")
+        expect(box).to_have_value(draft)
+        assert page.evaluate("document === window.__beforeUpdateDocument")
+        retained()
+        capture("held")
+        assert card.locator(".status-base .status-mark").evaluate("node => getComputedStyle(node).animationName") == "none"
+        box.fill("")
         page.wait_for_function("document !== window.__beforeUpdateDocument")
         expect(box).to_be_visible()
         assert documents == ["a" * 40, "b" * 40]
@@ -1904,8 +1951,8 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             "stagedOutcomes": cutover.outcomes, "stagedProcessStarts": len(cutover.process.pids),
             "dispatchCount": len(backend.provider.dispatched), "requests": posts, "documentVersions": documents,
             "boundary": "Full App and native dialogs -> actual FastAPI update routes -> durable request/lifecycle records; synthetic external dispatcher",
-            "cardIdentity": "Both desktop and phone card nodes retained across waiting, updating, failure, retry, restart, and complete",
-            "cutover": "Actual deploy_app file replacement, rollback, and disposable HTTP health supply the browser version; archive admission, repository dispatch, remain synthetic.",
+            "cardIdentity": "Both desktop and phone card nodes retained across waiting, updating, failure, retry, restart, complete, and held Refresh",
+            "cutover": "Actual deploy_app file replacement, rollback, and disposable HTTP health supply the browser version; archive admission, repository dispatch, and claim remain synthetic.",
         }, indent=2))
     finally:
         context.close()

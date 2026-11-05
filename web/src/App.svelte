@@ -36,6 +36,10 @@
     const status = updates.data;
     observeRunningAppSha(status?.app_sha ?? null);
     updateClock = Date.now();
+    const deadline = Date.parse(status?.restart_deadline_at ?? status?.deadline_at ?? "");
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) return;
+    const timer = window.setTimeout(() => { updateClock = Date.now(); }, deadline - Date.now() + 1);
+    return () => window.clearTimeout(timer);
   });
   $effect(() => {
     const expires = Date.parse(updates.data?.available?.expires_at ?? "");

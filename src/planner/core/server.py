@@ -61,9 +61,12 @@ from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
 from planner.datasets.api import router as datasets_router
 from planner.environments import ticket_scratch
+from planner.environments.deployment_attention import DeploymentAttentionObserver
+from planner.environments.deployment_configuration import DEPLOYMENT_ATTENTION_POLL_SECONDS
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_admission import (
+    UncommittedAppStore,
     matching_commit,
     startup_requires_commit,
 )
@@ -206,6 +209,7 @@ def create_app(
 
         recovery_task: asyncio.Task[None] | None = None
         lifecycle_observer: asyncio.Task[None] | None = None
+        attention_observer: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
         ticket_scratch_task: asyncio.Task[None] | None = None
         loops: Any = None
@@ -233,6 +237,8 @@ def create_app(
                     pass
 
             await attempt(preview_runtime.close())
+            if attention_observer is not None:
+                await attempt(cancel_task(attention_observer))
             if release_task is not None and not release_task.done():
                 await attempt(cancel_task(release_task))
             if video_cleanup_task is not None:
@@ -324,9 +330,41 @@ def create_app(
                     else conversation_system_for_test
                 )
 
+                attention = DeploymentAttentionObserver(
+                    lifecycle_store=deployment_lifecycle_store,
+                    attention_directory=deployment_lifecycle_path.parent / "deployment-attention",
+                    app_sha=config.app_sha,
+                    clock=clock,
+                    connect_database=conn_factory,
+                    conversation_system=lambda: app.state.conversation_system,
+                    startup_pending=lambda: app.state.update_startup_pending,
+                    admission_closed=lambda: app.state.update_admission_closed,
+                )
+
+                async def observe_deployment_attention() -> None:
+                    while True:
+                        try:
+                            await asyncio.to_thread(app.state.updates.reconcile)
+                            observed = await attention.poll()
+                            if observed != app.state.deployment_attention:
+                                app.state.deployment_attention = observed
+                                change_signal.emit()
+                        except Exception:
+                            logging.getLogger(__name__).exception(
+                                "Deployment attention could not be recorded or delivered"
+                            )
+                        await asyncio.sleep(DEPLOYMENT_ATTENTION_POLL_SECONDS)
+
+                attention_observer = asyncio.create_task(observe_deployment_attention())
+
                 async def release_normal_work() -> None:
                     nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
                     nonlocal loops, metrics
+                    # A matching runner commit is irreversible even if later setup fails.
+                    if config.app_sha is not None and matching_commit(
+                        deployment_lifecycle_store, config.app_sha
+                    ):
+                        uncommitted_apps.commit(config.app_sha)
                     app.state.update_startup_pending = False
                     app.state.update_admission_closed = False
                     change_signal.emit()
@@ -530,17 +568,22 @@ def create_app(
     recorded_update = update_request_store.read()
     applying_candidate = bool(
         recorded_update is not None
-        and recorded_update.state == "installing"
         and recorded_update.release.manifest.app_sha == config.app_sha
+    )
+    uncommitted_apps = UncommittedAppStore(
+        deployment_lifecycle_path.with_name("update-admission.json")
     )
     app.state.update_startup_pending = startup_requires_commit(
         deployment_lifecycle_store, config.app_sha
     ) or (
-        applying_candidate
+        (applying_candidate or uncommitted_apps.contains(config.app_sha))
         and not matching_commit(deployment_lifecycle_store, config.app_sha)
     )
+    if app.state.update_startup_pending and config.app_sha is not None:
+        uncommitted_apps.retain(config.app_sha)
     app.state.update_admission_closed = False
     app.state.update_startup_detail = None
+    app.state.deployment_attention = None
     update_provider = GitHubUpdateProvider.configured()
     app.state.mac_updates = MacUpdateService(
         deployment_lifecycle_path.parent / "mac-updates",
@@ -565,6 +608,7 @@ def create_app(
             request, mac_health_for_update()
         ),
         lifecycle_store=deployment_lifecycle_store,
+        recovery_admission=lambda: app.state.update_startup_pending,
     )
 
     app.add_middleware(IOSBuildGateMiddleware)
@@ -694,6 +738,8 @@ def create_app(
             payload["state"] = "problem"
             payload["installation_confirmed"] = False
             payload["unknown_display_until"] = None
+        attention = app.state.deployment_attention
+        payload["attention_status"] = attention.status if attention is not None else None
         return payload
 
     @app.get("/api/vps-status-summary")

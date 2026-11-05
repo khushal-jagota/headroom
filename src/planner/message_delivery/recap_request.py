@@ -8,9 +8,8 @@ every other message uses, with Panels as its source. It owns no transport, no qu
 no record of its own. What it owns is the sentence, which belongs beside the system that
 delivers it rather than in the browser that presses the button.
 
-The answer to this message is the recap the agent writes, not words it sends back. So the
-send carries no reply requirement: a press leaves the owner's attention alone and the
-fresh recap is the whole result.
+The answer to this message is the recap the agent writes, not words it sends back. A
+press leaves the owner's attention alone and the fresh recap is the whole result.
 
 Asking also clears the recap being replaced. The owner read that line before pressing, so
 it is spent, and leaving it in place makes a pending recap look like a current one. The
@@ -70,7 +69,6 @@ async def request_recap(
         recipient,
         RECAP_REQUEST_MESSAGE,
         MessageDeliveryMode.steer,
-        expects_reply=False,
         system_message=True,
     )
 

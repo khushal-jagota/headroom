@@ -133,7 +133,9 @@
       if (owner === retirementOwner && wanted >= 0 && wanted <= thread.scrollHeight - thread.clientHeight + .01) moveTheThread(thread, wanted);
     } finally { correctingRetirement = false; rememberNavigationPosition(thread); }
   }
-  let jumpVisible = $state(false);
+  let newestLineOutOfSight = $state(false);
+  // Latest points down, so a newest line above the view does not call for it.
+  let newestLineBelowTheView = $state(false);
   let belowCount = $state(0);
   const newerHistory = $derived(reader?.pages.some(page => page.scope.kind === "timeline" && page.newer !== null) ?? false);
   const newerThanUnplacedAnchor = $derived.by(() => {
@@ -458,7 +460,8 @@
   function takeTheReading(reading: ThreadReading): void {
     countBelow();
     newestLineBottomPixels = reading.newestLineBottomPixels;
-    jumpVisible = !reading.newestLineIsInSight;
+    newestLineOutOfSight = !reading.newestLineIsInSight;
+    newestLineBelowTheView = reading.newestLineIsBelowTheView;
   }
 
   /** Is the reader with the newest line right now? Measured, never remembered. */
@@ -495,7 +498,7 @@
       manualReader = false;
       retirementOwner = null;
       withTheNewestLineBeforeTheWrite = true;
-    } else if (!manualReader) withTheNewestLineBeforeTheWrite = !jumpVisible;
+    } else if (!manualReader) withTheNewestLineBeforeTheWrite = !newestLineOutOfSight;
     rememberNavigationPosition(thread);
     saveLogicalAnchor(thread);
   }
@@ -900,14 +903,15 @@
         if (sentMessageToPlace !== null && settledMessageIds.has(sentMessageToPlace)) sentMessageToPlace = null;
         else if (sentMessageToPlace !== null) dirty = true;
         takeTheReading(geometry.read(reservedSpacePixels));
-        jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels) && !followingMore;
+        newestLineOutOfSight = !geometry.newestLineIsInSight(newestLineBottomPixels) && !followingMore;
+        newestLineBelowTheView = geometry.newestLineIsBelowTheView(newestLineBottomPixels) && !followingMore;
         const finalRow = presentationRoots(thread).at(-1) ?? contentElement ?? thread;
         const latestPresented = intent?.cause !== 'restoration-fallback' || presentationReady(finalRow);
         const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && actualNewestIsHeld()
           && reservedSpacePixels === 0 && Math.abs(thread.scrollTop - Math.max(0, geometry.newestLineScrollTop(newestLineBottomPixels))) <= 1
-          && !jumpVisible && latestPresented;
+          && !newestLineOutOfSight && latestPresented;
         if (latestPlaced) { latestPending = false; manualReader = false; retirementOwner = null; }
-        withTheNewestLineBeforeTheWrite = !manualReader && (followingMore || !jumpVisible) && !latestPending && heldSent === null;
+        withTheNewestLineBeforeTheWrite = !manualReader && (followingMore || !newestLineOutOfSight) && !latestPending && heldSent === null;
         saveLogicalAnchor(thread);
         if (latestPlaced && intent !== null) {
           // Wait for Latest to leave the DOM before returning the keyboard to the thread.
@@ -1126,7 +1130,7 @@
     ontouchmove={stopAutomaticTravel}
     onpointerdown={(event) => { if (event.target === event.currentTarget) stopAutomaticTravel(); }}
     onkeydown={(event) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) stopAutomaticTravel(); }}
-    data-more-below={jumpVisible || newerHistory ? "true" : "false"}
+    data-more-below={newestLineBelowTheView || newerHistory ? "true" : "false"}
   >
     <div class="chat-thread-content" data-conversation-content bind:this={contentElement}>
     {#if emptyState && rows.length === 0 && outgoingMessages.length === 0}
@@ -1163,7 +1167,7 @@
       ></div>
     {/if}
   </div>
-  {#if jumpVisible || newerHistory || newerThanUnplacedAnchor || latestPending || manualReader && reservedSpacePixels > 0}
+  {#if newestLineBelowTheView || newerHistory || newerThanUnplacedAnchor || latestPending}
     <button
       type="button"
       class="chat-jump"

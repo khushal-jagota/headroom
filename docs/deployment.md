@@ -38,7 +38,7 @@ The host supplies the glibc loader and a short named list of system libraries, N
 
 Khushal opens **Update available** and chooses **Update now** or **When work finishes** for a retained release. The request stays pinned to that release. He can cancel a wait or change it to Update now. Only the owner can ask. Chief, Managers, and Workers are refused. Without an update source configured on the host, owner updates are unavailable.
 
-The existing readiness loop asks GitHub to run the install job on the host runner, so there is no second scheduler. An uncertain dispatch is never resent on its own. Khushal can cancel until installation starts. The request records cancellation as a terminal failure with a cancellation detail, and the browser shows it as canceled. The request states are requested, installing, done, and failed.
+The existing readiness loop asks GitHub to run the install job on the host runner, so there is no second scheduler. An uncertain dispatch is never resent on its own. Khushal can cancel until the runner claims the request, and that cancellation is neutral, not a failure.
 
 The publication also carries a prebuilt Mac runtime from the same source. One approval covers both machines, with separate progress for the Mac. **When work finishes** waits for turns and background tasks on both machines. The VPS keeps the approved Mac bytes before dispatch so a sleeping Mac can catch up after publication expiry. [The Mac executor](executor.md) owns its fixed launcher, runtime swap, and reversion rules. Older publications without a Mac runtime explicitly require a manual Mac update.
 
@@ -48,9 +48,9 @@ The current entry revision is staging's `goal_holders`. The direct upgrade appli
 
 Before the sweep merges, merge the latest staging into the sweep branch. Confirm staging's migration head and the live database revision with a read-only connection. If staging adds migrations, update the one supported entry revision and its direct transformation. Repeat the upgrade on a fresh copy of the live database. Compare every retained source record after the documented transformations, account for removed feature records, check integrity and foreign keys, and compare the complete schema with a fresh database. Keep the proof with the integration Ticket. Do not install the sweep until that proof passes.
 
-The installer runs in its own short-lived user service, so stopping Headroom cannot kill it. It downloads the archive from the owner request and checks its fingerprint once. It checks the runtime contract and database schema ancestry once before downtime. The current database starts at staging’s `goal_holders` revision. The direct upgrade finishes at `canonical_manager_identities`. Older application archives keep their original schema floor. It refuses older or unknown ancestry before the service stops. It does not download a separate proof, repeat the GitHub lookup, rebuild, or ask the live server for a claim. The separate process lock permits only one deploy at a time.
+The installer runs in its own short-lived user service, so stopping Headroom cannot kill it. While the old app still serves, it checks the download against the request, checks the runtime contract, and refuses a database whose schema history it does not recognise or that is too old. Then it asks the server for a final claim. The server rechecks workspace activity under the same barrier that guards new conversations and background work, and runs the startup Ticket integrity check. An idle request that finds work running goes back to waiting. A failed integrity check fails the request before any downtime.
 
-The installer stops the service, captures interrupted agent sessions, and takes a verified [backup](backups.md). It keeps the prior app, moves the new one into place, restarts, and waits for the new app to report its exact commit. Meanwhile ordinary requests, CLI work, and background loops stay closed; only health and status answer. When the new app proves healthy, the runner records the commit and work reopens. Interrupted conversations then get one recovery prompt ([Conversations](conversations.md)). Last, the job refreshes the agents' skill links and checks the private HTTPS route over HTTP/2.
+Once claimed, the installer stops the service, captures interrupted agent sessions, and takes a verified [backup](backups.md). It keeps the prior app, moves the new one into place, restarts, and waits for the new app to report its exact commit. Meanwhile ordinary requests, CLI work, and background loops stay closed. Health, status, and owner update recovery remain available. When the new app proves healthy, the runner records the commit and work reopens. Interrupted conversations then get one recovery prompt ([Conversations](conversations.md)). Last, the job refreshes the agents' skill links and checks the private HTTPS route over HTTP/2.
 
 ## What can be undone
 
@@ -60,15 +60,13 @@ The commit is the boundary.
 - **After the swap, before the commit.** If the new app fails its health proof, the runner restores the snapshot and the prior app, then proves the prior commit. A failed recovery is reported with what was kept, never as success.
 - **After the commit.** The database is never restored. A failed skill refresh or route check leaves the new app installed and the job incomplete, not the app unhealthy.
 
-The deploy writes a plain status file at each step, with no lease or renewal. If the runner disappears before the commit, work stays closed and the file retains its last recorded step. The file does not admit traffic or restore data. Panels sends no unfinished-deploy alert. No maximum outage is promised. If the recorded commit matches the available app and admission is open, only the final report remains uncertain. That owner notice ends five minutes after the last status update.
+Every dispatched attempt has a durable deadline. The server settles the request from the running version and the matching attempt records, even if the runner disappears. A settled attempt cannot regain installation authority or block a later request. An expired wait also ends. Expiry alone never reopens ordinary work or restores data. A paused candidate needs health proof before work can resume.
 
-One server answer supplies the update state and allowed actions. A waiting request can change to Update now. The sidebar card moves through Updating and Restarting to **Update complete · Refresh**. The browser reconnects after a restart and preserves a message draft until Refresh is safe. The Mac has separate status and work.
+An older server may accept an install before its runner can recognise the receipt. The runner reads old and new receipts through the same defaults. If an already accepted legacy attempt is stuck before shutdown, an operator can explicitly recover it through the same install job. Recovery first proves the prior app is still healthy, work remains paused, and the saved request and failure match. It grants a new bounded attempt for that pinned release; it never silently selects a newer release. See the [legacy recovery runbook](../ops/panels-environments/recover-legacy-update.md).
 
-The browser offers a refresh when its loaded app differs from the server. Each write carries the loaded page version, and the server rejects an outdated version.
+One server answer supplies the update state and allowed actions. The sidebar card moves through Updating and Restarting to **Update complete · Refresh**. The browser reconnects after a restart and preserves a message draft until Refresh is safe. A failed install offers Try again while the release remains valid. Update complete means that the VPS finished. The Mac has separate status and work.
 
 A finalizer records the installed commit, application health, and each later check separately. It runs from checked-out source with the host's own Python, never from the app it judges. Missing evidence stays uncertain.
-
-Each browser write carries the version of the loaded page. The server rejects an outdated version without a separate version request before each save.
 
 An upgrade refuses a database that still contains cancelled Tickets. Resolve those records through the prior supported version before retry.
 
@@ -86,8 +84,6 @@ The deploy workflow never changes Tailscale Serve. A separate manual workflow re
 
 An upgrade refuses a database that contains cancelled Tickets. Resolve these records through the prior supported version before retry.
 
-Each browser write carries its loaded page version. The server rejects an outdated version. Saves do not request the server version first.
-
 ## When `scripts/dev` refuses
 
 Development worktrees must never share dependency storage with the installed app, because a shared `node_modules` or `.venv` can write into the deployed tree and break its integrity proof. `scripts/dev` guards setup, npm, pytest, and mypy before the tool starts. No flag turns it off.
@@ -104,9 +100,9 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 
 - `.github/workflows/deploy.yml`: publication, rehearsal, and owner adoption. `recover-private-route.yml`: route repair.
 - `src/planner/environments/deployment.py`: replacement and the restore boundary. `update_runner.py`: the host-side install.
-- `src/planner/environments/update_service.py`, `update_requests.py`, `update_admission.py`: the owner request and admission hold.
+- `src/planner/environments/update_service.py`, `update_requests.py`, `update_admission.py`: the owner request, final claim, and admission hold.
 - `src/planner/environments/runtime_packaging.py`, `runtime_contracts.py`, `runtime_admission.py`, and `scripts/runtime_target_proof.py`: the private runtime and host contract.
-- `src/planner/environments/deployment_lifecycle.py`, `scripts/deployment_finalize.py`: evidence and reporting.
+- `src/planner/environments/deployment_lifecycle.py`, `deployment_attention.py`, `scripts/deployment_finalize.py`: evidence and reporting.
 - `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the owner's actions.
 - `scripts/dev`, `scripts/development_safety/`: the worktree guard.
 - `ops/panels-environments/`: user units and runner setup.

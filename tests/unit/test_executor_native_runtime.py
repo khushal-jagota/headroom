@@ -328,7 +328,25 @@ def test_bad_ticket_entry_does_not_lose_event_write_or_stop(
                 time.monotonic() + 0.1,
             )
         )
-        assert response.unconfirmed is not None and response.unconfirmed.publication == "queued"
+        # No VPS confirms the write, so the answer is unconfirmed. The short deadline only
+        # ends that wait. Under load the spool write can outlast it, which the gateway
+        # correctly reports as "preparing", so wait for the write itself, then ask again.
+        assert response.unconfirmed is not None
+        assert response.unconfirmed.publication in ("preparing", "queued")
+        publishing = gateway._publishing.get("write")
+        if publishing is not None:
+            await asyncio.wait((publishing[1],))
+        retried = await gateway.handle(
+            IpcRequest(
+                "write-retry",
+                IpcOperation.retry,
+                child.reference.child_id,
+                child.capability,
+                {"submission_id": "write"},
+                time.monotonic(),
+            )
+        )
+        assert retried.unconfirmed is not None and retried.unconfirmed.publication == "queued"
         published = spool.lookup("write")
         assert published is not None
         if trigger == "changing":

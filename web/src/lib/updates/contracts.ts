@@ -4,7 +4,7 @@ export type UpdateActivity = "idle" | "busy" | "unknown";
 export type UpdateExperienceState = "up_to_date" | "available" | "waiting" | "updating" | "restarting" | "failed" | "complete";
 export type UpdateAction = "update" | "cancel" | "update_now" | "retry";
 export type UpdateRequestState =
-  | "requested" | "installing" | "done" | "failed";
+  | "pending" | "dispatched" | "applying" | "applied" | "cancelled" | "failed";
 
 export type PublishedUpdate = {
   publication_run_id: number;
@@ -25,6 +25,9 @@ export type OwnerUpdateRequest = {
   created_at: string;
   detail: string | null;
   confirm_activity?: boolean;
+  dispatched_at?: string | null;
+  deadline_at?: string | null;
+  deployment_id?: string | null;
 };
 
 export type UpdateStatus = {
@@ -38,6 +41,8 @@ export type UpdateStatus = {
   allowed_actions: UpdateAction[];
   phase: string | null;
   app_sha: string | null;
+  deadline_at: string | null;
+  restart_deadline_at: string | null;
 };
 
 export type CreateUpdateRequest = {

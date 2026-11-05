@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from contextlib import ExitStack
 
 from starlette.requests import Request
@@ -25,11 +26,15 @@ class UpdateAdmissionMiddleware:
 
         request = Request(scope)
         path = request.url.path
+        recovery_update = request.method == "POST" and bool(re.fullmatch(
+            r"/api/updates/requests(?:/[^/]+/(?:now|cancel|claim))?", path
+        ))
         browser_sha = request.headers.get("X-Panels-App-SHA")
         if (
             request.method not in {"GET", "HEAD", "OPTIONS"}
             and browser_sha is not None
             and browser_sha != self.config.app_sha
+            and not recovery_update
         ):
             await JSONResponse(
                 status_code=409,
@@ -41,24 +46,24 @@ class UpdateAdmissionMiddleware:
 
         state = request.app.state
         status_path = path in {"/api/health", "/api/meta", "/api/deployment-status", "/api/updates"}
-        status_resource_body = (
-            request.method in {"GET", "HEAD"}
-            and path == "/api/resource-body"
-            and request.query_params.get("key") == "/api/deployment-status"
+        status_read = request.method in {"GET", "HEAD"} and (
+            path == "/api/changes"
+            or (path == "/api/resource-body"
+                and request.query_params.get("key") == "/api/deployment-status")
         )
         static_path = not path.startswith("/api/") and request.method in {"GET", "HEAD"}
         if (
             (state.update_startup_pending or state.update_admission_closed)
             and not status_path
             and not static_path
-            and not status_resource_body
+            and not status_read
+            and not recovery_update
         ):
             await JSONResponse(
                 status_code=503,
                 content={
                     "detail": (
-                        "Installation is unconfirmed. Work remains paused. "
-                        "Chief review is required."
+                        "Panels is not ready for changes. The update status remains available."
                     )
                 },
             )(scope, receive, send)

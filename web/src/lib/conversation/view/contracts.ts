@@ -4,7 +4,7 @@ export const VIEW_PROJECTION_VERSION = 4;
 
 export type ConversationViewLens = "focus" | "full";
 
-export type ViewRowKind = "credential_request" | "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "explicit_reply_missing" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "turn_ended" | "turn_stopped";
+export type ViewRowKind = "credential_request" | "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "turn_ended" | "turn_stopped";
 
 export type AskDeadReason = "turn_ended" | "no_ending_recorded";
 
@@ -60,18 +60,6 @@ export interface AgentMessageRowBody {
   kind: "agent_message";
   content: Array<ViewMessagePiece>;
   to_owner: boolean;
-}
-
-export type PrincipalKind = "owner" | "chief" | "manager" | "goal" | "ticket";
-
-export interface Principal {
-  kind: PrincipalKind;
-  id: string;
-}
-
-export interface MissingReplyRowBody {
-  kind: "explicit_reply_missing";
-  prompt_sender: Principal;
 }
 
 export interface ToolCallRowBody {
@@ -206,7 +194,7 @@ export interface CredentialRequestRowBody {
   delivery: RequestDelivery | null;
 }
 
-export type ViewRowBody = CredentialRequestRowBody | PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | MissingReplyRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody;
+export type ViewRowBody = CredentialRequestRowBody | PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody;
 
 export interface ViewBodyReference {
   body_id: string;
@@ -340,7 +328,7 @@ export interface ViewRestTool {
   body: DeliveredRowBody;
 }
 
-export type ViewRestEvent = ViewRestText | ViewRestDelivery | ViewRestTool | MissingReplyRowBody | TurnEndingRowBody | MarkerRowBody;
+export type ViewRestEvent = ViewRestText | ViewRestDelivery | ViewRestTool | TurnEndingRowBody | MarkerRowBody;
 
 export interface ViewPlanProgress {
   total_count: number;

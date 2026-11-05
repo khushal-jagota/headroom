@@ -12,7 +12,8 @@ from pathlib import Path
 
 import httpx
 import pytest
-from tests.support.server import BOOT_BUDGET_S, PLAN_BIN, REPO_ROOT, ServerHandle
+from tests.support.server import PLAN_BIN, REPO_ROOT, ServerHandle
+from tests.support.server_fixtures import _first_meta_answer
 
 
 def _direct_children(parent_pid: int) -> list[int]:
@@ -61,17 +62,6 @@ def _wait_for_one_child(parent_pid: int, *, different_from: int | None = None) -
     _wait_until(found, f"supervisor {parent_pid} did not expose one application child")
     assert child is not None
     return child
-
-
-def _wait_for_http(base: str) -> None:
-    def ready() -> bool:
-        try:
-            response = httpx.get(f"{base}/api/meta", timeout=0.5)
-        except httpx.HTTPError:
-            return False
-        return response.status_code == 200
-
-    _wait_until(ready, f"{base} did not become ready", timeout=BOOT_BUDGET_S)
 
 
 def _isolated_server_env(handle: ServerHandle, control_socket: Path) -> dict[str, str]:
@@ -168,7 +158,11 @@ def test_restart_from_ticket_worktree_uses_captured_launch_root(
 
     assert result.returncode == 0, result.stderr
     _wait_for_one_child(server.proc.pid, different_from=application_pid)
-    _wait_for_http(server.base)
+    # The supervisor keeps the fixture's listener across the restart, so this request
+    # waits in its queue for the replacement child.
+    _first_meta_answer(
+        server.base, server.log_path, lambda: f"panels serve (rc={server.proc.poll()})"
+    )
     replacement_shell = httpx.get(f"{server.base}/").text
     assert "data-svelte-app" in replacement_shell
     assert replacement_shell == original_shell
