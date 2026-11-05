@@ -215,6 +215,20 @@ import XCTest
         XCTAssertEqual(GoalProtocol.state.writes().count, 2)
     }
 
+    func testGoalConversationUsesTheHolderCurrentConversationAndSendDoor() async throws {
+        GoalProtocol.state.reset(try goal())
+        let api = client()
+        for holder in [GoalHolder.chief, .manager("holder-test")] {
+            let current = try await api.currentConversation(holder.conversationOwner)
+            XCTAssertEqual(current, holder.kind == .chief ? "chief-current" : "manager-current")
+            let message = ConversationSend(conversationId: current, content: [.init(text: "Hello holder")], senderMessageId: UUID().uuidString, sentAtUnixMilliseconds: 1)
+            let delivery = try await api.sendConversation(holder.conversationOwner, message: message)
+            XCTAssertEqual(delivery.conversationId, current)
+            XCTAssertEqual(delivery.fate, "injected")
+        }
+        XCTAssertEqual(GoalProtocol.state.requests(), ["/api/chief/conversation", "/api/chief/conversation/send", "/api/managers/holder-test/workspace", "/api/managers/holder-test/conversation/send"])
+    }
+
     func testRetiredReviewArtifactsAndPersistedGoalSendsHaveNoRequestDoor() async throws {
         GoalProtocol.state.reset(try goal())
         let api = client()
@@ -291,6 +305,24 @@ private final class GoalProtocolState: @unchecked Sendable {
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         let path = request.url!.path
         paths.append(path)
+        if path == "/api/chief/conversation" { return (200, Data(#"{"conversation_id":"chief-current"}"#.utf8)) }
+        if path == "/api/managers/holder-test/workspace" {
+#if SWIFT_PACKAGE
+            let fixture = Bundle.module.url(forResource: "manager", withExtension: "json", subdirectory: "Fixtures")!
+#else
+            let fixture = Bundle(for: GoalTests.self).url(forResource: "manager", withExtension: "json")!
+#endif
+            var value = try JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as! [String: Any]
+            var manager = value["manager"] as! [String: Any]; manager["conversation_id"] = "manager-current"; value["manager"] = manager
+            return (200, try JSONSerialization.data(withJSONObject: value))
+        }
+        if path == "/api/chief/conversation/send" || path == "/api/managers/holder-test/conversation/send" {
+            guard request.httpMethod == "POST", request.value(forHTTPHeaderField: "X-Panels-iOS-Build") == NativeBuildGate.build else { throw URLError(.badServerResponse) }
+            let body = try JSONDecoder().decode(GoalJSON.self, from: bodyData(request))
+            let expected = path == "/api/chief/conversation/send" ? "chief-current" : "manager-current"
+            guard body["conversation_id"].text == expected else { throw URLError(.badServerResponse) }
+            return (200, Data("{\"conversation_id\":\"\(expected)\",\"fate\":\"injected\"}".utf8))
+        }
         if path == "/api/managers/holder-test/page/readings" {
             return (200, Data("{\"goal_id\":\"holder-test\",\"revision\":\(holderRevision),\"status\":\"neutral\",\"status_date\":\"2026-11-05\",\"next_refresh_at\":1794000000,\"values\":[],\"sources\":[],\"charts\":{}}".utf8))
         }

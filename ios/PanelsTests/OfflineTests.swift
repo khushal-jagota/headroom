@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Observation
 import os
 import XCTest

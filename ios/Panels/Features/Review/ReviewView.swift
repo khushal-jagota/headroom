@@ -283,8 +283,8 @@ private struct ReviewProposalView: View {
         .onChange(of: editing || returning || sheet != nil || decision.busy || leaving, initial: true) { _, locked in selectionLocked = locked }
         .onDisappear { selectionLocked = false }
         .environment(\.openURL, OpenURLAction { url in
-            if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
-        if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selectedArtifact = target }
+            if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return .discarded }
+            if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selectedArtifact = target }
             else { openURL(url) }
             return .handled
         })
