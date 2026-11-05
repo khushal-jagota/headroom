@@ -17,9 +17,6 @@ MAC_UPDATE_REPORT_SECONDS = 90.0
 # How long `/api/deployment-status` (read by iOS builds in the field) shows success.
 DEPLOYMENT_SUCCESS_DISPLAY_SECONDS = 300.0
 
-# The live user unit the installer stops and starts.
-LIVE_SERVICE_NAME = "panels-live.service"
-
 # Staged and retained application folders beside `<current_root>/app`.
 STAGED_APP_PREFIX = ".app-next-"
 PREVIOUS_APP_PREFIX = ".app-previous-"

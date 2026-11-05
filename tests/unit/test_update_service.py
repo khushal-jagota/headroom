@@ -90,6 +90,7 @@ class Harness:
             backup_directory=root / "data" / "backups",
             current_app_sha=SHA_A,
             health_url="http://127.0.0.1:9/api/health",
+            service_unit="panels-test.service",
             launch=self.launch,
             stage=lambda provider, published, current_root: staged,
         )
@@ -131,7 +132,7 @@ def test_press_answers_at_once_then_pauses_work_and_starts_the_installer(
     assert Path(command[4]).read_text().startswith('"""')
     assert command[5:] == [
         "--current-root", str(harness.root), "--attempt-id", attempt.attempt_id,
-        "--service", "panels-live.service", "--health-url", "http://127.0.0.1:9/api/health",
+        "--service", "panels-test.service", "--health-url", "http://127.0.0.1:9/api/health",
         "--health-timeout-seconds", "300.0",
     ]
     with pytest.raises(UpdateConflict):
@@ -344,3 +345,17 @@ def test_prefetch_waits_while_an_attempt_owns_the_staged_release(
     monkeypatch.setattr("planner.environments.update_service.threading.Thread", refuse)
     harness.service.install(SHA_B, "idle", confirm_activity=False)
     harness.service.refresh_available(force=True)
+
+
+def test_installer_restarts_only_the_unit_this_server_runs_in() -> None:
+    # A wrong name here stops another service, so the parse must name this unit or none.
+    from planner.environments.update_install import own_service_unit
+
+    live = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/panels-live.service\n"
+    assert own_service_unit(live) == "panels-live.service"
+    scratch = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/panels-scratch.service\n"
+    assert own_service_unit(scratch) == "panels-scratch.service"
+    terminal = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/vte-spawn-1.scope\n"
+    assert own_service_unit(terminal) is None
+    assert own_service_unit("0::/user.slice/user-1000.slice/user@1000.service\n") is None
+    assert own_service_unit("") is None

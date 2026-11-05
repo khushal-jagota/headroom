@@ -33,7 +33,6 @@ from planner.environments.update_attempts import (
     utc_now,
 )
 from planner.environments.update_configuration import (
-    LIVE_SERVICE_NAME,
     MAC_UPDATE_REPORT_SECONDS,
     UPDATE_AVAILABILITY_REFRESH_SECONDS,
     UPDATE_HEALTH_TIMEOUT_SECONDS,
@@ -89,6 +88,7 @@ class UpdateService:
         backup_directory: Path,
         current_app_sha: str | None,
         health_url: str,
+        service_unit: str,
         prepare_mac_update: Callable[[PublishedUpdate], None] = lambda release: None,
         mac_phase: Callable[[str], str | None] = lambda mac_attempt_id: None,
         mac_reported_at: Callable[[str], float | None] = lambda mac_attempt_id: None,
@@ -104,6 +104,7 @@ class UpdateService:
         self.backup_directory = backup_directory
         self.current_app_sha = current_app_sha
         self._health_url = health_url
+        self._service_unit = service_unit
         self._prepare_mac_update, self._mac_phase = prepare_mac_update, mac_phase
         self._mac_reported_at = mac_reported_at
         self._mac_configured = mac_configured
@@ -442,7 +443,7 @@ class UpdateService:
             installer,
             current_root=self.current_root,
             attempt_id=attempt_id,
-            service=LIVE_SERVICE_NAME,
+            service=self._service_unit,
             health_url=self._health_url,
             health_timeout_seconds=UPDATE_HEALTH_TIMEOUT_SECONDS,
         )

@@ -73,6 +73,7 @@ from planner.environments.update_attempts import (
     import_legacy_request,
 )
 from planner.environments.update_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
+from planner.environments.update_install import own_service_unit
 from planner.environments.update_provider import GitHubUpdateProvider
 from planner.environments.update_service import UpdateService
 from planner.environments.vps_metrics.api import router as vps_metrics_router
@@ -483,9 +484,11 @@ def create_app(
     current_root = data_directory.parent
     # Only an installed release under <current_root>/app installs its own updates.
     installed_app = bool(config.app_sha) and _REPO_ROOT == current_root / "app"
+    # The installer restarts the unit this server runs in, and nothing else.
+    service_unit = own_service_unit() if installed_app else None
     update_attempts = FileUpdateAttemptStore(attempt_path(data_directory))
     import_legacy_request(update_attempts, data_directory, config.app_sha)
-    update_provider = GitHubUpdateProvider.configured() if installed_app else None
+    update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
     app.state.mac_updates = MacUpdateService(
         data_directory / "mac-updates",
         update_attempts,
@@ -503,6 +506,7 @@ def create_app(
         backup_directory=Path(config.backup_dir).expanduser(),
         current_app_sha=config.app_sha,
         health_url=f"http://{HOST}:{config.port}/api/health",
+        service_unit=service_unit or "",
         prepare_mac_update=app.state.mac_updates.prepare,
         mac_phase=app.state.mac_updates.phase,
         mac_reported_at=app.state.mac_updates.reported_at,

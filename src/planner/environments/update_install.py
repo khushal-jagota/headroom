@@ -59,6 +59,27 @@ def schema_change_pending(database: Path, staged_app: Path) -> bool:
     return revisions != heads
 
 
+def own_service_unit(cgroup: str | None = None) -> str | None:
+    """Name the systemd service this process runs in, or None outside one.
+
+    The installer stops and starts exactly this unit, so a server can only ever restart
+    itself. A copy of Panels running anywhere else cannot stop the live service.
+    """
+    if cgroup is None:
+        try:
+            cgroup = Path("/proc/self/cgroup").read_text()
+        except OSError:
+            return None
+    for line in cgroup.splitlines():
+        hierarchy, _, path = line.partition("::")
+        if hierarchy != "0":
+            continue
+        leaf = path.rstrip("/").rsplit("/", 1)[-1]
+        if leaf.endswith(".service") and not leaf.startswith("user@"):
+            return leaf
+    return None
+
+
 def write_installer(data_directory: Path) -> Path:
     """Copy the installer out of this app, so the app swap cannot change the code it runs."""
     destination = data_directory / INSTALLER_FILE_NAME
