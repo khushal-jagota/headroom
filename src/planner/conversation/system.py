@@ -37,7 +37,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
-from typing import IO, TYPE_CHECKING, Any, Literal
+from typing import IO, TYPE_CHECKING, Any, Final, Literal
 from uuid import uuid4
 
 from pydantic import JsonValue
@@ -182,6 +182,14 @@ IDLE_CHILD_SWEEP_INTERVAL_SECONDS = 5 * 60
 
 # What Panels tells an agent whose background task ended because its session did.
 LOST_BACKGROUND_TASK_SENDER_LABEL = "Panels"
+
+
+# How a background task ends when it finished by itself, or goes on as something that is
+# not activity. Any other ending, a stop or an end nobody announced, may be its session
+# going away.
+BACKGROUND_TASK_ENDINGS_OF_THEIR_OWN: Final[frozenset[str]] = frozenset(
+    {"completed", "failed", "ambient"}
+)
 
 
 def _lost_background_task_prompt(task_description: str) -> str:
@@ -503,6 +511,12 @@ class _ConversationState:
     # Set for the whole of a kill. Nothing runs in a killed conversation until someone
     # sends again, so a background task lost while it is killed goes without a prompt.
     being_killed: bool = False
+    # Background tasks that ended some way other than completing or failing, kept until
+    # the agent next does anything: description by task id. A backend being terminated
+    # stops its tasks on the way out, so if its stream ends first they were lost with it.
+    background_tasks_stopped_since_the_agent_last_acted: dict[str, str] = field(
+        default_factory=dict
+    )
     last_touched_monotonic: float = 0.0
     # When this conversation last said its model was thinking. Kept per conversation
     # because the rate it may be said at is about one browser watching one conversation.
@@ -3798,7 +3812,10 @@ class SqliteProcessConversationSystem:
         """
         if self._shutting_down:
             return
-        lost = await self._persist(
+        held = state.background_tasks_stopped_since_the_agent_last_acted
+        stopped_before_the_child_went = tuple(held.values())
+        held.clear()
+        lost = stopped_before_the_child_went + await self._persist(
             state, partial(self._store.take_background_tasks, state.record.conversation_id)
         )
         if not state.being_killed:
@@ -4341,6 +4358,7 @@ class SqliteProcessConversationSystem:
             args, (BackgroundTaskStarted, BackgroundTaskEnded, BackendStreamEnded)
         )
         lost_background_tasks: tuple[str, ...] = ()
+        ended_background_task_description: str | None = None
         try:
             running = state.running_turn
             live = (
@@ -4365,6 +4383,9 @@ class SqliteProcessConversationSystem:
                 live = False
             if live and token is not None:
                 state.last_touched_monotonic = self._monotonic_now()
+                # The agent acted after any stop it was told of, so its session outlived
+                # those stops and the tasks ended on their own.
+                state.background_tasks_stopped_since_the_agent_last_acted.clear()
             interpreted = (
                 interpret_backend_event(
                     token,
@@ -4434,7 +4455,7 @@ class SqliteProcessConversationSystem:
             def write(
                 conn: sqlite3.Connection,
             ) -> tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]:
-                nonlocal lost_background_tasks
+                nonlocal lost_background_tasks, ended_background_task_description
                 written = self._store.append_in_transaction(
                     conn,
                     conversation_id,
@@ -4462,12 +4483,15 @@ class SqliteProcessConversationSystem:
                         conn, conversation_id, args.task_id, args.task_description
                     )
                 elif live and isinstance(args, BackgroundTaskEnded):
-                    self._store.record_background_task_ended_in_transaction(
-                        conn, conversation_id, args.task_id
+                    ended_background_task_description = (
+                        self._store.record_background_task_ended_in_transaction(
+                            conn, conversation_id, args.task_id
+                        )
                     )
                 elif live and isinstance(args, BackendStreamEnded):
-                    lost_background_tasks = self._store.take_background_tasks_in_transaction(
-                        conn, conversation_id
+                    lost_background_tasks = (
+                        *state.background_tasks_stopped_since_the_agent_last_acted.values(),
+                        *self._store.take_background_tasks_in_transaction(conn, conversation_id),
                     )
                 return {"applied": live}, written
 
@@ -4503,6 +4527,11 @@ class SqliteProcessConversationSystem:
                     state.record = replace(state.record, composer_catalog=args.composer_catalog)
                 elif live and background_task_news:
                     self._note_background_task_news(state, args)
+                    self._hold_background_tasks_until_the_agent_acts(
+                        state, args, ended_background_task_description
+                    )
+                    if self._live_tail is not None:
+                        self._live_tail.views.publish_status_changed(conversation_id)
                 if predicted is not None and predicted.ended:
                     self._settle_phase(state)
                     should_drain = True
@@ -4526,6 +4555,27 @@ class SqliteProcessConversationSystem:
             # Register now so shutdown and quiescence also own the scheduled drain.
             self._settle_in_background(state, self._drain_held_prompts(state))
         return result
+
+    @staticmethod
+    def _hold_background_tasks_until_the_agent_acts(
+        state: _ConversationState,
+        args: BackendEventValue,
+        ended_task_description: str | None,
+    ) -> None:
+        """Keep a task that may have been stopped by its session ending, until we know.
+
+        Its row is already gone, so no screen shows it. Only a stream that ends before
+        the agent acts again makes it lost.
+        """
+        held = state.background_tasks_stopped_since_the_agent_last_acted
+        if isinstance(args, BackendStreamEnded):
+            held.clear()
+        elif (
+            isinstance(args, BackgroundTaskEnded)
+            and ended_task_description is not None
+            and args.task_status not in BACKGROUND_TASK_ENDINGS_OF_THEIR_OWN
+        ):
+            held[args.task_id] = ended_task_description
 
     def _note_background_task_news(
         self, state: _ConversationState, args: BackendEventValue

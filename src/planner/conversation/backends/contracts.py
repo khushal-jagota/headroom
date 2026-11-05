@@ -629,7 +629,8 @@ class BackgroundTaskEnded:
     """A background task reached a terminal status while its session was still alive.
 
     ``task_status`` is the backend's own word for how it ended. A task that ends because
-    its whole session went away is not reported here; ``BackendStreamEnded`` covers it.
+    its whole session went away is covered by ``BackendStreamEnded``, though a backend
+    being terminated may first report its tasks stopped.
     """
 
     task_id: str

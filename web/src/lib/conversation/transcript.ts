@@ -687,6 +687,18 @@ export function stoppedSentence(durationSeconds: number | null): string {
   return `You stopped after ${formatDuration(durationSeconds)}`;
 }
 
+/** Background work the agent started that outlived its turn, named by its own description. */
+export function backgroundWorkSentence(taskDescriptions: readonly string[]): string {
+  return `Background work running: ${taskDescriptions.join(", ")}`;
+}
+
+/** The background tasks a conversation shows: none while a turn runs or activity is unknown. */
+export function backgroundTasksAfterTheTurn<T>(
+  status: { turn_running: boolean | null; background_tasks: readonly T[] } | null | undefined
+): readonly T[] {
+  return status?.turn_running === false ? status.background_tasks : [];
+}
+
 /** The live counter on a turn that is still going. */
 export function workingSentence(elapsedSeconds: number | null): string {
   if (elapsedSeconds === null || elapsedSeconds < 0) return "Working";

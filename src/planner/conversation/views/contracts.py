@@ -345,6 +345,13 @@ class ViewRestFacts(TypedDict):
     plan_progress: ViewPlanProgress
 
 
+class ViewBackgroundTask(TypedDict):
+    """A background task the agent started that is still live after its turn."""
+
+    task_id: str
+    task_description: str
+
+
 class ConversationViewStatus(TypedDict):
     diagnostics_expired: bool
     runtime_epoch: str
@@ -355,6 +362,8 @@ class ConversationViewStatus(TypedDict):
     turn_key: str | None
     turn_running: bool | None
     stopped_without_ending: bool
+    # Live background tasks, from the record the conversation's working signal reads.
+    background_tasks: list[ViewBackgroundTask]
     pending_permission: ViewRequestIdentity | None
     pending_user_input: ViewRequestIdentity | None
     # Plan bodies can also be oversized. Their versioned source is fetched on demand.
