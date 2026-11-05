@@ -97,7 +97,7 @@ export function navigationScrollWindow(root:HTMLElement,initial:ScrollWindowOpti
     cancelAnimationFrame(frame);
     frame=requestAnimationFrame(()=>{
       if(disposed)return;
-      if(!options.pageRestoration&&restore&&anchor){const node=nodes().find(node=>options.key(node)===anchor!.key);if(node){restoring=true;surface.scrollTop+=node.getBoundingClientRect().top-viewportTop()-anchor.top;lastTop=surface.scrollTop;queueMicrotask(()=>restoring=false);}}
+      if(options.window&&!options.pageRestoration&&restore&&anchor){const node=nodes().find(node=>options.key(node)===anchor!.key);if(node){restoring=true;surface.scrollTop+=node.getBoundingClientRect().top-viewportTop()-anchor.top;lastTop=surface.scrollTop;queueMicrotask(()=>restoring=false);}}
       remember();demand();
     });
   }

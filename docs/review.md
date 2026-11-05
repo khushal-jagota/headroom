@@ -5,7 +5,7 @@ Review is Khushal's queue: one pass through everything that is waiting on him, o
 ## What it holds
 
 - **Proposals parked for Khushal.** A proposal whose holder is Chief or a Manager is that agent's to decide, in its own conversation. It is not in this queue. See [Ticket lifecycle](tickets.md).
-- **Unread messages to Khushal** from any agent conversation: a Worker, a Manager, Chief, or a goal agent.
+- **Unread messages to Khushal** from any agent conversation: a Worker, a Manager, or Chief.
 
 Items about one Ticket share a card. A card is as old as its oldest item. Messages drop out when their Ticket is Done or backlogged, or when their Manager is [settled](managers.md). Proposals stay until they are decided.
 

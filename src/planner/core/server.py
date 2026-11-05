@@ -83,7 +83,6 @@ from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
-from planner.goals.conversation_api import router as goal_conversation_router
 from planner.ideas.api import router as ideas_router
 from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
 from planner.managers.api import legacy_router as legacy_managers_router
@@ -656,7 +655,6 @@ def create_app(
         datasets_router,
         attention_router,
         goals_router,
-        goal_conversation_router,
         credentials_router,
         credential_requests_router,
         notifications_router,

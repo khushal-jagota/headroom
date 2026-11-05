@@ -59,7 +59,10 @@ def _schema_shape(
         return value
     if "$ref" in value:
         target = _reference(document, value["$ref"])
+        # FastAPI qualifies shared recursive aliases by input/output mode. The
+        # expanded body still compares exactly; cycle labels are not semantics.
         name = target.get("title", value["$ref"].rsplit("/", 1)[-1])
+        name = name.removesuffix("-Input").removesuffix("-Output")
         if name in active:
             return {"recursive": name}
         return _schema_shape(target, document, active | {name})
@@ -249,15 +252,19 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
     tmp_db: Connection,
 ) -> None:
     """The reference must be usable at the canonical writer, with safe repair guidance."""
-    from tests.unit.test_goal_pages import create, numeric_rule
+    from tests.unit.test_goal_pages import numeric_rule
 
+    from planner.managers.data import create_manager
+
+    clock = FakeClock(datetime(2026, 11, 4, tzinfo=UTC))
+    manager = create_manager(tmp_db, title="Examples", project_id="project_vylo", clock=clock)
+    foreign = create_manager(tmp_db, title="Other examples", project_id="project_vylo", clock=clock)
     goal_examples = _guidance("goal", "schema", "create")["examples"]
     goal_body = goal_examples["chief_goal"]
     source_body = _guidance("measure-source", "schema")["examples"]["goal_source"]
     measure_body = _guidance("measure", "schema")["examples"]["taken_daily_count"]
     chart_body = _guidance("goal", "schema", "edit")["examples"]["primary_line_chart"]
-    foreign = create(tmp_db)
-    foreign_headers = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": foreign.id}
+    foreign_headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": foreign.id}
     sentinel = "private-provider-value-do-not-echo"
 
     def invalid(response: Any, *fragments: str) -> None:
@@ -313,7 +320,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
                     # create example; real pages must retain all accepted content.
                     changed = client.patch(
                         f"/api/goals/{accepted['id']}", json=edit,
-                        headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": accepted["id"]},
+                        headers={"X-Plan-Actor": "chief"},
                     )
                     assert changed.status_code == 200, changed.text
                     accepted = changed.json()
@@ -332,11 +339,12 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
         goal_body["primary_chart"]["measure_id"] = (
             goal_body["completion_rule"]["actual"]["measure_id"]
         )
+        goal_body.update(holder_kind="manager", holder_id=manager.id)
         created = client.post("/api/goals", json=goal_body, headers={"X-Plan-Actor": "chief"})
         assert created.status_code == 200, created.text
         goal = created.json()
         goal_id = goal["id"]
-        headers = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal_id}
+        headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.id}
         source_body["project_id"] = "project_vylo"
         source_body["responsible"]["id"] = goal_id
 
@@ -686,21 +694,33 @@ def test_explicit_participants_constructor_executes_registered_lifespan(tmp_db: 
     assert not any(thread.name.startswith("measure-source") for thread in threading.enumerate())
 
 
-def test_goal_source_authority_covers_own_definitions_scripts_runs_and_schedule(
-    tmp_db: Connection,
+def test_goal_holder_authority_covers_definitions_scripts_runs_and_schedule(
+    tmp_db: Connection, fake_clock: FakeClock,
 ) -> None:
     from tests.unit.test_goal_pages import create
 
     from planner.core.contracts import Principal, PrincipalKind
     from planner.datasets.data import read_dataset
+    from planner.managers.data import create_manager
     from planner.measure_sources import data
 
-    own, other = create(tmp_db), create(tmp_db)
+    holder = create_manager(tmp_db, title="Owner", project_id="project_vylo", clock=fake_clock)
+    foreign_holder = create_manager(
+        tmp_db, title="Other", project_id="project_vylo", clock=fake_clock
+    )
+    own = create(tmp_db, holder_kind="manager", holder_id=holder.id)
+    other = create(tmp_db, holder_kind="manager", holder_id=foreign_holder.id)
     actor = Principal(PrincipalKind.goal, own.id)
-    headers = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": own.id}
-    other_headers = {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": other.id}
+    headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": holder.id}
+    other_headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": foreign_holder.id}
     managed, _ = configured_source(tmp_db)
     with TestClient(_app(tmp_db)) as client:
+        retired_goal = client.patch(
+            f"/api/goals/{own.id}",
+            headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": own.id},
+            json={"expected_revision": own.revision, "title": "Retired actor"},
+        )
+        assert retired_goal.json()["error"]["code"] == "agent_forbidden"
         body = {
             "name": "Goal source",
             "project_id": "project_vylo",
@@ -767,7 +787,9 @@ def test_goal_source_authority_covers_own_definitions_scripts_runs_and_schedule(
             json={"expected_revision": source.source_revision, "text": "pass"},
         )
         assert submitted.status_code == 200, submitted.text
-        assert submitted.json()["active_script"]["authored_by"] == {"kind": "goal", "id": own.id}
+        assert submitted.json()["active_script"]["authored_by"] == {
+            "kind": "manager", "id": holder.id
+        }
         source = data.read_source(tmp_db, source_id)
         scheduled = client.put(
             f"/api/measure-sources/{source_id}/schedule",

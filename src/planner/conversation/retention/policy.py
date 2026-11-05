@@ -47,6 +47,8 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "ticket_owned_workflows",
         # Live background tasks leave diagnostic events and conversation views unchanged.
         "conversation_background_tasks",
+        # Goal holders and holder pages leave diagnostic events and views unchanged.
+        "goal_holders",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

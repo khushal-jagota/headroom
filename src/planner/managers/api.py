@@ -22,6 +22,7 @@ from planner.core.authority import require_above, require_above_or_self
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import manager_files
+from planner.goals.views import calendar_now
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
 from planner.list_reads.detail import (
@@ -209,10 +210,10 @@ async def read_managers(
 
 @router.get("/managers/{item_id}/workspace-content")
 async def get_manager_workspace_content(
-    item_id: str, conn: DbConn, ctx: Ctx, response: Response
+    item_id: str, conn: DbConn, ctx: Ctx, response: Response, clk: Clk
 ) -> ManagerWorkspaceContent:
     require_above_or_self(conn, ctx.principal, authority.manager(item_id))
-    document = managers_views.manager_workspace_document(conn, item_id)
+    document = managers_views.manager_workspace_document(conn, item_id, calendar_now(clk))
     result: ManagerWorkspaceContent = {**document}
     response.headers["Cache-Control"] = "no-store"
     return result
@@ -459,3 +460,49 @@ for _route in router.routes:
         methods=list(_route.methods or []),
         include_in_schema=False,
     )
+
+
+@router.get("/chief/page")
+async def get_chief_page(conn: DbConn) -> Any:
+    from planner.managers.pages import read_page
+
+    return read_page(conn, None)
+
+
+@router.patch("/chief/page")
+async def patch_chief_page(body: dict[str, Any], conn: DbConn, ctx: Ctx) -> Any:
+    from planner.managers.pages import write_page
+
+    return write_page(conn, None, body, principal=ctx.principal)
+
+
+@router.patch("/managers/{item_id}/page")
+async def patch_manager_page(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx) -> Any:
+    from planner.managers.pages import write_page
+
+    return write_page(conn, item_id, body, principal=ctx.principal)
+
+
+@router.get("/managers/{item_id}/page")
+async def get_manager_page(item_id: str, conn: DbConn, ctx: Ctx) -> Any:
+    from planner.managers.pages import read_page
+
+    require_above_or_self(conn, ctx.principal, authority.manager(item_id))
+    return read_page(conn, item_id)
+
+
+@router.get("/chief/page/readings")
+async def get_chief_page_readings(conn: DbConn, clk: Clk) -> Any:
+    from planner.goals.views import calendar_now
+    from planner.managers.pages import page_readings
+
+    return page_readings(conn, None, calendar_now(clk))
+
+
+@router.get("/managers/{item_id}/page/readings")
+async def get_manager_page_readings(item_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
+    from planner.goals.views import calendar_now
+    from planner.managers.pages import page_readings
+
+    require_above_or_self(conn, ctx.principal, authority.manager(item_id))
+    return page_readings(conn, item_id, calendar_now(clk))

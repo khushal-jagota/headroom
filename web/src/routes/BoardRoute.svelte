@@ -15,6 +15,9 @@
   import type { NavigationPublication } from "../lib/navigation/collection";
   import { railDomMatches, hoverDomMatches } from "../lib/workspaceRailDom";
   import { workspaceRailImpact, workspaceHoverImpact, managerSettleImpact } from "../lib/workspaceNavigationImpact";
+  import {goalsForHolder} from "../lib/goals/holders";
+  import {refreshAtBoundary} from "../lib/goals/presentation";
+  import {goalQueries} from "../lib/goals/queries";
   import { createRailMotionController, type WorkspaceRailPresentation } from "../lib/workspaceRailMotion";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -47,6 +50,8 @@
   // Chief recap is dedicated content outside navigation records, so the popover
   // reads it from the same settings query the Chief conversation pane already uses.
   const chiefSettings = createQuery(() => queries.chiefSettings());
+  const goalBodies=createQuery(()=>goalQueries.list());
+  $effect(()=>{if(goalBodies.data)return refreshAtBoundary(goalBodies.data.next_refresh_at,()=>void goalBodies.refetch());});
   let workspace = $state.raw<NavigationPresentation | null>(null);
   let displayedPublication = $state.raw<NavigationPublication | null>(null);
   $effect(() => {
@@ -61,9 +66,12 @@
   });
   onDestroy(() => navigation.disposeRenderBoundary(railObserver));
   let opening = $derived(whatTheAddressOpens(address));
+  let selectedGoalHolder=$derived(opening.markedGoalId?goalBodies.data?.goals.find(goal=>goal.id===opening.markedGoalId):undefined);
+  let soleGoalManager=$derived(selectedGoalHolder?.holder_kind==='manager'&&goalsForHolder(goalBodies.data?.goals??[],{kind:'manager',id:selectedGoalHolder.holder_id}).sole?selectedGoalHolder.holder_id:null);
+  let managerId=$derived(opening.openManagerId??soleGoalManager);
   const selectedPaneModule = $derived.by(() => {
     if (opening.markedTicketId) return cachedImport("./TicketRoute.svelte", () => import("./TicketRoute.svelte"));
-    if (opening.openManagerId) return cachedImport("../components/ManagerWorkspace.svelte", () => import("../components/ManagerWorkspace.svelte"));
+    if (managerId) return cachedImport("../components/ManagerWorkspace.svelte", () => import("../components/ManagerWorkspace.svelte"));
     switch (opening.markedUtility) {
       case "usage": return cachedImport("./BackendsRoute.svelte", () => import("./BackendsRoute.svelte"));
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./SettingsRoute.svelte"));
@@ -101,7 +109,7 @@
     const corrected = correctedWorkspaceAddress(address, (id) => managerIds.has(id));
     if (corrected !== null) window.location.replace(corrected);
   });
-  const selectedItemWorkspace = createQuery(() => ({ ...queries.managerWorkspaceContent(opening.openManagerId ?? ""), enabled: opening.openManagerId !== null }));
+  const selectedItemWorkspace = createQuery(() => ({ ...queries.managerWorkspaceContent(managerId ?? ""), enabled: managerId !== null }));
   let allCards = $derived(workspace?.tickets ?? []);
   let visibleItems=$state<string[]>([]);
   let railWindows=$state<Record<string,{anchor:string;direction:'before'|'after'}>>({});
@@ -121,6 +129,16 @@
       const item=settledById.get(key.id);return item ? [item] : [];
     })};
   });
+  let goalRails=$derived.by(()=>{
+    const bodies=goalBodies.data?.goals??[];
+    const goals=bodies.map(goal=>({...goal,...workspace?.rawGoalsById.get(goal.id)?.value}));
+    return [{kind:'chief' as const,id:'chief'},...desiredRail.items.map(item=>({kind:'manager' as const,id:item.id}))].map(owner=>{
+      const {sole}=goalsForHolder(goals,owner);
+      const window=navigationWindow(workspace,'goals',owner);
+      return {owner,sole:owner.kind==='manager'?sole:null,
+        rows:(window?.members??[]).flatMap(member=>{const goal=goals.find(goal=>goal.id===member.id);return goal?[goal]:[];}),window};
+    });
+  });
   let presentation = $state<WorkspaceRailPresentation>({rail:buildWorkspaceRail([]), settledOpen:false});
   const scrollCoordinator = createScrollWindowCoordinator();
   function renderedRailWindow(section:ViewWindowRequest['section'],owner:ViewWindowRequest['owner']=null) {
@@ -134,23 +152,30 @@
   $effect(()=>{
     const windows:ViewWindowRequest[]=[viewWindow('rail_parents',null,{limit:60,...railWindows.parents}),viewWindow('rail_tickets',{kind:'chief',id:'chief'},{...railWindows.chief})];
     for(const id of visibleItems)windows.push(viewWindow('rail_tickets',{kind:'manager',id},{limit:60,...railWindows[id]}));
+    // Rows share one budget, so only holders with goals ask, and only for as many rows as they hold.
+    const held=new Map<string,number>();
+    for(const goal of goalBodies.data?.goals??[]){const key=goal.holder_kind==='manager'?goal.holder_id!:'chief';held.set(key,(held.get(key)??0)+1);}
+    for(const owner of [{kind:'chief' as const,id:'chief'},...desiredRail.items.map(item=>({kind:'manager' as const,id:item.id}))]){
+      const count=held.get(owner.id)??0;
+      if(count)windows.push(viewWindow('goals',owner,{limit:Math.min(60,count),...railWindows[`goals:${owner.id}`]}));
+    }
     if(requestedSettledOpen)windows.push(viewWindow('settled',null,{limit:60,...railWindows.settled}));
     navigation.owner.setDemand('workspace-rail',{windows});
   });
   onDestroy(()=>navigation.owner.setDemand('workspace-rail',undefined));
-  let itemPane = $derived(opening.markedManagerId !== null);
+  let itemPane = $derived(opening.markedManagerId !== null || soleGoalManager !== null);
   let railElement = $state<HTMLElement | null>(null);
   const motion = createRailMotionController(() => railElement, () => presentation, (next) => presentation = next,
     () => scrollCoordinator.flush(), () => scrollCoordinator.captureBeforePublication());
   $effect(() => {
-    const next = {rail:desiredRail, settledOpen:requestedSettledOpen,
+    const next = {rail:desiredRail, settledOpen:requestedSettledOpen,goalRails,
       scrollPublication:{publicationId:displayedPublication?.publicationId ?? null,windows:workspace?.viewWindows ?? []}};
     untrack(() => motion.update(next));
   });
   function freezeRows(event: PointerEvent, leaving: boolean): void {
     if (event.pointerType === "touch") return;
     const target = (leaving ? event.relatedTarget : event.target) as HTMLElement | null;
-    motion.freeze(Boolean(target?.closest?.(".worker-row")));
+    motion.freeze(Boolean(target?.closest?.(".worker-row,[data-goal-id]")));
   }
   let shellElement = $state<HTMLDivElement | null>(null);
   let railWidth = $state<number | null>(null);
@@ -236,6 +261,7 @@
     enterHover({target,title:'',kicker:'',goalId},immediate);
   }
   $effect(() => { address.selection; untrack(() => { if (hoverGoalId) dismissHover(); }); });
+  $effect(()=>{const id=hoverGoalId;if(id&&!presentation.goalRails?.some(holder=>!holder.sole&&holder.rows.some(goal=>goal.id===id)))untrack(dismissHover);});
   function scrollHover(event: Event): void {
     // Only the person's own scrolling dismisses a row preview (listenForUserScroll).
     if (!hoverGoalId || goalHoverElement?.contains(event.target as Node)) return;
@@ -398,15 +424,15 @@
 
 <section class="board-screen" data-screen="workspace">
     <div class="board-workspace-wrap">
-      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
+      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked && !managerId} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section use:workspaceRailWash bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
           <div class="rail-work">
           <ResourceState shape="block" layout="fill" loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
             <div role="presentation" class="active-work-scroll" onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:renderedRailWindow('rail_parents'),pageRestoration:{coordinator:scrollCoordinator,priority:'parent',publicationId:presentation.scrollPublication?.publicationId ?? null,members:rail.items.map(item=>item.id)},activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.manager-card:not(.chief)',key:node=>node.dataset.manager ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={scrollHover}>
-            <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} navigationWindow={renderedRailWindow('rail_tickets',{kind:'chief',id:'chief'})} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" suppressBackgroundPreview={Boolean(hoverGoalId)} title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked && !opening.markedGoalId} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => enterHover({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet beforeGroups()}<GoalRail selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
+            <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} navigationWindow={renderedRailWindow('rail_tickets',{kind:'chief',id:'chief'})} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" suppressBackgroundPreview={Boolean(hoverGoalId)} title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked && !opening.markedGoalId} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => enterHover({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet beforeGroups()}<GoalRail structure={presentation.goalRails?.find(holder=>holder.owner.kind==='chief')} onPage={(anchor,direction)=>railPage('goals:chief',anchor,direction)} selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
             {#each rail.items as item (item.id)}
-              <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} onVisibility={itemVisibility} navigationWindow={renderedRailWindow('rail_tickets',{kind:'manager',id:item.id})} onWindow={(anchor,direction)=>railPage(item.id,anchor,direction)} id={item.id} title={item.title} project={item.project} signal={item.conversationSignal} conversationId={item.conversationId} selected={opening.markedManagerId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target, immediate) => hoverItem(target,item,immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} />
+              <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} onVisibility={itemVisibility} navigationWindow={renderedRailWindow('rail_tickets',{kind:'manager',id:item.id})} onWindow={(anchor,direction)=>railPage(item.id,anchor,direction)} id={item.id} title={item.title} project={item.project} signal={item.conversationSignal} conversationId={item.conversationId} selected={opening.markedManagerId === item.id||soleGoalManager===item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target, immediate) => hoverItem(target,item,immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet beforeGroups()}<GoalRail structure={presentation.goalRails?.find(holder=>holder.owner.kind==='manager'&&holder.owner.id===item.id)} onPage={(anchor,direction)=>railPage(`goals:${item.id}`,anchor,direction)} selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
             {/each}
             {#if settleError}<p role="alert">{settleError}</p>{/if}
             </div>
@@ -436,17 +462,19 @@
         <section
           class:board-workspace-right--destination={Boolean(externalPane)}
           class:board-workspace-right--ticket={Boolean(opening.markedTicketId)}
-          class:board-workspace-right--chief={opening.chiefMarked}
+          class:board-workspace-right--chief={opening.chiefMarked && !managerId}
           class:board-workspace-right--item={itemPane}
           class:board-workspace-right--utility={opening.markedUtility !== null}
           class="board-workspace-right"
-          aria-label={opening.chiefMarked ? "Chief of Staff conversation" : itemPane ? "Manager workspace" : "Workspace inspector"}
+          aria-label={opening.chiefMarked && !managerId ? "Chief of Staff conversation" : itemPane ? "Manager workspace" : "Workspace inspector"}
         >
           {#if externalPane}
             {@render externalPane()}
-          {:else if opening.markedGoalId}
+          {:else if opening.markedGoalId && !goalBodies.data}
+            <ResourceState shape="document" layout="fill" error={goalBodies.error} loading={goalBodies.isPending} loadingText="Loading goal…"/>
+          {:else if opening.markedGoalId && !managerId}
             {#key opening.markedGoalId}<GoalWorkspace id={opening.markedGoalId} requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket}/>{/key}
-          {:else if opening.chiefMarked}
+          {:else if opening.chiefMarked && !managerId}
             <ChiefConversation allGoals={opening.allGoals} requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket} />
           {:else if opening.markedUtility !== null && selectedPaneModule && placement}
           <!-- The pane owns the scroll for a utility screen. These screens are written as
@@ -497,11 +525,13 @@
 <ErrorLine {error} />
 {/await}
             {/key}
-          {:else if itemPane && opening.openManagerId}
-            {#key opening.openManagerId}
+          {:else if itemPane && managerId}
+            {#key managerId}
               {#await import("../components/ManagerWorkspace.svelte") then view}
 <view.default
-                itemId={opening.openManagerId}
+                itemId={managerId}
+                openedFile={opening.markedGoalId?address.openFile:null}
+                onOpenFile={opening.markedGoalId?openFileOnTicket:undefined}
                 requestedConversationId={address.selectedConversationId ?? null}
                 workspaceName="Workspace"
                 backHref="#/workspace"

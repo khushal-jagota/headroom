@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -87,6 +88,8 @@ def _row_to_manager(row: sqlite3.Row) -> Manager:
         project_id=row["project_id"],
         project_name=row["project_name"],
         settled=bool(row["settled"]),
+        page=json.loads(row["page"]) if row["page"] else None,
+        page_revision=row["page_revision"],
         manager_launch_configuration=ManagerLaunchConfiguration(
             employee_backend=ConversationBackendKey(str(row["manager_backend"])),
             employee_launch_model=str(row["manager_model"]),
@@ -298,6 +301,10 @@ def _require_manager_can_delete(conn: sqlite3.Connection, item_id: str) -> Manag
         raise PlannerError(
             ErrorCode.validation, "Manager is responsible for measure sources; reassign them first"
         )
+    if conn.execute(
+        "SELECT 1 FROM goals WHERE holder_kind='manager' AND holder_id=? LIMIT 1", (item_id,)
+    ).fetchone():
+        raise PlannerError(ErrorCode.validation, "Manager holds goals; reassign them first")
     ticket_ids = [
         str(row["id"])
         for row in conn.execute(

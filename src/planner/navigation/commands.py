@@ -38,6 +38,11 @@ COMMAND_ROUTES = (
     ),
     *_routes("POST", "Manager and project creation", "/managers", "/items", "/projects"),
     *_routes(
+        "POST",
+        "Promotion changes goal ownership and creates a Manager",
+        "/goals/{goal_id}/make-manager",
+    ),
+    *_routes(
         "PATCH",
         "Manager and project metadata",
         "/managers/{item_id}",
@@ -114,6 +119,12 @@ def is_navigation_command(method: str, path: str) -> bool:
 # Exact exclusions make a new write route an explicit review decision. These
 # operations do not change the current navigation source record contract.
 EXCLUDED_COMMAND_ROUTES = (
+    *_routes(
+        "PATCH",
+        "Holder page documents are dedicated content, outside navigation source records",
+        "/chief/page",
+        "/managers/{item_id}/page",
+    ),
     *_routes(
         "PUT",
         "Prospective Manager defaults do not change any current navigation record",

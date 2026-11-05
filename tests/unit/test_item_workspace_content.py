@@ -24,6 +24,10 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
     path = tmp_path / "content.db"
     with sqlite3.connect(path) as conn:
         conn.execute(
+            "CREATE TABLE goals(id TEXT,holder_kind TEXT,holder_id TEXT,active INTEGER,"
+            "project_id TEXT,created_at INTEGER)"
+        )
+        conn.execute(
             "CREATE TABLE resource_source_versions("
             "source_kind TEXT,source_id TEXT,revision INTEGER)"
         )
@@ -31,10 +35,12 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
             "INSERT INTO resource_source_versions VALUES('workspace-manager','item',7)"
         )
         conn.execute(
-            "CREATE TABLE managers(id TEXT PRIMARY KEY,goal TEXT NOT NULL,recap TEXT NOT NULL)"
+            "CREATE TABLE managers(id TEXT PRIMARY KEY,goal TEXT NOT NULL,recap TEXT NOT NULL"
+            ")"
         )
         conn.execute(
-            "INSERT INTO managers VALUES(?,?,?)", ("item", "Original\n  goal", "Right now")
+            "INSERT INTO managers(id,goal,recap) VALUES(?,?,?)",
+            ("item", "Original\n  goal", "Right now"),
         )
         conn.execute(
             "CREATE TABLE conversations(conversation_id TEXT PRIMARY KEY,"
@@ -61,6 +67,7 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
+            "PLAN_FAKE_NOW": "2026-10-28T12:00:00+01:00",
             "PLAN_DB_PATH": str(path),
             "PLAN_LOGS_DIR": str(tmp_path / "logs"),
             "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "dispatcher.lock"),
@@ -96,6 +103,7 @@ def test_content_keeps_exact_document_without_unopened_catalog_or_summary_work(
     expected = {
         "goal": "Original\n  goal",
         "recap": "Right now",
+        "goals": [],
     }
 
     async def run() -> None:
@@ -114,7 +122,7 @@ def test_content_keeps_exact_document_without_unopened_catalog_or_summary_work(
         assert owner.json() == supervisor.json() == expected
         assert versioned.status_code == 200
         assert versioned.json()["body"] == expected
-        assert versioned.json()["revision"] == "7"
+        assert versioned.json()["revision"] == "7:0:2026-10-28"
         assert owner.headers["cache-control"] == supervisor.headers["cache-control"] == "no-store"
 
     asyncio.run(run())

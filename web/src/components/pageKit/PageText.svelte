@@ -21,30 +21,24 @@
 
   const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
   const authorText = $derived(context?.authorText);
-  const draft = $derived(authorText?.draft(blockId, field));
+  let saveText: ((raw: string) => Promise<unknown>) | undefined;
 
   function start(): void {
-    // A failed or remounted edit retains its original revision and writer.
-    if (draft && draft.value === null && authorText) {
-      draft.save = authorText.begin(blockId);
-      draft.apply = update;
+    if (authorText) {
+      const writer = authorText.begin(blockId), apply = update;
+      saveText = raw => writer(block => apply(block, raw));
     }
   }
 
   async function save(raw: string): Promise<unknown> {
-    const currentDraft = draft;
-    const apply = currentDraft?.apply;
-    if (!currentDraft?.save || !apply) throw new Error("This text edit no longer has its original save context.");
-    const result = await currentDraft.save(block => apply(block, raw));
-    currentDraft.save = undefined;
-    currentDraft.apply = undefined;
-    return result;
+    if (!saveText) throw new Error("Start this text edit before saving it.");
+    return saveText(raw);
   }
 </script>
 
-{#if authorText && draft}
-  <InlineEdit {value} {markdown} {multiline} {className} {draft} ariaLabel={label} placeholder={label}
-    onStart={start} onSave={save} onCancel={() => { draft.save = undefined; draft.apply = undefined; return value; }} />
+{#if authorText}
+  <InlineEdit {value} {markdown} {multiline} {className} ariaLabel={label} placeholder={label}
+    onStart={start} onSave={save} onCancel={() => { saveText = undefined; return value; }} />
 {:else if markdown}
   <div class={className}><MarkdownBlock text={value} quiet="" /></div>
 {:else}

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, NotRequired, TypedDict
 
 from planner.conversation.contracts import ConversationBackendKey
+from planner.goals.contracts import GoalResponse, PageDocument
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,9 @@ class Manager:  # §3.2
 
     launch_configuration_is_explicit: bool = field(default=False, kw_only=True)
 
+    page: PageDocument | None = field(default=None, kw_only=True)
+    page_revision: int = field(default=0, kw_only=True)
+
     stored_agent_key: str | None = field(default=None, kw_only=True, repr=False)
 
     @property
@@ -55,10 +59,11 @@ class ManagerDeletion:
 
 
 class ManagerWorkspaceDocument(TypedDict):
-    """Selected document only; catalogs have separate bounded readers."""
+    """Selected document and held goals; catalogs have separate bounded readers."""
 
     goal: str
     recap: str
+    goals: list[GoalResponse]
 
 
 class ManagerWorkspaceContent(ManagerWorkspaceDocument):

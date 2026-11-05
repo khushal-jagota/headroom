@@ -35,7 +35,7 @@ export function workspaceRailWash(root: HTMLElement) {
     for (const node of root.querySelectorAll<HTMLElement>('.active-work-scroll, .settled-body, .rail-utilities')) {
       if (!hosts.has(node)) { hosts.set(node, {node, group: layer(node,'group'), item:layer(node,'item'), hover:layer(node,'hover'), focus:layer(node,'focus')}); resize.observe(node); }
     }
-    for (const node of root.querySelectorAll('.manager-card, .identity, .worker-row, .goal, .settled-row')) { if (!observed.has(node)) {observed.add(node);resize.observe(node);} }
+    for (const node of root.querySelectorAll('.manager-card, .identity, [data-goal-status], .worker-row, .goal, .settled-row')) { if (!observed.has(node)) {observed.add(node);resize.observe(node);} }
     for (const node of observed) if (!root.contains(node)) {resize.unobserve(node);observed.delete(node);}
     for (const [node,host] of hosts) if (!root.contains(node)) {
       resize.unobserve(node);
@@ -58,8 +58,10 @@ export function workspaceRailWash(root: HTMLElement) {
       itemBox.width = groupBox.width-2*inset;
       if (node.matches('.item-head')) {
         const identity = local(node.closest('.identity')!.getBoundingClientRect());
+        const status = group?.querySelector<HTMLElement>('[data-goal-status]')?.getBoundingClientRect();
+        const bottom = status ? local(status).top + status.height : identity.top + identity.height;
         itemBox.top = groupBox.top+inset;
-        itemBox.height = Math.min(identity.top+identity.height+2*inset,groupBox.top+groupBox.height-inset)-itemBox.top;
+        itemBox.height = Math.min(bottom+2*inset,groupBox.top+groupBox.height-inset)-itemBox.top;
       }
     }
     return {node,host,group,itemBox,groupBox};
@@ -169,7 +171,8 @@ export function workspaceRailWash(root: HTMLElement) {
     if (!(node instanceof Element)) return null;
     const control=node.closest<HTMLElement>(targets);
     if (control && root.contains(control)) return control;
-    return node.closest('.identity')?.querySelector<HTMLElement>('.item-head') ?? null;
+    const identity = node.closest('[data-goal-status]')?.closest('.manager-card') ?? node.closest('.identity');
+    return identity?.querySelector<HTMLElement>('.item-head') ?? null;
   }
   function pointer(event: PointerEvent) {
     if(event.pointerType==='touch'){hovered=null;hoverHeld=null;}else hovered=targetAt(event.target);

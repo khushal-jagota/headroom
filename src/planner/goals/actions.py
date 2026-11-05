@@ -62,6 +62,15 @@ def _accepted(
     result = replace(current, **changes)
     if current.kind != result.kind and result.kind == "binary":
         result = replace(result, completion_rule=None)
+    if result.holder_kind not in ("chief", "manager"):
+        raise ValueError("holder_kind must be chief or manager")
+    if result.holder_kind == "chief" and result.holder_id is not None:
+        raise ValueError("Chief holder_id must be null")
+    if result.holder_kind == "manager" and (
+        not result.holder_id
+        or conn.execute("SELECT 1 FROM managers WHERE id=?", (result.holder_id,)).fetchone() is None
+    ):
+        raise ValueError("goal holder Manager does not exist")
     for key in GOAL_REQUIRED_TEXT:
         value = getattr(result, key)
         if not isinstance(value, str) or not value.strip():
@@ -162,7 +171,6 @@ def create_goal(
     conn: sqlite3.Connection, body: dict[str, Any], *, principal: Principal, now: int
 ) -> Goal:
     with transaction(conn):
-        authority.require_above(conn, principal, authority.owner_only("goals"))
         defaults = read_chief_settings(conn).launch_defaults
         title = body.get("title", "")
         current = Goal(
@@ -194,6 +202,12 @@ def create_goal(
             accepted = _accepted(conn, current, body, now=now, creating=True)
         except (ValueError, TypeError) as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc
+        authority.require_above_or_self(
+            conn, principal,
+            authority.manager(cast(str, accepted.holder_id))
+            if accepted.holder_kind == "manager"
+            else authority.owner_only("goals"),
+        )
         values = _values(accepted)
         fields = ",".join(values)
         conn.execute(
@@ -224,6 +238,12 @@ def update_goal(
             )
         except (ValueError, TypeError) as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc
+        authority.require_above_or_self(
+            conn, principal,
+            authority.manager(cast(str, accepted.holder_id))
+            if accepted.holder_kind == "manager"
+            else authority.owner_only("goals"),
+        )
         values = _values(accepted)
         values.pop("id")
         conn.execute(
@@ -231,3 +251,39 @@ def update_goal(
             (*values.values(), goal_id),
         )
     return accepted
+
+
+def make_manager(
+    conn: sqlite3.Connection,
+    goal_id: str,
+    *,
+    expected_revision: object,
+    principal: Principal,
+    clock: Any,
+) -> tuple[str, Goal]:
+    from planner.managers.data import create_manager
+
+    with transaction(conn):
+        authority.require_above_or_self(conn, principal, authority.goal(goal_id))
+        current = data.read_goal(conn, goal_id)
+        if current.holder_kind != "chief":
+            raise PlannerError(ErrorCode.validation, "only a Chief goal can become a Manager")
+        if type(expected_revision) is not int or expected_revision != current.revision:
+            raise PlannerError(
+                ErrorCode.stale_claim, "goal changed; read the accepted document before promotion"
+            )
+        manager = create_manager(
+            conn, title=current.title, project_id=current.project_id, clock=clock
+        )
+        accepted = update_goal(
+            conn,
+            goal_id,
+            {
+                "expected_revision": current.revision,
+                "holder_kind": "manager",
+                "holder_id": manager.id,
+            },
+            principal=principal,
+            now=clock.now_unix(),
+        )
+    return manager.id, accepted

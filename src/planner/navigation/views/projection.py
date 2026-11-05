@@ -46,6 +46,11 @@ def _metadata(
             else (value.get("parent_kind"), value.get("parent_id"))
         )
     )
+    if kind == "goal":
+        parent = (
+            value["holder_kind"],
+            value["holder_id"] if value["holder_kind"] == "manager" else "chief",
+        )
     attention = value["attention"] if kind == "conversation" else _attention(conn, conversation)
     current = attention and attention["current"]
     review = (
@@ -139,7 +144,7 @@ def _members(
                 )
 
             if kind == "goal" and value["active"]:
-                add("goals", None, rank=int(value["created_at"]), title_key=b"")
+                add("goals", parent, rank=int(value["created_at"]), title_key=b"")
             elif kind == "manager":
                 add(
                     "settled" if value["settled"] else "rail_parents",
