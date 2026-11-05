@@ -117,7 +117,7 @@ struct GoalChecklist: View {
             withAnimation(reduceMotion ? .linear(duration: 0.15) : PanelsTheme.Goal.cubicOut(PanelsTheme.Goal.itemCollapse)) {
                 optimistic[item.id] = nil; held.remove(item.id)
                 if done, expanded == item.id {
-                    let accepted = GoalPresentation.checklists(session.page["blocks"].array ?? []).first { $0.id == block.id }
+                    let accepted = GoalPresentation.checklists(session.page?["blocks"].array ?? []).first { $0.id == block.id }
                     expanded = GoalPresentation.nextChecklistItem(accepted ?? block, after: item.id)
                 }
                 if !done { expanded = item.id }
