@@ -80,7 +80,7 @@ private struct WorkspacePreview: View {
             HStack(alignment: .top) {
                 Text(title).panelsScaledFont(size: 20, relativeTo: .title3, weight: .semibold).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                if let ticket { TicketMachineLabel(locale: ticket.locale); TicketActivityMark(locale: ticket.locale, signal: signal, completed: ticket.stage == "done" || ticket.stage == "cancelled") }
+                if let ticket { TicketActivityMark(locale: ticket.locale, signal: signal, completed: ticket.stage == "done" || ticket.stage == "cancelled") }
                 else { ConversationSignalMark(signal: signal) }
             }
             if !stageLine.isEmpty { Text(TicketMachine.activityUnknown(ticket?.locale, health: store.executorHealth) ? "Current activity on Mac is unknown." : stageLine).panelsScaledFont(size: 15).foregroundStyle(PanelsTheme.muted) }

@@ -642,7 +642,8 @@ test host, stub the refresh work, and require no server or additional browser ho
 
 ## Mac execution release compatibility
 
-Ticket rows, Ticket detail and Review identify the Ticket's machine. The server's
+Ticket detail and Review identify the Ticket's machine. Workspace rows and their
+long-press previews omit machine labels. The server's
 executor health decides whether a Mac working mark is current. A disconnected or
 reconciling Mac retains unread messages but shows activity as unknown. The full
 conversation and Settings show the last measured contact, rather than treating a
