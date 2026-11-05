@@ -105,5 +105,5 @@ message outbox. There is no automatic replay after reconnect or relaunch. A fail
 manual write keeps its exact request identity and payload for an explicit retry.
 Conflicts load the accepted reading and require discarding the old edit before a
 new write. A failed page edit keeps its captured revision; Retry save cannot
-overwrite a newer server page. Goal conversation messages use the same durable
-message outbox as other conversations.
+overwrite a newer server page. Messages from goal pages use their holder’s durable message outbox. Retired
+goal-owned queued messages retain their words and never replay.

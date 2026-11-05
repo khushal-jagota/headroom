@@ -24,11 +24,11 @@ actor ResponseCacheWriter {
             let record = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first
             if let record {
                 if record.payload != data { record.payload = data }
-                record.updated = updated
+                record.updatedAt = updated
             } else {
                 context.insert(LocalRecord(key: key, server: server, kind: "cache", payload: data, updated: updated))
             }
-            let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == "cache" }, sortBy: [SortDescriptor(\.updated, order: .reverse)]))
+            let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == "cache" }, sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]))
             var bytes = 0
             for (index, row) in rows.enumerated() {
                 bytes += row.payload.count
