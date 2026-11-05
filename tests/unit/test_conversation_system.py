@@ -3221,6 +3221,7 @@ def test_a_live_background_task_keeps_the_child_and_shows_working_after_the_turn
     (
         "stream_ended",
         "stopped_as_the_stream_ended",
+        "stopped_then_the_agent_acted",
         "child_replaced",
         "server_restarted",
         "killed",
@@ -3248,16 +3249,20 @@ def test_a_background_task_lost_with_its_session_is_told_to_the_agent(
             await sink.report(None, BackendStreamEnded())
         elif how == "stopped_as_the_stream_ended":
             # Claude stops its tasks as it is terminated, so the task has left the record
-            # before the stream ends, and the end itself says the task went with it.
+            # and no screen shows it, but the stream ends before the agent acts again.
             sink = harness.backend("c").sink
             assert sink is not None
             await sink.report(None, BackgroundTaskEnded(task_id="task-1", task_status="killed"))
-            await sink.report(
-                None,
-                BackendStreamEnded(
-                    background_tasks_stopped_as_the_stream_ended=("Run the test suite",)
-                ),
-            )
+            await sink.report(None, BackendStreamEnded())
+        elif how == "stopped_then_the_agent_acted":
+            # The agent stopped the task itself and went on working: not lost.
+            sink = harness.backend("c").sink
+            assert sink is not None
+            await sink.report(None, BackgroundTaskEnded(task_id="task-1", task_status="killed"))
+            await harness.settle()
+            await system.send("c", text_message_content("carry on"), sender_label="o")
+            await harness.complete_turn("c")
+            await sink.report(None, BackendStreamEnded())
         elif how == "child_replaced":
             harness.backend("c").needs_rebind_once = True
             await system.send(
@@ -3283,7 +3288,9 @@ def test_a_background_task_lost_with_its_session_is_told_to_the_agent(
             if isinstance(event.payload, PromptEventPayload)
         ]
         told = [prompt for prompt in prompts if prompt[0] == lost_prompt]
-        assert told == ([] if how == "killed" else [(lost_prompt, "Panels")])
+        assert told == (
+            [] if how in ("killed", "stopped_then_the_agent_acted") else [(lost_prompt, "Panels")]
+        )
         facts = await harness.store.attention_facts({"c"})
         assert facts["c"].has_live_background_task is False
         if how == "server_restarted":

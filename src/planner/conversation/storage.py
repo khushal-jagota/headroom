@@ -1120,11 +1120,14 @@ class ConversationStore:
     @staticmethod
     def record_background_task_ended_in_transaction(
         conn: sqlite3.Connection, conversation_id: str, task_id: str
-    ) -> None:
-        conn.execute(
-            "DELETE FROM conversation_background_tasks WHERE conversation_id=? AND task_id=?",
+    ) -> str | None:
+        """Forget one live task and return its description, or None if it was not live."""
+        row = conn.execute(
+            "DELETE FROM conversation_background_tasks WHERE conversation_id=? AND task_id=? "
+            "RETURNING task_description",
             (conversation_id, task_id),
-        )
+        ).fetchone()
+        return None if row is None else str(row[0])
 
     @staticmethod
     def take_background_tasks_in_transaction(

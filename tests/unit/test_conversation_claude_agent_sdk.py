@@ -153,12 +153,10 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
     _run(exercise)
 
 
-def test_background_tasks_follow_claudes_live_set_and_a_dying_child_does_not_end_them(
-    tmp_path: Path,
-) -> None:
+def test_background_tasks_follow_claudes_live_set(tmp_path: Path) -> None:
     """Claude's live set alone says which tasks are live, so an end it never announced
-    still clears the task. Claude stops every task while it is terminated, and those tasks
-    ended with the session, not on their own. The frames follow claude's real order.
+    still clears the task, and each end says how it happened. The frames follow claude's
+    real order, including a terminated claude stopping its tasks before its stream ends.
     """
 
     def live(*task_ids: str, ambient: str | None = None) -> SystemMessage:
@@ -227,6 +225,9 @@ def test_background_tasks_follow_claudes_live_set_and_a_dying_child_does_not_end
             started("e"),
             live(),
             _assistant(TextBlock(text="carrying on")),
+            # A watcher claude marks ambient stops being activity while it goes on.
+            live("m"),
+            live(ambient="m"),
             # Stopped while claude itself is being terminated: the stream ends next.
             live("c"),
             started("c"),
@@ -244,9 +245,11 @@ def test_background_tasks_follow_claudes_live_set_and_a_dying_child_does_not_end
             BackgroundTaskEnded(task_id="b", task_status="killed"),
             BackgroundTaskStarted(task_id="e", task_description="sleep for e"),
             BackgroundTaskEnded(task_id="e", task_status="unreported"),
+            BackgroundTaskStarted(task_id="m", task_description="sleep for m"),
+            BackgroundTaskEnded(task_id="m", task_status="ambient"),
             BackgroundTaskStarted(task_id="c", task_description="sleep for c"),
             BackgroundTaskEnded(task_id="c", task_status="killed"),
-            BackendStreamEnded(background_tasks_stopped_as_the_stream_ended=("sleep for c",)),
+            BackendStreamEnded(),
         ]
         await child.stop()
 

@@ -629,7 +629,8 @@ class BackgroundTaskEnded:
     """A background task reached a terminal status while its session was still alive.
 
     ``task_status`` is the backend's own word for how it ended. A task that ends because
-    its whole session went away is not reported here; ``BackendStreamEnded`` covers it.
+    its whole session went away is covered by ``BackendStreamEnded``, though a backend
+    being terminated may first report its tasks stopped.
     """
 
     task_id: str
@@ -642,14 +643,9 @@ class BackendStreamEnded:
 
     Reported whether or not a turn was running, and never for a stop the core asked
     for. Anything the child was still running ended with it.
-
-    ``background_tasks_stopped_as_the_stream_ended`` holds the descriptions of tasks
-    already reported ended as stopped, when the child never acted again after those
-    stops. A backend being terminated stops its tasks on the way out, so they ended with
-    the session too.
     """
 
-    background_tasks_stopped_as_the_stream_ended: tuple[str, ...] = ()
+    pass
 
 
 type BackendEventValue = (
