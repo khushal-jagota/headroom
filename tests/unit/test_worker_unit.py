@@ -1,4 +1,4 @@
-"""Prove the new containment boundary cannot silently fall back or lose OOM reasons."""
+"""Prove the new containment boundary cannot silently fall back or leave a memory cap."""
 
 import asyncio
 import sys
@@ -16,7 +16,7 @@ def unit_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncMock:
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(worker_unit, "WORKER_TEMP_ROOT", str(tmp_path))
     monkeypatch.setattr(worker_unit, "_disk_directory", lambda path: None)
-    control = AsyncMock(return_value=(0, "LoadState=loaded\nMemoryMax=25769803776\nCPUWeight=10"))
+    control = AsyncMock(return_value=(0, "LoadState=loaded\nCPUWeight=10"))
     monkeypatch.setattr(worker_unit, "_control", control)
     return control
 
@@ -32,8 +32,8 @@ def test_missing_slice_refuses_worker_instead_of_uncontained_fallback(
     unit_setup: AsyncMock, tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
-        unit_setup.return_value = (0, "LoadState=not-found\nMemoryMax=infinity\nCPUWeight=100")
-        with pytest.raises(WorkerUnitError, match="lacks its resource limits"):
+        unit_setup.return_value = (0, "LoadState=not-found\nCPUWeight=100")
+        with pytest.raises(WorkerUnitError, match="lacks its lower CPU weight"):
             await WorkerUnit.create({"PLAN_TICKET_ID": "test"}, tmp_path)
         assert not list(tmp_path.iterdir())
     asyncio.run(scenario())
@@ -53,6 +53,9 @@ def test_service_keeps_environment_private_and_temp_lifetime(
         assert secret not in " ".join(argv)
         assert "--pipe" in argv and "--wait" in argv
         assert "--property=KillMode=control-group" in argv
+        # A process killed for memory ends alone, and no cap is set on the Worker.
+        assert "--property=OOMPolicy=continue" in argv
+        assert not any("MemoryMax" in item or "MemorySwapMax" in item for item in argv)
         assert argv[-2:] == (str(executable), "argument $with %specifiers")
         assert unit.environment["TMPDIR"] == unit.environment["TMP"] == unit.environment["TEMP"]
         assert Path(unit.environment["TMPDIR"]).is_dir()
@@ -65,25 +68,6 @@ def test_service_keeps_environment_private_and_temp_lifetime(
         unit_setup.side_effect = [(0, "LoadState=not-found")]
         await unit.stop()
         assert not unit.directory.exists()
-    asyncio.run(scenario())
-
-
-def test_oom_result_survives_whole_unit_stop(unit_setup: AsyncMock, tmp_path: Path) -> None:
-    async def scenario() -> None:
-        unit = await WorkerUnit.create({"PLAN_TICKET_ID": "test"}, tmp_path)
-        assert unit is not None
-        unit_setup.reset_mock()
-        unit_setup.side_effect = [
-            (0, "LoadState=loaded\nResult=oom-kill"), (0, "LoadState=loaded"), (0, ""), (0, ""),
-        ]
-        reason = await unit.finish()
-        assert reason == "Worker stopped because it exceeded its memory limit."
-        assert [call.args[0] for call in unit_setup.await_args_list] == [
-            "show", "show", "stop", "reset-failed",
-        ]
-        assert not unit.directory.exists()
-        assert await unit.finish() == reason
-        assert unit_setup.await_count == 4
     asyncio.run(scenario())
 
 
@@ -105,7 +89,7 @@ def test_parent_slice_must_deprioritize_workers_against_app_slice(
 ) -> None:
     async def scenario() -> None:
         unit_setup.side_effect = [
-            (0, "LoadState=loaded\nMemoryMax=25769803776\nCPUWeight=10"),
+            (0, "LoadState=loaded\nCPUWeight=10"),
             (0, "LoadState=loaded\nCPUWeight=100"),
         ]
         with pytest.raises(WorkerUnitError, match="Install panels.slice"):

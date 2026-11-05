@@ -182,7 +182,7 @@ def entrypoint_admission_proof(storage: Path, output: Path) -> list[dict[str, An
     """Prove unchanged defaults and explicit refusal inside disposable accounts."""
     probe = storage / "plugin-probe.py"
     probe.write_text("def test_collection_probe(): pass\n")
-    case = "tests/unit/test_containment_admission.py"
+    case = "tests/unit/test_failure_summary.py"
     routes = {
         "pytest": [str(ROOT / ".venv/bin/pytest"), "--collect-only", "-q", case],
         "python-module": [sys.executable, "-m", "pytest", "--collect-only", "-q", case],

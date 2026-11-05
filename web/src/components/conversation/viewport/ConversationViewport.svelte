@@ -401,12 +401,22 @@
     withTheNewestLineBeforeTheWrite = false;
     if (threadElement) { retireReplySpace(threadElement); rememberNavigationPosition(threadElement); }
   }
-  async function travel(thread: HTMLDivElement, wanted: number, duration = CONVERSATION_MOVE_MS, current: () => boolean = () => true): Promise<boolean> {
+  // When the previous reply line was due to finish. Each line ends on the first frame
+  // at or after its due time, so a line that started then would lose that wait,
+  // and any late frame, on every line. A following line starts at this time instead.
+  let replyLineDue = -Infinity;
+  async function travel(thread: HTMLDivElement, wanted: number, duration = CONVERSATION_MOVE_MS, current: () => boolean = () => true, followsReplyLine = false): Promise<boolean> {
     const from = thread.scrollTop;
     if (Math.abs(wanted - from) < .5) return true;
-    return await conversationMotion(thread).move(positionMotion, fraction => {
+    const now = performance.now();
+    // Within one line's duration of the due time, this line continues the last one.
+    const start = followsReplyLine && now - replyLineDue < duration ? replyLineDue : now;
+    replyLineDue = followsReplyLine ? start + duration : -Infinity;
+    const completed = await conversationMotion(thread).move(positionMotion, fraction => {
         if (current()) moveTheThread(thread, from + (wanted - from) * fraction);
-      }, duration, undefined, true);
+      }, duration, undefined, true, start);
+    if (!completed) replyLineDue = -Infinity;
+    return completed;
   }
 
   function moveTheThread(thread: HTMLDivElement, wanted: number): void {
@@ -832,7 +842,7 @@
             const line = last ? Number.parseFloat(getComputedStyle(last).lineHeight) : 24;
             const step = Math.min(distance, Number.isFinite(line) && line > 0 ? line : 24);
             const before = thread.scrollTop;
-            await travel(thread, Math.min(wanted, before + step), REPLY_LINE_MOVE_MS);
+            await travel(thread, Math.min(wanted, before + step), REPLY_LINE_MOVE_MS, undefined, true);
             const moved = Math.max(0, thread.scrollTop - before);
             liveArrivalPixels = moved < 0.5 ? 0 : Math.max(0, liveArrivalPixels - moved);
             const remaining = threadGeometry(thread, reservedSpaceElement).read(reservedSpacePixels).newestLineBottomPixels;

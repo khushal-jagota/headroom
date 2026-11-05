@@ -34,6 +34,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - **A check follows a piece of work, not a file and not an edit.** Finish what you set out to do, then run the narrowest check that proves it. A broad suite re-run when nothing since could have changed it proves nothing, and at a hundred repetitions it is not a detail of the work, it is most of the wall clock.
 - There is no single command that checks everything. Run `ruff`, `mypy` and `pytest` yourself, pointed at what your work touched, and read the output. A tool that is missing or a suite that skipped says so on screen, which a wrapper reporting one number does not.
 - `tests/unit`, `tests/integration` and `tests/e2e` must each get their own `pytest` process. Playwright's sync API holds an event loop for the whole session, so a unit fixture that calls `asyncio.run()` in teardown raises `asyncio.run() cannot be called from a running event loop` once an E2E test has run in the same process. A single `pytest tests` reports hundreds of failures that are not real. Three commands, three processes.
+- A full pass runs the three suites one after another, each on several processes with `pytest-xdist`: `scripts/dev pytest tests/unit -n 6`, then `scripts/dev pytest tests/integration -n 6`, then `scripts/dev pytest tests/e2e -n 4`. A focused run needs no `-n`. Because the processes run side by side, a test must not write outside its own `tmp_path`: not into the shared `.venv`, the repository tree, or a fixed path or port. Give it its own copy instead.
 - Use Playwright E2E only when a material risk requires a real browser and live server together. Ticket plans or reviews must name that risk, the exercised boundary, and why frontend, unit, or integration tests cannot prove it. Keep the smallest E2E proof. Test other browser behavior in `web/tests`, and never rely on an eyeball check.
 - Independent reviews may use a fresh sub-agent; the Codex CLI is not required. Use one focused review wherever a second pair of eyes materially improves confidence: completed work against its contract/design, intricate correctness logic, or a combined diff before integration. A second round is only for a concrete unresolved finding. Surface the review output and address or refute each point in writing.
 
@@ -52,6 +53,12 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 - Create the Ticket branch and isolated worktree from current `staging`. Do the work
   in that worktree.
+- Put the worktree at `~/projects/panels/repository-worktrees/<ticket-id>`, or
+  `<ticket-id>-<name>` for an extra one, and start its branch name with
+  `ticket/<ticket-id>`. Put every other file that must outlive one run in
+  `~/projects/panels/task-tmp/<ticket-id>/`. Panels removes all of these after the
+  Ticket is done or deleted. It keeps uncommitted changes and commits that no remote
+  has. See `docs/environments.md`.
 - Fetch the remote target before you create the branch. State in the proposal the
   commit you created the worktree from and the commit your final checks ran against.
   A stale local ref passes every check against the wrong tree.

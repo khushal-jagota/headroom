@@ -176,6 +176,7 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
+from planner.conversation.tool_shell_kill_priority import with_tool_shell_kill_priority
 from planner.conversation.worker_unit import WorkerUnit
 
 LOGGER = logging.getLogger("planner.conversation.backends.claude_agent_sdk")
@@ -429,6 +430,7 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
     async def connect(self) -> None:
         if self._cleanup_started:
             raise RuntimeError("a Claude transport cannot reconnect after cleanup")
+        with_tool_shell_kill_priority(self._options.env)
         # Use the role's explicit identity, never an inherited Worker identity.
         if self._options.env.get("PLAN_TICKET_ID"):
             environment = {
@@ -452,30 +454,22 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
             if self._worker_unit is not None:
                 await self._worker_unit.stop()
             raise
-        except Exception as error:
+        except Exception:
             if self._worker_unit is not None:
-                reason = await self._worker_unit.finish()
-                if reason is not None:
-                    raise RuntimeError(reason) from error
+                await self._worker_unit.stop()
             raise
 
     async def _read_messages_impl(self) -> AsyncIterator[dict[str, Any]]:
         try:
             async for message in super()._read_messages_impl():
                 yield message
-        except Exception as error:
-            reason = (
-                await self._worker_unit.finish()
-                if self._worker_unit is not None else None
-            )
-            if reason is not None:
-                raise RuntimeError(reason) from error
+        except Exception:
+            if self._worker_unit is not None:
+                await self._worker_unit.stop()
             raise
         else:
             if self._worker_unit is not None:
-                reason = await self._worker_unit.finish()
-                if reason is not None:
-                    raise RuntimeError(reason)
+                await self._worker_unit.stop()
 
     async def close(self) -> None:
         self._cleanup_started = True

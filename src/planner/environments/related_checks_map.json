@@ -17,13 +17,11 @@
         "tests/unit/test_cli_verbs_in_process.py",
         "tests/unit/test_supported_worker_catalog.py",
         "tests/integration/test_ticket_locale.py",
-        "tests/unit/test_authority_matrix.py",
         "web/tests/configuration-browser.test.mjs"
       ],
       "tests": {
         "unit": [
-          "tests/unit/test_authority_matrix.py",
-          "tests/unit/test_cli_verbs_in_process.py",
+            "tests/unit/test_cli_verbs_in_process.py",
           "tests/unit/test_supported_worker_catalog.py",
           "tests/unit/test_worker_step_readiness.py",
           "tests/unit/test_worker_step_readiness_loop.py",
@@ -52,7 +50,6 @@
         "tests/e2e/test_ticket_file_previews.py",
         "web/tests/ticket-page-artifacts.test.ts",
         "web/tests/managed-file-read.test.ts",
-        "tests/unit/test_authority_matrix.py",
         "web/src/lib/artifactStrip.ts",
         "web/src/lib/managedFileRead.ts",
         "web/src/routes/FilePreviewRoute.svelte",
@@ -62,8 +59,7 @@
       "tests": {
         "unit": [
           "tests/unit/test_artifact_listing.py",
-          "tests/unit/test_authority_matrix.py",
-          "tests/unit/test_orchestrator_artifact_cli.py",
+            "tests/unit/test_orchestrator_artifact_cli.py",
           "tests/unit/test_ticket_artifact_listing.py",
           "tests/unit/test_ticket_files.py",
           "tests/unit/test_sprint_item_supervisors.py"

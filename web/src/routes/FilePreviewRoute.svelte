@@ -91,7 +91,6 @@
       <p>{owner?.title ?? "Artifact"}</p>
       {#snippet conversation()}
         {#if owner && !ownerError}
-          <div class="artifact-recipient" data-artifact-recipient>Message {owner.title}</div>
           {#key identity}
             <LiveConversation bind:conversationState conversationId={sentConversationId ?? owner.conversationId}
               persistenceKey={`owner:${owner.kind}:${owner.id}`} uploadOwner={owner.kind === "goal" ? null : {kind: owner.kind, id: owner.id}}
@@ -110,5 +109,4 @@
 
 <style>
   .file-preview-route { flex:1; width:100%; height:100%; min-height:0; display:flex; flex-direction:column; }
-  .artifact-recipient { flex:none; color:var(--text-muted); font-size:var(--type-xs); padding:var(--space-2) var(--space-3); }
 </style>

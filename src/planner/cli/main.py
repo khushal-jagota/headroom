@@ -43,6 +43,7 @@ from planner.measure_sources.cli import measure_source as measure_source_group
 from planner.measures.cli import measure as measure_group
 from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.previews.cli import preview as preview_group
+from planner.server_lifecycle.cli import serve as serve_command
 from planner.tickets.contracts import TicketLocale
 from planner.worker_settings.contracts import SkillPatch
 from planner.worker_types.contracts import BRIEF_FIELD_ID
@@ -524,18 +525,7 @@ def send_message(
     http.emit(data, as_json, f"message {data['fate']}")
 
 
-@main.command("serve", hidden=True)
-def serve() -> None:
-    """Start the web server and background planner runtime."""
-    from planner.server_lifecycle.contracts import ServerLifecycleError
-    from planner.server_lifecycle.supervisor import run_server_supervisor
-
-    try:
-        result = run_server_supervisor()
-    except ServerLifecycleError as exc:
-        raise click.ClickException(str(exc)) from exc
-    if result != 0:
-        raise click.ClickException("Panels application exited unexpectedly.")
+main.add_command(serve_command)
 
 
 @main.command("restart", hidden=True)
