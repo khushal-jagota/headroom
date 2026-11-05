@@ -2,7 +2,7 @@ import { usageAliases } from "../../usage-aliases.mjs";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, rm, writeFile, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, open, readFile, rm, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -16,6 +16,12 @@ import { assertCompleteCaseEnvironment, selectedEntries, validateCompanion } fro
 const webRoot = fileURLToPath(new URL("../../", import.meta.url));
 const repositoryRoot = dirname(webRoot.replace(/\/$/, ""));
 const catalog = JSON.parse(await readFile(new URL("./catalog.json", import.meta.url), "utf8"));
+// Cases run side by side in this many Chromium processes. GitHub's hosted runners have
+// four vCPUs, and the longest case alone sets the lower limit on the wall clock.
+const browserProcesses = 4;
+// The measured longest cases start first, so none of them starts late and ends the run late.
+const longestCases = ["conversation-pane", "goal-preview", "workspace-utility-pane"];
+const longestFirst = identity => longestCases.includes(identity) ? longestCases.indexOf(identity) : longestCases.length;
 
 export function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -119,22 +125,52 @@ async function runSelected(entries, options, receipt, requiredCompanions) {
     await new Promise((resolve, reject) => {server.once("error", reject); server.listen(0, "127.0.0.1", resolve);});
     receipt.timing.sharedServerSeconds = (performance.now() - serverStarted) / 1000;
     const origin = `http://127.0.0.1:${server.address().port}`;
-    const manifest = {cases: prepared.map(case_ => ({id: case_.id, entry: case_.entry, python: case_.python,
-      urls: case_.arguments.map(path => `${origin}/${relative(webRoot, path).split(sep).join("/")}`)}))};
-    const manifestPath = join(temporary, "manifest.json");
-    const resultsPath = join(temporary, "results.json");
-    await writeFile(manifestPath, JSON.stringify(manifest));
-    try {
-      await runCommand(process.env.PANELS_TEST_PYTHON || join(repositoryRoot, ".venv/bin/python"), [fileURLToPath(new URL("./execute.py", import.meta.url)), manifestPath, resultsPath], {cwd: repositoryRoot, env: environment});
-    } finally {
+    const urls = case_ => case_.arguments.map(path => `${origin}/${relative(webRoot, path).split(sep).join("/")}`);
+    const results = new Map();
+    const processFailures = [];
+    let browserStartupSeconds = 0;
+    const runCase = async case_ => {
+      // Each case gets its own Chromium process, evidence folders, and log, so cases running
+      // side by side share nothing but the read-only build and its static server.
+      const manifestPath = join(temporary, `${case_.id}.case.json`);
+      const resultsPath = join(temporary, `${case_.id}.result.json`);
+      const logPath = join(evidence, "logs", `${case_.id}.log`);
+      await writeFile(manifestPath, JSON.stringify({id: case_.id, entry: case_.entry, python: case_.python, urls: urls(case_)}));
+      const log = await open(logPath, "w");
+      try {
+        await runCommand(process.env.PANELS_TEST_PYTHON || join(repositoryRoot, ".venv/bin/python"), [fileURLToPath(new URL("./execute.py", import.meta.url)), manifestPath, resultsPath], {
+          cwd: repositoryRoot, stdio: ["ignore", log.fd, log.fd],
+          env: {...environment, PYTHONUNBUFFERED: "1",
+            PANELS_SIDEBAR_ARTIFACT_DIR: join(environment.PANELS_SIDEBAR_ARTIFACT_DIR, case_.id),
+            PANELS_E2E_FAILURE_DIR: join(environment.PANELS_E2E_FAILURE_DIR, case_.id)}});
+      } catch (error) {
+        processFailures.push(`${case_.id}: ${error.message}`);
+      } finally {
+        await log.close();
+      }
+      // One block per case, printed when it ends, keeps a failure readable.
+      console.log(`\n===== browser case ${case_.entry}/${case_.id} =====\n${(await readFile(logPath, "utf8")).trimEnd()}`);
       try {
         const result = JSON.parse(await readFile(resultsPath, "utf8"));
-        receipt.cases = result.cases;
-        receipt.timing.browserStartupSeconds = result.browserStartupSeconds;
-      } catch { /* Missing proof remains invalid and the original process failure survives. */ }
-    }
+        results.set(case_.id, result.case);
+        browserStartupSeconds += result.browserStartupSeconds;
+      } catch { /* Missing proof remains invalid and the process failure survives. */ }
+    };
+    await mkdir(join(evidence, "logs"), {recursive: true});
+    const queue = [...prepared].sort((left, right) => longestFirst(left.id) - longestFirst(right.id));
+    await Promise.all(Array.from({length: Math.min(browserProcesses, queue.length)}, async () => {
+      while (queue.length) {
+        const case_ = queue.shift();
+        // Every slot keeps going, so the run never tears down under a running case.
+        await runCase(case_).catch(error => processFailures.push(`${case_.id}: ${error.message}`));
+      }
+    }));
+    receipt.cases = prepared.filter(case_ => results.has(case_.id)).map(case_ => results.get(case_.id));
+    receipt.timing.browserProcesses = Math.min(browserProcesses, prepared.length);
+    receipt.timing.browserStartupSeconds = browserStartupSeconds;
     assert.equal(receipt.cases.length, prepared.length, "Browser receipt omitted cases");
     assert.ok(receipt.cases.every(case_ => case_.status === "passed"), "Browser case failed");
+    assert.deepEqual(processFailures, [], "Browser case process failed");
     completed = true;
   } catch (error) {
     primaryError = error;

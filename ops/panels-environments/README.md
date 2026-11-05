@@ -78,78 +78,72 @@ Backup and restore instructions are in [backup-restore.md](backup-restore.md).
 ## Worker resource units
 
 Linux Ticket agents run in transient user services under `panels-workers.slice`.
-Their tools inherit that unit. Each service limits memory to 6 GiB and stops its
-whole cgroup on OOM. The slice limits all Workers to 24 GiB and gives them
-CPU weight 10. Its parent `panels.slice` also uses weight 10, below the
-foreground `app.slice`. Panels uses weight 100 and a 1 GiB memory reservation.
-`MemoryLow` protects memory under pressure only when every ancestor supplies
-the same protection. It does not preallocate RAM.
+Their tools inherit that unit, and it stops them all when the Worker ends. Workers
+have no memory cap. The slice and its parent `panels.slice` only give Workers CPU
+weight 10, below the foreground `app.slice`, where Panels uses weight 100.
 
-Worker temporary files use a private `~/.pw-XXXXXXXX/t` directory on disk for the agent process
-lifetime, including successive conversation turns. Shutdown removes the directory
-after the tools stop. Worker OOM errors appear in the existing conversation error
-path. The unit boundary controls resources, not access to files or credentials.
-Worker units retain `NoNewPrivileges=yes` from the previous live-service launch path.
+When the machine runs out of memory, Linux kills one process by score and the rest
+carry on:
 
-Activation has three required steps. Complete them in this order.
+- Every agent's tool shell sets its own score to 1000 through `BASH_ENV`, so tests and
+  browsers go first.
+- Worker agents keep the user manager's default score of 200.
+- The live service asks for -500, so Panels goes last but can still be stopped if it
+  leaks itself.
+- Worker units and the live service use `OOMPolicy=continue`, so one kill ends only
+  the killed process.
 
-1. **Install the slices before installing the application release.** Copy the two
-   slice files from the prepared release source, then reload the user manager:
+A user service cannot go below the user manager's own score, which is 100, without
+root. Until the root step below is applied, the live service starts at 100.
+
+Worker temporary files use a private `~/.pw-XXXXXXXX/t` directory on disk for the
+agent process lifetime, including successive conversation turns. Shutdown removes
+the directory after the tools stop. The unit boundary controls resources, not access
+to files or credentials. Worker units retain `NoNewPrivileges=yes`.
+
+### Activation
+
+Run these steps after the release that removes the Worker memory caps is installed.
+Older releases refuse to start Workers if the slice lacks its 24 GiB limit, so the
+slice file must not be installed before them.
+
+1. **Lower the user manager's floor and pin its default (root).** The drop-in makes it
+   persistent. The last command applies it to the running manager without a restart.
+   The pinned default keeps every other user unit at today's 200.
 
    ```sh
-   mkdir -p "$HOME/.config/systemd/user"
-   cp panels.slice panels-workers.slice "$HOME/.config/systemd/user/"
-   systemctl --user daemon-reload
+   sudo mkdir -p /etc/systemd/system/user@1000.service.d /etc/systemd/user.conf.d
+   printf '[Service]\nOOMScoreAdjust=-500\n' | sudo tee /etc/systemd/system/user@1000.service.d/panels-oom.conf
+   printf '[Manager]\nDefaultOOMScoreAdjust=200\n' | sudo tee /etc/systemd/user.conf.d/panels-oom.conf
+   sudo systemctl daemon-reload
+   echo -500 | sudo tee /proc/"$(systemctl show -p MainPID --value user@1000.service)"/oom_score_adj
    ```
 
-   The new code has no uncontained fallback. It cannot launch Workers until the
-   slices exist with the required limits. Updates restarts Panels on the new code
-   during installation, so this step must precede an Updates install.
-
-2. **Install the application release.** Use Updates or the approved release route
-   only after the slices are installed and the user manager reload is complete.
-   Updates performs its application restart during this step.
-
-3. **Install the live-service change and restart Panels.** After the release install
-   finishes, copy the prepared live-service file, reload the user manager, and
-   perform the operator-owned restart:
+2. **Make the 1 GiB reservation effective (root).** `MemoryLow` protects Panels only
+   when every ancestor supplies the same protection. It does not preallocate RAM.
 
    ```sh
-   cp panels-live.service "$HOME/.config/systemd/user/"
+   sudo systemctl set-property user.slice MemoryLow=1G
+   sudo systemctl set-property user-1000.slice MemoryLow=1G
+   sudo systemctl set-property user@1000.service MemoryLow=1G
+   systemctl --user set-property app.slice MemoryLow=1G
+   ```
+
+3. **Install the unit files and restart Panels.** Workers must not perform this step.
+
+   ```sh
+   cd "$HOME/Deployments/Panels/current/app/ops/panels-environments"
+   cp panels-live.service panels-workers.slice "$HOME/.config/systemd/user/"
    systemctl --user daemon-reload
    systemctl --user restart panels-live.service
    ```
 
-   This applies `OOMPolicy=continue` and the live service's memory protection request.
-   Workers must not perform these live operations. Check that no old Worker tools
-   remain after shutdown.
+4. **Check.** The live service reports `OOMPolicy=continue`, `OOMScoreAdjust=-500`
+   and `MemoryLow=1073741824`. Its process score is -500. The Worker slice reports
+   `MemoryMax=infinity`.
 
-The scratch verification record records measured peaks and the selected budgets.
-These limits leave about 7 GiB plus swap outside the Worker budget on the 31 GiB
-VPS. Future changes must preserve headroom for Panels and the host.
-
-### Optional extra memory protection
-
-The following ancestor allocations are optional extra protection. They do not gate
-Worker isolation or release installation. The independent Worker cap preserves
-headroom without them.
-
-If the operator wants an effective 1 GiB `MemoryLow` reservation, apply the same
-protection through the full cgroup hierarchy on this UID-1000 VPS:
-
-```sh
-sudo systemctl set-property user.slice MemoryLow=1G
-sudo systemctl set-property user-1000.slice MemoryLow=1G
-sudo systemctl set-property user@1000.service MemoryLow=1G
-systemctl --user set-property app.slice MemoryLow=1G
-```
-
-The three system-manager commands protect existing ancestors. They do not create
-another service or account. The user-manager command protects the foreground slice.
-Each command persists its property. These optional host changes require operator
-authority. Without them, the live unit's `MemoryLow` alone does not supply an
-effective reservation.
-
-After activation, check that each Worker cgroup is outside `panels-live.service`.
-Check `memory.max`, `memory.oom.group`, CPU weights, and disk `TMPDIR`. If optional
-memory protection was applied, also check `memory.low` along the ancestor chain.
+   ```sh
+   systemctl --user show panels-live.service -p OOMPolicy -p OOMScoreAdjust -p MemoryLow
+   cat /proc/"$(systemctl --user show -p MainPID --value panels-live.service)"/oom_score_adj
+   systemctl --user show panels-workers.slice -p MemoryMax
+   ```

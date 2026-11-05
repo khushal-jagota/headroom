@@ -459,7 +459,9 @@ def test_readiness_discovers_new_offer_once_per_cadence_and_persists_receipt(
         unsubscribe()
 
 
-def test_runner_refuses_unknown_schema_before_any_shutdown(tmp_path: Path) -> None:
+def test_runner_accepts_direct_upgrade_entry_and_head_but_refuses_unknown_schema(
+    tmp_path: Path,
+) -> None:
     import sqlite3
 
     from planner.environments.update_runner import validate_schema_ancestry
@@ -467,7 +469,10 @@ def test_runner_refuses_unknown_schema_before_any_shutdown(tmp_path: Path) -> No
     database = tmp_path / "schema.db"
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE alembic_version (version_num TEXT)")
-        conn.execute("INSERT INTO alembic_version VALUES ('canonical_manager_identities')")
+        conn.execute("INSERT INTO alembic_version VALUES ('conversation_background_tasks')")
+    validate_schema_ancestry(database)
+    with sqlite3.connect(database) as conn:
+        conn.execute("UPDATE alembic_version SET version_num = 'canonical_manager_identities'")
     validate_schema_ancestry(database)
     with sqlite3.connect(database) as conn:
         conn.execute("UPDATE alembic_version SET version_num = 'unknown_migration'")
@@ -564,9 +569,15 @@ def test_runner_failure_records_failure_without_reopening_terminal_requests(
     assert request.state == ("failed" if state == "installing" else state)
 
 
+@pytest.mark.parametrize(("installed_revision", "message"), [
+    ("canonical_manager_identities", "unknown schema ancestry"),
+    ("older_candidate", "precedes the supported update schema floor"),
+])
 def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    installed_revision: str,
+    message: str,
 ) -> None:
     import shutil
     import sqlite3
@@ -590,9 +601,14 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     history = candidate / "src" / "planner" / "core" / "migrations"
     (history / "versions").mkdir(parents=True)
     shutil.copy(MIGRATIONS_DIRECTORY / "env.py", history / "env.py")
-    # This candidate cannot read the current database's revision.
+    # An older archive must refuse both an unknown revision and its known pre-floor base.
     (history / "versions" / "older.py").write_text(
         'revision = "older_candidate"\ndown_revision = None\n'
+        'branch_labels = depends_on = None\n'
+        'def upgrade(): pass\ndef downgrade(): pass\n'
+    )
+    (history / "versions" / "floor.py").write_text(
+        'revision = "video_upload_ledger"\ndown_revision = "older_candidate"\n'
         'branch_labels = depends_on = None\n'
         'def upgrade(): pass\ndef downgrade(): pass\n'
     )
@@ -612,6 +628,8 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
         conn.execute("CREATE TABLE alembic_version (version_num TEXT)")
         conn.execute("INSERT INTO alembic_version VALUES ('canonical_manager_identities')")
     update_runner.validate_schema_ancestry(database)
+    with sqlite3.connect(database) as conn:
+        conn.execute("UPDATE alembic_version SET version_num=?", (installed_revision,))
     store = FileUpdateRequestStore(database.parent / "owner-update-request.json")
     store.create(OwnerUpdateRequest("request", offered, "idle", "installing", "now"))
     effects: list[str] = []
@@ -651,7 +669,7 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
         archive_sha256=checksum,
         health_url="http://127.0.0.1:1/api/health",
     )
-    with pytest.raises(ValueError, match="unknown schema ancestry"):
+    with pytest.raises(ValueError, match=message):
         update_runner.apply(arguments)
     assert effects == []
     assert store.read().state == "installing"  # type: ignore[union-attr]

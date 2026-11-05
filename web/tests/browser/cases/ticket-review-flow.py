@@ -17,6 +17,7 @@ def run(browser, urls):
     import time
     from urllib.parse import parse_qs
 
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import expect
 
     ticket = dict(
@@ -889,6 +890,29 @@ def run(browser, urls):
             route.fulfill(content_type="application/octet-stream", body="fixture")
 
     page.route("**/files/**", serve_file)
+
+    def wait_for_write(predicate):
+        # Routes record a write before they fulfill it, so the write's own finished
+        # request is the earliest moment the record is complete. Callers assert.
+        if not predicate():
+            try:
+                page.wait_for_event("requestfinished", lambda _: predicate(), timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
+
+    def wait_for_held(predicate):
+        # A held route never finishes its request, so poll the fixture while the
+        # driver hands the route to its handler. Callers assert.
+        deadline = time.monotonic() + 5
+        while not predicate() and time.monotonic() < deadline:
+            page.wait_for_timeout(10)
+
+    def frames_after_resize(width):
+        # Resize observers and media queries run before the next frame paints.
+        page.wait_for_function("width => window.innerWidth === width", arg=width)
+        page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+        )
     page.goto([__file__, *urls][1])
     expect(page.locator(".error-line")).to_have_count(0)
     assert page.evaluate("window.__badgeProof()") == dict(
@@ -972,10 +996,7 @@ def run(browser, urls):
     # The request stays held until Python supplies the deliberately stale reply.
     # Do not await invalidateQueries here: it waits for that same reply.
     drive("() => { void window.__detail(); }")
-    for _ in range(100):
-        if held_details:
-            break
-        page.wait_for_timeout(10)
+    wait_for_held(lambda: held_details)
     assert held_details
     for stage in manifest["worker_types"][1]["stages"]:
         if stage["id"] == "needs_consequences":
@@ -1085,10 +1106,7 @@ def run(browser, urls):
     parked_leash.get_by_role("listbox").press("u")
     assert ceiling_writes == []
     parked_leash.get_by_role("listbox").press("Enter")
-    for _ in range(100):
-        if ceiling_writes:
-            break
-        page.wait_for_timeout(50)
+    wait_for_write(lambda: ceiling_writes)
     assert ceiling_writes == [{"ceiling_holder": {"kind": "owner", "id": "owner"}}]
     drive("window.__batch()")
     assert approvals == []
@@ -1147,10 +1165,7 @@ def run(browser, urls):
     leash.get_by_role("listbox").press("c")
     leash.get_by_role("listbox").press("Enter")
     expect(leash.get_by_role("listbox")).to_have_count(0)
-    for _ in range(100):
-        if len(ceiling_writes) == 2:
-            break
-        page.wait_for_timeout(50)
+    wait_for_write(lambda: len(ceiling_writes) == 2)
     assert ceiling_writes[-1] == {
         "ceiling": "done",
         "ceiling_holder": {"kind": "chief", "id": "chief"},
@@ -1161,10 +1176,7 @@ def run(browser, urls):
     expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
     leash.locator('[data-ceiling-picker-choice="owner"]').click()
     expect(leash.get_by_role("listbox")).to_have_count(0)
-    for _ in range(100):
-        if len(ceiling_writes) == 3:
-            break
-        page.wait_for_timeout(50)
+    wait_for_write(lambda: len(ceiling_writes) == 3)
     assert ceiling_writes[-1] == {"ceiling_holder": {"kind": "owner", "id": "owner"}}, (
         ceiling_writes
     )
@@ -1195,7 +1207,7 @@ def run(browser, urls):
 
     def assert_ticket_layout(width):
         page.set_viewport_size({"width": width, "height": 900})
-        page.wait_for_timeout(50)
+        frames_after_resize(width)
         assert page.evaluate(
             "() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1"
         )
@@ -1293,7 +1305,7 @@ def run(browser, urls):
     hold_field_save = True
     saved.click()
     saved.press("Tab")
-    page.wait_for_timeout(50)
+    wait_for_held(lambda: held_field_saves)
     assert len(held_field_saves) == 1
     page.locator("[data-stage-fold]").evaluate("node => { node.open = false; }")
     expect(saved).to_have_count(0)
@@ -1342,10 +1354,7 @@ def run(browser, urls):
     exact_revision = "Keep the agreed scope.\nPreserve the attributed details."
     page.locator("[data-revision-note]").fill(exact_revision)
     page.locator("[data-revision-send]").click()
-    for _ in range(100):
-        if revisions:
-            break
-        page.wait_for_timeout(10)
+    wait_for_write(lambda: revisions)
     assert revisions == [{"message": exact_revision}]
     drive("window.__batch()")
     expect(
@@ -1410,10 +1419,7 @@ def run(browser, urls):
     # the saved reviewer and the retained local edit without another scope choice.
     approve_row.locator("[data-accept]").click()
     expect(page.get_by_role("listbox")).to_have_count(0)
-    for _ in range(100):
-        if approvals:
-            break
-        page.wait_for_timeout(50)
+    wait_for_write(lambda: approvals)
     assert len(approvals) == 1
     assert approvals[0]["next_ceiling"] == "none"
     assert approvals[0]["next_holder"] == {"kind": "owner", "id": "owner"}
@@ -1472,10 +1478,7 @@ def run(browser, urls):
     hold_detail = True
     drive("window.__refresh()")
     expect(page.locator("[data-review-card]")).to_have_count(0)
-    for _ in range(100):
-        if held_details:
-            break
-        page.wait_for_timeout(10)
+    wait_for_held(lambda: held_details)
     assert held_details
     finish_read(held_details.pop(0), ticket)
     expect(page.locator("[data-review-card]")).to_have_count(0)
@@ -1499,10 +1502,7 @@ def run(browser, urls):
     proposal_editor.press("Tab")
     approve_row.locator("[data-accept]").click()
     expect(page.get_by_role("listbox")).to_have_count(0)
-    for _ in range(100):
-        if len(approvals) == 2:
-            break
-        page.wait_for_timeout(10)
+    wait_for_write(lambda: len(approvals) == 2)
     assert approvals[1]["expected_proposal_revision"] == 3
     assert approvals[1]["edited_body"] == "Edited replacement body"
     assert approvals[1]["next_ceiling"] == "none"
@@ -2041,10 +2041,7 @@ def run(browser, urls):
     chief_input.fill("The older pending message.")
     hold_chief_send = True
     chief_form.locator("[data-review-send]").click()
-    for _ in range(100):
-        if held_chief_sends:
-            break
-        page.wait_for_timeout(10)
+    wait_for_held(lambda: held_chief_sends)
     assert held_chief_sends
     page.evaluate("window.__showTicket('t_review')")
     expect(chief_form).to_have_count(0)
@@ -2101,10 +2098,7 @@ def run(browser, urls):
         expect(page.locator(".review-ticket-title")).to_contain_text(f"Window item {index:02}")
         page.locator("body").click(position={"x": 1, "y": 1})
         page.keyboard.press("s")
-    for _ in range(100):
-        if held_review_windows:
-            break
-        page.wait_for_timeout(10)
+    wait_for_held(lambda: held_review_windows)
     assert held_review_windows, "Continuation window was not requested"
     expect(terminal).to_have_count(0)
     hold_next_review_window = False

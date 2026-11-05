@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,7 @@ from pathlib import Path
 import click
 
 from planner.core.config import Config, load_config
+from planner.environments import ticket_scratch
 from planner.environments.app import build_exported_app, validate_app_manifest, validate_app_sha
 from planner.environments.backup import create_database_backup, restore_database_snapshot
 from planner.environments.contracts import (
@@ -121,18 +123,38 @@ def status(as_json: bool) -> None:
 def cleanup(apply: bool, as_json: bool) -> None:
     """Inspect or safely maintain host-local Panels state (dry run by default)."""
     dependencies = _environment_cli_dependencies()
+    config = dependencies.load_config()
     inventory: CleanupInventory = collect_cleanup_inventory(
-        dependencies.load_config(), dependencies=dependencies.vps_status_dependencies
+        config, dependencies=dependencies.vps_status_dependencies
     )
     payload: dict[str, object] = {"dry_run": not apply, **inventory.as_dict()}
+    scratches: list[ticket_scratch.TicketScratch] = []
+    layout = ticket_scratch.layout_for(
+        config.ticket_scratch_root, config.ticket_scratch_database, config.db_path
+    )
+    if layout is not None:
+        states = ticket_scratch.read_ticket_states_from(config.db_path)
+        now = int(time.time())
+        scratches = ticket_scratch.collect_ticket_scratch(layout, states, now)
+        payload["ticket_scratch"] = [scratch.as_dict() for scratch in scratches]
+    scratch_result: ticket_scratch.ScratchResult | None = None
     if apply:
         payload["result"] = apply_cleanup_inventory(inventory).as_dict()
+        if layout is not None:
+            scratch_result = ticket_scratch.remove_ticket_scratch(layout, scratches, states, now)
+            payload["ticket_scratch_result"] = scratch_result.as_dict()
     if as_json:
         click.echo(json.dumps(payload, sort_keys=True))
         return
     click.echo("applied cleanup" if apply else "cleanup dry run")
     for candidate in inventory.candidates:
         click.echo(f"{candidate.kind}: {candidate.path}")
+    for scratch in scratches:
+        for entry in scratch.entries:
+            click.echo(f"ticket_scratch: {entry}")
+    if scratch_result is not None:
+        for kept in scratch_result.skipped:
+            click.echo(f"kept: {kept['path']} ({kept['reason']})")
 
 
 @environment.command("backup")

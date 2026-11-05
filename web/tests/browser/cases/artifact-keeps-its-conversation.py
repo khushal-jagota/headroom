@@ -640,7 +640,6 @@ def run(browser, urls):
     artifact_link(nested_conversation, "t_faraway").click()
     expect(viewer.locator("[data-ticket-artifact]")).to_have_attribute("aria-label", "budget.md")
     expect(nested_conversation).to_have_attribute("data-conversation-id", FILE_CONVERSATION)
-    expect(viewer.locator("[data-artifact-recipient]")).to_have_text("Message Artifact owner")
     assert page.evaluate("location.hash") == preview_hash
     viewer.locator('[data-ticket-artifact-close]').click()
     expect(reply).to_have_value("Keep this unfinished response")

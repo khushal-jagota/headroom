@@ -1,9 +1,7 @@
-"""The current Panels schema, after the guard sweep.
+"""The complete fresh schema and direct upgrade from the staging head.
 
-The revision identifier is retained from the sweep head. Existing databases must
-first install the bridge build documented in docs/deployment.md. That build includes
-staging's saved workflows and background tasks before the sweep revisions. The
-baseline build then recognizes the exact schema and leaves its records unchanged.
+Existing staging databases apply the sweep changes in one startup transaction.
+Fresh databases create this same final schema without an intermediate install.
 """
 
 import sqlite3
@@ -14,7 +12,7 @@ from typing import cast
 from alembic import op
 
 revision = "canonical_manager_identities"
-down_revision = None
+down_revision = "conversation_background_tasks"
 branch_labels = None
 depends_on = None
 
@@ -343,6 +341,14 @@ BASELINE_STATEMENTS = (
 
 
 def upgrade() -> None:
+    connection = op.get_bind()
+    if connection.exec_driver_sql(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).first() is not None:
+        from planner.core.migrations.direct_upgrade import upgrade_staging
+
+        upgrade_staging(cast(sqlite3.Connection, connection.connection.driver_connection))
+        return
     for statement in BASELINE_STATEMENTS:
         op.execute(statement)
     connection = op.get_bind()

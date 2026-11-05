@@ -86,7 +86,7 @@ record and storage (`events.py`, `storage.py`, one migration), the real system
 (`system.py`), the three backend adapters (`backends/`), and the reading side —
 events-after-a-position, a live tail, and the backend cards (`api.py`,
 `live_tail.py`, `snapshot.py`). The conformance suite runs against the real system
-through a process-backed binder in `tests/unit/test_conversation_conformance.py`.
+through a process-backed binder in `tests/integration/test_conversation_conformance.py`.
 The transcript read and the schema are typed by the real build, not by the
 contract — the seam above still deliberately says nothing about them.
 
