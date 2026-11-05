@@ -3903,8 +3903,14 @@ def _card_state_motion(browser, url):
           background:s.backgroundColor, radius:s.borderRadius,
           borders:['Top','Right','Bottom','Left'].map(side=>[s['border'+side+'Width'],s['border'+side+'Style']]),
           padding:s.padding};}""")
-    def shade(page, expected):
-        page.wait_for_function("expected=>getComputedStyle(document.querySelector('.conversation-layer')).backgroundColor===expected", arg=expected)
+    def dock_treatment(page, arrow_lit):
+        # Hover changes only the arrow. The layer stays on the page surface under its hairline.
+        page.wait_for_function("""lit=>{const layer=document.querySelector('.conversation-layer');
+          const arrow=getComputedStyle(document.querySelector('.c2-rest-control'));
+          return getComputedStyle(layer).backgroundColor==='rgb(21, 21, 21)'
+            && getComputedStyle(layer,'::before').opacity==='1'
+            && arrow.backgroundColor===(lit?'rgb(44, 44, 44)':'rgba(0, 0, 0, 0)')
+            && arrow.color===(lit?'rgb(242, 242, 242)':'rgb(191, 191, 191)')}""", arg=arrow_lit)
     for host, width, touch, reduced in (
         ("ticket", 1280, False, False), ("manager", 390, True, False),
         ("ticket", 390, True, True), ("manager", 1280, False, False),
@@ -3942,12 +3948,13 @@ def _card_state_motion(browser, url):
                 input_device = page.locator('[data-conversation-box]').bounding_box()
                 assert layer and surface and input_device
                 # Surface hover changes treatment without opening the reader.
+                dock_treatment(page, False)
                 page.mouse.move(layer['x']+2, surface['y']+8)
-                shade(page, 'rgb(21, 21, 21)')
+                dock_treatment(page, True)
                 expect(pane).to_have_attribute('data-conversation-state', 'rest')
                 # Include padding inside the actual rounded input boundary.
                 page.mouse.move(input_device['x']+3, input_device['y']+3)
-                shade(page, 'rgb(13, 13, 13)')
+                dock_treatment(page, False)
                 expect(pane).to_have_attribute('data-conversation-state', 'rest')
             elif reduced:
                 # Reuse one phone case to prove that background activation
@@ -3978,7 +3985,7 @@ def _card_state_motion(browser, url):
               observer.observe(document.querySelector('[data-conversation-pane]'),{attributes:true,attributeFilter:['data-conversation-state']});
               window.__dockObserver=observer;
               const sample=()=>{window.__dockFrames.push({time:performance.now(),height:layer.getBoundingClientRect().height,
-                bottom:composer.getBoundingClientRect().bottom,shade:getComputedStyle(layer).backgroundColor,
+                bottom:composer.getBoundingClientRect().bottom,line:Number(getComputedStyle(layer,'::before').opacity),
                 readerVisibility:getComputedStyle(document.querySelector('.ticket-reading,.manager-reading')).visibility,
                 moving:!!document.querySelector('[data-conversation-dock-transition]')});if(!window.__dockStop)requestAnimationFrame(sample)};sample();
             }""")
@@ -4001,9 +4008,9 @@ def _card_state_motion(browser, url):
                 assert 170 <= duration <= 360, motion
                 assert len({round(sample['height']) for sample in moving}) >= 5, motion
                 if touch:
-                    assert frames[0]['shade'] == 'rgb(13, 13, 13)', motion
-                    assert frames[-1]['shade'] == 'rgb(21, 21, 21)', motion
-                    assert len({sample['shade'] for sample in moving}) >= 3, motion
+                    assert frames[0]['line'] == 1, motion
+                    assert frames[-1]['line'] == 0, motion
+                    assert len({sample['line'] for sample in moving}) >= 3, motion
             expect(input_box).to_have_value('A retained draft')
             assert input_appearance(page) == rest_input
             if not touch:
@@ -4017,7 +4024,7 @@ def _card_state_motion(browser, url):
                 expect(page.locator('[data-conversation-expand]')).to_be_focused()
             expect(pane).to_have_attribute('data-conversation-state', 'rest')
             _settle_conversation_layout(page)
-            assert page.locator('.conversation-layer').evaluate('node=>getComputedStyle(node).backgroundColor') == 'rgb(13, 13, 13)'
+            assert page.locator('.conversation-layer').evaluate("node=>[getComputedStyle(node).backgroundColor,getComputedStyle(node,'::before').opacity]") == ['rgb(21, 21, 21)', '1']
 
             assert page.evaluate("window.__paneIdentity===document.querySelector('[data-conversation-pane]')&&window.__composerIdentity===document.querySelector('[data-conversation-composer]')")
             assert not document.evaluate('node=>node.closest(".ticket-reading,.manager-reading").inert')
@@ -4065,16 +4072,16 @@ def _card_state_motion(browser, url):
                 page.evaluate("window.__showHeldPrompt(true)")
                 held = page.locator('[data-conversation-held-row="held-1"] .chat-qrow-txt')
                 held.hover()
-                shade(page, 'rgb(21, 21, 21)')
+                dock_treatment(page, True)
                 expect(pane).to_have_attribute('data-conversation-state', 'rest')
                 expand.click()
                 _settle_conversation_layout(page)
                 held.hover()
                 page.keyboard.press('Escape')
                 _settle_conversation_layout(page)
-                shade(page, 'rgb(21, 21, 21)')
+                dock_treatment(page, True)
                 input_box.hover()
-                shade(page, 'rgb(13, 13, 13)')
+                dock_treatment(page, False)
                 expect(pane).to_have_attribute('data-conversation-state', 'rest')
 
             page.goto(url + ('?ticket=1&card-artifact=1' if host == 'ticket' else '?card-artifact=1'))

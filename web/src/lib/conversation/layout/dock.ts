@@ -45,21 +45,14 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     const text = `${value}px`;
     if (host.style.getPropertyValue(name) !== text) host.style.setProperty(name, text);
   };
-  function shade(): string {
-    const previewFocused = !!layer?.querySelector('[data-conversation-rest-bar]:focus-visible');
-    return getComputedStyle(host).getPropertyValue(state === 'opened' || hovered || previewFocused ? '--surface-1' : '--surface-recessed').trim();
-  }
   function pointer(event: PointerEvent): void {
     movePress(event);
     if (!layer) return;
-    const wasHovered = hovered;
     mousePoint = event.pointerType === 'mouse' && event.type !== 'pointerleave' ? { x: event.clientX, y: event.clientY } : null;
     hovered = event.pointerType === 'mouse' && event.type !== 'pointerleave'
       && event.target instanceof Node && layer.contains(event.target)
       && outsideInput(event.target);
     host.toggleAttribute('data-conversation-dock-hover', hovered);
-    // During motion its interpolation owns the shade. A later measurement retargets it.
-    if (wasHovered !== hovered && (!pane || !conversationMotion(pane).active(layer))) layer.style.backgroundColor = shade();
   }
   function releaseReader(): void {
     if (!reader) return;
@@ -90,7 +83,7 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
         const previousState = state;
         const motion = conversationMotion(pane);
         const from = motion.active(layer) ? layer.getBoundingClientRect().height : lastHeight;
-        const fromShade = getComputedStyle(layer).backgroundColor;
+        const fromLine = parseFloat(getComputedStyle(layer, '::before').opacity);
         motion.cancel(layer);
         if (previousState !== undefined && reader && !reader.style.height) {
           reader.style.height = `${readerHeight || reader.getBoundingClientRect().height}px`;
@@ -110,41 +103,34 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
           hovered = !!target && layer.contains(target) && outsideInput(target);
           host.toggleAttribute('data-conversation-dock-hover', hovered);
         }
-        const toShade = shade();
         if (previousState !== undefined && from > 0) {
           // Keep it bottom anchored throughout return. Rejoining the row is the final step.
           host.setAttribute('data-conversation-dock-transition', '');
           const movingLayer = layer;
-          const startColor = fromShade.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? [13, 13, 13];
-          const colorProbe = document.createElement('span');
-          colorProbe.style.color = toShade;
-          host.append(colorProbe);
-          const endColor = getComputedStyle(colorProbe).color.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? [21, 21, 21];
-          colorProbe.remove();
+          // The hairline fades out on open and back in on return, from wherever it is.
+          const toLine = nextState === 'opened' ? 0 : 1;
           void motion.move(layer, fraction => {
             const eased = 1 - Math.pow(1 - fraction, 3);
             movingLayer.style.height = `${from + (wanted - from) * eased}px`;
-            movingLayer.style.backgroundColor = `rgb(${startColor.map((channel, index) => channel + (endColor[index] - channel) * eased).join(',')})`;
+            movingLayer.style.setProperty('--conversation-dock-line', String(fromLine + (toLine - fromLine) * eased));
           }, CONVERSATION_CARD_MS, () => {
             movingLayer.style.removeProperty('height');
-            movingLayer.style.backgroundColor = shade();
+            movingLayer.style.removeProperty('--conversation-dock-line');
             host.removeAttribute('data-conversation-dock-transition');
             if (state !== 'opened') {
               const target = mousePoint ? document.elementFromPoint(mousePoint.x, mousePoint.y) : null;
               hovered = !!target && movingLayer.contains(target) && outsideInput(target);
               host.toggleAttribute('data-conversation-dock-hover', hovered);
-              movingLayer.style.backgroundColor = shade();
             }
             if (state !== 'opened') releaseReader();
             schedule();
           });
         } else {
-          layer.style.backgroundColor = toShade;
+          layer.style.removeProperty('--conversation-dock-line');
           if (nextState !== 'opened') releaseReader();
         }
       }
       lastHeight = layer.getBoundingClientRect().height;
-      if (!conversationMotion(pane).active(layer)) layer.style.backgroundColor = shade();
       if (reader && state !== 'opened' && !host.hasAttribute('data-conversation-dock-transition')) readerHeight = reader.getBoundingClientRect().height;
     }
     if (composer) {
