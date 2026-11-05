@@ -32,7 +32,7 @@ STALE_SHA = "b" * 40
 STATUS_PATHS = ("/api/health", "/api/meta", "/api/deployment-status", "/api/updates")
 WAIT_PAYLOAD = {
     "detail": (
-        "Installation is unconfirmed. Work remains paused. Chief review is required."
+        "Panels is not ready for changes. The update status remains available."
     )
 }
 STALE_PAYLOAD = {
@@ -166,12 +166,12 @@ def test_exact_status_and_static_exceptions_to_closed_gate(
             ("HEAD", "/api/projects", False),
             ("OPTIONS", "/api/projects", False),
             ("GET", "/api/health/", False),
-            ("GET", "/api/changes", False),
+            ("GET", "/api/changes", True),
             ("POST", "/api/changes", False),
-            ("POST", "/api/updates/requests", False),
-            ("POST", "/api/updates/requests/current/claim", False),
-            ("POST", "/api/updates/requests/current/now", False),
-            ("POST", "/api/updates/requests/current/cancel", False),
+            ("POST", "/api/updates/requests", True),
+            ("POST", "/api/updates/requests/current/claim", True),
+            ("POST", "/api/updates/requests/current/now", True),
+            ("POST", "/api/updates/requests/current/cancel", True),
             ("POST", "/api/updates/requests/current/delete", False),
             ("GET", "/api/updates/claim", False),
             ("POST", "/api/updates/claim", False),

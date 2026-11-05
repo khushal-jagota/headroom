@@ -21,6 +21,7 @@
     updating: { word: "Updating Panels", state: "changing", track: true },
     restarting: { word: "Restarting", state: "changing", detail: "Back in a moment", track: true },
     complete: { word: "Update complete", state: "done", action: "Refresh" },
+    held: { word: "Refresh waits until this message is safe", state: "changing", sentence: true },
     failed: { word: "Update didn't install", state: "wrong", action: "View" },
     unreachable: { word: "Can't reach Panels", state: "wrong", action: "Try now", detail: "Trying again every few seconds" }
   };
@@ -118,7 +119,8 @@
   $effect(() => {
     const now = Date.now();
     clock = now;
-    const deadlines = [effectiveStatus?.available?.expires_at].map(value => Date.parse(value ?? "")).filter(value => value > now);
+    const deadlines = [effectiveStatus?.restart_deadline_at ?? effectiveStatus?.deadline_at,
+      effectiveStatus?.available?.expires_at].map(value => Date.parse(value ?? "")).filter(value => value > now);
     const cancel = deadlines.map(deadline => atUpdateDeadline(deadline, () => { clock = Date.now(); }));
     return () => { for (const stop of cancel) stop(); };
   });

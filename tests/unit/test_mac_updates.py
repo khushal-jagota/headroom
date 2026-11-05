@@ -149,18 +149,17 @@ def test_approved_bytes_and_last_applied_target_survive_expiry_and_replaced_requ
     target = mac.check().target
     assert target is not None and not target.activate and target.mode == "now"
     assert mac.archive(request.request_id).read_bytes() == provider.archive
-    updates.store.transition(request.request_id, frozenset({"requested"}), "done")
+    updates.store.transition(request.request_id, frozenset({"pending"}), "applied")
     # A new VPS process sees the target release. Preserve it before replacement.
     mac = MacUpdateService(mac.root, updates.store, None, provider.offered.manifest.app_sha)
     mac.prepare(release())
     assert mac.check().target is not None
-    successor = replace(request, request_id="successor", state="requested", release=release())
+    successor = replace(request, request_id="successor", state="pending", release=release())
     updates.store.create(successor)
     unavailable = mac.status()
     assert unavailable is not None and unavailable.phase == "unavailable"
     assert mac.check().target is None
-    updates.store.transition("successor", frozenset({"requested"}), "failed",
-        detail="Update canceled before installation. The previous version stayed active.")
+    updates.store.transition("successor", frozenset({"pending"}), "cancelled")
     # No repository/provider remains. An expired receipt still authorizes its pinned bytes.
     retained = FileUpdateRequestStore(mac.root / "applied.json")
     saved = retained.read()
@@ -217,7 +216,7 @@ def test_recovery_routes_work_without_work_handshake_but_reject_untrusted_caller
             client.get("/api/executor/update/not-approved/archive", headers=headers).status_code
             == 409
         )
-        updates.store.transition(request.request_id, frozenset({"requested"}), "done")
+        updates.store.transition(request.request_id, frozenset({"pending"}), "applied")
         mac.current_app_sha = provider.offered.manifest.app_sha
         identity = ExecutorIdentity(
             PROTOCOL_VERSION,

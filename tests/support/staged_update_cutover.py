@@ -12,6 +12,9 @@ import socket
 import subprocess
 import sys
 import time
+from dataclasses import asdict, replace
+from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +23,11 @@ from tests.unit.test_deployment import SHA_A, SHA_B, _app
 
 from planner.environments.app import validate_app_manifest
 from planner.environments.deployment import HttpHealthClient, deploy_app
-from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+from planner.environments.deployment_lifecycle import (
+    DeploymentLifecycleStore,
+    _atomic_write,
+    _exclusive_lock,
+)
 from planner.environments.update_requests import FileUpdateRequestStore
 
 _SERVER = r'''
@@ -102,6 +109,26 @@ class StagedProcess:
         raise AssertionError("Disposable staged HTTP process did not start")
 
 
+class DeadlineHealth:
+    """Use real HTTP health, then advance the fixture's durable deadline."""
+
+    def __init__(self, url: str, store: FileUpdateRequestStore, *, expire: bool) -> None:
+        self.client = HttpHealthClient(url, poll_seconds=0.02)
+        self.store, self.expire = store, expire
+
+    def wait_for_sha(self, sha: str, *, deadline: float) -> bool:
+        healthy = self.client.wait_for_sha(sha, deadline=deadline)
+        if healthy and sha == SHA_B and self.expire:
+            with _exclusive_lock(self.store.lock_path):
+                receipt = self.store.read()
+                assert receipt is not None and receipt.state == "applying"
+                expired = replace(
+                    receipt, deadline_at=(datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+                )
+                _atomic_write(self.store.path, asdict(expired))
+        return healthy
+
+
 class StagedCutover:
     """Use one disposable installed app across failed and successful browser attempts."""
 
@@ -134,7 +161,7 @@ class StagedCutover:
     ) -> str:
         started = time.monotonic()
         receipt = store.read()
-        assert receipt is not None and receipt.state in {"installing"}
+        assert receipt is not None and receipt.state in {"dispatched", "applying"}
         assert receipt.release.manifest == self.manifest
         self.process.fail_sha = SHA_B if fail else ""
         current = lifecycle.read().lifecycle
@@ -143,6 +170,15 @@ class StagedCutover:
                 receipt.request_id, SHA_B, prior_sha=self.observed_sha(),
                 expected_deployment_id=current.deployment_id if current is not None else None,
             )
+
+        def claim() -> None:
+            current_receipt = store.read()
+            assert current_receipt is not None
+            if current_receipt.state == "dispatched":
+                store.transition(
+                    receipt.request_id, frozenset({"dispatched"}), "applying",
+                    deployment_id=receipt.request_id,
+                )
 
         def publish(phase: str, **values: object) -> None:
             lifecycle.transition(receipt.request_id, phase, **values)  # type: ignore[arg-type]
@@ -163,13 +199,10 @@ class StagedCutover:
                 candidate_app=self.candidate, current_root=self.root, source_db=database,
                 backup=backup, restore=restore, service=self.process,
                 health=HttpHealthClient(self.process.url + "/api/health", poll_seconds=0.02),
-                health_timeout_seconds=0.5, lifecycle_transition=publish,
+                health_timeout_seconds=0.5, before_stop=claim, lifecycle_transition=publish,
                 deployment_id=receipt.request_id,
+                installation_guard=partial(store.installation_guard, receipt.request_id),
             )
-        store.transition(
-            receipt.request_id, frozenset({"installing"}),
-            "failed" if fail else "done",
-        )
         observed = self.observed_sha()
         assert result.status == ("rolled_back" if fail else "succeeded")
         assert observed == (SHA_A if fail else SHA_B)

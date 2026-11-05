@@ -45,7 +45,11 @@ export async function fetchJson<T = unknown>(path: string, options: FetchOptions
   let headers: Record<string, string> = { ...(options.headers || {}) };
   const method = (options.method || "GET").toUpperCase();
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-    headers = await mutationHeaders(headers);
+    try {
+      headers = await mutationHeaders(headers);
+    } catch (cause) {
+      throw new PlannerFetchError(cause instanceof Error ? cause.message : "Refresh page before making changes", "page_version_unconfirmed");
+    }
   }
   const init: RequestInit = {
     method: options.method || "GET",

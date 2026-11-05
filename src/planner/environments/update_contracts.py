@@ -6,6 +6,8 @@ AppManifest remains the authority for the installed application's identity.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -23,7 +25,7 @@ type UpdateExperienceState = Literal[
 ]
 type UpdateAction = Literal["update", "cancel", "update_now", "retry"]
 type UpdateRequestState = Literal[
-    "requested", "installing", "done", "failed"
+    "pending", "dispatched", "applying", "applied", "cancelled", "failed"
 ]
 
 
@@ -57,6 +59,9 @@ class OwnerUpdateRequest:
     created_at: str
     detail: str | None = None
     confirm_activity: bool = False
+    dispatched_at: str | None = None
+    deadline_at: str | None = None
+    deployment_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +75,8 @@ class UpdateStatus:
     allowed_actions: tuple[UpdateAction, ...] = ()
     phase: DeploymentPhase | None = None
     app_sha: str | None = None
+    deadline_at: str | None = None
+    restart_deadline_at: str | None = None
 
 
 class UpdateProvider(Protocol):
@@ -91,6 +98,13 @@ class UpdateRequestStore(Protocol):
 
     def promote(self, request_id: str, *, confirm_activity: bool) -> OwnerUpdateRequest: ...
 
+    def installation_guard(self, request_id: str) -> AbstractContextManager[None]: ...
+
+    def settle(
+        self,
+        decide: Callable[[OwnerUpdateRequest], tuple[UpdateRequestState, str] | None],
+    ) -> OwnerUpdateRequest | None: ...
+
     def transition(
         self,
         request_id: str,
@@ -98,4 +112,5 @@ class UpdateRequestStore(Protocol):
         state: UpdateRequestState,
         *,
         detail: str | None = None,
+        deployment_id: str | None = None,
     ) -> OwnerUpdateRequest: ...

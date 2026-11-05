@@ -6,5 +6,5 @@ After=panels-live.service
 Type=oneshot
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PLAN_HERMES_HOME=%h/.hermes
-ExecStart=%h/Deployments/Panels/current/app/bin/panels environment backup-current --source-db %h/Deployments/Panels/current/data/planner.db --backup-dir %h/Deployments/Panels/current/data/backups --current-app %h/Deployments/Panels/current/app
+ExecStart=%h/Deployments/Panels/current/app/bin/panels-launcher environment backup-current --source-db %h/Deployments/Panels/current/data/planner.db --backup-dir %h/Deployments/Panels/current/data/backups --current-app %h/Deployments/Panels/current/app
 NoNewPrivileges=yes

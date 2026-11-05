@@ -511,7 +511,7 @@ def test_refused_work_protocol_recovers_through_actual_server_update_contract(
         provider = MacProvider()
         updates, server = services(tmp_path / "server", provider)
         request = updates.request(provider.offered, "now", confirm_activity=True)
-        updates.store.transition(request.request_id, frozenset({"requested"}), "done")
+        updates.store.transition(request.request_id, frozenset({"pending"}), "applied")
         server.current_app_sha = provider.offered.manifest.app_sha
         exits: list[bool] = []
         phases: list[str] = []

@@ -1615,9 +1615,10 @@ def verify_rail_overflow(page, fixture, evidence):
     fixture["release_sha"] = "fixture-next"
     page.evaluate("window.__ownerUpdatesSignal(); dispatchEvent(new Event('pageshow'))")
     status_samples = []
-    for state, word in [("ready", "Update complete"), ("composing", "Update complete")]:
-        if state == "composing":
+    for state, word in [("ready", "Update complete"), ("held", "Refresh waits until this message is safe")]:
+        if state == "held":
             page.evaluate("document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))")
+            page.locator("[data-shell-refresh]:visible").click()
         for viewport_width in [721, 720]:
             page.set_viewport_size({"width": viewport_width, "height": 700})
             expect(rail).to_be_visible()
@@ -1628,7 +1629,7 @@ def verify_rail_overflow(page, fixture, evidence):
                 expect(grip).to_have_attribute("aria-valuenow", "232")
             bounds = status_geometry(word)
             status = page.locator(".status-card:visible")
-            assert status.locator(".status-action").count() == 1
+            assert status.locator(".status-action").count() == (1 if state == "ready" else 0)
             values = []
             for scroller, selector in [(active, ".manager-card:not(.chief) .settle"), (settled, ".reopen")]:
                 dimensions = geometry(scroller)
@@ -1652,12 +1653,6 @@ def verify_rail_overflow(page, fixture, evidence):
                 values.append(dimensions)
             status_samples.append({"state": state, "viewportWidth": viewport_width, "status": bounds, "scrollers": values})
             page.screenshot(path=str(evidence / f"rail-overflow-status-{state}-{viewport_width}.png"))
-    # Composition no longer holds a requested refresh. Keep both geometry modes
-    # actionable, then cross the real reload boundary before later fixture work.
-    page.evaluate("window.__beforeStatusRefreshDocument = document")
-    with page.expect_navigation(wait_until="domcontentloaded"):
-        page.locator("[data-shell-refresh]:visible").click()
-    assert page.evaluate("document !== window.__beforeStatusRefreshDocument")
     (evidence / "rail-overflow-status-geometry.json").write_text(json.dumps(status_samples, indent=2))
     (evidence / "rail-overflow-geometry.json").write_text(json.dumps({
         "seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "samples": proof,
@@ -1809,13 +1804,13 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         dialog.get_by_role("button", name="When work finishes", exact=True).click()
         expect(card).to_contain_text("Update waits for work to finish")
         pinned = backend.store.read()
-        assert pinned is not None and pinned.state == "requested" and pinned.mode == "idle"
+        assert pinned is not None and pinned.state == "pending" and pinned.mode == "idle"
         retained()
         capture("waiting")
         card.get_by_role("button").click()
         dialog.get_by_role("button", name="Cancel update", exact=True).click()
         expect(card).to_contain_text("Update available")
-        assert backend.store.read().state == "failed"
+        assert backend.store.read().state == "cancelled"
         expect(card).not_to_contain_text("canceled")
         retained()
 
@@ -1830,7 +1825,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card).to_contain_text("Updating Panels")
         receipt = backend.store.read()
         assert receipt is not None and receipt.request_id == pending.request_id
-        assert receipt.state == "installing" and receipt.mode == "now" and receipt.confirm_activity
+        assert receipt.state == "dispatched" and receipt.mode == "now" and receipt.confirm_activity
         assert posts[-1]["path"].endswith("/" + receipt.request_id + "/now")
         assert len(backend.provider.dispatched) == 1
         retained()
@@ -1852,8 +1847,31 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         assert len(backend.provider.dispatched) == 2
         retained()
 
+        # Candidate startup changed the running SHA, but no health commit exists.
+        # The old page must retain a supported same-SHA retry instead of a dead end.
+        previous = backend.lifecycle.read().lifecycle
+        backend.lifecycle.start(receipt.request_id, backend.provider.offered.manifest.app_sha, prior_sha=observed,
+                                expected_deployment_id=previous.deployment_id if previous else None)
+        backend.lifecycle.transition(receipt.request_id, "restarting")
+        backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "failed", detail="The candidate did not commit health.")
+        backend.current_sha = backend.provider.offered.manifest.app_sha
+        backend.service.current_app_sha = backend.current_sha
+        backend.service.recovery_admission = lambda: True
+        signal()
+        expect(card).to_contain_text("Update didn't install")
+        card.get_by_role("button").click()
+        expect(dialog).to_contain_text("The candidate did not commit health.")
+        dialog.get_by_role("button", name="Try again", exact=True).click()
+        expect(card).to_contain_text("Updating Panels")
+        receipt = backend.store.read()
+        assert receipt is not None
+        assert len(backend.provider.dispatched) == 3
+        assert posts[-1]["boot_sha"] == "b" * 40
+        assert page.evaluate("document.querySelector('meta[name=panels-app-sha]').content") == "a" * 40
+        retained()
+
         # A second failure with an expired publication has only Not now.
-        backend.store.transition(receipt.request_id, frozenset({"installing"}), "failed")
+        backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "failed")
         offered = backend.provider.offered
         backend.provider.offered = replace(offered, expires_at="2000-01-01T00:00:00Z")
         backend.service.refresh_available(force=True)
@@ -1880,6 +1898,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         expect(card).to_contain_text("Updating Panels")
         receipt = backend.store.read()
         assert receipt is not None
+        backend.store.transition(receipt.request_id, frozenset({"dispatched"}), "applying")
         previous_lifecycle = backend.lifecycle.read().lifecycle
         backend.lifecycle.start(receipt.request_id, offered.manifest.app_sha, prior_sha=cutover.observed_sha(),
                                 expected_deployment_id=previous_lifecycle.deployment_id if previous_lifecycle else None)
@@ -1900,6 +1919,7 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         observed = cutover.apply(backend.store, backend.lifecycle, Path(backend.directory.name) / "planner.db")
         backend.current_sha = observed
         backend.service.current_app_sha = observed
+        backend.service.recovery_admission = lambda: False
         signal()
         expect(card).to_contain_text("Update complete")
         expect(page.locator(".board-workspace-right")).to_have_css("opacity", "1")
@@ -1914,6 +1934,13 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         health.click()
         assert page.evaluate("document === window.__beforeUpdateDocument")
         card.get_by_role("button").click()
+        expect(card).to_contain_text("Refresh waits until this message is safe")
+        expect(box).to_have_value(draft)
+        assert page.evaluate("document === window.__beforeUpdateDocument")
+        retained()
+        capture("held")
+        assert card.locator(".status-base .status-mark").evaluate("node => getComputedStyle(node).animationName") == "none"
+        box.fill("")
         page.wait_for_function("document !== window.__beforeUpdateDocument")
         expect(box).to_be_visible()
         assert documents == ["a" * 40, "b" * 40]
@@ -1924,8 +1951,8 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             "stagedOutcomes": cutover.outcomes, "stagedProcessStarts": len(cutover.process.pids),
             "dispatchCount": len(backend.provider.dispatched), "requests": posts, "documentVersions": documents,
             "boundary": "Full App and native dialogs -> actual FastAPI update routes -> durable request/lifecycle records; synthetic external dispatcher",
-            "cardIdentity": "Both desktop and phone card nodes retained across waiting, updating, failure, retry, restart, and complete",
-            "cutover": "Actual deploy_app file replacement, rollback, and disposable HTTP health supply the browser version; archive admission, repository dispatch, remain synthetic.",
+            "cardIdentity": "Both desktop and phone card nodes retained across waiting, updating, failure, retry, restart, complete, and held Refresh",
+            "cutover": "Actual deploy_app file replacement, rollback, and disposable HTTP health supply the browser version; archive admission, repository dispatch, and claim remain synthetic.",
         }, indent=2))
     finally:
         context.close()

@@ -5,15 +5,27 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
 from planner.core import change_signal
 from planner.environments.app import AppManifest
-from planner.environments.deployment_lifecycle import _atomic_write, _exclusive_lock
+from planner.environments.deployment_lifecycle import (
+    DeploymentLifecycleStore,
+    _atomic_write,
+    _exclusive_lock,
+)
+from planner.environments.logic.update_experience import instant, request_deadline
 from planner.environments.runtime_contracts import parse_optional_runtime_contract
-from planner.environments.update_configuration import MAX_CANCELLED_UPDATE_REPORTS
+from planner.environments.update_configuration import (
+    MAX_CANCELLED_UPDATE_REPORTS,
+    UPDATE_ATTEMPT_TIMEOUT_SECONDS,
+)
 from planner.environments.update_contracts import (
     OwnerUpdateRequest,
     PublishedMacUpdate,
@@ -49,10 +61,32 @@ def parse_release(payload: dict[str, object]) -> PublishedUpdate:
         archive_sha256=str(payload["archive_sha256"]),
         schema_floor=str(payload["schema_floor"]),
         expires_at=str(payload["expires_at"]),
-        mac=None if mac is None else PublishedMacUpdate(
-            artifact_id=mac["artifact_id"], archive_sha256=mac["archive_sha256"],
+        mac=None
+        if mac is None
+        else PublishedMacUpdate(
+            artifact_id=mac["artifact_id"],
+            archive_sha256=mac["archive_sha256"],
             archive_size=mac["archive_size"],
         ),
+    )
+
+
+def parse_request(payload: dict[str, object]) -> OwnerUpdateRequest:
+    """Read wire receipts and persisted requests through the same versioned defaults."""
+    release = payload["release"]
+    if not isinstance(release, dict):
+        raise ValueError("request release must be an object")
+    return OwnerUpdateRequest(
+        request_id=cast(str, payload["request_id"]),
+        release=parse_release(release),
+        mode=cast(UpdateMode, payload["mode"]),
+        state=cast(UpdateRequestState, payload["state"]),
+        created_at=cast(str, payload["created_at"]),
+        detail=cast(str | None, payload.get("detail")),
+        confirm_activity=cast(bool, payload.get("confirm_activity", False)),
+        dispatched_at=cast(str | None, payload.get("dispatched_at")),
+        deadline_at=cast(str | None, payload.get("deadline_at")),
+        deployment_id=cast(str | None, payload.get("deployment_id")),
     )
 
 
@@ -70,15 +104,63 @@ class FileUpdateRequestStore:
             payload = json.loads(path.read_text())
         except FileNotFoundError:
             return None
-        return OwnerUpdateRequest(
-            request_id=payload["request_id"],
-            release=parse_release(payload["release"]),
-            mode=cast(UpdateMode, payload["mode"]),
-            state=cast(UpdateRequestState, payload["state"]),
-            created_at=payload["created_at"],
-            detail=payload.get("detail"),
-            confirm_activity=payload.get("confirm_activity", False),
-        )
+        return parse_request(payload)
+
+    def recover_legacy_attempt(
+        self,
+        expected: OwnerUpdateRequest,
+        *,
+        deployment_id: str,
+        failed_deployment_id: str,
+        prior_sha: str,
+        lifecycle: DeploymentLifecycleStore,
+    ) -> OwnerUpdateRequest:
+        """Bind explicit operator recovery to an accepted, pre-attempt-contract claim.
+
+        The caller holds the deployment lock and has proved the old app's health,
+        closed admission, and identical live request. This is the only path that
+        renews an expired legacy claim; ordinary transitions never renew authority.
+        """
+        with _exclusive_lock(self.lock_path):
+            current = self.read()
+            if (
+                current != expected
+                or current is None
+                or current.state != "applying"
+                or current.mode != "now"
+                or not current.confirm_activity
+                or current.deployment_id is not None
+                or current.dispatched_at is not None
+                or current.deadline_at is not None
+                or current.release.mac is not None
+            ):
+                raise UpdateConflict("Recovery requires the unchanged accepted legacy request.")
+            record = lifecycle.read().lifecycle
+            if (
+                record is None
+                or record.deployment_id != failed_deployment_id
+                or record.phase != "unknown"
+                or record.code != "admission_evidence_uncertain"
+                or record.prior_sha != prior_sha
+                or record.requested_sha != current.release.manifest.app_sha
+                or record.serving_sha is not None
+                or record.requested_sha == prior_sha
+            ):
+                raise UpdateConflict(
+                    "Recovery requires the matching uncommitted admission failure."
+                )
+            lifecycle.start(
+                deployment_id, record.requested_sha,
+                expected_deployment_id=failed_deployment_id, prior_sha=prior_sha,
+            )
+            now = datetime.now(UTC)
+            recovered = replace(
+                current, deployment_id=deployment_id, dispatched_at=now.isoformat(),
+                deadline_at=(now + timedelta(seconds=UPDATE_ATTEMPT_TIMEOUT_SECONDS)).isoformat(),
+            )
+            _atomic_write(self.path, asdict(recovered))
+            change_signal.emit()
+            return recovered
 
     def _cancelled_path(self, request_id: str) -> Path:
         # Hash the identity so a malformed request cannot escape the report directory.
@@ -88,12 +170,11 @@ class FileUpdateRequestStore:
     def _prune_cancelled_reports(self) -> None:
         directory = self.path.parent / "cancelled-update-requests"
         reports = [
-            path
-            for path in directory.glob("*.json")
+            path for path in directory.glob("*.json")
             if re.fullmatch(r"[0-9a-f]{64}\.json", path.name) and not path.is_symlink()
         ]
         reports.sort(key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
-        for path in reports[MAX_CANCELLED_UPDATE_REPORTS - 1 :]:
+        for path in reports[MAX_CANCELLED_UPDATE_REPORTS - 1:]:
             path.unlink()
 
     def read_for_reporting(self, request_id: str) -> OwnerUpdateRequest | None:
@@ -103,12 +184,8 @@ class FileUpdateRequestStore:
             if current is not None and current.request_id == request_id:
                 return current
             archived = self._read_path(self._cancelled_path(request_id))
-            if (
-                archived is not None
-                and archived.request_id == request_id
-                and archived.state == "failed"
-                and archived.detail == CANCELLED_DETAIL
-            ):
+            if (archived is not None and archived.request_id == request_id
+                    and archived.state == "cancelled"):
                 return archived
         except (OSError, ValueError, KeyError, TypeError):
             pass
@@ -117,13 +194,9 @@ class FileUpdateRequestStore:
     def create(self, request: OwnerUpdateRequest) -> OwnerUpdateRequest:
         with _exclusive_lock(self.lock_path):
             current = self.read()
-            if current is not None and current.state in {"requested", "installing"}:
+            if current is not None and current.state in {"pending", "dispatched", "applying"}:
                 raise UpdateConflict("An update request already exists.")
-            if (
-                current is not None
-                and current.state == "failed"
-                and current.detail == CANCELLED_DETAIL
-            ):
+            if current is not None and current.state == "cancelled":
                 try:
                     self._prune_cancelled_reports()
                     _atomic_write(self._cancelled_path(current.request_id), asdict(current))
@@ -141,12 +214,48 @@ class FileUpdateRequestStore:
         state: UpdateRequestState,
         *,
         detail: str | None = None,
+        deployment_id: str | None = None,
     ) -> OwnerUpdateRequest:
         with _exclusive_lock(self.lock_path):
             current = self.read()
-            if current is None or current.request_id != request_id or current.state not in expected:
+            if current is None or current.request_id != request_id:
                 raise UpdateConflict("The update request changed or application already began.")
-            updated = replace(current, state=state, detail=detail)
+            if current.state in {"applied", "failed", "cancelled"}:
+                if state == current.state:
+                    return current
+                raise UpdateConflict("The update already ended.")
+            if current.state not in expected:
+                raise UpdateConflict("The update request changed or application already began.")
+            now = datetime.now(UTC)
+            deadline = request_deadline(current) if state in {"dispatched", "applying"} else None
+            if state in {"dispatched", "applying"} and deadline is not None and deadline <= now:
+                raise UpdateConflict("The update attempt expired.")
+            dispatched_at = current.dispatched_at
+            deadline_at = current.deadline_at
+            if state == "dispatched" and current.state == "pending":
+                dispatched_at = now.isoformat()
+                deadline_at = (now + timedelta(seconds=UPDATE_ATTEMPT_TIMEOUT_SECONDS)).isoformat()
+            updated = replace(
+                current, state=state, detail=CANCELLED_DETAIL if state == "cancelled" else detail,
+                dispatched_at=dispatched_at, deadline_at=deadline_at,
+                deployment_id=deployment_id or current.deployment_id,
+            )
+            _atomic_write(self.path, asdict(updated))
+            change_signal.emit()
+            return updated
+
+
+    def settle(
+        self, decide: Callable[[OwnerUpdateRequest], tuple[UpdateRequestState, str] | None],
+    ) -> OwnerUpdateRequest | None:
+        with _exclusive_lock(self.lock_path):
+            current = self.read()
+            if current is None:
+                return None
+            outcome = decide(current)
+            if current.state in {"applied", "failed", "cancelled"} or outcome is None:
+                return current
+            updated = replace(current, state=outcome[0], detail=outcome[1])
             _atomic_write(self.path, asdict(updated))
             change_signal.emit()
             return updated
@@ -157,9 +266,38 @@ class FileUpdateRequestStore:
         with _exclusive_lock(self.lock_path):
             current = self.read()
             if (current is None or current.request_id != request_id
-                    or current.state != "requested" or current.mode != "idle"):
+                    or current.state != "pending" or current.mode != "idle"):
                 raise UpdateConflict("The waiting update changed or already began.")
+            if instant(current.release.expires_at) <= datetime.now(UTC):
+                raise UpdateConflict("The waiting update expired.")
             updated = replace(current, mode="now", confirm_activity=True)
             _atomic_write(self.path, asdict(updated))
             change_signal.emit()
             return updated
+
+    @contextmanager
+    def dispatch_guard(self, request_id: str) -> Iterator[None]:
+        with self._authority_guard(request_id, "dispatched"):
+            yield
+
+    @contextmanager
+    def installation_guard(self, request_id: str) -> Iterator[None]:
+        with self._authority_guard(request_id, "applying"):
+            yield
+
+    @contextmanager
+    def _authority_guard(self, request_id: str, expected: UpdateRequestState) -> Iterator[None]:
+        """Serialize candidate cutover and health commit with terminal settlement.
+
+        Never hold this lock during downloads, backup, or health polling. A stale
+        runner can recover its fallback under the deployment lock, but cannot
+        install a candidate or commit health after this authority ends.
+        """
+        with _exclusive_lock(self.lock_path):
+            current = self.read()
+            if current is None or current.request_id != request_id or current.state != expected:
+                raise UpdateConflict("The runner no longer owns installation authority.")
+            deadline = request_deadline(current)
+            if deadline is not None and deadline.timestamp() <= time.time():
+                raise UpdateConflict("The update attempt expired before installation committed.")
+            yield

@@ -10,17 +10,19 @@ recorded subprocess is stopped.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import time
 from collections.abc import Callable
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import cast
 
 import httpx
-from tests.support.staged_update_cutover import StagedProcess
+from tests.support.staged_update_cutover import DeadlineHealth, StagedProcess
 from tests.unit.test_deployment import SHA_A, SHA_B, _app
 from tests.unit.test_deployment import (
     synthetic_runtime_admission as synthetic_runtime_admission,
@@ -30,7 +32,7 @@ from planner.conversation.contracts import ConversationSystem
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.db import connect, create_schema
 from planner.environments.app import validate_app_manifest
-from planner.environments.deployment import HttpHealthClient, deploy_app
+from planner.environments.deployment import deploy_app
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.update_contracts import OwnerUpdateRequest, PublishedUpdate
 from planner.environments.update_requests import FileUpdateRequestStore
@@ -97,7 +99,7 @@ def test_staged_failure_retry_and_document_reload_serve_the_cutover_version(tmp_
         previous_id: str | None = None
         receipts: list[str] = []
         outcomes: list[str] = []
-        for failure in ("unhealthy", None):
+        for failure in ("unhealthy", "deadline", None):
             expected = "rolled_back" if failure is not None else "succeeded"
             request = owner.request(release, "now", confirm_activity=True)
             receipts.append(request.request_id)
@@ -106,6 +108,10 @@ def test_staged_failure_retry_and_document_reload_serve_the_cutover_version(tmp_
                 request.request_id, SHA_B, expected_deployment_id=previous_id, prior_sha=SHA_A,
             )
             previous_id = request.request_id
+            # The runner takes its real claim before the transaction stops the process.
+            def claim(owner: UpdateService = owner, request_id: str = request.request_id) -> None:
+                asyncio.run(owner.claim(request_id))
+
             def publish(
                 phase: str, request_id: str = request.request_id, **values: object,
             ) -> None:
@@ -124,22 +130,21 @@ def test_staged_failure_retry_and_document_reload_serve_the_cutover_version(tmp_
                 candidate_app=candidate, current_root=root, source_db=database,
                 backup=backup, restore=restore,
                 service=process,
-                health=HttpHealthClient(process.url + "/api/health", poll_seconds=0.02),
+                health=DeadlineHealth(
+                    process.url + "/api/health", store, expire=failure == "deadline",
+                ),
                 health_timeout_seconds=0.5, lifecycle_transition=publish,
-                deployment_id=request.request_id,
+                deployment_id=request.request_id, before_stop=claim,
+                installation_guard=partial(store.installation_guard, request.request_id),
             )
             assert result.status == expected
             outcomes.append(result.status)
             installed = SHA_A if expected == "rolled_back" else SHA_B
             owner = service(installed)
-            # The runner records the transaction result in its pinned request.
-            store.transition(
-                request.request_id, frozenset({"installing"}),
-                "failed" if installed == SHA_A else "done",
-            )
+            # No runner report: the server must settle from durable evidence.
             status = owner.status()
             assert status.request is not None
-            assert status.request.state == ("failed" if installed == SHA_A else "done")
+            assert status.request.state == ("failed" if installed == SHA_A else "applied")
             assert SHA_A in old_document  # The already-loaded page remains the old version.
             fresh_document = httpx.get(process.url).text
             assert installed in fresh_document
@@ -149,13 +154,13 @@ def test_staged_failure_retry_and_document_reload_serve_the_cutover_version(tmp_
             else:
                 assert status.app_sha == SHA_B
                 assert "new" in [path.name for path in (root / "app").iterdir()]
-        assert len(set(receipts)) == 2
+        assert len(set(receipts)) == 3
         assert not list(root.glob(".app-*"))
         print(json.dumps({
             "boundary": "real cutover + subprocess restart + exact-SHA HTTP + document reload",
             "seconds": round(time.monotonic() - started, 3), "newHosts": 1,
             "processes": len(process.pids), "outcomes": outcomes,
-            "failureModes": ["unhealthy candidate"],
+            "failureModes": ["unhealthy candidate", "deadline after exact-SHA health"],
             "oldDocumentSHA": SHA_A, "reloadedDocumentSHA": SHA_B,
         }))
     finally:
