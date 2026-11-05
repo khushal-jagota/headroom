@@ -185,6 +185,27 @@ describe("manager rail projection", () => {
 
   });
 
+  it("does not hold a goal window under the pointer that its own answer reports as short", async () => {
+    // A lagging goal list once sized Chief's window to 2 of 3 goals, and a pointer resting
+    // on a goal row kept the full window from ever showing.
+    const goal = (id: string) => ({id}) as NonNullable<WorkspaceRailPresentation["goalRails"]>[number]["rows"][number];
+    const window = (limit: number, ids: string[], total: number) => ({window_id:"goals:chief", request:{section:"goals" as const, owner:{kind:"chief" as const,id:"chief"},
+      group:"all" as const, child_filter:"all" as const, anchor:null, direction:"after" as const, limit},
+      members:ids.map(id=>({kind:"goal" as const,id})), total, previous:null, next:null, forward_overlap:null, backward_overlap:null});
+    const holder = (limit: number, ids: string[], total: number) => [{owner:{kind:"chief" as const,id:"chief"}, sole:null, rows:ids.map(goal), window:window(limit,ids,total)}];
+    let presented: WorkspaceRailPresentation = {rail:buildWorkspaceRail([]), settledOpen:false, goalRails:holder(2,["a","b"],3)};
+    const motion = createRailMotionController(() => null, () => presented, (next) => presented = next);
+    motion.freeze(true);
+    motion.update({...presented, goalRails:holder(3,["a","b","c"],3)});
+    await tick();
+    expect(presented.goalRails?.[0].rows.map(row=>row.id)).toEqual(["a","b","c"]);
+    // A complete window holds still under the pointer as before.
+    motion.update({...presented, goalRails:holder(3,["a","c","d"],3)});
+    await tick();
+    expect(presented.goalRails?.[0].rows.map(row=>row.id)).toEqual(["a","b","c"]);
+    motion.dispose();
+  });
+
   it("acknowledges manual folds during a frozen rail exit and admits late pages without another entrance", async () => {
     let presented: WorkspaceRailPresentation = {rail:buildWorkspaceRail([card("departing")]), settledOpen:false};
     const plays: {node:string; frames:Keyframe[]; duration:number; delay:number; canceled:boolean; finish:()=>void}[] = [];

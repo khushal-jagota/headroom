@@ -5424,7 +5424,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .skeleton-content:not(.resource-state):not(.skeleton-content--inline){display:contents}
 .skeleton-region--fill{height:100%;min-height:0;flex:1;min-width:0}
 .skeleton-region--fill[data-active]{min-height:0}
-.skeleton-region--fill > .skeleton-content{display:flex;flex-direction:column;overflow:auto}
+/* Fill regions scroll up and down only. Content that reaches past the edge is clipped, never scrolled to. */
+.skeleton-region--fill > .skeleton-content{display:flex;flex-direction:column;overflow-x:hidden;overflow-y:auto}
 .skeleton-region > .skeleton{pointer-events:none}
 .skeleton-region--inline{display:inline-block;vertical-align:middle;min-width:72px;height:24px}
 .skeleton-region--inline > .skeleton{display:flex;align-items:center;mask-image:none;-webkit-mask-image:none}

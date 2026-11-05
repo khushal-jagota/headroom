@@ -20,6 +20,9 @@ from planner.environments import deployment_lifecycle  # noqa: E402
 RENEW_INTERVAL_SECONDS = 60.0
 POLL_INTERVAL_SECONDS = 0.05
 SHUTDOWN_GRACE_SECONDS = 2.0
+# Bounds one whole receipt recovery run, including starting its Python writer. It is
+# not a wait after a signal, so it does not share the shutdown grace.
+RECEIPT_RECOVERY_DEADLINE_SECONDS = 2.0
 TERMINAL_PHASES = {"succeeded", "failed", "rolled_back"}
 LIFECYCLE_WRITER = (
     Path(__file__).resolve().parents[1] / "src/planner/environments/deployment_lifecycle.py"
@@ -33,6 +36,7 @@ class Timings:
     renewal: float = RENEW_INTERVAL_SECONDS
     poll: float = POLL_INTERVAL_SECONDS
     shutdown_grace: float = SHUTDOWN_GRACE_SECONDS
+    receipt_recovery_deadline: float = RECEIPT_RECOVERY_DEADLINE_SECONDS
 
 
 DEFAULT_TIMINGS = Timings()
@@ -269,7 +273,7 @@ def supervise(
             [sys.executable, str(LIFECYCLE_WRITER), *arguments], pass_fds=descriptors,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
         )
-        deadline = time.monotonic() + timings.shutdown_grace
+        deadline = time.monotonic() + timings.receipt_recovery_deadline
         stopped = False
         timed_out = False
         while renewal.poll() is None:

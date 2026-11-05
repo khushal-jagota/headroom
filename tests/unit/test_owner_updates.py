@@ -851,9 +851,14 @@ def test_runner_preflight_failure_preserves_cancellation_and_uncertain_admission
         assert receipt.detail is None
 
 
+@pytest.mark.parametrize(
+    "evidence_case",
+    ["exact", "pinned_before_mac", "pinned_field_differs", "pinned_mac_differs"],
+)
 def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    evidence_case: str,
 ) -> None:
     import json
     import shutil
@@ -895,6 +900,17 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     offered = replace(
         release(), manifest=validate_app_manifest(manifest_path), archive_sha256=checksum
     )
+    mac = PublishedMacUpdate(artifact_id=4, archive_sha256="a" * 64, archive_size=10)
+    # Retained evidence parsed by this runner's contracts carries the Mac part.
+    evidence = replace(offered, mac=mac)
+    if evidence_case == "exact":
+        offered = evidence
+    elif evidence_case == "pinned_mac_differs":
+        offered = replace(evidence, mac=replace(mac, archive_size=11))
+    elif evidence_case == "pinned_field_differs":
+        # A pre-Mac pin still binds every field it recorded.
+        evidence = replace(evidence, expires_at="2099-01-01T00:00:00+00:00")
+    # "pinned_before_mac": a server without Mac contracts pinned mac=None.
     database = current / "data" / "planner.db"
     database.parent.mkdir()
     with sqlite3.connect(database) as conn:
@@ -903,16 +919,21 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     update_runner.validate_schema_ancestry(database)
     store = FileUpdateRequestStore(database.parent / "owner-update-request.json")
     store.create(OwnerUpdateRequest("request", offered, "idle", "dispatched", "now"))
+    if offered.mac is None:
+        # The older server's contracts wrote no Mac key at all.
+        pinned = json.loads(store.path.read_text())
+        del pinned["release"]["mac"]
+        store.path.write_text(json.dumps(pinned))
     effects: list[str] = []
 
     class RetainedProvider:
         def publication(self, run_id: int) -> PublishedUpdate:
-            return offered
+            return evidence
 
         def download_artifact(self, artifact_id: int, destination: Path) -> None:
             with zipfile.ZipFile(destination, "w") as zipped:
                 if artifact_id == offered.proof_artifact_id:
-                    zipped.writestr("publication.json", json.dumps(asdict(offered)))
+                    zipped.writestr("publication.json", json.dumps(asdict(evidence)))
                 else:
                     zipped.write(sealed, "panels-app.tar.gz")
 
@@ -940,7 +961,12 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
         archive_sha256=checksum,
         health_url="http://127.0.0.1:1/api/health",
     )
-    with pytest.raises(ValueError, match="unknown schema ancestry"):
+    refusal = (
+        "no longer has trusted retained evidence"
+        if evidence_case in {"pinned_field_differs", "pinned_mac_differs"}
+        else "unknown schema ancestry"
+    )
+    with pytest.raises(ValueError, match=refusal):
         update_runner.apply(arguments)
     assert effects == []
     assert store.read().state == "dispatched"  # type: ignore[union-attr]

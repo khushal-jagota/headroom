@@ -15,7 +15,11 @@ from typing import cast
 
 from planner.core import change_signal
 from planner.environments.app import AppManifest
-from planner.environments.deployment_lifecycle import _atomic_write, _exclusive_lock
+from planner.environments.deployment_lifecycle import (
+    DeploymentLifecycleStore,
+    _atomic_write,
+    _exclusive_lock,
+)
 from planner.environments.logic.update_experience import instant, request_deadline
 from planner.environments.runtime_contracts import parse_optional_runtime_contract
 from planner.environments.update_configuration import (
@@ -67,6 +71,25 @@ def parse_release(payload: dict[str, object]) -> PublishedUpdate:
     )
 
 
+def parse_request(payload: dict[str, object]) -> OwnerUpdateRequest:
+    """Read wire receipts and persisted requests through the same versioned defaults."""
+    release = payload["release"]
+    if not isinstance(release, dict):
+        raise ValueError("request release must be an object")
+    return OwnerUpdateRequest(
+        request_id=cast(str, payload["request_id"]),
+        release=parse_release(release),
+        mode=cast(UpdateMode, payload["mode"]),
+        state=cast(UpdateRequestState, payload["state"]),
+        created_at=cast(str, payload["created_at"]),
+        detail=cast(str | None, payload.get("detail")),
+        confirm_activity=cast(bool, payload.get("confirm_activity", False)),
+        dispatched_at=cast(str | None, payload.get("dispatched_at")),
+        deadline_at=cast(str | None, payload.get("deadline_at")),
+        deployment_id=cast(str | None, payload.get("deployment_id")),
+    )
+
+
 class FileUpdateRequestStore:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -81,18 +104,63 @@ class FileUpdateRequestStore:
             payload = json.loads(path.read_text())
         except FileNotFoundError:
             return None
-        return OwnerUpdateRequest(
-            request_id=payload["request_id"],
-            release=parse_release(payload["release"]),
-            mode=cast(UpdateMode, payload["mode"]),
-            state=cast(UpdateRequestState, payload["state"]),
-            created_at=payload["created_at"],
-            detail=payload.get("detail"),
-            confirm_activity=payload.get("confirm_activity", False),
-            dispatched_at=payload.get("dispatched_at"),
-            deadline_at=payload.get("deadline_at"),
-            deployment_id=payload.get("deployment_id"),
-        )
+        return parse_request(payload)
+
+    def recover_legacy_attempt(
+        self,
+        expected: OwnerUpdateRequest,
+        *,
+        deployment_id: str,
+        failed_deployment_id: str,
+        prior_sha: str,
+        lifecycle: DeploymentLifecycleStore,
+    ) -> OwnerUpdateRequest:
+        """Bind explicit operator recovery to an accepted, pre-attempt-contract claim.
+
+        The caller holds the deployment lock and has proved the old app's health,
+        closed admission, and identical live request. This is the only path that
+        renews an expired legacy claim; ordinary transitions never renew authority.
+        """
+        with _exclusive_lock(self.lock_path):
+            current = self.read()
+            if (
+                current != expected
+                or current is None
+                or current.state != "applying"
+                or current.mode != "now"
+                or not current.confirm_activity
+                or current.deployment_id is not None
+                or current.dispatched_at is not None
+                or current.deadline_at is not None
+                or current.release.mac is not None
+            ):
+                raise UpdateConflict("Recovery requires the unchanged accepted legacy request.")
+            record = lifecycle.read().lifecycle
+            if (
+                record is None
+                or record.deployment_id != failed_deployment_id
+                or record.phase != "unknown"
+                or record.code != "admission_evidence_uncertain"
+                or record.prior_sha != prior_sha
+                or record.requested_sha != current.release.manifest.app_sha
+                or record.serving_sha is not None
+                or record.requested_sha == prior_sha
+            ):
+                raise UpdateConflict(
+                    "Recovery requires the matching uncommitted admission failure."
+                )
+            lifecycle.start(
+                deployment_id, record.requested_sha,
+                expected_deployment_id=failed_deployment_id, prior_sha=prior_sha,
+            )
+            now = datetime.now(UTC)
+            recovered = replace(
+                current, deployment_id=deployment_id, dispatched_at=now.isoformat(),
+                deadline_at=(now + timedelta(seconds=UPDATE_ATTEMPT_TIMEOUT_SECONDS)).isoformat(),
+            )
+            _atomic_write(self.path, asdict(recovered))
+            change_signal.emit()
+            return recovered
 
     def _cancelled_path(self, request_id: str) -> Path:
         # Hash the identity so a malformed request cannot escape the report directory.

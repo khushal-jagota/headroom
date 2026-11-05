@@ -12,7 +12,7 @@ import os
 import sqlite3
 import tempfile
 import zipfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import httpx
@@ -32,13 +32,29 @@ from planner.environments.deployment import (
 from planner.environments.deployment_gate_contracts import PublicationGateEvidence
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore, lifecycle_path
 from planner.environments.update_artifacts import extract_app_archive
+from planner.environments.update_contracts import OwnerUpdateRequest, PublishedUpdate
 from planner.environments.update_provider import GitHubUpdateProvider
 from planner.environments.update_requests import (
     FileUpdateRequestStore,
     UpdateConflict,
     parse_release,
+    parse_request,
 )
 from planner.environments.update_service import validate_release
+
+
+def matches_pinned_release(evidence: PublishedUpdate | None, pinned: PublishedUpdate) -> bool:
+    """Compare retained evidence with exactly what the owner request pinned.
+
+    A server from before Mac publication pins no Mac part. Its request still
+    adopts the VPS release; the Mac runtime is then outside that request.
+    Every field the request does pin, including a pinned Mac part, stays exact.
+    """
+    if evidence is None:
+        return False
+    if pinned.mac is None:
+        evidence = replace(evidence, mac=None)
+    return evidence == pinned
 
 
 def validate_schema_ancestry(database: Path, migrations: Path = MIGRATIONS_DIRECTORY) -> None:
@@ -72,10 +88,11 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
     database = root / "data" / "planner.db"
     store = FileUpdateRequestStore(root / "data" / "owner-update-request.json")
     request = store.read()
+    recovery = getattr(arguments, "command", "apply") == "recover-legacy"
     if (
         request is None
         or request.request_id != arguments.request_id
-        or request.state != "dispatched"
+        or request.state != ("applying" if recovery else "dispatched")
     ):
         raise ValueError("The pinned request is cancelled, already claimed, or missing.")
     release = request.release
@@ -111,13 +128,21 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
     )
     # Artifact metadata and the proof bind IDs to a successful trusted main run.
     trusted = provider.publication(release.publication_run_id)
-    if trusted != release:
+    if not matches_pinned_release(trusted, release):
         raise ValueError("The pinned publication no longer has trusted retained evidence.")
     lifecycle = DeploymentLifecycleStore(lifecycle_path(root))
-    deployment_id = os.environ.get("PANELS_DEPLOYMENT_ID", request.request_id)
+    deployment_id = (
+        arguments.deployment_id if recovery
+        else os.environ.get("PANELS_DEPLOYMENT_ID", request.request_id)
+    )
 
     def claim() -> None:
         validate_schema_ancestry(database, candidate_migrations)
+        if recovery:
+            # deploy_app holds the deployment lock; all download, proof, schema,
+            # runtime and staged-byte checks have passed before recovery can write.
+            recover_legacy_claim(arguments, store, lifecycle, request)
+            return
         previous = lifecycle.read().lifecycle
         prior_manifest = validate_app_manifest(
             root / "app" / "manifest.json", require_runtime=False
@@ -141,13 +166,26 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
         if (
             response.status_code != 200
             or recorded is None
-            or response.json() != json.loads(json.dumps(asdict(recorded)))
+            or parse_request(response.json()) != recorded
         ):
             raise ValueError(
                 "Runner admission was refused or uncertain. The service remains unchanged."
             )
         if recorded.state != "applying":
             raise ValueError("Runner admission lacks an applying receipt.")
+        if recorded.deployment_id not in {None, deployment_id}:
+            raise ValueError("Runner admission belongs to another deployment attempt.")
+        if recorded != replace(
+            request, state="applying", deployment_id=recorded.deployment_id
+        ):
+            raise ValueError("Runner admission changed the pinned owner request.")
+        if recorded.deployment_id is None:
+            # Old servers ignore the claim body and omit optional receipt fields.
+            # Bind that accepted claim to this runner without renewing its budget.
+            store.transition(
+                request.request_id, frozenset({"applying"}), "applying",
+                deployment_id=deployment_id,
+            )
 
     with tempfile.TemporaryDirectory(prefix="panels-owner-update-") as temporary:
         work = Path(temporary)
@@ -155,7 +193,7 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
         with zipfile.ZipFile(work / "proof.zip") as zipped:
             proof = json.loads(zipped.read("publication.json"))
         proof["proof_artifact_id"] = release.proof_artifact_id
-        if parse_release(proof) != release:
+        if not matches_pinned_release(parse_release(proof), release):
             raise ValueError("Downloaded proof differs from the pinned publication.")
         provider.download_artifact(release.artifact_id, work / "app.zip")
         with zipfile.ZipFile(work / "app.zip") as zipped:
@@ -206,19 +244,75 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
     return asdict(result)
 
 
+def recover_legacy_claim(
+    arguments: argparse.Namespace,
+    store: FileUpdateRequestStore,
+    lifecycle: DeploymentLifecycleStore,
+    expected: OwnerUpdateRequest,
+) -> None:
+    """Prove an already-closed legacy admission, never repeat its HTTP claim.
+
+    Called only from deploy_app's before_stop callback under its deployment lock.
+    An operator must pin both the failed attempt and the still-installed prior app.
+    """
+    prior = validate_app_manifest(
+        arguments.current_root / "app" / "manifest.json", require_runtime=False
+    )
+    if prior.app_sha != arguments.prior_sha:
+        raise ValueError("Legacy recovery prior app no longer matches the installed app.")
+    base_url = arguments.health_url.removesuffix("/api/health")
+    health = httpx.get(
+        arguments.health_url, params={"expected_sha": arguments.prior_sha}, timeout=30
+    )
+    if health.status_code != 200 or (
+        health.json().get("ready") is not True
+        or health.json().get("app_sha") != arguments.prior_sha
+    ):
+        raise ValueError("Legacy recovery requires exact-SHA prior app health.")
+    status = httpx.get(base_url + "/api/deployment-status", timeout=30)
+    if status.status_code != 200 or any(
+        status.json().get(key) != value for key, value in {
+            "state": "unknown", "deployed_sha": arguments.prior_sha,
+            "target_sha": arguments.app_sha, "work_paused": True,
+            "installation_confirmed": False,
+        }.items()
+    ):
+        raise ValueError("Legacy recovery requires unchanged paused deployment evidence.")
+    live = httpx.get(base_url + "/api/updates", timeout=30)
+    if (
+        live.status_code != 200
+        or not isinstance(live.json().get("request"), dict)
+        or parse_request(live.json()["request"]) != expected
+    ):
+        raise ValueError("Legacy recovery live request differs from the accepted receipt.")
+    store.recover_legacy_attempt(
+        expected, deployment_id=arguments.deployment_id,
+        failed_deployment_id=arguments.failed_deployment_id,
+        prior_sha=arguments.prior_sha, lifecycle=lifecycle,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    command = commands.add_parser("apply")
-    for name in ("request-id", "app-sha", "artifact-digest", "archive-sha256"):
-        command.add_argument("--" + name, required=True)
-    for name in ("publication-run-id", "artifact-id", "proof-artifact-id"):
-        command.add_argument("--" + name, type=int, required=True)
-    command.add_argument(
-        "--current-root", type=Path, default=Path.home() / "Deployments/Panels/current"
-    )
-    command.add_argument("--health-url", default="http://127.0.0.1:8767/api/health")
+    for operation in ("apply", "recover-legacy"):
+        command = commands.add_parser(operation)
+        for name in ("request-id", "app-sha", "artifact-digest", "archive-sha256"):
+            command.add_argument("--" + name, required=True)
+        for name in ("publication-run-id", "artifact-id", "proof-artifact-id"):
+            command.add_argument("--" + name, type=int, required=True)
+        command.add_argument(
+            "--current-root", type=Path, default=Path.home() / "Deployments/Panels/current"
+        )
+        command.add_argument("--health-url", default="http://127.0.0.1:8767/api/health")
+        if operation == "recover-legacy":
+            for name in ("deployment-id", "failed-deployment-id", "prior-sha"):
+                command.add_argument("--" + name, required=True)
     arguments = parser.parse_args()
+    deployment_id = (
+        arguments.deployment_id if arguments.command == "recover-legacy"
+        else os.environ.get("PANELS_DEPLOYMENT_ID", arguments.request_id)
+    )
     try:
         result = apply(arguments)
         print(json.dumps(result, sort_keys=True))
@@ -232,7 +326,7 @@ def main() -> int:
         committed = DeploymentLifecycleStore(lifecycle_path(root)).read().lifecycle
         try:
             if recorded is not None and recorded.request_id == arguments.request_id:
-                if recorded.state == "dispatched":
+                if recorded.state == "dispatched" and arguments.command == "apply":
                     store.transition(
                         recorded.request_id,
                         frozenset({"dispatched"}),
@@ -243,7 +337,7 @@ def main() -> int:
                     if (
                         committed is not None
                         and committed.deployment_id
-                        == os.environ.get("PANELS_DEPLOYMENT_ID", arguments.request_id)
+                        == deployment_id
                         and committed.requested_sha == arguments.app_sha
                         and committed.serving_sha == arguments.app_sha
                         and committed.phase in {"app_healthy", "succeeded", "failed"}

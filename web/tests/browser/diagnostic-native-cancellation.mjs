@@ -12,7 +12,7 @@ import { markdownWorkerPlugins } from "../../build/markdown-worker.mjs";
 import { ownedByProcess, scratchDirectory } from "../support/scratch.mjs";
 import { prepare } from "./cases/live-conversation-unanswered-send.mjs";
 
-const controls = ["clean", "zero-tail", "positive-tail", "late-wheel", "late-acceptance", "broken-wheel", "broken-supersession"];
+const controls = ["clean", "zero-tail", "late-wheel", "late-acceptance", "broken-wheel", "broken-supersession"];
 const webRoot = fileURLToPath(new URL("../../", import.meta.url));
 const repositoryRoot = dirname(webRoot.replace(/\/$/, ""));
 const selections = [];

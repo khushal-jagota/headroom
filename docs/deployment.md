@@ -56,6 +56,8 @@ The commit is the boundary.
 
 Every dispatched attempt has a durable deadline. The server settles the request from the running version and the matching attempt records, even if the runner disappears. A settled attempt cannot regain installation authority or block a later request. An expired wait also ends. Expiry alone never reopens ordinary work or restores data. A paused candidate needs health proof before work can resume.
 
+An older server may accept an install before its runner can recognise the receipt. The runner reads old and new receipts through the same defaults. If an already accepted legacy attempt is stuck before shutdown, an operator can explicitly recover it through the same install job. Recovery first proves the prior app is still healthy, work remains paused, and the saved request and failure match. It grants a new bounded attempt for that pinned release; it never silently selects a newer release. See the [legacy recovery runbook](../ops/panels-environments/recover-legacy-update.md).
+
 One server answer supplies the update state and allowed actions. The sidebar card moves through Updating and Restarting to **Update complete · Refresh**. The browser reconnects after a restart and preserves a message draft until Refresh is safe. A failed install offers Try again while the release remains valid. Update complete means that the VPS finished. The Mac has separate status and work.
 
 A finalizer records the installed commit, application health, and each later check separately. It runs from checked-out source with the host's own Python, never from the app it judges. Missing evidence stays uncertain.
