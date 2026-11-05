@@ -5,8 +5,8 @@ import {createGoalRequestSessions} from '../src/lib/goals/requestSessions';
 import type {PageContext} from '../src/lib/pageKit/context';
 
 function goal(id:string):GoalResponse{
- return {id,project_id:'project',title:id,why:'',kind:'binary',active:true,completed:false,completion_date:null,completion_rule:null,outcome:'undated',primary_checklist_block_id:null,deadline:null,primary_chart:null,
-  page:{kind:'headroom.page',version:1,title:id,summary:'',blocks:[]},revision:1,created_at:0,updated_at:0,employee_backend:'codex',employee_launch_model:'model',employee_launch_reasoning_effort:null,conversation_id:null,status:'neutral',status_date:'2026-10-31',next_refresh_at:1};
+ return {holder_kind:'chief',holder_id:null,legacy_conversation_id:null,id,project_id:'project',title:id,why:'',kind:'binary',active:true,completed:false,completion_date:null,completion_rule:null,outcome:'undated',primary_checklist_block_id:null,deadline:null,primary_chart:null,
+  page:{kind:'headroom.page',version:1,title:id,summary:'',blocks:[]},revision:1,created_at:0,updated_at:0,employee_backend:'codex',employee_launch_model:'model',employee_launch_reasoning_effort:null,status:'neutral',status_date:'2026-10-31',next_refresh_at:1};
 }
 function readings(id:string,value:number):GoalReadingsResponse{
  const reading:MeasureValue={measure_id:'measure',date:'2026-10-31',definition_revision:1,status:'value',value,inputs:[],missing_inputs:[],query_start_at:null,query_end_at:null,limitation:null,coverage_status:'not_applicable',coverage_reasons:[]};
@@ -61,7 +61,8 @@ it('retains optional host capability references without granting absent capabili
  const source={goalId:()=> 'first',goal:()=>goal('first'),readings:()=>undefined,narrow:()=>true,sessions:()=>sessions};
  const updateBlock:PageContext['updateBlock']=async()=>undefined;
  const manualSession:PageContext['manualSession']=measureId=>sessions.manual('first',measureId);
- const authorText:PageContext['authorText']={draft:()=>({value:null,error:null,saving:false}),begin:()=>async()=>undefined};
+ const draft={value:null,error:null,saving:false};
+ const authorText:PageContext['authorText']={draft:()=>draft,begin:()=>async()=>undefined};
  const card=createGoalPageContext(source,{updateBlock});
  expect(card.updateBlock).toBe(updateBlock);
  expect('manualSession' in card).toBe(false);

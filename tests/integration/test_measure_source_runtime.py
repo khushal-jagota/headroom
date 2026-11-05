@@ -105,14 +105,20 @@ time.sleep(30)
     pid, descendant = json.loads(marker.read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
-    # The source's child is terminated too. Its orphaned exit status belongs to init.
+    # SIGKILL targets the whole run group. The descendant can briefly remain
+    # runnable until the scheduler delivers it, after the source parent is reaped.
+    # Require termination, not just a successful signal or parent exit.
     status = Path(f"/proc/{descendant}/stat")
-    try:
-        process_state = status.read_text().split()[2]
-    except (FileNotFoundError, ProcessLookupError):
-        pass  # Reaping can remove the process before open or during the read.
-    else:
-        assert process_state in {"Z", "X"}  # Both states describe a terminated process.
+    deadline = time.monotonic() + 1
+    while True:
+        try:
+            process_state = status.read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            break  # Init reaped it before open or during the read.
+        if process_state in {"Z", "X"}:
+            break
+        assert time.monotonic() < deadline, f"Descendant {descendant} remains {process_state}"
+        time.sleep(0.01)
     assert result.metrics.elapsed_milliseconds < 3000
 
 

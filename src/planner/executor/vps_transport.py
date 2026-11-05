@@ -16,8 +16,10 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import Clock
 from planner.core.contracts import PrincipalKind
 from planner.core.errors import PlannerError
-from planner.execution_identity import ExecutorIdentity
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ExecutorIdentity, supports_executor_versions
 from planner.executor.catalog_relay import VpsCatalogRelay
+from planner.executor.clock import now_ms
 from planner.executor.files import file_digest
 from planner.executor.link import ControlMessageStream, Link, accept_link
 from planner.executor.link_files import GenerationTransfers, settled_io
@@ -54,13 +56,22 @@ class ExecutorHealthRead(TypedDict):
     identity: JsonObject | None
     connection_state: str
     last_contact_at_ms: int | None
+    refusal: JsonObject | None
 
 
 class VpsExecutor:
     """Compose VPS owners and adapt app transport frames to their typed inputs."""
 
-    def __init__(self, db_path: str, clock: Clock, *, machine_id: str = "macos") -> None:
+    def __init__(
+        self,
+        db_path: str,
+        clock: Clock,
+        *,
+        machine_id: str = "macos",
+        application_revision: str = "unknown",
+    ) -> None:
         self.db_path = db_path
+        self.application_revision = application_revision
         self.runs = MacRuns(db_path)
         self.inbox = MacInbox(db_path, clock, self.runs)
         self.catalog = VpsCatalogRelay(self.runs, machine_id=machine_id)
@@ -68,6 +79,7 @@ class VpsExecutor:
         self.message_files = ConversationMessageFiles(db_path)
         self.app: ASGIApp
         self._last_contact_at_ms: int | None = None
+        self._refusal: JsonObject | None = None
         self.transfers: dict[ExecutorIdentity, GenerationTransfers] = {}
         self._transport_lock = asyncio.Lock()
 
@@ -100,8 +112,10 @@ class VpsExecutor:
         return link.last_received_at_ms if link is not None else self._last_contact_at_ms
 
     def health(self) -> ExecutorHealthRead:
+        self._last_contact_at_ms, self._refusal = self.runs.store.contact_status()
         return {
             "identity": None if self.runs.identity is None else as_object(self.runs.identity),
+            "refusal": self._refusal,
             "last_contact_at_ms": self.last_contact_at_ms,
             "connection_state": "ready"
             if self.runs.ready
@@ -109,6 +123,28 @@ class VpsExecutor:
             if self.runs.link is None
             else "reconciling",
         }
+
+    def _inspect_identity(self, identity: ExecutorIdentity) -> JsonObject | None:
+        if supports_executor_versions(identity.protocol_version, identity.spool_format_version):
+            return None
+        at_ms = now_ms()
+        server = ExecutorIdentity(
+            PROTOCOL_VERSION, self.application_revision, SPOOL_FORMAT_VERSION, "", 0
+        )
+        refusal = {
+            "reason": "Mac needs update"
+            if identity.protocol_version < PROTOCOL_VERSION
+            or identity.spool_format_version < SPOOL_FORMAT_VERSION
+            else "Mac version is incompatible",
+            "peer_identity": as_object(identity),
+            "server_identity": as_object(server),
+            "refused_at_ms": at_ms,
+        }
+        if self.runs.link is None:
+            self._refusal = cast(JsonObject, refusal)
+            self._last_contact_at_ms = at_ms
+            self.runs.store.contact(at_ms, refusal)
+        return cast(JsonObject, refusal)
 
     async def session(self, stream: ControlMessageStream) -> None:
         link: Link | None = None
@@ -121,6 +157,9 @@ class VpsExecutor:
                 old_identity = self.runs.identity
                 await self.runs.admit(candidate)
                 admitted = candidate
+                self._refusal = None
+                self.runs.store.contact(now_ms(), clear=True)
+                candidate.received = self.runs.store.contact
             if old_identity is not None:
                 await self._close_transport(old_identity)
             if self.runs.link is not candidate:
@@ -129,7 +168,7 @@ class VpsExecutor:
             return identity
 
         try:
-            link = await accept_link(stream, admit)
+            link = await accept_link(stream, admit, self._inspect_identity)
             identity = link.identity
             if self.runs.link is not link:
                 return

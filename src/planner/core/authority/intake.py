@@ -59,6 +59,29 @@ def _admit_source_assignment(
     authority.require_above(conn, principal, authority.owner_only("measure_sources"))
 
 
+
+def _manager_manual_measure(
+    conn: sqlite3.Connection, manager_id: str, measure_id: str
+) -> bool:
+    from planner.goals import data as goals
+    from planner.goals.logic.documents import measure_ids
+    from planner.managers.data import read_manager
+    from planner.measures import data as measures
+    from planner.measures.contracts import MeasureOrigin
+
+    if measures.read_measure(conn, measure_id).origin is not MeasureOrigin.manual:
+        return False
+    page = read_manager(conn, manager_id).item.page
+    if page is not None and measure_id in measure_ids(None, page):
+        return True
+    return any(
+        goal.holder_kind == "manager"
+        and goal.holder_id == manager_id
+        and measure_id in measure_ids(goal.primary_chart, goal.page)
+        for goal in goals.list_goals(conn)
+    )
+
+
 def admit_command(
     conn: sqlite3.Connection,
     principal: Principal,
@@ -172,6 +195,9 @@ def admit_command(
             if route.endswith('/manual-writes'):
                 if principal.kind is PrincipalKind.goal:
                     return  # The writer checks the goal's bound manual measure.
+                if (principal.kind is PrincipalKind.manager and identifier is not None
+                        and _manager_manual_measure(conn, principal.id, identifier)):
+                    return
                 target = authority.owner_only('measures')
             elif identifier is not None:
                 record = (measures.read_measure(conn, identifier) if family == 'measures'

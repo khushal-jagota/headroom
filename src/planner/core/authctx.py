@@ -133,3 +133,13 @@ def require_owner(ctx: RequestContext) -> None:
         "this operation is available only to the owner",
         {"actor": principal_legacy_actor(ctx.principal)},
     )
+
+
+AUTHENTICATED_OWNER_SCOPE_KEY: Final = "planner.authenticated_owner"
+
+
+def require_authenticated_owner(request: Request) -> None:
+    """Device registration needs the deployed access boundary's owner identity."""
+    require_owner(request_context(request))
+    if request.scope.get(AUTHENTICATED_OWNER_SCOPE_KEY) is not True:
+        raise PlannerError(ErrorCode.agent_forbidden, "authenticated owner access is required", {})

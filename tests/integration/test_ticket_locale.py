@@ -53,7 +53,7 @@ def test_http_native_provider_creation_allowed_offline_but_both_execution_doors_
                 connection, ticket, worker_type_definition=definition
             )
             blocker = worker_step_blocker(connection, ticket, worker_type_definition=definition)
-            assert blocker is not None and "macos" in blocker and "cannot start" in blocker
+            assert blocker is not None and "Mac Tickets cannot start" in blocker
             assert (
                 connection.execute(
                     "SELECT 1 FROM executor_connections WHERE active=1 AND connection_state='ready'"
@@ -81,7 +81,7 @@ def test_http_native_provider_creation_allowed_offline_but_both_execution_doors_
         assert error["detail"]["ticket_id"] == created["id"]
         assert error["detail"]["locale"] == "macos"
         assert error["detail"]["machine_locale"] == "vps"
-        assert "macos" in error["message"] and "cannot start" in error["message"]
+        assert "Mac Tickets cannot start" in error["message"]
         with connect(str(server.db_path)) as connection:
             assert (
                 tuple(

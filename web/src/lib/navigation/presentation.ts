@@ -44,7 +44,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   let exactOutClaimCount=0;
   let chiefRecord:Extract<(typeof records)[number],{kind:'chief'}> | undefined;
   for(const record of records) {
-    if(record.kind==='ticket' || record.kind==='manager' || record.kind==='chief' || record.kind==='goal') {
+    if(record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') {
       if(record.value.conversation_id!==null) currentConversationIds.add(record.value.conversation_id);
     }
     if(record.kind==='ticket') {
@@ -239,7 +239,7 @@ export function navigationWorkingAgentCount(view:EffectiveNavigationView | null 
   if(counts)return counts.running_conversations;
   const pointers=new Set<string>();
   for(const record of view.publication.records) {
-    if((record.kind==='ticket' || record.kind==='manager' || record.kind==='chief' || record.kind==='goal') && record.value.conversation_id!==null) {
+    if((record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') && record.value.conversation_id!==null) {
       pointers.add(record.value.conversation_id);
     }
   }

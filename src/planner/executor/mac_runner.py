@@ -21,6 +21,9 @@ from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerRefused,
+    BackendStreamEnded,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     NeedsRebind,
     PermissionAskRaised,
     PromptWriteRefused,
@@ -85,6 +88,7 @@ from planner.executor.protocol import (
     Quiescence,
     StartRun,
     Steer,
+    StopRun,
     WireMessageKind,
     WithdrawCommands,
     WritePrompt,
@@ -150,6 +154,7 @@ class RunningChild:
     backend_key: ConversationBackendKey
     active_turn: TurnToken | None = None
     asks: dict[str, AskReference] = field(default_factory=dict)
+    background_task_ids: set[str] = field(default_factory=set)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     model: str | None = None
     reasoning_effort: str | None = None
@@ -196,6 +201,9 @@ class MacRunner:
         self._withdrawn_commands: set[str] = set()
         self._commands: dict[str, _CommandRecord] = {}
         self.admission_stopped = False
+        self.planned_update_replay = False
+        self._planned_replay_finished = asyncio.Event()
+        self._planned_replay_finished.set()
         self._retired_children: set[str] = set()
         self._retiring_children: set[str] = set()
         self._source_tasks: dict[ChildReference, set[asyncio.Task[object]]] = {}
@@ -402,6 +410,10 @@ class MacRunner:
     async def _stop_exact_child(self, command: ChildCommand) -> CommandOutcome:
         reference = command.child
         child = self._children.get(reference.child_id)
+        if child is None and self.planned_update_replay:
+            # A restarted VPS can request retirement before FIFO replay starts.
+            # Preserve old write/file authority until the saved FIFO has receipts.
+            await self._planned_replay_finished.wait()
         current = asyncio.current_task()
         stop_owner = next(
             (
@@ -803,6 +815,12 @@ class MacRunner:
             if child.active_turn == turn:
                 child.active_turn = None
                 child.asks.clear()
+        elif isinstance(event, BackgroundTaskStarted):
+            child.background_task_ids.add(event.task_id)
+        elif isinstance(event, BackgroundTaskEnded):
+            child.background_task_ids.discard(event.task_id)
+        elif isinstance(event, BackendStreamEnded):
+            child.background_task_ids.clear()
         method, arguments = encode_backend_event(event)
         wire_event = BackendEvent(reference, method, turn, arguments)
         await asyncio.to_thread(
@@ -868,3 +886,68 @@ class MacRunner:
             counts = self._quiescence_counts()
             stopped = not self._children and not any(counts)
         return Quiescence(True, *counts, stopped)
+
+    def resume_after_cancelled_update(self) -> None:
+        self.admission_stopped = False
+        self.connection.admission_stopped = False
+
+    def begin_planned_replay(self) -> None:
+        self.planned_update_replay = True
+        self._planned_replay_finished.clear()
+        self.admission_stopped = True
+        self.connection.admission_stopped = True
+
+    def finish_planned_replay(self) -> None:
+        self.planned_update_replay = False
+        self._planned_replay_finished.set()
+
+    async def prepare_update(self, mode: Literal["now", "idle"]) -> bool:
+        """Stop processes, but retain output that already reached the journal.
+
+        Normal maintenance still requires all receipts. A planned runtime swap
+        transfers journal custody and only waits for local publication safety.
+        """
+        if mode == "idle" and (
+            any(self._quiescence_counts()[:3])
+            or any(child.background_task_ids for child in self._children.values())
+        ):
+            return False
+        # No await separates the idle observation from both admission gates.
+        self.admission_stopped = True
+        self.connection.admission_stopped = True
+        children = tuple(self._children.values())
+        for child in children:
+            self._retiring_children.add(child.reference.child_id)
+        for command_id in tuple(self._commands):
+            self.withdraw(command_id)
+        # A provider call can hold child.lock until its process stops. Stop the
+        # native processes before joining those calls or taking their locks.
+        await asyncio.gather(*(child.native.stop() for child in children))
+        command_tasks = tuple(
+            record.task for record in self._commands.values()
+            if record.task is not None and not record.task.done()
+        )
+        if command_tasks:
+            await asyncio.gather(*(asyncio.shield(task) for task in command_tasks))
+        for child in children:
+            await self._finish_source_work(child.reference)
+        await self.flush_command_output(tuple(self._commands))
+        if self._failed_source_work or any(
+            record.required_output is not None and not record.output_published
+            for record in self._commands.values()
+        ):
+            raise RuntimeError("update cannot abandon required local output")
+        for child in children:
+            # This proof follows every saved result in the conversation FIFO.
+            # It closes old assignments only after replay accepts prior output.
+            command = ChildCommand(
+                f"update_stop_{uuid4().hex}", child.reference,
+                ChildOperation.stop, None, StopRun(),
+            )
+            outcome = _outcome(command, CommandDisposition.succeeded, {})
+            record = _CommandRecord(command, outcome=outcome, required_output=outcome)
+            self._commands[command.command_id] = record
+            await self._publish_required_output(record)
+            self._retired_children.add(child.reference.child_id)
+            self._children.pop(child.reference.child_id, None)
+        return True

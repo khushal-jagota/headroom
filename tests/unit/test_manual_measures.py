@@ -431,3 +431,55 @@ def test_goal_writes_require_its_current_saved_manual_binding(tmp_db: Connection
         manual.write_value(tmp_db, shared.id, first, principal=actor, now=NOW)
     assert manual.read_state(tmp_db, shared.id, "2026-10-27", now=NOW).write_revision == 2
     assert tmp_db.execute("SELECT COUNT(*) FROM manual_measure_writes").fetchone()[0] == 2
+
+
+def test_manager_writes_only_manual_measures_bound_to_its_held_goals(tmp_db: Connection) -> None:
+    """Command intake grants manual writes only for the Manager's current bindings."""
+    from tests.unit.test_goal_pages import create
+
+    from planner.core.authority.intake import admit_command
+    from planner.goals import actions as goals
+    from planner.measures.contracts import ManualWriteResult
+
+    measure = manual_measure(tmp_db)
+    foreign = manual_measure(tmp_db)
+    goal = create(
+        tmp_db,
+        kind="quantitative",
+        primary_chart={
+            "type": "chart",
+            "kind": "line",
+            "measure_id": measure.id,
+        },
+    )
+    manager_id, moved = goals.make_manager(
+        tmp_db,
+        goal.id,
+        principal=CHIEF_PRINCIPAL,
+        clock=FakeClock(datetime.fromtimestamp(NOW, UTC)),
+    )
+    actor = Principal(PrincipalKind.manager, manager_id)
+    request = replacement("holder-manual", "2026-10-27", 4, 0)
+    def write(measure_id: str) -> ManualWriteResult:
+        admit_command(
+            tmp_db, actor, "POST", "/api/measures/{measure_id}/manual-writes",
+            {"measure_id": measure_id}, request,
+        )
+        return manual.write_value(tmp_db, measure_id, request, principal=actor, now=NOW)
+
+    accepted = write(measure.id)
+    assert accepted.receipt.actor == actor
+    with pytest.raises(PlannerError):
+        admit_command(
+            tmp_db, actor, "POST", "/api/measures/{measure_id}/manual-writes",
+            {"measure_id": foreign.id}, request,
+        )
+    goals.update_goal(
+        tmp_db,
+        moved.id,
+        {"holder_kind": "chief", "holder_id": None},
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    with pytest.raises(PlannerError):
+        write(measure.id)

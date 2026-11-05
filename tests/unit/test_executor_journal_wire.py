@@ -71,13 +71,21 @@ def test_oversized_envelope_never_becomes_a_queued_poison_entry(tmp_path: Path) 
     spool.close()
 
 
-def test_previous_protocol_cannot_admit_native_default_work() -> None:
+@pytest.mark.parametrize("version", [19, 20])
+def test_current_and_previous_protocol_admit_native_work(version: int) -> None:
     from uuid import uuid4
 
-    from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.execution_configuration import SPOOL_FORMAT_VERSION
     from planner.execution_identity import ExecutorIdentity, validate_identity
 
-    with pytest.raises(ProtocolRefused, match="protocol or spool format mismatch"):
-        validate_identity(ExecutorIdentity(
-            PROTOCOL_VERSION - 1, "retained", SPOOL_FORMAT_VERSION, str(uuid4()), 1
-        ))
+    validate_identity(ExecutorIdentity(version, "retained", SPOOL_FORMAT_VERSION, str(uuid4()), 1))
+
+
+@pytest.mark.parametrize("version,spool", [(18, 5), (21, 5), (20, 4), (True, 5), (20, True)])
+def test_unsupported_versions_refuse_before_work(version: int, spool: int) -> None:
+    from uuid import uuid4
+
+    from planner.execution_identity import ExecutorIdentity, validate_identity
+
+    with pytest.raises(ProtocolRefused):
+        validate_identity(ExecutorIdentity(version, "retained", spool, str(uuid4()), 1))

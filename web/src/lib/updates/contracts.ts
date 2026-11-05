@@ -1,6 +1,8 @@
 /** The JSON projection of environments/update_contracts.py. */
 export type UpdateMode = "now" | "idle";
 export type UpdateActivity = "idle" | "busy" | "unknown";
+export type UpdateExperienceState = "up_to_date" | "available" | "waiting" | "updating" | "restarting" | "failed" | "complete";
+export type UpdateAction = "update" | "cancel" | "update_now" | "retry";
 export type UpdateRequestState =
   | "requested" | "installing" | "done" | "failed";
 
@@ -12,6 +14,7 @@ export type PublishedUpdate = {
   archive_sha256: string;
   schema_floor: string;
   expires_at: string;
+  mac?: { artifact_id: number; archive_sha256: string; archive_size: number } | null;
 };
 
 export type OwnerUpdateRequest = {
@@ -25,11 +28,16 @@ export type OwnerUpdateRequest = {
 };
 
 export type UpdateStatus = {
+  mac_status?: import("../ticketMachines").MacStatus;
   configured: boolean;
   available: PublishedUpdate | null;
   request: OwnerUpdateRequest | null;
   activity: UpdateActivity;
   detail: string | null;
+  state: UpdateExperienceState;
+  allowed_actions: UpdateAction[];
+  phase: string | null;
+  app_sha: string | null;
 };
 
 export type CreateUpdateRequest = {

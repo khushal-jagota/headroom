@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -30,7 +30,11 @@ from planner.environments.deployment_lifecycle import DeploymentLifecycleStore, 
 from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_admission import matching_commit, startup_requires_commit
 from planner.environments.update_api import router
-from planner.environments.update_contracts import OwnerUpdateRequest, PublishedUpdate
+from planner.environments.update_contracts import (
+    OwnerUpdateRequest,
+    PublishedMacUpdate,
+    PublishedUpdate,
+)
 from planner.environments.update_requests import FileUpdateRequestStore, UpdateConflict
 from planner.environments.update_service import UpdateService
 
@@ -96,7 +100,29 @@ def test_named_agents_remain_refused_through_hosted_ingress(tmp_path: Path) -> N
             )
             assert response.status_code == 400
             assert response.json()["error"]["code"] == "agent_forbidden"
-        assert client.get("/api/updates").json()["configured"] is True
+        baseline = json.loads(json.dumps(asdict(app.state.updates.status())))
+        result = client.get("/api/updates").json()
+        assert result == {**baseline, "mac_status": None}
+        from types import SimpleNamespace
+
+        mac_status = {
+            "connection_state": "disconnected",
+            "last_contact_at_ms": 1234,
+            "identity": None,
+            "refusal": {"reason": "Mac needs update"},
+        }
+        app.state.executor_endpoint = SimpleNamespace(health=lambda: mac_status)
+        assert client.get("/api/updates").json() == {**baseline, "mac_status": mac_status}
+        response = client.get(
+            "/api/updates",
+            headers={
+                "tailscale-user-login": "owner@example.test",
+                "X-Plan-Actor": "worker",
+                "X-Plan-Ticket-ID": "t",
+            },
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "agent_forbidden"
 
 
 def test_pinned_request_survives_new_publication_and_install_cannot_be_cancelled(
@@ -257,11 +283,14 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     cleaned: list[bool] = []
     monkeypatch.setattr(VideoUploadService, "recover_and_cleanup", lambda _: cleaned.append(True))
     app = create_app(config, build_clock(config), lambda: connect(str(database)))
+    from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
+
     # Preserve the complete registered stack. This baseline has no CORS middleware.
     registered: list[object] = [middleware.cls for middleware in app.user_middleware]
     expected: list[object] = [
         CompressExceptEventStreams,
         UpdateAdmissionMiddleware,
+        IOSBuildGateMiddleware,
         TrustedIngressMiddleware,
         ConversationSendBodyLimitMiddleware,
     ]
@@ -269,6 +298,9 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     with TestClient(app) as client:
         assert client.get("/api/health", params={"expected_sha": SHA_B}).status_code == 200
         assert client.get("/api/worker-types").status_code == 503
+        assert (
+            client.get("/api/worker-types", headers={"X-Panels-iOS-Build": "0"}).status_code == 503
+        )
         assert app.state.conversation is None
         assert cleaned == []
         assert (old_epoch / "retained.json").read_text() == "prior output"
@@ -276,6 +308,10 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
         assert "Chief review is required" in held_status["detail"]
         assert held_status["installation_confirmed"] is False
         assert held_status["unknown_display_until"] is None
+        # A paused installation stays active until the runner records its result.
+        held_update = client.get("/api/updates").json()
+        assert held_update["state"] == "updating"
+        assert held_update["allowed_actions"] == []
         progress.start("runner", SHA_B, prior_sha=SHA_A)
         progress.transition("runner", "verifying")
         assert client.get("/api/worker-types").status_code == 503
@@ -469,7 +505,7 @@ def test_runner_accepts_direct_upgrade_entry_and_head_but_refuses_unknown_schema
     database = tmp_path / "schema.db"
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE alembic_version (version_num TEXT)")
-        conn.execute("INSERT INTO alembic_version VALUES ('conversation_background_tasks')")
+        conn.execute("INSERT INTO alembic_version VALUES ('goal_holders')")
     validate_schema_ancestry(database)
     with sqlite3.connect(database) as conn:
         conn.execute("UPDATE alembic_version SET version_num = 'canonical_manager_identities'")
@@ -493,13 +529,14 @@ def test_provider_rechecks_metadata_without_repeated_proof_download(
     from planner.environments.update_provider import GitHubUpdateProvider
 
     provider = GitHubUpdateProvider("owner/repository", None, runner_token="runner-only")
-    offered = release()
+    offered = replace(release(), mac=PublishedMacUpdate(4, "f" * 64, 123))
     payload = BytesIO()
     with zipfile.ZipFile(payload, "w") as zipped:
         zipped.writestr("publication.json", json.dumps(asdict(offered)))
     metadata_reads: list[str] = []
     proof_reads: list[str] = []
     expired = [False]
+    mac_artifact_id = [4]
 
     def respond(_client: httpx.Client, method: str, url: str, **kwargs: Any) -> httpx.Response:
         path = url.removeprefix("https://api.github.com/repos/owner/repository/")
@@ -526,6 +563,7 @@ def test_provider_rechecks_metadata_without_repeated_proof_download(
                     "artifacts": [
                         {"id": 2, "name": "panels-app", "expired": expired[0]},
                         {"id": 3, "name": "panels-publication-proof", "expired": False},
+                        {"id": mac_artifact_id[0], "name": "panels-mac-runtime", "expired": False},
                     ]
                 },
             )
@@ -536,10 +574,13 @@ def test_provider_rechecks_metadata_without_repeated_proof_download(
     monkeypatch.setattr(httpx.Client, "request", respond)
     assert provider.available() == offered
     assert provider.available() == offered
+    mac_artifact_id[0] = 5
+    with pytest.raises(ValueError, match="trusted repository evidence"):
+        provider.available()
     expired[0] = True
     assert provider.available() is None
     assert len(proof_reads) == 1
-    assert metadata_reads == ["run", "artifacts"] * 3
+    assert metadata_reads == ["run", "artifacts"] * 4
 
 
 @pytest.mark.parametrize("state", ["requested", "installing", "done", "failed"])

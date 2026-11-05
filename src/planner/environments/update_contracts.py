@@ -11,15 +11,29 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from planner.environments.app import AppManifest
+from planner.environments.deployment_lifecycle import DeploymentPhase
 
 SUPPORTED_UPDATE_SCHEMA_FLOOR = "video_upload_ledger"
 UPDATE_ARTIFACT_RETENTION_DAYS = 30
 
 type UpdateMode = Literal["now", "idle"]
 type UpdateActivity = Literal["idle", "busy", "unknown"]
+type UpdateExperienceState = Literal[
+    "up_to_date", "available", "waiting", "updating", "restarting", "failed", "complete"
+]
+type UpdateAction = Literal["update", "cancel", "update_now", "retry"]
 type UpdateRequestState = Literal[
     "requested", "installing", "done", "failed"
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedMacUpdate:
+    """The prebuilt arm64 runtime from the same source as the VPS publication."""
+
+    artifact_id: int
+    archive_sha256: str
+    archive_size: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +45,7 @@ class PublishedUpdate:
     archive_sha256: str
     schema_floor: str
     expires_at: str
+    mac: PublishedMacUpdate | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +66,10 @@ class UpdateStatus:
     request: OwnerUpdateRequest | None
     activity: UpdateActivity
     detail: str | None = None
+    state: UpdateExperienceState = "up_to_date"
+    allowed_actions: tuple[UpdateAction, ...] = ()
+    phase: DeploymentPhase | None = None
+    app_sha: str | None = None
 
 
 class UpdateProvider(Protocol):
@@ -69,6 +88,8 @@ class UpdateRequestStore(Protocol):
     def read(self) -> OwnerUpdateRequest | None: ...
 
     def create(self, request: OwnerUpdateRequest) -> OwnerUpdateRequest: ...
+
+    def promote(self, request_id: str, *, confirm_activity: bool) -> OwnerUpdateRequest: ...
 
     def transition(
         self,

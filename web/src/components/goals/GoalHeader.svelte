@@ -8,21 +8,12 @@
  import InlineEdit from '../InlineEdit.svelte';
  import ErrorLine from '../ErrorLine.svelte';
 
- let {goal,mark}:{goal:GoalResponse;mark?:import('svelte').Snippet}=$props();
+ let {goal,mark,title}:{goal:GoalResponse;mark?:import('svelte').Snippet;title?:import('svelte').Snippet}=$props();
  const projects=createQuery(()=>queries.projects());
  type Field='title'|'why'|'project_id'|'deadline'|'active';
  type Edit=InlineEditDraft & {dirty:boolean;node:HTMLInputElement|HTMLSelectElement|null;accepted:GoalResponse|null;editor:ReturnType<typeof createGoalEditor>|null};
- const drafts=new Map<string,Record<Field,Edit>>();
- function goalDrafts(id:string){
-  let fields=drafts.get(id);
-  if(!fields){
-   function field():Edit{const edit=$state<Edit>({value:null,error:null,saving:false,dirty:false,node:null,accepted:null,editor:null});return edit;}
-   fields={title:field(),why:field(),project_id:field(),deadline:field(),active:field()};
-   drafts.set(id,fields);
-  }
-  return fields;
- }
- let fields=$derived(goalDrafts(goal.id));
+ function field():Edit{const edit=$state<Edit>({value:null,error:null,saving:false,dirty:false,node:null,accepted:null,editor:null});return edit;}
+ const fields={title:field(),why:field(),project_id:field(),deadline:field(),active:field()};
  let projectId=$derived(fields.project_id.value??goal.project_id);
  let projectName=$derived(projects.data?.projects.find(project=>project.id===projectId)?.name??(projectId==='project_personal'?'Personal':'…'));
  let deadline=$derived(fields.deadline.value??goal.deadline??'');
@@ -54,7 +45,7 @@
   const saved=await editor.write(patch);
    // A previous field can save while focus enters its pristine sibling. Only
    // this known local acceptance advances that sibling's unused snapshot.
-   for(const sibling of Object.values(drafts.get(saved.id)??{})){
+   for(const sibling of Object.values(fields)){
     if(sibling!==edit&&sibling.value===null&&!sibling.dirty&&!sibling.error&&!sibling.saving&&sibling.accepted?.id===saved.id&&saved.revision>sibling.accepted.revision){
      sibling.accepted=structuredClone($state.snapshot(saved));
     }
@@ -116,7 +107,7 @@
   <span class="signal">{@render mark?.()}</span>
  </div>
  {#each ['project_id','deadline','active'] as field}{@render failure(field as Field)}{/each}
- <h1 oninput={()=>editFields.title.dirty=true}><InlineEdit value={goal.title} draft={editFields.title} placeholder="Goal title…" ariaLabel="Goal title" onStart={()=>start(editFields.title,true)} onCancel={()=>discard(editFields.title,'title')} onSave={raw=>saveText(editFields.title,'title',raw)}/></h1>
+ <h1 oninput={()=>{if(!title)editFields.title.dirty=true;}}>{#if title}{@render title()}{:else}<InlineEdit value={goal.title} draft={editFields.title} placeholder="Goal title…" ariaLabel="Goal title" onStart={()=>start(editFields.title,true)} onCancel={()=>discard(editFields.title,'title')} onSave={raw=>saveText(editFields.title,'title',raw)}/>{/if}</h1>
  <div class="why" oninput={()=>editFields.why.dirty=true}><InlineEdit value={goal.why} draft={editFields.why} multiline placeholder="Why this goal matters…" ariaLabel="Why this goal matters" onStart={()=>start(editFields.why,true)} onCancel={()=>discard(editFields.why,'why')} onSave={raw=>saveText(editFields.why,'why',raw)}/></div>
  {/each}
 </header>

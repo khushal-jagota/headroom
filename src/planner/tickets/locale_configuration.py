@@ -5,6 +5,7 @@ and installed prerequisites remain separate from admission. Creation never
 requires reachability.
 """
 
+import json
 import sqlite3
 
 from planner.tickets.contracts import TicketLocale
@@ -24,3 +25,25 @@ def can_execute_locale(conn: sqlite3.Connection, locale: TicketLocale) -> bool:
         ).fetchone()
         is not None
     )
+
+
+def execution_unavailable_reason(conn: sqlite3.Connection, locale: TicketLocale) -> str:
+    if locale is TicketLocale.macos:
+        row = conn.execute(
+            "SELECT refusal_json FROM mac_contact_status WHERE singleton=1"
+        ).fetchone()
+        if row is not None and row[0] is not None:
+            refusal = json.loads(row[0])
+            peer, server = refusal["peer_identity"], refusal["server_identity"]
+            return (
+                f"{refusal['reason']}: Mac {peer['application_revision']} "
+                f"(protocol {peer['protocol_version']}, outbox {peer['spool_format_version']}); "
+                f"server {server['application_revision']} "
+                f"(protocol {server['protocol_version']}, "
+                f"outbox {server['spool_format_version']}). "
+                "Last contact confirmed a version mismatch."
+            )
+        return (
+            "Mac Tickets cannot start: the Mac is disconnected or has not completed reconciliation"
+        )
+    return f"The Ticket locale {locale.value} cannot execute on this machine"

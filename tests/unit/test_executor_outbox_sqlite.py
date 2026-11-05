@@ -201,7 +201,7 @@ def test_confirmation_commit_survives_cleanup_failure(
     asyncio.run(run())
 
 
-def test_previous_format_refused_without_conversion(tmp_path: Path) -> None:
+def test_unsupported_format_preserved_without_conversion(tmp_path: Path) -> None:
     root = tmp_path / "outbox"
     root.mkdir()
     database = root / DATABASE_NAME

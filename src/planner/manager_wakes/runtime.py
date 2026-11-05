@@ -25,7 +25,6 @@ from planner.core.clock import Clock
 from planner.core.contracts import PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.goals.conversation import goal_agent_key, resolve_goal
 from planner.manager_wakes import data
 from planner.manager_wakes.contracts import WakeBatch, WakeBatchStatus
 from planner.managers import data as managers_data
@@ -126,7 +125,6 @@ async def _admitted_deliver_batch(
             else _no_lifecycle_lock()
         )
         async with lifecycle:
-            required_goal_id: str | None = None
             try:
                 if target.kind is PrincipalKind.manager:
                     item = managers_data.read_manager(conn, target.id).item
@@ -136,11 +134,6 @@ async def _admitted_deliver_batch(
                 elif target.kind is PrincipalKind.chief:
                     agent_key = CHIEF_SETTINGS_KEY
                     resolved = conversation_start.agent_resolve(conn)
-                    required_manager_id = None
-                elif target.kind is PrincipalKind.goal:
-                    agent_key = goal_agent_key(target.id)
-                    resolved = resolve_goal(conn, target.id)
-                    required_goal_id = target.id
                     required_manager_id = None
                 else:
                     ticket = tickets_data.read_ticket(conn, target.id)
@@ -206,7 +199,6 @@ async def _admitted_deliver_batch(
                             sender_message_id=batch.sender_message_id,
                             reply_requested=False,
                             required_manager_id=required_manager_id,
-                            required_goal_id=required_goal_id,
                         )
                 except BaseException:
                     data.record_batch_uncertain(

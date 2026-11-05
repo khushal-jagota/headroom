@@ -2773,7 +2773,7 @@ def _manager_recap_header(browser, url):
         expect(toggle).to_have_text("Show less")
         page.evaluate("window.__layoutUpdate('')")
         expect(recap).to_be_empty()
-        expect(recap).to_have_attribute("data-ph", "Write a concise recap for this manager…")
+        expect(recap).to_have_attribute("data-ph", "Write a concise recap…")
         expect(toggle).to_have_count(0)
         assert page.evaluate("window.__layoutHeaderMatches()")
     finally:

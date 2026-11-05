@@ -987,7 +987,7 @@
   <p class="executor-answer-status" data-executor-answer-status role="status">{record.sentence}</p>
 {/each}
 <ConversationPane
-  roleLabel={historyOwner?.kind === "goal" ? "Goal" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
+  roleLabel={historyOwner?.kind === "goal" ? "Goal" : historyOwner?.kind === "manager" ? "Manager" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
   {withdrawnDisplayIds}
   conversationId={openedId ?? ""}
   {backendKey}

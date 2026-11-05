@@ -1,34 +1,39 @@
 <script lang="ts">
   import { queryClient } from "../lib/queryClient";
-  import { cancelUpdate, requestUpdate } from "../lib/updates/api";
-  import type { PublishedUpdate, UpdateMode, UpdateStatus } from "../lib/updates/contracts";
-  import { activeUpdateRequest, canCancelUpdate, needsActivityConfirmation, usableUpdate } from "../lib/updates/logic/actions";
+  import { cancelUpdate, promoteUpdate, requestUpdate } from "../lib/updates/api";
+  import type { UpdateMode, UpdateStatus } from "../lib/updates/contracts";
+  import { usableUpdate } from "../lib/updates/logic/actions";
 
   let { status, now }: { status: UpdateStatus; now: number } = $props();
-  let confirming = $state<PublishedUpdate | null>(null);
+  let dialog = $state<HTMLDialogElement | null>(null);
+  let kind = $state<"offer" | "waiting" | "failed">("offer");
   let submitting = $state(false);
   let error = $state<string | null>(null);
-  const request = $derived(status.request);
-  const active = $derived(activeUpdateRequest(request));
-  const canceled = $derived(request?.detail === "Update canceled before installation. The previous version stayed active.");
-  const hasContent = $derived(active || confirming !== null ||
-    (status.configured && usableUpdate(status.available, now)) || request?.state === "failed" || error !== null);
+  const id = $props.id();
+  const canOffer = $derived(status.allowed_actions.includes("update") && usableUpdate(status.available, now));
+  const canRetry = $derived(status.allowed_actions.includes("retry") && usableUpdate(status.available, now));
 
-  async function submit(release: PublishedUpdate, mode: UpdateMode, confirmed = false): Promise<void> {
+  export function openDialog(view: "offer" | "waiting" | "failed"): void {
+    kind = view;
+    error = null;
+    dialog?.showModal();
+  }
+
+  async function perform(action: "cancel" | UpdateMode): Promise<void> {
     if (submitting) return;
-    if (!usableUpdate(release, Date.now())) {
-      error = "This update expired. Refresh its availability.";
-      return;
-    }
-    if (mode === "now" && needsActivityConfirmation(status.activity) && !confirmed) {
-      confirming = release;
-      return;
-    }
     submitting = true;
     error = null;
     try {
-      await requestUpdate(release, mode, confirmed);
-      confirming = null;
+      if (action === "cancel" && status.request) {
+        await cancelUpdate(status.request.request_id);
+      } else if (kind === "waiting" && action === "now" && status.request) {
+        await promoteUpdate(status.request.request_id);
+      } else if (action !== "cancel" && usableUpdate(status.available, Date.now())) {
+        await requestUpdate(status.available, action, action === "now");
+      } else {
+        throw new Error("This update expired. Close this dialog to check availability.");
+      }
+      dialog?.close();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Update request failed";
     } finally {
@@ -37,65 +42,56 @@
     }
   }
 
-  async function cancel(): Promise<void> {
-    if (!request || !canCancelUpdate(request) || submitting) return;
-    submitting = true;
-    error = null;
-    try { await cancelUpdate(request.request_id); }
-    catch (cause) { error = cause instanceof Error ? cause.message : "Cancellation failed"; }
-    finally {
-      await queryClient.invalidateQueries({ queryKey: ["updates"] });
-      submitting = false;
-    }
-  }
+  // A server transition can make an open decision obsolete without a local click.
+  $effect(() => {
+    if (dialog?.open && !submitting && !["available", "waiting", "failed"].includes(status.state)) dialog.close();
+  });
 </script>
 
-{#if hasContent}
-<div class="update-actions" data-update-activity={status.activity}>
-  {#if !active && request?.state === "failed"}
-    {#if canceled}<span>{request.detail}</span>{:else}<span role="alert">{request.detail ?? "Update failed"}</span>{/if}
-  {/if}
-  {#if active && request}
-    <span>{request.state === "installing" ? "Update in progress" : request.mode === "idle" && request.state === "requested" ? "Update waits for idle" : "Update requested"}</span>
-    {#if canCancelUpdate(request)}<button type="button" class="ghost" disabled={submitting} onclick={cancel}>Cancel update</button>{/if}
-  {:else if confirming}
-    <span>{status.activity === "busy" ? "Work is active. The update can interrupt it." : "Activity is unknown. The update can interrupt work."}</span>
-    {#if usableUpdate(confirming, now)}
-      <button type="button" class="ghost" disabled={submitting} onclick={() => submit(confirming!, "now", true)}>Proceed with update</button>
-    {:else}<span>This update expired. Refresh its availability.</span>{/if}
-    <button type="button" class="ghost" disabled={submitting} onclick={() => { confirming = null; }}>Go back</button>
-  {:else if status.configured && usableUpdate(status.available, now)}
-    <button type="button" class="primary" disabled={submitting} onclick={() => submit(status.available!, "idle")}>Update when idle</button>
-    <button type="button" class="ghost" disabled={submitting} onclick={() => submit(status.available!, "now")}>Start update</button>
-  {/if}
-  {#if error}<span role="alert">{error}</span>{/if}
-</div>
-{/if}
+<dialog bind:this={dialog} aria-labelledby={id} data-update-dialog data-update-activity={status.activity}>
+  <div class="dlg">
+    <h2 id={id}>{kind === "offer" ? "Update Panels" : kind === "waiting" ? "Update waits for work to finish" : "Update didn't install"}</h2>
+    <p>{kind === "offer" ? "A new version is ready. Panels restarts, then you refresh to finish." : kind === "waiting" ? "Panels updates as soon as running work finishes." : (status.detail ?? "Panels could not finish this update.")}</p>
+    {#if kind === "offer" && status.activity !== "idle"}
+      <div class="note"><span class="status-mark" aria-hidden="true"></span><span>{status.activity === "busy" ? "Work is running. Updating now interrupts it." : "Panels cannot tell if work is running. Updating now can interrupt it."}</span></div>
+    {/if}
+    {#if error}<p role="alert">{error}</p>{/if}
+    <footer>
+      {#if kind === "waiting"}
+        {#if status.allowed_actions.includes("cancel")}<button type="button" class="pill pill--ghost" disabled={submitting} onclick={() => perform("cancel")}>Cancel update</button>{/if}
+        <button type="button" class="pill pill--ghost" onclick={() => dialog?.close()}>Close</button>
+        {#if status.allowed_actions.includes("update_now")}<button type="button" class="pill pill--primary" disabled={submitting} onclick={() => perform("now")}>Update now</button>{/if}
+      {:else}
+        <button type="button" class="pill pill--ghost" onclick={() => dialog?.close()}>Not now</button>
+        {#if kind === "offer" && canOffer}
+          {#if status.activity !== "idle"}<button type="button" class="pill pill--ghost" disabled={submitting} onclick={() => perform("idle")}>When work finishes</button>{/if}
+          <button type="button" class="pill pill--primary" disabled={submitting} onclick={() => perform("now")}>Update now</button>
+        {:else if kind === "failed" && canRetry}
+          <button type="button" class="pill pill--primary" disabled={submitting} onclick={() => perform("now")}>Try again</button>
+        {/if}
+      {/if}
+    </footer>
+  </div>
+</dialog>
 
 <style>
-  .update-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--space-2);
-    width: 100%;
-    /* The old status-card set this slot to --type-xs (11px). Set it here explicitly:
-       the update controls no longer rely on a card or ancestor for their type scale. */
-    font-size: var(--type-xs);
-  }
-  .update-actions > span { flex-basis: 100%; color: var(--text-faint); }
-  .update-actions > span[role="alert"] { color: var(--accent-error); }
-
-  /* Replace the old generic padding override, which fought the button classes.
-     These are the app's primary/ghost pills, scaled to this --type-xs slot. Keep
-     padding on each identity so a generic ancestor cannot flatten their spacing. */
-  .update-actions button { font: inherit; cursor: pointer; border: 0; border-radius: var(--radius-pill); font-weight: 500; }
-  .update-actions button:disabled { opacity: .5; cursor: default; }
-  /* The card-free slot clips overflow for shell transitions. Keep keyboard focus
-     inside the pills so its outline remains visible without card padding. */
-  .update-actions button:focus-visible { outline-offset: calc(-1 * var(--border-strong)); }
-  .update-actions .primary { background: var(--accent-bright); color: var(--surface-ink); padding: 4px 12px; }
-  .update-actions .primary:focus-visible { outline-color: var(--surface-ink); }
-  .update-actions .ghost { background: transparent; color: var(--text-faint); padding: 4px 10px; }
-  .update-actions .ghost:hover:not(:disabled) { background-image: var(--interaction-hover); color: var(--text-strong); }
+  dialog { width: min(460px, calc(100% - var(--space-5))); margin: auto; padding: 0; border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-lg); background: var(--surface-2); color: var(--text-default); box-shadow: var(--shadow-float); }
+  dialog[open] { animation: dialog-in var(--motion-slow) var(--motion-ease); }
+  dialog::backdrop { background: var(--scrim); }
+  .dlg { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); }
+  h2 { font-size: var(--type-md); font-weight: 600; color: var(--text-strong); margin: 0; }
+  p { color: var(--text-muted); line-height: 1.45; margin: 0; }
+  p[role="alert"] { color: var(--accent-error); }
+  .note { display: flex; gap: var(--space-2); align-items: baseline; color: var(--accent-attention); }
+  .status-mark { width: 7px; height: 7px; flex: none; border-radius: var(--radius-pill); background: var(--accent-attention); transform: translateY(-1px); }
+  footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); }
+  .pill { cursor: pointer; font: inherit; border: 0; border-radius: var(--radius-pill); padding: 6px 14px; font-weight: 500; transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .pill--primary { background: var(--accent-bright); color: var(--surface-ink); }
+  .pill--ghost { background: transparent; color: var(--text-faint); }
+  .pill:hover { background-image: var(--interaction-hover); }
+  .pill--ghost:hover { color: var(--text-strong); }
+  .pill:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: 2px; }
+  .pill:disabled { opacity: .5; cursor: default; }
+  @keyframes dialog-in { from { opacity: 0; transform: translateY(var(--space-1)); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } .pill { transition: none; } }
 </style>

@@ -31,6 +31,8 @@ _CHART = {
     "direction": "atmost",
 }
 _CHART_NOTES = (
+    "Goals belong to a holder. Set holder_kind to chief with holder_id null, or manager "
+    "with the saved Manager ID. Talk about goals through the holder conversation.",
     "A chart has type chart and a separate kind such as line. Use direction atleast or "
     "atmost (not target_direction). The example target 100 is an explicit illustrative "
     "test assumption; choose the real target from the goal's requirements.",

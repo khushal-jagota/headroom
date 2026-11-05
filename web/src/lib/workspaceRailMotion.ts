@@ -1,6 +1,14 @@
 import { tick } from "svelte";
 import { refreshWorkspaceRailSignals, stabilizeWorkspaceRail, type WorkspaceRail } from "./workspaceRail";
 import type { ViewWindow } from "./navigation/contracts";
+import type {GoalResponse} from "./goals/contracts";
+
+export type GoalRailStructure = {
+  owner: {kind:"chief"|"manager";id:string};
+  sole: GoalResponse | null;
+  rows: GoalResponse[];
+  window: ViewWindow | undefined;
+};
 
 // The approved Glide timing: distance changes duration, never the easing.
 export const RAIL_MOTION = {
@@ -15,6 +23,7 @@ export const railMoveDuration = (distance: number) => Math.round(Math.max(RAIL_M
 export type WorkspaceRailPresentation = {
   rail: WorkspaceRail;
   settledOpen: boolean;
+  goalRails?: GoalRailStructure[];
   /** Keep the closing body mounted while the header acknowledges the click. */
   settledBodyOpen?: boolean;
   /** Metadata travels with its rows through hover freeze and the structural queue. */
@@ -213,6 +222,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
         remaining.add(`heading:${id}:${group.key}`);
         for (const ticket of group.cards) remaining.add(`row:${ticket.id}`);
       }
+    }
+    for (const holder of next.goalRails ?? []) {
+      for (const goal of holder.sole ? [holder.sole] : holder.rows) remaining.add(`row:${goal.id}`);
     }
     if (next.settledOpen) for (const item of next.rail.settledItems) {
       remaining.add(`settled:${item.id}`);

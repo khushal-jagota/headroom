@@ -212,7 +212,12 @@ export interface SectionBlock {
   views?: Array<SegmentedView>;
 }
 
-export type Block = TextBlock | ChecklistBlock | ChartBlock | TableBlock | SectionBlock | GridBlock | SegmentedBlock | CalloutBlock | MetricsBlock | PropertiesBlock | StatusBlock | RowsBlock;
+export type Block = TicketsBlock | TextBlock | ChecklistBlock | ChartBlock | TableBlock | SectionBlock | GridBlock | SegmentedBlock | CalloutBlock | MetricsBlock | PropertiesBlock | StatusBlock | RowsBlock;
+
+export interface TicketsBlock {
+  type: "tickets";
+  id: string;
+}
 
 export interface GridBlock {
   type: "grid";
@@ -298,6 +303,8 @@ export interface PageDocument {
 }
 
 export interface GoalCommonFields {
+  holder_kind?: "chief" | "manager";
+  holder_id?: string | null;
   project_id?: string;
   title?: string;
   why?: string;
@@ -308,6 +315,8 @@ export interface GoalCommonFields {
 }
 
 export interface GoalWriteFields {
+  holder_kind?: "chief" | "manager";
+  holder_id?: string | null;
   project_id?: string;
   title?: string;
   why?: string;
@@ -322,6 +331,8 @@ export interface GoalWriteFields {
 }
 
 export interface GoalCreateFields {
+  holder_kind?: "chief" | "manager";
+  holder_id?: string | null;
   project_id?: string;
   title?: string;
   why?: string;
@@ -332,6 +343,8 @@ export interface GoalCreateFields {
 }
 
 export interface BinaryGoalCreateBody {
+  holder_kind?: "chief" | "manager";
+  holder_id?: string | null;
   project_id?: string;
   title?: string;
   why?: string;
@@ -345,6 +358,8 @@ export interface BinaryGoalCreateBody {
 }
 
 export interface QuantitativeGoalCreateBody {
+  holder_kind?: "chief" | "manager";
+  holder_id?: string | null;
   project_id?: string;
   title?: string;
   why?: string;
@@ -361,6 +376,8 @@ export interface QuantitativeGoalCreateBody {
 export type GoalCreateBody = BinaryGoalCreateBody | QuantitativeGoalCreateBody;
 
 export interface GoalEditBody {
+  holder_kind?: "chief" | "manager";
+  holder_id?: string | null;
   project_id?: string;
   title?: string;
   why?: string;
@@ -375,6 +392,9 @@ export interface GoalEditBody {
 }
 
 export interface GoalResponse {
+  holder_kind: "chief" | "manager";
+  holder_id: string | null;
+  legacy_conversation_id: string | null;
   id: string;
   project_id: string;
   title: string;
@@ -395,7 +415,6 @@ export interface GoalResponse {
   employee_backend: string;
   employee_launch_model: string;
   employee_launch_reasoning_effort: string | null;
-  conversation_id: string | null;
   status: "neutral" | "attention" | "bad" | "good";
   status_date: string;
   next_refresh_at: number;
