@@ -12,7 +12,6 @@ revision short of head always get the real replay.
 
 from __future__ import annotations
 
-import secrets
 import sqlite3
 import tempfile
 import threading
@@ -70,17 +69,15 @@ def _template() -> tuple[str, ...]:
 
 def _give_the_copy_its_own_identity(connection: Connection) -> None:
     # A replay draws these values fresh for every database: the attention history start
-    # from the clock, and the navigation scope, epochs and proof secret at random. Two
+    # from the clock, and the navigation scope and epochs at random. Two
     # databases must never share them, so each copy draws its own the same way.
     connection.exec_driver_sql(
         "UPDATE attention_history_metadata SET started_at=?", (int(time.time()),)
     )
+    epoch = str(uuid.uuid4())
     connection.exec_driver_sql(
-        "UPDATE navigation_meta SET scope=?, epoch=?", (str(uuid.uuid4()), str(uuid.uuid4()))
+        "UPDATE navigation_meta SET scope=?, epoch=?", (str(uuid.uuid4()), epoch)
     )
     connection.exec_driver_sql(
-        "UPDATE navigation_delivery_retention SET epoch=?", (str(uuid.uuid4()),)
-    )
-    connection.exec_driver_sql(
-        "UPDATE navigation_proof_identity SET secret=?", (secrets.token_hex(32),)
+        "UPDATE navigation_delivery_retention SET epoch=?", (epoch,)
     )

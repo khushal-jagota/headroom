@@ -15,7 +15,6 @@ from planner.datasets.contracts import (
     UpdateDatasetBody,
 )
 from planner.datasets.logic.validation import validate_definition
-from planner.measure_sources import authority as sources_authority
 from planner.measure_sources import data as sources
 from planner.measures.data import transaction
 from planner.measures.logic.dates import invalid
@@ -39,7 +38,6 @@ def create_dataset(
     validate_definition(dataset)
     with transaction(conn):
         source = sources.read_source(conn, dataset.source_id)
-        sources_authority.require_author(conn, principal, source)
         if source.scope.project_id != dataset.project_id:
             raise invalid("dataset and source Projects differ")
         conn.execute(
@@ -72,9 +70,6 @@ def update_dataset(
 ) -> Dataset:
     with transaction(conn):
         current = data.read_dataset(conn, dataset_id)
-        sources_authority.require_author(
-            conn, principal, sources.read_source(conn, current.source_id)
-        )
         if (
             type(body.get("expected_revision")) is not int
             or body["expected_revision"] != current.definition_revision

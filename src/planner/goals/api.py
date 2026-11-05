@@ -78,7 +78,6 @@ async def make_manager(goal_id: str, body: dict[str, Any], conn: DbConn, ctx: Ct
     manager_id, goal = actions.make_manager(
         conn,
         goal_id,
-        expected_revision=body.get("expected_revision"),
         principal=ctx.principal,
         clock=clk,
     )

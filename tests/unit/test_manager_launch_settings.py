@@ -8,6 +8,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation.contracts import (
     ConversationBackendKey as Backend,
@@ -18,7 +19,6 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryStarted,
 )
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FakeClock
@@ -139,7 +139,6 @@ def test_saved_model_and_null_effort_reach_reused_conversation(
             conversation_start.manager_resolve(tmp_db, latest),
             conversation_id=first.conversation_id,
             sender_label="Panels",
-            reply_requested=False,
             required_manager_id=item.id,
         )
         assert notice.conversation_id == first.conversation_id

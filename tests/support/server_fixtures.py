@@ -333,6 +333,7 @@ def cli(tmp_path: Path) -> Callable[..., JsonObject]:
         ticket_id: str | None = None,
         actor: str | None = None,
         stdin: str | None = None,
+        settle_brief: bool = False,
     ) -> JsonObject:
         env = _scrubbed_env()
         env.update(create_synthetic_homes(tmp_path))
@@ -346,11 +347,6 @@ def cli(tmp_path: Path) -> Callable[..., JsonObject]:
             env["PLAN_ACTOR"] = "worker"
         if actor is not None:
             env["PLAN_ACTOR"] = actor
-        # A Ticket created with no Brief rests at its Brief stage with nothing parked,
-        # so the fixture has to write one before it can settle the gate below.
-        settles_the_intake_gate = args[:2] == ("ticket", "create") and "--kickoff-note" not in args
-        if settles_the_intake_gate:
-            args = (*args, "--kickoff-note", "Agreed brief.")
         proc = subprocess.run(
             [str(PLAN_BIN), *args, "--json"],
             input=stdin,
@@ -364,16 +360,17 @@ def cli(tmp_path: Path) -> Callable[..., JsonObject]:
             f"plan {' '.join(args)} rc={proc.returncode}\nstderr: {proc.stderr}"
         )
         data: JsonObject = json.loads(proc.stdout)
-        # Most pre-Kickoff browser scenarios need a worker-stage ticket. Settle the
-        # new intake gate in the fixture unless the test supplied Kickoff content;
-        # those explicit cases exercise the parked proposal itself.
-        if settles_the_intake_gate:
+        # Worker-stage scenarios explicitly accept their supplied Brief. Tests
+        # about the parked proposal leave this off and retain the creation gate.
+        if settle_brief:
+            assert args[:2] == ("ticket", "create")
             approve = subprocess.run(
                 [
                     str(PLAN_BIN),
                     "ticket",
-                    "approve",
+                    "proposal",
                     data["id"],
+                    "accept",
                     "--ceiling",
                     "none",
                     "--json",
@@ -385,7 +382,7 @@ def cli(tmp_path: Path) -> Callable[..., JsonObject]:
                 timeout=30,
             )
             assert approve.returncode == 0, (
-                f"automatic kickoff approval rc={approve.returncode}\nstderr: {approve.stderr}"
+                f"fixture Brief approval rc={approve.returncode}\nstderr: {approve.stderr}"
             )
             approved: JsonObject = json.loads(approve.stdout)
             return approved

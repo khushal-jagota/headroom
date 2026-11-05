@@ -8,13 +8,11 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.ticket_workflows import preset_workflow_json
-from tests.unit.test_db import _migration_tree_through
 
 from planner.conversation.contracts import PromptDeliveryStarted
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-from planner.core import db
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
@@ -30,7 +28,8 @@ from planner.tickets.workspace.views import workspace_ticket
         ("workflow_json", "{SENSITIVE_TEST_workflow"),
         ("stage", "SENSITIVE_TEST_stage"),
         ("ceiling", "SENSITIVE_TEST_ceiling"),
-        ("ceiling_holder", '{"kind":"ticket","id":"SENSITIVE_TEST_holder"}'),
+        # A missing Manager passes the SQL shape check but fails registry integrity.
+        ("ceiling_holder", '{"kind":"manager","id":"SENSITIVE_TEST_holder"}'),
         ("field_values", "{SENSITIVE_TEST_json"),
         ("pending_proposal", "{SENSITIVE_TEST_json"),
         ("employee_backend", "SENSITIVE_TEST_backend"),
@@ -124,7 +123,7 @@ def test_audit_records_one_fault_and_preserves_other_tickets(
             )
         )
         assert len(sent) == 1
-        assert sent[0][1]["system_message"] and not sent[0][1]["expects_reply"]
+        assert sent[0][1]["system_message"]
         assert "SENSITIVE_TEST" not in str(sent[0][0][5])
         # Only the dedicated audit mark controls the diagnostic. Ordinary human text
         # cannot erase it, and successful validation clears it without changing claims.
@@ -238,39 +237,3 @@ def test_display_reason_cannot_echo_arbitrary_error_payload(tmp_path: Path) -> N
         stored_issue = integrity.issue_for_ticket(conn, "stored")
         assert stored_issue is not None and sensitive not in stored_issue.reason
         assert integrity.issue_for_ticket(conn, "stored") is not None
-
-
-def test_reason_column_upgrade_does_not_reinterpret_recap_or_cached_diagnostic(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    shipped = db.MIGRATIONS_DIRECTORY
-    _migration_tree_through(tmp_path, monkeypatch, "executor_default_workspace")
-    with closing(connect(str(tmp_path / "upgrade.db"))) as conn:
-        create_schema(conn)
-        conn.execute(
-            "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
-            "field_values,recap,worker_step_claim,created_at,updated_at) VALUES "
-            "('prior','Prior Ticket','coding','codex','needs_brief','needs_brief','{}',"
-            "'Ticket integrity failure: human text','errored',1,1)"
-        )
-        # This database contains the actual predecessor schema. A cached
-        # old-format diagnostic must not remain authoritative after the migration.
-        conn.execute(
-            "UPDATE navigation_records SET value=json_set(value,'$.integrity_error',"
-            "json('{\"reason\":\"old cached reason\"}')) WHERE kind='ticket' AND id='prior'"
-        )
-
-        def audit(current: sqlite3.Connection) -> None:
-            data.audit_ticket_registry_integrity(current, startup=True)
-
-        monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", shipped)
-        create_schema(conn, startup_audit=audit)
-        row = conn.execute("SELECT * FROM tickets WHERE id='prior'").fetchone()
-        assert row["integrity_error_reason"] is None
-        assert row["recap"] == "Ticket integrity failure: human text"
-        assert row["worker_step_claim"] == "errored"
-        navigation = conn.execute(
-            "SELECT value FROM navigation_records WHERE kind='ticket' AND id='prior'"
-        ).fetchone()[0]
-        assert '"integrity_error"' not in navigation

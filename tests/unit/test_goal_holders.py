@@ -6,7 +6,9 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from fastapi.testclient import TestClient
 from starlette.requests import Request
+from tests.support.api_app import _app
 from tests.unit.test_goal_pages import create, page
 from tests.unit.test_manual_measures import manual_measure, replacement
 
@@ -19,6 +21,8 @@ from planner.managers.data import _require_manager_can_delete, create_manager, r
 from planner.managers.pages import page_readings, read_page, write_page
 from planner.managers.resource_versions import ManagerDocumentResources
 from planner.measures import manual
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import TITLE_MAX_CHARS
 
 
 def test_promotion_preserves_goal_record_and_owner_control(
@@ -26,7 +30,7 @@ def test_promotion_preserves_goal_record_and_owner_control(
 ) -> None:
     goal = create(tmp_db)
     manager_id, moved = actions.make_manager(
-        tmp_db, goal.id, expected_revision=goal.revision,
+        tmp_db, goal.id,
         principal=CHIEF_PRINCIPAL, clock=fake_clock,
     )
     changed = {"holder_kind", "holder_id", "revision", "updated_at"}
@@ -39,23 +43,21 @@ def test_promotion_preserves_goal_record_and_owner_control(
         _require_manager_can_delete(tmp_db, manager_id)
 
 
-def test_manager_page_survives_goal_cardinality_and_rejects_stale_write(
+def test_manager_page_survives_goal_cardinality(
     tmp_db: Connection, fake_clock: Clock
 ) -> None:
     manager = create_manager(tmp_db, title="Guide", project_id="project_vylo", clock=fake_clock)
     actor = Principal(PrincipalKind.manager, manager.id)
     saved = write_page(
-        tmp_db, manager.id, {"page": page(), "expected_revision": 0}, principal=actor
+        tmp_db, manager.id, {"page": page()}, principal=actor
     )
     create(tmp_db, holder_kind="manager", holder_id=manager.id)
     second = create(tmp_db, holder_kind="manager", holder_id=manager.id)
     actions.update_goal(
         tmp_db, second.id,
-        {"expected_revision": second.revision, "holder_kind": "chief", "holder_id": None},
+        {"holder_kind": "chief", "holder_id": None},
         principal=OWNER_PRINCIPAL, now=fake_clock.now_unix(),
     )
-    with pytest.raises(PlannerError, match="page changed"):
-        write_page(tmp_db, manager.id, {"page": None, "expected_revision": 0}, principal=actor)
     assert read_page(tmp_db, manager.id) == saved
 
 
@@ -72,7 +74,7 @@ def test_holder_page_writer_validates_bound_measure(
         {"id": "chart", "type": "chart", "kind": "line", "measure_id": measure.id}
     ]}
     write_page(
-        tmp_db, None, {"page": document, "expected_revision": 0}, principal=CHIEF_PRINCIPAL
+        tmp_db, None, {"page": document}, principal=CHIEF_PRINCIPAL
     )
     result = page_readings(tmp_db, None, fake_clock.now())
     assert (
@@ -81,7 +83,7 @@ def test_holder_page_writer_validates_bound_measure(
     document["blocks"][0]["measure_id"] = "missing-measure"
     with pytest.raises(PlannerError):
         write_page(
-            tmp_db, None, {"page": document, "expected_revision": 1}, principal=CHIEF_PRINCIPAL
+            tmp_db, None, {"page": document}, principal=CHIEF_PRINCIPAL
         )
     assert read_page(tmp_db, None)["page"]["blocks"][0]["measure_id"] == measure.id
 
@@ -105,16 +107,48 @@ def test_manager_workspace_goals_share_snapshot_and_resource_revision(
 
     before, document = read_workspace()
     assert document["goals"][0]["page"] == goal.page
-    edited = actions.update_goal(
-        tmp_db, goal.id, {"expected_revision": goal.revision, "why": "Accepted rationale"},
+    actions.update_goal(
+        tmp_db, goal.id, {"why": "Accepted rationale"},
         principal=OWNER_PRINCIPAL, now=fake_clock.now_unix(),
     )
     after_edit, document = read_workspace()
     assert after_edit != before and document["goals"][0]["why"] == "Accepted rationale"
     actions.update_goal(
         tmp_db, goal.id,
-        {"expected_revision": edited.revision, "holder_kind": "chief", "holder_id": None},
+        {"holder_kind": "chief", "holder_id": None},
         principal=OWNER_PRINCIPAL, now=fake_clock.now_unix(),
     )
     after_move, document = read_workspace()
     assert after_move != after_edit and document["goals"] == []
+
+
+def test_manager_page_reads_use_central_rank_admission(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    manager = create_manager(tmp_db, title="Peer", project_id="project_vylo", clock=fake_clock)
+    worker = tickets_data.create_ticket(
+        tmp_db, title="Unrelated work", principal=OWNER_PRINCIPAL,
+        now=fake_clock.now_unix(), title_max_chars=TITLE_MAX_CHARS, worker_type="coding",
+    )
+    saved = write_page(
+        tmp_db, manager.id, {"page": page()}, principal=OWNER_PRINCIPAL
+    )
+    with TestClient(_app(tmp_db)) as client:
+        for suffix in ("page", "page/readings"):
+            route = f"/api/managers/{manager.id}/{suffix}"
+            denied = client.get(
+                route, headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": worker.id}
+            )
+            assert denied.status_code == 400, denied.text
+            assert denied.json()["error"]["code"] == "agent_forbidden"
+            for headers in (
+                {},
+                {"X-Plan-Actor": "chief"},
+                {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.id},
+            ):
+                allowed = client.get(route, headers=headers)
+                assert allowed.status_code == 200, allowed.text
+                if suffix == "page":
+                    assert allowed.json() == saved
+                else:
+                    assert allowed.json()["values"] == []

@@ -24,6 +24,9 @@ CONVERSATION_WRITE_LOCK_RETRY_SECONDS: Final = 0.05
 
 HOST: Final = "127.0.0.1"  # §2: the bind is fixed, not tunable
 DEFAULT_CONFIG_PATH: Final = "config.yaml"
+SSE_HEARTBEAT_MS: Final = 15000
+DB_BUSY_TIMEOUT_MS: Final = 5000
+SHUTDOWN_GRACE_SECONDS: Final = 30
 
 _TRUE: Final = frozenset({"1", "true", "yes", "on"})
 _FALSE: Final = frozenset({"0", "false", "no", "off"})
@@ -37,12 +40,9 @@ class Config:
     tick_seconds: int
     dispatch_enabled: bool
     # other tunables named across SPEC
-    sse_heartbeat_ms: int
     dispatcher_lock_path: str
     logs_dir: str
     backup_dir: str
-    db_busy_timeout_ms: int
-    shutdown_grace_seconds: int
     # optional hosted trusted-ingress boundary
     trusted_ingress_provider: str | None
     trusted_ingress_allowed_login: str | None
@@ -307,20 +307,11 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         port=_int_value(cfg, env, "port", "PLAN_PORT", 8767),
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
-        sse_heartbeat_ms=_positive_int_value(
-            cfg, env, "sse_heartbeat_ms", "PLAN_SSE_HEARTBEAT_MS", 15000
-        ),
         dispatcher_lock_path=_str_value(
             cfg, env, "dispatcher_lock_path", "PLAN_DISPATCHER_LOCK_PATH", "data/dispatcher.lock"
         ),
         logs_dir=_str_value(cfg, env, "logs_dir", "PLAN_LOGS_DIR", "data/logs"),
         backup_dir=_str_value(cfg, env, "backup_dir", "PLAN_BACKUP_DIR", "data/backups"),
-        db_busy_timeout_ms=_int_value(
-            cfg, env, "db_busy_timeout_ms", "PLAN_DB_BUSY_TIMEOUT_MS", 5000
-        ),
-        shutdown_grace_seconds=_int_value(
-            cfg, env, "shutdown_grace_seconds", "PLAN_SHUTDOWN_GRACE_SECONDS", 30
-        ),
         voice_transcription_base_url=_str_value(
             cfg,
             env,

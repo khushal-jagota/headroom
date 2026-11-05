@@ -164,7 +164,12 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     server = rail_server
     started_at = time.monotonic()
     ticket_id = cli(
-        server, "ticket", "create", "--worker-type", "coding", "--title", "HTML artifact"
+        server, "ticket", "create", "--input-json", "-",
+        stdin=json.dumps({
+            "worker_type": "coding", "title": "HTML artifact", "brief": "Agreed brief.",
+            "manager": {"kind": "chief", "id": "chief"},
+        }),
+        settle_brief=True,
     )["id"]
     _write_ticket_files(server, ticket_id)
     root = _ticket_files_dir(server, ticket_id)
@@ -499,7 +504,12 @@ def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
     shows a player and then refuses.
     """
     ticket_id = cli(
-        server, "ticket", "create", "--worker-type", "coding", "--title", "Media preview"
+        server, "ticket", "create", "--input-json", "-",
+        stdin=json.dumps({
+            "worker_type": "coding", "title": "Media preview", "brief": "Agreed brief.",
+            "manager": {"kind": "chief", "id": "chief"},
+        }),
+        settle_brief=True,
     )["id"]
     _write_ticket_files(server, ticket_id)
     root = _ticket_files_dir(server, ticket_id)

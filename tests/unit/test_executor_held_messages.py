@@ -156,21 +156,6 @@ class HeldFixture:
         self.endpoint.bind_conversations(system or self.system)
         return await self.endpoint.inbox.accept(envelope, IDENTITY)
 
-    async def source_reply_credited(
-        self, system: SqliteProcessConversationSystem | None = None
-    ) -> bool:
-        state = (system or self.system)._conversations["c_source"]
-        token = state.running_turn.token if state.running_turn else state.last_ended_turn_token
-        assert token is not None
-        return (
-            self.connection.execute(
-                "SELECT 1 FROM conversation_reply_credits WHERE conversation_id='c_source' "
-                "AND turn_number=? AND principal_kind='chief' AND principal_id='chief'",
-                (token.turn_number,),
-            ).fetchone()
-            is not None
-        )
-
     async def close(self) -> None:
         self.spool.close()
         for system in self.systems:
@@ -277,7 +262,6 @@ def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
                 assert (await fixture.deliver(envelope)).result == replay_result(fixture, envelope)
                 fixture.spool.acknowledge(receipt)
             assert fixture.spool.pending() == ()
-            assert not await fixture.source_reply_credited()
             before = list(fixture.native.commands)
             fresh = await fixture.new_core()
             assert await fresh.held_prompts("c_target") == ()
@@ -286,7 +270,6 @@ def test_waiting_native_messages_are_interrupted_without_restore_or_replay(
                     fixture, envelope
                 )
             assert fixture.native.commands == before
-            assert not await fixture.source_reply_credited(fresh)
         finally:
             await fixture.close()
 

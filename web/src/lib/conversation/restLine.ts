@@ -16,7 +16,6 @@
  */
 
 import {
-  explicitReplyMissingSentence,
   liveAskFrom,
   promptLabelFor,
   turnEndingSentence,
@@ -152,64 +151,39 @@ function restLineBodyFrom(
   presentation: RestLinePresentation
 ): Omit<RestLine, "marks"> | null {
   const ask = liveAskFrom(presentation.visibleRows);
-  if (ask !== null) {
-    return {
-      who: null,
-      // The title is what the ask is; the detail is only read when a backend sent an ask
-      // with no title, and then it is the only thing there is to say.
-      text: oneLine(ask.title) || oneLine(ask.detail ?? ""),
-      aside: null,
-      taskProgress: null,
-      waiting: true,
-      workingSinceUnixMilliseconds: null
-    };
-  }
-
-  const items = conversationThreadItemsForLens(
-    rows,
-    presentation.visibleRows,
-    presentation.lens
-  );
+  const items = conversationThreadItemsForLens(rows, presentation.visibleRows, presentation.lens);
   const turn = newestTurn(items);
-  const happened = whateverHappenedLast(presentation.visibleRows, ownSenderLabel);
+  const call = turn === null ? null : newestToolCallOf(items, turn.turnKey);
+  return restLineBodyFor({
+    permissionTitle: ask === null ? null : oneLine(ask.title) || oneLine(ask.detail ?? ""),
+    running: turn !== null && !turn.settled,
+    startedAt: turn?.startedAtUnixMilliseconds ?? null,
+    tool: call === null ? null : toolCallSentence(call),
+    last: whateverHappenedLast(presentation.visibleRows, ownSenderLabel),
+    progress
+  });
+}
 
+/** One presentation decision for server status and complete transcript rows. */
+export function restLineBodyFor(facts: {
+  permissionTitle: string | null;
+  running: boolean;
+  startedAt: number | null;
+  tool: string | null;
+  last: Happened | null;
+  progress: ConversationTaskProgress;
+}): Omit<RestLine, "marks"> | null {
+  const { permissionTitle, running, startedAt, tool, last, progress } = facts;
+  if (permissionTitle !== null) {
+    return { who: null, text: permissionTitle, aside: null, taskProgress: null, waiting: true, workingSinceUnixMilliseconds: null };
+  }
   if (progress.turnRunning && progress.currentEntry !== null) {
-    return {
-      who: null,
-      text: oneLine(progress.currentEntry.text),
-      aside: null,
-      taskProgress: progress,
-      waiting: false,
-      workingSinceUnixMilliseconds: turn?.startedAtUnixMilliseconds ?? null
-    };
+    return { who: null, text: oneLine(progress.currentEntry.text), aside: null, taskProgress: progress, waiting: false, workingSinceUnixMilliseconds: startedAt };
   }
-
-  if (turn !== null && !turn.settled) {
-    const call = newestToolCallOf(items, turn.turnKey);
-    const doing = call === null ? null : toolCallSentence(call);
-    return {
-      // A tool call is the turn's own doing and says so itself. What stands in for it
-      // before the turn has called anything belongs to whoever produced it.
-      who: doing === null ? happened?.who ?? null : null,
-      // What the turn is doing; failing that the last thing anybody can point at, which
-      // for a turn that has not called a tool yet is the message that started it.
-      text: doing ?? happened?.text ?? workingSentence(null),
-      aside: null,
-      taskProgress: null,
-      waiting: false,
-      workingSinceUnixMilliseconds: turn.startedAtUnixMilliseconds
-    };
+  if (running) {
+    return { who: tool === null ? last?.who ?? null : null, text: tool ?? last?.text ?? workingSentence(null), aside: null, taskProgress: null, waiting: false, workingSinceUnixMilliseconds: startedAt };
   }
-
-  if (happened === null) return null;
-  return {
-    who: happened.who,
-    text: happened.text,
-    aside: null,
-    taskProgress: null,
-    waiting: false,
-    workingSinceUnixMilliseconds: null
-  };
+  return last === null ? null : { ...last, aside: null, taskProgress: null, waiting: false, workingSinceUnixMilliseconds: null };
 }
 
 /** A thing that happened, and who it was that did it. */
@@ -264,8 +238,6 @@ export function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Hap
       return { who: senderOf(row.senderLabel, ownSenderLabel), text: PROMPT_DISCARDED_SENTENCE };
     case "agent_message":
       return { who: null, text: oneLine(messageContentText(row.content)) };
-    case "explicit_reply_missing":
-      return { who: null, text: explicitReplyMissingSentence(row.promptSender) };
     case "streaming_agent_message":
       return { who: null, text: oneLine(row.text) };
     case "tool_call":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import shutil
 import time
 from collections.abc import Callable
@@ -82,6 +83,29 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
     events: list[str] = []
     lifecycle: list[tuple[str, dict[str, object]]] = []
     snapshot = tmp_path / "snapshot"
+    # Rotate the previous release, but preserve unrelated copies and recovery material.
+    _app(current / "app-previous", "c" * 40, "older")
+    unrelated = [
+        current / name
+        for name in (
+            ".app-candidate-old",
+            ".app-failed-old",
+            ".app-fallback-old",
+            "app-mutated-before-old",
+        )
+    ]
+    for app in unrelated:
+        app.mkdir()
+        (app / "old-copy").write_text("unrelated")
+    protected = [
+        current / "recovery" / "snapshot",
+        current / "restore-proof.json",
+        current.parent / "quarantine" / "evidence",
+        current.parent / "deployment-runner" / "runner",
+    ]
+    for sentinel in protected:
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text("protected")
 
     health = FakeHealth(events, {SHA_B})
 
@@ -117,13 +141,19 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
     assert database.read_text(encoding="utf-8") == "db"
     assert log.read_text(encoding="utf-8") == "log"
     assert candidate.is_dir()
-    assert list(current.glob(".app-*")) == []
+    assert (current / "app-previous" / "old").is_file()
+    assert not (current / "app-previous" / "older").exists()
+    assert all((app / "old-copy").read_text() == "unrelated" for app in unrelated)
+    assert all(sentinel.read_text() == "protected" for sentinel in protected)
+    assert not (current / f".app-candidate-{os.getpid()}").exists()
+    assert not (current / f".app-fallback-{os.getpid()}").exists()
 
 
 def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) -> None:
     current = tmp_path / "current"
     _app(current / "app", SHA_A, "old", include_cli=False)
     prior_artifact_digest = digest_app_artifact(current / "app")
+    previous = _app(current / "app-previous", "c" * 40, "older")
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
     database = _database(current)
     events: list[str] = []
@@ -146,6 +176,7 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
     assert health.deadlines == [27.0, 27.0]
     assert (current / "app" / "old").is_file()
     assert digest_app_artifact(current / "app") == prior_artifact_digest
+    assert (previous / "older").is_file()
     assert (
         json.loads((current / "app" / "manifest.json").read_text(encoding="utf-8"))["app_sha"]
         == SHA_A
@@ -278,6 +309,7 @@ def _app(
         "{}\n", encoding="utf-8"
     )
     from planner.environments.runtime_contracts import RuntimeContract, runtime_bytes_digest
+
     inventory = b'{"native_files": []}'
     contract = RuntimeContract("3.12.12", runtime_bytes_digest(inventory))
     (root / "runtime").mkdir()

@@ -144,8 +144,7 @@ CREATE = RequestGuidance(
         "Omitted page defaults to an empty headroom.page version 1 with the goal title and "
         "empty summary. Replace measure_example in both the chart and completion_rule "
         "with an existing measure. Example dates and targets are illustrative.",
-        "expected_revision is accepted and ignored on create for compatibility. "
-        "Use panels goal schema edit for revision-checked changes and panels goal schema "
+        "Use panels goal schema edit for changes and panels goal schema "
         "primary-chart for chart author input.",
         *_NOTES,
         *_CHART_NOTES,
@@ -163,26 +162,25 @@ CREATE = RequestGuidance(
 EDIT = RequestGuidance(
     GoalEditBody,
     examples={
-        "primary_line_chart": {"expected_revision": 1, "primary_chart": _CHART},
+        "primary_line_chart": {"primary_chart": _CHART},
         "numeric_finish_line": {
-            "expected_revision": 1,
             "completion_rule": {
                 "actual": {"op": "reference", "measure_id": "measure_example", "day_offset": 0},
                 "target": {"op": "constant", "value": 10000},
                 "direction": "atleast", "first_date": "2026-11-01",
             },
         },
-        "select_binary_display": {"expected_revision": 1, "primary_checklist_block_id": None},
-        "select_checklist": {"expected_revision": 1, "primary_checklist_block_id": "approach"},
+        "select_binary_display": {"primary_checklist_block_id": None},
+        "select_checklist": {"primary_checklist_block_id": "approach"},
         "change_checklist_deadline": {
-            "expected_revision": 1, "page": _workshop_page("2026-11-09")
+            "page": _workshop_page("2026-11-09")
         },
-        "clear_checklist_deadline": {"expected_revision": 1, "page": _workshop_page(None)},
+        "clear_checklist_deadline": {"page": _workshop_page(None)},
     },
     notes=(
-        "Read panels goal show GOAL_ID --json first. Replace expected_revision with the "
-        "current revision and send changed fields to panels goal edit GOAL_ID on stdin. "
-        "Omitted goal fields stay unchanged. Authority and stale-revision checks run before "
+        "Read panels goal show GOAL_ID --json first. "
+        "Send changed fields to panels goal edit GOAL_ID on stdin. "
+        "Omitted goal fields stay unchanged. Authority checks run before "
         "the existing document validator.",
         "A kind change requires the destination main-display choice in the same request: "
         "binary needs primary_checklist_block_id, including explicit null for binary "
@@ -195,7 +193,7 @@ EDIT = RequestGuidance(
         "switch. Ordinary edits preserve existing and legacy display configurations.",
         "Before an item-date edit, copy the accepted page from goal show and keep every "
         "block, item ID, state, and unrelated field. Change only the intended item's "
-        "deadline and use the current expected_revision. The workshop examples are "
+        "deadline. The workshop examples are "
         "complete fictional pages; never replace a real page with an example page.",
         *_NOTES,
         *_CHART_NOTES,
@@ -206,7 +204,7 @@ PRIMARY_CHART = RequestGuidance(
     ChartBlock,
     examples={"primary_line_chart": _CHART},
     notes=(
-        "This schema describes the primary_chart object. Put it in the revision-checked "
+        "This schema describes the primary_chart object. Put it in the "
         "edit envelope shown by panels goal schema edit. A quantitative goal requires "
         "a non-null main chart. To switch to binary completion, send kind binary and "
         "primary_checklist_block_id null explicitly in the same edit.",

@@ -410,7 +410,6 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
     from planner.core.response_compression import CompressExceptEventStreams
     from planner.core.server import create_app
     from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
-    from planner.navigation.middleware import NavigationCommandFenceMiddleware
     from planner.projects import api as projects_api
     from planner.projects.contracts import CreateProjectBody
 
@@ -457,7 +456,6 @@ def test_candidate_holds_normal_http_and_cleanup_until_matching_runner_commit(
         IOSBuildGateMiddleware,
         TrustedIngressMiddleware,
         ConversationSendBodyLimitMiddleware,
-        NavigationCommandFenceMiddleware,
     ]
     assert registered == expected
     with TestClient(app) as client:
@@ -695,7 +693,9 @@ def test_readiness_discovers_new_offer_once_per_cadence_and_persists_receipt(
         unsubscribe()
 
 
-def test_runner_refuses_unknown_schema_before_any_shutdown(tmp_path: Path) -> None:
+def test_runner_accepts_direct_upgrade_entry_and_head_but_refuses_unknown_schema(
+    tmp_path: Path,
+) -> None:
     import sqlite3
 
     from planner.environments.update_runner import validate_schema_ancestry
@@ -703,8 +703,36 @@ def test_runner_refuses_unknown_schema_before_any_shutdown(tmp_path: Path) -> No
     database = tmp_path / "schema.db"
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE alembic_version (version_num TEXT)")
-        conn.execute("INSERT INTO alembic_version VALUES ('video_upload_ledger')")
+        conn.execute("INSERT INTO alembic_version VALUES ('goal_holders')")
     validate_schema_ancestry(database)
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            "UPDATE alembic_version SET version_num = 'retire_explicit_reply_requirement'"
+        )
+    validate_schema_ancestry(database)
+    with sqlite3.connect(database) as conn:
+        conn.execute("UPDATE alembic_version SET version_num = 'canonical_manager_identities'")
+    validate_schema_ancestry(database)
+    # The direct entry is valid only in a candidate graph that declares it.
+    historical = tmp_path / "historical-migrations"
+    (historical / "versions").mkdir(parents=True)
+    for revision, parent in (("historical_base", None), ("video_upload_ledger", "historical_base")):
+        (historical / "versions" / f"{revision}.py").write_text(
+            f"revision = {revision!r}\ndown_revision = {parent!r}\n"
+            "branch_labels = depends_on = None\n"
+            "def upgrade(): pass\ndef downgrade(): pass\n"
+        )
+    with sqlite3.connect(database) as conn:
+        conn.execute("UPDATE alembic_version SET version_num = 'goal_holders'")
+    with pytest.raises(ValueError, match="unknown schema ancestry"):
+        validate_schema_ancestry(database, historical)
+    with sqlite3.connect(database) as conn:
+        conn.execute("UPDATE alembic_version SET version_num = 'historical_base'")
+    with pytest.raises(ValueError, match="precedes the supported update schema floor"):
+        validate_schema_ancestry(database, historical)
+    with sqlite3.connect(database) as conn:
+        conn.execute("UPDATE alembic_version SET version_num = 'video_upload_ledger'")
+    validate_schema_ancestry(database, historical)
     with sqlite3.connect(database) as conn:
         conn.execute("UPDATE alembic_version SET version_num = 'unknown_migration'")
     with pytest.raises(ValueError, match="unknown schema ancestry"):
@@ -868,8 +896,6 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     from dataclasses import asdict
     from typing import Any
 
-    from alembic.script import ScriptDirectory
-
     from planner.core.db import MIGRATIONS_DIRECTORY
     from planner.environments import update_runner
     from planner.environments.app import (
@@ -885,11 +911,12 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     history = candidate / "src" / "planner" / "core" / "migrations"
     (history / "versions").mkdir(parents=True)
     shutil.copy(MIGRATIONS_DIRECTORY / "env.py", history / "env.py")
-    # Copy only the predecessor chain, regardless of later shipped descendants.
-    for revision in ScriptDirectory(str(MIGRATIONS_DIRECTORY)).walk_revisions(
-        base="base", head="owner_message_preview"
-    ):
-        shutil.copy(revision.path, history / "versions" / Path(revision.path).name)
+    # The older archive has its own complete graph, independent of the sweep graph.
+    (history / "versions" / "older.py").write_text(
+        'revision = "older_candidate"\ndown_revision = None\n'
+        'branch_labels = depends_on = None\n'
+        'def upgrade(): pass\ndef downgrade(): pass\n'
+    )
     manifest_path = candidate / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["source_digest"] = digest_app_source(candidate)
@@ -915,7 +942,7 @@ def test_extracted_older_candidate_rejects_live_schema_before_claim_or_stop(
     database.parent.mkdir()
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE alembic_version (version_num TEXT)")
-        conn.execute("INSERT INTO alembic_version VALUES ('video_upload_ledger')")
+        conn.execute("INSERT INTO alembic_version VALUES ('goal_holders')")
     update_runner.validate_schema_ancestry(database)
     store = FileUpdateRequestStore(database.parent / "owner-update-request.json")
     store.create(OwnerUpdateRequest("request", offered, "idle", "dispatched", "now"))

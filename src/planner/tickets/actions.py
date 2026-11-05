@@ -2,22 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 import sqlite3
-from collections.abc import Callable
 
-from planner.conversation.contracts import ConversationSystem
 from planner.core import ticket_blocks
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
-from planner.core.contracts import Principal, PrincipalKind
-from planner.message_delivery import service as message_delivery_service
+from planner.core.contracts import Principal
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket
 from planner.tickets.logic import admission
 from planner.worker_types.contracts import TicketWorkflowDefinition
-
-LOGGER = logging.getLogger(__name__)
 
 
 def create_ticket(
@@ -75,15 +69,12 @@ def add_ticket_block(
     blocked_ticket_id: str,
     *,
     now: int,
-    admit: Callable[[], None] | None = None,
 ) -> None:
-    """Create a Ticket block under admission, in one transaction.
+    """Create a Ticket block in one transaction.
 
     Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
     """
     with tickets_data._txn(conn):
-        if admit is not None:
-            admit()
         ticket_blocks.add_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
 
 
@@ -93,15 +84,12 @@ def remove_ticket_block(
     blocked_ticket_id: str,
     *,
     now: int,
-    admit: Callable[[], None] | None = None,
 ) -> None:
-    """Remove a Ticket block under admission, in one transaction.
+    """Remove a Ticket block in one transaction.
 
     Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
     """
     with tickets_data._txn(conn):
-        if admit is not None:
-            admit()
         ticket_blocks.remove_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
 
 
@@ -128,8 +116,7 @@ def file_current_proposal(
     )
 
 
-async def reject_ticket_proposal(
-    conversation_system: ConversationSystem,
+def reject_ticket_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
@@ -141,9 +128,6 @@ async def reject_ticket_proposal(
     if message is not None:
         admission.validate_revision_guidance(message)
     principal = ctx.principal
-    source_turn = await message_delivery_service.revision_source_turn(
-        conversation_system, conn, ctx=ctx
-    )
     now = clock.now_unix()
     ticket = tickets_data.require_reject(
         conn,
@@ -151,7 +135,7 @@ async def reject_ticket_proposal(
         principal=principal,
         has_guidance=message is not None,
     )
-    revised = tickets_data.reject_proposal(
+    return tickets_data.reject_proposal(
         conn,
         ticket_id,
         message=message,
@@ -159,15 +143,3 @@ async def reject_ticket_proposal(
         now=now,
         expected_proposal=ticket.pending_proposal,
     )
-    if source_turn is not None:
-        try:
-            await conversation_system.record_explicit_reply(
-                source_turn, Principal(PrincipalKind.ticket, ticket_id)
-            )
-        except Exception:
-            LOGGER.warning(
-                "could not record explicit reply for Ticket revision %s",
-                ticket_id,
-                exc_info=True,
-            )
-    return revised

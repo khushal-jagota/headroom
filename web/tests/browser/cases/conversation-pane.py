@@ -2801,23 +2801,29 @@ def _overlay_menu_bounds(browser, url):
       const viewport = new EventTarget();
       Object.assign(viewport, {offsetTop:0,offsetLeft:0,width:1100,height:900});
       Object.defineProperty(window,'visualViewport',{value:viewport,configurable:true});
-      let keyboard = null;
-      const textEntry = el => el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['button','checkbox','file','radio','submit'].includes(el.type)) || (el instanceof HTMLElement && el.isContentEditable);
-      const apply = focused => {
-        const bounds = keyboard && textEntry(focused) ? keyboard : {top:0,height:900};
-        if (viewport.offsetTop === bounds.top && viewport.height === bounds.height) return;
-        Object.assign(viewport,{offsetTop:bounds.top,height:bounds.height});
+      let keyboard={offsetTop:0,height:900};
+      const update=()=>{
+        // Text fields, pickers, and editable content open the simulated keyboard.
+        // Buttons move focus out of text entry and close it.
+        const active=document.activeElement;
+        const textEntry=active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement
+          || active instanceof HTMLElement && active.isContentEditable
+          || active instanceof HTMLInputElement && !['button','checkbox','color','file','hidden','image','radio','range','reset','submit'].includes(active.type);
+        const shown=textEntry || window.__keepStaleKeyboardAfterBlur;
+        const next=shown?keyboard:{offsetTop:0,height:900};
+        if(viewport.offsetTop===next.offsetTop && viewport.height===next.height)return;
+        Object.assign(viewport,next);
         viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));
       };
-      document.addEventListener('focusin', event => apply(event.target), true);
-      document.addEventListener('focusout', event => apply(event.relatedTarget), true);
-      window.__keyboardBounds=(top,height)=>{keyboard={top,height};apply(document.activeElement);};
+      window.__keyboardBounds=(top,height)=>{keyboard={offsetTop:top,height};update();};
+      document.addEventListener('focusin',update);
+      document.addEventListener('focusout',()=>queueMicrotask(update));
     })()""")
-    proof = {"nativeKeyboard":"Not tested: visualViewport reduction and displacement are simulated.", "states":[], "actions":[]}
+    proof = {"nativeKeyboard":"Not tested: focus-driven visualViewport reduction and displacement are simulated.", "states":[], "actions":[]}
     def settle():
         _settle_conversation_layout(page)
     def composer_geometry():
-        return page.locator('[data-conversation-composer]').evaluate("""el=>({height:el.clientHeight,scrollHeight:el.scrollHeight,top:el.getBoundingClientRect().top,popupRoom:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-popup-height')),target:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-target')),gap:parseFloat(getComputedStyle(el).getPropertyValue('--space-6')),constrained:el.hasAttribute('data-conversation-composer-constrained'),viewportTop:visualViewport.offsetTop,viewportHeight:visualViewport.height})""")
+        return page.locator('[data-conversation-composer]').evaluate("""el=>({height:el.clientHeight,scrollHeight:el.scrollHeight,top:el.getBoundingClientRect().top,popupRoom:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-popup-height')),target:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-target')),gap:parseFloat(getComputedStyle(el).getPropertyValue('--space-6')),constrained:el.hasAttribute('data-conversation-composer-constrained'),visibleTop:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-visible-top')),visibleHeight:parseFloat(getComputedStyle(el).getPropertyValue('--conversation-visible-height')),viewportTop:visualViewport.offsetTop,viewportHeight:visualViewport.height})""")
     def hit(item):
         item.scroll_into_view_if_needed()
         settle()
@@ -2826,7 +2832,11 @@ def _overlay_menu_bounds(browser, url):
         x,y=bounds["x"]+bounds["width"]/2,bounds["y"]+bounds["height"]/2
         assert item.evaluate("(el,p)=>el.contains(document.elementFromPoint(p.x,p.y))", {"x":x,"y":y}), (item.get_attribute("class"), bounds)
         viewport = page.evaluate("({top:visualViewport.offsetTop,bottom:visualViewport.offsetTop+visualViewport.height})")
-        assert viewport["top"] <= y <= viewport["bottom"], (bounds,viewport)
+        focus = page.evaluate("""()=>({tag:document.activeElement?.tagName,
+          add:document.activeElement?.hasAttribute('data-conversation-add'),
+          input:document.activeElement?.hasAttribute('data-conversation-input'),
+          composer:document.querySelector('[data-conversation-composer]')?.getBoundingClientRect().toJSON()})""")
+        assert viewport["top"] <= y <= viewport["bottom"], (bounds,viewport,focus)
         return x,y
     def keyboard_rail(item, key):
         picker.get_by_role('listbox').press('ArrowLeft')
@@ -2851,6 +2861,24 @@ def _overlay_menu_bounds(browser, url):
         assert page.locator('.chat-menu').evaluate("el=>getComputedStyle(el).position")=='absolute'
         proof["ordinaryMenusFloating"]=True
         input_box.fill('')
+        ordinary=composer_geometry()
+        page.evaluate("window.__keyboardBounds(120,340)")
+        settle()
+        keyboard=composer_geometry()
+        assert keyboard['visibleHeight'] < ordinary['visibleHeight'], (ordinary,keyboard)
+        # Safari can retain its last keyboard-sized viewport after text focus ends.
+        # The dock must recover without another visualViewport resize event.
+        page.evaluate("window.__keepStaleKeyboardAfterBlur=true")
+        input_box.evaluate("el=>el.blur()")
+        settle()
+        recovered=composer_geometry()
+        assert recovered['viewportTop']==120 and recovered['viewportHeight']==340, recovered
+        assert abs(recovered['visibleHeight']-ordinary['visibleHeight'])<1, (ordinary,recovered)
+        assert abs(recovered['visibleTop']-ordinary['visibleTop'])<1, (ordinary,recovered)
+        assert abs(recovered['top']-ordinary['top'])<1, (ordinary,recovered)
+        proof['staleAfterBlur']={'keyboard':keyboard,'recovered':recovered}
+        page.evaluate("window.__keepStaleKeyboardAfterBlur=false;window.__keyboardBounds(0,900)")
+        input_box.focus()
         for mode,top,height in (("keyboard",120,340),("constrained",200,190)):
             page.evaluate("([top,height])=>window.__keyboardBounds(top,height)",[top,height])
             settle()
@@ -3116,7 +3144,7 @@ def _position_commit(browser, url):
     started=time.perf_counter()
     output=Path(os.environ.get('PANELS_E2E_FAILURE_DIR','/tmp'))
     output.mkdir(parents=True,exist_ok=True)
-    page=browser.new_page(viewport={'width':1000,'height':900},reduced_motion='no-preference',record_video_dir=str(output/'position-video'),record_video_size={'width':800,'height':720})
+    page=browser.new_page(viewport={'width':1000,'height':900},reduced_motion='no-preference')
     proof={'entry':[],'contraction':[],'labels':[]}
     page.add_init_script("""window.__positionFrames=[];window.__samplePosition=false;
       const sample=()=>{
@@ -3903,8 +3931,14 @@ def _card_state_motion(browser, url):
           background:s.backgroundColor, radius:s.borderRadius,
           borders:['Top','Right','Bottom','Left'].map(side=>[s['border'+side+'Width'],s['border'+side+'Style']]),
           padding:s.padding};}""")
-    def shade(page, expected):
-        page.wait_for_function("expected=>getComputedStyle(document.querySelector('.conversation-layer')).backgroundColor===expected", arg=expected)
+    def dock_treatment(page, arrow_lit):
+        # Hover changes only the arrow. The layer stays on the page surface under its hairline.
+        page.wait_for_function("""lit=>{const layer=document.querySelector('.conversation-layer');
+          const arrow=getComputedStyle(document.querySelector('.c2-rest-control'));
+          return getComputedStyle(layer).backgroundColor==='rgb(21, 21, 21)'
+            && getComputedStyle(layer,'::before').opacity==='1'
+            && arrow.backgroundColor===(lit?'rgb(44, 44, 44)':'rgba(0, 0, 0, 0)')
+            && arrow.color===(lit?'rgb(242, 242, 242)':'rgb(191, 191, 191)')}""", arg=arrow_lit)
     for host, width, touch, reduced in (
         ("ticket", 1280, False, False), ("manager", 390, True, False),
         ("ticket", 390, True, True), ("manager", 1280, False, False),
@@ -3942,12 +3976,13 @@ def _card_state_motion(browser, url):
                 input_device = page.locator('[data-conversation-box]').bounding_box()
                 assert layer and surface and input_device
                 # Surface hover changes treatment without opening the reader.
+                dock_treatment(page, False)
                 page.mouse.move(layer['x']+2, surface['y']+8)
-                shade(page, 'rgb(21, 21, 21)')
+                dock_treatment(page, True)
                 expect(pane).to_have_attribute('data-conversation-state', 'rest')
                 # Include padding inside the actual rounded input boundary.
                 page.mouse.move(input_device['x']+3, input_device['y']+3)
-                shade(page, 'rgb(13, 13, 13)')
+                dock_treatment(page, False)
                 expect(pane).to_have_attribute('data-conversation-state', 'rest')
             elif reduced:
                 # Reuse one phone case to prove that background activation
@@ -3978,7 +4013,7 @@ def _card_state_motion(browser, url):
               observer.observe(document.querySelector('[data-conversation-pane]'),{attributes:true,attributeFilter:['data-conversation-state']});
               window.__dockObserver=observer;
               const sample=()=>{window.__dockFrames.push({time:performance.now(),height:layer.getBoundingClientRect().height,
-                bottom:composer.getBoundingClientRect().bottom,shade:getComputedStyle(layer).backgroundColor,
+                bottom:composer.getBoundingClientRect().bottom,line:Number(getComputedStyle(layer,'::before').opacity),
                 readerVisibility:getComputedStyle(document.querySelector('.ticket-reading,.manager-reading')).visibility,
                 moving:!!document.querySelector('[data-conversation-dock-transition]')});if(!window.__dockStop)requestAnimationFrame(sample)};sample();
             }""")
@@ -4001,9 +4036,9 @@ def _card_state_motion(browser, url):
                 assert 170 <= duration <= 360, motion
                 assert len({round(sample['height']) for sample in moving}) >= 5, motion
                 if touch:
-                    assert frames[0]['shade'] == 'rgb(13, 13, 13)', motion
-                    assert frames[-1]['shade'] == 'rgb(21, 21, 21)', motion
-                    assert len({sample['shade'] for sample in moving}) >= 3, motion
+                    assert frames[0]['line'] == 1, motion
+                    assert frames[-1]['line'] == 0, motion
+                    assert len({sample['line'] for sample in moving}) >= 3, motion
             expect(input_box).to_have_value('A retained draft')
             assert input_appearance(page) == rest_input
             if not touch:
@@ -4017,7 +4052,7 @@ def _card_state_motion(browser, url):
                 expect(page.locator('[data-conversation-expand]')).to_be_focused()
             expect(pane).to_have_attribute('data-conversation-state', 'rest')
             _settle_conversation_layout(page)
-            assert page.locator('.conversation-layer').evaluate('node=>getComputedStyle(node).backgroundColor') == 'rgb(13, 13, 13)'
+            assert page.locator('.conversation-layer').evaluate("node=>[getComputedStyle(node).backgroundColor,getComputedStyle(node,'::before').opacity]") == ['rgb(21, 21, 21)', '1']
 
             assert page.evaluate("window.__paneIdentity===document.querySelector('[data-conversation-pane]')&&window.__composerIdentity===document.querySelector('[data-conversation-composer]')")
             assert not document.evaluate('node=>node.closest(".ticket-reading,.manager-reading").inert')
@@ -4065,16 +4100,16 @@ def _card_state_motion(browser, url):
                 page.evaluate("window.__showHeldPrompt(true)")
                 held = page.locator('[data-conversation-held-row="held-1"] .chat-qrow-txt')
                 held.hover()
-                shade(page, 'rgb(21, 21, 21)')
+                dock_treatment(page, True)
                 expect(pane).to_have_attribute('data-conversation-state', 'rest')
                 expand.click()
                 _settle_conversation_layout(page)
                 held.hover()
                 page.keyboard.press('Escape')
                 _settle_conversation_layout(page)
-                shade(page, 'rgb(21, 21, 21)')
+                dock_treatment(page, True)
                 input_box.hover()
-                shade(page, 'rgb(13, 13, 13)')
+                dock_treatment(page, False)
                 expect(pane).to_have_attribute('data-conversation-state', 'rest')
 
             page.goto(url + ('?ticket=1&card-artifact=1' if host == 'ticket' else '?card-artifact=1'))

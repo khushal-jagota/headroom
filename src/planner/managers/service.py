@@ -6,8 +6,6 @@ import asyncio
 import sqlite3
 
 from planner.conversation.contracts import ConversationSystem
-from planner.core import authority
-from planner.core.authority import require_above
 from planner.core.contracts import Principal
 from planner.files.lifecycle import (
     purge_quarantined_manager_files,
@@ -37,7 +35,6 @@ async def delete_manager(
     principal: Principal,
 ) -> ManagerDeletion:
     """Stop the Manager and delete its childless item as one guarded action."""
-    require_above(conn, principal, authority.manager(item_id))
     async with manager_lifecycle_lock(item_id):
         managers_data._require_manager_can_delete(conn, item_id)
         quarantined = None

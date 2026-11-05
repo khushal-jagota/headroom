@@ -1,8 +1,7 @@
 <script lang="ts">
   import { getContext, untrack } from 'svelte';
   import type { ChecklistItem } from '../../lib/goals/contracts';
-  import { PlannerFetchError } from '../../lib/api';
-  import { queryClient } from '../../lib/queryClient';
+  import { createGoalEditor } from '../../lib/goals/editing';
   import { deadlineColor, deadlineTone, goalDateText } from '../../lib/goals/presentation';
   import type { ChecklistDeadlineCommand } from '../../lib/goals/requestSessions';
   import { PAGE_CONTEXT, type PageContext } from '../../lib/pageKit/context';
@@ -54,12 +53,8 @@
       await session.run(command, () => editor(capturedBlockId, block => {
         if (block.type !== 'checklist' || !block.items.some(candidate => candidate.id === capturedItemId)) throw new Error('This checklist item no longer exists.');
         return { ...block, items: block.items.map(candidate => candidate.id === capturedItemId ? { ...candidate, deadline: command.deadline } : candidate) };
-      }, command.revision));
+      }));
     } catch (error) {
-      // Keep the failed draft, but refresh accepted revisions for a later explicit edit.
-      if (error instanceof PlannerFetchError && error.status === 409 && goalId) {
-        await queryClient.invalidateQueries().catch(()=>undefined);
-      }
       // Submitted failures remain in the parent-owned receipt after unmount.
       if (!session.current) admissionError = error;
     }

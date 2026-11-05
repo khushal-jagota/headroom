@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
-from alembic import op
 from tests.support.conversation_view_database import FIXTURES, database
 
 from planner.conversation.events import (
     ConversationEventKind,
     conversation_event_payload_from_canonical_json,
 )
-from planner.conversation.retention.read import diagnostics_expired, sequence_expired
 from planner.conversation.storage import StoredConversationEvent
 from planner.conversation.views.api import _changes
 from planner.conversation.views.configuration import (
@@ -30,6 +27,7 @@ from planner.conversation.views.contracts import (
     ViewPageCursor,
 )
 from planner.conversation.views.live_output import ConversationViewLiveOutput
+from planner.conversation.views.omissions import diagnostics_expired, sequence_expired
 from planner.conversation.views.status import read_status
 from planner.conversation.views.storage import (
     ViewBodyChanged,
@@ -39,9 +37,8 @@ from planner.conversation.views.storage import (
     read_page,
     read_turn,
 )
-from planner.conversation.views.writer import append_projection
+from planner.conversation.views.writer import append_projection, rebuild_projection
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.migrations.versions import owner_message_preview
 
 
 def event(sequence: int, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -129,9 +126,7 @@ def test_oversized_body_chunks_preserve_unicode_and_one_logical_markdown_documen
             read_body_chunk(conn, "fixture", reference, 0)
 
 
-def test_projection_writes_share_source_rollback_and_upgrade_matches_incremental(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental() -> None:
     with database(FIXTURES[0]["events"]) as conn:
         conn.commit()
         before = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
@@ -169,15 +164,10 @@ def test_projection_writes_share_source_rollback_and_upgrade_matches_incremental
         # recover it from canonical events without changing row layout.
         conn.execute("UPDATE conversation_view_state SET projection_version=1")
         conn.execute("UPDATE conversation_view_rows SET rest_summary=NULL")
-        monkeypatch.setattr(
-            op,
-            "get_bind",
-            lambda: SimpleNamespace(connection=SimpleNamespace(driver_connection=conn)),
-        )
         conn.commit()
         stale = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
         with pytest.raises(RuntimeError, match="migration rollback"), conn:
-            owner_message_preview.upgrade()
+            rebuild_projection(conn)
             assert (
                 conn.execute("SELECT projection_version FROM conversation_view_state").fetchone()[0]
                 == VIEW_PROJECTION_VERSION
@@ -190,7 +180,7 @@ def test_projection_writes_share_source_rollback_and_upgrade_matches_incremental
         assert list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence")) == stale
         original_factory = conn.row_factory
         conn.row_factory = None
-        owner_message_preview.upgrade()
+        rebuild_projection(conn)
         assert conn.row_factory is None
         conn.row_factory = original_factory
         assert (

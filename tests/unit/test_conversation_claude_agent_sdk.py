@@ -27,6 +27,7 @@ from anyio.abc import Process
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     CLINotFoundError,
+    SystemMessage,
     TaskNotificationMessage,
     TaskStartedMessage,
     TaskUpdatedMessage,
@@ -44,7 +45,6 @@ from tests.support.conversation_claude_agent_sdk_bench import (
     _write,
 )
 
-from planner.conversation.backends import claude_agent_sdk
 from planner.conversation.backends.claude_agent_sdk import (
     _ClaudeCleanupTransport,
     _ClaudeProtocolTransport,
@@ -153,12 +153,114 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
     _run(exercise)
 
 
-def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_end_them(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_claude_model_change_rebinds_the_child_and_preserves_the_conversation(
+    tmp_path: Path,
 ) -> None:
-    """Task news arrives when no turn runs. Claude stops every task while it is terminated,
-    and those tasks ended with the session, not on their own.
+    """A same-provider model change must cross Claude's fresh-child boundary."""
+    from claude_agent_sdk import ResultMessage
+
+    from planner.conversation.backends.claude_agent_sdk import (
+        ClaudeAgentSdkBackendChildFactory,
+        ClaudeAgentSdkChildLaunch,
+    )
+    from planner.conversation.contracts import (
+        ConversationBackendKey,
+        ConversationStartRequest,
+        PromptDeliveryStarted,
+    )
+    from planner.conversation.live_tail import ConversationLiveTail
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.conversation.storage import ConversationStore
+    from planner.conversation.system import SqliteProcessConversationSystem
+    from planner.core.db import connect, create_schema
+
+    db_path = str(tmp_path / "claude-model-change.db")
+    conn = connect(db_path)
+    create_schema(conn)
+    conn.close()
+
+    async def exercise() -> None:
+        clients: list[_ScriptedClaudeSdkClient] = []
+
+        def make(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
+            client = _ScriptedClaudeSdkClient(options)
+            clients.append(client)
+            return client
+
+        store = ConversationStore(db_path)
+        system = SqliteProcessConversationSystem(
+            store=store,
+            message_files=ConversationMessageFiles(db_path),
+            backend_child_factories={
+                key: ClaudeAgentSdkBackendChildFactory(
+                    ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")),
+                    client_factory=make,
+                )
+                for key in ConversationBackendKey
+            },
+            live_tail=ConversationLiveTail(),
+        )
+
+        async def finish(client: _ScriptedClaudeSdkClient, session: str) -> None:
+            client.say(ResultMessage(
+                subtype="success", duration_ms=1, duration_api_ms=1,
+                is_error=False, num_turns=1, session_id=session,
+            ))
+            await client.until_taken_in()
+            await system.wait_until_quiescent()
+
+        try:
+            await system.start_conversation(ConversationStartRequest(
+                conversation_id="claude-model-change", backend_key=ConversationBackendKey.claude,
+                model="opus", workspace_folder=tmp_path,
+            ))
+            first = await system.send(
+                "claude-model-change", text_message_content("First turn"), sender_label="owner",
+            )
+            assert isinstance(first, PromptDeliveryStarted)
+            session = clients[0].options.session_id
+            assert session is not None
+            await finish(clients[0], session)
+            changed = await system.send(
+                "claude-model-change", text_message_content("Use Sonnet"),
+                sender_label="owner", model_change="sonnet",
+            )
+            assert isinstance(changed, PromptDeliveryStarted)
+            assert [client.options.model for client in clients] == ["opus", "sonnet"]
+            assert clients[0].disconnected
+            assert len(clients[0].prompts) == 1
+            assert clients[1].options.resume == session
+            assert len(clients[1].prompts) == 1
+            assert "Use Sonnet" in clients[1].prompts[0]
+            record = await store.read_conversation("claude-model-change")
+            assert record is not None
+            assert record.model == "sonnet"
+            assert record.vendor_session_cursor == session
+            await finish(clients[1], session)
+        finally:
+            await system.shutdown()
+
+    _run(exercise)
+
+
+def test_background_tasks_follow_claudes_live_set(tmp_path: Path) -> None:
+    """Claude's live set alone says which tasks are live, so an end it never announced
+    still clears the task, and each end says how it happened. The frames follow claude's
+    real order, including a terminated claude stopping its tasks before its stream ends.
     """
+
+    def live(*task_ids: str, ambient: str | None = None) -> SystemMessage:
+        tasks: list[dict[str, object]] = [
+            {"task_id": task_id, "task_type": "local_bash", "description": f"sleep for {task_id}"}
+            for task_id in task_ids
+        ]
+        if ambient is not None:
+            watcher = {"task_id": ambient, "task_type": "monitor", "description": "watch"}
+            tasks.append({**watcher, "ambient": True})
+        return SystemMessage(
+            subtype="background_tasks_changed",
+            data={"type": "system", "subtype": "background_tasks_changed", "tasks": tasks},
+        )
 
     def started(task_id: str) -> TaskStartedMessage:
         return TaskStartedMessage(
@@ -192,33 +294,36 @@ def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_
             session_id=SESSION_ID,
         )
 
-    monkeypatch.setattr(
-        claude_agent_sdk, "STOPPED_BACKGROUND_TASK_PROOF_OF_LIFE_SECONDS", 0.01
-    )
-
     async def exercise() -> None:
         start = _start_request(workspace_folder=tmp_path)
         child, sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=SESSION_ID)
         clients[0].say(
+            live("a", ambient="w"),
             started("a"),
             updated("a", "completed"),
             notified("a", "completed"),
-            # Stopped by the agent: the session goes on, which proves it survived the stop.
+            live(ambient="w"),
+            # Stopped by the agent, which goes on working: the stop is the task's own end.
+            live("b"),
             started("b"),
             updated("b", "killed"),
+            live(),
             _assistant(TextBlock(text="stopped it")),
-            # Stopped between turns: the child is still up a while later.
-            started("d"),
-            notified("d", "stopped"),
-        )
-        await clients[0].until_taken_in()
-        await asyncio.sleep(0.05)
-        clients[0].say(
+            # A shell whose end claude never announced leaves the live set all the same.
+            live("e"),
+            started("e"),
+            live(),
+            _assistant(TextBlock(text="carrying on")),
+            # A watcher claude marks ambient stops being activity while it goes on.
+            live("m"),
+            live(ambient="m"),
             # Stopped while claude itself is being terminated: the stream ends next.
+            live("c"),
             started("c"),
             notified("c", "stopped"),
             updated("c", "killed"),
+            live(),
         )
         clients[0].end_the_stream()
         await clients[0].until_taken_in()
@@ -228,9 +333,12 @@ def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_
             BackgroundTaskEnded(task_id="a", task_status="completed"),
             BackgroundTaskStarted(task_id="b", task_description="sleep for b"),
             BackgroundTaskEnded(task_id="b", task_status="killed"),
-            BackgroundTaskStarted(task_id="d", task_description="sleep for d"),
-            BackgroundTaskEnded(task_id="d", task_status="stopped"),
+            BackgroundTaskStarted(task_id="e", task_description="sleep for e"),
+            BackgroundTaskEnded(task_id="e", task_status="unreported"),
+            BackgroundTaskStarted(task_id="m", task_description="sleep for m"),
+            BackgroundTaskEnded(task_id="m", task_status="ambient"),
             BackgroundTaskStarted(task_id="c", task_description="sleep for c"),
+            BackgroundTaskEnded(task_id="c", task_status="killed"),
             BackendStreamEnded(),
         ]
         await child.stop()

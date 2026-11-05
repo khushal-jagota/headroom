@@ -120,7 +120,7 @@ def _environment_root(tmp_path: Path) -> Path:
     the test's identity goes in as a digest rather than as its name.
     """
     digest = hashlib.sha1(str(tmp_path).encode("utf-8")).hexdigest()[:8]
-    return Path("/tmp").resolve() / f"pe-{os.getpid()}-{digest}"
+    return Path(os.environ.get("TMPDIR", "/tmp")).resolve() / f"pe-{os.getpid()}-{digest}"
 
 
 def _test_port(tmp_path: Path) -> int:

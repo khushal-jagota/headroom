@@ -13,8 +13,7 @@
   import { mutateJson } from "../lib/mutate";
   import { reviewReturnHref } from "../lib/review/visit";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { ticketCommandImpact } from "../lib/ticketNavigationImpact";
-  import { conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
+
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { readBackends, type BackendSnapshot, type DeliveredMessage, type OwnerSendBody } from "../lib/conversation/wire";
 
@@ -77,13 +76,11 @@
     if (!owner || ownerError) throw new Error("The artifact's conversation is unavailable.");
     const recipient = owner;
     const view = navigation?.state.effective;
-    const impact = recipient.kind === "ticket"
-      ? ticketCommandImpact(view, recipient.id, "conversation")
-      : conversationOwnerImpact(view ? navigation!.presentationFor(view) : undefined, recipient.kind, recipient.id);
-    const operation = (responseMetadata?: import("../lib/api").FetchOptions["responseMetadata"]) => mutateJson<DeliveredMessage>(
-      recipient.kind==='chief'?'/api/chief/conversation/send':`/api/${recipient.kind === "ticket" ? "tickets" : "managers"}/${encodeURIComponent(recipient.id)}/conversation/send`,
-      { method: "POST", body, responseMetadata });
-    const delivered = navigation ? await navigation.runCommand(impact, operation, "send artifact message") : await operation();
+
+    const operation = () => mutateJson<DeliveredMessage>(
+      recipient.kind === "chief" ? "/api/chief/conversation/send" : `/api/${recipient.kind === "ticket" ? "tickets" : "managers"}/${encodeURIComponent(recipient.id)}/conversation/send`,
+      { method: "POST", body });
+    const delivered = await operation();
     if (delivered.conversation_id !== null) sentConversationId = delivered.conversation_id;
     return delivered;
   }

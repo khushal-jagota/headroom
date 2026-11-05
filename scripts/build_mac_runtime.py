@@ -301,13 +301,17 @@ def prove_archive(archive: Path, work: Path, *, revision: str) -> dict[str, obje
     )
     backend_root = extracted / "agent_backends/node_modules"
     for relative in (
-        "@agentclientprotocol/claude-agent-acp/dist/index.js",
-        "@agentclientprotocol/codex-acp/dist/index.js",
+        "@anthropic-ai/claude-code/cli-wrapper.cjs",
+        "@openai/codex/bin/codex.js",
     ):
         entry = backend_root / relative
         if not entry.is_file():
             raise ValueError("Mac runtime lacks a locked backend entry point")
         run([node, "--check", str(entry)], cwd=state, environment=environment)
+    run(
+        [node, str(backend_root / "@openai/codex/bin/codex.js"), "--version"],
+        cwd=state, environment=environment,
+    )
     claude = backend_root / "@anthropic-ai/claude-code/bin/claude.exe"
     run([str(claude), "--version"], cwd=state, environment=environment)
     libraries = audit_native_dependencies(extracted, environment)

@@ -9,7 +9,6 @@ from dataclasses import asdict, replace
 from datetime import date
 from typing import Any, cast, get_type_hints
 
-from planner.core import authority
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.datasets.data import read_dataset
@@ -40,7 +39,7 @@ def _accepted(
     conn: sqlite3.Connection, current: Goal, body: dict[str, Any], *,
     now: int, creating: bool = False
 ) -> Goal:
-    if set(body) - _EDITABLE - {"expected_revision"}:
+    if set(body) - _EDITABLE:
         raise ValueError("unknown goal field")
     changes = {key: value for key, value in body.items() if key in _EDITABLE and key != "completed"}
     if "completed" in body and type(body["completed"]) is not bool:
@@ -202,12 +201,6 @@ def create_goal(
             accepted = _accepted(conn, current, body, now=now, creating=True)
         except (ValueError, TypeError) as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc
-        authority.require_above_or_self(
-            conn, principal,
-            authority.manager(cast(str, accepted.holder_id))
-            if accepted.holder_kind == "manager"
-            else authority.owner_only("goals"),
-        )
         values = _values(accepted)
         fields = ",".join(values)
         conn.execute(
@@ -222,15 +215,6 @@ def update_goal(
 ) -> Goal:
     with transaction(conn):
         current = data.read_goal(conn, goal_id)
-        authority.require_above_or_self(conn, principal, authority.goal(goal_id))
-        if (
-            type(body.get("expected_revision")) is not int
-            or body["expected_revision"] != current.revision
-        ):
-            raise PlannerError(
-                ErrorCode.stale_claim,
-                "goal changed; read the accepted document before editing again",
-            )
         try:
             accepted = replace(
                 _accepted(conn, current, body, now=now),
@@ -238,12 +222,6 @@ def update_goal(
             )
         except (ValueError, TypeError) as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc
-        authority.require_above_or_self(
-            conn, principal,
-            authority.manager(cast(str, accepted.holder_id))
-            if accepted.holder_kind == "manager"
-            else authority.owner_only("goals"),
-        )
         values = _values(accepted)
         values.pop("id")
         conn.execute(
@@ -257,21 +235,15 @@ def make_manager(
     conn: sqlite3.Connection,
     goal_id: str,
     *,
-    expected_revision: object,
     principal: Principal,
     clock: Any,
 ) -> tuple[str, Goal]:
     from planner.managers.data import create_manager
 
     with transaction(conn):
-        authority.require_above_or_self(conn, principal, authority.goal(goal_id))
         current = data.read_goal(conn, goal_id)
         if current.holder_kind != "chief":
             raise PlannerError(ErrorCode.validation, "only a Chief goal can become a Manager")
-        if type(expected_revision) is not int or expected_revision != current.revision:
-            raise PlannerError(
-                ErrorCode.stale_claim, "goal changed; read the accepted document before promotion"
-            )
         manager = create_manager(
             conn, title=current.title, project_id=current.project_id, clock=clock
         )
@@ -279,7 +251,6 @@ def make_manager(
             conn,
             goal_id,
             {
-                "expected_revision": current.revision,
                 "holder_kind": "manager",
                 "holder_id": manager.id,
             },

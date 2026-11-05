@@ -87,7 +87,6 @@ def in_focus(payload: event.ConversationEventPayload, owner_label: str = "owner"
         payload,
         (
             event.CredentialRequestEventPayload,
-            event.ExplicitReplyMissingEventPayload,
             event.PermissionAskedEventPayload,
             event.PermissionAnsweredEventPayload,
             event.UserInputRequestedEventPayload,
@@ -145,8 +144,6 @@ def row_body(
             "content": content_pieces(source.content),
             "to_owner": isinstance(source, event.MessageToOwnerEventPayload),
         }
-    if isinstance(source, event.ExplicitReplyMissingEventPayload):
-        return {"kind": "explicit_reply_missing", "prompt_sender": source.prompt_sender}
     if isinstance(source, (event.ToolCallStartedEventPayload, event.ToolCallFinishedEventPayload)):
         start = source if isinstance(source, event.ToolCallStartedEventPayload) else None
         finish = (

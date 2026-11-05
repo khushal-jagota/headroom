@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
 
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -428,7 +428,7 @@ def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
 ) -> None:
     test_client, _db_path = client
     source = "---\nname: batch-role\ndescription: Reviewed role\n---\n\nExact owner instructions.\n"
-    payload = {"skills": [{"name": "batch-role", "source_text": source, "expected_sha256": None}]}
+    payload = {"skills": [{"name": "batch-role", "source_text": source}]}
     before = test_client.get("/api/skills").json()
     for headers in (
         {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
@@ -448,7 +448,6 @@ def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
             {
                 "name": "batch-role",
                 "source_text": chief_source,
-                "expected_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
             }
         ]
     }

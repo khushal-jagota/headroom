@@ -6,6 +6,8 @@
 
 The command name grants nothing. The process environment says who is calling: Headroom sets the actor, the Ticket, Manager, or goal id, and the conversation id when it starts an agent. The server admits or refuses that caller with the same rule as the browser. See [Who may act](authority.md).
 
+Manager commands accept `panels manager` and `--manager`. The old Sprint Item and Orchestrator spellings are removed.
+
 ## What it is made of
 
 - **Ordinary roots**, shown in help, for people and supervising agents:
@@ -14,11 +16,11 @@ The command name grants nothing. The process environment says who is calling: He
   - `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md).
   - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).
 - **The Worker group**, hidden from ordinary help: read my Ticket, file a proposal, set a recap, request help. A Worker can file a proposal. Accepting one is `ticket proposal`, for a caller who stands above the Ticket.
-- **Hidden groups** that a specialist skill or an operator names when needed: `serve`, `skill`, `worker-type`, `schedule`, `feedback`, and maintenance.
+- **Hidden groups** that a specialist skill or an operator names when needed: `serve`, `skill`, and `worker-type`.
 
 ## How reads and writes work
 
-A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. A write that depends on what was read, such as backlog and resume, carries the record's fingerprint, so a stale write is refused instead of landing on a changed Ticket. `ticket create` sends one object to the same create route as the browser. It accepts a preset or a custom workflow. Custom stages carry their result fields, ownership, and instructions together. The route validates the whole Ticket before one write.
+A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. Backlog and resume need no record fingerprint. `ticket delete` needs no confirmation flag, but a running Ticket still needs `--force`. `ticket create --input-json FILE` sends one object to the same create route as the browser, which validates the whole Ticket before one write. A new Ticket starts from a preset or custom stages. Custom stages carry their result fields, ownership, and instructions together.
 
 ## What the CLI feeds
 

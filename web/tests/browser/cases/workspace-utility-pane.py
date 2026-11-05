@@ -163,14 +163,16 @@ def run(browser, urls):
                 "/api/goals": {"goals": card_fixture.get("goals", []), "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
                 "/api/worker-types?supported=true": {"worker_types": manifests},
                 "/api/worker-types": {"worker_types": manifests},
-                "/api/feedback/count": {"open_count": 0},
                 "/api/deployment-status": {"state": "preparing", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))},
             }.get(key)
+            # A Chief-owned goal uses the Chief composer and its launch settings.
+            # Admit this exact selected-owner resource, not unrelated Chief reads.
+            if key == "/api/chief/conversation/start-values" and any(
+                goal["holder_kind"] == "chief" for goal in card_fixture.get("goals", [])
+            ):
+                inner = {"backend_key": "codex", "model": None, "reasoning_effort": None}
             if key == "/api/projects" and card_fixture.get("goals"):
                 inner = {"projects": []}
-            if key == "/api/chief/conversation/start-values" and card_fixture.get("goals"):
-                # A Chief goal's page shows Chief's conversation, which reads its launch settings.
-                inner = {"backend_key": "codex", "model": None, "reasoning_effort": None}
             if key.startswith("/api/goals/") and card_fixture.get("goals"):
                 inner = {"goal_id": card_fixture["goals"][0]["id"], "values": [], "charts": {}, "sources": [],
                          "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400} if key.endswith("/readings") else card_fixture["goals"][0]
@@ -194,8 +196,6 @@ def run(browser, urls):
             result = {"skills": [skill]}
         elif path == "/api/worker-types":
             result = {"worker_types": manifests}
-        elif path == "/api/feedback/count":
-            result = {"open_count": 0}
         elif path == "/api/meta":
             result = {"test_mode": True, "app_sha": fold["release_sha"]}
         elif path == "/api/review":
@@ -253,8 +253,8 @@ def run(browser, urls):
     expect(pane.locator("[data-settings]")).to_be_visible()
     # The back-arrow to Usage belonged to a page that reached Settings from Usage.
     assert pane.locator('a[href="#/backends"]').count() == 0
-    pane.get_by_role("link", name="Scheduled tasks").click()
-    page.wait_for_function("location.hash === '#/workspace/utility/settings/scheduled-tasks?view=managers'")
+    pane.get_by_role("link", name="Notifications").click()
+    page.wait_for_function("location.hash === '#/workspace/utility/settings/notifications?view=managers'")
     expect(rail).to_be_visible()
 
     # A row of the Config index is a link like any other, and it was never reported.
@@ -347,7 +347,7 @@ def run(browser, urls):
     expect(rail.locator('.utility')).to_have_count(6)
     rail_bounds = page.locator('.workspace-rail').bounding_box()
     assert rail_bounds and abs(rail_bounds['width'] - 232) < 2, rail_bounds
-    for name in ["Review", "Usage", "Ideas", "Feedback", "VPS", "Settings"]:
+    for name in ["Review", "Usage", "Ideas", "Goals", "VPS", "Settings"]:
         control = rail.get_by_label(name, exact=True)
         control.focus()
         label = control.locator('.utility-label')
@@ -374,8 +374,8 @@ def run(browser, urls):
     expect(pane.locator('[data-settings]')).to_be_visible()
     expect(page.locator('.workspace-rail')).to_be_hidden()
     # Resizing while the compact bar owns focus must reveal an equivalent target.
-    for name in ["Review", "Workspace"]:
-        link = page.locator('.workspace-mobile-nav').get_by_role('link', name=name, exact=True)
+    for name in ["Review", "Workspace", "More"]:
+        link = page.locator('.workspace-mobile-nav').get_by_role("button" if name == "More" else "link", name=name, exact=name != "More")
         link.focus()
         page.set_viewport_size({"width": 721, "height": 700})
         page.wait_for_function("document.activeElement && document.activeElement.getClientRects().length > 0 && document.activeElement !== document.body")
@@ -400,7 +400,7 @@ def run(browser, urls):
     verify_conversation_overlay(browser, url)
 
     assert not errors, errors
-    unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
+    unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/notifications/settings", "/api/conversation", "/api/workers/chief-of-staff"))]
     assert not unwanted, unwanted
     context.close()
     metrics.close()
@@ -1089,9 +1089,18 @@ def verify_rail_pagination(page, url, fixture, evidence):
             page.mouse.move(bounds['x']+1,bounds['y']+30)
             scroll.evaluate("""n=>{
               window.__exitScrollSamples=[];window.__captureExitScroll=true;
-              n.addEventListener('wheel',event=>window.__exitWheel={ms:performance.now(),trusted:event.isTrusted,
-                before:n.scrollTop,deltaY:event.deltaY},{once:true,capture:true});
-              n.addEventListener('scroll',event=>{
+              window.__exitWheel=null;
+              const wheel=event=>{
+                if(!event.isTrusted)return;
+                n.removeEventListener('wheel',wheel,true);
+                window.__exitWheel={ms:performance.now(),trusted:event.isTrusted,before:n.scrollTop,deltaY:event.deltaY};
+              };
+              n.addEventListener('wheel',wheel,{capture:true});
+              const continued=event=>{
+                // Layout scrolls can arrive before the physical wheel. They do not
+                // prove native movement during the exit and must not consume capture.
+                if(!window.__exitWheel || !event.isTrusted || n.scrollTop===window.__exitWheel.before)return;
+                n.removeEventListener('scroll',continued,true);
                 const row=document.querySelector('[data-ticket-id="page_worker_17"]');
                 const exit=document.querySelector('[data-ticket-id="page_worker_00"]');
                 const exitRunning=exit?.getAnimations().some(a=>a.playState!=='finished'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
@@ -1105,7 +1114,8 @@ def verify_rail_pagination(page, url, fixture, evidence):
                 };
                 const sample=()=>{if(!window.__captureExitScroll)return;window.__exitScrollTake();
                   requestAnimationFrame(sample);};sample();
-              },{once:true,capture:true});
+              };
+              n.addEventListener('scroll',continued,{capture:true});
             }""")
             page.mouse.wheel(0,36)
             page.wait_for_function('window.__exitContinued')
@@ -1255,7 +1265,6 @@ def verify_conversation_overlay(browser, url):
             "/api/tickets/t_overlay0/conversation/start-values": {"backend_key":"codex","model":None,"reasoning_effort":None},
             "/api/worker-types?supported=true": manifest,
             "/api/worker-types": manifest,
-            "/api/feedback/count": {"open_count": 0},
             "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
             "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None, "state": "up_to_date", "allowed_actions": [], "phase": None, "app_sha": None, "deadline_at": None, "restart_deadline_at": None},
             "/api/meta": {"test_mode": True, "app_sha": None},
@@ -1476,9 +1485,16 @@ def verify_conversation_overlay(browser, url):
         proof['hosts'].append({'name':name,'host':host,'titleChannel':title,'document':doc_open,'openedCard':card_open,'scrollTop':scroll_before,'retainedScrollHeight':highwater,'documentTail':final_box,'transcriptOpened':transcript_open,'scrollbackAnchor':anchor,'anchorChecks':anchor_proof,'collapse':{'before':collapse_before,'after':collapse_after},'keyboardCard':card_keyboard,'keyboardTranscript':keyboard_transcript,'artifact':artifact_proof})
         draft_before_dismissal = box.input_value()
         doc_before_dismissal = document.evaluate('e=>e.scrollTop')
-        point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + pane.bounding_box()['y'])/2}
-        hit = page.evaluate('''point=>Boolean(document.elementFromPoint(point.x,point.y)?.closest('.ticket-doc,.manager-doc'))''', point)
-        assert hit, (name,point)
+        # A plain part of the document above the card: a link there would open another page.
+        point = page.evaluate('''([host, top]) => {
+          for (let y = host.y + 8; y < top - 8; y += 8) for (const x of [host.x + host.width / 2, host.x + 24]) {
+            const e = document.elementFromPoint(x, y);
+            if (e?.closest('.ticket-doc,.manager-doc') && !e.closest('a,button,input,textarea,[role=button]')) return {x, y};
+          }
+          return null;
+        }''', [host, pane.bounding_box()['y']])
+        hit = point is not None
+        assert hit, name
         page.mouse.click(point['x'], point['y'])
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         assert box.input_value() == draft_before_dismissal
@@ -2423,7 +2439,10 @@ def verify_selection_washes(page, url, fixture, evidence):
     page.evaluate("code=>window.__washSample=eval('('+code+')')", sampler)
     goal_row = page.locator('[data-goal-id="wash_goal"]')
     expect(goal_row).to_be_visible()
-    goal_row.click()
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/resource-body"
+                              and parse_qs(urlsplit(response.url).query).get("key") == ["/api/chief/conversation/start-values"]) as launch:
+        goal_row.click()
+    assert launch.value.ok
     page.mouse.move(1300, 950)
     selection_settled('[data-goal-id="wash_goal"]')
     aligned(sample('[data-goal-id="wash_goal"]'))

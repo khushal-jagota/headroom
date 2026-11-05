@@ -118,9 +118,6 @@ class SignalBatch:
 
     base_cursor: SignalCursor
     cursor: SignalCursor
-    batch_id: str
-    operation_ids: tuple[str, ...]
-    fingerprint: str
     replacements: tuple[ConversationSignalPublicationV1, ...]
     deletions: tuple[SignalDeletion, ...]
     associations: tuple[SignalAssociationEffect, ...]
@@ -161,9 +158,6 @@ class SignalInvalidation:
     reason: Literal[
         "initializing",
         "authority_lost",
-        "publication_failed",
-        "commit_uncertain",
-        "install_failed",
         "detached",
         "shutdown",
     ]
@@ -187,20 +181,6 @@ class SignalAvailability:
     reason: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class SignalKnowledge:
-    """Unavailable knowledge has no current publication or fabricated runtime facts."""
-
-    conversation_id: str
-    availability: SignalAvailability
-    current: ConversationSignalPublicationV1 | None
-    durable: SignalDurableFacts | None
-
-    def __post_init__(self) -> None:
-        if self.current is not None:
-            object.__setattr__(self, "current", replace(self.current))
-
-
 class SignalUnavailable(RuntimeError):
     """Producer truth or the requested attachment generation is unavailable."""
 
@@ -222,16 +202,6 @@ class SignalAttachment(Protocol):
 class SignalPublicationSource(Protocol):
     """Public operations of the domain coordinator, with no storage implementation."""
 
-    def read_durable_signal_knowledge(
-        self,
-        connection: sqlite3.Connection,
-        conversation_ids: tuple[str, ...],
-        expected_generation: int,
-        /,
-    ) -> tuple[SignalKnowledge, ...]:
-        """Read durable facts in the supplied transaction and validate its generation."""
-        ...
-
     def signal_availability(self) -> SignalAvailability:
         """Read atomic availability without admission to current facts or source writes."""
         ...
@@ -245,14 +215,6 @@ class SignalPublicationSource(Protocol):
     ) -> SignalAttachment:
         """Install complete state and register callbacks before current admission."""
         ...
-
-
-@dataclass(frozen=True, slots=True)
-class ConversationTurnReference:
-    """The public, opaque-enough name of one active turn in one conversation."""
-
-    conversation_id: str
-    turn_number: int
 
 
 class ConversationBackendKey(StrEnum):
@@ -649,11 +611,10 @@ type PromptDeliveryFate = (
 
 @dataclass(slots=True)
 class NativeMessageOperation:
-    """One executor-origin send's reply credit, shared with its canonical append."""
+    """One executor-origin send's delivery record, written in its canonical append's commit."""
 
     sender_id: str
     submission_id: str
-    composed_confirmed: bool = False
     in_commit: (
         Callable[[sqlite3.Connection, str, object, NativeMessageAdmission | None], None] | None
     ) = None
@@ -662,20 +623,6 @@ class NativeMessageOperation:
 @dataclass(frozen=True, slots=True)
 class NativeMessageAdmission:
     fate: PromptDeliveryFate
-    composed_content_delivered: bool
-
-
-@dataclass(frozen=True, slots=True)
-class AddressedPromptDeliveryReceipt:
-    """An internal receipt for reply attribution after one addressed send.
-
-    The public fate stays the complete conversation contract. ``newly_accepted`` is
-    false only when the sender's message id replayed an earlier outcome, so a retry in a
-    later source turn cannot claim that it answered that turn.
-    """
-
-    fate: PromptDeliveryFate
-    newly_accepted: bool
 
 
 type HeldPromptPromotionFate = (
@@ -793,8 +740,8 @@ class ConversationSystem(Protocol):
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
-        reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        record_refusal: bool = False,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
@@ -833,34 +780,7 @@ class ConversationSystem(Protocol):
         ``sender_label`` says who sent the text — the automatic loop or the owner, for
         example. It is recorded on the prompt event and it is display-only: nothing else
         consumes it and nothing branches on it.
-        """
-        ...
 
-    async def send_with_receipt(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        owner_read_through_sequence: int | None = None,
-        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
-        model_change: str | None = None,
-        reasoning_effort_change: str | None = None,
-        reasoning_effort_is_set: bool = False,
-        sender_message_id: str | None = None,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-        reply_requested: bool = True,
-        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
-        record_refusal: bool = False,
-        recording_receipt: NativeMessageOperation | None = None,
-    ) -> AddressedPromptDeliveryReceipt:
-        """Run the canonical send and expose replay freshness to addressed-send wiring.
-
-        Ordinary callers use ``send`` and receive only the stable public fate. This
-        receipt exists so Send Message can credit a reply only for the first accepted
-        delivery of a sender-minted message id.
         A caller that retains a refused initial message sets ``record_refusal`` and
         supplies a sender message id. Its refusal remains visible in the conversation.
         """
@@ -876,34 +796,9 @@ class ConversationSystem(Protocol):
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
-        credit_explicit_reply: bool = True,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> None:
-        """Record one addressed message that no backend receives.
-
-        System notices disable reply credit because they do not answer a prompt.
-        """
-        ...
-
-    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
-        """Capture the exact active turn that a Send Message may answer."""
-        ...
-
-    async def turn_expects_reply(
-        self, turn: ConversationTurnReference, recipient: Principal
-    ) -> bool:
-        """Say whether an accepted send to ``recipient`` answers the named turn."""
-        ...
-
-    async def record_explicit_reply(
-        self, turn: ConversationTurnReference, recipient: Principal
-    ) -> None:
-        """Credit an accepted Send Message to the active turn in its sender conversation.
-
-        The message itself belongs to its destination conversation. This records no
-        second row. If the named turn has ended or changed, its ending won the race and
-        the later send cannot rewrite what that turn said.
-        """
+        """Record one addressed message that no backend receives."""
         ...
 
     async def interrupt(self, conversation_id: str) -> None:

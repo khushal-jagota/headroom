@@ -23,6 +23,7 @@
   import { restLineFrom } from "../../lib/conversation/restLine";
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
+  import { backgroundTasksAfterTheTurn, backgroundWorkSentence } from "../../lib/conversation/transcript";
   import type {
     ComposerCatalogEntry,
     BackendModel,
@@ -224,9 +225,13 @@
     if (activityUncertain) return {text:"activity unknown on Mac",accent:false};
     if (ask || userInput) return { text: "waiting for you", accent: true };
     if (running) return { text: "working", accent: false };
+    if (backgroundTasks.length > 0) return { text: "background work", accent: false };
     return null;
   });
 
+  // Work the agent started that outlived its turn. Stop and the composer still follow
+  // the turn alone; this only keeps the conversation saying what the sidebar says.
+  let backgroundTasks = $derived(activityUncertain ? [] : backgroundTasksAfterTheTurn(reader?.status));
   // The dock has an activity header. Full conversation has the turn head.
   let rowsForLens = $derived(visibleRows ?? rows);
   let planEntries = $state<import('../../lib/conversation/wire').PlanEntry[]>([]);
@@ -274,7 +279,7 @@
     const latest = reader?.status?.rest.latest_happened ?? rows.at(-1);
     if (latest?.kind === "turn_ended" && latest.ending === "completed") return null;
     const kind = latest?.kind;
-    return kind && ["prompt_refused", "prompt_uncertain", "prompt_discarded", "explicit_reply_missing", "turn_stopped", "turn_ended"].includes(kind)
+    return kind && ["prompt_refused", "prompt_uncertain", "prompt_discarded", "turn_stopped", "turn_ended"].includes(kind)
       ? restLine?.text ?? null : null;
   });
   let activityKnown = $derived(!activityUncertain && (reader ? typeof reader.status?.turn_running === "boolean" : true));
@@ -538,7 +543,9 @@
   <!-- Activity and the latest unread preview belong to the dock surface above the input. -->
   {#if conversationState === "rest"}
     <ConversationRestBar preview={unreadPreview} {roleLabel} {activityKnown}
-      {connectionTrouble} running={running && !activityUncertain} feedback={activityUncertain ? "Current activity on Mac is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
+      {connectionTrouble} running={running && !activityUncertain}
+      backgroundWork={backgroundTasks.length > 0 ? backgroundWorkSentence(backgroundTasks.map(task => task.task_description)) : null}
+      feedback={activityUncertain ? "Current activity on Mac is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 
   {#if readOnly}

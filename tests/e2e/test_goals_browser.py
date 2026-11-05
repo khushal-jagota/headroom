@@ -452,7 +452,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         server.base + path,
         headers={"X-Plan-Actor": "chief"},
         json={
-            "expected_revision": current["revision"],
             "primary_checklist_block_id": "approach",
         },
         timeout=10,
@@ -482,7 +481,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         assert date_saved.value.ok
         body = date_saved.value.request.post_data_json
         assert isinstance(body, dict)
-        assert body["expected_revision"] == before["revision"]
+        assert "expected_revision" not in body
         accepted = api.get(server, path)
         expected_page = before["page"]
         expected_page["blocks"][0]["items"][1]["deadline"] = value
@@ -543,7 +542,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         server.base + path,
         headers={"X-Plan-Actor": "chief"},
         json={
-            "expected_revision": current["revision"],
             "page": updated_page,
             "active": True,
         },
@@ -566,7 +564,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(card.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
     )
-    # The newly interactive overview must use the real revision-checked writer.
+    # The newly interactive overview must use the real goal writer.
     # Reuse this connected scenario: component tests cannot prove persisted API
     # acceptance, effective completion, or reload reads from a card-originated edit.
     overview_revision = api.get(server, path)["revision"]
@@ -580,7 +578,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert overview_saved.value.ok
     overview_body = overview_saved.value.request.post_data_json
     assert isinstance(overview_body, dict)
-    assert overview_body["expected_revision"] == overview_revision
+    assert "expected_revision" not in overview_body
     overview_accepted = api.get(server, path)
     assert overview_accepted["revision"] == overview_revision + 1
     assert overview_accepted["page"]["blocks"][0]["items"][1]["state"] == "done"
@@ -602,9 +600,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(card.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
     )
-    page.get_by_role("region", name="Active goals", exact=True).get_by_role(
-        "link", name="All goals", exact=True
-    ).click(timeout=WAIT_MS)
+    page.locator('.rail-utilities a[data-screen="goals"]').click(timeout=WAIT_MS)
     row = page.get_by_role("row").filter(
         has=page.get_by_role("link", name="Publish a field guide", exact=True)
     )
@@ -670,8 +666,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
 
     # Reuse this connected host to prove a real native title commit and reload.
     # Frontend-only cases cannot prove API acceptance and persisted browser reads.
-    title_editor = page.get_by_role("textbox", name="Goal title", exact=True)
     before_title = api.get(server, path)
+    title_editor = page.get_by_role("textbox", name="Goal title", exact=True)
     title_editor.fill("Owner title", timeout=WAIT_MS)
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
@@ -680,7 +676,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         title_editor.press("Enter", timeout=WAIT_MS)
     assert titled.value.ok, titled.value.text()
     assert titled.value.request.post_data_json == {
-        "expected_revision": before_title["revision"],
         "title": "Owner title",
     }
     accepted_title = api.get(server, path)
@@ -690,8 +685,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     expect(title_editor).to_have_text("Owner title", timeout=WAIT_MS)
 
-    # An external revision must reach the mounted page without replacing a focused
-    # draft. Submitting that original revision must produce a real stale response.
+    # An external revision reaches the mounted page without replacing a focused
+    # draft. The later title-only save wins and preserves the remotely edited page.
     title_editor.fill("Unaccepted local title", timeout=WAIT_MS)
     page.locator("[data-goal-page]").evaluate(
         "node => node.dataset.nativeEditProof = 'retained'"
@@ -710,7 +705,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             server.base + path,
             headers={"X-Plan-Actor": "chief"},
             json={
-                "expected_revision": current["revision"],
                 "title": "Chief title",
                 "page": reordered,
             },
@@ -727,23 +721,34 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     with page.expect_response(
         lambda reply: reply.url.endswith(path) and reply.request.method == "PATCH",
         timeout=WAIT_MS,
-    ) as stale_title:
+    ) as local_title:
         title_editor.press("Enter", timeout=WAIT_MS)
-    assert stale_title.value.status == 409
-    assert stale_title.value.request.post_data_json == {
-        "expected_revision": current["revision"],
+    assert local_title.value.status == 200, local_title.value.text()
+    assert local_title.value.request.post_data_json == {
         "title": "Unaccepted local title",
     }
     error = page.locator("[data-goal-page] .goal-heading .error-line")
-    expect(error).to_contain_text("goal changed", timeout=WAIT_MS)
-    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
-    accepted_remote = api.get(server, path)
-    assert accepted_remote["title"] == "Chief title"
-    assert accepted_remote["revision"] == remote.json()["revision"]
-    title_editor.press("Escape", timeout=WAIT_MS)
-    expect(title_editor).to_have_text("Chief title", timeout=WAIT_MS)
     expect(error).to_have_count(0, timeout=WAIT_MS)
-    assert api.get(server, path)["revision"] == accepted_remote["revision"]
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    accepted_local = api.get(server, path)
+    assert remote.json()["revision"] == current["revision"] + 1
+    assert accepted_local["title"] == "Unaccepted local title"
+    assert accepted_local["revision"] == remote.json()["revision"] + 1
+    assert accepted_local["page"] == reordered
+    expect(page.locator(f'a[data-goal-id="{goal["id"]}"] .row-title')).to_have_text(
+        "Unaccepted local title", timeout=WAIT_MS
+    )
+    expect(page.locator("[data-goal-page]")).to_have_attribute(
+        "data-native-edit-proof", "retained", timeout=WAIT_MS
+    )
+    # The field stays locked until the page reads the saved goal back, so the
+    # old title cannot flash. Playwright fill fails at once on a locked field.
+    expect(title_editor).to_have_attribute("contenteditable", "true", timeout=WAIT_MS)
+    title_editor.fill("Discard this unsaved title", timeout=WAIT_MS)
+    title_editor.press("Escape", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    expect(error).to_have_count(0, timeout=WAIT_MS)
+    assert api.get(server, path)["revision"] == accepted_local["revision"]
     expect(page.locator('[data-block="table"] tbody tr').first).to_contain_text(
         "Second", timeout=WAIT_MS
     )

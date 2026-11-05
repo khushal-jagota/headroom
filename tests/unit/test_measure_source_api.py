@@ -14,8 +14,8 @@ from fastapi.params import Body as BodyParameter
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
+from tests.support.api_app import _app
 from tests.support.measure_sources import configured_source
-from tests.unit.test_scheduled_ticket_authority import _app
 
 from planner.cli.main import main
 from planner.core.clock import TestClock as FakeClock
@@ -130,9 +130,9 @@ def test_cli_and_openapi_publish_closed_recursive_authoring_contracts(tmp_db: Co
     }
     assert "default" not in branches["quantitative"]["properties"]["completed"]
     for branch in branches.values():
-        assert "expected_revision" in branch["properties"]
+        assert "expected_revision" not in branch["properties"]
         assert "default" not in branch["properties"]["kind"]
-    assert edit_schema["required"] == ["expected_revision"]
+    assert not edit_schema.get("required")
     for field in ("deadline", "primary_chart", "primary_checklist_block_id"):
         assert {"type": "null"} in branches["binary"]["properties"][field]["anyOf"]
     assert "anyOf" not in branches["quantitative"]["properties"]["primary_chart"]
@@ -315,7 +315,6 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
                     ("clear_checklist_deadline", None),
                 ):
                     edit = deepcopy(edit_examples[edit_name])
-                    edit["expected_revision"] = accepted["revision"]
                     # These complete-page examples apply to their matching fictional
                     # create example; real pages must retain all accepted content.
                     changed = client.patch(
@@ -421,7 +420,6 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "day",
         )
         assert measure["formula"] is None
-        chart_body["expected_revision"] = goal["revision"]
         chart_body["primary_chart"]["measure_id"] = measure["id"]
 
         # Populated native chart failure; discriminator-only probes are checked separately.
@@ -466,9 +464,15 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "bar",
             "gauge",
         )
-        # Empty objects were deliberate setup probes, not failed valid product operations.
-        for path in ("/api/measure-sources", "/api/measures"):
-            invalid(client.post(path, json={}, headers=headers), "required")
+        # Required-field probes retain valid assignment context where intake needs it.
+        invalid(
+            client.post("/api/measure-sources", json={}, headers=headers),
+            "$.responsible: expected an object with kind and id",
+        )
+        invalid(
+            client.post("/api/measures", json={"source_id": source_id}, headers=headers),
+            "$.origin", "required",
+        )
         invalid(
             client.patch(
                 f"/api/goals/{goal_id}",
@@ -488,15 +492,16 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             "unknown",
         )
 
-        # Runtime parsing order is unchanged: source/measure syntax precedes authority;
-        # goal edits check ownership, then revision, before inspecting authored content.
+        # Intake parses assignment context before permission checks. Authored fields
+        # reach command validation only after the request passes intake.
         invalid(
             client.post("/api/measure-sources", json=guessed_source, headers=foreign_headers),
             "$.responsible.goal_id",
         )
-        invalid(
-            client.post("/api/measures", json=guessed_measure, headers=foreign_headers), "unknown"
-        )
+        denied = client.post("/api/measures", json=guessed_measure, headers=foreign_headers)
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+        assert sentinel not in denied.text
         assert (
             client.post("/api/measures", json=measure_body, headers=foreign_headers).json()[
                 "error"
@@ -507,7 +512,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             client.patch(
                 f"/api/goals/{goal_id}",
                 headers=foreign_headers,
-                json={"expected_revision": 0, "primary_chart": guessed_chart},
+                json={"primary_chart": guessed_chart},
             ).json()["error"]["code"]
             == "agent_forbidden"
         )
@@ -515,9 +520,9 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             client.patch(
                 f"/api/goals/{goal_id}",
                 headers=headers,
-                json={"expected_revision": 0, "primary_chart": guessed_chart},
+                json={"primary_chart": guessed_chart},
             ).json()["error"]["code"]
-            == "stale_claim"
+            == "validation"
         )
         saved = client.patch(f"/api/goals/{goal_id}", json=chart_body, headers=headers)
         assert saved.status_code == 200, saved.text
@@ -541,7 +546,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
         minimal = client.post(
             "/api/goals",
             headers={"X-Plan-Actor": "chief"},
-            json={"title": "Defaults", "project_id": "project_vylo", "expected_revision": 99,
+            json={"title": "Defaults", "project_id": "project_vylo",
                   "kind": "binary", "primary_checklist_block_id": None},
         )
         assert minimal.status_code == 200, minimal.text
@@ -634,8 +639,8 @@ def test_explicit_participants_constructor_executes_registered_lifespan(tmp_db: 
     from planner.core.server import create_app
     from planner.credentials.contracts import CredentialResolver
     from planner.measure_sources.contracts import RunAdmission, RunMetrics, RunResult
+    from planner.measure_sources.registry import build_participants
     from planner.measures.contracts import CandidateObservation
-    from planner.scheduled_tickets.registry import build_participants
 
     class FixtureRuntime:
         def __init__(self) -> None:

@@ -1,4 +1,4 @@
-"""Locale compatibility and the authoritative execution admission read.
+"""The authoritative execution admission read.
 
 All implemented backends are intended for Mac execution. Native qualification
 and installed prerequisites remain separate from admission. Creation never
@@ -8,15 +8,9 @@ requires reachability.
 import json
 import sqlite3
 
-from planner.conversation.contracts import ConversationBackendKey
-from planner.core.errors import ErrorCode, PlannerError
 from planner.tickets.contracts import TicketLocale
 
 CURRENT_EXECUTION_LOCALE = TicketLocale.vps
-LOCALE_SUPPORTED_BACKENDS: dict[TicketLocale, frozenset[str]] = {
-    TicketLocale.vps: frozenset(backend.value for backend in ConversationBackendKey),
-    TicketLocale.macos: frozenset(backend.value for backend in ConversationBackendKey),
-}
 
 
 def can_execute_locale(conn: sqlite3.Connection, locale: TicketLocale) -> bool:
@@ -53,13 +47,3 @@ def execution_unavailable_reason(conn: sqlite3.Connection, locale: TicketLocale)
             "Mac Tickets cannot start: the Mac is disconnected or has not completed reconciliation"
         )
     return f"The Ticket locale {locale.value} cannot execute on this machine"
-
-
-def require_locale_backend_compatibility(locale: TicketLocale, backend: str) -> None:
-    if backend not in LOCALE_SUPPORTED_BACKENDS[locale]:
-        reason = "backend is not supported for this locale"
-        raise PlannerError(
-            ErrorCode.validation,
-            f"locale {locale.value} cannot use backend {backend}: {reason}",
-            {"locale": locale.value, "employee_backend": backend, "reason": reason},
-        )

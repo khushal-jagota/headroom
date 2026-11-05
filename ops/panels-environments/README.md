@@ -1,6 +1,6 @@
 # Panels single-user operating inputs
 
-These checked-in files describe the Linux and macOS operating surface. They do not
+These checked-in files describe the Linux operating surface. They do not
 modify a host by themselves.
 
 The VPS has one Panels identity: the existing UID-1000 `vps` user. Source lives at

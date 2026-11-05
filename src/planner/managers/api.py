@@ -6,7 +6,6 @@ from functools import partial
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, Response
-from fastapi.routing import APIRoute
 
 from planner.conversation.api import (
     OwnerSendBody,
@@ -16,9 +15,7 @@ from planner.conversation.api import (
 )
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.conversation.video_uploads.contracts import UploadDestination
-from planner.core import authority
 from planner.core.authctx import require_owner_or_chief
-from planner.core.authority import require_above, require_above_or_self
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import manager_files
@@ -101,7 +98,6 @@ async def put_manager_launch_defaults(raw: dict[str, Any], conn: DbConn, ctx: Ct
 
 @router.get("/managers/{item_id}/launch-defaults")
 async def get_manager_launch_configuration(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
-    require_above_or_self(conn, ctx.principal, authority.manager(item_id))
     return launch_configuration_json(
         managers_data.read_manager(conn, item_id).item.manager_launch_configuration
     )
@@ -111,7 +107,6 @@ async def get_manager_launch_configuration(item_id: str, conn: DbConn, ctx: Ctx)
 async def put_manager_launch_configuration(
     item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, authority.manager(item_id))
     configuration = parse_launch_configuration(raw)
     async with managers_service.manager_lifecycle_lock(item_id):
         validate_launch_configuration(conn, configuration)
@@ -212,7 +207,6 @@ async def read_managers(
 async def get_manager_workspace_content(
     item_id: str, conn: DbConn, ctx: Ctx, response: Response, clk: Clk
 ) -> ManagerWorkspaceContent:
-    require_above_or_self(conn, ctx.principal, authority.manager(item_id))
     document = managers_views.manager_workspace_document(conn, item_id, calendar_now(clk))
     result: ManagerWorkspaceContent = {**document}
     response.headers["Cache-Control"] = "no-store"
@@ -237,7 +231,6 @@ async def get_manager_workspace(
     know *which* agent holds one reads ``ceiling_holder`` on the row — the holder is an
     address, and this is the read of it.
     """
-    require_above_or_self(conn, ctx.principal, authority.manager(item_id))
     result = managers_views.manager_workspace(conn, item_id)
     await add_work_attention(
         conn,
@@ -260,7 +253,6 @@ async def get_item_conversation_start_values(item_id: str, conn: DbConn, ctx: Ct
     lost claimed an authority it never used: this admits Khushal and the Chief, and the
     Manager reading its own start values, exactly as before.
     """
-    require_above_or_self(conn, ctx.principal, authority.manager(item_id))
     values = conversation_start.manager_resolve(
         conn, managers_data.read_manager(conn, item_id).item
     )
@@ -288,7 +280,6 @@ async def send_to_item_conversation(
     a principal. This is the door a person types at: it carries the browser's own message
     name, the files attached to it, and what the conversation is to run on.
     """
-    require_above(conn, ctx.principal, authority.manager(item_id))
     return await _send_to_manager(
         item_id, body, request, conn, ctx, conversations, message_files, clk
     )
@@ -366,7 +357,6 @@ async def reset_item_conversation(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     """Cut this Manager's agent loose from its conversation. This is what New does."""
-    require_above(conn, ctx.principal, authority.manager(item_id))
     async with managers_service.manager_lifecycle_lock(item_id):
         item = managers_data.read_manager(conn, item_id).item
         await conversation_start.reset_agent_conversation(
@@ -379,7 +369,6 @@ async def reset_item_conversation(
 async def delete_manager(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
-    require_above(conn, ctx.principal, authority.manager(item_id))
     deleted = await managers_service.delete_manager(
         conversations, conn, item_id, principal=ctx.principal
     )
@@ -424,9 +413,6 @@ async def patch_item(
         item_id,
         edits=edits,
         clock=clk,
-        admit=lambda: require_above_or_self(
-            conn, ctx.principal, authority.manager(item_id, *edits)
-        ),
     )
     return managers_views.manager_detail(conn, item_id)
 
@@ -447,19 +433,6 @@ async def settle_item(
         conn, item_id, settled=raw["settled"], principal=ctx.principal, clock=clk
     )
     return managers_views.manager_detail(conn, item_id)
-
-
-# Previously issued addresses keep one implementation and canonical output.
-legacy_router = APIRouter()
-for _route in router.routes:
-    if not isinstance(_route, APIRoute):
-        continue
-    legacy_router.add_api_route(
-        _route.path.replace("/managers", "/items", 1),
-        _route.endpoint,
-        methods=list(_route.methods or []),
-        include_in_schema=False,
-    )
 
 
 @router.get("/chief/page")
@@ -487,7 +460,6 @@ async def patch_manager_page(item_id: str, body: dict[str, Any], conn: DbConn, c
 async def get_manager_page(item_id: str, conn: DbConn, ctx: Ctx) -> Any:
     from planner.managers.pages import read_page
 
-    require_above_or_self(conn, ctx.principal, authority.manager(item_id))
     return read_page(conn, item_id)
 
 
@@ -504,5 +476,4 @@ async def get_manager_page_readings(item_id: str, conn: DbConn, ctx: Ctx, clk: C
     from planner.goals.views import calendar_now
     from planner.managers.pages import page_readings
 
-    require_above_or_self(conn, ctx.principal, authority.manager(item_id))
     return page_readings(conn, item_id, calendar_now(clk))

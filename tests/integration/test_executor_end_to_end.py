@@ -1139,7 +1139,8 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
         )
 
         def prompts(client: _ScriptedClaudeSdkClient) -> list[str]:
-            return client.prompts + [
+            # The scripted client also lists a one-block streamed message as a prompt.
+            return [
                 "\n".join(block["text"] for block in message["message"]["content"])
                 for message in client.streamed_messages
             ]
@@ -1216,7 +1217,7 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 assert harness.endpoint.runs.store.child_assignment(old_reference) is None
                 assert len(prompts(replacement)) == 1
                 prompt = prompts(replacement)[0]
-                assert prompt.startswith("[Authenticated Panels reply requirement]\n")
+                assert prompt.startswith(NATIVE_WORKER_CONTEXT)
                 assert prompt.count(NATIVE_WORKER_CONTEXT) == 1
                 assert prompt.count(sender_text) == 1
                 assert prompt.index("Chief:") < prompt.index(sender_text)

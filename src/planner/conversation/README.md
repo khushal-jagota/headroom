@@ -17,9 +17,8 @@ the layer being replaced. Renaming it is the job of whoever deletes that layer.
 - `logic/conversation_start_resolution.py` — the pure rule that applies the floor
   defaults to a start request. It lives with the contract, not inside each
   implementation, so every implementation resolves from one source.
-- `in_memory_conversation_system.py` — a deterministic in-memory implementation. It is a
-  real implementation of the contract, usable as a stand-in wherever a conversation
-  system is needed but a child process is not.
+- `tests/support/in_memory_conversation_system.py` — the deterministic implementation for tests.
+  Production does not import or export it.
 - `message_content.py` — the ordered text, image, and file pieces in each message.
 - `message_files.py` — the durable bytes that image and file pieces name.
 - `file_validation.py` — the accepted document and data formats and their size boundary.

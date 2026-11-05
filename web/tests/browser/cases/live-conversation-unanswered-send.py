@@ -158,7 +158,7 @@ def run_retirement(browser, urls, *, control=""):
     output = Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp"))
     output.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    page = browser.new_page(viewport={"width": 1100, "height": 800}, reduced_motion="no-preference", record_video_dir=str(output / "retirement-video"))
+    page = browser.new_page(viewport={"width": 1100, "height": 800}, reduced_motion="no-preference")
     page.set_default_timeout(6_000)
     samples = []
     checks = []
@@ -612,7 +612,6 @@ def run_retirement(browser, urls, *, control=""):
         data = page.evaluate('window.__retirementStop=true;({frames:window.__retirementFrames??[],events:window.__retirementEvents??[]})')
         data.update(samples=samples, checks=checks, errors=errors, seconds=round(time.perf_counter() - started, 3), newHosts=0)
         data['nativeControl'] = {'control': control, 'events': native_events, 'motion': page.evaluate('window.__nativeMotion?.events??[]')}
-        data['video'] = str(page.video.path())
         page.screenshot(path=str(output / 'retirement-final.png'))
         print('REPLY_SPACE_RETIREMENT_PROOF ' + json.dumps({'seconds':data['seconds'],'frames':len(data['frames']),'samples':len(samples)}), flush=True)
         page.close()

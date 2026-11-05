@@ -11,7 +11,6 @@ import threading
 from pathlib import Path
 from typing import Protocol
 
-from planner.core.commit_observers import CommitObserver
 from planner.core.transaction_participants import TransactionParticipant
 
 
@@ -72,17 +71,9 @@ def attach(connection: sqlite3.Connection) -> tuple[TransactionParticipant, ...]
     """Attach database modules and return their synchronous commit participants."""
     from planner import navigation
     from planner.files.catalog.links import finalize as finalize_artifact_links
-    from planner.navigation import proof
 
     navigation.attach(connection)
     source = _source(connection)
     if source is not None:
         source.attach_connection(connection)
-    return (_finalize_signal, finalize_artifact_links, proof.prepare_witness, navigation.finalize)
-
-
-def commit_observers() -> tuple[CommitObserver, ...]:
-    """Compose domain observers without domain branches in core."""
-    from planner.navigation.proof import COMMIT_OBSERVER
-
-    return (COMMIT_OBSERVER,)
+    return (_finalize_signal, finalize_artifact_links, navigation.finalize)

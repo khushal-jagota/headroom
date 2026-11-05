@@ -19,13 +19,11 @@ from planner.core.authctx import (
     PLAN_CONVERSATION_ID_SCOPE_KEY,
     PLAN_GOAL_ID_SCOPE_KEY,
     PLAN_MANAGER_ID_SCOPE_KEY,
-    PLAN_SPRINT_ITEM_ID_SCOPE_KEY,
     PLAN_TICKET_ID_SCOPE_KEY,
     X_PLAN_ACTOR,
     X_PLAN_CONVERSATION_ID,
     X_PLAN_GOAL_ID,
     X_PLAN_MANAGER_ID,
-    X_PLAN_SPRINT_ITEM_ID,
     X_PLAN_TICKET_ID,
 )
 from planner.core.config import Config
@@ -117,11 +115,9 @@ class TrustedIngressMiddleware:
                 scope[PLAN_GOAL_ID_SCOPE_KEY] = None
                 scope = _without_header(scope, X_PLAN_TICKET_ID)
                 scope = _without_header(scope, X_PLAN_MANAGER_ID)
-                scope = _without_header(scope, X_PLAN_SPRINT_ITEM_ID)
                 scope[PLAN_ACTOR_SCOPE_KEY] = None
                 scope[PLAN_TICKET_ID_SCOPE_KEY] = None
                 scope[PLAN_MANAGER_ID_SCOPE_KEY] = None
-                scope[PLAN_SPRINT_ITEM_ID_SCOPE_KEY] = None
 
         await self.app(scope, receive, send)
 

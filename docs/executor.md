@@ -37,7 +37,7 @@ A Mac Worker runs in its Project's folder, taken as a path on the Mac. A Ticket 
 
 The VPS records which Mac agent belongs to each conversation before it sends a start command. This record survives restart.
 
-The Mac fetches prompt files, installs skills, prepares the workspace, and starts the provider. Skills come from the VPS database at each start and link into the provider's normal home.
+To start, the Mac fetches the files the prompt needs, installs the current skills, prepares the workspace, and then starts the provider. Skills come from the VPS database at each start and are linked into the provider's normal home on the Mac. Each Worker receives the general skills and its assigned specialist. Historical personal and calendar specialists stay outside other Workers' snapshots.
 
 Ticket artifacts go to a folder on the Mac. The Mac copies changed files to the Ticket's VPS folder. The Worker's `panels` commands use the Mac service. Reads go directly to the VPS. Writes enter the outbox, then the VPS applies them with authority from its original run record.
 

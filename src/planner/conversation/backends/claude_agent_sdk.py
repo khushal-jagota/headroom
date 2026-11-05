@@ -244,10 +244,14 @@ REJECTED_COMMAND_LIFECYCLE_STATES: Final[frozenset[str]] = frozenset(
 # Claude is doing. 15.0 seconds is what codex and hermes allow a wait of this kind.
 CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS: Final[float] = 15.0
 
-# How long claude must keep running after it reports a background task stopped before
-# that stop counts as the task's own end. A claude being terminated stops its tasks and
-# exits within a second; one that is still up after this has survived the stop.
-STOPPED_BACKGROUND_TASK_PROOF_OF_LIFE_SECONDS: Final[float] = 10.0
+# Claude's word for the frame that carries every live background task after a change.
+BACKGROUND_TASKS_CHANGED_SUBTYPE: Final[str] = "background_tasks_changed"
+
+# How a task that left claude's live set ended when claude said nothing else about it.
+BACKGROUND_TASK_ENDED_UNREPORTED: Final[str] = "unreported"
+
+# How a task ends as activity when claude marks it ambient while it goes on running.
+BACKGROUND_TASK_BECAME_AMBIENT: Final[str] = "ambient"
 
 # Stop must not leave a queued steering command behind. A missing cancel receipt is a
 # failed cancellation, which makes the core discard this child and resume its session on
@@ -870,13 +874,13 @@ class ClaudeAgentSdkBackendChild:
         self._standard_error: deque[str] = deque()
         self._asks_raised = 0
         self._available_command_names: frozenset[str] = frozenset()
-        # Background tasks this child has reported started and not yet reported ended.
-        self._live_background_task_ids: set[str] = set()
-        # Tasks claude said were stopped or killed, held until the child shows it is
-        # still going. When claude itself is terminated it stops every task on its way
-        # out, and those tasks did not end on their own: they ended with the session.
-        self._stopped_background_tasks_awaiting_proof_of_life: dict[str, str] = {}
-        self._proof_of_life_waits: set[asyncio.Task[None]] = set()
+        # Claude's own live set of background tasks, as its last report gave it: task id
+        # to description. Each report replaces the whole set, so an end claude never
+        # announced cannot leave a task here.
+        self._live_background_tasks: dict[str, str] = {}
+        # How each live task ended, from claude's task_updated and task_notification
+        # frames, kept until the task leaves the live set.
+        self._live_background_task_endings: dict[str, str] = {}
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -1310,8 +1314,7 @@ class ClaudeAgentSdkBackendChild:
     async def stop(self) -> None:
         """Close the exact child, retaining cleanup handles until each step succeeds."""
         self._wire_broken = True
-        for wait in tuple(self._proof_of_life_waits):
-            wait.cancel()
+        self._forget_background_tasks()
         turn = self._turn
         self._turn = None
         self._last_ended_turn = None
@@ -1526,14 +1529,14 @@ class ClaudeAgentSdkBackendChild:
             await self._report_the_stream_ended()
 
     async def _report_the_stream_ended(self) -> None:
-        """Say the child is gone. A stop the core asked for cancels the reader instead.
-
-        Stops still awaiting proof of life are not reported as ended: the child did not
-        survive them, so those tasks ended with the session.
-        """
-        self._live_background_task_ids.clear()
-        self._stopped_background_tasks_awaiting_proof_of_life.clear()
+        """Say the child is gone. A stop the core asked for cancels the reader instead."""
+        self._forget_background_tasks()
         await self._sink.report(None, BackendStreamEnded())
+
+    def _forget_background_tasks(self) -> None:
+        """Claude's live set belongs to one process, and starts empty in the next."""
+        self._live_background_tasks.clear()
+        self._live_background_task_endings.clear()
 
     async def _take_in(self, message: Message) -> None:
         """One piece of the agent's news, turned into what the core keeps or shows."""
@@ -1577,63 +1580,61 @@ class ClaudeAgentSdkBackendChild:
                 )
 
     async def _take_in_background_task_news(self, message: Message) -> bool:
-        """Report a background task starting or ending. True when the message was that.
+        """Follow claude's live set of background tasks. True when the message was that.
 
-        A task that completed or failed has ended on its own. A stopped or killed task
-        is held until the child next shows model activity or is still running a short
-        while later. A child being terminated does neither; the stream ending first
-        means the task died with it.
+        Claude reports the whole live set after every change, and that report is the only
+        source of which tasks are live: a task joins when it appears and leaves when it
+        is gone, whether or not its end was ever announced. Tasks claude marks ambient
+        are not activity and are left out. The task frames only say how a task ended.
         """
-        if isinstance(message, (AssistantMessage, UserMessage, ResultMessage, StreamEvent)):
-            await self._report_the_stops_the_child_survived()
-        match message:
-            case TaskStartedMessage():
-                self._live_background_task_ids.add(message.task_id)
-                await self._sink.report(
-                    None,
-                    BackgroundTaskStarted(
-                        task_id=message.task_id, task_description=message.description
-                    ),
-                )
-                return True
-            case TaskNotificationMessage() | TaskUpdatedMessage():
-                task_status = message.status
-                if (
-                    task_status is None
-                    or task_status not in TERMINAL_TASK_STATUSES
-                    or message.task_id not in self._live_background_task_ids
-                ):
-                    return True
-                if task_status in ("stopped", "killed"):
-                    self._stopped_background_tasks_awaiting_proof_of_life[message.task_id] = (
-                        task_status
-                    )
-                    wait = asyncio.create_task(self._report_the_stop_if_the_child_lives_on())
-                    self._proof_of_life_waits.add(wait)
-                    wait.add_done_callback(self._proof_of_life_waits.discard)
-                    return True
-                await self._report_the_background_task_ended(message.task_id, task_status)
-                return True
+        if isinstance(message, TaskNotificationMessage | TaskUpdatedMessage):
+            task_status = message.status
+            if task_status in TERMINAL_TASK_STATUSES and (
+                message.task_id in self._live_background_tasks
+            ):
+                self._live_background_task_endings[message.task_id] = task_status
+            return True
+        if isinstance(message, TaskStartedMessage):
+            return True
+        if isinstance(message, SystemMessage) and message.subtype == (
+            BACKGROUND_TASKS_CHANGED_SUBTYPE
+        ):
+            await self._take_in_the_live_background_tasks(message.data.get("tasks"))
+            return True
         return False
 
-    async def _report_the_stop_if_the_child_lives_on(self) -> None:
-        await asyncio.sleep(STOPPED_BACKGROUND_TASK_PROOF_OF_LIFE_SECONDS)
-        if not self._wire_broken:
-            await self._report_the_stops_the_child_survived()
-
-    async def _report_the_stops_the_child_survived(self) -> None:
-        stopped = self._stopped_background_tasks_awaiting_proof_of_life
-        self._stopped_background_tasks_awaiting_proof_of_life = {}
-        for task_id, task_status in stopped.items():
-            await self._report_the_background_task_ended(task_id, task_status)
-
-    async def _report_the_background_task_ended(self, task_id: str, task_status: str) -> None:
-        if task_id not in self._live_background_task_ids:
-            return
-        self._live_background_task_ids.discard(task_id)
-        await self._sink.report(
-            None, BackgroundTaskEnded(task_id=task_id, task_status=task_status)
-        )
+    async def _take_in_the_live_background_tasks(self, reported: object) -> None:
+        live: dict[str, str] = {}
+        ambient: set[str] = set()
+        for task in reported if isinstance(reported, list) else ():
+            if not isinstance(task, dict):
+                continue
+            task_id, description = task.get("task_id"), task.get("description")
+            if not isinstance(task_id, str) or not isinstance(description, str):
+                continue
+            if task.get("ambient") is True:
+                ambient.add(task_id)
+            else:
+                live[task_id] = description
+        previous = self._live_background_tasks
+        self._live_background_tasks = live
+        for task_id in previous:
+            if task_id not in live:
+                task_status = self._live_background_task_endings.pop(
+                    task_id,
+                    BACKGROUND_TASK_BECAME_AMBIENT
+                    if task_id in ambient
+                    else BACKGROUND_TASK_ENDED_UNREPORTED,
+                )
+                await self._sink.report(
+                    None, BackgroundTaskEnded(task_id=task_id, task_status=task_status)
+                )
+        for task_id, description in live.items():
+            if task_id not in previous:
+                await self._sink.report(
+                    None,
+                    BackgroundTaskStarted(task_id=task_id, task_description=description),
+                )
 
     async def _note_the_session_id(self, session_id: str) -> None:
         """Keep the session this conversation resumes from, and refuse a substitute.

@@ -28,7 +28,7 @@ User-owned stages are marked with `*`.
 
 The user-owned stages are where the person's view is the product. Exploration does not race ahead of a shared picture, and does not declare its answer alone. Planning settles open questions with Khushal before Tickets are proposed. On types with no user-owned stage, a person stays involved through the ceiling, for example by stopping a coding Ticket at What Changes.
 
-A few retired types remain readable on old Tickets and schedules. They cannot be used for new work.
+A few retired types remain readable on old Tickets. They cannot be used for new work.
 
 ## Changing a type
 

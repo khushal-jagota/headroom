@@ -467,7 +467,10 @@ def deploy_app(
                 )
             # No database restoration is allowed after the guarded health commit.
             try:
-                shutil.rmtree(fallback)
+                previous = root / "app-previous"
+                if previous.exists():
+                    shutil.rmtree(previous)
+                os.replace(fallback, previous)
             except OSError as exc:
                 _publish_lifecycle(
                     lifecycle_transition,
@@ -477,8 +480,8 @@ def deploy_app(
                     detail="The requested app is healthy, but deployment cleanup failed.",
                 )
                 raise DeploymentError(
-                    f"candidate is healthy at {current_app}, but fallback cleanup failed: "
-                    f"{exc}; retained fallback: {fallback}"
+                    f"candidate is healthy at {current_app}, but app retention cleanup failed: "
+                    f"{exc}; rollback paths: {previous}, {fallback}"
                 ) from exc
             return DeploymentResult(
                 "succeeded", candidate_manifest.app_sha, prior_manifest.app_sha, None

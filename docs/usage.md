@@ -10,11 +10,11 @@ Four tabs: Limits, Tokens, Cost, and Config.
 - **Tokens and Cost** are recorded spend: what the agents have used.
 - **Config** is the same editor as Settings, so model availability and skill text sit next to the limits they affect. [Skills](skills.md) owns the editor.
 
-The two numbers come from different places and do not mix.
+The two numbers come from different places and do not mix. Recorded usage comes from one local server. The browser calculates its totals and charts directly from that server's summary.
 
 ```
  provider login ──► Limits (saved observation, refreshed on request)
- local transcripts ─► Tokens and Cost (totalled on the server)
+ local transcripts ─► server summary ─► browser totals and charts
 ```
 
 ## Allowance and spend
@@ -22,6 +22,8 @@ The two numbers come from different places and do not mix.
 Opening Limits reads the last observation Headroom saved for Codex and Claude. It calls no provider and scans nothing, and an old observation keeps its timestamp. Refresh is the explicit provider read. It starts no agent turn, and a failed refresh keeps the last good observation. Failed, signed out, and unavailable stay different outcomes, and an unconfirmed sign-in is shown as unknown. Hermes has no allowance source here.
 
 Tokens and Cost are totalled from the transcripts of Codex, Claude, and Grok Build on this host, including sessions never started in Headroom, with prices refreshed separately. That path never asks a provider for allowance. Grok Build appears in the scan but is not a conversation backend. See [Conversations](conversations.md).
+
+Recorded usage comes from one local server. The browser calculates totals and charts from that server’s summary.
 
 ## Backend setup
 

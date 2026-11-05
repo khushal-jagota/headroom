@@ -7,16 +7,12 @@ import sqlite3
 from planner.conversation.contracts import (
     ConversationMessageContent,
     ConversationSystem,
-    ConversationTurnReference,
     NativeMessageOperation,
     PromptDeliveryMode,
     PromptDeliveryQueued,
-    PromptDeliveryRefused,
     PromptDeliveryStarted,
-    PromptDeliverySuppressed,
 )
 from planner.conversation.message_content import text_message_content
-from planner.core import authority
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
@@ -29,7 +25,6 @@ from planner.message_delivery.contracts import (
     MessageDeliveryResult,
     MessageRecordedToOwner,
 )
-from planner.message_delivery.logic.permissions import permits_manager_message
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
@@ -37,21 +32,6 @@ from planner.runtime.logic.conversation_start_resolution import (
 )
 from planner.tickets import data as tickets_data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
-
-
-async def revision_source_turn(
-    conversations: ConversationSystem,
-    conn: sqlite3.Connection,
-    *,
-    ctx: RequestContext,
-) -> ConversationTurnReference | None:
-    """Capture the exact source turn that the committed rejection answers."""
-    if ctx.principal.kind is PrincipalKind.owner:
-        return None
-    source_conversation_id = _sender_conversation_id(conn, ctx.principal)
-    if source_conversation_id is None:
-        return None
-    return await conversations.active_turn_reference(source_conversation_id)
 
 
 def sender_label(ctx: RequestContext) -> str:
@@ -106,55 +86,6 @@ def _sender_conversation_link_key(conn: sqlite3.Connection, sender: Principal) -
     raise ValueError("the owner has no sender conversation link")
 
 
-def _as_target(principal: Principal) -> authority.Target | None:
-    """The thing this principal is, when something can stand above it.
-
-    Khushal and the Chief are above everything, so nothing is above them and they are no
-    target. A message addressed to either asks no authority question.
-    """
-    if principal.kind is PrincipalKind.goal:
-        return authority.goal(principal.id)
-    if principal.kind is PrincipalKind.ticket:
-        return authority.ticket(principal.id)
-    if principal.kind is PrincipalKind.manager:
-        return authority.manager(principal.id)
-    return None
-
-
-def require_reach(conn: sqlite3.Connection, caller: Principal, recipient: Principal) -> None:
-    """Sending down the chain is acting on the recipient. Sending up is only speaking.
-
-    Two principals in one chain can talk, in both directions. Standing above the
-    recipient is acting on it — starting a turn in a conversation that belongs to
-    something below you — and that is the rule's own question. Standing below it is not:
-    a Worker answering the Outcome that asked it something is speaking, and refusing that
-    would make the reply every addressed prompt requires impossible to send.
-
-    Existing ordinary Managers can also speak to one another. This
-    message-only permission grants no authority over either supervisor or its Tickets.
-    Other strangers are neither, and they refuse.
-
-    Asked by the two routes that take a recipient from their caller, and it lives here so
-    they ask the same question rather than two. It is not asked inside ``send_message``:
-    the other callers name a recipient the route has already guarded, and a Ticket asking
-    its own ceiling holder for help names a principal Panels addressed it to, which is not
-    the caller reaching anywhere.
-    """
-    if permits_manager_message(caller, recipient):
-        managers_data.read_manager(conn, caller.id)
-        managers_data.read_manager(conn, recipient.id)
-        return
-    target = _as_target(recipient)
-    if target is None:
-        return
-    if authority.is_above(conn, caller, target):
-        return
-    caller_target = _as_target(caller)
-    if caller_target is not None and authority.is_above(conn, recipient, caller_target):
-        return
-    authority.require_above(conn, caller, target)
-
-
 async def send_message(
     conversations: ConversationSystem,
     conn: sqlite3.Connection,
@@ -171,7 +102,6 @@ async def send_message(
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     retain_created_conversation: bool = False,
-    expects_reply: bool = True,
     system_message: bool = False,
     admission: MessageAdmission | None = None,
     recording_receipt: NativeMessageOperation | None = None,
@@ -179,12 +109,7 @@ async def send_message(
     """Send one text message to one resolved Panels conversation owner.
 
     ``system_message`` records an automatic action as Panels without changing the caller's
-    authority or launch choices. Only trusted internal callers select it. A system action
-    creates no reply requirement and cannot settle the caller's existing reply obligation.
-
-    ``expects_reply`` is False for a message whose answer is a thing the recipient does
-    rather than words it sends back. Such a message adds no reply requirement to the wire
-    prompt and leaves no missing-reply marker when the turn ends.
+    authority or launch choices. Only trusted internal callers select it.
     """
     caller = ctx.principal
     if owner_read_through_sequence is not None and (
@@ -203,14 +128,6 @@ async def send_message(
     )
     prompt_mode = _prompt_mode(mode)
     sender = None if system_message else caller
-    source_turn = None
-    if not system_message and caller.kind is not PrincipalKind.owner:
-        source_conversation_id = _sender_conversation_id(conn, caller)
-        if source_conversation_id is not None:
-            source_turn = await conversations.active_turn_reference(source_conversation_id)
-    is_reply = bool(
-        source_turn is not None and await conversations.turn_expects_reply(source_turn, recipient)
-    )
 
     if recipient.kind is PrincipalKind.owner:
         if caller.kind is PrincipalKind.owner:
@@ -273,7 +190,6 @@ async def send_message(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=not system_message and expects_reply and not is_reply,
                     now=clock.now_unix(),
                     recording_receipt=recording_receipt,
                 )
@@ -310,7 +226,6 @@ async def send_message(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=not system_message and expects_reply and not is_reply,
                     recording_receipt=recording_receipt,
                 )
         elif recipient.kind is PrincipalKind.manager:
@@ -368,7 +283,6 @@ async def send_message(
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                         sender=sender,
                         recipient=recipient,
-                        reply_requested=not system_message and expects_reply and not is_reply,
                         required_manager_id=item_id,
                         retain_created_conversation=retain_created_conversation,
                         recording_receipt=recording_receipt,
@@ -409,16 +323,8 @@ async def send_message(
     if admission is not None:
         admission.finish(delivered.fate)
 
-    result = MessageDeliveryResult(
+    return MessageDeliveryResult(
         recipient=recipient,
         conversation_id=delivered.conversation_id,
         fate=delivered.fate,
     )
-    if (
-        source_turn is not None
-        and not isinstance(delivered.fate, (PromptDeliveryRefused, PromptDeliverySuppressed))
-        and delivered.newly_accepted
-        and (recording_receipt is None or recording_receipt.composed_confirmed)
-    ):
-        await conversations.record_explicit_reply(source_turn, recipient)
-    return result

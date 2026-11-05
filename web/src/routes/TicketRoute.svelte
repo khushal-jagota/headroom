@@ -11,10 +11,8 @@
   import { queries } from "../lib/queryCatalogue";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { navigationConversationSignal, type NavigationTicketMasthead } from "../lib/navigation/presentation";
-  import { admitTicketSection, ticketSectionDetailMatches, ticketSectionFacts, ticketSectionHeading, ticketSectionRunLabel, ticketSectionFieldState, type TicketSection } from "../lib/ticketSection";
-  import { ticketCommandImpact, ticketMastheadImpact, ticketSectionImpact } from "../lib/ticketNavigationImpact";
-  import { ticketSectionDomMatches } from "../lib/ticketSectionDom";
-  import { ticketMastheadDomMatches } from "../lib/ticketMastheadDom";
+  import { ticketSection, ticketSectionFacts, ticketSectionHeading, ticketSectionRunLabel, ticketSectionFieldState } from "../lib/ticketSection";
+
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { labelize } from "../lib/ui";
   import {
@@ -73,14 +71,7 @@
     if(!context) throw new Error('Ticket masthead requires the application navigation owner');
     return context;
   })();
-  const mastheadObserver=navigation.registerRenderBoundary(`ticket-masthead:${crypto.randomUUID()}`,impact=>{
-    const mapped=currentView ? navigation.presentationFor(currentView) : undefined;
-    const row=mapped?.rawTicketsById.get(stableId);
-    const parent=row?.value.manager_id ?? null;
-    const project=parent===null ? row?.value.project_id ?? null : mapped?.rawManagersById.get(parent)?.value.project_id ?? null;
-    return ticketMastheadImpact(impact,row,parent,project);
-  });
-  onDestroy(()=>navigation.disposeRenderBoundary(mastheadObserver));
+
   let mastheadElement=$state<HTMLElement | null>(null);
   let screenElement=$state<HTMLElement | null>(null);
   let currentView=$derived(navigation.selectors.effective);
@@ -104,30 +95,8 @@
   let manifestMissingWorkerType = $derived(Boolean(healthyTicket && !healthyTicket.workflow));
   let canonicalTicket=$derived(currentView ? navigation.presentationFor(currentView).rawTicketsById.get(stableId) : undefined);
   let sectionConfiguration=$derived(healthyTicket?.workflow);
-  let admittedSection=$derived(admitTicketSection(currentView,canonicalTicket,healthyTicket,sectionConfiguration));
-  let section=$state.raw<TicketSection | undefined>(undefined);
-  $effect(()=>{if(brokenTicket) section=undefined; else if(admittedSection) section=admittedSection;});
+  let section=$derived(ticketSection(healthyTicket,sectionConfiguration));
   let sectionFacts=$derived(section ? ticketSectionFacts(section,currentView) : undefined);
-  // A changed public control tuple needs its matching exact detail/configuration.
-  // One request per mismatch avoids a repeated refetch for an incompatible manifest.
-  let refreshedMismatch='';
-  $effect(()=>{
-    if(!canonicalTicket || admittedSection || !healthyTicket || !healthyTicket.workflow) return;
-    const key=JSON.stringify([canonicalTicket.value,healthyTicket.record_sha256,sectionConfiguration]);
-    if(key===refreshedMismatch) return;
-    refreshedMismatch=key;
-    void ticket.refetch();
-  });
-  function assertCurrentSection():void {
-    // The owner keeps its coherent accepted view during the selector handoff.
-    // Runtime uncertainty does not change structural action authority.
-    const view = navigation.state.effective;
-    const record = view ? navigation.presentationFor(view).rawTicketsById.get(stableId) : undefined;
-    if(!section || !record || !ticketSectionDetailMatches(record,section.detail) || !admitTicketSection(view,record,healthyTicket,
-      healthyTicket?.workflow)) {
-      throw {code:'validation',message:'the Ticket changed; read it again before this action'};
-    }
-  }
   let conversationId=$state<string | null>(null);
   let selectedPastConversationId=$state<string | null>(null);
   let shownConversationId=$derived(selectedPastConversationId ?? conversationId);
@@ -225,10 +194,9 @@
    * same write that made the link.
    */
   async function sendToTicketWorker(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered=await navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'conversation'),responseMetadata=>mutateJson<DeliveredMessage>(`/api/tickets/${stableId}/conversation/send`, {
+    const delivered=await mutateJson<DeliveredMessage>(`/api/tickets/${stableId}/conversation/send`, {
       method: "POST",
-      body,responseMetadata
-    }),"send Ticket message");
+      body});
     if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
     return delivered;
   }
@@ -236,18 +204,16 @@
   /** New: the old conversation is killed and the Ticket stops pointing at it. The next
    *  message starts a fresh one, through the same door as the first one ever did. */
   async function resetTicketConversation(): Promise<void> {
-    await navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'conversation'),responseMetadata=>mutateJson(`/api/tickets/${stableId}/conversation/reset`, { method: "POST",responseMetadata }),"reset Ticket conversation");
+    await mutateJson(`/api/tickets/${stableId}/conversation/reset`, { method: "POST"});
     conversationId=null;
   }
 
   async function patch(body: Record<string, unknown>): Promise<unknown> {
-    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'title'),responseMetadata=>
-      mutateJson(`/api/tickets/${stableId}`, {method:"PATCH",body,responseMetadata}));
+    return mutateJson(`/api/tickets/${stableId}`, {method:"PATCH",body});
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
-    assertCurrentSection();
-    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'scope'),responseMetadata=>mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body,responseMetadata }));
+    return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body});
   }
 
   async function updateScope(body: Record<string, unknown>): Promise<void> {
@@ -261,31 +227,24 @@
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    assertCurrentSection();
-    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'private'),responseMetadata=>mutateJson(`/api/tickets/${stableId}`, {
-      method: "PATCH", body: { field_values: { [field]: body } },responseMetadata
-    }));
+    return mutateJson(`/api/tickets/${stableId}`, {
+      method: "PATCH", body: { field_values: { [field]: body } }});
   }
 
   function completeGate(field: string, body: string): Promise<unknown> {
-    assertCurrentSection();
-    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'stage'),responseMetadata=>mutateJson(`/api/tickets/${stableId}/complete/${field}`, {
-      method: "POST", body: { body },responseMetadata
-    }));
+    return mutateJson(`/api/tickets/${stableId}/complete/${field}`, {
+      method: "POST", body: { body }});
   }
 
   function saveEmployeeConfiguration(
     configuration: EmployeeConfigurationSnapshot
   ): Promise<TicketDetail> {
-    assertCurrentSection();
-    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'configuration'),responseMetadata=>mutateJson<TicketDetail>(`/api/tickets/${stableId}/employee-configuration`, {
-      method: "PUT", body: configuration,responseMetadata
-    }));
+    return mutateJson<TicketDetail>(`/api/tickets/${stableId}/employee-configuration`, {
+      method: "PUT", body: configuration});
   }
 
   function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
-    assertCurrentSection();
-    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'stage'),responseMetadata=>mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body,responseMetadata }));
+    return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body});
   }
 
   function conversationWorkerTypeLabel(detail: TicketDetail): string {
@@ -306,98 +265,25 @@
       Boolean(section.detail.employee_configuration_editable)
   );
   function returnProposal(message:string):Promise<unknown> {
-    assertCurrentSection();
-    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'stage'),responseMetadata=>mutateJson(`/api/tickets/${stableId}/reject`,{method:"POST",body:{message},responseMetadata}));
+    return mutateJson(`/api/tickets/${stableId}/reject`,{method:"POST",body:{message}});
   }
-
 
   async function removeBlocker(blockerTicketId: string): Promise<void> {
     headerError = null;
     try {
-      await navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'blocker'),responseMetadata=>mutateJson(
+      await mutateJson(
         `/api/collections/blockers/${encodeURIComponent(stableId)}/${encodeURIComponent(blockerTicketId)}`,
-        { method: "DELETE",responseMetadata }
-      ));
+        { method: "DELETE"}
+      );
     } catch (err) {
       headerError = err;
     }
   }
   let mastheadTypeLabel=$derived(masthead ? masthead.workflow_label ?? (healthyTicket?.worker_type === masthead.worker_type ? healthyTicket?.workflow?.label : null) ?? (masthead.worker_type ? labelize(masthead.worker_type) : 'Custom workflow') : '');
-  $effect(()=>{
-    const view=currentView;
-    const source=currentMasthead;
-    const header=masthead;
-    const root=mastheadElement;
-    const generation=navigation.state.generation;
-    const typeLabel=mastheadTypeLabel;
-    sectionDisclosureVersion;
-    if(!view?.runtimeCurrent || !source || source!==heldMasthead || !header || !root) return;
-    const observation=mastheadObserver.observeSelectors(view.publication,generation);
-    let obsolete=false;
-    void tick().then(()=>{
-      if(obsolete || !root.isConnected || navigation.state.generation!==generation || navigation.selectors.effective!==view) return;
-      if(ticketMastheadDomMatches(root,header,typeLabel)) mastheadObserver.acknowledgeRender(view.publication,observation);
-    });
-    return ()=>{obsolete=true;};
-  });
 
   // The pointer footprint belongs to the mounted pane, independent of section controls.
-  const conversationObserver = navigation.registerRenderBoundary(`ticket-conversation:${crypto.randomUUID()}`, impact =>
-    impact.kind === 'ticket' && impact.id === stableId
-      && (impact.fields === '*' || impact.fields.includes('conversation_id')));
-  onDestroy(() => navigation.disposeRenderBoundary(conversationObserver));
-  $effect(() => {
-    const view = currentView;
-    const source = canonicalTicket;
-    const root = screenElement;
-    const detail = healthyTicket;
-    const shown = section;
-    const pointer = shownConversationId;
-    const generation = navigation.state.generation;
-    if (!view?.runtimeCurrent || !source || !root || !detail || !shown
-      || (selectedPastConversationId === null && pointer !== source.value.conversation_id)) return;
-    const token = conversationObserver.observeSelectors(view.publication, generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (obsolete || !root.isConnected || navigation.selectors.effective !== view
-        || navigation.state.generation !== generation || shownConversationId !== pointer) return;
-      const pane = root.querySelector('[data-conversation-pane]');
-      if (pane?.getAttribute('data-conversation-id') === (pointer ?? '')) {
-        conversationObserver.acknowledgeRender(view.publication, token);
-      }
-    });
-    return () => { obsolete = true; };
-  });
 
-  const sectionObserver=navigation.registerRenderBoundary(`ticket-section:${crypto.randomUUID()}`,impact=>ticketSectionImpact(impact,canonicalTicket));
-  onDestroy(()=>navigation.disposeRenderBoundary(sectionObserver));
   let sectionElement=$state<HTMLElement | null>(null);
-  let sectionDisclosureVersion=$state(0);
-  function sectionObservationEvents(node:HTMLElement) {
-    const changed=()=>{sectionDisclosureVersion+=1;};
-    const events=['click','keydown','input','toggle'];
-    for(const event of events) node.addEventListener(event,changed,true);
-    // Content checkpoints do not rerender unchanged data. A separately mounted
-    // control still needs a fresh DOM observation before it can certify a command.
-    const observer = new MutationObserver(changed);
-    observer.observe(node, { childList: true, subtree: true });
-    return {destroy(){
-      observer.disconnect();
-      for(const event of events) node.removeEventListener(event,changed,true);
-    }};
-  }
-  $effect(()=>{
-    const view=currentView,shown=section,root=sectionElement,header=mastheadElement,generation=navigation.state.generation;
-    sectionDisclosureVersion;
-    if(!view?.runtimeCurrent || !shown || !admittedSection || shown!==admittedSection || !root || !header) return;
-    const token=sectionObserver.observeSelectors(view.publication,generation);
-    let obsolete=false;
-    void tick().then(()=>{
-      if(obsolete || !root.isConnected || navigation.selectors.effective!==view || navigation.state.generation!==generation) return;
-      if(ticketSectionDomMatches(root,header,shown,view)) sectionObserver.acknowledgeRender(view.publication,token);
-    });
-    return ()=>{obsolete=true;};
-  });
 
 </script>
 
@@ -440,7 +326,7 @@
       <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
       <main class="ticket-doc">
-        <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
+        <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <div class="worker-eyebrow" data-ticket-identity>
             <span data-project-fact>{masthead.project || "No project"}</span>
             <span aria-hidden="true">·</span>
@@ -449,7 +335,7 @@
             <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
           </div>
           <div class="ticket-title-row">
-            <div class="ticket-title" data-feedback-page-title>
+            <div class="ticket-title">
               <InlineEdit
                 value={masthead.title}
                 placeholder="Untitled"
@@ -470,16 +356,16 @@
                 multiline
                 placeholder="+ add orientation"
                 onSave={(raw) =>
-                  navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'recap'),responseMetadata=>mutateJson(`/api/tickets/${stableId}`, {
-                    method: "PATCH", body: { recap: raw },responseMetadata
-                  }))}
+                  mutateJson(`/api/tickets/${stableId}`, {
+                    method: "PATCH", body: { recap: raw }
+                  })}
               />
             </ClampedText>
             {/snippet}
             </RecapSlot>
           </div>
           {#if masthead.locale === "macos"}<MacStatus health={machineHealth.isError ? undefined : machineHealth.data} showDisconnected />{/if}
-          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)}>
+          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal}>
             {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
           </TicketLifecycleControls>{/if}
           {#if detail.blocker_summary?.blocked_by.length}
@@ -505,7 +391,7 @@
         {#if section}
         {@const detail=section.detail}
         {@const lc=section.lifecycle}
-        <div bind:this={sectionElement} use:sectionObservationEvents class="ticket-col" data-ticket-section={section.record.id} data-section-stage={section.record.value.stage}>
+        <div bind:this={sectionElement} class="ticket-col" data-ticket-section={section.record.id} data-section-stage={section.record.value.stage}>
           {#snippet kickoffContextRow()}
             {#if detail.employee_configuration_editable}
               {#key JSON.stringify([stableId, detail.locale, conversationStartValues.data?.workspace_folder, conversationStartValues.data?.workspace_path_policy])}

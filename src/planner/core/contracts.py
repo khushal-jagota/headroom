@@ -22,11 +22,6 @@ class PrincipalKind(StrEnum):
     goal = "goal"
     ticket = "ticket"
 
-    @classmethod
-    def _missing_(cls, value: object) -> PrincipalKind | None:
-        if value == "sprint_item":
-            return cls.manager
-        return None
 
 
 OWNER_PRINCIPAL_ID: Final = "owner"
