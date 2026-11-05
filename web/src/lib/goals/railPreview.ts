@@ -20,16 +20,16 @@ export function goalPreviewPosition(anchor: DOMRect, railRight: number, width: n
 
 type RowOptions = {show:(target:HTMLElement,immediate:boolean)=>void;leave:(target:HTMLElement)=>void};
 
-/** The shared input owns timing. This boundary preserves successful touch releases,
- * including a release click retargeted from the row into its overlapping panel. */
-export function createGoalRailPreviewInput(active: () => HTMLElement | null) {
-  let heldTarget: HTMLElement | null = null;
-  let releaseClick = false;
+/** The shared input owns timing and keeps a completed touch hold through its release.
+ * This boundary also swallows that release's click when the browser retargets it from
+ * the row into the panel that now overlaps it. */
+export function createGoalRailPreviewInput() {
+  let releaseClick: HTMLElement | null = null;
   return {
-    clearTouch() { heldTarget = null; releaseClick = false; },
+    clearTouch() { releaseClick = null; },
     click(event: MouseEvent) {
       if (!releaseClick) return;
-      releaseClick = false;
+      releaseClick = null;
       event.preventDefault();
       event.stopImmediatePropagation();
     },
@@ -37,30 +37,23 @@ export function createGoalRailPreviewInput(active: () => HTMLElement | null) {
       let current = options;
       let touchStart: {x:number;y:number;id:number} | null = null;
       const down = (event: PointerEvent) => {
-        heldTarget = null; releaseClick = false;
+        releaseClick = null;
         touchStart = event.pointerType === 'touch' ? {x:event.clientX,y:event.clientY,id:event.pointerId} : null;
       };
       const move = (event: PointerEvent) => {
         if (touchStart && (event.pointerId !== touchStart.id || Math.hypot(event.clientX-touchStart.x,event.clientY-touchStart.y) > RAIL_TOUCH_MOVE_TOLERANCE)) {
-          touchStart = null; heldTarget = null; releaseClick = false;
+          touchStart = null; releaseClick = null;
         }
       };
       const end = () => { touchStart = null; };
-      const cancel = () => { touchStart = null; heldTarget = null; releaseClick = false; };
-      const leave = (event: PointerEvent) => {
-        if (event.pointerType === 'touch' && heldTarget === node && active() === node) event.stopImmediatePropagation();
-      };
-      const blur = (event: FocusEvent) => {
-        if (heldTarget === node && active() === node && (event.relatedTarget === null || event.relatedTarget === document.body)) event.stopImmediatePropagation();
-      };
+      const cancel = () => { touchStart = null; releaseClick = null; };
       const listeners: [string, EventListener][] = [
-        ['pointerdown',down as EventListener],['pointermove',move as EventListener],['pointerup',end],
-        ['pointercancel',cancel],['pointerleave',leave as EventListener],['blur',blur as EventListener]
+        ['pointerdown',down as EventListener],['pointermove',move as EventListener],['pointerup',end],['pointercancel',cancel]
       ];
       for (const [name, listener] of listeners) node.addEventListener(name,listener,true);
       const wrapped = (): NonNullable<Parameters<typeof railPreview>[1]> => ({
         show(target,immediate) {
-          if (immediate && touchStart) { heldTarget=node; releaseClick=true; }
+          if (immediate && touchStart) releaseClick=node;
           current.show(target,immediate);
         },
         leave() { current.leave(node); }
@@ -70,7 +63,7 @@ export function createGoalRailPreviewInput(active: () => HTMLElement | null) {
         update(next: RowOptions) { current=next; action.update(wrapped()); },
         destroy() {
           for (const [name, listener] of listeners) node.removeEventListener(name,listener,true);
-          if (heldTarget===node) { heldTarget=null; releaseClick=false; }
+          if (releaseClick===node) releaseClick=null;
           action.destroy();
         }
       };

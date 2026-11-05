@@ -15,7 +15,7 @@
   import {refreshAtBoundary} from "../lib/goals/presentation";
   import {queryClient} from "../lib/queryClient";
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
-  import { createRailHoverController } from "../lib/workspaceRailInteraction";
+  import { createRailHoverController, listenForUserScroll } from "../lib/workspaceRailInteraction";
   import WorkspaceRailHover from "./WorkspaceRailHover.svelte";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import { navigationApplication } from "../lib/navigation/application.svelte";
@@ -128,6 +128,22 @@
     hoverVisible = true; hoverInstant = instant;
   }, () => hoverVisible = false);
   onDestroy(() => hover.dispose());
+  // A touch hold keeps the preview after the finger lifts (createRailPreviewInput), so a
+  // press outside it and its row, or the person's own scrolling, is what dismisses it.
+  onMount(() => {
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (hoverVisible && !hoverElement?.contains(target) && !hoverTarget?.contains(target)) hover.leave();
+    };
+    window.addEventListener("pointerdown", outside);
+    const stopUserScroll = listenForUserScroll(window, event => {
+      const target = event.target as Node | null;
+      // A key on the previewed row itself moves focus, which opens the next preview.
+      if (hoverElement?.contains(target) || (event.type === "keydown" && hoverTarget?.contains(target))) return;
+      hover.leave();
+    });
+    return () => { window.removeEventListener("pointerdown", outside); stopUserScroll(); };
+  });
   function hoverRow(target: HTMLElement, ticket: WorkItemTicketFacts, immediate = false): void {
     hover.enter({target, ticket}, immediate);
   }
