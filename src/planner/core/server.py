@@ -57,6 +57,7 @@ from planner.datasets.api import router as datasets_router
 from planner.environments.deployment_attention import DeploymentAttentionObserver
 from planner.environments.deployment_configuration import DEPLOYMENT_ATTENTION_POLL_SECONDS
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_admission import (
     UncommittedAppStore,
     matching_commit,
@@ -564,13 +565,29 @@ def create_app(
     app.state.update_admission_closed = False
     app.state.update_startup_detail = None
     app.state.deployment_attention = None
+    update_provider = GitHubUpdateProvider.configured()
+    app.state.mac_updates = MacUpdateService(
+        deployment_lifecycle_path.parent / "mac-updates",
+        update_request_store,
+        update_provider,
+        config.app_sha,
+    )
+
+    def mac_health_for_update() -> Mapping[str, object]:
+        endpoint = getattr(app.state, "executor_endpoint", None)
+        return {} if endpoint is None else cast(Mapping[str, object], endpoint.health())
+
     app.state.updates = UpdateService(
-        GitHubUpdateProvider.configured(),
+        update_provider,
         update_request_store,
         lambda: app.state.conversation_system,
         connection_factory=conn_factory,
         current_app_sha=config.app_sha,
         availability_path=deployment_lifecycle_path.with_name("owner-update-availability.json"),
+        prepare_mac_update=app.state.mac_updates.prepare,
+        mac_ready_for_dispatch=lambda request: app.state.mac_updates.ready_for_dispatch(
+            request, mac_health_for_update()
+        ),
         lifecycle_store=deployment_lifecycle_store,
         recovery_admission=lambda: app.state.update_startup_pending,
     )

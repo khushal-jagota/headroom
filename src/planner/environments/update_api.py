@@ -46,7 +46,12 @@ def _service(request: Request) -> UpdateService:
 async def status(request: Request) -> dict[str, object]:
     result = asdict(await asyncio.to_thread(_service(request).status))
     endpoint = getattr(request.app.state, "executor_endpoint", None)
-    result["mac_status"] = None if endpoint is None else endpoint.health()
+    mac_status = None if endpoint is None else dict(endpoint.health())
+    mac_updates = getattr(request.app.state, "mac_updates", None)
+    if mac_status is not None and mac_updates is not None:
+        update = await asyncio.to_thread(mac_updates.status)
+        mac_status["update"] = None if update is None else asdict(update)
+    result["mac_status"] = mac_status
     return result
 
 
@@ -73,7 +78,9 @@ async def create(request: Request, body: UpdateRequestBody) -> JSONResponse:
             body.archive_sha256,
         ):
             raise UpdateConflict("The selected publication is no longer available.")
-        receipt = service.request(release, body.mode, confirm_activity=body.confirm_activity)
+        receipt = await asyncio.to_thread(
+            service.request, release, body.mode, confirm_activity=body.confirm_activity
+        )
         await asyncio.to_thread(service.dispatch_pending)
         return JSONResponse(asdict(service.store.read() or receipt), status_code=201)
     except (UpdateConflict, OSError, RuntimeError, ValueError) as exc:

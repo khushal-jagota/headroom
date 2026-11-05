@@ -221,7 +221,11 @@ def test_closed_assignment_admits_exact_late_native_result_without_renewing_auth
         actual = CommandOutcome(command.command_id, reference, CommandDisposition.succeeded, {})
         receipt = await endpoint.inbox.accept(envelope(actual, sequence=1), IDENTITY)
         assert receipt.disposition is ReceiptDisposition.accepted
-        assert receipt.result == {"recorded": True}
+        assert receipt.result == {
+            "recorded": True,
+            "stop_command_id": command.command_id,
+            "stopped_child": encode_value(reference),
+        }
         assert await asyncio.wait_for(stopping, 2) == actual
         assert endpoint.inbox.store.runs.child_assignment(reference) is None
         with pytest.raises(PlannerError, match="assignment"):

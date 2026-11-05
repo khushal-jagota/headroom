@@ -24,6 +24,7 @@ from planner.environments.update_configuration import (
 )
 from planner.environments.update_contracts import (
     OwnerUpdateRequest,
+    PublishedMacUpdate,
     PublishedUpdate,
     UpdateMode,
     UpdateRequestState,
@@ -40,6 +41,9 @@ def parse_release(payload: dict[str, object]) -> PublishedUpdate:
     manifest = payload["manifest"]
     if not isinstance(manifest, dict):
         raise ValueError("publication manifest must be an object")
+    mac = payload.get("mac")
+    if mac is not None and not isinstance(mac, dict):
+        raise ValueError("Mac publication must be an object")
     return PublishedUpdate(
         publication_run_id=int(str(payload["publication_run_id"])),
         artifact_id=int(str(payload["artifact_id"])),
@@ -53,6 +57,13 @@ def parse_release(payload: dict[str, object]) -> PublishedUpdate:
         archive_sha256=str(payload["archive_sha256"]),
         schema_floor=str(payload["schema_floor"]),
         expires_at=str(payload["expires_at"]),
+        mac=None
+        if mac is None
+        else PublishedMacUpdate(
+            artifact_id=mac["artifact_id"],
+            archive_sha256=mac["archive_sha256"],
+            archive_size=mac["archive_size"],
+        ),
     )
 
 

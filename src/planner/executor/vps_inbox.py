@@ -385,9 +385,9 @@ class MacInbox:
                     and previous.disposition is ReceiptDisposition.accepted
                     and previous.result.get("recorded") is True
                 ):
-                    self.runs._resolve_command(
+                    await self.runs.accept_stop_receipt(
                         type_adapter(CommandOutcome).validate_python(envelope.payload),
-                        stop_proven=True,
+                        previous,
                     )
                 return previous
             handler = {
@@ -476,13 +476,17 @@ class MacInbox:
             partial(
                 self.store.accept,
                 envelope,
-                lambda conn, row: cast(JsonObject, {"recorded": True}),
+                lambda conn, row: cast(JsonObject, {
+                    "recorded": True,
+                    "stop_command_id": outcome.command_id,
+                    "stopped_child": as_object(outcome.child),
+                }),
                 now_ms(),
                 identity=identity,
             )
         )
         if receipt.disposition is ReceiptDisposition.accepted:
-            self.runs._resolve_command(outcome, stop_proven=True)
+            await self.runs.accept_stop_receipt(outcome, receipt)
         return receipt
 
     async def _apply_answer(

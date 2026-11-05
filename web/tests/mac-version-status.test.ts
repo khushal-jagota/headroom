@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
 import MacStatus from "../src/components/machines/MacStatus.svelte";
 import { macAvailability, type ExecutorIdentity, type MacStatus as Health } from "../src/lib/ticketMachines";
+import { macUpdateNeedsNotice } from "../src/lib/machines/macUpdateStatus";
 
 const identity: ExecutorIdentity = { protocol_version: 18, application_revision: "old-mac-revision", spool_format_version: 5, executor_incarnation: "mac", connection_generation: 1 };
 const refused: Health = { identity: null, connection_state: "disconnected", last_contact_at_ms: 1000,
@@ -31,5 +32,32 @@ describe("Mac version evidence", () => {
     const ready = { ...refused, connection_state: "ready" as const };
     expect(render(MacStatus, { props: { health: ready, showDisconnected: true } }).body).not.toContain("Mac needs update");
     expect(macAvailability(ready)).not.toBe("Mac needs update");
+  });
+  // VPS completion cannot stand in for Mac completion. Each actual Mac phase
+  // needs its own label without turning an absent connection into an offline claim.
+  it.each([
+    ["waiting", "Mac waits to update"],
+    ["downloading", "Mac downloads the update"],
+    ["ready_to_restart", "Mac is ready to update"],
+    ["current", "Mac is current"],
+    ["failed", "Mac update failed"],
+    ["reverted", "Mac returned to its previous version"],
+    ["unavailable", "Mac needs a manual update"],
+  ] as const)("shows %s separately from VPS completion", (phase, label) => {
+    const update = { request_id: "approved", target_revision: "0123456789abcdef", phase, detail: null };
+    const html = render(MacStatus, { props: { health: { ...refused, refusal: null, update } } }).body;
+    expect(html).toContain(label);
+    expect(html).toContain("Target 0123456789ab");
+    expect(html).not.toContain("Mac disconnected");
+    expect(macUpdateNeedsNotice(update)).toBe(phase !== "current");
+  });
+  it("keeps update failure and version-refusal evidence distinct", () => {
+    const update = { request_id: "approved", target_revision: "next", phase: "failed" as const, detail: "The previous version stayed active." };
+    const html = render(MacStatus, { props: { health: { ...refused, update } } }).body;
+    expect(html).toContain("Mac update failed");
+    expect(html).toContain("The previous version stayed active.");
+    expect(html).toContain("Mac needs update");
+    expect(html).toContain("Last refusal:");
+    expect(html).toContain("Last contact:");
   });
 });

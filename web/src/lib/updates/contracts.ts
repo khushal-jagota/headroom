@@ -14,6 +14,7 @@ export type PublishedUpdate = {
   archive_sha256: string;
   schema_floor: string;
   expires_at: string;
+  mac?: { artifact_id: number; archive_sha256: string; archive_size: number } | null;
 };
 
 export type OwnerUpdateRequest = {

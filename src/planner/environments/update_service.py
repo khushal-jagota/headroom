@@ -56,10 +56,14 @@ class UpdateService:
         availability_path: Path | None = None,
         can_refresh: Callable[[], bool] = lambda: True,
         now: Callable[[], float] = time.time,
+        prepare_mac_update: Callable[[PublishedUpdate], None] | None = None,
+        mac_ready_for_dispatch: Callable[[OwnerUpdateRequest], bool] | None = None,
         lifecycle_store: DeploymentLifecycleStore | None = None,
         recovery_admission: Callable[[], bool] = lambda: False,
     ) -> None:
         self.provider, self.store, self.conversation = provider, store, conversation
+        self._prepare_mac_update = prepare_mac_update
+        self._mac_ready_for_dispatch = mac_ready_for_dispatch
         self._connection_factory = connection_factory
         self.current_app_sha = current_app_sha
         self.lifecycle_store = lifecycle_store
@@ -189,6 +193,8 @@ class UpdateService:
         activity = system.workspace_activity() if system is not None else "unknown"
         if mode == "now" and activity != "idle" and not confirm_activity:
             raise UpdateConflict("Active or unknown work requires explicit confirmation.")
+        if self._prepare_mac_update is not None:
+            self._prepare_mac_update(release)
         request = self.store.create(
             OwnerUpdateRequest(
                 uuid4().hex,
@@ -208,6 +214,8 @@ class UpdateService:
             return False
         system = self.conversation()
         if request.mode == "idle" and (system is None or system.workspace_activity() != "idle"):
+            return False
+        if self._mac_ready_for_dispatch is not None and not self._mac_ready_for_dispatch(request):
             return False
         try:
             validate_release(request.release)

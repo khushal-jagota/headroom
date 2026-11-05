@@ -8,6 +8,7 @@
   import { retryChangeStream } from "../lib/changeStream";
   import UpdateActions from "./UpdateActions.svelte";
   import MacStatus from "./machines/MacStatus.svelte";
+  import { macUpdateNeedsNotice } from "../lib/machines/macUpdateStatus";
   import type { UpdateStatus } from "../lib/updates/contracts";
   import { updatePresentation, type UpdatePresentationState } from "../lib/updates/logic/presentation";
   import { atUpdateDeadline } from "../lib/updates/deadline";
@@ -33,7 +34,8 @@
   let clock = $state(Date.now());
   const statusState = $derived(presentation ?? updatePresentation(effectiveStatus, connectionState, $releaseState, clock));
   const hasMacRefusal = $derived(Boolean(effectiveStatus?.mac_status?.connection_state === "disconnected" && effectiveStatus.mac_status.refusal));
-  const statusKey = $derived(statusState !== "up_to_date" ? statusState : hasMacRefusal ? "mac" : navigationHealth ? "navigation" : null);
+  const hasMacUpdate = $derived(macUpdateNeedsNotice(effectiveStatus?.mac_status?.update));
+  const statusKey = $derived(statusState !== "up_to_date" ? statusState : hasMacRefusal || hasMacUpdate ? "mac" : navigationHealth ? "navigation" : null);
   let displayedWord = $state<UpdatePresentationState | "navigation" | "mac" | null>(null);
   let displayedHealth = $state.raw<NavigationHealth>(null);
   let textOut = $state(false);

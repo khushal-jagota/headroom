@@ -5,13 +5,20 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+import tarfile
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from planner.environments.app import AppManifest
 from planner.environments.deployment_gate import smoke_candidate
+from planner.environments.mac_runtime_configuration import (
+    MAC_PYTHON_SHA256,
+    MAC_PYTHON_VERSION,
+    MAC_RUNTIME_RECEIPT_NAME,
+)
 from planner.environments.runtime_contracts import parse_optional_runtime_contract
 from planner.environments.update_artifacts import (
     APP_ARCHIVE_NAME,
@@ -23,6 +30,13 @@ from planner.environments.update_artifacts import (
 from planner.environments.update_contracts import (
     SUPPORTED_UPDATE_SCHEMA_FLOOR,
     UPDATE_ARTIFACT_RETENTION_DAYS,
+    PublishedMacUpdate,
+)
+from planner.executor.update_configuration import (
+    MAC_RUNTIME_ARCHIVE_NAME,
+    MAC_RUNTIME_MANIFEST_NAME,
+    MAX_MAC_RUNTIME_ARCHIVE_BYTES,
+    MAX_MAC_RUNTIME_MANIFEST_BYTES,
 )
 
 # Keep the historical import available to archive callers and focused tests.
@@ -82,6 +96,74 @@ def validate_target_proof(
             "target proof differs from publication identity or lacks execution evidence"
         )
     return proof
+
+
+def validate_mac_publication(
+    directory: Path,
+    *,
+    requested: str,
+    run_id: int,
+    artifact_id: int,
+    build_result: str,
+) -> PublishedMacUpdate:
+    """Bind the native build, sealed archive and current workflow artifact together."""
+    if build_result != "success" or type(artifact_id) is not int or artifact_id < 1:
+        raise ValueError("Mac publication requires a successful native build and artifact")
+    value = json.loads((directory / MAC_RUNTIME_RECEIPT_NAME).read_text())
+    archive = directory / MAC_RUNTIME_ARCHIVE_NAME
+    digest = hash_archive(archive)
+    size = archive.stat().st_size
+    proof = value.get("proof", {})
+    operations = proof.get("native_operations", {}) if isinstance(proof, dict) else {}
+    if (
+        value.get("schema_version") != 1
+        or value.get("application_revision") != requested
+        or re.fullmatch(r"[0-9a-f]{40}", requested) is None
+        or value.get("publication_run_id") != run_id
+        or value.get("archive_sha256") != digest
+        or value.get("archive_size") != size
+        or not 0 < size <= MAX_MAC_RUNTIME_ARCHIVE_BYTES
+        or value.get("python_archive_sha256") != MAC_PYTHON_SHA256
+        or value.get("python_version") != MAC_PYTHON_VERSION
+        or not isinstance(proof, dict)
+        or proof.get("passed") is not True
+        or proof.get("application_revision") != requested
+        or proof.get("relocation") is not True
+        or proof.get("cli_help") is not True
+        or proof.get("backend_entrypoints") is not True
+        or proof.get("forbidden_dependencies") != []
+        or not proof.get("native")
+        or not isinstance(operations, dict)
+        or operations.get("native") != "passed"
+        or operations.get("python") != MAC_PYTHON_VERSION
+        or operations.get("platform") != "darwin"
+        or operations.get("architecture") != "arm64"
+        or any(
+            operations.get(name) is not True
+            for name in (
+                "cli_import",
+                "mac_service_import",
+                "sqlite",
+                "aiohttp",
+                "cryptography",
+                "icu",
+            )
+        )
+    ):
+        raise ValueError("Mac publication differs from the source or lacks native execution proof")
+    with tarfile.open(archive, "r:gz") as packed:
+        member = packed.getmember(MAC_RUNTIME_MANIFEST_NAME)
+        if not member.isfile() or member.size > MAX_MAC_RUNTIME_MANIFEST_BYTES:
+            raise ValueError("Mac runtime manifest is invalid")
+        stream = packed.extractfile(member)
+        if stream is None or json.load(stream) != {
+            "schema_version": 1,
+            "application_revision": requested,
+            "platform": "darwin",
+            "architecture": "arm64",
+        }:
+            raise ValueError("Mac runtime manifest differs from publication source")
+    return PublishedMacUpdate(artifact_id, digest, size)
 
 
 def main() -> None:
@@ -154,7 +236,15 @@ def main() -> None:
         }:
             raise ValueError("smoke proof differs from publication identity")
         target = validate_target_proof(gate, manifest, requested, digest)
+        mac = validate_mac_publication(
+            gate / "mac",
+            requested=requested,
+            run_id=int(os.environ["GITHUB_RUN_ID"]),
+            artifact_id=int(os.environ["PANELS_MAC_ARTIFACT_ID"]),
+            build_result=os.environ["PANELS_MAC_BUILD_RESULT"],
+        )
         receipt = {
+            "mac": asdict(mac),
             "publication_run_id": int(os.environ["GITHUB_RUN_ID"]),
             "artifact_id": int(os.environ["PANELS_ARTIFACT_ID"]),
             "manifest": asdict(manifest),

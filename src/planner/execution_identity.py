@@ -6,7 +6,11 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_configuration import (
+    MIN_SUPPORTED_PROTOCOL_VERSION,
+    PROTOCOL_VERSION,
+    SPOOL_FORMAT_VERSION,
+)
 
 
 class TicketLocale(StrEnum):
@@ -66,6 +70,16 @@ class ProtocolRefused(ValueError):
     """The peer did not speak the agreed protocol; replay must not start."""
 
 
+def supports_executor_versions(protocol_version: int, spool_format_version: int) -> bool:
+    """Only the current and previous work protocol share the stable spool format."""
+    return (
+        type(protocol_version) is int
+        and type(spool_format_version) is int
+        and MIN_SUPPORTED_PROTOCOL_VERSION <= protocol_version <= PROTOCOL_VERSION
+        and spool_format_version == SPOOL_FORMAT_VERSION
+    )
+
+
 def validate_identity(identity: ExecutorIdentity, *, check_versions: bool = True) -> None:
     if (
         not isinstance(identity.application_revision, str)
@@ -85,9 +99,8 @@ def validate_identity(identity: ExecutorIdentity, *, check_versions: bool = True
         )
     ):
         raise ProtocolRefused("identity versions and generation must be integers")
-    if check_versions and (
-        identity.protocol_version != PROTOCOL_VERSION
-        or identity.spool_format_version != SPOOL_FORMAT_VERSION
+    if check_versions and not supports_executor_versions(
+        identity.protocol_version, identity.spool_format_version
     ):
         raise ProtocolRefused("executor protocol or spool format mismatch")
     if identity.connection_generation < 1 or not identity.executor_incarnation:
@@ -95,13 +108,13 @@ def validate_identity(identity: ExecutorIdentity, *, check_versions: bool = True
 
 
 def parse_identity(payload: object, *, check_versions: bool = True) -> ExecutorIdentity:
-    if not isinstance(payload, dict) or set(payload) != {
+    if not isinstance(payload, dict) or not {
         "protocol_version",
         "application_revision",
         "spool_format_version",
         "executor_incarnation",
         "connection_generation",
-    }:
+    }.issubset(payload):
         raise ProtocolRefused("invalid identity fields")
     for key in ("protocol_version", "spool_format_version", "connection_generation"):
         if type(payload[key]) is not int:
