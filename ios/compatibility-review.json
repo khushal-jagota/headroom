@@ -1,6 +1,6 @@
 {
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "contract_sha256": "46d2765f702165fea078eea57c0865c6e8029b24cd4773845a2d5da7fbad61f8",
+  "contract_sha256": "20ca2578b749c0dc2c207b3f2a87fc8ec6d5ead16a335958ebcc0d26d9d00c18",
   "evidence": "Combined sweep and staging update restoration source review. Retained sweep native-route removals and owner-facing response shapes remain as reviewed before. The update protocol now restores staging b30f2b25e: claim route, pending/dispatched/applying/applied/cancelled fields, attempt deadlines, lifecycle status and recovery endpoints. These match the native build 1 staging contract. Central rank intake remains in the sweep; native owner requests do not carry employee headers. The only update runner exception is validate_schema_ancestry acceptance of goal_holders and canonical_manager_identities after candidate graph resolution. It changes no HTTP or Swift contract. Minimum native build stays 1. This is source compatibility review only. No signed-device, TestFlight, native draft survival or reconnect checks ran. Scratch install and focused runtime results are separate evidence."
 }
