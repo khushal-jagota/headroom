@@ -1066,10 +1066,25 @@ def verify_rail_pagination(page, url, fixture, evidence):
             'order':page.evaluate('window.__navigationOrder'),'held':page.evaluate('window.__heldNavigation.length'),
             'heldFrames':page.evaluate('window.__heldNavigationFrames'),
             'members':members('rail_tickets')},indent=2))
+        if queued:
+            # The exit fade lasts 160 ms, and a loaded runner can spend longer than that
+            # between seeing it start and delivering the wheel. Hold the fade paused from
+            # the moment it is created, so the wheel always lands while it is pending.
+            page.evaluate("""()=>{
+              const animate=Element.prototype.animate;
+              window.__restoreAnimate=()=>{Element.prototype.animate=animate;};
+              window.__heldExit=[];
+              Element.prototype.animate=function(frames,options){
+                const animation=animate.call(this,frames,options);
+                if(this.dataset?.ticketId==='page_worker_00' && Array.isArray(frames) && frames.some(k=>'opacity' in k)){
+                  animation.pause();window.__heldExit.push(animation);
+                }
+                return animation;
+              };
+            }""")
         page.mouse.move(900, 600)
         if queued:
-            page.wait_for_function("""()=>document.querySelector('[data-ticket-id="page_worker_00"]')?.getAnimations()
-              .some(a=>a.playState==='running' && a.effect?.getKeyframes().some(k=>'opacity' in k))""")
+            page.wait_for_function('window.__heldExit.length>0')
             bounds = scroll.bounding_box()
             page.mouse.move(bounds['x']+1,bounds['y']+30)
             scroll.evaluate("""n=>{
@@ -1079,7 +1094,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
               n.addEventListener('scroll',event=>{
                 const row=document.querySelector('[data-ticket-id="page_worker_17"]');
                 const exit=document.querySelector('[data-ticket-id="page_worker_00"]');
-                const exitRunning=exit?.getAnimations().some(a=>a.playState==='running'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
+                const exitRunning=exit?.getAnimations().some(a=>a.playState!=='finished'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
                 window.__exitContinued={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,ms:performance.now(),
                   trusted:event.isTrusted,exitRunning,wheel:window.__exitWheel};
                 window.__exitScrollTake=()=>{
@@ -1097,6 +1112,8 @@ def verify_rail_pagination(page, url, fixture, evidence):
             continued = page.evaluate('window.__exitContinued')
             assert continued['exitRunning'] and continued['wheel']['trusted'] and continued['wheel']['deltaY']>0, continued
             assert continued['scrollTop']-continued['wheel']['before']>20 and continued['ms']>=continued['wheel']['ms'], continued
+            # Let the held fade finish, so the exit publishes under the continued scroll.
+            page.evaluate('window.__restoreAnimate();window.__heldExit.forEach(a=>a.play())')
         after_view = page_changed('rail_tickets', prior)
         if queued:
             page.evaluate('window.__exitScrollTake();window.__captureExitScroll=false')
