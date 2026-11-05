@@ -101,7 +101,7 @@ struct GoalDocumentContent: View {
         } label: { Text(goal.active ? "Active" : "Inactive") }.accessibilityLabel("State")
     }
     private func loadProjects() async {
-        if let response: GoalJSON = try? await store.client.get("/api/projects") { projects = response["projects"].array }
+        if let response = try? await store.client.goalProjects() { projects = response["projects"].array }
     }
 }
 

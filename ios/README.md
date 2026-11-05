@@ -684,6 +684,7 @@ working checklists and manual charts. A Manager with one goal displays that goal
 under the Manager's name; multiple goals use cards. Holder documents use the same
 native page renderer, including Tickets blocks; when none is authored the page
 keeps its own paged Tickets list. All goals includes inactive goals and column filters.
+Goal screens share a full project catalogue read for labels, filters and editing.
 
 A goal page opens its holder's conversation. Previous goal transcripts use the
 existing historical reader and remain read only. Retired goal-owned Review rows
@@ -716,6 +717,7 @@ the app never retries a measurement write by itself. There is no Saved toast.
 Run `ios/scripts/test-offline.sh` for the Foundation checks. That host evaluates
 the current web chart catalogue and curve functions as an independent comparison
 for the native presentation code; it requires this worktree's web dependencies.
+The Goals request test also checks that the project read supplies `detail=full`.
 The existing simulator fixture host supports `PANELS_GOALS_SMOKE=1` and
 `PANELS_OFFLINE_TEST=GoalFlowTests`. Supply an already booted assigned simulator,
 a separate task bundle ID, lane lock name and output directory through its

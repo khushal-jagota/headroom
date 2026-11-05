@@ -89,7 +89,7 @@ private struct GoalPeek: View {
             }
         }.padding(24).background(PanelsTheme.surface).allowsHitTesting(false)
             .task {
-                if let response: GoalJSON = try? await store.client.get("/api/projects") { project = response["projects"].array.first { $0.id == session.goal?.projectId }?["name"].text ?? "" }
+                if let response = try? await store.client.goalProjects() { project = response["projects"].array.first { $0.id == session.goal?.projectId }?["name"].text ?? "" }
             }
     }
 }
@@ -140,7 +140,7 @@ struct HolderContent: View {
         async let document: () = session.refresh()
         do {
             async let response = api.goals()
-            async let projectResponse: GoalJSON = api.get("/api/projects")
+            async let projectResponse = api.goalProjects()
             let (list, projects) = try await (response, projectResponse); try Task.checkCancellation()
             guard api.baseURL == store.baseURL else { return }
             goals = list.goals; nextRefreshAt = list.nextRefreshAt; self.projects = projects["projects"].array; error = nil
