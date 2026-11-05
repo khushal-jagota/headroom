@@ -21,13 +21,14 @@ SUITES = ("unit", "integration", "e2e", "browser")
 REPORTS = {suite: f"reports/{suite}.{'json' if suite == 'browser' else 'xml'}"
            for suite in SUITES}
 IDENTITY_KEYS = ("requested_sha", "workflow_sha", "run_id", "run_attempt")
-# The build job seals and proves the candidate while the suites run. Publication
-# accepts only these files, anchored by the record digest the build job reports.
+# The build job seals, proves, and rehearses the candidate while the suites run, and
+# uploads the archive itself. Publication accepts only these proofs, anchored by the
+# record digest the build job reports, and writes the receipt from them.
 CANDIDATE_RECORD = "candidate-record.json"
-CANDIDATE_REQUIRED = ("panels-app.tar.gz", "archive-sha256.txt", "manifest.json", "smoke.json",
-                      "target/target-proof.json", "target/target-root-inventory.json")
-CANDIDATE_REPORTS = ("reports/ruff.log", "reports/mypy.log", "reports/svelte-check.log",
-                     "reports/vitest.json", "reports/candidate-build.log")
+CANDIDATE_REQUIRED = ("archive-sha256.txt", "manifest.json", "smoke.json",
+                      "replacement-proof.json", "target/target-proof.json",
+                      "target/target-root-inventory.json")
+CANDIDATE_REPORTS = ("reports/candidate-build.log",)
 
 
 def full_selection(source: Path) -> dict[str, object]:
@@ -252,7 +253,8 @@ def collect(downloads: Path, gate: Path, expected: dict[str, str],
                         raise ValueError("browser evidence directory is empty or absent")
             except (OSError, ValueError) as error:
                 errors.append(f"{suite}: {error}")
-    if prerequisites != {"prepare": "success", "suites": "success", "build": "success"}:
+    if prerequisites != {"prepare": "success", "suites": "success", "checks": "success",
+                         "build": "success"}:
         errors.append(f"publication prerequisites did not succeed: {prerequisites}")
     if errors:
         raise ValueError("; ".join(errors))
@@ -266,7 +268,7 @@ def candidate_path(relative: str) -> bool:
 
 
 def pack_candidate(gate: Path, output: Path, expected: dict[str, str]) -> str:
-    """Copy the sealed archive and its proofs, and return the record digest."""
+    """Copy the sealed archive's proofs, and return the record digest."""
     names = [*CANDIDATE_REQUIRED,
              *(name for name in CANDIDATE_REPORTS if (gate / name).is_file()),
              *("target/" + name for name in regular_files(gate / "target"))]
