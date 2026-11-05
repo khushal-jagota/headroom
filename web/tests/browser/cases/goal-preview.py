@@ -3253,7 +3253,7 @@ def checklist_deadline_controls(browser, url):
                     "data-deadline-tone", "bad"
                 )
                 expect(date_control(card)).to_have_attribute("data-tone", "neutral")
-                page.evaluate("location.hash='#/workspace/goals'")
+                page.evaluate("location.hash='#/goals'")
                 table_row = page.locator("tbody tr").filter(
                     has=page.get_by_role("link", name="Prepare the field guide", exact=True)
                 )

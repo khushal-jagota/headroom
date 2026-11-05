@@ -344,10 +344,10 @@ def run(browser, urls):
     for _ in range(20):
         page.keyboard.press("Shift+ArrowLeft")
     expect(grip).to_have_attribute("aria-valuenow", "232")
-    expect(rail.locator('.utility')).to_have_count(5)
+    expect(rail.locator('.utility')).to_have_count(6)
     rail_bounds = page.locator('.workspace-rail').bounding_box()
     assert rail_bounds and abs(rail_bounds['width'] - 232) < 2, rail_bounds
-    for name in ["Review", "Usage", "Ideas", "VPS", "Settings"]:
+    for name in ["Review", "Usage", "Ideas", "Goals", "VPS", "Settings"]:
         control = rail.get_by_label(name, exact=True)
         control.focus()
         label = control.locator('.utility-label')

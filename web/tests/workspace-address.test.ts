@@ -131,6 +131,5 @@ describe('goal conversation destinations',()=>{
   expect(parseWorkspaceAddress(workspaceAddress(original!.selection,original!.view,original!.openFile,original!.selectedConversationId))).toEqual(original);
   const closed=parseWorkspaceAddress(workspaceAddress(original!.selection,original!.view,null,original!.selectedConversationId));
   expect(closed).toMatchObject({selection:{kind:'goal',id:'goal one'},selectedConversationId:'past',openFile:null,view:'tickets'});
-  expect(parseWorkspaceAddress('#/workspace/goals')?.selection).toEqual({kind:'goals'});
  });
 });
