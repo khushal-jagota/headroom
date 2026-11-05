@@ -103,6 +103,7 @@
     await resolve(bound);
   }
   async function send():Promise<void> {
+    if(item.owner_kind==='goal')return;
     if(busy || intakeBusy || !ready || !loaded || !hasReply || voiceActive)return;
     busy=true;error=null;
     try {
@@ -158,9 +159,9 @@
         <div class="review-message-run">
           {#each events as event (event.sequence)}<div class="review-message-said" data-review-message-sequence={event.sequence}><MessagePieces content={messageContentOf(event.payload)} {conversationId}/></div>{/each}
         </div>
-        <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
+        {#if item.owner_kind !== 'goal'}<ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
           {disabled} sendDisabled={busy || !ready} sending={busy}
-          sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>
+          sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>{/if}
         <div class="review-read-row"><button data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</button></div>
         {#if error}<ErrorLine {error}/>{/if}
       </div>

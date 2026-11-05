@@ -1,0 +1,12 @@
+{
+  "aps": {
+    "alert": {
+      "title": "Chief of Staff \u00b7 Message",
+      "body": "There is an unread message. Open Chief to read and reply."
+    },
+    "sound": "default",
+    "thread-id": "panels-chief"
+  },
+  "server_url": "https://panels-vps.tail687c57.ts.net",
+  "route": "/#/agents/chief-of-staff"
+}

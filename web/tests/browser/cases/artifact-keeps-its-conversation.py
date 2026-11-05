@@ -201,12 +201,15 @@ def run(browser, urls):
         "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
         "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "The Chief's conversation names another Ticket's artifact.", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
         "/api/chief/conversation/start-values": start_values,
+        "/api/chief/conversation": {"conversation_id": CHIEF_CONVERSATION},
+        "/api/chief/page": {"page": None, "page_revision": 0},
+        f"/api/managers/{MANAGER_ID}/page": {"page": None, "page_revision": 0},
         f"/api/managers/{MANAGER_ID}/conversation/start-values": start_values,
-        f"/api/managers/{MANAGER_ID}/workspace-content": {"goal": "Ship the rollout.", "recap": "The Manager's own conversation names another Ticket's artifact."},
+        f"/api/managers/{MANAGER_ID}/workspace-content": {"goals": [], "goal": "Ship the rollout.", "recap": "The Manager's own conversation names another Ticket's artifact."},
         "/api/worker-types?supported=true": manifest,
         "/api/worker-types": manifest,
         "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
-        "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None},
+        "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None, "state": "up_to_date", "allowed_actions": [], "phase": None, "app_sha": None, "deadline_at": None, "restart_deadline_at": None},
         "/api/meta": {"test_mode": True, "app_sha": None},
         "/api/review": {"items": [], "running_worker_count": 0},
         "/api/conversation/backends": {"backends": []},
@@ -223,8 +226,8 @@ def run(browser, urls):
         "/api/tickets?detail=full&id=t_elsewhere": {"id": "t_elsewhere", "title": "Artifact owner", "conversation_id": FILE_CONVERSATION, "locale": "vps", "worker_type": "coding"},
         "/api/tickets/t_elsewhere/conversation/start-values": start_values,
         f"/api/managers/{MANAGER_ID}/workspace": {"id": MANAGER_ID, "title": MANAGER_TITLE, "manager": {"conversation_id": MANAGER_CONVERSATION}},
-        "/api/goals/goal_fixture": {"id": "goal_fixture", "title": "Artifact goal", "conversation_id": FILE_CONVERSATION},
-        "/api/goals/goal_fixture/conversation/start-values": start_values,
+        "/api/goals/goal_fixture": {"id": "goal_fixture", "title": "Artifact goal", "holder_kind": "manager", "holder_id": MANAGER_ID},
+        "/api/goals/goal_chieffixture": {"id": "goal_chieffixture", "title": "Chief artifact goal", "holder_kind": "chief", "holder_id": None},
     })
     unexpected = []
     writes = []
@@ -559,8 +562,14 @@ def run(browser, urls):
     assert not writes, writes
 
     page.goto(url + "#/preview?source=goal&goal=goal_fixture&path=notes.md", wait_until="domcontentloaded")
-    expect(viewer.locator("[data-conversation-pane]")).to_have_attribute("data-conversation-id", FILE_CONVERSATION)
-    expect(viewer).to_contain_text("Artifact goal")
+    expect(viewer.locator("[data-conversation-pane]")).to_have_attribute("data-conversation-id", MANAGER_CONVERSATION)
+    expect(viewer).to_contain_text(MANAGER_TITLE)
+    assert not writes, writes
+
+    # A cold direct goal-file visit reads its Chief holder's native pointer.
+    page.goto("about:blank")
+    page.goto(url + "#/preview?source=goal&goal=goal_chieffixture&path=notes.md", wait_until="domcontentloaded")
+    expect(viewer.locator("[data-conversation-pane]")).to_have_attribute("data-conversation-id", CHIEF_CONVERSATION)
     assert not writes, writes
 
     page.goto(url + "#/preview?source=ticket&ticket=t_missing&path=artifacts%2Fplan.md", wait_until="domcontentloaded")

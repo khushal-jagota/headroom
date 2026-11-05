@@ -49,7 +49,7 @@ def validate_schema_ancestry(database: Path, migrations: Path = MIGRATIONS_DIREC
     # The sweep has one explicit entry. Older archives retain their original floor.
     floor = (
         bases[0]
-        if bases in ([BASELINE_REVISION], ["conversation_background_tasks"])
+        if bases in ([BASELINE_REVISION], ["goal_holders"])
         else "video_upload_ledger"
     )
     try:

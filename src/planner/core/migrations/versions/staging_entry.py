@@ -1,6 +1,6 @@
 """The staging migration head admitted by the direct sweep upgrade."""
 
-revision = "conversation_background_tasks"
+revision = "goal_holders"
 down_revision = None
 branch_labels = None
 depends_on = None

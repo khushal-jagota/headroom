@@ -12,10 +12,11 @@ describe('conversation host geometry', () => {
     expect(visibleHostBounds(host, {top: 900, left: 0, width: 1440, height: 200}).height).toBe(0);
   });
 
-  it('ignores a keyboard-sized visual viewport once no text field has focus', () => {
+  it('retains menu bounds across focus transfer and restores the viewport after dismissal', () => {
     const keyboardUp = {top: 0, left: 0, width: 393, height: 470};
     const reading = {layoutWidth: 393, layoutHeight: 760, visual: keyboardUp};
     expect(visibleViewportFrom({...reading, textEntryFocused: true})).toEqual(keyboardUp);
+    expect(visibleViewportFrom({...reading, textEntryFocused: false}, true)).toEqual(keyboardUp);
     expect(visibleViewportFrom({...reading, textEntryFocused: false})).toEqual({top: 0, left: 0, width: 393, height: 760});
   });
 });

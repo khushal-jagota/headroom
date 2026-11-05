@@ -32,8 +32,7 @@ STALE_SHA = "b" * 40
 STATUS_PATHS = ("/api/health", "/api/meta", "/api/deployment-status", "/api/updates")
 WAIT_PAYLOAD = {
     "detail": (
-        "Installation is unconfirmed. Work remains paused. "
-        "Chief review is required."
+        "Installation is unconfirmed. Work remains paused. Chief review is required."
     )
 }
 STALE_PAYLOAD = {
@@ -167,6 +166,13 @@ def test_exact_status_and_static_exceptions_to_closed_gate(
             ("HEAD", "/api/projects", False),
             ("OPTIONS", "/api/projects", False),
             ("GET", "/api/health/", False),
+            ("GET", "/api/changes", False),
+            ("POST", "/api/changes", False),
+            ("POST", "/api/updates/requests", False),
+            ("POST", "/api/updates/requests/current/claim", False),
+            ("POST", "/api/updates/requests/current/now", False),
+            ("POST", "/api/updates/requests/current/cancel", False),
+            ("POST", "/api/updates/requests/current/delete", False),
             ("GET", "/api/updates/claim", False),
             ("POST", "/api/updates/claim", False),
         ]
@@ -457,4 +463,16 @@ def test_connected_header_timeout_still_logs_and_returns_500_at_uvicorn_boundary
                 assert cycle.response_complete
                 assert b"500 Internal Server Error" in b"".join(transport.writes)
 
+    asyncio.run(run())
+
+
+def test_paused_start_allows_only_the_status_resource_body(harness: Harness) -> None:
+    async def run() -> None:
+        harness.owner.state.update_startup_pending = True
+        for key, expected in (
+            ("/api/deployment-status", 200), ("/api/projects", 503), ("", 503),
+        ):
+            scope = harness.scope("GET", "/api/resource-body")
+            scope["query_string"] = ("key=" + key).encode()
+            assert (await invoke(harness.wrap(answer), scope))[0]["status"] == expected
     asyncio.run(run())

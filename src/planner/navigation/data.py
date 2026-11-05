@@ -464,15 +464,18 @@ def _derive(
         records.append(_record(kind, identity, value))
     elif kind == "goal":
         deps.add(("goals", identity))
-        deps.add(("agents", "goal_" + identity))
         found = rows(
             conn,
             "SELECT * FROM goals WHERE id=?",
             (identity,),
         )
-        if found:
+        # Historical commits can finalize navigation before the holder migration.
+        # That migration rebuilds these records once their canonical shape exists.
+        if found and "holder_kind" in found[0]:
             goal = found[0]
             value = {
+                "holder_kind": goal["holder_kind"],
+                "holder_id": goal["holder_id"],
                 "title": goal["title"],
                 "active": bool(goal["active"]),
                 "completed": bool(goal.get("completion_date"))
@@ -486,10 +489,6 @@ def _derive(
                 "created_at": goal["created_at"],
                 "updated_at": goal["updated_at"],
             }
-            linked = conn.execute(
-                "SELECT conversation_id FROM agents WHERE agent_key=?", ("goal_" + identity,)
-            ).fetchone()
-            value["conversation_id"] = None if linked is None else linked[0]
             records.append(_record(kind, identity, value))
     elif kind == "project":
         deps.add(("projects", identity))

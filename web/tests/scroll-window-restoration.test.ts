@@ -168,6 +168,15 @@ describe('pending page retains admitted user movement',()=>{
 });
 
 describe('explicit intent waits for the actual rendered page',()=>{
+  it('does not restore an anchor when no navigation window owns the action',()=>{
+    const f=actionFixture();try {
+      const options={...f.options(),window:undefined,pageRestoration:undefined};
+      f.action.update(options);f.frame();
+      f.rows([{id:'a',top:110},{id:'b',top:140}]);
+      f.action.update(options);f.frame();
+      expect(f.surface.writes).toEqual([]);
+    } finally {f.dispose()}
+  });
   it('does not restore ordinary publications or interpret another owner restoration as user travel',()=>{
     const f=actionFixture();let sibling:ReturnType<typeof navigationScrollWindow>|undefined;
     try {

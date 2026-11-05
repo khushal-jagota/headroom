@@ -219,6 +219,7 @@ def prepare_background_loops(
                 config.db_path,
                 clock,
                 canonical_origin=config.trusted_ingress_canonical_origin,
+                apns_config=config.apns,
                 busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
                 workspace_admission=getattr(conversation_system, "workspace_admission", None),
             )

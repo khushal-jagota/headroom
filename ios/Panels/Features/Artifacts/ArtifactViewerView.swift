@@ -1,0 +1,187 @@
+import SwiftUI
+import QuickLook
+import PDFKit
+import AVKit
+
+struct ArtifactViewerView: View {
+    let owner: ArtifactOwner
+    let path: String
+    let title: String
+    var showsConversation = true
+    var conversationOwner: ConversationOwner? = nil
+    @State private var conversationID: String?
+    @Environment(AppStore.self) private var store
+    @Environment(\.openURL) private var openURL
+    @State private var document: ArtifactDocument?
+    @State private var image: UIImage?
+    @State private var error: String?
+    @State private var isLoading = true
+    @State private var showLoading = false
+    @State private var sharePresented = false
+    @State private var linkedArtifact: ArtifactTarget?
+    @State private var loadVersion = 0
+    @State private var renderVersion = 0
+    @State private var webReady = false
+    @State private var desktopPreview = false
+    private var target: ArtifactTarget { .init(owner: owner, path: path, title: title) }
+
+    private var activeConversationOwner: ConversationOwner {
+        conversationOwner ?? (owner.kind == .ticket ? .ticket(owner.id) : .manager(owner.id))
+    }
+
+    private var waitingForPreview: Bool { isLoading || (target.kind == .html && document != nil && !webReady && error == nil) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let document {
+                content(document)
+                    .environment(\.openURL, OpenURLAction { url in follow(url); return .handled })
+            } else if let error {
+                ContentUnavailableView {
+                    Label("Couldn't open artifact", systemImage: "doc.badge.ellipsis")
+                } description: { Text(error) } actions: {
+                    Button("Try again") { loadVersion += 1 }.buttonStyle(.bordered)
+                }
+            } else {
+                Color.clear.overlay { if showLoading { RingSpinner("Opening artifact…") } }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let error, document != nil {
+                LoadErrorView(message: "Couldn’t refresh. Showing the last loaded artifact. \(error)") { await load() }
+                    .padding(.horizontal, PanelsTheme.Space.lg).background(PanelsTheme.surface)
+            }
+        }
+        .panelsScreen()
+        .modifier(ArtifactConversationSurface(owner: activeConversationOwner, conversationID: conversationID, enabled: showsConversation))
+        .navigationTitle((path as NSString).lastPathComponent)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text((path as NSString).lastPathComponent).font(PanelsTheme.TypeScale.artifactTitle).lineLimit(1).truncationMode(.middle)
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button { sharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
+                    .accessibilityLabel("Share artifact").disabled(document == nil)
+                Menu {
+                    Button("Reload", systemImage: "arrow.clockwise") { loadVersion += 1 }.disabled(isLoading)
+                    Button("Copy link", systemImage: "link") {
+                        UIPasteboard.general.url = target.previewURL(baseURL: store.baseURL); Haptics.success()
+                    }
+                } label: { Image(systemName: "ellipsis") }.accessibilityLabel("Artifact actions")
+            }
+        }
+        .sheet(isPresented: $sharePresented) { if let document { ArtifactShareSheet(document: document).presentationDetents([.medium, .large]) } }
+        .navigationDestination(item: $linkedArtifact) { target in
+            ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: showsConversation, conversationOwner: activeConversationOwner)
+        }
+        .task(id: activeConversationOwner) {
+            guard showsConversation else { return }
+            do {
+                switch activeConversationOwner {
+                case .ticket(let id): conversationID = try await store.client.ticket(id).conversationId
+                case .manager(let id): conversationID = try await store.client.manager(id).manager.conversationId
+                case .chief: conversationID = try await store.client.chiefConversation().conversationId
+                case .goal: conversationID = try await store.client.currentConversation(activeConversationOwner)
+                }
+            } catch { /* The owner send door remains available when detail cannot be read. */ }
+        }
+        .task(id: loadVersion) { await load() }
+        .task(id: waitingForPreview) {
+            showLoading = false
+            if waitingForPreview {
+                try? await Task.sleep(for: .milliseconds(200))
+                if !Task.isCancelled && waitingForPreview { showLoading = true }
+            }
+        }
+    }
+
+    @ViewBuilder private func content(_ document: ArtifactDocument) -> some View {
+        switch target.kind {
+        case .html where document.text != nil:
+            VStack(spacing: 0) {
+                Picker("Preview width", selection: $desktopPreview) {
+                    Text("Phone width").tag(false)
+                    Text("Fit desktop").tag(true)
+                }.pickerStyle(.segmented).padding(PanelsTheme.Space.md)
+                    .accessibilityIdentifier("artifact-preview-width")
+                ArtifactWebView(source: document.text!, url: document.remoteURL, desktopPreview: desktopPreview, openLink: follow, failed: { error = $0 }, ready: { webReady = true }, reload: { Task { await load() } })
+                    .id(renderVersion)
+                    .overlay { if !webReady && showLoading { RingSpinner("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
+            }
+        case .markdown where document.text != nil:
+            ArtifactMarkdownView(source: document.text!, baseURL: document.remoteURL).panelsRefreshable { await load() }
+        case .text where document.text != nil:
+            ScrollView {
+                Text(document.text!).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(PanelsTheme.Space.lg)
+            }.panelsRefreshable { await load() }
+        case .image:
+            if let image { ArtifactImageView(image: image).id(renderVersion) }
+            else { fallback(document) }
+        default: fallback(document)
+        }
+    }
+    @ViewBuilder private func fallback(_ document: ArtifactDocument) -> some View {
+        if path.lowercased().hasSuffix(".pdf") { ArtifactPDFView(url: document.localURL).id(renderVersion) }
+        else if ["mp4", "mov", "m4v", "mp3", "m4a", "wav"].contains((path as NSString).pathExtension.lowercased()) {
+            ArtifactMediaView(url: document.localURL).id(renderVersion)
+        } else if QLPreviewController.canPreview(document.localURL as NSURL) { ArtifactSystemPreview(document: document).id(renderVersion) }
+        else {
+            ContentUnavailableView {
+                Label(document.localURL.lastPathComponent, systemImage: "doc")
+            } description: { Text("Share this file to open it in another app.") } actions: {
+                Button("Share file") { sharePresented = true }.buttonStyle(.bordered)
+            }
+        }
+    }
+    private func follow(_ url: URL) {
+        if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
+            if target.id != self.target.id { linkedArtifact = target }
+        } else if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") { openURL(url) }
+    }
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let result = try await store.client.artifactDocument(target)
+            let image = target.kind == .image ? await Task.detached(priority: .userInitiated) {
+                UIImage(contentsOfFile: result.localURL.path)
+            }.value : nil
+            try Task.checkCancellation()
+            self.image = image
+            document = result; error = nil; webReady = false; renderVersion += 1
+        } catch {
+            if !Task.isCancelled {
+                self.error = error.localizedDescription
+                Haptics.error()
+            }
+        }
+    }
+}
+
+struct ArtifactPDFView: UIViewRepresentable {
+    let url: URL
+    func makeUIView(context: Context) -> PDFView {
+        let view = PDFView(); view.autoScales = true; view.displayMode = .singlePageContinuous
+        view.backgroundColor = UIColor(PanelsTheme.surface); view.document = PDFDocument(url: url)
+        return view
+    }
+    func updateUIView(_ view: PDFView, context: Context) {}
+}
+struct ArtifactMediaView: View {
+    @State private var player: AVPlayer
+    init(url: URL) { _player = State(initialValue: AVPlayer(url: url)) }
+    var body: some View { VideoPlayer(player: player).background(.black).onDisappear { player.pause() } }
+}
+
+private struct ArtifactConversationSurface: ViewModifier {
+    let owner: ConversationOwner
+    let conversationID: String?
+    let enabled: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if enabled { content.conversationNavigation(owner: owner, conversationID: conversationID) }
+        else { content }
+    }
+}

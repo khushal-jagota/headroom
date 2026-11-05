@@ -12,11 +12,11 @@ from typing import cast
 from alembic import op
 
 revision = "canonical_manager_identities"
-down_revision = "conversation_background_tasks"
+down_revision = "goal_holders"
 branch_labels = None
 depends_on = None
 
-BASELINE_STATEMENTS = (
+BASELINE_STATEMENTS: tuple[str, ...] = (
     "CREATE TABLE \"ideas\" (\n          id         TEXT PRIMARY KEY,\n          title      TEXT NOT NULL,\n          body       TEXT NOT NULL DEFAULT '',\n          project_id TEXT REFERENCES projects(id),\n          created_at INTEGER NOT NULL,\n          updated_at INTEGER NOT NULL\n        )",
     "CREATE INDEX idx_ideas_project_id ON ideas(project_id)",
     "CREATE TABLE conversation_events (\n  conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id),\n  sequence        INTEGER NOT NULL,\n  kind            TEXT NOT NULL,\n  payload         TEXT NOT NULL,\n  created_at      INTEGER NOT NULL,\n  PRIMARY KEY (conversation_id, sequence)\n)",
@@ -339,18 +339,35 @@ BASELINE_STATEMENTS = (
     "CREATE TRIGGER signal_source_conversation_background_tasks_delete BEFORE DELETE ON conversation_background_tasks BEGIN INSERT INTO signal_publication_dirty SELECT OLD.conversation_id WHERE OLD.conversation_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM signal_publication_dirty WHERE conversation_id=OLD.conversation_id); END",
 )
 
+BASELINE_STATEMENTS += (
+    "CREATE TABLE mac_contact_status (singleton INTEGER PRIMARY KEY CHECK(singleton=1), last_contact_at_ms INTEGER NOT NULL, refusal_json TEXT)",
+    "\n        CREATE TABLE notification_apns_devices (\n            device_id TEXT PRIMARY KEY,\n            owner_id TEXT NOT NULL CHECK(owner_id = 'owner'),\n            device_token TEXT NOT NULL,\n            bundle_id TEXT NOT NULL,\n            environment TEXT NOT NULL CHECK(environment IN ('development','production')),\n            registration_version INTEGER NOT NULL,\n            created_at INTEGER NOT NULL,\n            updated_at INTEGER NOT NULL,\n            UNIQUE(owner_id, device_token, bundle_id, environment)\n        )\n    ",
+    "\n        CREATE TABLE notification_apns_deliveries (\n            subject_kind TEXT NOT NULL,\n            subject_id TEXT NOT NULL,\n            notification_type TEXT NOT NULL,\n            generation INTEGER NOT NULL,\n            device_id TEXT NOT NULL REFERENCES notification_apns_devices(device_id) ON DELETE CASCADE,\n            title TEXT NOT NULL, body TEXT NOT NULL, route TEXT NOT NULL, tag TEXT NOT NULL,\n            created_at INTEGER NOT NULL,\n            status TEXT NOT NULL CHECK(status IN ('pending','retry','delivered','failed','expired')),\n            attempts INTEGER NOT NULL DEFAULT 0,\n            next_attempt_at INTEGER NOT NULL,\n            delivered_at INTEGER,\n            last_error TEXT,\n            PRIMARY KEY(subject_kind, subject_id, notification_type, generation, device_id),\n            FOREIGN KEY(subject_kind, subject_id, notification_type, generation)\n                REFERENCES notification_attention_edges(subject_kind, subject_id, notification_type, generation)\n                ON DELETE CASCADE\n        )\n    ",
+    "CREATE INDEX idx_notification_apns_due ON notification_apns_deliveries(status, next_attempt_at)",
+    "ALTER TABLE goals ADD COLUMN holder_kind TEXT NOT NULL DEFAULT 'chief' CHECK(holder_kind IN ('chief','manager'))",
+    "ALTER TABLE goals ADD COLUMN holder_id TEXT REFERENCES managers(id) ON DELETE RESTRICT CHECK((holder_kind='chief' AND holder_id IS NULL) OR (holder_kind='manager' AND holder_id IS NOT NULL))",
+    "CREATE INDEX goals_holder ON goals(holder_kind,holder_id)",
+    "ALTER TABLE managers ADD COLUMN page TEXT CHECK(page IS NULL OR json_valid(page))",
+    "ALTER TABLE managers ADD COLUMN page_revision INTEGER NOT NULL DEFAULT 0",
+    "CREATE TABLE chief_page(singleton INTEGER PRIMARY KEY CHECK(singleton=1),page TEXT CHECK(page IS NULL OR json_valid(page)),page_revision INTEGER NOT NULL DEFAULT 0)",
+)
+
 
 def upgrade() -> None:
     connection = op.get_bind()
-    if connection.exec_driver_sql(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets'"
-    ).first() is not None:
+    if (
+        connection.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets'"
+        ).first()
+        is not None
+    ):
         from planner.core.migrations.direct_upgrade import upgrade_staging
 
         upgrade_staging(cast(sqlite3.Connection, connection.connection.driver_connection))
         return
     for statement in BASELINE_STATEMENTS:
         op.execute(statement)
+    op.execute("INSERT INTO chief_page(singleton) VALUES(1)")
     connection = op.get_bind()
     epoch = str(uuid.uuid4())
     connection.exec_driver_sql(

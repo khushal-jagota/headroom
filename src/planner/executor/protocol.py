@@ -51,6 +51,7 @@ from planner.execution_identity import (
     ChildReference,
     ExecutorIdentity,
     ProtocolRefused,
+    supports_executor_versions,
 )
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
 
@@ -98,7 +99,7 @@ class CanonicalSkillSnapshot:
 class FileTransfer:
     """Generation reservation; publication authority stays with the original child."""
 
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
 
     transfer_id: str
     direction: Literal["upload", "download"]
@@ -313,7 +314,7 @@ class BackendEvent:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StartRun:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
     resolved_start: ResolvedConversationStart
     canonical_skill_snapshot: CanonicalSkillSnapshot
     vendor_session_cursor: str | None = None
@@ -324,7 +325,7 @@ class StartRun:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class WritePrompt:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
     content: MessageContent
     sender_content: MessageContent
     sender_label: str
@@ -340,7 +341,7 @@ class WritePrompt:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Steer:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
     content: MessageContent
     sender_label: str
     sender_content: MessageContent | None = None
@@ -350,13 +351,13 @@ class Steer:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CancelTurn:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
     kind: Literal["cancel_running_turn"] = "cancel_running_turn"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AnswerPermission:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
     ask_id: str
     option_id: str
     answer: DurableAnswer | None = None
@@ -365,7 +366,7 @@ class AnswerPermission:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AnswerUserInput:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
     request_id: str
     answers: tuple[UserInputAnswer, ...]
     answer: DurableAnswer | None = None
@@ -374,7 +375,7 @@ class AnswerUserInput:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StopRun:
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
     kind: Literal["stop"] = "stop"
 
 
@@ -447,6 +448,19 @@ class ChildCommand:
                 )
             ):
                 raise ValueError("durable answer conflicts with command")
+
+
+def encode_command_for_peer(command: ChildCommand, protocol_version: int) -> JsonObject:
+    """Protocols 19 and 20 have identical commands, including nested start values.
+
+    Protocol 20 adds only Mac-to-VPS events. Future command changes must supply an
+    explicit older-peer adaptation here, verified against its frozen schema.
+    """
+    from planner.execution_configuration import SPOOL_FORMAT_VERSION
+
+    if not supports_executor_versions(protocol_version, SPOOL_FORMAT_VERSION):
+        raise ProtocolRefused("unsupported command peer protocol")
+    return as_object(command)
 
 
 class CommandDisposition(StrEnum):

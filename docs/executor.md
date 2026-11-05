@@ -1,14 +1,14 @@
 # The Mac executor
 
-The executor lets a Ticket's Worker run on Khushal's Mac while the VPS keeps the Ticket, its conversation, and every Panels record. Some work needs the Mac: its files, its apps, its provider sign-ins, and the macOS permissions granted there. The executor brings that work to the Mac without making the Mac a second Panels server.
+The executor lets a Ticket's Worker use the Mac's files, apps, provider sign-ins, and macOS permissions. The VPS keeps the Ticket, conversation, and every Panels record. The Mac does not become a second Panels server.
 
 ## What it is made of
 
-- **The VPS endpoint.** Part of the ordinary Panels server. It admits the Mac's connection, sends it commands, and applies what comes back through the same writers the VPS uses for local work.
-- **The Mac service.** One long-running process on the Mac. It keeps a connection to the VPS, starts and stops agent processes, and holds everything it has not yet delivered.
-- **The connection.** The Mac dials out to the VPS app over HTTPS. One WebSocket carries commands and receipts, and plain HTTP carries file bytes. The VPS never dials the Mac.
-- **The outbox.** A small database on the Mac that keeps each piece of agent output, and any files it refers to, until the VPS confirms it.
-- **The installation.** What keeps the service running on the Mac. See [What runs on the Mac](#what-runs-on-the-mac).
+- **The VPS endpoint** admits the connection, sends commands, and applies results through the ordinary canonical writers.
+- **The Mac service** maintains the connection and starts and stops agent processes.
+- **The connection** carries commands and receipts over a WebSocket, and file bytes over HTTPS. The Mac opens it.
+- **The outbox** keeps agent output and its files until the VPS confirms receipt.
+- **The installation** keeps the service alive. See [What runs on the Mac](#what-runs-on-the-mac).
 
 ```
  VPS: Tickets, conversations, files, canonical writers
@@ -25,9 +25,9 @@ The executor lets a Ticket's Worker run on Khushal's Mac while the VPS keeps the
 
 ## Which work goes to the Mac
 
-Each Ticket has a locale, `vps` or `macos` (see [Tickets](tickets.md)). When a Worker step starts, a Ticket whose locale is `macos` gets an agent process on the Mac. Everything else stays on the VPS: VPS Tickets, the Chief, Managers, and goal agents. The VPS starts Mac work only while the Mac is connected and its reconnect check has finished. Otherwise the Ticket waits.
+Each Ticket has a locale, `vps` or `macos` (see [Tickets](tickets.md)). A `macos` Worker step gets an agent process on the Mac. VPS Tickets, the Chief, Managers, and goal agents stay on the VPS. Mac work waits until the Mac connects and completes its reconnect check.
 
-Mac execution is switched on per server: the VPS configuration names one executor ID, and only a Mac presenting that ID is admitted. Without it, the VPS runs everything locally.
+The VPS configuration names one executor ID. Only that executor is admitted. Without this configuration, the VPS runs everything locally.
 
 All three backends can run on the Mac, with the same abilities as on the VPS. A missing provider install or sign-in on the Mac refuses the start.
 
@@ -35,11 +35,11 @@ A Mac Worker runs in its Project's folder, taken as a path on the Mac. A Ticket 
 
 ## A run on the Mac
 
-Before it sends a start command, the VPS records which Mac agent process belongs to which conversation. That record lets it find and stop the process later, even after a restart.
+The VPS records which Mac agent belongs to each conversation before it sends a start command. This record survives restart.
 
 To start, the Mac fetches the files the prompt needs, installs the current skills, prepares the workspace, and then starts the provider. Skills come from the VPS database at each start and are linked into the provider's normal home on the Mac. Each Worker receives the general skills and its assigned specialist. Historical personal and calendar specialists stay outside other Workers' snapshots.
 
-The Worker uses ordinary tools. Its Ticket artifacts go to a Ticket folder on the Mac, and the Mac copies new or changed files to the Ticket's folder on the VPS. When the Worker runs `panels`, the command goes to the Mac service. Reads go straight through to the VPS. Writes are saved in the outbox and applied on the VPS with the Worker's own authority, which comes from the VPS's record of the run and not from anything the Mac claims.
+Ticket artifacts go to a folder on the Mac. The Mac copies changed files to the Ticket's VPS folder. The Worker's `panels` commands use the Mac service. Reads go directly to the VPS. Writes enter the outbox, then the VPS applies them with authority from its original run record.
 
 ## Getting work back to the VPS
 
@@ -54,31 +54,42 @@ Live text, thinking, and tool progress skip the outbox. They show in the convers
 A lost connection supplies no answer. Panels never guesses an outcome.
 
 - **A short outage** leaves the Mac's agent processes running. On reconnect the VPS checks which processes, turns, and open questions still exist, and the Mac resends what it saved.
-- **A VPS or Mac service restart** ends every Mac run that was live before it. The next send starts a fresh process that resumes the provider session. Anything whose delivery was uncertain stays uncertain and is not resent.
+- **A VPS or Mac service restart** ends every Mac run that was live before it. The next send starts a fresh process that resumes the provider session. An uncertain provider call stays uncertain and is not repeated.
 - **A Worker's `panels` write** that cannot be confirmed says so. It stays in the outbox, and the Worker must not repeat it.
 
 Answers to permission and question requests can be saved while the Mac is offline. A saved answer counts as applied only when the Mac confirms that the original request received it.
 
-A stop counts only when the Mac's final stop receipt arrives, after all of that process's earlier output has been received. A process missing from the Mac's list is not proof that it stopped.
+A stop counts only after its final receipt and all earlier output arrive. A missing process is not proof of a stop.
 
 ## Model lists and health
 
-Each machine reads its own backends' model lists. The VPS keeps the Mac's last answer, so pickers for Mac Tickets still work while the Mac is offline. [Conversations](conversations.md) covers the picker.
+Each machine reads its own model lists. The VPS retains the Mac's last answer for offline pickers. [Conversations](conversations.md) covers the picker.
 
-The executor health read shows whether the Mac is connected and ready, and when the VPS last heard from it.
+Health shows connection readiness and last contact. A version refusal shows “Mac needs update” with both versions. Mac Tickets use the same refusal reason. Last contact and refusal survive restart. A compatible reconnect clears the refusal. Until then, it describes historical contact, not current presence.
+
+The update status includes the Mac's target, progress, and failure beside the VPS result. An update completes when the VPS is done. A Mac that still waits for its target does not imply that it is offline.
 
 ## What runs on the Mac
 
 One installation lives in the owner's normal account:
 
-- **The Panels app.** A small native launcher, signed for this Mac, that starts the executor in the Python environment.
-- **A Python environment and a source checkout.** Both are replaced on each update. The owner installs and signs in to the providers.
-- **A LaunchAgent** that starts the app at login, restarts it after a crash, and leaves it stopped after a clean maintenance exit.
-- **The executor data folder.** The outbox, Ticket files, skill copies, the default workspace, the local socket, and logs. Updates never replace it.
+- **The Panels app** is a signed native launcher for a fixed supervisor.
+- **The fixed installation** retains its Python environment and supervisor. They select a versioned runtime and keep the prior runtime for recovery.
+- **A prebuilt runtime** supplies Python and agent packages. The owner supplies sign-ins and other native tools.
+- **A LaunchAgent** starts at login and restarts after a crash. A clean maintenance exit leaves it stopped.
+- **The data folder** holds the outbox, Ticket files, skills, workspace, socket, and logs. Updates never replace it.
 
-**Permissions.** macOS asks for consent to protected folders on behalf of a responsible app. The signed Panels app exists so that consent belongs to "Panels" rather than to Python or to each provider. The signature is an Apple Development signature for this Mac only. It is not a distributable or notarized release.
+**Permissions.** macOS asks for protected-folder consent on behalf of a responsible app. Panels uses a signed app so that macOS can associate consent with Panels. Its Apple Development signature is for this Mac only, without distribution or notarization.
 
-**Updates.** An operator updates the Mac by hand. First the executor is asked to quiesce: it stops taking new work and exits only once no run, open request, uncertain result, or unsent output remains. The operator confirms the old process is gone, replaces the code, environment, and app, and starts the LaunchAgent again. Both machines must speak the same protocol version, and the Mac must recognise its outbox format. A mismatch refuses work before anything runs, and nothing is converted. There is no automatic updater and no automatic rollback.
+**Updates.** One owner approval names the release and timing for both machines. “Update now” stops connected Mac agents before VPS installation. “When work finishes” waits for idle work. The Mac checks while connected and after reconnect or wake. Its authenticated update channel works even when its work protocol is too old.
+
+The VPS retains the approved Mac archive and target outside database rollback and publication expiry. After VPS success, the Mac installs those bytes beside its previous runtime. If the candidate fails to report readiness, the supervisor reverts. The launcher and data folder stay in place.
+
+Saved results and their files remain in the outbox through the swap. A planned handoff retains their original authority until the VPS receives them. It does not repeat provider calls or restore stopped agents. Ordinary maintenance still waits for an empty outbox before exit.
+
+The VPS accepts the current work protocol or one older. The current window is protocols 19 and 20, both with outbox format 5. Messages ignore unknown fields but still check their known fields and identities. The protocol check detects schema changes without a version change. Unsupported outbox formats fail without conversion or deletion.
+
+Existing installations need one operator-controlled bootstrap installation. Its Python environment and supervisor then remain fixed. Local fixtures do not prove permission retention, certificate renewal behavior, or Gatekeeper acceptance.
 
 The installation uses the owner's real home folder, so it shares provider sign-ins and skill folders with anything else in that account, including a second executor installation.
 
@@ -99,6 +110,7 @@ These still need confirming on a real Mac:
 - That launchd ends provider processes when the service restarts.
 - Running after a reboot before login. The LaunchAgent runs only in a logged-in session.
 - That macOS attributes access to the Panels app for every provider, and keeps the grant across app and Python updates.
+- That permission grants survive a runtime swap and certificate renewal, and Gatekeeper accepts the downloaded runtime through this updater.
 - That the Mac's disk honours the outbox's durability flushes through power loss.
 
 ## Code
@@ -107,5 +119,6 @@ These still need confirming on a real Mac:
 - `src/planner/execution_configuration.py` and `src/planner/execution_identity.py`: the protocol and outbox versions and the shared identities.
 - `src/planner/tickets/locale_configuration.py`: when a Mac Ticket may start.
 - `src/planner/environments/mac_executor.py` and `src/planner/environments/mac_app/`: the LaunchAgent and the signed app.
+- `src/planner/executor/runtime_bootstrap.py`, `mac_updates.py`, and `src/planner/environments/mac_updates.py`: the fixed supervisor, update client, retained target, and progress.
 
 _Last verified: 2026-11-04._

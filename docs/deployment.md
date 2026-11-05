@@ -5,7 +5,8 @@ Deployment is how a commit on `main` becomes the app the live host runs. Publica
 ```text
 push to main ─┬→ suites (unit, integration, e2e, browser) ─────────────────────────────────┐
               ├→ static checks (ruff, mypy, frontend, vitest) ─────────────────────────────┤
-              └→ build once → seal archive → prove on clean root → smoke → rehearsal ──────┤
+              ├→ build once → seal archive → prove on clean root → smoke → rehearsal ──────┤
+              └→ native Mac build → sealed runtime → native proof ─────────────────────────┤
                                                                                            │
                                                                      all passed → receipt
                                                                                            │
@@ -18,11 +19,11 @@ owner asks (now or when idle) → pinned request → host runner → admit → s
 
 ## What it is made of
 
-- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and the static checks run on their own machines. At the same time another machine builds once, seals the archive, proves it, and rehearses the install on a throwaway copy of a known-good release. A last machine waits for all of them. It checks the proofs against the digest the build machine reported and writes the receipt. Panels offers a release only when the whole run passed and the receipt exists, so nothing can be installed before every check passes. Domain checks include their permission behavior; shared or unknown changes select all default suites.
+- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and the static checks run on their own machines. At the same time another machine builds once, seals the archive, proves it, and rehearses the install on a throwaway copy of a known-good release. A native Mac machine also builds and proves the Mac runtime for the same commit. A native Mac job also builds and checks the Mac runtime. A last machine waits for all of them. It checks the app proofs against the build digest, checks the Mac archive and proof, and writes the receipt. Panels offers a release only when the whole run passed and the receipt exists, so nothing can be installed before every check passes. Domain checks include their permission behavior; shared or unknown changes select all default suites.
 - **The sealed release.** An archive plus a proof record. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages, including the Claude Code and Codex CLIs.
 - **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. Replacement changes only `app`. See [Environments](environments.md).
 - **The deployment runner.** A self-hosted GitHub runner on the VPS, used only to install.
-- **The owner's install request.** A small file beside the live data, outside the database and its snapshots, and the update actions in the shell status pill.
+- **The owner's install request.** A small file beside the live data, outside the database and its snapshots, and the update dialog in the sidebar.
 - **The lifecycle record.** Durable evidence of each install attempt and how it ended. The status pill, the [VPS](vps.md) summary, and Chief read it.
 
 The test suites run on several processes at once. Each test process builds the current database once by replaying every migration, then copies it into each new test database; a test of a migration, or of a database that already holds data, still gets the real replay.
@@ -35,17 +36,19 @@ The host supplies the glibc loader and a short named list of system libraries, N
 
 ## How an install happens
 
-Khushal chooses **Start update** or **Update when idle** for a retained release. The request is pinned to that release and never slides forward. To move ahead or back, he picks another retained release; there is no rebuild and no arbitrary-commit rollback. Only the owner can ask. Chief, Managers, and Workers are refused. Without an update source configured on the host, owner updates are unavailable.
+Khushal opens **Update available** and chooses **Update now** or **When work finishes** for a retained release. The request stays pinned to that release. He can cancel a wait or change it to Update now. Only the owner can ask. Chief, Managers, and Workers are refused. Without an update source configured on the host, owner updates are unavailable.
 
 The existing readiness loop asks GitHub to run the install job on the host runner, so there is no second scheduler. An uncertain dispatch is never resent on its own. Khushal can cancel until installation starts. The request records cancellation as a terminal failure with a cancellation detail, and the browser shows it as canceled. The request states are requested, installing, done, and failed.
 
+The publication also carries a prebuilt Mac runtime from the same source. One approval covers both machines, with separate progress for the Mac. **When work finishes** waits for turns and background tasks on both machines. The VPS keeps the approved Mac bytes before dispatch so a sleeping Mac can catch up after publication expiry. [The Mac executor](executor.md) owns its fixed launcher, runtime swap, and reversion rules. Older publications without a Mac runtime explicitly require a manual Mac update.
+
 A new database starts from one complete schema. An existing staging database upgrades directly to that schema in one startup transaction. No bridge installation is needed.
 
-The current entry revision is staging's `conversation_background_tasks`. The direct upgrade applies the sweep removals and Manager rename, preserves retained source records, and finishes at `canonical_manager_identities`. Fresh and upgraded databases have the same schema.
+The current entry revision is staging's `goal_holders`. The direct upgrade applies the sweep removals and Manager rename, preserves retained source records, and finishes at `canonical_manager_identities`. Fresh and upgraded databases have the same schema.
 
 Before the sweep merges, merge the latest staging into the sweep branch. Confirm staging's migration head and the live database revision with a read-only connection. If staging adds migrations, update the one supported entry revision and its direct transformation. Repeat the upgrade on a fresh copy of the live database. Compare every retained source record after the documented transformations, account for removed feature records, check integrity and foreign keys, and compare the complete schema with a fresh database. Keep the proof with the integration Ticket. Do not install the sweep until that proof passes.
 
-The installer runs in its own short-lived user service, so stopping Headroom cannot kill it. It downloads the archive from the owner request and checks its fingerprint once. It checks the runtime contract and database schema ancestry once before downtime. The current database starts at staging’s `conversation_background_tasks` revision. The direct upgrade finishes at `canonical_manager_identities`. Older application archives keep their original schema floor. It refuses older or unknown ancestry before the service stops. It does not download a separate proof, repeat the GitHub lookup, rebuild, or ask the live server for a claim. The separate process lock permits only one deploy at a time.
+The installer runs in its own short-lived user service, so stopping Headroom cannot kill it. It downloads the archive from the owner request and checks its fingerprint once. It checks the runtime contract and database schema ancestry once before downtime. The current database starts at staging’s `goal_holders` revision. The direct upgrade finishes at `canonical_manager_identities`. Older application archives keep their original schema floor. It refuses older or unknown ancestry before the service stops. It does not download a separate proof, repeat the GitHub lookup, rebuild, or ask the live server for a claim. The separate process lock permits only one deploy at a time.
 
 The installer stops the service, captures interrupted agent sessions, and takes a verified [backup](backups.md). It keeps the prior app, moves the new one into place, restarts, and waits for the new app to report its exact commit. Meanwhile ordinary requests, CLI work, and background loops stay closed; only health and status answer. When the new app proves healthy, the runner records the commit and work reopens. Interrupted conversations then get one recovery prompt ([Conversations](conversations.md)). Last, the job refreshes the agents' skill links and checks the private HTTPS route over HTTP/2.
 
@@ -58,6 +61,8 @@ The commit is the boundary.
 - **After the commit.** The database is never restored. A failed skill refresh or route check leaves the new app installed and the job incomplete, not the app unhealthy.
 
 The deploy writes a plain status file at each step, with no lease or renewal. If the runner disappears before the commit, work stays closed and the file retains its last recorded step. The file does not admit traffic or restore data. Panels sends no unfinished-deploy alert. No maximum outage is promised. If the recorded commit matches the available app and admission is open, only the final report remains uncertain. That owner notice ends five minutes after the last status update.
+
+One server answer supplies the update state and allowed actions. A waiting request can change to Update now. The sidebar card moves through Updating and Restarting to **Update complete · Refresh**. The browser reconnects after a restart and preserves a message draft until Refresh is safe. The Mac has separate status and work.
 
 The browser offers a refresh when its loaded app differs from the server. Each write carries the loaded page version, and the server rejects an outdated version.
 

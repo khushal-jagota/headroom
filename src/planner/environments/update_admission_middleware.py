@@ -41,11 +41,17 @@ class UpdateAdmissionMiddleware:
 
         state = request.app.state
         status_path = path in {"/api/health", "/api/meta", "/api/deployment-status", "/api/updates"}
+        status_resource_body = (
+            request.method in {"GET", "HEAD"}
+            and path == "/api/resource-body"
+            and request.query_params.get("key") == "/api/deployment-status"
+        )
         static_path = not path.startswith("/api/") and request.method in {"GET", "HEAD"}
         if (
             (state.update_startup_pending or state.update_admission_closed)
             and not status_path
             and not static_path
+            and not status_resource_body
         ):
             await JSONResponse(
                 status_code=503,

@@ -71,3 +71,14 @@ async def readings(
     return views.readings_json(
         conn, goal_id, views.calendar_now(clk), first_date=first_date, last_date=last_date
     )
+
+
+@router.post("/goals/{goal_id}/make-manager")
+async def make_manager(goal_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
+    manager_id, goal = actions.make_manager(
+        conn,
+        goal_id,
+        principal=ctx.principal,
+        clock=clk,
+    )
+    return {"manager_id": manager_id, "goal": views.goal_json(conn, goal, views.calendar_now(clk))}

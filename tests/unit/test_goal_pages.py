@@ -29,7 +29,6 @@ from planner.goals.contracts import (
     ChecklistBlock,
     Goal,
     GoalCompletionRule,
-    GoalsResponse,
     SegmentedBlock,
 )
 from planner.goals.logic.documents import prepare_document
@@ -93,8 +92,13 @@ def create(conn: Connection, **extra: Any) -> Goal:
 
 
 def test_saved_page_race_and_independent_completion_activation(tmp_db: Connection) -> None:
-    goal = create(tmp_db, deadline="2026-10-28")
-    agent = Principal(PrincipalKind.goal, goal.id)
+    from planner.managers.data import create_manager
+    manager = create_manager(
+        tmp_db, title="Guide", project_id="project_vylo",
+        clock=FakeClock(datetime.fromtimestamp(NOW, UTC)),
+    )
+    goal = create(tmp_db, deadline="2026-10-28", holder_kind="manager", holder_id=manager.id)
+    agent = Principal(PrincipalKind.manager, manager.id)
     draft = deepcopy(goal.page)
     draft["blocks"].reverse()
     cast(ChecklistBlock, draft["blocks"][0])["items"][0]["state"] = "done"
@@ -348,34 +352,6 @@ def test_document_rejects_bad_ids_and_preserves_static_signed_charts(tmp_db: Con
     accepted_segmented = create(tmp_db, page=segmented)
     saved_segmented = cast(SegmentedBlock, accepted_segmented.page["blocks"][-1])
     assert saved_segmented["views"][0]["id"] == "overview"
-
-
-def test_goal_list_revision_tracks_conversation_links_without_document_edits(
-    tmp_db: Connection,
-) -> None:
-    goal = create(tmp_db)
-    clock = FakeClock(datetime(2026, 10, 28, 12, tzinfo=ZoneInfo("Europe/Berlin")))
-    request = Request({"type": "http", "app": SimpleNamespace(state=SimpleNamespace(clock=clock))})
-    provider = GoalResources()
-    before = provider.capture(tmp_db, request, "/api/goals")
-    assert before and cast(GoalsResponse, before.read())["goals"][0]["conversation_id"] is None
-    tmp_db.execute(
-        "INSERT INTO agents(agent_key,conversation_id) VALUES(?,?)",
-        ("goal_" + goal.id, "goal-list-conversation"),
-    )
-    tmp_db.commit()
-    linked = provider.capture(tmp_db, request, "/api/goals")
-    assert linked and linked.revision != before.revision
-    assert (
-        cast(GoalsResponse, linked.read())["goals"][0]["conversation_id"]
-        == "goal-list-conversation"
-    )
-    tmp_db.execute("UPDATE agents SET conversation_id=NULL WHERE agent_key=?", ("goal_" + goal.id,))
-    tmp_db.commit()
-    reset = provider.capture(tmp_db, request, "/api/goals")
-    assert reset and reset.revision != linked.revision
-    assert cast(GoalsResponse, reset.read())["goals"][0]["conversation_id"] is None
-    assert data.read_goal(tmp_db, goal.id).revision == 1
 
 
 def test_sheet_charts_preserve_summary_semantics_and_saved_cell_tones(tmp_db: Connection) -> None:

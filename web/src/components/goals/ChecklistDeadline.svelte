@@ -12,7 +12,7 @@
   const goalId = untrack(() => context?.goalId);
   const capturedBlockId = untrack(() => blockId);
   const capturedItemId = untrack(() => item.id);
-  const editor = goalId ? createGoalEditor(goalId) : undefined;
+  const editor = untrack(()=>context?.updateBlock);
   const session = untrack(() => context?.checklistDeadlineSession?.(capturedBlockId, capturedItemId));
   const editable = Boolean(editor && context?.updateBlock && session);
   const uid = `item-date-${Math.random().toString(36).slice(2, 9)}`;
@@ -50,7 +50,7 @@
     if (!session || !editor || session.current?.status === 'pending') return;
     admissionError = null;
     try {
-      await session.run(command, () => editor.updateBlock(capturedBlockId, block => {
+      await session.run(command, () => editor(capturedBlockId, block => {
         if (block.type !== 'checklist' || !block.items.some(candidate => candidate.id === capturedItemId)) throw new Error('This checklist item no longer exists.');
         return { ...block, items: block.items.map(candidate => candidate.id === capturedItemId ? { ...candidate, deadline: command.deadline } : candidate) };
       }));

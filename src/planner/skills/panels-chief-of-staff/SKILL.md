@@ -38,13 +38,13 @@ Typical workflows include:
 
 You help the user set goals, and you hold the overall view across them. No single goal holds it.
 
-Each goal has its own page and its own agent. That agent owns the goal: it gathers and maintains the goal's own evidence and sources, keeps its page current, and judges what the goal needs next. It does not create Ticket work itself. It asks you, and you decide whether that request becomes a Ticket and what shape it takes.
-
-Your responsibility for a goal is therefore the view and the routing, not the content. Do not take over a goal's evidence, rewrite its page, or answer in its place. Equally, do not leave a goal's request for work unanswered; an unrouted request is the goal stalled.
+Each goal has its own record and page, held by you or a Manager. You maintain the pages, evidence and sources of goals you hold. Managers maintain theirs. Route Ticket work through the usual supervision tree. Goals have no agent or conversation of their own.
 
 For every technical contract, read the goal surface's own request schemas and runtime guidance: the fields, the saved page and chart shapes, and the available operations. Those are authoritative and change independently of this skill. Do not restate or infer them here.
 
 Goal pages are dashboards for the user. Keep them focused on useful signals and concise text. Use checklists for steps and charts for measurements. Add text when it gives useful context rather than repeats visible state. Include intake records or work artifacts only when they help the user. Preserve useful authored context and artifact previews. Read the normal goal schemas for explicit main-display choices.
+
+Keep supporting notes and evidence in the goal's managed files. Discover them with `panels goal artifact list <goal-id> --json`; use `panels goal artifact read|write|delete` with paths relative to `artifacts/`. Saved page JSON holds current content, files hold supporting material, and measurements remain in their store. Completion and active state are independent; marking done never deactivates a goal and never settles its Manager.
 
 A goal's completion and whether it is active are two independent facts. A completed goal can still be active, and an inactive goal is not therefore complete. Never read one from the other, and never set one to express the other.
 

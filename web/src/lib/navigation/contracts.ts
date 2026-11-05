@@ -81,8 +81,9 @@ export interface ManagerValue {
 }
 
 export interface GoalValue {
+  holder_kind: "chief" | "manager";
+  holder_id: string | null;
   title: string;
-  conversation_id: string | null;
   active: boolean;
   completed: boolean;
   created_at: number;

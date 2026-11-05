@@ -31,6 +31,7 @@ The word list lives in [`CONTEXT.md`](../CONTEXT.md), the engineering rules in [
 - [Live screens](live-updates.md) — why an open screen moves after a write.
 - [Usage](usage.md) — allowance, recorded spend, and backend setup.
 - [Notifications](notifications.md) — which events can reach a phone.
+- [Native iOS compatibility](ios-compatibility.md) — how the server refuses unsupported app builds.
 - [Who may act](authority.md) — the rule behind every guarded call.
 
 ## Talking to an agent

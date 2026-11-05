@@ -1,5 +1,6 @@
 <script lang="ts">
   import { isBrokenTicket } from "../lib/ticketIntegrity";
+  import MacStatus from "../components/machines/MacStatus.svelte";
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
   import MachineIdentity from "../components/machines/MachineIdentity.svelte";
   import { machineName } from "../lib/ticketMachines";
@@ -79,6 +80,7 @@
   $effect(()=>{if(currentMasthead) heldMasthead=currentMasthead;});
   let masthead=$derived(heldMasthead ? {...heldMasthead,
     conversation_signal:navigationConversationSignal(currentView,heldMasthead.conversation_id)} : undefined);
+  const machineHealth = createQuery(() => ({...queries.executorHealth(), enabled: masthead?.locale === "macos"}));
   const ticket = createQuery(() => queries.workspaceTicket(stableId));
   let brokenTicket = $derived(isBrokenTicket(ticket.data) ? ticket.data : undefined);
   let healthyTicket = $derived(ticket.data && !isBrokenTicket(ticket.data) ? ticket.data : undefined);
@@ -362,6 +364,7 @@
             {/snippet}
             </RecapSlot>
           </div>
+          {#if masthead.locale === "macos"}<MacStatus health={machineHealth.isError ? undefined : machineHealth.data} showDisconnected />{/if}
           {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal}>
             {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
           </TicketLifecycleControls>{/if}

@@ -513,8 +513,7 @@ async def send_to_ticket_conversation(
     if not locale_configuration.can_execute_locale(conn, ticket.locale):
         raise PlannerError(
             ErrorCode.validation,
-            f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
-            f"this {locale_configuration.CURRENT_EXECUTION_LOCALE.value} machine",
+            locale_configuration.execution_unavailable_reason(conn, ticket.locale),
             {
                 "ticket_id": ticket_id,
                 "locale": ticket.locale.value,
@@ -879,7 +878,6 @@ async def start_agent_conversation(
     *,
     conversation_id: str,
     required_manager_id: str | None = None,
-    required_goal_id: str | None = None,
 ) -> LinkedConversation:
     """Start a conversation for an agent that is not a Ticket, under a minted name.
 
@@ -915,18 +913,7 @@ async def start_agent_conversation(
     )
     missing_supervisor = False
     with conn:
-        if required_goal_id is not None:
-            linked = conn.execute(
-                "INSERT INTO agents (agent_key, conversation_id) "
-                "SELECT ?, ? WHERE EXISTS (SELECT 1 FROM goals WHERE id=? AND ? = 'goal_' || id) "
-                "ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id "
-                "WHERE agents.conversation_id IS NULL",
-                (agent_key, conversation_id, required_goal_id, agent_key),
-            )
-            missing_supervisor = (
-                linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None
-            )
-        elif required_manager_id is None:
+        if required_manager_id is None:
             conn.execute(
                 "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
                 "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id "
@@ -948,10 +935,8 @@ async def start_agent_conversation(
         await system.kill(conversation_id)
         raise PlannerError(
             ErrorCode.not_found,
-            "goal no longer exists" if required_goal_id is not None else "Manager no longer exists",
-            {"goal_id": required_goal_id}
-            if required_goal_id is not None
-            else {"manager_id": required_manager_id},
+            "Manager no longer exists",
+            {"manager_id": required_manager_id},
         )
     now_in = read_agent_conversation(conn, agent_key) or conversation_id
     return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
@@ -976,7 +961,6 @@ async def send_to_agent_conversation(
     recipient: Principal | None = None,
     reply_requested: bool = True,
     required_manager_id: str | None = None,
-    required_goal_id: str | None = None,
     retain_created_conversation: bool = False,
     recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
@@ -1020,7 +1004,6 @@ async def send_to_agent_conversation(
             values,
             conversation_id=making,
             required_manager_id=required_manager_id,
-            required_goal_id=required_goal_id,
         )
         if linked.made_here:
             # Made here, on the values this message says it runs under, so the message has

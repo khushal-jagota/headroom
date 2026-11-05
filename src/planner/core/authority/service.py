@@ -45,6 +45,11 @@ def _target_parent_manager_id(conn: sqlite3.Connection, target: Target) -> str |
 
     Every Manager is a Manager with a Manager identity.
     """
+    if target.kind is TargetKind.goal:
+        row = conn.execute(
+            "SELECT holder_id FROM goals WHERE id=? AND holder_kind='manager'", (target.id,)
+        ).fetchone()
+        return None if row is None else row[0]
     if target.kind is not TargetKind.ticket:
         return None
     row = conn.execute(
@@ -77,8 +82,6 @@ def _target_is_itself_a_principal(conn: sqlite3.Connection, target: Target) -> b
     if target.kind is TargetKind.ticket:
         row = conn.execute("SELECT 1 FROM tickets WHERE id = ?", (target.id,)).fetchone()
         return row is not None
-    if target.kind is TargetKind.goal:
-        return conn.execute("SELECT 1 FROM goals WHERE id = ?", (target.id,)).fetchone() is not None
     if target.kind is TargetKind.manager:
         row = conn.execute("SELECT 1 FROM managers WHERE id = ?", (target.id,)).fetchone()
         return row is not None

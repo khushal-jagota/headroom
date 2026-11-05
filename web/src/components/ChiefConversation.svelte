@@ -14,11 +14,17 @@
   import { navigationApplication } from "../lib/navigation/application.svelte";
 
   import { createQuery } from "@tanstack/svelte-query";
+  import HolderDocument from './pageKit/HolderDocument.svelte';
+  import {holderPageQuery} from '../lib/pageKit/holderEditing';
+  import {goalQueries} from "../lib/goals/queries";
+  import {refreshAtBoundary} from "../lib/goals/presentation";
+  import ErrorLine from "./ErrorLine.svelte";
   import GoalsOverview from "./goals/GoalsOverview.svelte";
   import ManagerHeader from "./ManagerHeader.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
-  import ManagerChildren from "./ManagerChildren.svelte";
+  import {hasTickets} from '../lib/pageKit/holderDocument';
+  import PageTickets from "./pageKit/PageTickets.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
@@ -60,7 +66,10 @@
   // arrival because the owner changes it on the Config screen, and this must not go on
   // showing what the Chief was configured on before they did.
   const startValues = createQuery(() => queries.chiefConversationStartValues());
+  const chiefPage=createQuery(()=>holderPageQuery({kind:'chief',id:'chief'}));
   const chiefSettings = createQuery(() => queries.chiefSettings());
+  const goals=createQuery(()=>goalQueries.list());
+  $effect(()=>{if(goals.data)return refreshAtBoundary(goals.data.next_refresh_at,()=>void goals.refetch());});
 
   $effect(() => {
     if (!chief) return;
@@ -95,17 +104,19 @@
 
 <div class="chief-workspace-host" bind:this={root}>
 <ManagerFrame class="chief-workspace" bind:conversationState {openedFile} {onOpenFile}>
+  {#if goals.error}<ErrorLine error={goals.error}/>{/if}
   {#if allGoals}
-  <GoalsOverview all/>
+  <GoalsOverview goals={goals.data?.goals??[]} all/>
   {:else}
   <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
-  <GoalsOverview/>
-  <section class="manager-workers" aria-label="Workers">
-    <ManagerChildren principal={{ kind: "chief", id: "chief" }} />
-  </section>
+  <GoalsOverview goals={goals.data?.goals??[]}/>
+  {#if chiefPage.data?.page}<HolderDocument holder={{kind:"chief",id:"chief"}}/>{/if}
+  {#if !hasTickets(chiefPage.data?.page)}<section class="manager-workers" aria-label="Workers">
+    <PageTickets principal={{ kind: "chief", id: "chief" }} />
+  </section>{/if}
   {/if}
   {#snippet conversation()}
   <LiveConversation

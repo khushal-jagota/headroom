@@ -14,6 +14,7 @@ from typing import Any, Final
 from urllib.parse import urlsplit
 
 from planner.core.authctx import (
+    AUTHENTICATED_OWNER_SCOPE_KEY,
     PLAN_ACTOR_SCOPE_KEY,
     PLAN_CONVERSATION_ID_SCOPE_KEY,
     PLAN_GOAL_ID_SCOPE_KEY,
@@ -77,6 +78,7 @@ class TrustedIngressMiddleware:
         # Never accept a caller-supplied normalized identity.
         scope = dict(scope)
         scope.pop(TRUSTED_LOGIN_SCOPE_KEY, None)
+        scope.pop(AUTHENTICATED_OWNER_SCOPE_KEY, None)
         duplicate_header = _duplicate_singleton_security_header(scope)
         if duplicate_header is not None:
             await self._reject(scope, send, "duplicate security header is not allowed")
@@ -101,6 +103,7 @@ class TrustedIngressMiddleware:
                     await self._reject(scope, send, "Tailscale user is not allowed")
                     return
                 scope[TRUSTED_LOGIN_SCOPE_KEY] = login
+                scope[AUTHENTICATED_OWNER_SCOPE_KEY] = True
 
                 if str(scope.get("path", "")).startswith("/api/updates"):
                     await self.app(scope, receive, send)
@@ -193,6 +196,7 @@ def require_executor_ingress(scope: Mapping[str, Any], executor_id: str | None) 
     if headers.get(EXECUTOR_ID_HEADER) != executor_id:
         raise ValueError("executor identity does not match configuration")
     return executor_id
+
 
 def require_preview_ingress(scope: dict[str, Any], config: TrustedIngressConfig) -> None:
     """Require the configured tailnet gate, including reads and socket upgrades.

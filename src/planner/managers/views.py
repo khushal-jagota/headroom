@@ -6,10 +6,13 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 
 from planner.core import ticket_blocks
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
+from planner.goals import data as goals_data
+from planner.goals import views as goals_views
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.managers import data as managers_data
 from planner.managers.contracts import (
@@ -154,15 +157,23 @@ def manager_workspace(conn: sqlite3.Connection, item_id: str) -> JsonDict:
         return result
 
 
-def manager_workspace_document(conn: sqlite3.Connection, item_id: str) -> ManagerWorkspaceDocument:
-    """Read only the selected document, without child, catalog, or attention reads."""
+def manager_workspace_document(
+    conn: sqlite3.Connection, item_id: str, now: datetime
+) -> ManagerWorkspaceDocument:
+    """Read the selected document and held goals in one snapshot, without catalogs."""
     with _read_snapshot(conn):
-        row = conn.execute("SELECT goal, recap FROM managers WHERE id=?", (item_id,)).fetchone()
+        row = conn.execute(
+            "SELECT goal, recap FROM managers WHERE id=?", (item_id,)
+        ).fetchone()
         if row is None:
             raise PlannerError(ErrorCode.not_found, "manager not found", {"id": item_id})
         return {
             "goal": str(row[0]),
             "recap": str(row[1]),
+            "goals": [
+                goals_views.goal_json(conn, goal, now)
+                for goal in goals_data.list_goals(conn, holder_id=item_id)
+            ],
         }
 
 

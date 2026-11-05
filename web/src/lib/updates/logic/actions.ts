@@ -1,19 +1,7 @@
-import type { CreateUpdateRequest, OwnerUpdateRequest, PublishedUpdate, UpdateActivity, UpdateMode } from "../contracts";
+import type { CreateUpdateRequest, PublishedUpdate, UpdateMode } from "../contracts";
 
 export function usableUpdate(release: PublishedUpdate | null | undefined, now: number): release is PublishedUpdate {
   return !!release && Number.isFinite(Date.parse(release.expires_at)) && Date.parse(release.expires_at) > now;
-}
-
-export function needsActivityConfirmation(activity: UpdateActivity): boolean {
-  return activity !== "idle";
-}
-
-export function canCancelUpdate(request: OwnerUpdateRequest): boolean {
-  return request.state === "requested";
-}
-
-export function activeUpdateRequest(request: OwnerUpdateRequest | null | undefined): boolean {
-  return !!request && ["requested", "installing"].includes(request.state);
 }
 
 export function createUpdatePayload(release: PublishedUpdate, mode: UpdateMode, confirmActivity: boolean): CreateUpdateRequest {

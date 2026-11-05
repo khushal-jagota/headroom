@@ -14,7 +14,8 @@ from uuid import uuid4
 
 from planner.conversation.contracts import ConversationSystem
 from planner.core import change_signal
-from planner.environments.deployment_lifecycle import _atomic_write
+from planner.environments.deployment_lifecycle import DeploymentLifecycleStore, _atomic_write
+from planner.environments.logic.update_experience import effective_request, experience
 from planner.environments.update_configuration import UPDATE_AVAILABILITY_REFRESH_SECONDS
 from planner.environments.update_contracts import (
     SUPPORTED_UPDATE_SCHEMA_FLOOR,
@@ -40,10 +41,16 @@ class UpdateService:
         availability_path: Path | None = None,
         can_refresh: Callable[[], bool] = lambda: True,
         now: Callable[[], float] = time.time,
+        prepare_mac_update: Callable[[PublishedUpdate], None] | None = None,
+        mac_ready_for_dispatch: Callable[[OwnerUpdateRequest], bool] | None = None,
+        lifecycle_store: DeploymentLifecycleStore | None = None,
     ) -> None:
         self.provider, self.store, self.conversation = provider, store, conversation
         self._connection_factory = connection_factory
         self.current_app_sha = current_app_sha
+        self._prepare_mac_update = prepare_mac_update
+        self._mac_ready_for_dispatch = mac_ready_for_dispatch
+        self.lifecycle_store = lifecycle_store
         self._availability_path = availability_path
         self._can_refresh, self._now = can_refresh, now
         self._refresh_lock = threading.Lock()
@@ -112,12 +119,20 @@ class UpdateService:
         system = self.conversation()
         activity = system.workspace_activity() if system is not None else "unknown"
         available = self.refresh_available()
+        request = self.store.read()
+        lifecycle = self.lifecycle_store.read().lifecycle if self.lifecycle_store else None
+        state, actions = experience(
+            request, lifecycle, available, self.provider is not None,
+            self.current_app_sha, datetime.fromtimestamp(self._now(), UTC),
+        )
+        effective = effective_request(request, lifecycle)
         return UpdateStatus(
-            self.provider is not None,
-            available,
-            self.store.read(),
-            activity,
-            self._availability_error,
+            self.provider is not None, available, request, activity,
+            self._availability_error or (
+                effective.detail if effective is not None and effective.state == "failed"
+                else lifecycle.detail if effective is None and lifecycle is not None else None
+            ), state=state, allowed_actions=actions,
+            phase=lifecycle.phase if lifecycle else None, app_sha=self.current_app_sha,
         )
 
     def request(
@@ -132,6 +147,8 @@ class UpdateService:
         activity = system.workspace_activity() if system is not None else "unknown"
         if mode == "now" and activity != "idle" and not confirm_activity:
             raise UpdateConflict("Active or unknown work requires explicit confirmation.")
+        if self._prepare_mac_update is not None:
+            self._prepare_mac_update(release)
         request = self.store.create(
             OwnerUpdateRequest(
                 uuid4().hex,
@@ -151,6 +168,8 @@ class UpdateService:
             return False
         system = self.conversation()
         if request.mode == "idle" and (system is None or system.workspace_activity() != "idle"):
+            return False
+        if self._mac_ready_for_dispatch is not None and not self._mac_ready_for_dispatch(request):
             return False
         try:
             validate_release(request.release)
@@ -178,6 +197,9 @@ class UpdateService:
         return self.store.transition(
             request_id, frozenset({"requested"}), "failed", detail=CANCELLED_DETAIL
         )
+
+    def promote(self, request_id: str, *, confirm_activity: bool) -> OwnerUpdateRequest:
+        return self.store.promote(request_id, confirm_activity=confirm_activity)
 
 
 def validate_release(release: PublishedUpdate) -> None:

@@ -61,6 +61,15 @@ def _accepted(
     result = replace(current, **changes)
     if current.kind != result.kind and result.kind == "binary":
         result = replace(result, completion_rule=None)
+    if result.holder_kind not in ("chief", "manager"):
+        raise ValueError("holder_kind must be chief or manager")
+    if result.holder_kind == "chief" and result.holder_id is not None:
+        raise ValueError("Chief holder_id must be null")
+    if result.holder_kind == "manager" and (
+        not result.holder_id
+        or conn.execute("SELECT 1 FROM managers WHERE id=?", (result.holder_id,)).fetchone() is None
+    ):
+        raise ValueError("goal holder Manager does not exist")
     for key in GOAL_REQUIRED_TEXT:
         value = getattr(result, key)
         if not isinstance(value, str) or not value.strip():
@@ -220,3 +229,32 @@ def update_goal(
             (*values.values(), goal_id),
         )
     return accepted
+
+
+def make_manager(
+    conn: sqlite3.Connection,
+    goal_id: str,
+    *,
+    principal: Principal,
+    clock: Any,
+) -> tuple[str, Goal]:
+    from planner.managers.data import create_manager
+
+    with transaction(conn):
+        current = data.read_goal(conn, goal_id)
+        if current.holder_kind != "chief":
+            raise PlannerError(ErrorCode.validation, "only a Chief goal can become a Manager")
+        manager = create_manager(
+            conn, title=current.title, project_id=current.project_id, clock=clock
+        )
+        accepted = update_goal(
+            conn,
+            goal_id,
+            {
+                "holder_kind": "manager",
+                "holder_id": manager.id,
+            },
+            principal=principal,
+            now=clock.now_unix(),
+        )
+    return manager.id, accepted
