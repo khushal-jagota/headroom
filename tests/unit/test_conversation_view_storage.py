@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import pytest
 from alembic import op
-from tests.unit.test_conversation_view_projection import FIXTURES, database
+from tests.support.conversation_view_database import FIXTURES, database
 
 from planner.conversation.events import (
     ConversationEventKind,

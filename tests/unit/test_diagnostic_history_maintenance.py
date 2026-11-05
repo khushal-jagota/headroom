@@ -11,7 +11,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from tests.support.migration_head import shipped_migration_head
 from tests.support.ticket_workflows import preset_workflow_json
 from tests.unit.test_db import _migration_tree_through
 
@@ -67,11 +66,12 @@ def seed_archive(database: Path) -> None:
             )
         maintenance.rebuild_projection(conn, "history")
         conn.commit()
+    # Bootstrap installs the Signal publication tables and source triggers that
+    # maintenance writes through. Initialization would read current-schema tables
+    # that the retained historical archive does not have, so the fixture stops here.
     runtime = SignalRuntimeComposition(str(database), 1000)
     try:
         runtime.bootstrap()
-        runtime.coordinator.bind_runtime(lambda _identity: None)
-        runtime.initialize()
     finally:
         runtime.close()
 
@@ -536,7 +536,9 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
 
 @pytest.mark.parametrize(
     "schema_revision",
-    ["mac_vps_execution", "executor_default_workspace", shipped_migration_head()],
+    # Offline expiry admits only explicitly reviewed revisions. The current
+    # application head can add storage that this maintenance policy refuses.
+    ["mac_vps_execution", "executor_default_workspace", "ticket_owned_workflows"],
 )
 def test_native_stop_proof_holds_diagnostics_after_terminal_lifecycle(
     archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, schema_revision: str,

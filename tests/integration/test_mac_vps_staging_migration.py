@@ -302,11 +302,17 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                         current = [row[:position] + row[position + 1 :] for row in current]
                     assert current == old_rows, name
                 elif name == "managers":
-                    # The new flag defaults to false. Every historical field stays exact.
+                    # The launch flag and page defaults are explicit. Every
+                    # historical Manager field stays exact.
                     assert tuple(
                         row[1] for row in conn.execute("PRAGMA table_info(managers)")
-                    ) == (*manager_columns, "launch_configuration_is_explicit")
-                    assert current == [(*row, 0) for row in before], name
+                    ) == (
+                        *manager_columns,
+                        "launch_configuration_is_explicit",
+                        "page",
+                        "page_revision",
+                    )
+                    assert current == [(*row, 0, None, 0) for row in before], name
                 else:
                     assert current == before, name
             assert (

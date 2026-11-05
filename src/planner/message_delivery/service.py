@@ -313,27 +313,6 @@ async def send_message(
                     reply_requested=not system_message and expects_reply and not is_reply,
                     recording_receipt=recording_receipt,
                 )
-        elif recipient.kind is PrincipalKind.goal:
-            from planner.goals.conversation import deliver_goal_message
-
-            delivered = await deliver_goal_message(
-                conversations,
-                conn,
-                clock,
-                ctx,
-                recipient,
-                content,
-                prompt_mode,
-                conversation_id=conversation_id,
-                created_conversation_id=created_conversation_id,
-                runs_under=runs_under,
-                sender_label=label,
-                sender=sender,
-                owner_read_through_sequence=owner_read_through_sequence,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                reply_requested=not system_message and expects_reply and not is_reply,
-            )
         elif recipient.kind is PrincipalKind.manager:
             item_id = recipient.id
             async with managers_service.manager_lifecycle_lock(item_id):

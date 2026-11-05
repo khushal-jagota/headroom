@@ -1,8 +1,7 @@
 <script lang="ts">
   import MachineActivityMark from "./machines/MachineActivityMark.svelte";
   import MachineIdentity from "./machines/MachineIdentity.svelte";
-  import { macActivityKnown } from "../lib/ticketMachines";
-  import { MACHINE_ACTIVITY_UNKNOWN } from "../lib/machines/config";
+  import { macActivityKnown, macAvailability } from "../lib/ticketMachines";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -27,7 +26,7 @@
   let currentWorker = $derived(worker);
   const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
   let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
-  let stageSentence = $derived(unknownMac ? MACHINE_ACTIVITY_UNKNOWN : currentWorker ? workspaceWorkerStageSentence(currentWorker) : "");
+  let stageSentence = $derived(unknownMac ? macAvailability(health.isError ? undefined : health.data) : currentWorker ? workspaceWorkerStageSentence(currentWorker) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
   let recapIdentity = $derived(recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null);
   let pointerVisit = $state<{ target: HTMLElement | null; recapIdentity: string | null } | null>(null);
@@ -90,8 +89,9 @@
     const observer = new ResizeObserver(place);
     observer.observe(currentPanel);
     void tick().then(place);
-    window.addEventListener("resize", place);
-    return () => { observer.disconnect(); window.removeEventListener("resize", place); };
+    // A scroll no longer dismisses the panel, so it follows its row instead.
+    window.addEventListener("resize", place); window.addEventListener("scroll", place, true);
+    return () => { observer.disconnect(); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
   });
 </script>
 <div bind:this={element} class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}

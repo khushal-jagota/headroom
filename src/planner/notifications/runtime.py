@@ -85,12 +85,10 @@ class NotificationLoop:
                 native_deliveries = apns_data.pending_deliveries(conn, now)
                 if self._apns is not None and self._apns_origin is not None:
                     for native_delivery in native_deliveries:
-                        native_result = self._apns.send(
-                            native_delivery,
-                            server_url=self._apns_origin,
-                            now=now,
+                        result_native = self._apns.send(
+                            native_delivery, server_url=self._apns_origin, now=now
                         )
-                        apns_data.record_result(conn, native_delivery, native_result, now)
+                        apns_data.record_result(conn, native_delivery, result_native, now)
                     return len(deliveries) + len(native_deliveries)
                 return len(deliveries)
             finally:

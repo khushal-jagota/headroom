@@ -614,6 +614,8 @@ class SqliteProcessConversationSystem:
                 or any(not task.done() for task in state.settlement_tasks)
             ):
                 return "busy"
+        if self._store.read_live_background_task_ids():
+            return "busy"
         return "idle"
 
     async def run_with_workspace_admission(
@@ -4308,29 +4310,37 @@ class SqliteProcessConversationSystem:
         for reference in references:
             state = self._conversations[reference.conversation_id]
             await self._own_settlement(
-                state, self._interrupt_run_of_replaced_host(state, reference)
+                state, self._confirm_remote_child_termination(state, reference)
             )
 
-    async def _interrupt_run_of_replaced_host(
+    async def confirm_remote_child_termination(self, reference: ChildReference) -> None:
+        """Retire an exact remote child after its termination evidence commits."""
+        state = await self._conversation_state(reference.conversation_id)
+        if state is not None:
+            await self._own_settlement(
+                state, self._confirm_remote_child_termination(state, reference)
+            )
+
+    async def _confirm_remote_child_termination(
         self, state: _ConversationState, reference: ChildReference
     ) -> None:
-        # Pending command futures have already become uncertain. Let their normal
-        # delivery writers finish; replacing the process cannot prove non-delivery.
+        # Let original delivery writers settle before clearing the exact child.
+        # Termination never supplies missing delivery or provider outcomes.
         await self._acquire_settled(state)
         try:
             if state.retained_child_reference != reference:
                 return
-            if state.running_turn is not None:
-                await self._end_turn(
-                    state, state.running_turn, ConversationTurnEnding.interrupted, None
-                )
             retained = self._retained_run(state)
             if (
                 retained is None
                 or retained.reference != reference
                 or not retained.retirement_confirmed
             ):
-                raise ValueError("Replaced executor termination was not committed")
+                raise ValueError("Remote child termination was not committed")
+            if state.running_turn is not None:
+                await self._end_turn(
+                    state, state.running_turn, ConversationTurnEnding.interrupted, None
+                )
             if child_stops_outside_lock(state.child):
                 await state.child.detach()
             state.child = None

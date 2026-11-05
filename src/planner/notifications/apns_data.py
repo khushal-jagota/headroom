@@ -99,6 +99,7 @@ def pending_deliveries(conn: sqlite3.Connection, now: int) -> tuple[PendingAPNsD
         "AND ((d.subject_kind='ticket' AND EXISTS "
         "(SELECT 1 FROM tickets WHERE id=d.subject_id)) OR "
         "(d.subject_kind='manager' AND EXISTS (SELECT 1 FROM managers WHERE id=d.subject_id)) OR "
+        "(d.subject_kind='goal' AND EXISTS (SELECT 1 FROM goals WHERE id=d.subject_id)) OR "
         "(d.subject_kind='agent' AND EXISTS (SELECT 1 FROM agents WHERE agent_key=d.subject_id))) "
         "ORDER BY d.next_attempt_at,d.device_id LIMIT ?",
         (now, APNS_BATCH_SIZE),

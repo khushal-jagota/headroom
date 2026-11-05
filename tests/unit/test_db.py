@@ -27,7 +27,7 @@ REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger a current build holds: the baseline plus what the
 # revisions after it add.
-CURRENT_SCHEMA_OBJECT_COUNT = 125
+CURRENT_SCHEMA_OBJECT_COUNT = 122
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -1410,42 +1410,6 @@ def test_notice_suppression_upgrade_preserves_lifecycle_facts_and_indexes(
         assert conn.execute("SELECT count(*) FROM manager_wake_suppressions").fetchone()[0] == 0
     finally:
         conn.close()
-
-
-@pytest.mark.parametrize(
-    "starting_head", ["reconcile_native_mac_release", "conversation_background_tasks"]
-)
-def test_native_and_staging_histories_upgrade_to_one_head(
-    tmp_path: Path, starting_head: str
-) -> None:
-    """Either installed branch must gain the other schema without replaying its own."""
-    from alembic import command
-
-    path = tmp_path / "combined-native-staging.db"
-    engine = db_module._migration_engine(str(path), 1000)
-    try:
-        with engine.begin() as connection:
-            command.upgrade(db_module._alembic_config(connection), starting_head)
-        with engine.begin() as connection:
-            command.upgrade(db_module._alembic_config(connection), "head")
-    finally:
-        engine.dispose()
-    with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("reconcile_native_staging",)
-        ]
-        assert "recovery_sender_message_id" in {
-            column[1]
-            for column in conn.execute("PRAGMA table_info(deploy_interruption_deliveries)")
-        }
-        assert conn.execute("SELECT count(*) FROM notification_apns_devices").fetchone() == (0,)
-        assert conn.execute("SELECT count(*) FROM notification_apns_deliveries").fetchone() == (0,)
-        assert "workflow_json" in {
-            column[1] for column in conn.execute("PRAGMA table_info(tickets)")
-        }
-        assert conn.execute("SELECT count(*) FROM conversation_background_tasks").fetchone() == (0,)
-        assert "locale" in {column[1] for column in conn.execute("PRAGMA table_info(tickets)")}
-        assert conn.execute("SELECT count(*) FROM executor_connections").fetchone() == (0,)
 
 
 def test_workspace_policy_migration_keeps_legacy_conversation_home_mapping(

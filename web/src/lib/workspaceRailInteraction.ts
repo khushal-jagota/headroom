@@ -81,6 +81,48 @@ export function createRailHoverController<T>(
 export const RAIL_TOUCH_HOLD_MS = 400;
 export const RAIL_TOUCH_MOVE_TOLERANCE = 8;
 
+const RAIL_SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End", " "]);
+
+/**
+ * A row, manager or Chief preview leaves when the person scrolls: the wheel, a touch
+ * drag past the hold tolerance, or a scroll key outside a text field. A scroll event
+ * alone does not dismiss it. Layout, data refreshes and the browser itself also move
+ * scroll positions, and a pointer that stays still on a row gets no second
+ * pointerenter to bring the preview back.
+ */
+export function listenForUserScroll(page: EventTarget, scrolled: (event: Event) => void): () => void {
+  const wheel = (event: Event) => scrolled(event);
+  // A finger that holds a row to open its preview trembles a little. Only a drag counts.
+  let touchStart: { x: number; y: number } | null = null;
+  const touchPoint = (event: Event) => (event as TouchEvent).touches?.[0];
+  const touchDown = (event: Event) => { const point = touchPoint(event); touchStart = point ? { x: point.clientX, y: point.clientY } : null; };
+  const touchMove = (event: Event) => {
+    const point = touchPoint(event);
+    if (!touchStart || !point) return;
+    if (Math.hypot(point.clientX - touchStart.x, point.clientY - touchStart.y) <= RAIL_TOUCH_MOVE_TOLERANCE) return;
+    touchStart = null;
+    scrolled(event);
+  };
+  const key = (event: Event) => {
+    const press = event as KeyboardEvent;
+    const source = press.target as HTMLElement | null;
+    const closest = (selector: string) => typeof source?.closest === "function" && source.closest(selector) !== null;
+    if (press.defaultPrevented || press.altKey || press.ctrlKey || press.metaKey || !RAIL_SCROLL_KEYS.has(press.key)) return;
+    if (closest('input,textarea,select,[contenteditable="true"]') || (press.key === " " && closest("button,summary,a"))) return;
+    scrolled(press);
+  };
+  page.addEventListener("wheel", wheel, { passive: true });
+  page.addEventListener("touchstart", touchDown, { passive: true });
+  page.addEventListener("touchmove", touchMove, { passive: true });
+  page.addEventListener("keydown", key);
+  return () => {
+    page.removeEventListener("wheel", wheel);
+    page.removeEventListener("touchstart", touchDown);
+    page.removeEventListener("touchmove", touchMove);
+    page.removeEventListener("keydown", key);
+  };
+}
+
 /** Touch uses a hold. Pointer hover is gated before compatibility mouse events exist. */
 export function createRailPreviewInput(show: (target: HTMLElement, immediate: boolean) => void, leave: () => void) {
   let hold: ReturnType<typeof setTimeout> | undefined;

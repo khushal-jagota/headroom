@@ -17,6 +17,7 @@ claude-agent-sdk==0.2.152
 click==8.4.2
 cryptography==49.0.0
 datamodel-code-generator==0.71.0
+execnet==2.1.2
 fastapi==0.139.0
 frozenlist==1.8.0
 genson==1.4.0
@@ -61,6 +62,7 @@ PyICU==2.16.2
 PyJWT==2.13.0
 pytest-base-url==2.1.0
 pytest-playwright==0.8.0
+pytest-xdist==3.8.0
 pytest==9.1.1
 python-dotenv==1.2.2
 python-multipart==0.0.32
@@ -91,3 +93,4 @@ markdown-it-py==4.0.0
 mdurl==0.1.2
 linkify-it-py==2.0.3
 uc-micro-py==1.0.3
+

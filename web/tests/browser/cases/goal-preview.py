@@ -94,6 +94,8 @@ class GoalFixture:
         goal = {
             "id": identity,
             "title": title,
+            "holder_kind": "chief",
+            "holder_id": None,
             "project_id": "project",
             "why": "",
             "kind": "binary",
@@ -249,7 +251,8 @@ class GoalFixture:
                         key: goal[key]
                         for key in (
                             "title",
-                            "conversation_id",
+                            "holder_kind",
+                            "holder_id",
                             "active",
                             "completed",
                             "created_at",
@@ -293,6 +296,7 @@ class GoalFixture:
                 "/api/feedback/count": {"open_count": 0},
                 "/api/review": {"items": [], "running_worker_count": 0},
                 "/api/meta": {"test_mode": True, "app_sha": "fixture"},
+                "/api/managers?detail=full": {"managers": []},
                 "/api/conversation/backends": {"backends": []},
                 "/api/workers/chief-of-staff/settings": {
                     "employee_id": "chief",
@@ -1216,6 +1220,43 @@ def gauge_visual_equivalence(browser, url):
             consecutive,signatures:signatures.map(JSON.parse)};
         }""")
 
+    def wait_for_gauge_settled(chart):
+        # The fill must reach the meter's own reading, then the whole chart DOM and
+        # the snapshot fields must hold for four frames. That is the end of the
+        # reveal or update the recorder samples, whatever the machine's speed.
+        return chart.evaluate("""async node => {
+          const start = performance.now();
+          let previous = null, consecutive = 0, frames = 0, last = null;
+          while (consecutive < 4) {
+            await new Promise(requestAnimationFrame);
+            frames++;
+            const meter = node.querySelector('svg[role=meter]');
+            const fill = meter?.querySelectorAll('path')[1];
+            let fraction = null, expected = null;
+            if (fill) {
+              const manual = !!meter.closest('.manual-measurement');
+              fraction = manual ? parseFloat(getComputedStyle(fill).strokeDasharray) :
+                fill.getTotalLength() / (42 * Math.PI * 1.5);
+              const [now, low, high] = ['aria-valuenow','aria-valuemin','aria-valuemax']
+                .map(name => Number(meter.getAttribute(name)));
+              if (meter.hasAttribute('aria-valuenow') && high > low)
+                expected = Math.min(1, Math.max(0, (now - low) / (high - low)));
+            }
+            const box = node.getBoundingClientRect();
+            const signature = JSON.stringify([node.innerHTML, box.x, box.y, box.width,
+              box.height, fill ? [getComputedStyle(fill).opacity, getComputedStyle(fill).stroke,
+              getComputedStyle(fill).strokeDasharray] : null]);
+            const arrived = !fill || expected === null || Math.abs(fraction - expected) < .005;
+            consecutive = arrived && signature === previous ? consecutive + 1 : arrived ? 1 : 0;
+            previous = signature;
+            last = {fraction, expected, arrived};
+            if (performance.now() - start > 10000) {
+              throw new Error('Gauge did not settle: ' + JSON.stringify(last));
+            }
+          }
+          return {frames, milliseconds: performance.now() - start, ...last};
+        }""")
+
     def capture(page, chart, name):
         # Existing inspection helpers prove dismissal when the fade starts.
         # Capture only after that fade finishes, so a tooltip cannot ghost into
@@ -1277,7 +1318,6 @@ def gauge_visual_equivalence(browser, url):
         page = context.new_page()
         page.set_default_timeout(5000)
         page.add_init_script(f"({recorder})()")
-        settle_ms = 80 if reduced else 1900
         fixture = GoalFixture()
         fixture.observations["cumulative_target"] = {TODAY: 8}
         manual = fixture.goals["cumulative_target"]
@@ -1312,7 +1352,7 @@ def gauge_visual_equivalence(browser, url):
                 expect(meter).to_be_visible()
                 meter.scroll_into_view_if_needed()
                 # Keep initial reveal samples before a screenshot waits for stability.
-                page.wait_for_timeout(settle_ms)
+                wait_for_gauge_settled(chart)
                 row["surfaces"][identity + ":normal"] = snapshot(chart)
                 if identity == "cumulative_target":
                     value = chart.get_by_role("textbox")
@@ -1341,8 +1381,14 @@ def gauge_visual_equivalence(browser, url):
                     summary.tap()
                     expect(summary).to_have_attribute("aria-expanded", "true")
                 expect(support.get_by_role("meter")).to_be_visible()
-                support.get_by_role("meter").scroll_into_view_if_needed()
-                page.wait_for_timeout(settle_ms)
+                # Expansion changes the clipped scroller's geometry. Scroll the
+                # observed figure after that expansion, before its reveal proof.
+                wait_for_capture_stability(support)
+                support.get_by_role("meter").evaluate("""node =>
+                  (node.closest('figure') ?? node).scrollIntoView({
+                    block:'center',inline:'nearest',behavior:'instant'})""")
+                expect(support.get_by_role("meter")).to_be_in_viewport(ratio=0.5)
+                wait_for_gauge_settled(support)
                 row["surfaces"][identity + ":support-expanded"] = snapshot(support)
                 if output:
                     row["captures"][identity + ":support-expanded"] = capture(
@@ -1362,8 +1408,10 @@ def gauge_visual_equivalence(browser, url):
                     # (8) to exercise a real sweep and threshold change.
                     chart.get_by_role("button", name="Week", exact=True).click()
                     expect(meter).to_have_attribute("aria-valuenow", "8")
-                page.wait_for_timeout(settle_ms)
+                wait_for_gauge_settled(chart)
                 row["surfaces"][identity + ":updated"] = snapshot(chart)
+                # The motion receipt covers both meters' update through their rest.
+                wait_for_gauge_settled(support)
                 row["motion"][identity] = page.evaluate(
                     "keys => window.__gaugeEvidence.filter(record => keys.includes(record.chart))",
                     [identity, support_id],
@@ -1374,7 +1422,7 @@ def gauge_visual_equivalence(browser, url):
                 chart = page.locator(f'[data-goal-card="{identity}"] [data-chart-id="{identity}"]')
                 expect(chart.get_by_role("meter")).to_be_visible()
                 chart.scroll_into_view_if_needed()
-                page.wait_for_timeout(settle_ms)
+                wait_for_gauge_settled(chart)
                 row["surfaces"][identity + ":small"] = snapshot(chart)
                 if output:
                     row["captures"][identity + ":small"] = capture(
@@ -2363,11 +2411,12 @@ def native_goal_edits(browser, url):
         def refresh(goal_id=identity):
             key = f"/api/goals/{goal_id}"
             before = fixture.reads.get(key, 0)
+            # A read already in flight can answer first; wait for one counted after now.
             with page.expect_response(
                 lambda response: (
                     urlsplit(response.url).path == key
                     or parse_qs(urlsplit(response.url).query).get("key", [None])[0] == key
-                )
+                ) and fixture.reads.get(key, 0) > before
             ):
                 page.evaluate(
                     "document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))"

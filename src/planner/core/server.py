@@ -54,10 +54,16 @@ from planner.core.web_assets import WebAssets
 from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
 from planner.datasets.api import router as datasets_router
+from planner.environments import ticket_scratch
 from planner.environments.deployment_attention import DeploymentAttentionObserver
 from planner.environments.deployment_configuration import DEPLOYMENT_ATTENTION_POLL_SECONDS
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
-from planner.environments.update_admission import matching_commit, startup_requires_commit
+from planner.environments.mac_updates import MacUpdateService
+from planner.environments.update_admission import (
+    UncommittedAppStore,
+    matching_commit,
+    startup_requires_commit,
+)
 from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
 from planner.environments.update_api import router as updates_router
 from planner.environments.update_provider import GitHubUpdateProvider
@@ -77,8 +83,8 @@ from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
-from planner.goals.conversation_api import router as goal_conversation_router
 from planner.ideas.api import router as ideas_router
+from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
 from planner.managers.api import legacy_router as legacy_managers_router
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
@@ -208,6 +214,7 @@ def create_app(
         lifecycle_observer: asyncio.Task[None] | None = None
         attention_observer: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
+        ticket_scratch_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
         executor_endpoint = None
@@ -239,6 +246,8 @@ def create_app(
                 await attempt(cancel_task(release_task))
             if video_cleanup_task is not None:
                 await attempt(cancel_task(video_cleanup_task))
+            if ticket_scratch_task is not None:
+                await attempt(cancel_task(ticket_scratch_task))
             if recovery_task is not None:
                 await attempt(cancel_task(recovery_task))
             await attempt(scoped_navigation.close())
@@ -272,7 +281,12 @@ def create_app(
             from planner.executor.routing import LocaleBackendChildFactory
             from planner.executor.vps_transport import VpsExecutor
 
-            executor_endpoint = VpsExecutor(config.db_path, clock, machine_id=config.executor_id)
+            executor_endpoint = VpsExecutor(
+                config.db_path,
+                clock,
+                machine_id=config.executor_id,
+                application_revision=config.app_sha or "unknown",
+            )
             backend_factories = {
                 key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.runs)
                 for key, local in backend_factories.items()
@@ -335,6 +349,7 @@ def create_app(
                 async def observe_deployment_attention() -> None:
                     while True:
                         try:
+                            await asyncio.to_thread(app.state.updates.reconcile)
                             observed = await attention.poll()
                             if observed != app.state.deployment_attention:
                                 app.state.deployment_attention = observed
@@ -348,9 +363,15 @@ def create_app(
                 attention_observer = asyncio.create_task(observe_deployment_attention())
 
                 async def release_normal_work() -> None:
-                    nonlocal recovery_task, video_cleanup_task, loops, metrics
+                    nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
+                    nonlocal loops, metrics
                     # A matching runner commit is irreversible even if later setup fails.
+                    if config.app_sha is not None and matching_commit(
+                        deployment_lifecycle_store, config.app_sha
+                    ):
+                        uncommitted_apps.commit(config.app_sha)
                     app.state.update_startup_pending = False
+                    app.state.update_admission_closed = False
                     change_signal.emit()
                     conversation.live_tail.views.cleanup_stale_epochs()
                     if config.workspace_root is not None:
@@ -387,6 +408,13 @@ def create_app(
                     app.state.conversation = conversation
                     await asyncio.to_thread(video_uploads.recover_and_cleanup)
                     video_cleanup_task = asyncio.create_task(_clean_video_uploads())
+                    scratch_layout = ticket_scratch.layout_for(
+                        config.ticket_scratch_root, config.ticket_scratch_database, config.db_path
+                    )
+                    if scratch_layout is not None and not config.test_mode:
+                        ticket_scratch_task = asyncio.create_task(
+                            _clean_ticket_scratch(scratch_layout)
+                        )
                     # Worker tests can supply a held conversation system.
                     # Production always uses the real system.
                     if not config.test_mode:
@@ -479,6 +507,25 @@ def create_app(
                     if admitted:
                         await asyncio.to_thread(video_uploads.recover_and_cleanup)
 
+    async def _clean_ticket_scratch(layout: ticket_scratch.ScratchLayout) -> None:
+        already_kept: set[str] = set()
+        logger = logging.getLogger(__name__)
+        while True:
+            await asyncio.sleep(ticket_scratch.CLEANUP_INTERVAL_SECONDS)
+            try:
+                result = await asyncio.to_thread(
+                    ticket_scratch.clean_finished_ticket_scratch,
+                    layout,
+                    config.db_path,
+                    clock.now_unix(),
+                    already_kept,
+                )
+            except Exception:
+                logger.exception("Ticket scratch cleanup failed")
+                continue
+            for kept in result.skipped:
+                logger.warning("Ticket scratch kept: %s (%s)", kept["path"], kept["reason"])
+
     navigation_delivery = create_delivery_runtime(config.db_path)
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
@@ -532,25 +579,50 @@ def create_app(
     recorded_update = update_request_store.read()
     applying_candidate = bool(
         recorded_update is not None
-        and recorded_update.state == "applying"
         and recorded_update.release.manifest.app_sha == config.app_sha
+    )
+    uncommitted_apps = UncommittedAppStore(
+        deployment_lifecycle_path.with_name("update-admission.json")
     )
     app.state.update_startup_pending = startup_requires_commit(
         deployment_lifecycle_store, config.app_sha
-    ) or (applying_candidate and not matching_commit(deployment_lifecycle_store, config.app_sha))
+    ) or (
+        (applying_candidate or uncommitted_apps.contains(config.app_sha))
+        and not matching_commit(deployment_lifecycle_store, config.app_sha)
+    )
+    if app.state.update_startup_pending and config.app_sha is not None:
+        uncommitted_apps.retain(config.app_sha)
     app.state.update_admission_closed = False
     app.state.update_startup_detail = None
     app.state.deployment_attention = None
+    update_provider = GitHubUpdateProvider.configured()
+    app.state.mac_updates = MacUpdateService(
+        deployment_lifecycle_path.parent / "mac-updates",
+        update_request_store,
+        update_provider,
+        config.app_sha,
+    )
+
+    def mac_health_for_update() -> Mapping[str, object]:
+        endpoint = getattr(app.state, "executor_endpoint", None)
+        return {} if endpoint is None else cast(Mapping[str, object], endpoint.health())
+
     app.state.updates = UpdateService(
-        GitHubUpdateProvider.configured(),
+        update_provider,
         update_request_store,
         lambda: app.state.conversation_system,
         connection_factory=conn_factory,
         current_app_sha=config.app_sha,
         availability_path=deployment_lifecycle_path.with_name("owner-update-availability.json"),
-        can_refresh=lambda: not app.state.update_startup_pending,
+        prepare_mac_update=app.state.mac_updates.prepare,
+        mac_ready_for_dispatch=lambda request: app.state.mac_updates.ready_for_dispatch(
+            request, mac_health_for_update()
+        ),
+        lifecycle_store=deployment_lifecycle_store,
+        recovery_admission=lambda: app.state.update_startup_pending,
     )
 
+    app.add_middleware(IOSBuildGateMiddleware)
     app.add_middleware(UpdateAdmissionMiddleware, config=config)
 
     app.state.resource_version_epoch = str(uuid4())
@@ -583,7 +655,6 @@ def create_app(
         datasets_router,
         attention_router,
         goals_router,
-        goal_conversation_router,
         credentials_router,
         credential_requests_router,
         notifications_router,
@@ -661,7 +732,8 @@ def create_app(
     @app.get("/api/deployment-status")
     async def deployment_status() -> dict[str, object]:
         projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha,
+            deployment_lifecycle_store.project,
+            config.app_sha,
             admission_open=deployment_admission_open(),
         )
         payload = projection.to_public_dict()
@@ -686,7 +758,8 @@ def create_app(
     @app.get("/api/vps-status-summary")
     async def vps_status_summary() -> dict[str, object]:
         projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha,
+            deployment_lifecycle_store.project,
+            config.app_sha,
             admission_open=deployment_admission_open(),
         )
         summary = await asyncio.to_thread(

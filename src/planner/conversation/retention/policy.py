@@ -15,11 +15,6 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "review_messages",
         "review_work_cards",
         "owner_message_preview",
-        "native_push_deliveries",
-        "reconcile_native_recovery",
-        "reconcile_native_main",
-        "reconcile_native_mac_release",
-        "reconcile_native_staging",
         "video_upload_ledger",
         "mac_vps_execution",
         # This workspace CHECK expansion leaves diagnostics and mac_runs unchanged.
@@ -50,6 +45,10 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "attention_history",
         "remove_macos_requirements",
         "ticket_owned_workflows",
+        # Live background tasks leave diagnostic events and conversation views unchanged.
+        "conversation_background_tasks",
+        # Goal holders and holder pages leave diagnostic events and views unchanged.
+        "goal_holders",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

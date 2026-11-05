@@ -4,7 +4,17 @@
   import { onMount, onDestroy, tick } from "svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
-  import ManagerChildren from "./ManagerChildren.svelte";
+  import {hasTickets} from '../lib/pageKit/holderDocument';
+  import PageTickets from "./pageKit/PageTickets.svelte";
+  import HolderDocument from "./pageKit/HolderDocument.svelte";
+  import GoalHeader from "./goals/GoalHeader.svelte";
+  import GoalContent from "./goals/GoalContent.svelte";
+  import GoalsOverview from "./goals/GoalsOverview.svelte";
+  import {goalsForHolder} from "../lib/goals/holders";
+  import {holderPageQuery} from "../lib/pageKit/holderEditing";
+  import {refreshAtBoundary} from "../lib/goals/presentation";
+  import {queryClient} from "../lib/queryClient";
+  import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import { createRailHoverController } from "../lib/workspaceRailInteraction";
   import WorkspaceRailHover from "./WorkspaceRailHover.svelte";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
@@ -28,6 +38,7 @@
   import ManagerHeader from "./ManagerHeader.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import ArtifactsBand from "./ArtifactsBand.svelte";
+  import type {ManagedFileTarget} from "../lib/filePreview";
   import type { ManagerWorkspaceContent } from "../lib/types";
 
   export type ManagerWorkspaceResource = {
@@ -40,17 +51,22 @@
     itemId,
     workspaceName,
     requestedConversationId = null,
+    openedFile = null,
+    onOpenFile,
     backHref = "#/workspace/chief-of-staff",
     workspaceResource = null
     // A host that is already a way back can pass null so the line is not drawn.
   }: {
     itemId: string;
     requestedConversationId?: string | null;
+    openedFile?:ManagedFileTarget|null;
+    onOpenFile?:(file:ManagedFileTarget|null)=>void;
     workspaceName: string;
     backHref?: string | null;
     workspaceResource?: ManagerWorkspaceResource | null;
   } = $props();
 
+  const holderPage=createQuery(()=>holderPageQuery({kind:'manager',id:itemId}));
   const ownWorkspace = createQuery(() => ({
     ...queries.managerWorkspaceContent(itemId),
     enabled: workspaceResource === null
@@ -71,6 +87,9 @@
   const fullRecap=selectedRecap(()=>rawPublicItem?.recap_reference,()=>true);
   let publicItem=$derived(rawPublicItem?.recap_reference && fullRecap.body===undefined?undefined:rawPublicItem?{...rawPublicItem,recap:fullRecap.body ?? rawPublicItem.recap}:undefined);
   let content=$derived(workspaceResource ?? ownWorkspace);
+  let held=$derived(goalsForHolder(content.data?.goals??[],{kind:'manager',id:itemId}));
+  let soleGoal=$derived(held.sole);
+  $effect(()=>{if(content.data?.goals.length)return refreshAtBoundary(Math.min(...content.data.goals.map(goal=>goal.next_refresh_at)),()=>void queryClient.invalidateQueries({queryKey:queries.managerWorkspaceContent(itemId).queryKey}));});
   let workspace=$derived({data:publicItem && content.data ? {...publicItem,...content.data} : undefined,
     error:fullRecap.error ?? content.error,isLoading:content.isLoading || !publicItem});
   let headerElement=$state<HTMLElement | null>(null);
@@ -79,15 +98,19 @@
   const startValues = createQuery(() => queries.managerConversationStartValues(itemId));
   let conversationId = $state<string | null>(null);
   let selectedPastConversationId = $state<string | null>(null);
+  let legacyGoalId=$state<string|null>(null);
   let selectedConversationId = $derived(selectedPastConversationId ?? conversationId);
-  $effect(()=>navigation.owner.setDemand('manager',{selected:{kind:'manager',id:itemId},selected_conversation_id:selectedPastConversationId,windows:[]}));
+  let historyOwner=$derived(selectedPastConversationId!==null&&legacyGoalId!==null?{kind:'goal' as const,id:legacyGoalId}:{kind:'manager' as const,id:itemId});
+  $effect(()=>{if(selectedPastConversationId===null)legacyGoalId=null;});
+  $effect(()=>navigation.owner.setDemand('manager',{selected:historyOwner,selected_conversation_id:selectedPastConversationId,windows:[]}));
   onDestroy(()=>navigation.owner.setDemand('manager',undefined));
   let conversationState = $state<ConversationState>("rest");
   let requestedConversationApplied: string | null | undefined;
   $effect(() => {
-    if (!publicItem || requestedConversationApplied === requestedConversationId) return;
+    if (!workspace.data || requestedConversationApplied === requestedConversationId) return;
     requestedConversationApplied = requestedConversationId;
-    selectedPastConversationId = requestedConversationId && requestedConversationId !== publicItem.conversation_id ? requestedConversationId : null;
+    legacyGoalId=requestedConversationId!==null&&requestedConversationId===soleGoal?.legacy_conversation_id?soleGoal.id:null;
+    selectedPastConversationId = requestedConversationId && requestedConversationId !== workspace.data.conversation_id ? requestedConversationId : null;
     if (requestedConversationId) conversationState = "opened";
   });
   let backends = $state<readonly BackendSnapshot[]>([]);
@@ -207,15 +230,17 @@
     return ()=>{obsolete=true;};
   });
 
+
 </script>
 
 <ManagerFrame
   class="manager-resource-workspace"
+  {openedFile} {onOpenFile}
   bind:conversationState
   data-manager-workspace={itemId}
   data-manager-view={itemId}
 >
-    <ResourceState shape="document" layout="fill"
+    <ResourceState shape="document"
       error={workspace.error}
       loading={workspace.isLoading}
       hasData={workspace.data !== undefined}
@@ -224,36 +249,42 @@
       {#if workspace.data}
         {@const item = workspace.data}
           <div bind:this={headerElement}>
-          <ManagerHeader signal={item.conversation_signal} conversationId={item.conversation_id}
-            recap={item.recap} onSaveRecap={(value) => saveItem("recap", value)}
-            recapTarget={{ kind: "manager", id: item.id }}>
-            {#snippet eyebrow()}
-            <div class="page-eyebrow">
-              <span>{item.project}</span>
-              {#if backHref !== null}<span aria-hidden="true">/</span><a href={backHref} aria-label={`Back to ${workspaceName}`}>↖</a>{/if}
-              <button type="button" class="page-settle" disabled={settleBusy} onclick={() => void setSettled(!(item.settled ?? false))} aria-label={`${item.settled ? "Reopen" : "Settle"} ${item.title}`}>
-                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>{item.settled ? "Reopen" : "Settle"}
-              </button>
-            </div>
-            {#if settleError}<p role="alert">{settleError}</p>{/if}
-            {/snippet}
-            {#snippet title()}
-              <InlineEdit
-                value={item.title}
-                placeholder="(untitled Manager)"
-                onSave={(value) => saveItem("title", value)}
-              />
-            {/snippet}
+          {#snippet managerTitle()}<InlineEdit value={item.title} placeholder="(untitled Manager)" ariaLabel="Manager name" onSave={(value)=>saveItem("title",value)}/>{/snippet}
+          {#snippet settleButton()}
+            <button type="button" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>
+              <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{item.settled?'Reopen':'Settle'}
+            </button>
+          {/snippet}
+          {#snippet goalHeading()}
+            {#if soleGoal}<GoalHeader goal={soleGoal}>
+              {#snippet title()}{@render managerTitle()}<ConversationSignalMark signal={item.conversation_signal} conversationId={item.conversation_id}/>{/snippet}
+              {#snippet mark()}{@render settleButton()}{/snippet}
+            </GoalHeader>{/if}
+          {/snippet}
+          <ManagerHeader heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
+            recap={item.recap} onSaveRecap={(value)=>saveItem("recap",value)} recapTarget={{kind:"manager",id:item.id}}>
+            {#snippet eyebrow()}<div class="page-eyebrow"><span>{item.project}</span>
+              {#if backHref!==null}<span aria-hidden="true">/</span><a href={backHref} aria-label={`Back to ${workspaceName}`}>↖</a>{/if}
+              {@render settleButton()}
+            </div>{/snippet}
+            {#snippet title()}{@render managerTitle()}{/snippet}
           </ManagerHeader>
+          {#if settleError}<p role="alert">{settleError}</p>{/if}
           </div>
 
-          <section class="manager-workers" aria-label="Workers">
-            <ManagerChildren principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication}
+          {#if soleGoal}<GoalContent goal={soleGoal}/>
+            {#if soleGoal.legacy_conversation_id}<button type="button" class="previous-conversation" onclick={()=>{legacyGoalId=soleGoal!.id;selectedPastConversationId=soleGoal!.legacy_conversation_id;conversationState="opened";}}>Previous goal conversation</button>{/if}
+          {:else}
+            {#if held.held.length>1}<GoalsOverview goals={item.goals} holderKind="manager" holderId={itemId}/>{/if}
+            {#if holderPage.data?.page}<HolderDocument holder={{kind:"manager",id:itemId}}/>{/if}
+          {/if}
+          {#if !hasTickets(soleGoal?soleGoal.page:holderPage.data?.page)}<section class="manager-workers" aria-label="Workers">
+            <PageTickets principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication}
               onHover={(element, id, immediate) => {
                 const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
                 if (ticket) hoverRow(element, ticket, immediate);
               }} onLeave={() => hover.leave()} />
-          </section>
+          </section>{/if}
           <div class="manager-bands disclosure-bands">
             <details class="disclosure-band goal-band" data-goal-band>
               <summary>Goal<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
@@ -275,7 +306,7 @@
       {/if}
     </ResourceState>
   {#snippet conversation()}
-      <LiveConversation historyOwner={{kind:"manager",id:itemId}}
+      <LiveConversation {historyOwner}
         bind:conversationState
         conversationId={selectedConversationId}
         persistenceKey={`owner:sprint-item:${itemId}`}
@@ -295,11 +326,11 @@
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Manager"} worker={hoverWorker} cards={[]} rail={hoverTarget} recapTarget={hoverWorker ? { kind: "ticket", id: hoverWorker.id } : null} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
 <style>
-  :global(.manager-resource-workspace .manager-column) { height:100%; min-height:0; display:flex; flex-direction:column; }
   .page-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .page-eyebrow a { color:inherit; text-decoration:none; }
   .page-eyebrow a:hover { color:var(--text-strong); }
   .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; margin-right:-8px; border:0; border-radius:var(--radius-sm); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
+  .previous-conversation {margin-top:24px;border:0;background:none;color:var(--text-muted);font:inherit;font-size:12px;padding:0;cursor:pointer}
   .page-settle svg { width:13px; height:13px; }
   :global(.manager-doc):hover .page-settle, .page-settle:focus-visible { opacity:1; }
   .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }

@@ -27,6 +27,7 @@ from planner.conversation.retention.contracts import (
 )
 from planner.conversation.retention.data import build_report, read_report
 from planner.conversation.retention.logic.rules import classify_conversation, event_fingerprint
+from planner.conversation.retention.policy import SUPPORTED_SCHEMA_REVISIONS
 from planner.core.db import connect, create_schema
 
 
@@ -255,10 +256,17 @@ def test_report_reads_without_initialization_and_binds_source_schema_and_databas
     tmp_db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     current_path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    current_revision = shipped_migration_head()
     assert [row[0] for row in tmp_db.execute("SELECT version_num FROM alembic_version")] == [
-        shipped_migration_head()
+        current_revision
     ]
-    assert read_report(current_path, as_of_unix=2_000_000).database_path == str(current_path)
+    # A shipped migration does not authorize destructive maintenance before its
+    # retention compatibility review. Unreviewed current schemas stay refused.
+    if current_revision in SUPPORTED_SCHEMA_REVISIONS:
+        assert read_report(current_path, as_of_unix=2_000_000).database_path == str(current_path)
+    else:
+        with pytest.raises(ValueError, match="Unsupported diagnostic retention schema revision"):
+            read_report(current_path, as_of_unix=2_000_000)
     tmp_db.execute("UPDATE alembic_version SET version_num = 'unknown_future_revision'")
     tmp_db.commit()
     with pytest.raises(ValueError, match="Unsupported diagnostic retention schema revision"):

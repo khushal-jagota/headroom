@@ -9,8 +9,9 @@
 
   // ``recapTarget`` is the agent that can be asked for a fresh recap. Every agent with a
   // recap passes one; a header shown without a live agent behind it passes nothing.
-  let { title, eyebrow, recap, onSaveRecap, signal, conversationId = null, recapTarget = null }: {
+  let { title, heading, eyebrow, recap, onSaveRecap, signal, conversationId = null, recapTarget = null }: {
     title: Snippet;
+    heading?: Snippet;
     eyebrow?: Snippet;
     recap?: string;
     onSaveRecap?: (value: string) => Promise<unknown>;
@@ -21,11 +22,13 @@
 </script>
 
 <header class="manager-workspace-head">
+  {#if heading}{@render heading()}{:else}
   {@render eyebrow?.()}
   <h1 class="manager-workspace-title" data-feedback-page-title>
     {@render title()}
     <ConversationSignalMark {signal} {conversationId} class="manager-workspace-title-mark" />
   </h1>
+  {/if}
   {#if recap !== undefined && onSaveRecap}
     <RecapSlot>
     {#snippet children()}
@@ -40,7 +43,7 @@
         markdown
         multiline
         ariaLabel="Manager recap"
-        placeholder="Write a concise recap for this manager…"
+        placeholder="Write a concise recap…"
         onSave={onSaveRecap}
       />
     </ClampedText>

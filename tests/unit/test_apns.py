@@ -18,20 +18,16 @@ from tests.unit.test_notifications import _subscribe, _ticket
 from planner.core.clock import TestClock as MutableClock
 from planner.core.clock import parse_fake_now
 from planner.core.config import load_config
-from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.notifications import apns_data, data
 from planner.notifications.apns import TokenAPNsAdapter
 from planner.notifications.contracts import (
-    NOTIFICATION_TYPES,
     APNsConfig,
     APNsDevice,
-    AttentionEdge,
     EdgeKey,
     NotificationIntent,
     PendingAPNsDelivery,
 )
-from planner.notifications.logic.policy import decide_notification
 from planner.notifications.runtime import NotificationLoop
 
 NOW = 1_790_000_000
@@ -335,24 +331,3 @@ def test_missing_credentials_skip_network_and_do_not_claim_delivery(tmp_path: Pa
             ) == ("pending", 0)
     finally:
         loop.stop()
-
-
-def test_policy_preserves_native_destinations_and_bounds_lock_screen_copy() -> None:
-    for subject, route in (
-        (Principal(PrincipalKind.ticket, "t_42"), "/#/workspace/t_42"),
-        (Principal(PrincipalKind.manager, "m_9"), "/#/workspace/item/m_9"),
-        (CHIEF_PRINCIPAL, "/#/agents/chief-of-staff"),
-    ):
-        for notification_type in NOTIFICATION_TYPES:
-            edge = AttentionEdge(
-                EdgeKey(subject.kind.value, subject.id, notification_type.id, 1),
-                subject,
-                "A long work label " * 30,
-                NOW,
-            )
-            intent = decide_notification(edge, enabled=True)
-            assert intent is not None and intent.route == route
-            assert intent.title.endswith(" · " + notification_type.label)
-            assert len(intent.title.split(" · ")[0]) <= 61
-            assert "A long work label " * 30 not in intent.body
-            assert decide_notification(edge, enabled=False) is None

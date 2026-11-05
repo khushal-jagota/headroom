@@ -424,3 +424,44 @@ def test_goal_writes_require_its_current_saved_manual_binding(tmp_db: Connection
         manual.write_value(tmp_db, shared.id, first, principal=actor, now=NOW)
     assert manual.read_state(tmp_db, shared.id, "2026-10-27", now=NOW).write_revision == 2
     assert tmp_db.execute("SELECT COUNT(*) FROM manual_measure_writes").fetchone()[0] == 2
+
+
+def test_manager_writes_only_manual_measures_bound_to_its_held_goals(tmp_db: Connection) -> None:
+    """The previous goal-only capability must follow its holder after promotion."""
+    from tests.unit.test_goal_pages import create
+
+    from planner.goals import actions as goals
+
+    measure = manual_measure(tmp_db)
+    foreign = manual_measure(tmp_db)
+    goal = create(
+        tmp_db,
+        kind="quantitative",
+        primary_chart={
+            "type": "chart",
+            "kind": "line",
+            "measure_id": measure.id,
+        },
+    )
+    manager_id, moved = goals.make_manager(
+        tmp_db,
+        goal.id,
+        expected_revision=goal.revision,
+        principal=CHIEF_PRINCIPAL,
+        clock=FakeClock(datetime.fromtimestamp(NOW, UTC)),
+    )
+    actor = Principal(PrincipalKind.manager, manager_id)
+    request = replacement("holder-manual", "2026-10-27", 4, 0)
+    accepted = manual.write_value(tmp_db, measure.id, request, principal=actor, now=NOW)
+    assert accepted.receipt.actor == actor
+    with pytest.raises(PlannerError):
+        manual.write_value(tmp_db, foreign.id, request, principal=actor, now=NOW)
+    goals.update_goal(
+        tmp_db,
+        moved.id,
+        {"expected_revision": moved.revision, "holder_kind": "chief", "holder_id": None},
+        principal=OWNER_PRINCIPAL,
+        now=NOW,
+    )
+    with pytest.raises(PlannerError):
+        manual.write_value(tmp_db, measure.id, request, principal=actor, now=NOW)

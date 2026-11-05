@@ -35,17 +35,18 @@ function readViewport(): ViewportReading {
 
 /**
  * The part of the layout viewport the reader can see. Only an on-screen keyboard narrows
- * it, and the keyboard is up only while a text field has focus. Without one, the whole
- * layout viewport is visible, whatever size iPhone Safari last reported: it can report
+ * it. An open conversation menu retains those bounds when it takes focus from the
+ * text field. Without either, the whole layout viewport is visible, whatever size
+ * iPhone Safari last reported: it can report
  * the keyboard-sized screen one last time as the keyboard closes and never again.
  */
-export function visibleViewportFrom(reading: ViewportReading): LayoutRectangle {
-  if (!reading.textEntryFocused || !reading.visual) return { top: 0, left: 0, width: reading.layoutWidth, height: reading.layoutHeight };
+export function visibleViewportFrom(reading: ViewportReading, menuOpen = false): LayoutRectangle {
+  if ((!reading.textEntryFocused && !menuOpen) || !reading.visual) return { top: 0, left: 0, width: reading.layoutWidth, height: reading.layoutHeight };
   return reading.visual;
 }
 
-export function visibleViewport(): LayoutRectangle {
-  return visibleViewportFrom(readViewport());
+export function visibleViewport(menuOpen = false): LayoutRectangle {
+  return visibleViewportFrom(readViewport(), menuOpen);
 }
 
 /** How far the keyboard reaches up from the bottom of the layout viewport. */
