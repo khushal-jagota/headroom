@@ -1,4 +1,9 @@
 <script lang="ts">
+  import {getContext} from 'svelte';
+  import {PAGE_HOLDER} from '../../lib/pageKit/context';
+  import type {ManagerPrincipal} from '../../lib/types';
+  import PageTickets from './PageTickets.svelte';
+  const holder=getContext<(()=>ManagerPrincipal)|undefined>(PAGE_HOLDER);
   import type { Block } from "../../lib/pageKit";
   import PageText from "./PageText.svelte";
   import PageBlocks from "./PageBlocks.svelte";
@@ -23,7 +28,9 @@
 
 <div class="blocks" data-page-blocks>
   {#each blocks as block, index (block.id)}
-    {#if block.type === "section"}
+    {#if block.type === "tickets"}
+      {#if holder}<PageTickets principal={holder()}/>{/if}
+    {:else if block.type === "section"}
       <PageSection {block} {view} />
     {:else if block.type === "text"}
       <div class="text" data-block="text"><PageText blockId={block.id} field="text" value={block.text} label="Text" markdown multiline update={(current, raw) => current.type === "text" ? {...current, text: raw} : current} /></div>

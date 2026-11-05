@@ -252,6 +252,10 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
 ) -> None:
     server = signal_server
     project = api.direct_post(server, "/api/projects", {"name": "Goal browser proof"})
+    # Another mounted holder must not dismiss Chief's goal previews.
+    api.direct_post(
+        server, "/api/managers", {"title": "Other holder", "project_id": project["id"]}
+    )
     source = api.direct_post(
         server,
         "/api/measure-sources",
@@ -442,11 +446,11 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert any(
         row["id"] == goal["id"] for row in api.get(server, "/api/goals?active=true")["goals"]
     )
-    # Agent configuration crosses the API and change stream into the mounted page.
+    # Holder configuration crosses the API and change stream into the mounted page.
     before_selection = current["page"]
     selected = httpx.patch(
         server.base + path,
-        headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
+        headers={"X-Plan-Actor": "chief"},
         json={
             "expected_revision": current["revision"],
             "primary_checklist_block_id": "approach",
@@ -537,7 +541,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     updated_page["blocks"][0]["items"][1]["state"] = "open"
     response = httpx.patch(
         server.base + path,
-        headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
+        headers={"X-Plan-Actor": "chief"},
         json={
             "expected_revision": current["revision"],
             "page": updated_page,
@@ -704,10 +708,10 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     ):
         remote = httpx.patch(
             server.base + path,
-            headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
+            headers={"X-Plan-Actor": "chief"},
             json={
                 "expected_revision": current["revision"],
-                "title": "Agent title",
+                "title": "Chief title",
                 "page": reordered,
             },
             timeout=10,
@@ -715,7 +719,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         assert remote.is_success, remote.text
     expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
     expect(page.locator(f'a[data-goal-id="{goal["id"]}"] .row-title')).to_have_text(
-        "Agent title", timeout=WAIT_MS
+        "Chief title", timeout=WAIT_MS
     )
     expect(page.locator("[data-goal-page]")).to_have_attribute(
         "data-native-edit-proof", "retained", timeout=WAIT_MS
@@ -734,10 +738,10 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(error).to_contain_text("goal changed", timeout=WAIT_MS)
     expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
     accepted_remote = api.get(server, path)
-    assert accepted_remote["title"] == "Agent title"
+    assert accepted_remote["title"] == "Chief title"
     assert accepted_remote["revision"] == remote.json()["revision"]
     title_editor.press("Escape", timeout=WAIT_MS)
-    expect(title_editor).to_have_text("Agent title", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Chief title", timeout=WAIT_MS)
     expect(error).to_have_count(0, timeout=WAIT_MS)
     assert api.get(server, path)["revision"] == accepted_remote["revision"]
     expect(page.locator('[data-block="table"] tbody tr').first).to_contain_text(
@@ -914,59 +918,71 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(primary.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
     )
+    # Opening either goal starts no model. Both pages use their shared holder.
+    assert api.get(server, "/api/chief/conversation")["conversation_id"] is None
     other_message = api.direct_post(
         server,
         "/api/messages/send",
         {
-            "target": {"kind": "goal", "id": other["id"]},
-            "message": "Work on the other goal",
+            "target": {"kind": "chief", "id": "chief"},
+            "message": "Work on our goals",
         },
     )
-    other_id = other_message["conversation_id"]
+    holder_conversation_id = other_message["conversation_id"]
+    chief = page.locator("[data-chief-destination]")
     rail_goal = page.locator(f'[data-goal-id="{other["id"]}"]')
-    expect(rail_goal.locator('[data-conversation-signal="working"]')).to_have_count(
+    expect(chief.locator('[data-conversation-signal="working"]')).to_have_count(
         1, timeout=WAIT_MS
     )
+    # Goals retain no independent conversation marks, even when their holder works.
+    expect(rail_goal.locator("[data-conversation-signal]")).to_have_count(0)
+    assert api.get(server, "/api/chief/conversation")["conversation_id"] == holder_conversation_id
     api.direct_post(
         server,
-        f"/api/test/connected/{other_id}/message",
+        f"/api/test/connected/{holder_conversation_id}/message",
         {
-            "kind": "goal",
-            "id": other["id"],
-            "text": "A question from the other goal",
+            "kind": "chief",
+            "id": "chief",
+            "text": "A question from your goals holder",
         },
     )
-    expect(rail_goal.locator('[data-conversation-signal="message"]')).to_have_count(
+    expect(chief.locator('[data-conversation-signal="message"]')).to_have_count(
         1, timeout=WAIT_MS
     )
-    api.direct_post(server, f"/api/test/signals/{other_id}/finish", {})
-    # Opening the page did not start a model. Its first browser message must do so.
-    assert api.get(server, path)["conversation_id"] is None
+    expect(rail_goal.locator("[data-conversation-signal]")).to_have_count(0)
+    api.direct_post(server, f"/api/test/signals/{holder_conversation_id}/finish", {})
+    # A browser message beside either goal reuses the holder's existing conversation.
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
     type_instead = page.get_by_role("button", name="Type instead", exact=True)
     if type_instead.is_visible():
         type_instead.click(timeout=WAIT_MS)
     page.locator("[data-conversation-input]").fill("Help with this goal", timeout=WAIT_MS)
     with page.expect_response(
-        lambda response: response.url.endswith(path + "/conversation/send"), timeout=WAIT_MS
+        lambda response: response.url.endswith("/api/chief/conversation/send"), timeout=WAIT_MS
     ) as delivered:
         page.locator("[data-conversation-input]").press("Enter", timeout=WAIT_MS)
     assert delivered.value.ok, delivered.value.text()
     conversation_id = delivered.value.json()["conversation_id"]
+    assert conversation_id == holder_conversation_id
+    assert api.get(server, "/api/chief/conversation")["conversation_id"] == conversation_id
     wire = api.get(server, f"/api/test/signals/{conversation_id}/delivered")["texts"][-1]
-    assert "You are the agent for goal " + goal["id"] in wire
+    assert "You are the agent for goal " not in wire
     assert "Help with this goal" in wire
     api.direct_post(server, f"/api/test/signals/{conversation_id}/finish", {})
     page.get_by_role("button", name="Conversation options", exact=True).click(timeout=WAIT_MS)
     page.locator("[data-conversation-new-arm]").click(timeout=WAIT_MS)
     with page.expect_response(
-        lambda response: response.url.endswith(path + "/conversation/reset"), timeout=WAIT_MS
+        lambda response: response.url.endswith("/api/chief/conversation/reset"), timeout=WAIT_MS
     ) as reset:
         page.locator("[data-conversation-new-confirm]").click(timeout=WAIT_MS)
     assert reset.value.ok
     history = api.get(server, f"/api/conversation-history/goal/{goal['id']}")
-    assert [entry["conversation_id"] for entry in history["entries"]] == [conversation_id]
-    assert api.get(server, path)["conversation_id"] is None
+    assert history["entries"] == []
+    assert api.get(server, "/api/chief/conversation")["conversation_id"] is None
+    # Reset clears the shared pointer and preserves the holder's recorded messages.
+    assert "Help with this goal" in api.get(
+        server, f"/api/test/signals/{conversation_id}/delivered"
+    )["texts"][-1]
     page.reload()
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"

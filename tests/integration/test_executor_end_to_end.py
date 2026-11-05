@@ -99,6 +99,290 @@ from planner.executor.vps_transport import VpsExecutor
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
 
 
+def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gap: real reconnect retirement must not revoke saved write/file authority."""
+
+    from tests.support.executor_catalog import ScriptedBackendSnapshots
+
+    from planner.executor.protocol import CliWrite, as_object
+    from planner.executor.runtime_bootstrap import atomic_record, read_record
+    from planner.executor.update_configuration import MAC_RUNTIME_HANDOFF_ENV
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
+        try:
+            old = harness.mac
+            child = next(iter(old.runner._children.values()))
+            assert harness.native.sink is not None and harness.native.turn is not None
+            artifact = old.paths.artifacts / child.ticket_id / "saved-before-update.txt"
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_bytes(b"durable artifact before update")
+            async with paused_outbox(old.outbox):
+                saved_write = old.outbox.add(
+                    OutboxEntry(
+                        child.reference.conversation_id, EnvelopeKind.cli_write,
+                        as_object(CliWrite(
+                            "ticket.edit",
+                            {
+                                "ticket_id": child.ticket_id,
+                                "body": {"recap": "Saved before update"},
+                            },
+                            child.reference, harness.native.turn,
+                        )),
+                        "saved_before_update",
+                    ),
+                    ticket_id=child.ticket_id,
+                )
+                assert saved_write.file_dependencies
+                await harness.native.sink.report(
+                    harness.native.turn,
+                    AgentMessageCompleted(
+                        content=text_message_content("Saved reply before update")
+                    ),
+                )
+                assert await old.runner.prepare_update("now")
+                original_pending = old.outbox.pending()
+                assert len(original_pending) == 3
+                identity = old.identity
+                handoff = old.paths.root / "updates/handoff.json"
+                atomic_record(handoff, {
+                    "executor_incarnation": identity.executor_incarnation,
+                    "connection_generation": identity.connection_generation,
+                    "replay_pending": True,
+                })
+                old._stop.set()
+                assert harness.endpoint.runs.link is not None
+                harness.endpoint.runs.link.close()
+                await asyncio.wait_for(harness.task, 3)
+            await harness.restart_vps_core(wait_ready=False)
+            accepted: dict[str, list[AcceptanceReceipt]] = {}
+            accept = harness.endpoint.inbox.accept
+
+            async def observe_accept(
+                envelope: QueuedEnvelope, peer: ExecutorIdentity,
+            ) -> AcceptanceReceipt:
+                receipt = await accept(envelope, peer)
+                accepted.setdefault(envelope.submission_id, []).append(receipt)
+                return receipt
+
+            monkeypatch.setattr(harness.endpoint.inbox, "accept", observe_accept)
+            monkeypatch.setenv(MAC_RUNTIME_HANDOFF_ENV, str(handoff))
+
+            def replacement(revision: str) -> MacService:
+                service = MacService(
+                    paths=old.paths, revision=revision, executor_id=old.executor_id,
+                    panels_server_url=harness.proxy.origin,
+                    session_factory=harness.proxy.session_factory,
+                )
+                service.catalog.snapshots = ScriptedBackendSnapshots(lambda: service.identity)
+                service.runner.factory = old.runner.factory
+                return service
+
+            candidate = replacement("b" * 40)
+            harness.mac = candidate
+            async with paused_outbox(candidate.outbox):
+                harness.task = asyncio.create_task(candidate.run())
+                await eventually(
+                    lambda: harness.endpoint.runs.ready,
+                    "Candidate did not reconcile after the VPS restart",
+                )
+                assert candidate.identity.executor_incarnation == identity.executor_incarnation
+                assert candidate.identity.connection_generation > identity.connection_generation
+                assert candidate.runner.admission_stopped
+                assert candidate.outbox.pending() == original_pending
+                assert harness.endpoint.runs.store.child_assignment(child.reference) is not None
+                # Model failure/reversion after a successful hello but before
+                # saved receipts. The permanent supervisor test owns its process timer.
+                candidate._stop.set()
+                assert harness.endpoint.runs.link is not None
+                harness.endpoint.runs.link.close()
+                await asyncio.wait_for(harness.task, 3)
+            fallback = replacement("a" * 40)
+            harness.mac = fallback
+            harness.task = asyncio.create_task(fallback.run())
+            await eventually(
+                lambda: not fallback.outbox.pending(), "Saved update output did not replay",
+            )
+            await eventually(
+                lambda: harness.endpoint.runs.store.has_closed_child_assignment(child.reference),
+                "Restart retirement did not settle after the saved FIFO drained",
+            )
+            assert fallback.identity.executor_incarnation == identity.executor_incarnation
+            assert (
+                fallback.identity.connection_generation > candidate.identity.connection_generation
+            )
+            await eventually(
+                lambda: (read_record(handoff) or {}).get("replay_pending") is False,
+                "The Mac did not release custody after saved output drained",
+            )
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                assert connection.execute(
+                    "SELECT recap FROM tickets WHERE id=?", (child.ticket_id,),
+                ).fetchone()[0] == "Saved before update"
+            # Completed backend prose remains runtime output. Its original
+            # journal record still receives one acceptance, never a refusal.
+            for original in original_pending:
+                receipts = accepted[original.submission_id]
+                assert len(receipts) == 1
+                assert receipts[0].disposition is ReceiptDisposition.accepted
+            uploaded = harness.endpoint.inbox.store.file_target(saved_write.file_dependencies[0])
+            assert uploaded.read_bytes() == artifact.read_bytes()
+            # Duplicate original submission cannot mutate the Ticket again.
+            receipt = await harness.endpoint.inbox.accept(saved_write, fallback.identity)
+            assert receipt.disposition is ReceiptDisposition.accepted
+            assert harness.native.start_count == harness.native.prompt_count == 1
+            assert harness.native.stop_count == 1
+            assert not harness.system._conversations["c_scripted"].child_is_quarantined
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("request_ending", ["cancelled", "dispatch_failed"])
+def test_update_stop_settles_live_vps_before_cancel_or_dispatch_failure_resumes_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request_ending: str,
+) -> None:
+    """Gap: stop evidence must settle the live core even without a VPS restart."""
+    from dataclasses import replace
+
+    from tests.unit.test_mac_updates import MacProvider
+
+    from planner.environments.mac_updates import MacUpdateService
+    from planner.environments.update_contracts import OwnerUpdateRequest
+    from planner.environments.update_requests import FileUpdateRequestStore
+    from planner.environments.update_service import UpdateService
+    from planner.executor.protocol import CliWrite, CommandOutcome, as_object
+
+    async def run() -> None:
+        monkeypatch.setattr("planner.executor.mac_updates.MAC_UPDATE_POLL_SECONDS", 0.02)
+        harness = await boot(tmp_path, monkeypatch)
+        try:
+            system = harness.system
+            provider = MacProvider()
+            store = FileUpdateRequestStore(tmp_path / "owner-update.json")
+            mac_updates = MacUpdateService(
+                tmp_path / "mac-updates", store, provider, harness.mac.identity.application_revision
+            )
+            updates = UpdateService(
+                provider, store, lambda: system,
+                connection_factory=lambda: connect(harness.endpoint.db_path),
+                current_app_sha=harness.mac.identity.application_revision,
+                prepare_mac_update=mac_updates.prepare,
+                mac_ready_for_dispatch=lambda request: mac_updates.ready_for_dispatch(
+                    request, harness.endpoint.health()
+                ),
+            )
+            harness.transport_app.state.mac_updates = mac_updates
+            child = next(iter(harness.mac.runner._children.values()))
+            old_turn = harness.native.turn
+            assert old_turn is not None
+            artifact = harness.mac.paths.artifacts / child.ticket_id / "before-stop.txt"
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_bytes(b"saved before the authoritative stop")
+            async with paused_outbox(harness.mac.outbox):
+                saved = harness.mac.outbox.add(
+                    OutboxEntry(
+                        child.reference.conversation_id, EnvelopeKind.cli_write,
+                        as_object(CliWrite(
+                            "ticket.edit", {
+                                "ticket_id": child.ticket_id,
+                                "body": {"recap": "Saved before the canceled update"},
+                            }, child.reference, old_turn,
+                        )),
+                    ),
+                    ticket_id=child.ticket_id,
+                )
+                assert saved.file_dependencies
+                request = updates.request(provider.offered, "now", confirm_activity=True)
+                await eventually(
+                    lambda: (status := mac_updates.status()) is not None
+                    and status.phase == "ready_to_restart",
+                    "The connected Mac did not acknowledge its physical stop",
+                )
+                assert harness.native.stop_count == 1
+                stopped = next(
+                    row for row in harness.mac.outbox.pending()
+                    if row.kind is EnvelopeKind.child_stopped
+                )
+                assert stopped.sequence > saved.sequence
+                assert system._conversations["c_scripted"].running_turn is not None
+                assert harness.endpoint.runs.store.child_assignment(child.reference) is not None
+                if request_ending == "cancelled":
+                    updates.cancel(request.request_id)
+                else:
+                    def fail_dispatch(request: OwnerUpdateRequest) -> None:
+                        del request
+                        raise RuntimeError("fixture dispatch failure")
+
+                    monkeypatch.setattr(provider, "dispatch", fail_dispatch)
+                    assert not updates.dispatch_pending()
+                    recorded = store.read()
+                    assert recorded is not None and recorded.state == "failed"
+            await eventually(
+                lambda: not harness.mac.outbox.pending(), "The saved FIFO did not drain",
+            )
+            await eventually(
+                lambda: system._conversations["c_scripted"].running_turn is None
+                and system._conversations["c_scripted"].child is None,
+                "The authoritative Mac stop did not settle the unchanged VPS core",
+            )
+            await eventually(
+                lambda: not harness.mac.runner.admission_stopped,
+                "A canceled or failed request did not release Mac admission",
+            )
+            assert harness.system is system
+            state = system._conversations["c_scripted"]
+            assert not state.child_is_quarantined
+            assert state.retained_child_reference is None
+            endings = [
+                event.payload
+                for event in await system._store.read_events_after("c_scripted", 0)
+                if isinstance(event.payload, TurnEndedEventPayload)
+            ]
+            assert len(endings) == 1
+            assert endings[0].ending is ConversationTurnEnding.interrupted
+            assert harness.endpoint.runs.store.child_assignment(child.reference) is None
+            assert harness.endpoint.runs.store.has_closed_child_assignment(child.reference)
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                assert connection.execute(
+                    "SELECT recap FROM tickets WHERE id=?", (child.ticket_id,),
+                ).fetchone()[0] == "Saved before the canceled update"
+            uploaded = harness.endpoint.inbox.store.file_target(saved.file_dependencies[0])
+            assert uploaded.read_bytes() == artifact.read_bytes()
+            delivery = await asyncio.wait_for(system.send(
+                "c_scripted", text_message_content("Continue after the canceled update"),
+                sender_label="Test", sender=CHIEF_PRINCIPAL,
+                recipient=Principal(PrincipalKind.ticket, child.ticket_id),
+            ), 3)
+            assert isinstance(delivery, PromptDeliveryStarted)
+            assert harness.native.start_count == harness.native.prompt_count == 2
+            current = next(iter(harness.mac.runner._children.values())).reference
+            assert current != child.reference
+            running = state.running_turn
+            assert running is not None and running.token != old_turn
+            # The original receipt can finish cleanup after a lost ACK, but
+            # neither a duplicate nor a substituted payload can stop this child.
+            original = await harness.endpoint.inbox.accept(stopped, harness.mac.identity)
+            assert original.disposition is ReceiptDisposition.accepted
+            outcome = TypeAdapter(CommandOutcome).validate_python(stopped.payload)
+            substituted = replace(stopped, payload=as_object(replace(outcome, child=current)))
+            assert (await harness.endpoint.inbox.accept(
+                substituted, harness.mac.identity
+            )).disposition is ReceiptDisposition.accepted
+            await asyncio.sleep(0)
+            assert state.running_turn is running
+            assert harness.endpoint.runs.store.child_assignment(current) is not None
+            assert harness.native.stop_count == 1
+            assert not state.child_is_quarantined
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
 class ScriptedNativeChild:
     def __init__(self) -> None:
         self.sink: BackendEventSink | None = None
@@ -1850,7 +2134,7 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
     asyncio.run(run())
 
 
-def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_peer(
+def test_vps_refuses_unsupported_protocol_before_replay_without_fencing_current_peer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from uuid import uuid4
@@ -1874,7 +2158,7 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
             ws_context = client.websocket("/api/executor/connect")
             stream = await ws_context.__aenter__()
             old = ExecutorHealth(
-                ExecutorIdentity(PROTOCOL_VERSION - 1, "a" * 40, 2, str(uuid4()), 1),
+                ExecutorIdentity(PROTOCOL_VERSION - 2, "a" * 40, 5, str(uuid4()), 1),
                 42,
                 ConnectionState.disconnected,
                 False,
@@ -1884,7 +2168,9 @@ def test_vps_refuses_previous_protocol_before_replay_without_fencing_current_pee
             payload = encode_value(old)
             assert isinstance(payload, dict)
             await stream.send(WireMessage(WireMessageKind.hello, "old_protocol", payload))
-            assert await asyncio.wait_for(stream.receive_bytes(), 1) == b""
+            refusal = await asyncio.wait_for(stream.receive(), 1)
+            assert refusal.kind is WireMessageKind.protocol_refused
+            assert refusal.payload["reason"] == "Mac needs update"
             await ws_context.__aexit__(None, None, None)
             await client.close()
             assert harness.endpoint.runs.identity == identity and harness.endpoint.runs.ready
@@ -2779,6 +3065,27 @@ def test_reconnect_ready_precedes_retained_output_drain(
         finally:
             if resume is not None:
                 resume.set()
+            await harness.close()
+
+    asyncio.run(run())
+
+
+def test_previous_mac_protocol_reconciles_and_executes_through_authenticated_app_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One existing host proves both version gates and the actual command boundary."""
+    monkeypatch.setattr("planner.executor.mac_service.PROTOCOL_VERSION", PROTOCOL_VERSION - 1)
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        try:
+            identity = harness.endpoint.runs.identity
+            assert identity is not None and identity.protocol_version == PROTOCOL_VERSION - 1
+            assert harness.endpoint.runs.ready
+            assert harness.native.start_count == 1
+            assert harness.mac.identity == identity
+            assert harness.native.prompt_count == 1
+        finally:
             await harness.close()
 
     asyncio.run(run())

@@ -28,7 +28,7 @@ export function childrenDomMatches(root:HTMLElement,principal:import('./types').
 }
 
 export function workspaceHeaderDomMatches(root:HTMLElement,item:import('./workspaceRail').WorkspaceManager):boolean {
-  return root.querySelector('.page-eyebrow > span')?.textContent===(item.project ?? '')
+  return (root.querySelector('.goal-heading')!==null || root.querySelector('.page-eyebrow > span')?.textContent===(item.project ?? ''))
     && root.querySelector('h1 [contenteditable]')?.textContent===item.title
     && root.querySelector('.page-settle')?.getAttribute('aria-label')===`${item.settled ? 'Reopen' : 'Settle'} ${item.title}`
     && JSON.stringify(actualMark(root.querySelector('h1')!))===JSON.stringify(expectedMark(item.conversation_signal,item.conversation_id));

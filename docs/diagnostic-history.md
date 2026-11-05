@@ -12,6 +12,8 @@ Diagnostic history is the append-only event record that conversations and relate
 
 A measurement runs against a private copy, so trying the policy never changes the real database. The report separates what compaction alone would recover from what expiry would remove. When disk space is not urgent, the recommendation is compaction without expiry.
 
+Reports accept only explicitly supported database schemas. A newer shipped schema can remain unsupported until its retention review.
+
 Applying a report needs separate owner approval, with Headroom stopped and no Worker identity in the environment. It refuses a report that no longer matches the database, since any change makes a report stale, and it refuses while an agent backend is still using the database. Compaction is a later, separate step that chooses nothing new to delete. If it fails, an expiry already applied stays applied. The steps are in [ops/runbooks/diagnostic-history.md](../ops/runbooks/diagnostic-history.md).
 
 ## Decisions that shape it

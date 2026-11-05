@@ -30,24 +30,24 @@ def run(browser, urls):
     # Rendered status owns its transition lifecycle; pure resolution cannot prove
     # healthy removal, rapid reversal or reduced-motion card behavior.
     status = page.locator('.rail-foot .status-card')
-    for state, word in [("preparing", "Deploying"), ("problem", "Problem"), ("restarting", "Deploying")]:
+    for state, word in [("preparing", "Updating Panels"), ("problem", "Update didn't install"), ("restarting", "Restarting")]:
         page.evaluate("state => window.__deployment(state)", state)
-        expect(status).to_have_text(word)
+        expect(status).to_contain_text(word)
     page.evaluate("window.__deployment('idle')")
     expect(status).to_have_count(0)
     page.evaluate("window.__connection('reconnecting')")
-    expect(status).to_have_text("Reconnecting")
+    expect(status).to_contain_text("Can't reach Panels")
     page.evaluate("window.__connection('connected')")
     expect(status).to_have_count(0)
     page.evaluate("window.__deployment('preparing')")
-    expect(status).to_have_text("Deploying")
+    expect(status).to_have_text("Updating Panels")
     page.evaluate("async () => { await window.__deployment('idle'); await window.__deployment('problem'); }")
-    expect(status).to_have_text("Problem")
+    expect(status).to_contain_text("Update didn't install")
     page.emulate_media(reduced_motion="reduce")
     page.evaluate("window.__deployment('idle')")
     expect(status).to_have_count(0)
     page.evaluate("window.__deployment('preparing')")
-    expect(status).to_have_text("Deploying")
+    expect(status).to_have_text("Updating Panels")
     page.emulate_media(reduced_motion="no-preference")
 
     # Closing keeps a device-local draft and restores it.
@@ -68,7 +68,7 @@ def run(browser, urls):
     input_box = page.locator("[data-feedback-input]")
     assert input_box.input_value() == "unfinished"
 
-    expect(page.locator('.rail-foot [data-shell-status]')).to_contain_text("Deploying")
+    expect(page.locator('.rail-foot [data-shell-status]')).to_contain_text("Updating Panels")
     page.wait_for_function("""() => {
       const capture=document.querySelector('[data-feedback-capture]')?.getBoundingClientRect();
       const foot=document.querySelector('.rail-foot')?.getBoundingClientRect();
@@ -166,32 +166,21 @@ def run(browser, urls):
     expect(phone.locator('[data-feedback-trigger]')).to_be_focused()
     phone_context.close()
 
-    # A resolved back_up state must produce a visible card, then remove itself
-    # on expiry without another fetch. Reuse the same shell and browser host.
+    # Completion belongs to this page's boot SHA, and never expires before Refresh.
+    # A server-only healthy deployment does not show a spurious success card.
     page.clock.install()
     page.evaluate("window.__deployment('back_up')")
-    expect(status).to_have_text("Deployed")
-    expect(status).to_be_visible()
-    assert status.locator('.status-mark').evaluate("node => getComputedStyle(node).animationName") == "none"
-    page.screenshot(animations="disabled", path=str(evidence / "deploy-success-desktop.png"))
-    page.evaluate("window.__connection('reconnecting')")
-    expect(status).to_have_text("Reconnecting")
-    page.evaluate("window.__connection('connected')")
-    expect(status).to_have_text("Deployed")
-    # An older bundle still sees the ready
-    # update above Deployed. Neither event restarts the recorded success window.
-    page.evaluate("window.__release('shipped')")
-    expect(status).to_contain_text("New version ready")
-    page.evaluate("window.__release('booted')")
-    expect(status).to_have_text("Deployed")
-    page.clock.fast_forward(300_001)
     expect(status).to_have_count(0)
-    # The board no longer mounts the recovery display or reads its removed API.
+    page.evaluate("window.__release('shipped')")
+    expect(status).to_contain_text("Update complete")
+    page.clock.fast_forward(300_001)
+    expect(status).to_contain_text("Update complete")
+    page.evaluate("window.__release('booted')")
+    expect(status).to_have_count(0)
     expect(page.locator('[data-deployment-interruptions]')).to_have_count(0)
     assert not any("deployment-interruptions" in request["path"]
                    for request in page.evaluate("window.__requests()"))
     page.screenshot(animations="disabled", path=str(evidence / "shell-without-interruption-panel.png"))
-    pass  # Shared runner owns the browser lifecycle.
 
     # The update prompt is now an occupant of this same slot, so only the rendered
     # surface can show which card wins, that the action is reachable, and that the
@@ -199,16 +188,16 @@ def run(browser, urls):
     # The deploy fixture has already expired above, so the slot starts empty.
     expect(status).to_have_count(0)
     page.evaluate("window.__release('shipped')")
-    expect(status).to_contain_text("New version ready")
-    expect(status.locator(".status-action")).to_have_text("Refresh page")
+    expect(status).to_contain_text("Update complete")
+    expect(status.locator(".status-action")).to_have_text("Refresh")
     expect(status.locator("[data-shell-refresh]")).to_be_visible()
     # A failed deploy displaces it: a rolled back release still differs from the boot.
     page.evaluate("window.__deployment('problem')")
-    expect(status).to_have_text("Problem")
+    expect(status).to_contain_text("Update didn't install")
     assert status.evaluate("node => node.tagName") == "DIV"
     page.evaluate("window.__deployment('idle')")
-    expect(status).to_contain_text("New version ready")
-    expect(status.locator(".status-action")).to_have_text("Refresh page")
+    expect(status).to_contain_text("Update complete")
+    expect(status.locator(".status-action")).to_have_text("Refresh")
     page.screenshot(animations="disabled", path=str(evidence / "update-ready-desktop.png"))
 
     # Asking for the reload while a message is composed holds it, and says why.
@@ -216,7 +205,7 @@ def run(browser, urls):
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
     )
     status.locator("[data-shell-refresh]").click()
-    expect(status).to_contain_text("Page refresh waits until this message is safe")
+    expect(status).to_contain_text("Refresh waits until this message is safe")
     expect(status.locator(".status-action")).to_have_count(0)
     assert status.evaluate("node => node.tagName") == "DIV"
     # The long copy wraps inside the rail rather than widening or truncating it.
@@ -236,7 +225,7 @@ def run(browser, urls):
     # Both breakpoints: on mobile the same card is a band inside the bottom bar.
     page.set_viewport_size({"width": 390, "height": 844})
     band = page.locator(".compact-bar .status-card")
-    expect(band).to_contain_text("Page refresh waits until this message is safe")
+    expect(band).to_contain_text("Refresh waits until this message is safe")
     bar = page.locator(".compact-bar-row").bounding_box()
     box = band.bounding_box()
     assert box and bar and box["y"] + box["height"] <= bar["y"] + 1, (box, bar)
@@ -279,7 +268,7 @@ def run(browser, urls):
         )
         if shown.locator("[data-shell-refresh]").count():
             shown.locator("[data-shell-refresh]").click()
-        expect(shown).to_contain_text("Page refresh waits until this message is safe")
+        expect(shown).to_contain_text("Refresh waits until this message is safe")
         page.screenshot(animations="disabled", path=str(evidence / f"state-update-held-{breakpoint_}.png"))
 
     # A swap between two open occupants holds the slot at grid-template-rows:1fr, so the
@@ -296,9 +285,9 @@ def run(browser, urls):
           document.querySelector('.rail-foot [data-shell-refresh]').click();
         },
         problem: () => window.__deployment('problem'),
-        ready: () => window.__release('shipped'),
+        ready: () => { window.__deployment('idle'); window.__release('shipped'); },
         close: () => { window.__deployment('idle'); window.__release('booted'); },
-        returning: () => window.__deployment('problem'),
+        returning: () => window.__deployment('restarting'),
       };
       window.__slotStart = (duration, action) => {
         const slot = document.querySelector('.rail-foot [data-shell-status]');
@@ -362,26 +351,26 @@ def run(browser, urls):
                    for sample in samples), (label, samples)
         assert abs(heights[-1] - heights[-3]) < 1, (label, samples[-4:])
 
-    page.evaluate("window.__release('shipped')")
+    page.evaluate("window.__deployment('idle'); window.__release('shipped')")
     status = page.locator(".rail-foot .status-card")
-    expect(status).to_contain_text("New version ready")
+    expect(status).to_contain_text("Update complete")
     page.screenshot(animations="disabled", path=str(evidence / "narrow-update-ready-desktop.png"))
     ready_to_held = swap("held")
-    expect(status).to_contain_text("Page refresh waits until this message is safe")
+    expect(status).to_contain_text("Refresh waits until this message is safe")
     smooth(ready_to_held, "ready-to-held")
     page.screenshot(animations="disabled", path=str(evidence / "narrow-update-held-desktop.png"))
 
     held_to_problem = swap("problem")
-    expect(status).to_have_text("Problem")
+    expect(status).to_contain_text("Update didn't install")
     smooth(held_to_problem, "held-to-problem")
     page.screenshot(animations="disabled", path=str(evidence / "narrow-problem-desktop.png"))
 
     # Reduced motion keeps the same occupants and the same hold, without a timed effect.
     page.emulate_media(reduced_motion="reduce")
     page.evaluate("window.__deployment('idle')")
-    expect(status).to_contain_text("Page refresh waits until this message is safe")
+    expect(status).to_contain_text("Refresh waits until this message is safe")
     reduced = swap("problem", duration=200)
-    expect(status).to_have_text("Problem")
+    expect(status).to_contain_text("Update didn't install")
     assert all(sample["heightEffects"] == 0 for sample in reduced), reduced
     assert abs(reduced[0]["height"] - reduced[-1]["height"]) < 2, reduced
     page.emulate_media(reduced_motion="no-preference")
@@ -399,7 +388,7 @@ def run(browser, urls):
     page.evaluate("window.__release('booted'); window.__deployment('idle')")
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
     page.evaluate("window.__release('shipped')")
-    expect(status).to_contain_text("New version ready")
+    expect(status).to_contain_text("Update complete")
     closed_at = 260
     overlapped = overlap([[0, "held"], [120, "problem"], [closed_at, "close"]])
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
@@ -426,7 +415,7 @@ def run(browser, urls):
     page.evaluate("window.__release('booted'); window.__deployment('idle')")
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
     entering = overlap([[0, "ready"], [80, "held"]], duration=1200)
-    expect(status).to_contain_text("Page refresh waits until this message is safe")
+    expect(status).to_contain_text("Refresh waits until this message is safe")
     card = status.bounding_box()
     assert card and abs(entering[-1]["height"] - (card["height"] + 8)) < 1.5, (card, entering[-1])
     # rAF samples span different time intervals across displays. Match the
@@ -476,10 +465,10 @@ def run(browser, urls):
         page.evaluate("window.__release('booted'); window.__deployment('idle')")
         expect(page.locator(".rail-foot .status-card")).to_have_count(0)
         page.evaluate("window.__release('shipped')")
-        expect(status).to_contain_text("New version ready")
+        expect(status).to_contain_text("Update complete")
         page.wait_for_function(settled_open)
         frames = overlap([[0, "held"], [120, "close"], [at, "returning"]], duration=1200)
-        expect(status).to_have_text("Problem")
+        expect(status).to_contain_text("Restarting")
         continuous(frames, label, at)
         interrupted[label] = frames
         card = status.bounding_box()
@@ -490,7 +479,7 @@ def run(browser, urls):
     # The same overlap under reduced motion runs with no timed effect at all.
     page.emulate_media(reduced_motion="reduce")
     page.evaluate("window.__release('shipped')")
-    expect(status).to_contain_text("New version ready")
+    expect(status).to_contain_text("Update complete")
     reduced_overlap = overlap([[0, "held"], [120, "problem"], [260, "close"]], duration=700)
     expect(page.locator(".rail-foot .status-card")).to_have_count(0)
     assert all(sample["heightEffects"] == 0 for sample in reduced_overlap), reduced_overlap
@@ -503,7 +492,7 @@ def run(browser, urls):
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"
     )
     page.evaluate("window.__release('shipped')")
-    expect(status).to_contain_text("New version ready")
+    expect(status).to_contain_text("Update complete")
     slot_element = page.locator(".rail-foot [data-shell-status]")
     assert slot_element.get_attribute("aria-hidden") is None
     assert slot_element.locator("> div").get_attribute("inert") is None
@@ -530,7 +519,7 @@ def run(browser, urls):
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:true}}))"
     )
     status.locator("[data-shell-refresh]").click()
-    expect(status).to_contain_text("Page refresh waits until this message is safe")
+    expect(status).to_contain_text("Refresh waits until this message is safe")
     page.evaluate("window.__heldNarrow = true")
     page.evaluate(
         "document.dispatchEvent(new CustomEvent('panels:composition-state',{detail:{active:false}}))"

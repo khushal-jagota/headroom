@@ -435,6 +435,9 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
             enabled=preferences.get((_preference_subject_key(edge), edge.notification_type), False),
         )
         if intent is not None:
+            from planner.notifications import apns_data
+
+            apns_data.queue_intent(conn, edge.key, intent, now)
             for subscription_id in subscriptions:
                 conn.execute(
                     "INSERT OR IGNORE INTO notification_deliveries"

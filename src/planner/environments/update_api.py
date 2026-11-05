@@ -17,6 +17,14 @@ from planner.environments.update_service import UpdateService
 router = APIRouter(prefix="/updates")
 
 
+class ClaimBody(BaseModel):
+    deployment_id: str | None = None
+
+
+class PromoteBody(BaseModel):
+    confirm_activity: bool = False
+
+
 class UpdateRequestBody(BaseModel):
     publication_run_id: int
     artifact_id: int
@@ -36,7 +44,15 @@ def _service(request: Request) -> UpdateService:
 
 @router.get("")
 async def status(request: Request) -> dict[str, object]:
-    return asdict(await asyncio.to_thread(_service(request).status))
+    result = asdict(await asyncio.to_thread(_service(request).status))
+    endpoint = getattr(request.app.state, "executor_endpoint", None)
+    mac_status = None if endpoint is None else dict(endpoint.health())
+    mac_updates = getattr(request.app.state, "mac_updates", None)
+    if mac_status is not None and mac_updates is not None:
+        update = await asyncio.to_thread(mac_updates.status)
+        mac_status["update"] = None if update is None else asdict(update)
+    result["mac_status"] = mac_status
+    return result
 
 
 @router.post("/requests")
@@ -62,7 +78,9 @@ async def create(request: Request, body: UpdateRequestBody) -> JSONResponse:
             body.archive_sha256,
         ):
             raise UpdateConflict("The selected publication is no longer available.")
-        receipt = service.request(release, body.mode, confirm_activity=body.confirm_activity)
+        receipt = await asyncio.to_thread(
+            service.request, release, body.mode, confirm_activity=body.confirm_activity
+        )
         await asyncio.to_thread(service.dispatch_pending)
         return JSONResponse(asdict(service.store.read() or receipt), status_code=201)
     except (UpdateConflict, OSError, RuntimeError, ValueError) as exc:
@@ -78,11 +96,24 @@ async def cancel(request: Request, request_id: str) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
 
-@router.post("/requests/{request_id}/claim")
-async def claim(request: Request, request_id: str) -> JSONResponse:
+@router.post("/requests/{request_id}/now")
+async def promote(request: Request, request_id: str, body: PromoteBody) -> JSONResponse:
     service = _service(request)
     try:
-        receipt = await service.claim(request_id)
+        receipt = service.promote(request_id, confirm_activity=body.confirm_activity)
+        await asyncio.to_thread(service.dispatch_pending)
+        return JSONResponse(asdict(service.store.read() or receipt))
+    except UpdateConflict as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+
+@router.post("/requests/{request_id}/claim")
+async def claim(request: Request, request_id: str, body: ClaimBody | None = None) -> JSONResponse:
+    service = _service(request)
+    try:
+        receipt = await service.claim(
+            request_id, deployment_id=body.deployment_id if body is not None else None
+        )
         request.app.state.update_admission_closed = True
         return JSONResponse(asdict(receipt))
     except UpdateConflict as exc:

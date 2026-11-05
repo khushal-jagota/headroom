@@ -502,4 +502,6 @@ export type WorkspaceMessageConversation = {
 };
 
 /** Exact detail-only reply, independent of shared navigation facts. */
-export type ManagerWorkspaceContent = Pick<ManagerWorkspace, "goal" | "recap">;
+export type ManagerWorkspaceContent = Pick<ManagerWorkspace, "goal" | "recap"> & {
+  goals: import("./goals/contracts").GoalResponse[];
+};

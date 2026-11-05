@@ -52,6 +52,32 @@ class VpsDatabase:
 
 
 class ExecutorStore(VpsDatabase):
+    def contact(
+        self, at_ms: int, refusal: dict[str, Any] | None = None, *, clear: bool = False
+    ) -> None:
+        with self._transaction() as conn:
+            conn.execute(
+                "INSERT INTO mac_contact_status VALUES (1,?,?) "
+                "ON CONFLICT(singleton) DO UPDATE SET "
+                "last_contact_at_ms=MAX(last_contact_at_ms,excluded.last_contact_at_ms), "
+                "refusal_json=CASE WHEN ? THEN excluded.refusal_json ELSE refusal_json END",
+                (at_ms, None if refusal is None else _json(refusal), clear or refusal is not None),
+            )
+
+    def contact_status(self) -> tuple[int | None, dict[str, Any] | None]:
+        conn = connect(self.db_path)
+        try:
+            row = conn.execute(
+                "SELECT last_contact_at_ms,refusal_json FROM mac_contact_status WHERE singleton=1"
+            ).fetchone()
+            return (
+                (None, None)
+                if row is None
+                else (row[0], None if row[1] is None else json.loads(row[1]))
+            )
+        finally:
+            conn.close()
+
     @staticmethod
     def interrupt_after_restart(conn: sqlite3.Connection) -> None:
         conn.execute(

@@ -1,99 +1,63 @@
 <script lang="ts">
- import {setContext} from 'svelte';
+ import GoalContent from './GoalContent.svelte';
+ import {workspaceAddress} from '../../lib/workspaceAddress';
  import {createQuery} from '@tanstack/svelte-query';
- import {goalQueries} from '../../lib/goals/queries';
- import {createGoalEditor} from '../../lib/goals/editing';
- import {createGoalRequestSessions} from '../../lib/goals/requestSessions';
+ import {queries} from '../../lib/queryCatalogue';
  import {refreshAtBoundary} from '../../lib/goals/presentation';
- import {pageWithoutSelectedChecklistForRender} from '../../lib/goals/checklistCompletion';
- import {resolveGoalPrimaryDisplay} from '../../lib/goals/primaryDisplay';
- import {createGoalPageContext} from '../../lib/goals/pageContext';
- import type {GoalResponse,GoalEditBody} from '../../lib/goals/contracts';
- import {PAGE_CONTEXT,type PageContext,type PageTextDraft} from '../../lib/pageKit/context';
- import {queryClient} from '../../lib/queryClient';
- import ConversationSignalMark from '../ConversationSignalMark.svelte';
- import {navigationConversationSignal} from '../../lib/navigation/presentation';
+ import {goalQueries} from '../../lib/goals/queries';
  import {conversationOwnerImpact} from '../../lib/workspaceNavigationImpact';
  import {navigationApplication} from '../../lib/navigation/application.svelte';
  import {mutateJson} from '../../lib/mutate';
+ import {fetchJson} from '../../lib/api';
+ import {queryClient} from '../../lib/queryClient';
  import {readBackends,type BackendSnapshot,type DeliveredMessage,type OwnerSendBody} from '../../lib/conversation/wire';
  import type {ConversationState} from '../../lib/conversation/conversationState';
  import type {ManagedFileTarget} from '../../lib/filePreview';
  import ManagerFrame from '../ManagerFrame.svelte';
  import LiveConversation from '../conversation/LiveConversation.svelte';
- import PageDocument from '../pageKit/PageDocument.svelte';
- import PageChart from '../pageKit/PageChart.svelte';
- import PageChecklist from '../pageKit/PageChecklist.svelte';
  import GoalHeader from './GoalHeader.svelte';
  import ErrorLine from '../ErrorLine.svelte';
  let {id,requestedConversationId=null,openedFile=null,onOpenFile}:{id:string;requestedConversationId?:string|null;openedFile?:ManagedFileTarget|null;onOpenFile?:(file:ManagedFileTarget|null)=>void}=$props();
  const navigation=navigationApplication();
- const detail=createQuery(()=>goalQueries.detail(id)),readings=createQuery(()=>goalQueries.readings(id)),start=createQuery(()=>goalQueries.start(id));
- let goal=$derived(detail.data),narrow=$state(false),content=$state<HTMLElement|null>(null),error=$state<unknown>(null);
+ const detail=createQuery(()=>goalQueries.detail(id));
+ let goal=$derived(detail.data),error=$state<unknown>(null);
+ $effect(()=>{if(goal)return refreshAtBoundary(goal.next_refresh_at,()=>void detail.refetch());});
+ let holder=$derived(goal?.holder_kind==='manager'?{kind:'manager' as const,id:goal.holder_id!}:{kind:'chief' as const,id:'chief'});
+ let shared=$derived(navigation?.selectors.effective?navigation.presentationFor(navigation.selectors.effective):null);
+ let holderConversationId=$derived(holder.kind==='chief'?shared?.chief?.conversation_id:shared?.managersById.get(holder.id)?.conversation_id);
+ const start=createQuery(()=>({...(holder.kind==='chief'?queries.chiefConversationStartValues():queries.managerConversationStartValues(holder.id)),enabled:goal!==undefined}));
+ let conversationPath=$derived(holder.kind==='chief'?'/api/chief/conversation':`/api/managers/${encodeURIComponent(holder.id)}/conversation`);
+ let legacyBrowsing=$state(false);
  let conversationState=$state<ConversationState>('rest'),selectedPastConversationId=$state<string|null>(null),backends=$state<readonly BackendSnapshot[]>([]);
- let conversationId=$derived(selectedPastConversationId??goal?.conversation_id??null);
+ let currentConversationId=$state<string|null>(null);
+ let observedPointer=$state<string|undefined>();
+ $effect(()=>{const pointer=JSON.stringify([holder.kind,holder.id,holderConversationId]);if(holderConversationId!==undefined&&pointer!==observedPointer){observedPointer=pointer;currentConversationId=holderConversationId;}});
+ let conversationId=$derived(selectedPastConversationId??currentConversationId);
  let requestedApplied:string|null|undefined;
- $effect(()=>{if(goal&&requestedApplied!==requestedConversationId){requestedApplied=requestedConversationId;selectedPastConversationId=requestedConversationId&&requestedConversationId!==goal.conversation_id?requestedConversationId:null;if(requestedConversationId&&!openedFile)conversationState='opened';}});
- $effect(()=>{navigation?.owner.setDemand('goal',{selected:{kind:'goal',id},selected_conversation_id:selectedPastConversationId,windows:[]});return()=>navigation?.owner.setDemand('goal',undefined);});
- $effect(()=>{if(content){const observer=new ResizeObserver(([entry])=>narrow=entry.contentRect.width<=640);observer.observe(content);return()=>observer.disconnect();}});
- $effect(()=>{if(goal)return refreshAtBoundary(Math.min(goal.next_refresh_at,readings.data?.next_refresh_at??Infinity),()=>{void detail.refetch();void readings.refetch();});});
+ $effect(()=>{if(goal&&holderConversationId!==undefined&&requestedApplied!==requestedConversationId){requestedApplied=requestedConversationId;legacyBrowsing=requestedConversationId===goal.legacy_conversation_id;selectedPastConversationId=requestedConversationId&&requestedConversationId!==holderConversationId?requestedConversationId:null;if(requestedConversationId&&!openedFile)conversationState='opened';}});
+ $effect(()=>{if(goal)navigation?.owner.setDemand('goal',{selected:legacyBrowsing&&selectedPastConversationId?{kind:'goal',id}:holder,selected_conversation_id:selectedPastConversationId,windows:[]});return()=>navigation?.owner.setDemand('goal',undefined);});
  $effect(()=>{void readBackends().then(value=>backends=value).catch(()=>undefined);});
- const sessions=createGoalRequestSessions();
- let editor=$derived(createGoalEditor(id));
- function save(patch:Omit<GoalEditBody,'expected_revision'>,revision?:number){return editor.write(patch,revision);}
- function updateBlock(blockId:string,update:Parameters<typeof editor.updateBlock>[1],revision?:number){return editor.updateBlock(blockId,update,revision);}
- const textDrafts = new Map<string, PageTextDraft>();
- const authorText: NonNullable<PageContext['authorText']> = {
-  draft(blockId, field) {
-   const key = JSON.stringify([id, blockId, field]);
-   let draft = textDrafts.get(key);
-   if (!draft) {
-    const created = $state<PageTextDraft>({value:null,error:null,saving:false});
-    draft = created;
-    textDrafts.set(key, created);
-   }
-   return draft;
-  },
-  begin(blockId) {
-   if (!goal || goal.id !== id) throw new Error('The goal is not ready for this edit.');
-   const ownerId = goal.id, revision = goal.revision;
-   const captured = createGoalEditor(ownerId);
-   return async update => {
-    try { return await captured.updateBlock(blockId, update, revision); }
-    catch (failure) { void queryClient.invalidateQueries(); throw failure; }
-   };
-  }
- };
- setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
-  goalId:()=>id,goal:()=>goal,readings:()=>readings.data,narrow:()=>narrow,sessions:()=>sessions,
- },{manualSession:measureId=>sessions.manual(id,measureId),updateBlock,authorText}));
- async function change(patch:Omit<GoalEditBody,'expected_revision'>){try{await save(patch);error=null;}catch(e){error=e;}}
- async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson<DeliveredMessage>(`/api/goals/${encodeURIComponent(id)}/conversation/send`,{method:'POST',body,responseMetadata});const view=navigation?.state.effective;const delivered=navigation?await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'send goal message'):await operation();await detail.refetch();return delivered;}
- async function reset(){const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson(`/api/goals/${encodeURIComponent(id)}/conversation/reset`,{method:'POST',responseMetadata});const view=navigation?.state.effective;if(navigation)await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,'goal',id),operation,'reset goal conversation');else await operation();selectedPastConversationId=null;await detail.refetch();}
- let display=$derived(resolveGoalPrimaryDisplay(goal));
- let checklist=$derived(display.checklist);
- let renderedPage=$derived(goal?pageWithoutSelectedChecklistForRender(goal.page,checklist?.id??null):null);
- let primary=$derived(display.chart);
+ async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson<DeliveredMessage>(`${conversationPath}/send`,{method:'POST',body,responseMetadata});const view=navigation?.state.effective;const delivered=navigation?await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,holder.kind,holder.id),operation,'send goal message'):await operation();currentConversationId=delivered.conversation_id;return delivered;}
+ async function reset(){const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson(`${conversationPath}/reset`,{method:'POST',responseMetadata});const view=navigation?.state.effective;if(navigation)await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,holder.kind,holder.id),operation,'reset goal conversation');else await operation();selectedPastConversationId=null;currentConversationId=null;}
+ let promoting=$state(false);
+ async function makeManager(){
+  if(!goal||promoting)return;
+  promoting=true;
+  try{const result=await fetchJson<{manager_id:string}>(`/api/goals/${encodeURIComponent(id)}/make-manager`,{method:'POST',body:{expected_revision:goal.revision}});window.location.hash=workspaceAddress({kind:'manager',id:result.manager_id});void queryClient.invalidateQueries();}catch(failure){error=failure;}finally{promoting=false;}
+ }
+ let holderLabel=$derived(holder.kind==='chief'?'Chief of Staff':navigation?.selectors.effective?navigation.presentationFor(navigation.selectors.effective).managersById.get(holder.id)?.title??'Manager':'Manager');
 </script>
 <ManagerFrame class="goal-workspace" bind:conversationState {openedFile} {onOpenFile}>
- <div class="goal-content" bind:this={content} data-goal-page={id}>
+ <div class="goal-content" data-goal-page={id}>
  {#if goal}
- <GoalHeader {goal}>{#snippet mark()}<ConversationSignalMark signal={navigationConversationSignal(navigation?.selectors.effective,goal.conversation_id)} conversationId={goal.conversation_id}/>{/snippet}</GoalHeader>
+ <GoalHeader {goal}>{#snippet mark()}{#if goal.holder_kind==='chief'}<button class="make-manager" disabled={promoting} aria-busy={promoting} onclick={makeManager}>{promoting?'Making Manager…':'Make it a Manager'}</button>{/if}{/snippet}</GoalHeader>
  {#if error}<ErrorLine {error}/>{/if}
- {#if checklist}<section class="checklist-panel" aria-label="Completion checklist">{#key `${goal.id}:${checklist.id}`}<PageChecklist block={checklist} presentation="normal"/>{/key}</section>{/if}
- {#if primary}<section class="measure-panel" aria-label="Current reading"><PageChart block={primary} integrated/>
-  {#if goal.kind==='binary'}<div class="panel-actions"><button class="completion-action" onclick={()=>change({completed:!goal!.completed})}>{goal.completed?'Mark not done':'Mark done'}</button></div>{/if}
- </section>{/if}
- {#if readings.error}<ErrorLine error={readings.error}/>{/if}
- {#each readings.data?.sources.filter(s=>s.health!=='healthy')??[] as source(source.source_id)}<p class="source-warning">{source.source_name}: {source.health}</p>{/each}
- <!-- The saved page is the goal's content. It carries its own authored headings; the page
-      renderer adds none, and nothing here wraps it in a section of our own naming. -->
- {#if renderedPage}<div class="goal-page">{#key goal.id}<PageDocument document={renderedPage} showHeader={false} supplementary/>{/key}</div>{/if}
+ <GoalContent {goal}/>
+ {#if goal.legacy_conversation_id}<button class="previous-conversation" onclick={()=>{legacyBrowsing=true;selectedPastConversationId=goal!.legacy_conversation_id;conversationState='opened';}}>Previous goal conversation</button>{/if}
  {:else if detail.error}<ErrorLine error={detail.error}/>{:else}<p>Loading goal…</p>{/if}
  </div>
- {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:goal:${id}`} label={goal?.title??'Goal'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={{kind:'goal',id}}/>{/snippet}
+ {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:${holder.kind}:${holder.id}`} label={holderLabel} composerPlaceholder={holder.kind==='manager'?'Message this manager…':'Message the Chief…'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={legacyBrowsing&&selectedPastConversationId?{kind:'goal',id}:holder.kind==='manager'?holder:undefined} uploadOwner={holder}/>{/snippet}
 </ManagerFrame>
 <style>
-.goal-content{container-type:inline-size;max-width:900px;margin:0 auto;padding-top:32px}/* The approved card: the chart sits inside it without a second frame. */
-.measure-panel{margin-top:28px;padding:28px;border:1px solid var(--chart-card-border);border-radius:28px;background:var(--chart-surface)}.measure-panel :global(.completion-card){min-height:124px}.panel-actions{display:flex;justify-content:flex-end;margin-top:20px}.completion-action{border:1px solid var(--border-color);border-radius:var(--radius-md);background:none;padding:8px 14px;color:var(--text-muted);font:inherit;font-size:13px;cursor:pointer}.completion-action:hover{color:var(--text-strong)}.goal-page{margin-top:40px}.source-warning{font-size:12px;color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}@media (max-width:760px){.goal-content{padding-top:24px}}
+.goal-content{container-type:inline-size;max-width:900px;margin:0 auto;padding-top:32px}.make-manager,.previous-conversation{border:0;background:none;color:var(--text-muted);font:inherit;font-size:12px;padding:0;cursor:pointer}.make-manager:hover,.previous-conversation:hover{color:var(--text-strong)}.previous-conversation{margin-top:24px}@media(max-width:760px){.goal-content{padding-top:24px}}
 </style>

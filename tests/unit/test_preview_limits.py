@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 
 import pytest
 
@@ -38,6 +39,34 @@ def test_transfer_pacer_cancellation_does_not_block_other_connections() -> None:
         budget.available = 1
         async with asyncio.timeout(0.1):
             await budget.consume(1)
+
+    asyncio.run(run())
+
+
+def test_transfer_pacer_serves_saturating_streams_in_the_order_they_asked() -> None:
+    # A preview's headers wait for its first chunk to pass this pacer. If a later
+    # waiter can overtake an earlier one, a stream can lose round after round and
+    # never answer. The saturation integration test then times out on CI.
+    async def run() -> None:
+        budget = TransferBudget(rate=1000, burst=10)  # one 10-byte chunk per 10 ms
+        budget.available = 0
+        asked = itertools.count()
+        granted: list[int] = []
+
+        async def stream() -> None:
+            while True:
+                turn = next(asked)
+                await budget.consume(10)
+                granted.append(turn)
+                await asyncio.sleep(0)
+
+        streams = [asyncio.create_task(stream()) for _ in range(8)]
+        await asyncio.sleep(0.4)
+        for task in streams:
+            task.cancel()
+        await asyncio.gather(*streams, return_exceptions=True)
+        assert len(granted) >= 10
+        assert granted == sorted(granted)
 
     asyncio.run(run())
 

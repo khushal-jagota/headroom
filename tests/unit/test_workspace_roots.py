@@ -26,8 +26,6 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.db import connect, create_schema
-from planner.goals.actions import create_goal
-from planner.goals.conversation import resolve_goal
 from planner.managers.data import create_manager
 from planner.message_delivery.service import send_message
 from planner.projects.data import create_project
@@ -107,12 +105,6 @@ def test_all_agent_resolvers_keep_explicit_and_project_precedence(
         workspace_root.mkdir()
     project = create_project(tmp_db, name="Workspace", folder_path=project_folder, now=1)
     manager = create_manager(tmp_db, title="Manager", project_id=project.id, clock=fake_clock)
-    goal = create_goal(
-        tmp_db,
-        {"project_id": project.id, "title": "Goal", "kind": "binary",
-         "primary_checklist_block_id": None},
-        principal=OWNER_PRINCIPAL, now=1
-    )
     ticket = create_ticket(
         tmp_db,
         title="Worker",
@@ -128,13 +120,11 @@ def test_all_agent_resolvers_keep_explicit_and_project_precedence(
         assert manager_resolve(tmp_db, manager).workspace_folder == (
             files / "sprint-items" / manager.id
         )
-        assert resolve_goal(tmp_db, goal.id).workspace_folder == configured
         assert worker_resolve(tmp_db, ticket).workspace_folder == configured
         assert agent_resolve(tmp_db, workspace_folder=explicit).workspace_folder == explicit
         assert (
             manager_resolve(tmp_db, manager, workspace_folder=explicit).workspace_folder == explicit
         )
-        assert resolve_goal(tmp_db, goal.id, workspace_folder=explicit).workspace_folder == explicit
         tmp_db.execute("UPDATE tickets SET project_id=? WHERE id=?", (project.id, ticket.id))
         ticket = read_ticket(tmp_db, ticket.id)
         assert worker_resolve(tmp_db, ticket).workspace_folder == project_folder

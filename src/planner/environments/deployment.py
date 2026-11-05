@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TextIO
@@ -234,10 +235,12 @@ def deploy_app(
     gate_evidence: GateEvidence | None = None,
     deployment_id: str | None = None,
     before_stop: Callable[[], None] | None = None,
+    installation_guard: Callable[[], AbstractContextManager[None]] | None = None,
 ) -> DeploymentResult:
     """Replace only ``current/app`` and recover the prior app on post-move failure."""
     if health_timeout_seconds <= 0:
         raise DeploymentError("health timeout must be positive")
+    guard = installation_guard or nullcontext
     root_input = current_root.expanduser()
     if root_input.is_symlink():
         raise DeploymentError("current root must not be a symlink")
@@ -271,6 +274,8 @@ def deploy_app(
                 expected_digest=gate_evidence["artifact_digest"] if gate_evidence else None,
             )
         if prior_manifest.app_sha == candidate_manifest.app_sha:
+            if before_stop is not None:
+                before_stop()
             _publish_lifecycle(lifecycle_transition, "verifying")
             if not health.wait_for_sha(
                 prior_manifest.app_sha, deadline=now() + health_timeout_seconds
@@ -282,9 +287,10 @@ def deploy_app(
                     detail="The current app did not pass exact-SHA health proof.",
                 )
                 raise DeploymentError("unchanged current app did not pass health proof")
-            _publish_lifecycle(
-                lifecycle_transition, "app_healthy", serving_sha=prior_manifest.app_sha
-            )
+            with guard():
+                _publish_lifecycle(
+                    lifecycle_transition, "app_healthy", serving_sha=prior_manifest.app_sha
+                )
             return DeploymentResult(
                 "unchanged", candidate_manifest.app_sha, prior_manifest.app_sha, None
             )
@@ -382,7 +388,8 @@ def deploy_app(
                     "database backup failed; current app was unchanged and restarted"
                 ) from exc
             try:
-                os.replace(current_app, fallback)
+                with guard():
+                    os.replace(current_app, fallback)
             except BaseException as exc:
                 try:
                     service.restart()
@@ -411,8 +418,10 @@ def deploy_app(
                         f"{recovery_exc}; operator continuation path: {current_app}"
                     ) from exc
                 raise
+            commit_started = False
             try:
-                os.replace(staged, current_app)
+                with guard():
+                    os.replace(staged, current_app)
                 service.restart()
                 _publish_lifecycle(lifecycle_transition, "verifying")
                 if not health.wait_for_sha(
@@ -420,7 +429,19 @@ def deploy_app(
                     deadline=now() + health_timeout_seconds,
                 ):
                     raise DeploymentError("candidate app did not become healthy before cutoff")
+                # The authority lock makes this health commit atomic with deadline
+                # settlement. Expiry during health polling enters normal rollback.
+                with guard():
+                    commit_started = True
+                    _publish_lifecycle(
+                        lifecycle_transition, "app_healthy",
+                        serving_sha=candidate_manifest.app_sha,
+                    )
             except BaseException as exc:
+                if commit_started:
+                    # Publication can expose admission before directory fsync fails.
+                    # Never restore the database after this irreversible boundary.
+                    raise
                 detail = _restore_fallback(
                     current_app=current_app,
                     source_db=source_db,
@@ -444,13 +465,7 @@ def deploy_app(
                     prior_manifest.app_sha,
                     str(exc),
                 )
-            # This publication can expose admission before its directory fsync fails.
-            # No database restoration is allowed after this boundary.
-            _publish_lifecycle(
-                lifecycle_transition,
-                "app_healthy",
-                serving_sha=candidate_manifest.app_sha,
-            )
+            # No database restoration is allowed after the guarded health commit.
             try:
                 shutil.rmtree(fallback)
             except OSError as exc:

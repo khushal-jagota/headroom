@@ -94,6 +94,8 @@ class GoalFixture:
         goal = {
             "id": identity,
             "title": title,
+            "holder_kind": "chief",
+            "holder_id": None,
             "project_id": "project",
             "why": "",
             "kind": "binary",
@@ -249,7 +251,8 @@ class GoalFixture:
                         key: goal[key]
                         for key in (
                             "title",
-                            "conversation_id",
+                            "holder_kind",
+                            "holder_id",
                             "active",
                             "completed",
                             "created_at",
@@ -293,6 +296,7 @@ class GoalFixture:
                 "/api/feedback/count": {"open_count": 0},
                 "/api/review": {"items": [], "running_worker_count": 0},
                 "/api/meta": {"test_mode": True, "app_sha": "fixture"},
+                "/api/managers?detail=full": {"managers": []},
                 "/api/conversation/backends": {"backends": []},
                 "/api/workers/chief-of-staff/settings": {
                     "employee_id": "chief",
@@ -1377,7 +1381,13 @@ def gauge_visual_equivalence(browser, url):
                     summary.tap()
                     expect(summary).to_have_attribute("aria-expanded", "true")
                 expect(support.get_by_role("meter")).to_be_visible()
-                support.get_by_role("meter").scroll_into_view_if_needed()
+                # Expansion changes the clipped scroller's geometry. Scroll the
+                # observed figure after that expansion, before its reveal proof.
+                wait_for_capture_stability(support)
+                support.get_by_role("meter").evaluate("""node =>
+                  (node.closest('figure') ?? node).scrollIntoView({
+                    block:'center',inline:'nearest',behavior:'instant'})""")
+                expect(support.get_by_role("meter")).to_be_in_viewport(ratio=0.5)
                 wait_for_gauge_settled(support)
                 row["surfaces"][identity + ":support-expanded"] = snapshot(support)
                 if output:
