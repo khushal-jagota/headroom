@@ -26,7 +26,9 @@ from tests.support.connected_rows import _bind
 from tests.support.connected_rows import _conversation as _conversation
 from tests.support.connected_rows import _message as _message
 from tests.support.connected_rows import _post as _post
-from tests.support.server_fixtures import rail_server as rail_server
+from tests.support.server_fixtures import (
+    owner_read_traced_rail_server as owner_read_traced_rail_server,
+)
 
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 
@@ -44,12 +46,12 @@ def _read_position(server: ServerHandle, conversation: str) -> int:
 
 
 def test_approval_membership_and_each_workers_durable_message_dot(
-    rail_server: ServerHandle,
+    owner_read_traced_rail_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
 ) -> None:
-    server = rail_server
+    server = owner_read_traced_rail_server
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     project = _post(server, "/api/projects", {"name": "Message proof"})
     item = _post(
@@ -238,9 +240,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         ).to_have_count(1, timeout=WAIT_MS)
         assert _read_position(server, "dot-ticket") == 1
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
-        assert (
-            page.locator(f'[data-manager="{item["id"]}"] .item-head .stage-mark').count() == 0
-        )
+        assert page.locator(f'[data-manager="{item["id"]}"] .item-head .stage-mark').count() == 0
 
         _post(
             server, "/api/conversation/conversations/dot-ticket/owner-read", {"through_sequence": 2}

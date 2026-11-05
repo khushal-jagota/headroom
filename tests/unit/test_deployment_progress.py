@@ -105,7 +105,12 @@ def test_periodic_renewal_preserves_bash_semantics_and_child_status(
     tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
 ) -> None:
     before = record(lifecycle)
-    process = launch(tmp_path, lifecycle, "sleep 0.45\nfalse | true\necho should-not-run\n")
+    # The command can exit mid-renewal; receipt recovery then starts a writer, which
+    # alone takes about 80ms to start, so recovery needs more than the 80ms default.
+    process = launch(
+        tmp_path, lifecycle, "sleep 0.45\nfalse | true\necho should-not-run\n",
+        shutdown_grace=0.5,
+    )
     processes.append(process)
     wait_until(lambda: record(lifecycle)["updated_at"] != before["updated_at"])
     first = record(lifecycle)
@@ -148,7 +153,8 @@ def test_long_cleanup_renews_while_healthy(
     tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
 ) -> None:
     record_initial = record(lifecycle)
-    process = launch(tmp_path, lifecycle, "sleep 0.45\n", cleanup=True)
+    # As above: an exit mid-renewal needs room to recover the receipt.
+    process = launch(tmp_path, lifecycle, "sleep 0.45\n", cleanup=True, shutdown_grace=0.5)
     processes.append(process)
     wait_until(lambda: record(lifecycle)["updated_at"] != record_initial["updated_at"])
     first = record(lifecycle)
