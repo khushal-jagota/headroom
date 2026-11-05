@@ -3144,7 +3144,7 @@ def _position_commit(browser, url):
     started=time.perf_counter()
     output=Path(os.environ.get('PANELS_E2E_FAILURE_DIR','/tmp'))
     output.mkdir(parents=True,exist_ok=True)
-    page=browser.new_page(viewport={'width':1000,'height':900},reduced_motion='no-preference',record_video_dir=str(output/'position-video'),record_video_size={'width':800,'height':720})
+    page=browser.new_page(viewport={'width':1000,'height':900},reduced_motion='no-preference')
     proof={'entry':[],'contraction':[],'labels':[]}
     page.add_init_script("""window.__positionFrames=[];window.__samplePosition=false;
       const sample=()=>{
