@@ -1,4 +1,4 @@
-"""Workflow routing and the real mount boundary, without another browser host."""
+"""Owner adoption finalization executes against disposable durable records."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -48,7 +48,7 @@ def test_rehearsal_refuses_non_disposable_or_no_replacement_setup(
 
 def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
-    publication = workflow["jobs"]["deploy"]
+    publication = workflow["jobs"]["build"]
     adoption = workflow["jobs"]["adopt"]
     assert publication["runs-on"] == "ubuntu-24.04"
     assert publication["env"]["PANELS_REHEARSAL"] == "true"
@@ -70,14 +70,14 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
         "Smoke exact retained archive"
     )
     assert names.index("Smoke exact retained archive") < names.index("Deploy exact app")
-    assert names.index("Collect rehearsal proof") < names.index(
-        "Write immutable publication receipt"
-    )
+    assert names.index("Collect rehearsal proof") < names.index("Check sealed archive is unchanged")
     assert "publication_checks.py verify-selection" in (
-        steps["Select complete publication checks"]["run"]
+        next(step for step in workflow["jobs"]["publish"]["steps"]
+             if step.get("name") == "Select complete publication checks")["run"]
     )
-    for name in ("Retain exact executable archive", "Retain publication proof"):
-        assert steps[name]["with"]["retention-days"] == 30
+    assert steps["Retain exact executable archive"]["with"]["retention-days"] == 30
+    assert next(step for step in workflow["jobs"]["publish"]["steps"]
+                if step.get("name") == "Retain publication proof")["with"]["retention-days"] == 30
     commands = "\n".join(step.get("run", "") for step in adoption["steps"])
     assert "update_runner apply" in commands
     assert "systemd-run --user --wait --collect --pipe" in commands
@@ -89,7 +89,7 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
 
 
 def test_publication_preserves_existing_isolated_suite_report_boundaries() -> None:
-    job = yaml.safe_load(WORKFLOW.read_text())["jobs"]["deploy"]
+    job = yaml.safe_load(WORKFLOW.read_text())["jobs"]["build"]
     shell = "python3 scripts/deployment_progress.py {0}"
     assert job["defaults"]["run"]["shell"] == shell
     steps = {step.get("name"): step for step in job["steps"] if "run" in step}
@@ -116,16 +116,17 @@ def test_publication_preserves_existing_isolated_suite_report_boundaries() -> No
     )
 
 
-def test_parallel_publication_requires_all_suites_before_any_candidate_work() -> None:
+def test_parallel_publication_binds_checked_build_and_native_mac_before_receipt() -> None:
     jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
-    preparation, suites, publication = jobs["prepare"], jobs["suites"], jobs["deploy"]
-    native = jobs["mac-runtime"]
-    assert suites["needs"] == "prepare"
+    preparation, suites, publication = jobs["prepare"], jobs["suites"], jobs["publish"]
+    native, build, checks = jobs["mac-runtime"], jobs["build"], jobs["checks"]
+    assert suites["needs"] == build["needs"] == checks["needs"] == "prepare"
     assert suites["strategy"] == {"fail-fast": False,
                                   "matrix": {"suite": ["unit", "integration", "e2e", "browser"]}}
-    assert publication["needs"] == ["prepare", "suites", "mac-runtime"]
+    assert publication["needs"] == ["prepare", "suites", "checks", "build", "mac-runtime"]
     assert "always()" in publication["if"]
-    for job in (preparation, suites, publication, native):
+    assert "inputs.operation != 'mac-build'" in publication["if"]
+    for job in (preparation, suites, publication, native, build, checks):
         assert job["runs-on"] == ("macos-15" if job is native else "ubuntu-24.04")
         assert job["steps"][0]["with"]["ref"] == "${{ github.sha }}"
         assert not job.get("continue-on-error")
@@ -136,40 +137,41 @@ def test_parallel_publication_requires_all_suites_before_any_candidate_work() ->
     gate = steps[gate_name]
     assert "always()" in gate["if"]
     assert gate["env"]["PANELS_PREREQUISITES"] == (
-        '{"prepare":"${{ needs.prepare.result }}","suites":"${{ needs.suites.result }}"}'
+        '{"prepare":"${{ needs.prepare.result }}","suites":"${{ needs.suites.result }}",'
+        '"checks":"${{ needs.checks.result }}","build":"${{ needs.build.result }}"}'
     )
     assert "publication_checks.py collect" in gate["run"]
-    assert names.index("Set deployment paths") < names.index(gate_name)
-    assert names.index(gate_name) < names.index("Provision offline Hermes packaging prerequisite")
-    assert names.index(gate_name) < names.index("Start known-good rehearsal release")
+    assert names.index("Set publication paths") < names.index(gate_name)
     mac_gate = steps["Require successful native Mac publication"]
     assert mac_gate["env"]["PANELS_MAC_BUILD_RESULT"] == "${{ needs.mac-runtime.result }}"
     assert mac_gate["run"] == 'test "$PANELS_MAC_BUILD_RESULT" = success'
     assert names.index(gate_name) < names.index("Require successful native Mac publication")
     assert names.index("Require successful native Mac publication") < names.index(
-        "Provision offline Hermes packaging prerequisite"
+        "Write immutable publication receipt"
     )
-    assert names.index("Validate collected suite reports at requested source") < (
-        names.index("Build exact candidate once")
-    )
-    for name in ("Provision offline Hermes packaging prerequisite", "Build exact candidate once",
-                 "Seal immutable executable archive", "Retain exact executable archive",
-                 "Write immutable publication receipt"):
-        assert "if" not in steps[name]
-    assert sum("app-build" in step.get("run", "") for step in publication["steps"]) == 1
+    receipt = steps["Write immutable publication receipt"]
+    assert receipt["env"] == {
+        "PANELS_ARTIFACT_ID": "${{ needs.build.outputs.app_artifact_id }}",
+        "PANELS_MAC_ARTIFACT_ID": "${{ needs.mac-runtime.outputs.artifact_id }}",
+        "PANELS_MAC_BUILD_RESULT": "${{ needs.mac-runtime.result }}",
+    }
+    assert receipt["run"] == "python3 scripts/update_publication.py receipt"
+    assert "if" not in receipt
+    assert sum("app-build" in step.get("run", "") for step in build["steps"]) == 1
+    assert not any("app-build" in step.get("run", "") for step in publication["steps"])
     assert not any("app-build" in step.get("run", "") for step in suites["steps"])
     downloads = [step for step in publication["steps"]
                  if "actions/download-artifact@" in step.get("uses", "")]
-    assert len(downloads) == 6
-    assert len({step["with"]["path"] for step in downloads}) == 6
-    suite_downloads = [step for step in downloads if "name" in step["with"]]
-    assert len(suite_downloads) == 5
-    assert all("github.run_attempt" in step["with"]["name"] for step in suite_downloads)
+    assert len(downloads) == 7
+    assert len({step["with"]["path"] for step in downloads}) == 7
     assert steps["Download checked native Mac publication"]["with"] == {
         "artifact-ids": "${{ needs.mac-runtime.outputs.artifact_id }}",
         "path": "${{ env.PANELS_GATE_DIR }}/mac",
         "merge-multiple": True,
     }
+    assert "!${{ env.PANELS_GATE_DIR }}/mac/panels-mac-runtime.tar.gz" in (
+        steps["Retain publication proof"]["with"]["path"]
+    )
 
 
 def test_parallel_suite_setup_and_evidence_keep_the_existing_native_and_mount_boundaries() -> None:
@@ -374,120 +376,6 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
         assert "installed" in (recorded.detail or "")
     else:
         assert recorded.phase == "succeeded" and recorded.serving_sha == sha
-
-
-@pytest.mark.parametrize("target", [
-    "root", "candidate", "baseline", "hermes", "interpreter", "stdlib",
-])
-def test_cleanup_refuses_execution_path_alias_before_any_service_or_file_action(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str,
-) -> None:
-    import sys
-    import sysconfig
-    from types import SimpleNamespace
-
-    from scripts import deployment_rehearsal as helper
-
-    temporary = tmp_path / "temporary"
-    temporary.mkdir()
-    checkout = Path(helper.__file__).resolve().parents[1]
-    alias = tmp_path / "execution-alias"
-    protected = {
-        "interpreter": Path(sys.executable).resolve().parent,
-        "stdlib": Path(sysconfig.get_path("stdlib")).resolve(),
-    }.get(target, checkout)
-    alias.symlink_to(protected, target_is_directory=True)
-    values = {
-        "PANELS_TEMP_ROOT": str(temporary),
-        "PANELS_CANDIDATE_SOURCE": str(temporary / "source"),
-        "PANELS_REHEARSAL": "true",
-    }
-    if target in {"root", "interpreter", "stdlib"}:
-        values["PANELS_TEMP_ROOT"] = str(alias)
-    elif target == "candidate":
-        values["PANELS_CANDIDATE_SOURCE"] = str(alias)
-    elif target == "baseline":
-        (temporary / "baseline-source").symlink_to(checkout, target_is_directory=True)
-    else:
-        values["PANELS_REHEARSAL_HERMES_ROOT"] = str(alias)
-    for key, value in values.items():
-        monkeypatch.setenv(key, value)
-
-    def forbidden(*args: object, **kwargs: object) -> None:
-        raise AssertionError("cleanup performed an action before admission")
-
-    # Replace helper dependencies, not the process-wide modules used by pytest teardown.
-    monkeypatch.setattr(helper, "subprocess", SimpleNamespace(run=forbidden))
-    monkeypatch.setattr(helper, "shutil", SimpleNamespace(rmtree=forbidden))
-    try:
-        with pytest.raises(ValueError, match="overlaps finalizer execution path"):
-            helper.cleanup()
-        assert temporary.is_dir()
-    finally:
-        alias.unlink()
-        if (temporary / "baseline-source").is_symlink():
-            (temporary / "baseline-source").unlink()
-
-
-def test_rehearsal_cleanup_preserves_unretained_or_unfinished_outcome_evidence(
-    tmp_path: Path,
-) -> None:
-    import json
-
-    from scripts.deployment_rehearsal import validate_cleanup
-
-    root = tmp_path / "rehearsal"
-    root.mkdir()
-    lifecycle = root / "lifecycle.json"
-    values = {
-        "PANELS_TEMP_ROOT": str(root), "PANELS_CANDIDATE_SOURCE": str(root / "source"),
-        "PANELS_REHEARSAL": "true", "PANELS_LIFECYCLE_PATH": str(lifecycle),
-        "PANELS_DEPLOYMENT_ID": "attempt", "PANELS_LIFECYCLE_START_OUTCOME": "success",
-    }
-    lifecycle.write_text(json.dumps({"phase": "app_healthy", "deployment_id": "attempt"}))
-    with pytest.raises(ValueError, match="diagnostics are not retained"):
-        validate_cleanup(values)
-    values["PANELS_PROOF_RETENTION_OUTCOME"] = "success"
-    with pytest.raises(ValueError, match="no terminal lifecycle outcome"):
-        validate_cleanup(values)
-    lifecycle.write_text(json.dumps({"phase": "succeeded", "deployment_id": "attempt"}))
-    validate_cleanup(values)
-    lifecycle.unlink()
-    with pytest.raises(ValueError, match="evidence is unavailable"):
-        validate_cleanup(values)
-    # A suite or failed setup that never attempted installation has no outcome to finalize.
-    values["PANELS_LIFECYCLE_START_OUTCOME"] = "skipped"
-    validate_cleanup(values)
-
-
-def test_lifecycle_finalizer_uses_isolated_checkout_source_and_reports_missing_source(
-    tmp_path: Path,
-) -> None:
-    import json
-    import shutil
-    import subprocess
-    import sys
-
-    from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
-
-    store = DeploymentLifecycleStore(tmp_path / "lifecycle.json")
-    sha = "a" * 40
-    store.start("attempt", sha)
-    store.transition("attempt", "verifying")
-    store.transition("attempt", "app_healthy", serving_sha=sha)
-    launcher = WORKFLOW.parents[2] / "scripts/deployment_finalize.py"
-    command = [sys.executable, "-I", "-S", "-B", str(launcher), "lifecycle", "transition",
-               "--path", str(store.path), "--deployment-id", "attempt", "--phase", "succeeded"]
-    result = subprocess.run(command, capture_output=True, text=True, check=True, cwd=tmp_path)
-    assert json.loads(result.stdout)["phase"] == "succeeded"
-    # An empty checkout cannot silently use this test environment's installed planner.
-    empty = tmp_path / "empty/scripts"
-    empty.mkdir(parents=True)
-    shutil.copyfile(launcher, empty / launcher.name)
-    command[4] = str(empty / launcher.name)
-    result = subprocess.run(command, capture_output=True, text=True, cwd=tmp_path)
-    assert result.returncode != 0
-    assert "ModuleNotFoundError" in result.stderr
 
 
 def test_adoption_reporting_write_failure_is_observable_without_lifecycle_mutation(

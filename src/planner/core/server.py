@@ -54,6 +54,7 @@ from planner.core.web_assets import WebAssets
 from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
 from planner.datasets.api import router as datasets_router
+from planner.environments import ticket_scratch
 from planner.environments.deployment_attention import DeploymentAttentionObserver
 from planner.environments.deployment_configuration import DEPLOYMENT_ATTENTION_POLL_SECONDS
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
@@ -214,6 +215,7 @@ def create_app(
         lifecycle_observer: asyncio.Task[None] | None = None
         attention_observer: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
+        ticket_scratch_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
         executor_endpoint = None
@@ -245,6 +247,8 @@ def create_app(
                 await attempt(cancel_task(release_task))
             if video_cleanup_task is not None:
                 await attempt(cancel_task(video_cleanup_task))
+            if ticket_scratch_task is not None:
+                await attempt(cancel_task(ticket_scratch_task))
             if recovery_task is not None:
                 await attempt(cancel_task(recovery_task))
             await attempt(scoped_navigation.close())
@@ -360,7 +364,8 @@ def create_app(
                 attention_observer = asyncio.create_task(observe_deployment_attention())
 
                 async def release_normal_work() -> None:
-                    nonlocal recovery_task, video_cleanup_task, loops, metrics
+                    nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
+                    nonlocal loops, metrics
                     # A matching runner commit is irreversible even if later setup fails.
                     if config.app_sha is not None and matching_commit(
                         deployment_lifecycle_store, config.app_sha
@@ -404,6 +409,13 @@ def create_app(
                     app.state.conversation = conversation
                     await asyncio.to_thread(video_uploads.recover_and_cleanup)
                     video_cleanup_task = asyncio.create_task(_clean_video_uploads())
+                    scratch_layout = ticket_scratch.layout_for(
+                        config.ticket_scratch_root, config.ticket_scratch_database, config.db_path
+                    )
+                    if scratch_layout is not None and not config.test_mode:
+                        ticket_scratch_task = asyncio.create_task(
+                            _clean_ticket_scratch(scratch_layout)
+                        )
                     # Worker tests can supply a held conversation system.
                     # Production always uses the real system.
                     if not config.test_mode:
@@ -495,6 +507,25 @@ def create_app(
                 with system.workspace_admission.operation() as admitted:
                     if admitted:
                         await asyncio.to_thread(video_uploads.recover_and_cleanup)
+
+    async def _clean_ticket_scratch(layout: ticket_scratch.ScratchLayout) -> None:
+        already_kept: set[str] = set()
+        logger = logging.getLogger(__name__)
+        while True:
+            await asyncio.sleep(ticket_scratch.CLEANUP_INTERVAL_SECONDS)
+            try:
+                result = await asyncio.to_thread(
+                    ticket_scratch.clean_finished_ticket_scratch,
+                    layout,
+                    config.db_path,
+                    clock.now_unix(),
+                    already_kept,
+                )
+            except Exception:
+                logger.exception("Ticket scratch cleanup failed")
+                continue
+            for kept in result.skipped:
+                logger.warning("Ticket scratch kept: %s (%s)", kept["path"], kept["reason"])
 
     navigation_delivery = create_delivery_runtime(config.db_path)
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)

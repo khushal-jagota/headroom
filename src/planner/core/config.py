@@ -61,6 +61,10 @@ class Config:
     credential_key_path: str = "data/credential-secrets/key"
     measure_source_timeout_seconds: int = 30
     workspace_root: Path | None = None
+    # Where Ticket worktrees and scratch live, and the one database whose Tickets own it.
+    # Both unset: no Ticket scratch is ever removed.
+    ticket_scratch_root: Path | None = None
+    ticket_scratch_database: str | None = None
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -125,11 +129,17 @@ def _optional_str_value(
 
 
 def _workspace_root_value(file_cfg: Mapping[str, object], env: Mapping[str, str]) -> Path | None:
-    value = env.get("PLAN_WORKSPACE_ROOT", file_cfg.get("workspace_root"))
+    return _existing_directory_value(file_cfg, env, "workspace_root", "PLAN_WORKSPACE_ROOT")
+
+
+def _existing_directory_value(
+    file_cfg: Mapping[str, object], env: Mapping[str, str], key: str, env_var: str
+) -> Path | None:
+    value = env.get(env_var, file_cfg.get(key))
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
-        raise PlannerError(ErrorCode.validation, f"invalid workspace_root: {value!r}")
+        raise PlannerError(ErrorCode.validation, f"invalid {key}: {value!r}")
     try:
         root = Path(value).expanduser()
         if not root.is_absolute():
@@ -138,9 +148,7 @@ def _workspace_root_value(file_cfg: Mapping[str, object], env: Mapping[str, str]
         if not root.is_dir():
             raise ValueError("the path must be an existing directory")
     except (OSError, RuntimeError, ValueError) as exc:
-        raise PlannerError(
-            ErrorCode.validation, f"invalid workspace_root {value!r}: {exc}"
-        ) from exc
+        raise PlannerError(ErrorCode.validation, f"invalid {key} {value!r}: {exc}") from exc
     return root
 
 
@@ -286,6 +294,12 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
     return Config(
         db_path=db_path,
         workspace_root=_workspace_root_value(cfg, env),
+        ticket_scratch_root=_existing_directory_value(
+            cfg, env, "ticket_scratch_root", "PLAN_TICKET_SCRATCH_ROOT"
+        ),
+        ticket_scratch_database=_optional_str_value(
+            cfg, env, "ticket_scratch_database", "PLAN_TICKET_SCRATCH_DATABASE"
+        ),
         credential_key_path=credential_key_path,
         measure_source_timeout_seconds=_positive_int_value(
             cfg, env, "measure_source_timeout_seconds", "PLAN_MEASURE_SOURCE_TIMEOUT_SECONDS", 30

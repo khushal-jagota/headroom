@@ -43,6 +43,7 @@ from planner.conversation.backends.codex_app_server.login import (
     codex_home,
     logins_hold_the_same_credential,
 )
+from planner.conversation.tool_shell_kill_priority import with_tool_shell_kill_priority
 from planner.conversation.worker_unit import WorkerUnit, WorkerUnitError
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
@@ -200,6 +201,7 @@ class CodexAppServerClient:
         worker_ticket_id: str | None = None,
     ) -> None:
         """Spawn the child and begin reading it. Raises ``CodexChildWouldNotStart``."""
+        environment = with_tool_shell_kill_priority(dict(environment))
         try:
             if worker_ticket_id:
                 self._worker_unit = await WorkerUnit.create(
@@ -564,7 +566,7 @@ class CodexAppServerClient:
         unit = self._worker_unit
         if unit is not None:
             try:
-                self._end_reason = await unit.finish()
+                await unit.stop()
             except (WorkerUnitError, TimeoutError) as cleanup_failed:
                 self._end_reason = f"Worker stopped, but its unit cleanup failed: {cleanup_failed}"
             else:

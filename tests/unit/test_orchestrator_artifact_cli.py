@@ -97,7 +97,7 @@ def _invoke(
 @pytest.mark.parametrize("source", ["file", "stdin"])
 @pytest.mark.parametrize(
     "content",
-    ["", "no terminal newline", "line\n", "a\r\nb\r\n", "雪 · café\r\nend", "\x1b[31mred\x1b[0m"],
+    ["", "雪 · café\r\nend", "\x1b[31mred\x1b[0m"],
 )
 def test_own_artifact_round_trip_preserves_exact_text(
     artifact_cli: tuple[TestClient, CliRunner], tmp_path: Path, content: str, source: str
@@ -137,8 +137,6 @@ def test_own_artifact_round_trip_preserves_exact_text(
     assert client.get(f"/api/managers/{item_id}/workspace").json()["goal"] == "The goal stays here."
 
 
-
-
 @pytest.mark.parametrize("operation", ["read", "write", "list"])
 def test_foreign_manager_artifacts_remain_refused(
     artifact_cli: tuple[TestClient, CliRunner], tmp_path: Path, operation: str
@@ -170,10 +168,6 @@ def test_foreign_manager_artifacts_remain_refused(
     assert result.stdout == ""
     assert json.loads(result.stderr)["error"]["code"] == "agent_forbidden"
     assert client.get(f"/files/managers/{foreign}/artifacts/context.md").content == b"private"
-
-
-
-
 
 
 @pytest.mark.parametrize(

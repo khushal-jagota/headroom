@@ -30,7 +30,7 @@ from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
 AS_OF = RETENTION_SECONDS + 1000
 
 
-def seed_archive(database: Path, *, initialize_runtime: bool = True) -> None:
+def seed_archive(database: Path) -> None:
     with closing(connect(str(database))) as conn:
         create_schema(conn)
         conn.execute("BEGIN IMMEDIATE")
@@ -66,12 +66,12 @@ def seed_archive(database: Path, *, initialize_runtime: bool = True) -> None:
             )
         maintenance.rebuild_projection(conn, "history")
         conn.commit()
+    # Bootstrap installs the Signal publication tables and source triggers that
+    # maintenance writes through. Initialization would read current-schema tables
+    # that the retained historical archive does not have, so the fixture stops here.
     runtime = SignalRuntimeComposition(str(database), 1000)
     try:
         runtime.bootstrap()
-        runtime.coordinator.bind_runtime(lambda _identity: None)
-        if initialize_runtime:
-            runtime.initialize()
     finally:
         runtime.close()
 
@@ -92,7 +92,7 @@ def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     # The offline writer deliberately refuses later, unreviewed schema revisions.
     _migration_tree_through(tmp_path, monkeypatch, "owner_message_preview")
     database = tmp_path / "archive.db"
-    seed_archive(database, initialize_runtime=False)
+    seed_archive(database)
     yield database
 
 

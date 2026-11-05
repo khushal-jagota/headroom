@@ -372,10 +372,14 @@ def test_metadata_batches_stop_on_failure_and_cache_expires_only_on_a_hint(tmp_p
             reads = scripted.all_sent("app/read")
             assert [len(read["params"]["appIds"]) for read in reads] == [100, 100, 1]
             reports = len(scripted.sink.composer_catalog_reports)
+            installed_before_hint = coordinator.installed
             coordinator.hint_apps()
             now[0] += 1
             coordinator.wake()
             await _until(lambda: len(scripted.all_sent("app/installed")) == 2)
+            # Wait for the reply, not only the request: applying it asks for metadata,
+            # and that refresh must read the clock before the clock jumps below.
+            await _until(lambda: coordinator.installed is not installed_before_hint)
             await _until(lambda: not coordinator._lanes["metadata"].pending)
             assert len(scripted.all_sent("app/read")) == 3
             assert len(scripted.sink.composer_catalog_reports) == reports
@@ -466,12 +470,13 @@ def test_ordinary_start_needs_correlated_response(
     from planner.conversation.backends.codex_app_server import client
     from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
 
-    monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
-
     async def exercise() -> None:
         script: dict[str, Any] = {"turns": [{"respond": respond, "actions": []}]}
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
+            # Shorten the wait only for the prompt under test. Set before the start, it
+            # also bounds the child's initialize handshake, which a busy machine can miss.
+            monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
             expected = PromptWriteFailed if respond == "never" else BackendPromptRejected
             with pytest.raises(expected):
                 await scripted.write_prompt(1, text_message_content("exact provider token"))

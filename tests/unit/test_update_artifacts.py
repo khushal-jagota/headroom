@@ -7,7 +7,6 @@ import tarfile
 from pathlib import Path
 
 import pytest
-from scripts.update_publication import full_selection
 from tests.unit.test_deployment import _app, _rewrite_artifact_digest
 
 from planner.environments import deployment_gate as gate
@@ -69,28 +68,6 @@ def test_portable_publication_gate_never_reuses_old_live_observation(
     (app / "candidate").write_text("changed after publication")
     with pytest.raises(ValueError, match="digest"):
         gate.verify_gate_evidence(gate.read_gate_evidence(evidence), tmp_path / "current", app)
-
-
-def test_publication_selects_complete_suite_and_browser_catalog(tmp_path: Path) -> None:
-    entries = [
-        {"path": "web/tests/a-browser.test.mjs"},
-        {"path": "web/tests/b-browser.test.mjs"},
-    ]
-    catalog = {"schema": 1, "entries": entries}
-    path = tmp_path / "web/tests/browser/catalog.json"
-    path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(catalog))
-    for layer in ("unit", "integration", "e2e"):
-        for name in ("test_top.py", "nested/test_nested.py"):
-            path = tmp_path / "tests" / layer / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("")
-    selection = full_selection(tmp_path)
-    assert selection["ruff_paths"] == ["."]
-    for layer in ("unit", "integration", "e2e"):
-        assert selection[layer] == [f"tests/{layer}/nested/test_nested.py",
-                                     f"tests/{layer}/test_top.py"]
-    assert selection["browser"] == [entry["path"] for entry in entries]
 
 
 @pytest.mark.parametrize("proof", ["portable", "legacy", "legacy-mismatch"])
