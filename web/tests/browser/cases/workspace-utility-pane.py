@@ -2171,9 +2171,11 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     assert after + 1 < entered < full - 1, (after, entered, full)
     sample_change('enter-during-shrink', lambda: None, entered, point)
     proof["sessions"].append({"name": "enter-during-shrink", "full": full, "entered": entered})
-    # The scroll dismissal hides the panel while the pointer remains on it.
-    # Reopening must size to the empty recap, even when no reply ever arrives.
-    page.locator('[data-active-work-scroll]').dispatch_event('scroll')
+    # The person's own scrolling of the rail hides the panel while the pointer
+    # remains on it. Reopening must size to the empty recap, even when no reply
+    # ever arrives. A bare scroll event no longer dismisses it, because layout and
+    # data refreshes fire those too.
+    page.locator('[data-active-work-scroll]').dispatch_event('wheel')
     expect(panel).to_have_attribute('aria-hidden', 'true')
     open_panel()
     assert panel.bounding_box()["height"] < entered - 1
