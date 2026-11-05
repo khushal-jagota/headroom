@@ -6,7 +6,9 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from fastapi.testclient import TestClient
 from starlette.requests import Request
+from tests.support.api_app import _app
 from tests.unit.test_goal_pages import create, page
 from tests.unit.test_manual_measures import manual_measure, replacement
 
@@ -19,6 +21,8 @@ from planner.managers.data import _require_manager_can_delete, create_manager, r
 from planner.managers.pages import page_readings, read_page, write_page
 from planner.managers.resource_versions import ManagerDocumentResources
 from planner.measures import manual
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import TITLE_MAX_CHARS
 
 
 def test_promotion_preserves_goal_record_and_owner_control(
@@ -116,3 +120,35 @@ def test_manager_workspace_goals_share_snapshot_and_resource_revision(
     )
     after_move, document = read_workspace()
     assert after_move != after_edit and document["goals"] == []
+
+
+def test_manager_page_reads_use_central_rank_admission(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    manager = create_manager(tmp_db, title="Peer", project_id="project_vylo", clock=fake_clock)
+    worker = tickets_data.create_ticket(
+        tmp_db, title="Unrelated work", principal=OWNER_PRINCIPAL,
+        now=fake_clock.now_unix(), title_max_chars=TITLE_MAX_CHARS, worker_type="coding",
+    )
+    saved = write_page(
+        tmp_db, manager.id, {"page": page()}, principal=OWNER_PRINCIPAL
+    )
+    with TestClient(_app(tmp_db)) as client:
+        for suffix in ("page", "page/readings"):
+            route = f"/api/managers/{manager.id}/{suffix}"
+            denied = client.get(
+                route, headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": worker.id}
+            )
+            assert denied.status_code == 400, denied.text
+            assert denied.json()["error"]["code"] == "agent_forbidden"
+            for headers in (
+                {},
+                {"X-Plan-Actor": "chief"},
+                {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.id},
+            ):
+                allowed = client.get(route, headers=headers)
+                assert allowed.status_code == 200, allowed.text
+                if suffix == "page":
+                    assert allowed.json() == saved
+                else:
+                    assert allowed.json()["values"] == []
