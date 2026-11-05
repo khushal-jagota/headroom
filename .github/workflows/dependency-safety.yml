@@ -54,7 +54,9 @@ jobs:
           scripts/dev npm --prefix web run check
           scripts/dev npm --prefix web run test:vitest
       - name: Check aliases, startup refusal, and Python backstops
-        run: scripts/dev pytest tests/unit/test_development_*.py tests/unit/test_tree_environment_hooks.py tests/unit/test_instrument.py
+        run: |
+          scripts/dev pytest tests/unit/test_development_*.py tests/unit/test_instrument.py
+          scripts/dev pytest tests/integration/test_tree_environment_hooks.py
       - name: Admit safe Python module and console commands
         run: |
           scripts/dev python -m pytest tests/unit/test_instrument.py

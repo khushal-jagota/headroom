@@ -9,7 +9,7 @@ from sqlite3 import Connection
 from typing import cast
 
 import pytest
-from claude_agent_sdk import ClaudeAgentOptions
+from claude_agent_sdk import ClaudeAgentOptions, ResultMessage
 from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
 from tests.unit.test_executor_native_runtime import (
     canonical_snapshot,
@@ -17,7 +17,6 @@ from tests.unit.test_executor_native_runtime import (
 from tests.unit.test_executor_retired_journal import IDENTITY as SOURCE_IDENTITY
 from tests.unit.test_executor_retired_journal import endpoint
 
-from planner.conversation.backends import claude_agent_sdk
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChild,
     ClaudeAgentSdkBackendChildFactory,
@@ -51,6 +50,17 @@ from planner.tickets import data as tickets
 from planner.tickets.contracts import TicketLocale
 
 
+class _InterruptibleClaudeSdkClient(_ScriptedClaudeSdkClient):
+    async def interrupt_and_cancel_queued(self) -> tuple[frozenset[str], frozenset[str]]:
+        queued = await super().interrupt_and_cancel_queued()
+        assert self.options.session_id is not None
+        self.say(ResultMessage(
+            subtype="success", duration_ms=0, duration_api_ms=0, is_error=False,
+            num_turns=1, session_id=self.options.session_id, terminal_reason="aborted_streaming",
+        ))
+        return queued
+
+
 def claude_registry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[MacRunner, list[_ScriptedClaudeSdkClient]]:
@@ -58,7 +68,7 @@ def claude_registry(
     clients: list[_ScriptedClaudeSdkClient] = []
 
     def client(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
-        scripted = _ScriptedClaudeSdkClient(options)
+        scripted = _InterruptibleClaudeSdkClient(options)
         clients.append(scripted)
         return scripted
 
@@ -90,9 +100,6 @@ def test_claude_stop_result_controls_canonical_retirement(
     tmp_db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fails: bool
 ) -> None:
     """Gap: scripted native stop hid Claude's swallowed disconnect failures."""
-    # The scripted client never settles an interrupted turn, so the kill's cancel
-    # always times out before the stop under test. Only the wait is shortened.
-    monkeypatch.setattr(claude_agent_sdk, "CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS", 0.05)
 
     async def run() -> None:
         remote = endpoint(tmp_db)
@@ -167,6 +174,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             if fails:
                 monkeypatch.setattr(client, "disconnect", disconnect_failure)
             await system.kill("c_cleanup")
+            assert client.interrupts == 1
             assert state.retirement_task is not None
             assert await state.retirement_task is (not fails)
             stop = next(command for command in commands if command.operation is ChildOperation.stop)

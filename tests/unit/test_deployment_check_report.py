@@ -74,7 +74,8 @@ def test_pytest_provider_opt_in_cannot_excuse_required_skip(tmp_path: Path) -> N
         ("tests.unit.test_conversation_codex_real_cli_extra",
          opt_ins["tests.unit.test_conversation_codex_real_cli"]),
         ("tests.unit.test_conversation_codex_real_cli", "a different skip reason"),
-        ("tests.unit.test_conversation_codex_bindings", "the pinned Codex binary is not installed"),
+        ("tests.integration.test_conversation_codex_bindings",
+         "the pinned Codex binary is not installed"),
     ):
         report.write_text(
             f'<testsuite>{executed}<testcase classname="{module}" name="required">'

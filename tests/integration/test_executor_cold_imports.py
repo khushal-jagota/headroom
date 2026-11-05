@@ -23,17 +23,12 @@ def cold_python(program: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+# Public process entrypoints exercise their transitive imports too.
 @pytest.mark.parametrize(
     "module",
     [
-        "planner.executor.protocol",
-        "planner.executor.mac_outbox",
-        "planner.conversation.model_resolution.contracts",
-        "planner.executor.mac_runner",
         "planner.executor.mac_service",
         "planner.executor.vps_transport",
-        "planner.executor.vps_agent_writes",
-        "planner.executor.cli",
         "planner.cli.main",
     ],
 )
