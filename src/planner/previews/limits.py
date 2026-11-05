@@ -52,6 +52,8 @@ class TransferBudget:
         # If waiters raced instead, they would all wake at the same instant and one could
         # lose for many seconds. A preview's headers wait for its first chunk, so that
         # stream would not answer at all.
+        if not amount:
+            return
         async with self.lock:
             while amount:
                 part = min(amount, self.burst)

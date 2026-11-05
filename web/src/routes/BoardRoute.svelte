@@ -269,7 +269,12 @@
     const click = (event: MouseEvent) => goalPreviewInput.click(event);
     window.addEventListener('pointerdown',outside); window.addEventListener('wheel',wheel,{passive:true});
     window.addEventListener('scroll',scrollHover,true); window.addEventListener('keydown',key); window.addEventListener('click',click,true);
-    const stopUserScroll = listenForUserScroll(window, target => { if (!hoverGoalId && !hoverElement?.contains(target as Node)) hover.leave(); });
+    const stopUserScroll = listenForUserScroll(window, event => {
+      const target = event.target as Node | null;
+      // A key on the previewed row itself moves focus, which opens the next preview.
+      if (hoverGoalId || hoverElement?.contains(target) || (event.type === 'keydown' && hoverTarget?.contains(target))) return;
+      hover.leave();
+    });
     return () => {
       stopUserScroll();
       blurGoalPreviewInput(goalHoverElement);

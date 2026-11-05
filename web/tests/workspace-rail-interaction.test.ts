@@ -1,45 +1,39 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clampRailWidth, createRailHoverController, createRailPreviewInput, listenForUserScroll, railWidthForKey, readRailWidth,
-  saveRailWidth, RAIL_HOVER_ENTER_MS, RAIL_HOVER_EXIT_MS, RAIL_WIDTH_STORAGE_KEY
+  saveRailWidth, RAIL_HOVER_EXIT_MS, RAIL_WIDTH_STORAGE_KEY
 } from "../src/lib/workspaceRailInteraction";
 import {createGoalRailPreviewInput} from "../src/lib/goals/railPreview";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("approved rail interaction", () => {
-  it("opens a row preview through an unrelated scroll and leaves it on the person's own scrolling", () => {
-    // A layout scroll during the open delay once cancelled the preview under a still pointer.
+  it("leaves a row preview only on the person's own scrolling", () => {
+    // BoardRoute once left the preview on any scroll event, which a layout scroll under a
+    // still pointer could fire. Only these inputs dismiss now. The browser proof is the
+    // conversation-signals E2E hover.
     vi.useFakeTimers();
     const page=new EventTarget();
     const show=vi.fn(), hide=vi.fn();
     const hover=createRailHoverController<string>(show,hide);
     const stop=listenForUserScroll(page,()=>hover.leave());
+    const touch=(name:string,y:number)=>page.dispatchEvent(Object.assign(new Event(name),{touches:[{clientX:10,clientY:y}]}));
     const key=(name:string,target:unknown=null)=>{
       const event=Object.assign(new Event('keydown'),{key:name,altKey:false,ctrlKey:false,metaKey:false});
       Object.defineProperty(event,'target',{value:target});
       page.dispatchEvent(event);
     };
-    hover.enter('row');
-    vi.advanceTimersByTime(RAIL_HOVER_ENTER_MS/2);
-    page.dispatchEvent(new Event('scroll'));
-    vi.advanceTimersByTime(RAIL_HOVER_ENTER_MS/2);
-    expect(show).toHaveBeenCalledWith('row',false);
-    for (const scroll of [()=>page.dispatchEvent(new Event('wheel')),()=>page.dispatchEvent(new Event('touchmove')),()=>key('PageDown')]) {
-      hover.enter('row',true);
-      scroll();
-      vi.advanceTimersByTime(RAIL_HOVER_EXIT_MS);
-    }
-    expect(hide).toHaveBeenCalledTimes(3);
-    hover.enter('row',true);
-    key('ArrowDown',{closest:(selector:string)=>selector.includes('textarea') ? {} : null});
-    key('Escape');
-    vi.advanceTimersByTime(RAIL_HOVER_EXIT_MS);
-    expect(hide).toHaveBeenCalledTimes(3);
+    const kept=(act:()=>void)=>{ hover.enter('row',true); act(); vi.advanceTimersByTime(RAIL_HOVER_EXIT_MS); expect(hide).not.toHaveBeenCalled(); };
+    const left=(act:()=>void)=>{ hover.enter('row',true); act(); vi.advanceTimersByTime(RAIL_HOVER_EXIT_MS); expect(hide).toHaveBeenCalledOnce(); hide.mockClear(); };
+    kept(()=>{ touch('touchstart',100); touch('touchmove',105); });
+    kept(()=>key('ArrowDown',{closest:(selector:string)=>selector.includes('textarea') ? {} : null}));
+    kept(()=>key('Escape'));
+    left(()=>page.dispatchEvent(new Event('wheel')));
+    left(()=>{ touch('touchstart',100); touch('touchmove',130); });
+    left(()=>key('PageDown'));
     stop();
-    page.dispatchEvent(new Event('wheel'));
-    vi.advanceTimersByTime(RAIL_HOVER_EXIT_MS);
-    expect(hide).toHaveBeenCalledTimes(3);
+    kept(()=>page.dispatchEvent(new Event('wheel')));
+    expect(show).toHaveBeenCalledWith('row',true);
   });
   it("keeps a completed goal hold through release blur and suppresses its retargeted overlay click", () => {
     vi.useFakeTimers();
