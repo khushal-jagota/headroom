@@ -28,7 +28,7 @@ def _principal(raw: object) -> Principal:
     if not isinstance(raw_kind, str):
         raise PlannerError(
             ErrorCode.validation,
-            "recipient kind must be owner, chief, manager, goal, or ticket",
+            "recipient kind must be owner, chief, manager, or ticket",
             {"kind": raw_kind},
         )
     try:
@@ -36,9 +36,15 @@ def _principal(raw: object) -> Principal:
     except ValueError as exc:
         raise PlannerError(
             ErrorCode.validation,
-            "recipient kind must be owner, chief, manager, goal, or ticket",
+            "recipient kind must be owner, chief, manager, or ticket",
             {"kind": raw_kind},
         ) from exc
+    if kind not in (
+        PrincipalKind.owner, PrincipalKind.chief, PrincipalKind.manager, PrincipalKind.ticket
+    ):
+        raise PlannerError(
+            ErrorCode.validation, "unknown message recipient kind", {"kind": raw_kind}
+        )
     raw_id = raw.get("id")
     if not isinstance(raw_id, str) or not raw_id.strip():
         raise PlannerError(

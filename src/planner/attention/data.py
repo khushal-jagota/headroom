@@ -114,7 +114,7 @@ def load_evidence(conn: sqlite3.Connection, *, first_at: int, last_at: int) -> E
         kind = str(row["owner_kind"])
         if kind == "worker":
             kind = "ticket"
-        if kind in ("ticket", "manager", "goal", "chief") and row["owner_id"] is not None:
+        if kind in ("ticket", "manager", "chief") and row["owner_id"] is not None:
             by_conversation.setdefault(str(row["conversation_id"]), (kind, str(row["owner_id"])))
     for row in conn.execute(
         "SELECT conversation_id,ticket_id FROM ticket_conversations "
@@ -130,7 +130,6 @@ def load_evidence(conn: sqlite3.Connection, *, first_at: int, last_at: int) -> E
             identity = "chief", "chief"
         for prefix, kind in (
             ("manager_", "manager"),
-            ("goal_", "goal"),
         ):
             if agent_key.startswith(prefix):
                 identity = kind, agent_key[len(prefix) :]
@@ -153,7 +152,6 @@ def load_evidence(conn: sqlite3.Connection, *, first_at: int, last_at: int) -> E
         if isinstance(recipient, dict) and recipient.get("kind") in (
             "ticket",
             "manager",
-            "goal",
             "chief",
         ):
             identity = str(recipient["kind"]), str(recipient.get("id", ""))
