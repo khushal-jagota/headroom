@@ -1,13 +1,46 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  clampRailWidth, createRailHoverController, createRailPreviewInput, railWidthForKey, readRailWidth,
-  saveRailWidth, RAIL_WIDTH_STORAGE_KEY
+  clampRailWidth, createRailHoverController, createRailPreviewInput, listenForUserScroll, railWidthForKey, readRailWidth,
+  saveRailWidth, RAIL_HOVER_ENTER_MS, RAIL_HOVER_EXIT_MS, RAIL_WIDTH_STORAGE_KEY
 } from "../src/lib/workspaceRailInteraction";
 import {createGoalRailPreviewInput} from "../src/lib/goals/railPreview";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("approved rail interaction", () => {
+  it("opens a row preview through an unrelated scroll and leaves it on the person's own scrolling", () => {
+    // A layout scroll during the open delay once cancelled the preview under a still pointer.
+    vi.useFakeTimers();
+    const page=new EventTarget();
+    const show=vi.fn(), hide=vi.fn();
+    const hover=createRailHoverController<string>(show,hide);
+    const stop=listenForUserScroll(page,()=>hover.leave());
+    const key=(name:string,target:unknown=null)=>{
+      const event=Object.assign(new Event('keydown'),{key:name,altKey:false,ctrlKey:false,metaKey:false});
+      Object.defineProperty(event,'target',{value:target});
+      page.dispatchEvent(event);
+    };
+    hover.enter('row');
+    vi.advanceTimersByTime(RAIL_HOVER_ENTER_MS/2);
+    page.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(RAIL_HOVER_ENTER_MS/2);
+    expect(show).toHaveBeenCalledWith('row',false);
+    for (const scroll of [()=>page.dispatchEvent(new Event('wheel')),()=>page.dispatchEvent(new Event('touchmove')),()=>key('PageDown')]) {
+      hover.enter('row',true);
+      scroll();
+      vi.advanceTimersByTime(RAIL_HOVER_EXIT_MS);
+    }
+    expect(hide).toHaveBeenCalledTimes(3);
+    hover.enter('row',true);
+    key('ArrowDown',{closest:(selector:string)=>selector.includes('textarea') ? {} : null});
+    key('Escape');
+    vi.advanceTimersByTime(RAIL_HOVER_EXIT_MS);
+    expect(hide).toHaveBeenCalledTimes(3);
+    stop();
+    page.dispatchEvent(new Event('wheel'));
+    vi.advanceTimersByTime(RAIL_HOVER_EXIT_MS);
+    expect(hide).toHaveBeenCalledTimes(3);
+  });
   it("keeps a completed goal hold through release blur and suppresses its retargeted overlay click", () => {
     vi.useFakeTimers();
     vi.stubGlobal('window',{matchMedia:()=>({matches:true})});

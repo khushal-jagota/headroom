@@ -90,8 +90,9 @@
     const observer = new ResizeObserver(place);
     observer.observe(currentPanel);
     void tick().then(place);
-    window.addEventListener("resize", place);
-    return () => { observer.disconnect(); window.removeEventListener("resize", place); };
+    // A scroll no longer dismisses the panel, so it follows its row instead.
+    window.addEventListener("resize", place); window.addEventListener("scroll", place, true);
+    return () => { observer.disconnect(); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
   });
 </script>
 <div bind:this={element} class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}
