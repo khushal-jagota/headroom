@@ -12,7 +12,7 @@ import os
 import sqlite3
 import tempfile
 import zipfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import httpx
@@ -32,6 +32,7 @@ from planner.environments.deployment import (
 from planner.environments.deployment_gate_contracts import PublicationGateEvidence
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore, lifecycle_path
 from planner.environments.update_artifacts import extract_app_archive
+from planner.environments.update_contracts import PublishedUpdate
 from planner.environments.update_provider import GitHubUpdateProvider
 from planner.environments.update_requests import (
     FileUpdateRequestStore,
@@ -39,6 +40,20 @@ from planner.environments.update_requests import (
     parse_release,
 )
 from planner.environments.update_service import validate_release
+
+
+def matches_pinned_release(evidence: PublishedUpdate | None, pinned: PublishedUpdate) -> bool:
+    """Compare retained evidence with exactly what the owner request pinned.
+
+    A server from before Mac publication pins no Mac part. Its request still
+    adopts the VPS release; the Mac runtime is then outside that request.
+    Every field the request does pin, including a pinned Mac part, stays exact.
+    """
+    if evidence is None:
+        return False
+    if pinned.mac is None:
+        evidence = replace(evidence, mac=None)
+    return evidence == pinned
 
 
 def validate_schema_ancestry(database: Path, migrations: Path = MIGRATIONS_DIRECTORY) -> None:
@@ -111,7 +126,7 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
     )
     # Artifact metadata and the proof bind IDs to a successful trusted main run.
     trusted = provider.publication(release.publication_run_id)
-    if trusted != release:
+    if not matches_pinned_release(trusted, release):
         raise ValueError("The pinned publication no longer has trusted retained evidence.")
     lifecycle = DeploymentLifecycleStore(lifecycle_path(root))
     deployment_id = os.environ.get("PANELS_DEPLOYMENT_ID", request.request_id)
@@ -155,7 +170,7 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
         with zipfile.ZipFile(work / "proof.zip") as zipped:
             proof = json.loads(zipped.read("publication.json"))
         proof["proof_artifact_id"] = release.proof_artifact_id
-        if parse_release(proof) != release:
+        if not matches_pinned_release(parse_release(proof), release):
             raise ValueError("Downloaded proof differs from the pinned publication.")
         provider.download_artifact(release.artifact_id, work / "app.zip")
         with zipfile.ZipFile(work / "app.zip") as zipped:
