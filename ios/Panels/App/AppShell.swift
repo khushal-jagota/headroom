@@ -4,6 +4,7 @@ struct AppShell: View {
     @Environment(AppStore.self) private var store
     @Environment(NotificationController.self) private var notifications
     @Environment(\.scenePhase) private var scenePhase
+    @State private var updateRequired = false
     @State private var deploymentState: DeploymentStatusPresentation?
     @State private var selectedTab: AppTab = .workspace
     @State private var reviewPath: [AppRoute] = []
@@ -38,8 +39,24 @@ struct AppShell: View {
         }
         .task {
             while !Task.isCancelled {
+                updateRequired = NativeBuildGate.requiresUpdate(store.baseURL)
                 deploymentState = DeploymentStatusPresentation.resolve(store.deployment, connected: store.connection == "Following changes", readFailed: store.errors["Deployment"] != nil, now: .now)
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+        }
+        .overlay {
+            if updateRequired {
+                VStack(spacing: 16) {
+                    Image(systemName: "arrow.down.app").font(.largeTitle)
+                    Text(NativeBuildGate.message).font(.title2)
+                    Text("Your drafts and pending messages stay on this device.").font(.body)
+                    Link("Open TestFlight", destination: URL(string: "itms-beta://")!)
+                }
+                .multilineTextAlignment(.center)
+                .padding(32)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(PanelsTheme.surface)
+                .accessibilityIdentifier("ios-update-required")
             }
         }
         .task(id: notifications.pendingOpen?.id) { openNotification() }

@@ -131,7 +131,8 @@ def _catalogs(browser, url):
         page.evaluate("window.__catalogOwner('t_other')")
         expect(window.locator('[data-artifact-chip]')).to_have_count(0)
         expect(window.locator('[aria-busy="true"]')).to_have_count(1)
-        page.wait_for_timeout(50)
+        # The new owner's held read reaches the route before it can fail.
+        _until(page, lambda: pending_artifacts)
         assert pending_artifacts
         pending_artifacts.pop(0)[0].fulfill(status=503, json={"error":{"code":"offline","message":"offline"}})
         expect(window.get_by_role("button", name="Retry", exact=True)).to_be_visible()
@@ -481,6 +482,94 @@ def _settle_conversation_layout(page):
     })""")
 
 
+# Settled: no surface motion, no admitted presentation or entry work, and the
+# same thread geometry for this many consecutive frames. Every pane reaction
+# (scroll handler, notification reconciliation, resize repair, placement) starts
+# within a frame of its cause and marks the pane while it moves.
+_SETTLED_FRAMES = 5
+_SETTLED = r"""({frames,until,arg,work})=>{
+  const t=document.querySelector('[data-conversation-thread]');
+  const region=t?.closest('.conversation-transcript-region');
+  const dormant='[data-visible-content-state="released"], [data-visible-content-state="retained"]';
+  const busy=!!t&&(!!t.closest('[data-conversation-pane]')?.hasAttribute('data-conversation-motion')||work&&(
+    t.dataset.conversationPlacementReady!=='true'||region?.getAttribute('aria-busy')==='true'||
+    ['loading','placing'].includes(region?.dataset.conversationEntry)||
+    [...t.querySelectorAll('[aria-busy="true"], [data-markdown-rendering]')].some(n=>!n.closest(dormant))));
+  const room=t?.querySelector('[data-conversation-reserved-space]'),content=t?.querySelector('[data-conversation-content]');
+  const key=t?JSON.stringify([t.scrollTop,t.scrollHeight,t.clientHeight,getComputedStyle(t).paddingTop,
+    room?.getBoundingClientRect().height??0,content?.getBoundingClientRect().height??0,
+    t.dataset.conversationPositionOwner??null]):'absent';
+  const met=!until||!!(0,eval)('('+until+')')(arg);
+  const s=window.__settled;
+  s.stable=met&&!busy&&key===s.key?s.stable+1:0;s.key=key;s.busy=busy;s.met=met;
+  return s.stable>=frames;
+}"""
+
+
+# The newest sent bubble sits 32px below the thread top: explicit send placement.
+_SENT_AT_TOP = "()=>{const t=document.querySelector('[data-conversation-thread]'),n=t&&[...t.querySelectorAll('[data-conversation-outgoing]')].at(-1);return !!n&&Math.abs(n.getBoundingClientRect().top-t.getBoundingClientRect().top-32)<2}"
+
+
+def _settle(page, until=None, arg=None, *, work=True, label=""):
+    """Wait for the end state a step needs, then for the pane to settle.
+
+    work=False ignores entry and presentation work a step deliberately holds,
+    and settles on motion and geometry alone.
+    A timeout proceeds to the step's own assertions, which report the state.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    page.evaluate("window.__settled={stable:0,key:null}")
+    try:
+        page.wait_for_function(_SETTLED, arg={"frames": _SETTLED_FRAMES, "until": until, "arg": arg, "work": work}, polling="raf", timeout=5_000)
+    except PlaywrightTimeoutError:
+        print("SETTLE_TIMEOUT", label, until, page.evaluate("window.__settled"), flush=True)
+
+
+def _frames(page, count):
+    page.evaluate("n=>new Promise(resolve=>{const next=k=>k?requestAnimationFrame(()=>next(k-1)):resolve();next(n)})", count)
+
+
+def _late_completion(page, *, work=True, label=""):
+    # A released fixture response reaches the reader through promise jobs and a
+    # task. Let queued tasks run, then require five unchanged, idle frames: any
+    # reaction to the late completion marks the pane or moves its geometry.
+    page.evaluate("()=>new Promise(resolve=>setTimeout(resolve,0))")
+    _settle(page, work=work, label=label)
+
+
+def _until(page, condition, timeout=5_000):
+    """Wait for a condition that Python route handlers satisfy.
+
+    Each round trip lets Playwright dispatch pending route callbacks.
+    """
+    import time
+    deadline = time.monotonic() + timeout / 1000
+    while not condition() and time.monotonic() < deadline:
+        page.evaluate("()=>new Promise(requestAnimationFrame)")
+    return condition()
+
+
+# A native scroll input has taken effect once the thread leaves the position it
+# held before that input. Callers then settle, which waits out any animated travel.
+_NATIVE_SCROLL_ARM = r"""()=>{
+  const thread=document.querySelector('[data-conversation-thread]');
+  const start=[thread.scrollTop,thread.scrollLeft];
+  window.__nativeScroll={moved:()=>Math.abs(thread.scrollTop-start[0])>.5||Math.abs(thread.scrollLeft-start[1])>.5};
+}"""
+
+
+def _native_scroll(page, action, *, label=""):
+    """Run one native scroll input and wait until the browser has moved the thread."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    page.evaluate(_NATIVE_SCROLL_ARM)
+    action()
+    try:
+        page.wait_for_function("window.__nativeScroll.moved()", polling="raf", timeout=5_000)
+    except PlaywrightTimeoutError:
+        # The step's own assertions report the position it reached.
+        print("NATIVE_SCROLL_TIMEOUT", label, flush=True)
+
+
 def _run(browser, urls):
     controls_only = __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'controls'
     if not controls_only:
@@ -609,12 +698,14 @@ def _run(browser, urls):
                   return paragraph.getBoundingClientRect().top - thread.getBoundingClientRect().top + 9;
                 }""")
                 thread.hover()
+                page.evaluate(_NATIVE_SCROLL_ARM)
                 page.mouse.wheel(0, distance)
             else:
                 thread.hover()
+                page.evaluate(_NATIVE_SCROLL_ARM)
                 page.mouse.wheel(0, -550)
             page.evaluate("window.__lastRegressionWheel = performance.now()")
-            page.wait_for_timeout(80)
+            page.wait_for_function("window.__nativeScroll.moved()", polling="raf", timeout=5_000)
             settled(page)
             page.locator('button[aria-label="Jump to latest message"]').wait_for()
             return visible_paragraph(page)
@@ -797,8 +888,7 @@ def _run(browser, urls):
           window.__nativeRaceBefore = thread.scrollTop;
         }, {capture:true, once:true})""")
         page.locator(THREAD).hover()
-        page.mouse.wheel(0, 120)
-        page.wait_for_timeout(100)
+        _native_scroll(page, lambda: page.mouse.wheel(0, 120), label="native before observer")
         settled(page)
         after = newest_reading(page)
         # The browser can adjust for growth before native wheel motion begins.
@@ -852,6 +942,7 @@ def _run(browser, urls):
             settled(page)
             before = newest_reading(page)["scrollTop"]
             page.evaluate("""()=>{window.__keyFrames=[];window.__keyStop=false;const start=performance.now();const sample=()=>{const thread=document.querySelector('[data-conversation-thread]');window.__keyFrames.push({ms:performance.now()-start,scroll:thread.scrollTop,height:thread.clientHeight,focused:document.activeElement?.getBoundingClientRect().top-thread.getBoundingClientRect().top,held:window.__heldParagraph.getBoundingClientRect().top-thread.getBoundingClientRect().top});if(!window.__keyStop)requestAnimationFrame(sample)};sample()}""")
+            page.evaluate(_NATIVE_SCROLL_ARM)
             page.keyboard.press(key)
             # Chromium animates native key scrolling. Wait for its actual endpoint
             # before the independent geometry change, so the held paragraph is settled.
@@ -865,7 +956,8 @@ def _run(browser, urls):
                   return thread.scrollHeight-thread.scrollTop-thread.clientHeight <= 1;
                 }""")
             else:
-                page.wait_for_timeout(250)
+                # The page has begun its travel; settling waits for its end.
+                page.wait_for_function("window.__nativeScroll.moved()", polling="raf", timeout=5_000)
             settled(page)
             after = newest_reading(page)
             if key == "PageDown":
@@ -902,8 +994,7 @@ def _run(browser, urls):
         settled(page)
         for key, amount in [("ArrowDown", 180), ("ArrowUp", 220)]:
             before = newest_reading(page)["scrollTop"]
-            page.keyboard.press(key)
-            page.wait_for_timeout(250)
+            _native_scroll(page, lambda key=key: page.keyboard.press(key), label=key)
             settled(page)
             after = newest_reading(page)["scrollTop"]
             assert after > before + 10 if key == "ArrowDown" else after < before - 10, (
@@ -953,10 +1044,7 @@ def _run(browser, urls):
         page.wait_for_function("() => document.querySelector('[data-conversation-row]') !== null")
         # The preview now starts only near the viewport. Wait for its observer,
         # then keep the original delayed native-layout/anchor assertion.
-        for _ in range(50):
-            if pending:
-                break
-            page.wait_for_timeout(20)
+        _until(page, lambda: pending)
         if len(pending)!=1:
             print("DELAYED_VISIBILITY",kind,mode,page.evaluate("""()=>({thread:document.querySelector('[data-conversation-thread]').getBoundingClientRect().toJSON(),slots:Array.from(document.querySelectorAll('[data-conversation-image-slot]')).map(node=>({rect:node.getBoundingClientRect().toJSON(),html:node.outerHTML}))})"""),flush=True)
         assert len(pending) == 1, (kind, len(pending))
@@ -1446,8 +1534,8 @@ def _run(browser, urls):
       return thread && thread.scrollHeight > thread.clientHeight && thread.scrollTop > 0;
     }""")
     thread.hover()
-    page.mouse.wheel(0, -550)
-    page.wait_for_timeout(50)
+    _native_scroll(page, lambda: page.mouse.wheel(0, -550), label="anchor before height change")
+    settled(page)
     anchored = first_visible_line(page)
     assert anchored is not None
     old_height = thread.evaluate("node=>node.clientHeight")
@@ -1601,7 +1689,7 @@ def _run(browser, urls):
     # is. Nothing else about keeping their place changes.
     while page.locator(f'{PANE}[data-conversation-state="rest"]').count() == 0:
         page.keyboard.press("Escape")
-        page.wait_for_timeout(50)
+        settled(page)
     page.locator(INPUT).click()
     page.locator("[data-conversation-expand]").click()
     state(page, "opened")
@@ -1678,7 +1766,7 @@ def _run(browser, urls):
     # Back to rest, where the line lives.
     while page.locator(f'{PANE}[data-conversation-state="rest"]').count() == 0:
         page.keyboard.press("Escape")
-        page.wait_for_timeout(50)
+        settled(page)
 
     # A pending ask retains the activity header and separate request controls.
     page.evaluate("window.__showRunningAndNeedsYou()")
@@ -2396,7 +2484,7 @@ def _bounded_reader(browser, url):
     page.get_by_text("This diagnostic detail expired.", exact=True).wait_for()
     assert page.get_by_text("Cached whole diagnostic", exact=True).count() == 0
     page.evaluate("() => window.__completeDiagnosticBody()")
-    page.wait_for_timeout(100)
+    _late_completion(page, label="late diagnostic body")
     assert page.locator('[data-conversation-view-key="e3"]').count() == 0
     assert page.get_by_text("Late diagnostic body must disappear.", exact=True).count() == 0
     assert page.get_by_text("Cached whole diagnostic", exact=True).count() == 0
@@ -2560,7 +2648,7 @@ def _conversation_repairs(browser, url):
                 state(page, "rest")
                 # Dismissal occurs on pointerdown. The later click must not
                 # reopen the same conversation after it reaches rest.
-                page.wait_for_timeout(100)
+                frames(page)
                 state(page, "rest")
                 layer = page.locator(".conversation-layer").bounding_box()
                 pane = page.locator(pane_selector).bounding_box()
@@ -2685,7 +2773,7 @@ def _manager_recap_header(browser, url):
         expect(toggle).to_have_text("Show less")
         page.evaluate("window.__layoutUpdate('')")
         expect(recap).to_be_empty()
-        expect(recap).to_have_attribute("data-ph", "Write a concise recap for this manager…")
+        expect(recap).to_have_attribute("data-ph", "Write a concise recap…")
         expect(toggle).to_have_count(0)
         assert page.evaluate("window.__layoutHeaderMatches()")
     finally:
@@ -2707,11 +2795,23 @@ def _overlay_menu_bounds(browser, url):
     output = Path(os.environ.get("PANELS_MENU_ARTIFACT_DIR", os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/tmp/panels-menu-proof")))
     output.mkdir(parents=True, exist_ok=True)
     page = browser.new_page(viewport={"width": 1100, "height": 900})
+    # A real on-screen keyboard is up only while a text field has focus. Focus on a
+    # button closes it, so the simulated keyboard follows focus in the same way.
     page.add_init_script("""(() => {
       const viewport = new EventTarget();
       Object.assign(viewport, {offsetTop:0,offsetLeft:0,width:1100,height:900});
       Object.defineProperty(window,'visualViewport',{value:viewport,configurable:true});
-      window.__keyboardBounds=(top,height)=>{Object.assign(viewport,{offsetTop:top,height});viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));};
+      let keyboard = null;
+      const textEntry = el => el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['button','checkbox','file','radio','submit'].includes(el.type)) || (el instanceof HTMLElement && el.isContentEditable);
+      const apply = focused => {
+        const bounds = keyboard && textEntry(focused) ? keyboard : {top:0,height:900};
+        if (viewport.offsetTop === bounds.top && viewport.height === bounds.height) return;
+        Object.assign(viewport,{offsetTop:bounds.top,height:bounds.height});
+        viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));
+      };
+      document.addEventListener('focusin', event => apply(event.target), true);
+      document.addEventListener('focusout', event => apply(event.relatedTarget), true);
+      window.__keyboardBounds=(top,height)=>{keyboard={top,height};apply(document.activeElement);};
     })()""")
     proof = {"nativeKeyboard":"Not tested: visualViewport reduction and displacement are simulated.", "states":[], "actions":[]}
     def settle():
@@ -2914,7 +3014,7 @@ def _settled_motion(browser, url):
         page.evaluate("window.__setupScrollRegression('plain')")
         thread = page.locator('[data-conversation-thread]')
         thread.wait_for()
-        page.wait_for_timeout(350)
+        _settle(page, label="settled motion entry")
         before = thread.evaluate('node=>node.clientHeight')
         page.evaluate("""()=>{
           window.__growthFrames=[];window.__growthStop=false;
@@ -2922,32 +3022,34 @@ def _settled_motion(browser, url):
           requestAnimationFrame(sample);
         }""")
         page.locator('[data-conversation-input]').fill('One line\nSecond line\nThird line\nFourth line')
-        page.wait_for_timeout(350)
+        # The draft's growth has shortened the thread and come to rest.
+        _settle(page, "before=>{const f=window.__growthFrames;return f.length>3&&f.at(-1)<before}", before, label="draft growth")
         frames=page.evaluate('window.__growthStop=true;window.__growthFrames')
         assert len(frames)>3
         assert frames[-1] < before and min(frames) >= before - 150, {'before':before,'frames':frames}
         page.locator('[data-conversation-input]').fill('')
-        page.wait_for_timeout(300)
+        _settle(page, label="draft cleared")
         page.evaluate("""()=>{
           window.__sendFrames=[];window.__sendStop=false;
           const sample=()=>{const node=document.querySelector('[data-conversation-thread]');window.__sendFrames.push(node.scrollTop);if(!window.__sendStop)requestAnimationFrame(sample);};
           requestAnimationFrame(sample);window.__sendScrollRegression(false);
         }""")
-        page.wait_for_timeout(450)
+        # The send's travel has placed its bubble 32px below the thread top and stopped.
+        _settle(page, _SENT_AT_TOP, label="send travel")
         send_frames=page.evaluate('window.__sendStop=true;window.__sendFrames')
         moving=[value for i,value in enumerate(send_frames) if i==0 or abs(value-send_frames[i-1])>.5]
         assert len(moving)>3, send_frames
         assert all(b>=a-1 for a,b in zip(send_frames,send_frames[1:],strict=False)), send_frames
         page.evaluate("window.__sentBubble=document.querySelector('[data-conversation-outgoing=\"scroll-send\"]')")
         page.evaluate('window.__answerScrollRegression(1)')
-        page.wait_for_timeout(350)
+        _settle(page, "()=>!!document.querySelector('[data-conversation-row=\"prompt\"]')", label="send receipt")
         assert page.evaluate("window.__sentBubble===document.querySelector('[data-conversation-row=\"prompt\"]')"), 'Receipt replaced the visible bubble'
         assert page.locator('.c2-chip').count()==0
         page.screenshot(path=str(output/'settled-motion.png'))
         page.evaluate('window.__showUnansweredSend()')
         bubble=page.locator('[data-conversation-outgoing="sent-into-the-dark"]')
         bubble.wait_for()
-        page.wait_for_timeout(300)
+        _settle(page, "()=>document.querySelector('[data-conversation-outgoing=\"sent-into-the-dark\"]')?.getAnimations({subtree:true}).every(a=>a.playState!=='running')", label="unanswered entrance")
         page.screenshot(path=str(output/'settled-unanswered.png'))
         page.evaluate("""()=>{
           const bubble=document.querySelector('[data-conversation-outgoing="sent-into-the-dark"]');
@@ -3038,7 +3140,8 @@ def _position_commit(browser, url):
             page.evaluate('window.__positionProbe.release()')
             page.locator('[data-conversation-entry="complete"]').wait_for()
             assert page.locator('[data-conversation-ask-state="live"], [data-conversation-user-input-state="live"]').count() == 1
-            page.wait_for_timeout(350)
+            # Sample until the released bodies have rendered and the pane has come to rest.
+            _settle(page, label="position entry "+request)
             frames=page.evaluate('window.__samplePosition=false;window.__positionFrames')
             visible=[row for row in frames if not row['hidden']]
             assert visible and all(abs(row['scrollHeight']-row['height']-row['top'])<=1.5 for row in visible), visible
@@ -3048,7 +3151,7 @@ def _position_commit(browser, url):
             for lens in ('full','focus'):
                 page.evaluate('window.__positionFrames=[];window.__samplePosition=true')
                 page.locator('[data-conversation-lens-choice="'+lens+'"]').click()
-                page.wait_for_timeout(500)
+                _settle(page, "lens=>document.querySelector('[data-conversation-lens-choice=\"'+lens+'\"]')?.getAttribute('aria-pressed')==='true'", lens, label="position lens "+lens)
                 frames=page.evaluate('window.__samplePosition=false;window.__positionFrames')
                 visible=[row for row in frames if not row['hidden']]
                 assert visible and all(abs(row['scrollHeight']-row['height']-row['top'])<=1.5 for row in visible), (lens,visible)
@@ -3074,13 +3177,16 @@ def _position_commit(browser, url):
         thread.wait_for(state='visible')
         assert page.locator('.conversation-transcript-region').get_attribute('aria-busy') == 'true'
         thread.focus()
+        page.evaluate(_NATIVE_SCROLL_ARM)
         page.keyboard.press('PageUp')
         page.wait_for_function("document.querySelector('[data-conversation-thread]')?.dataset.conversationPositionOwner==='manual'")
-        page.wait_for_timeout(200)
+        # The native PageUp travel has begun; its end is two unchanged, idle frames.
+        page.wait_for_function("window.__nativeScroll.moved()", polling="raf", timeout=5_000)
+        _settle_conversation_layout(page)
         held = thread.evaluate('node=>node.scrollTop')
         page.evaluate('window.__positionProbe.release()')
         page.wait_for_function("document.querySelector('.conversation-transcript-region')?.getAttribute('aria-busy')==='false'")
-        page.wait_for_timeout(350)
+        _settle(page, label="position takeover release")
         after = thread.evaluate('node=>({top:node.scrollTop,gap:node.scrollHeight-node.clientHeight-node.scrollTop,owner:node.dataset.conversationPositionOwner})')
         assert after['owner'] == 'manual' and after['gap'] > 200, after
         assert abs(after['top']-held) <= 2, (held,after)
@@ -3174,6 +3280,12 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
     if completion_order not in (None, 'history-first', 'body-first', 'bounded', 'off-range'):
         raise ValueError('Unknown text restoration completion order')
     page = browser.new_page(viewport={'width': 1000, 'height': 850}, reduced_motion='no-preference')
+
+    def reads_completed(path, count):
+        page.wait_for_function("([path,count])=>window.__completedReads.filter(read=>read.endsWith(path)).length>=count", arg=[path, count])
+        # The reader consumes a completed response through promise jobs and tasks.
+        page.evaluate("()=>new Promise(resolve=>setTimeout(resolve,0))")
+        _frames(page, 2)
     # This observer reads native text nodes and Range geometry. No product anchor,
     # rendering marker or wrapper identity supplies the correctness assertion.
     page.add_init_script('''
@@ -3278,11 +3390,20 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
               Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__fixtureVisible?'visible':'hidden'});
               document.dispatchEvent(new Event('visibilitychange'));
             }''')
-            page.wait_for_timeout(100)
+            # The hidden transition's own work has run and the pane is idle.
+            _settle_conversation_layout(page)
             page.evaluate('''count=>{
               window.__backlog(count);Object.assign(window.__returnProbe,{hold:true,bodies:true,bodyHold:true});
               window.__textFrames=[];window.__stopTextFrames=false;
             }''',backlog)
+            if order in ('history-first','body-first'):
+                # Record each completed reader read, so the ordering below follows
+                # actual completion rather than elapsed time.
+                page.evaluate('''() => {
+                  const fetch=window.fetch;window.__completedReads=[];
+                  window.fetch=(input,init)=>fetch(input,init).then(response=>{
+                    window.__completedReads.push(new URL(String(input),location.href).pathname);return response;});
+                }''')
             if order=='off-range':
                 # A taller real pane can make the saved line offset unattainable
                 # although the exact immutable native text remains available.
@@ -3378,7 +3499,8 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                 before=page.evaluate(snapshot)
                 # Ignore-abort history cannot reclaim the admitted newest range.
                 page.evaluate('window.__returnProbe.release()')
-                page.wait_for_timeout(500)
+                # The fixture still holds bodies here, so their rows stay busy by design.
+                _late_completion(page, work=False, label="late ignore-abort history")
                 after=page.evaluate(snapshot)
                 assert before==after, ('Late history reclaimed fallback placement',before,after)
                 case.update({'beforeLateCompletion':before,'afterLateCompletion':after})
@@ -3486,7 +3608,7 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                     _settle_conversation_layout(page)
                     before=page.evaluate("({scroll:document.querySelector('[data-conversation-thread]').scrollTop,text:window.__readCharacter()})")
                     page.evaluate('window.__returnProbe.releaseBodies()')
-                    page.wait_for_timeout(400)
+                    _late_completion(page, label="canceled late bodies")
                     after=page.evaluate("({scroll:document.querySelector('[data-conversation-thread]').scrollTop,text:window.__readCharacter()})")
                     assert before==after, ('Canceled completion moved the visible text',before,after)
                     case.update({'beforeLateCompletion':before,'afterLateCompletion':after})
@@ -3508,23 +3630,27 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                 page.evaluate('window.__returnProbe.release()')
                 # The snapshot's body admission can finish while anchor history is held.
                 page.wait_for_function('window.__returnProbe.bodyWaiting>0')
+                held_bodies=page.evaluate('window.__returnProbe.bodyWaiting')
                 page.evaluate('window.__returnProbe.releaseBodies()')
-                page.wait_for_timeout(150)
+                reads_completed('/view/body/content', held_bodies)
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
             else:
+                pages_before=page.evaluate("window.__completedReads.filter(path=>path.endsWith('/view/pages')).length")
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
                 page.wait_for_function('window.__returnProbe.bodyWaiting>0')
-                page.wait_for_timeout(150)
+                # Only a backlog needs a history read; without one there is nothing to finish first.
+                reads_completed('/view/pages', pages_before+(1 if backlog else 0))
                 page.evaluate('window.__returnProbe.releaseBodies()')
             page.wait_for_function('''() => {
               const thread=document.querySelector('[data-conversation-thread]'),region=document.querySelector('.conversation-transcript-region');
               return thread&&region&&getComputedStyle(thread).visibility!=='hidden'&&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true';
             }''',timeout=15000)
-            page.wait_for_timeout(500)
+            # Keep sampling until the revealed pane has finished its deferred work.
+            _settle(page, label="text return "+order)
             if variant=='tall':
                 # A late font metric change moves the saved interior line inside one block.
                 page.add_style_tag(content='[data-conversation-thread] pre code { line-height: 1.8; }')
-                page.wait_for_timeout(400)
+                _settle(page, label="text return late metrics")
             case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
             case['after']=page.evaluate('window.__readCharacter()')
             page.screenshot(path=str(output/f'text-return-{variant}-{backlog}-{order}-after.png'))
@@ -3555,7 +3681,8 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                 thread.hover()
                 page.mouse.wheel(0,10000)
                 _settle_conversation_layout(page)
-                page.wait_for_timeout(100)
+                # Intersection notices arrive after layout; wait for the target to leave admission.
+                _settle(page, "()=>{const target=window.__settledTargetGroup,thread=document.querySelector('[data-conversation-thread]');if(!target?.isConnected)return true;const rect=target.getBoundingClientRect(),viewport=thread.getBoundingClientRect();return (rect.bottom<viewport.top-256||rect.top>viewport.bottom+256)&&target.dataset.visibleContentState!=='active'}", label="navigation cleanup")
                 cleanup=page.evaluate('''() => {
                   const target=window.__settledTargetGroup,thread=document.querySelector('[data-conversation-thread]');
                   if(!target?.isConnected)return {connected:false};
@@ -3569,10 +3696,11 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                 page.evaluate('''() => {
                   window.__fixtureVisible=false;document.dispatchEvent(new Event('visibilitychange'));
                 }''')
-                page.wait_for_timeout(50)
+                _settle_conversation_layout(page)
                 page.evaluate('window.__fixtureVisible=true;document.dispatchEvent(new Event("visibilitychange"))')
                 _settle_conversation_layout(page)
-                page.wait_for_timeout(100)
+                # Any reactivation follows visibility within a frame and marks the pane busy.
+                _settle(page, label="reader swap cleanup")
                 swapped=page.evaluate('''() => {
                   const target=window.__settledTargetGroup;
                   return !target?.isConnected||target.dataset.visibleContentState!=='active';
@@ -3633,8 +3761,9 @@ def _tab_return(browser, url):
           return thread&&region&&getComputedStyle(thread).visibility!=='hidden'
             &&getComputedStyle(region).visibility!=='hidden'&&region.getAttribute('aria-busy')!=='true';
         }''',timeout=10000)
-        # Keep sampling after reveal so a deferred reconciliation cannot hide a snap.
-        page.wait_for_timeout(350)
+        # Keep sampling after reveal so a deferred reconciliation cannot hide a snap:
+        # until the pane shows no motion or pending work and holds its geometry.
+        _settle(page, label="tab return reveal")
 
     def assert_frames(held, frames):
         visible = [frame for frame in frames if frame['visible']]
@@ -3658,16 +3787,20 @@ def _tab_return(browser, url):
             held = page.evaluate(reading)
             assert held['key'] and held['scroll'] > 0, held
             page.evaluate(hidden)
-            page.wait_for_timeout(100)
+            # The hidden transition's own work has run and the pane is idle.
+            _settle_conversation_layout(page)
             calls_before = page.evaluate('window.__viewCalls.filter(call=>call.includes("/view/pages")).length')
             page.evaluate('(count)=>window.__backlog(count)', backlog)
             page.evaluate('(mode)=>{window.__returnProbe.hold=mode==="delayed";window.__returnProbe.fail=mode==="failed";window.__returnProbe.bodies=mode==="bodies";window.__returnProbe.bodyHold=mode==="bodies";}', admission)
-            page.wait_for_timeout(100)
+            # A read caused by the hidden backlog would start in this task or the next frame.
+            page.evaluate("()=>new Promise(resolve=>setTimeout(resolve,0))")
+            _frames(page, 2)
             assert page.evaluate('window.__viewCalls.filter(call=>call.includes("/view/pages")).length') == calls_before
             page.evaluate(sample_return, held)
             if admission == 'delayed':
                 page.wait_for_function('window.__returnProbe.waiting>0')
-                page.wait_for_timeout(250)
+                # Sample the held state until the pane's response to the return is idle.
+                _settle_conversation_layout(page)
                 waiting = page.evaluate('window.__returnFrames')
                 # Any retained content that the user can see must already be correct.
                 visible = [frame for frame in waiting if frame['visible']]
@@ -3676,7 +3809,7 @@ def _tab_return(browser, url):
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
             if admission == 'bodies':
                 page.wait_for_function('window.__returnProbe.bodyWaiting>0')
-                page.wait_for_timeout(250)
+                _settle_conversation_layout(page)
                 waiting=page.evaluate('window.__returnFrames')
                 visible=[frame for frame in waiting if frame['visible']]
                 if visible:
@@ -3712,8 +3845,7 @@ def _tab_return(browser, url):
         page.locator('[data-conversation-entry="complete"]').wait_for()
         _settle_conversation_layout(page)
         page.locator('[data-conversation-thread]').hover()
-        page.mouse.wheel(0,-750)
-        page.wait_for_timeout(300)
+        establish_scrollback(page, lambda: page.mouse.wheel(0,-750), min_clearance=2)
         before_motion=page.evaluate(reading)
         page.evaluate("""before => {
           window.__midMotionHeld=null;
@@ -3736,7 +3868,9 @@ def _tab_return(browser, url):
         page.wait_for_function('window.__midMotionHeld!==null')
         held=page.evaluate('window.__midMotionHeld')
         assert held['scroll']>before_motion['scroll']+1,(before_motion,held)
-        page.wait_for_timeout(150)
+        # Stay hidden past the interrupted move's remaining travel: a move that kept
+        # running would have finished, and a held one leaves no motion mark.
+        _settle(page, "()=>!document.querySelector('[data-conversation-pane]').hasAttribute('data-conversation-motion')", work=False, label="hidden mid-motion")
         page.evaluate(sample_return,held)
         wait_for_reveal()
         frames=page.evaluate('window.__stopReturnFrames=true;window.__returnFrames')
@@ -3887,10 +4021,16 @@ def _card_state_motion(browser, url):
 
             assert page.evaluate("window.__paneIdentity===document.querySelector('[data-conversation-pane]')&&window.__composerIdentity===document.querySelector('[data-conversation-composer]')")
             assert not document.evaluate('node=>node.closest(".ticket-reading,.manager-reading").inert')
+            # Each press lands once the previous one has its state and, with motion,
+            # its travel is under way: the presses interrupt moving cards.
+            travel = """([state,start])=>document.querySelector('[data-conversation-pane]')?.dataset.conversationState===state&&
+              (matchMedia('(prefers-reduced-motion: reduce)').matches||Math.abs(document.querySelector('.conversation-layer').getBoundingClientRect().height-start)>1)"""
+            start = page.locator('.conversation-layer').evaluate('node=>node.getBoundingClientRect().height')
             page.locator('[data-conversation-expand]').click()
-            page.wait_for_timeout(60)
+            page.wait_for_function(travel, arg=['opened', start], polling='raf')
+            start = page.locator('.conversation-layer').evaluate('node=>node.getBoundingClientRect().height')
             page.locator('[data-conversation-collapse]').click()
-            page.wait_for_timeout(60)
+            page.wait_for_function(travel, arg=['rest', start], polling='raf')
             page.locator('[data-conversation-expand]').click()
             _settle_conversation_layout(page)
             page.keyboard.press('Escape')

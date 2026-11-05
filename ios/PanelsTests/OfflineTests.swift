@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Observation
 import os
 import XCTest
@@ -269,5 +270,71 @@ private final class OfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(model.rows.count, 1)
         XCTAssertEqual(model.rows.first?.id, "old")
         XCTAssertEqual(model.rows.first?.text, "Words")
+    }
+}
+
+extension OfflineTests {
+    func testRequiredUpdateRetainsPendingIdentityAndDraftWithoutReplay() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let api = APIClient(baseURL: URL(string: "https://update-\(UUID().uuidString).invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        store.saveDraft("More unsent words", server: server, id: "draft")
+        let message = ConversationSend(conversationId: "c", content: [.init(text: "Pending words")], senderMessageId: "stable", sentAtUnixMilliseconds: 123)
+        let outbox = Outbox(store: store)
+        try outbox.save(PendingWork(id: "stable", created: .now, kind: .message, owner: .chief, message: message), server: server)
+        NativeBuildGate.requireUpdate(api.baseURL)
+        await outbox.drain(api: api)
+        let saved = try XCTUnwrap(outbox.entries(server).first)
+        XCTAssertEqual(saved.state, .waiting)
+        XCTAssertEqual(saved.message?.senderMessageId, "stable")
+        XCTAssertEqual(saved.message?.content.first?.text, "Pending words")
+        XCTAssertEqual(store.draft(server: server, id: "draft"), "More unsent words")
+    }
+}
+
+// Matches the app's original unversioned model. The entity keeps its LocalRecord
+// name, while the new model renames only the Core Data-colliding date property.
+private enum LegacyPhoneSchema {
+    @Model final class LocalRecord {
+        @Attribute(.unique) var key: String
+        var server: String
+        var kind: String
+        var payload: Data
+        var updated: Date
+        init(key: String, server: String, kind: String, payload: Data, updated: Date) {
+            self.key = key; self.server = server; self.kind = kind; self.payload = payload; self.updated = updated
+        }
+    }
+}
+
+extension OfflineTests {
+    func testLegacyStoreMigrationPreservesDraftAndPendingMessage() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("test.store")
+        let server = "https://legacy.invalid"
+        let message = ConversationSend(conversationId: "c", content: [.init(text: "Pending legacy words")], senderMessageId: "legacy-id", sentAtUnixMilliseconds: 123)
+        let work = PendingWork(id: "legacy-id", created: .now, kind: .message, owner: .chief, message: message)
+        do {
+            let schema = Schema([LegacyPhoneSchema.LocalRecord.self])
+            let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(url: url)])
+            let context = ModelContext(container)
+            context.autosaveEnabled = false
+            context.insert(LegacyPhoneSchema.LocalRecord(key: LocalStore.key(server, "draft", "draft"), server: server, kind: "draft", payload: Data("Legacy unsent draft".utf8), updated: .now))
+            context.insert(LegacyPhoneSchema.LocalRecord(key: LocalStore.key(server, "outbox", work.id), server: server, kind: "outbox", payload: try JSONEncoder().encode(work), updated: .now))
+            try context.save()
+        }
+        let migrated = LocalStore(url: url)
+        XCTAssertNil(migrated.saveError)
+        XCTAssertEqual(migrated.draft(server: server, id: "draft"), "Legacy unsent draft")
+        let pending = try XCTUnwrap(Outbox(store: migrated).entries(server).first)
+        XCTAssertEqual(pending.message?.senderMessageId, "legacy-id")
+        XCTAssertEqual(pending.message?.content.first?.text, "Pending legacy words")
+        migrated.saveDraft("Updated after migration", server: server, id: "draft")
+        let reopened = LocalStore(url: url)
+        XCTAssertEqual(reopened.draft(server: server, id: "draft"), "Updated after migration")
     }
 }

@@ -3,6 +3,7 @@ import { ensureDebug } from "./debug";
 import { queryClient } from "./queryClient";
 import { createResourceCoordinator } from "./resourceVersions/coordinator";
 import { RESOURCE_REFRESH_DEBOUNCE_MS } from "./resourceVersions/config";
+import { UPDATE_RECOVERY_POLL_MS } from "./updates/config";
 
 // The server sends one contentless "something changed" frame per commit. The
 // browser probes versions for mounted resources and refetches changed bodies.
@@ -20,6 +21,8 @@ export const connectionStatus = writable<ConnectionStatus>("reconnecting");
 
 let stream: EventSource | null = null;
 let flushTimer: number | null = null;
+let reconnectTimer: number | null = null;
+let started = false;
 /** Something was committed while nobody was looking at this tab. */
 let changedWhileHidden = false;
 
@@ -42,12 +45,19 @@ function onVisibilityChange(): void {
 }
 
 export function startChangeStream(): void {
-  if (stream) return;
+  if (started) return;
+  started = true;
   document.addEventListener("visibilitychange", onVisibilityChange);
+  openStream();
+}
+
+function openStream(): void {
+  if (!started) return;
   const source = new EventSource("/api/changes");
   stream = source;
   source.onopen = () => {
     if (stream !== source) return;
+    clearReconnect();
     ensureDebug().sseOpens += 1;
     connectionStatus.set("connected");
     // A connection just opened, so anything that changed while it was down is
@@ -73,12 +83,33 @@ export function startChangeStream(): void {
   };
   source.onerror = () => {
     if (stream !== source) return;
-    // EventSource reconnects on its own; the pill just says so.
     connectionStatus.set("reconnecting");
+    // HTTP 503 can permanently close EventSource. Native retry cannot reopen it.
+    if (source.readyState === 2 && reconnectTimer === null) {
+      reconnectTimer = window.setTimeout(retryChangeStream, UPDATE_RECOVERY_POLL_MS);
+    }
   };
 }
 
+function clearReconnect(): void {
+  if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+}
+
+/** The same recovery path serves the timer and the owner's Try now action. */
+export function retryChangeStream(): void {
+  if (!started) return;
+  clearReconnect();
+  stream?.close();
+  stream = null;
+  connectionStatus.set("reconnecting");
+  void queryClient.refetchQueries({ queryKey: ["updates"] });
+  openStream();
+}
+
 export function stopChangeStream(): void {
+  started = false;
+  clearReconnect();
   resources.stop();
   document.removeEventListener("visibilitychange", onVisibilityChange);
   changedWhileHidden = false;

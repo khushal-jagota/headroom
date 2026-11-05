@@ -50,7 +50,7 @@ extension APIClient {
             path = "/api/managers/\(id)/settled"
             method = "PATCH"; body = ["settled": true]
         }
-        var request = URLRequest(url: try url(path))
+        var request = try self.request(try url(path))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

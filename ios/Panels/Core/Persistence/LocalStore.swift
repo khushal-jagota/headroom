@@ -7,9 +7,12 @@ import SwiftData
     var server: String
     var kind: String
     var payload: Data
-    var updated: Date
+    // `updated` collides with Core Data's isUpdated KVC getter. Keep rename
+    // metadata so the existing store migrates without discarding user work.
+    @Attribute(originalName: "updated") var updatedAt: Date
+    var updated: Date { updatedAt }
     init(key: String, server: String, kind: String, payload: Data, updated: Date) {
-        self.key = key; self.server = server; self.kind = kind; self.payload = payload; self.updated = updated
+        self.key = key; self.server = server; self.kind = kind; self.payload = payload; self.updatedAt = updated
     }
 }
 
@@ -54,7 +57,7 @@ import SwiftData
     }
     func records(server: String, kind: String) throws -> [LocalRecord] {
         _ = workRevision
-        return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.server == server && $0.kind == kind }, sortBy: [SortDescriptor(\.updated)]))
+        return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.server == server && $0.kind == kind }, sortBy: [SortDescriptor(\.updatedAt)]))
     }
     func record(server: String, kind: String, id: String) throws -> LocalRecord? {
         let key = Self.key(server, kind, id)
@@ -85,14 +88,14 @@ import SwiftData
         let context = try context
         do {
             let key = Self.key(server, kind, id)
-            if let record = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first { record.payload = data; record.updated = .now }
+            if let record = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first { record.payload = data; record.updatedAt = .now }
             else { context.insert(LocalRecord(key: Self.key(server, kind, id), server: server, kind: kind, payload: data, updated: .now)) }
             if let (id, text) = draft {
-                if let row = try record(server: server, kind: "draft", id: id) { row.payload = Data(text.utf8); row.updated = .now }
+                if let row = try record(server: server, kind: "draft", id: id) { row.payload = Data(text.utf8); row.updatedAt = .now }
                 else { context.insert(LocalRecord(key: Self.key(server, "draft", id), server: server, kind: "draft", payload: Data(text.utf8), updated: .now)) }
             }
             if kind == "cache" {
-                let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == "cache" }, sortBy: [SortDescriptor(\.updated, order: .reverse)]))
+                let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == "cache" }, sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]))
                 var bytes = 0
                 for (index, row) in rows.enumerated() {
                     bytes += row.payload.count

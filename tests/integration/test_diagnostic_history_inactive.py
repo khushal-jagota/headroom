@@ -51,6 +51,8 @@ def test_startup_restart_and_background_loops_never_expire_and_reconcile_offline
     database = offline_path / "planner.db"
     with monkeypatch.context() as historical:
         _migration_tree_through(offline_path, historical, "owner_message_preview")
+        # Current runtime readers require current migrations. This archive stays
+        # historical until the real startup below performs its upgrade.
         seed_archive(database)
     report = read_report(database, as_of_unix=AS_OF)
     assert sum(len(decision.candidates) for decision in report.decisions) == 2

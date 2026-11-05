@@ -3,6 +3,7 @@ import Foundation
 struct APIError: LocalizedError, Sendable {
     let status: Int
     let message: String
+    var isUpdateRequired: Bool { status == 426 && message == NativeBuildGate.message }
     var isChangedProposal: Bool {
         status == 400 && message.hasPrefix("the visible proposal changed; read it again before ")
     }
@@ -33,6 +34,16 @@ struct APIClient: Sendable {
         return url
     }
 
+    /// Every native transport goes through this factory, including uploads and streams.
+    func request(_ target: URL) throws -> URLRequest {
+        guard !NativeBuildGate.requiresUpdate(baseURL) else {
+            throw APIError(status: 426, message: NativeBuildGate.message)
+        }
+        var request = URLRequest(url: target)
+        request.setValue(NativeBuildGate.build, forHTTPHeaderField: "X-Panels-iOS-Build")
+        return request
+    }
+
     func get<T: Decodable & Sendable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
         let (data, url) = try await responseData(path, query: query)
         let value = try Self.decoder().decode(T.self, from: data)
@@ -43,7 +54,7 @@ struct APIClient: Sendable {
     }
 
     func responseData(_ path: String, query: [URLQueryItem] = []) async throws -> (Data, URL) {
-        var request = URLRequest(url: try url(path, query: query))
+        var request = try self.request(try url(path, query: query))
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 25
         let (data, response) = try await session.data(for: request)
@@ -53,6 +64,16 @@ struct APIClient: Sendable {
 
     static func validate(_ response: URLResponse, data: Data = Data()) throws {
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        if http.statusCode == 426 {
+            struct Envelope: Decodable { struct Detail: Decodable { let code: String }; let error: Detail }
+            let code = (try? JSONDecoder().decode(Envelope.self, from: data))?.error.code
+            // Streaming transports have no error body until after headers. 426 is reserved
+            // for the native gate on this server, including stream admission.
+            if code == "ios_update_required" || data.isEmpty {
+                if let url = http.url { NativeBuildGate.requireUpdate(url) }
+                throw APIError(status: 426, message: NativeBuildGate.message)
+            }
+        }
         guard (200..<300).contains(http.statusCode) else {
             struct Envelope: Decodable { struct Detail: Decodable { let message: String }; let error: Detail }
             let message = (try? JSONDecoder().decode(Envelope.self, from: data))?.error.message
@@ -143,7 +164,7 @@ extension APIClient {
     func conversationBackends(owner: ConversationOwner) async throws -> TicketBackendCatalog {
         guard case .ticket(let id) = owner else { return try await get("/api/conversation/backends") }
         struct Body: Encodable { let ticketId: String }
-        var request = URLRequest(url: try url("/api/conversation/backends"))
+        var request = try self.request(try url("/api/conversation/backends"))
         request.httpMethod = "POST"
         request.timeoutInterval = 25
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -157,4 +178,16 @@ extension APIClient {
 
 extension APIClient {
     func executorHealth() async throws -> ExecutorHealth { try await get("/api/executor/health") }
+}
+
+/// A server-scoped latch survives relaunch. A new build automatically gets a fresh key.
+/// UserDefaults is thread-safe, so API adapters can use this outside the main actor.
+enum NativeBuildGate {
+    static let message = "Update Panels from TestFlight"
+    static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+    private static func key(_ url: URL) -> String {
+        "panels.updateRequired.\(build).\(url.scheme ?? "https")://\(url.host ?? ""):\(url.port ?? (url.scheme == "http" ? 80 : 443))"
+    }
+    static func requiresUpdate(_ url: URL) -> Bool { UserDefaults.standard.bool(forKey: key(url)) }
+    static func requireUpdate(_ url: URL) { UserDefaults.standard.set(true, forKey: key(url)) }
 }

@@ -1,8 +1,7 @@
 [Unit]
-Description=Panels Worker resource budget
+Description=Panels Worker CPU share
 
 [Slice]
 MemoryAccounting=yes
-MemoryMax=24G
 CPUAccounting=yes
 CPUWeight=10

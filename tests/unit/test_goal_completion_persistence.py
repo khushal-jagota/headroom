@@ -365,10 +365,16 @@ def test_selector_migration_preserves_binary_inputs_and_saved_page(
         after = [dict(row) for row in conn.execute("SELECT * FROM goals ORDER BY id")]
         assert after == [{**row, "primary_checklist_block_id": None} for row in before]
         for checked in (False, True):
-            goal = data.read_goal(conn, f"retained-{int(checked)}")
-            assert goal.binary_checked is checked and goal.page == document
+            row = conn.execute(
+                "SELECT completed,page,primary_checklist_block_id FROM goals WHERE id=?",
+                (f"retained-{int(checked)}",),
+            ).fetchone()
+            stored_page = json.loads(row["page"])
+            assert bool(row["completed"]) is checked and stored_page == document
             assert (
-                views.goal_json(conn, goal, datetime.fromtimestamp(NOW, UTC))["completed"]
+                effective_completion(
+                    bool(row["completed"]), stored_page, row["primary_checklist_block_id"]
+                )
                 is checked
             )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

@@ -271,8 +271,14 @@ class RowsBlock(TypedDict):
     items: list[RowItem]
 
 
+class TicketsBlock(TypedDict):
+    type: Literal["tickets"]
+    id: str
+
+
 type Block = (
-    TextBlock
+    TicketsBlock
+    | TextBlock
     | ChecklistBlock
     | ChartBlock
     | TableBlock
@@ -302,6 +308,8 @@ GOAL_CREATE_REQUIRED = (*GOAL_REQUIRED_TEXT, "kind")
 
 
 class GoalCommonFields(TypedDict, total=False):
+    holder_kind: Literal["chief", "manager"]
+    holder_id: str | None
     project_id: str
     title: str
     why: str
@@ -365,9 +373,28 @@ class Goal:
     employee_launch_reasoning_effort: str | None
     completion_rule: GoalCompletionRule | None = None
     completion_date: str | None = None
+    holder_kind: Literal["chief", "manager"] = "chief"
+    holder_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PageReadingSubject:
+    """An authored holder document uses chart reads without a persisted goal record."""
+
+    id: str
+    page: PageDocument
+    revision: int
+    primary_chart: ChartBlock | None = None
+    deadline: str | None = None
+    kind: GoalKind = "binary"
+    binary_checked: bool = False
+    primary_checklist_block_id: str | None = None
 
 
 class GoalResponse(TypedDict):
+    holder_kind: Literal["chief", "manager"]
+    holder_id: str | None
+    legacy_conversation_id: str | None
     id: str
     project_id: str
     title: str
@@ -388,7 +415,6 @@ class GoalResponse(TypedDict):
     employee_backend: str
     employee_launch_model: str
     employee_launch_reasoning_effort: str | None
-    conversation_id: str | None
     status: Tone
     status_date: str
     next_refresh_at: int

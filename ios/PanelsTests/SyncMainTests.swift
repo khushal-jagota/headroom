@@ -42,3 +42,20 @@ final class SyncMainTests: XCTestCase {
     }
 
 }
+
+extension SyncMainTests {
+    func testNativeBuildRejectionBlocksRequestsAndSurvivesClientRecreation() throws {
+        let server = URL(string: "https://\(UUID().uuidString).example")!
+        let client = APIClient(baseURL: server)
+        let request = try client.request(try client.url("/api/review"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Panels-iOS-Build"), NativeBuildGate.build)
+        let response = HTTPURLResponse(url: server.appendingPathComponent("api/review"), statusCode: 426, httpVersion: nil, headerFields: nil)!
+        XCTAssertThrowsError(try APIClient.validate(response, data: Data(#"{"error":{"code":"ios_update_required","message":"Update Panels from TestFlight"}}"#.utf8))) {
+            XCTAssertTrue(($0 as? APIError)?.isUpdateRequired == true)
+        }
+        let recreated = APIClient(baseURL: server)
+        XCTAssertThrowsError(try recreated.request(try recreated.url("/api/tickets/t1/accept/brief")))
+        XCTAssertFalse(NativeBuildGate.requiresUpdate(URL(string: "https://different.example")!))
+    }
+
+}

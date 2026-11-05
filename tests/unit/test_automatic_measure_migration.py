@@ -61,8 +61,11 @@ def _assert_upgrade_to_current(
         current = [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
         assert len(current) == len(rows), table
         for old, new in zip(rows, current, strict=True):
-            # Later migrations add nullable/default columns. Existing values stay exact.
-            assert old == {key: new[key] for key in old}, table
+            # Retired goal recipients move to Chief; other retained values stay exact.
+            expected = old
+            if table in ("manager_wakes", "manager_wake_batches") and old["target_kind"] == "goal":
+                expected = {**old, "target_kind": "chief", "target_id": "chief", "manager_id": ""}
+            assert expected == {key: new[key] for key in expected}, table
     assert objects <= {
         (row[0], row[1], row[2], str(row[3]).replace('"', ""))
         for row in conn.execute(

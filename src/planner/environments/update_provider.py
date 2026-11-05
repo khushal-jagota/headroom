@@ -117,6 +117,10 @@ class GitHubUpdateProvider:
             release.publication_run_id != run_id
             or release.artifact_id != app["id"]
             or release.manifest.app_sha != run["head_sha"]
+            or (
+                release.mac is not None
+                and (by_name.get("panels-mac-runtime", {}).get("id") != release.mac.artifact_id)
+            )
         ):
             raise ValueError("Publication identity differs from trusted repository evidence.")
         if datetime.fromisoformat(release.expires_at.replace("Z", "+00:00")) <= datetime.now(UTC):

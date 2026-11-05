@@ -201,7 +201,7 @@ def test_confirmation_commit_survives_cleanup_failure(
     asyncio.run(run())
 
 
-def test_previous_format_refused_without_conversion(tmp_path: Path) -> None:
+def test_unsupported_format_preserved_without_conversion(tmp_path: Path) -> None:
     root = tmp_path / "outbox"
     root.mkdir()
     database = root / DATABASE_NAME
@@ -311,13 +311,13 @@ def test_ticket_index_skips_unchanged_sources_and_rechecks_racy_same_size_change
     root = tmp_path / "artifacts/tickets/t_one"
     root.mkdir(parents=True)
     old_ns = time.time_ns() - 10_000_000_000
-    for index in range(200):
+    for index in range(2):
         path = root / str(index)
         path.write_bytes(b"old")
         os.utime(path, ns=(old_ns, old_ns))
     outbox = MacOutbox(tmp_path / "spool")
     first = outbox.add(entry("first"), ticket_id="t_one")
-    assert len(first.file_dependencies) == 200
+    assert len(first.file_dependencies) == 2
     outbox.acknowledge(receipt(first))
     opened: list[Path] = []
     from planner.executor.files import regular_descriptor

@@ -1,6 +1,6 @@
 # Goals
 
-A goal is an outcome Khushal wants by a date, with a page that shows how close it is. Goals sit under Chief. Chief sets them and keeps the overview. Each goal also has its own agent, which keeps the page current. Goals exist so that committed outcomes, and whether they were hit, are visible in one place instead of spread across Tickets.
+A goal is an outcome Khushal wants by a date, with a page that shows how close it is. Each goal is held by Chief or by one Manager, and a holder can have none, one, or several. The holder keeps the page current. Goals have no agent or conversation of their own. Goals exist so that committed outcomes, and whether they were hit, are visible in one place instead of spread across Tickets.
 
 ## What a goal is made of
 
@@ -8,8 +8,6 @@ A goal is an outcome Khushal wants by a date, with a page that shows how close i
 - **The page.** A flexible document in the shared page kit: text, checklists, tables, layouts, and charts. The page is a dashboard for Khushal. Steps are checklists and numbers are charts. Text adds context that the checklists and charts do not show.
 - **The main display.** One checkbox, one checklist, or one chart that stands for the goal in cards, the overview, and the rail.
 - **A completion rule.** What counts as done. See below.
-- **A conversation.** The goal's agent, on the ordinary [conversation system](conversations.md).
-- **A file folder.** Notes, research, and evidence that the page can link to.
 
 ```
  measures ─────────────────────► charts on the page
@@ -42,14 +40,15 @@ A missing value stays missing. Headroom does not show an older reading as curren
 
 ## Who edits a goal
 
-Khushal, Chief, and the goal's agent all edit through one writer. Each edit names the revision it started from. If someone else saved first, the edit fails and the draft stays for a retry. A stale edit never overwrites newer work. The goal agent changes its own page, completion, and active state without an approval step. Goals have no Ticket stages.
+Khushal, Chief, and the holding Manager all edit through one writer. Each edit names the revision it started from. If someone else saved first, the edit fails and the draft stays for a retry. A stale edit never overwrites newer work. The holder changes the page, completion, and active state without an approval step. Goals have no Ticket stages.
 
-Khushal edits most text on the page in place. Checklist wording belongs to the agent. Checklist items can carry their own deadlines, which Khushal sets from the page. Item deadlines are colored, but they do not change the goal's own deadline or result.
+Khushal edits most text on the page in place. Checklist wording belongs to the holder. Checklist items can carry their own deadlines, which Khushal sets from the page. Item deadlines are colored, but they do not change the goal's own deadline or result.
 
 ## Where it shows up
 
-- The **goal page**, with the goal's conversation beside it.
-- **Active goals** inside the Chief card in the rail. Hovering or holding a row opens a preview with the main display, which Khushal can check or edit from there.
+- The **goal page**, with its holder's conversation beside it.
+- **Holder pages.** Chief and each Manager have a page in the same page kit, where Tickets is one of the blocks. A Manager with one goal is shown as that goal under the Manager's name, and both its Goal and Manager links open that page. A Manager with several goals shows goal cards. `panels goal make-manager` turns a Chief goal into a new Manager that holds it.
+- **Active goals** inside their holder’s card in the rail or iPhone Workspace. Hovering or holding a row opens a preview with the main display, which Khushal can check or edit from there.
 - The **goals overview**, with cards and a table.
 - `panels goal` for agents: list, show, create, edit, read, and artifact commands. `panels goal schema` prints the accepted request shapes with examples, so agents read those before a write.
 
@@ -62,8 +61,8 @@ Khushal edits most text on the page in place. Checklist wording belongs to the a
 
 ## Code
 
-- `src/planner/goals/`: records, the writer, completion rules, outcomes, the background check, and goal conversations.
+- `src/planner/goals/`: records, the writer, completion rules, outcomes, holders, and the background check. `src/planner/managers/pages.py`: Chief and Manager page documents.
 - `src/planner/measures/` and `src/planner/datasets/`: the numbers that charts and rules read.
-- `web/src/components/goals/` and `web/src/lib/goals/`: the page, rail, previews, and overview.
+- `web/src/components/goals/` and `web/src/lib/goals/`: the page, rail, previews, and overview. `ios/Panels/Features/Goals/`: the native holder and goal documents, sharing the existing chart and checklist animations.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-05._

@@ -925,6 +925,7 @@ def _adopt_database_left_by_the_collapsed_chain(connection: Connection) -> None:
     # Leave every nonempty, wholly known head set to Alembic's normal DAG upgrade.
     # A source branch may have committed before the navigation join was attempted.
     if revisions and set(revisions) <= _revisions_this_build_carries(connection):
+        _adopt_main_goal_holder_ancestry(connection, revisions)
         return
     if revisions != [PRE_COLLAPSE_HEAD_REVISION]:
         held = ", ".join(revisions) if revisions else "nothing"
@@ -953,3 +954,27 @@ def _adopt_database_left_by_the_collapsed_chain(connection: Connection) -> None:
     # Clearing it as the database is adopted makes an adopted database and a database this
     # build made from nothing the same database.
     connection.exec_driver_sql("PRAGMA user_version=0")
+
+
+def _adopt_main_goal_holder_ancestry(connection: Connection, revisions: list[str]) -> None:
+    """Main shipped the same native-push revision with a later Mac-status parent.
+
+    Keep iOS's historical revision unchanged. A main goal-holder database already
+    contains the Mac-status migration, so retain its proved ancestor marker before
+    Alembic joins the histories. Native and fresh databases have no such table and
+    follow their ordinary migration path.
+    """
+    if revisions != ["goal_holders"]:
+        return
+    present = list(connection.exec_driver_sql("PRAGMA table_info(mac_contact_status)"))
+    if not present:
+        return
+    expected = [
+        ("singleton", "INTEGER", 0, 1),
+        ("last_contact_at_ms", "INTEGER", 1, 0),
+        ("refusal_json", "TEXT", 0, 0),
+    ]
+    actual = [(str(row[1]), str(row[2]), int(row[3]), int(row[5])) for row in present]
+    if actual != expected:
+        raise RuntimeError("main goal-holder database has an unexpected Mac contact schema")
+    command.stamp(_alembic_config(connection), ["goal_holders", "mac_contact_status"])

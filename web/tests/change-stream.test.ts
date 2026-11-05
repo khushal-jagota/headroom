@@ -11,6 +11,7 @@ class ControlledEventSource {
   onmessage: (() => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
+  readyState = 1;
   constructor(readonly url: string) { ControlledEventSource.current = this; }
   close() { this.closed = true; }
 }
@@ -86,6 +87,30 @@ describe("contentless change stream refresh", () => {
     old.onerror?.();
     expect(get(connectionStatus)).toBe("connected");
     unsubscribe();
+  });
+
+  it("reopens a permanently CLOSED stream and cancels recovery on stop", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    vi.stubGlobal("document", { visibilityState: "visible", addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    vi.stubGlobal("EventSource", ControlledEventSource);
+    startChangeStream();
+    const first = ControlledEventSource.current;
+    first.readyState = 2;
+    first.onerror?.();
+    await vi.advanceTimersByTimeAsync(3000);
+    const second = ControlledEventSource.current;
+    expect(second).not.toBe(first);
+    expect(first.closed).toBe(true);
+    second.onopen?.();
+    expect(get(connectionStatus)).toBe("connected");
+    first.onerror?.();
+    expect(get(connectionStatus)).toBe("connected");
+    second.readyState = 2;
+    second.onerror?.();
+    stopChangeStream();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(ControlledEventSource.current).toBe(second);
   });
 
   it("coalesces bursts at the first frame deadline for subscribed queries", async () => {

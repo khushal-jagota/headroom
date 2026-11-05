@@ -180,7 +180,7 @@ extension APIClient {
         try Self.validate(response, data: data)
     }
     private func usageRefreshRequest(_ path: String) async throws -> (Data, URLResponse) {
-        var request = URLRequest(url: try url(path))
+        var request = try self.request(try url(path))
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         return try await session.data(for: request)

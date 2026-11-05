@@ -87,12 +87,16 @@ struct PendingWork: Codable, Identifiable, Sendable {
     }
     func drain(api: APIClient) async {
         let server = LocalStore.server(api.baseURL)
-        guard networkAvailable, !draining.contains(server) else { return }
+        guard !NativeBuildGate.requiresUpdate(api.baseURL), networkAvailable, !draining.contains(server) else { return }
         draining.insert(server)
         defer { draining.remove(server) }
         for var work in entries(server) {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, !NativeBuildGate.requiresUpdate(api.baseURL) else { return }
             guard [.waiting, .sending, .uncertain, .serverQueued].contains(work.state) else { continue }
+            if case .goal = work.owner {
+                work.state = .changed; work.note = "Not sent · goal conversations are retired; open the goal to talk to its holder"
+                try? save(work, server: server); continue
+            }
             // Decisions have no server receipt. Never silently replay an ambiguous write.
             if work.kind != .message && work.kind != .voice && [.sending, .uncertain].contains(work.state) {
                 work.state = .uncertain; work.note = "Delivery uncertain · check the ticket"
@@ -171,6 +175,14 @@ struct PendingWork: Codable, Identifiable, Sendable {
                 }
                 try save(work, server: server)
             } catch {
+                if let error = error as? APIError, error.isUpdateRequired {
+                    // The server rejected admission before the write. Retain the original
+                    // pending identity and content for the next installed build.
+                    work.state = priorState == .sending ? .waiting : priorState
+                    work.note = NativeBuildGate.message
+                    try? save(work, server: server)
+                    return
+                }
                 if let error = error as? APIError, error.status >= 500, writeStarted {
                     work.state = .uncertain; work.note = "Delivery uncertain"
                 } else if let error = error as? APIError {

@@ -1,6 +1,12 @@
 import Foundation
 
 extension APIClient {
+    func holderPage(_ holder: GoalHolder) async throws -> HolderPage { try await get(holder.pagePath) }
+    func holderReadings(_ holder: GoalHolder) async throws -> GoalReadings { try await get(holder.pagePath + "/readings") }
+    func saveHolderPage(_ holder: GoalHolder, patch: GoalJSON) async throws -> HolderPage {
+        try await goalRequest(holder.pagePath, method: "PATCH", body: patch)
+    }
+
     func goals() async throws -> GoalsResponse { try await get("/api/goals") }
     func goal(_ id: String) async throws -> GoalRecord { try await get("/api/goals/\(id)") }
     func goalReadings(_ id: String) async throws -> GoalReadings { try await get("/api/goals/\(id)/readings") }
@@ -14,7 +20,7 @@ extension APIClient {
         try await goalRequest("/api/measures/\(id)/manual-writes", method: "POST", body: command)
     }
     func goalRequest<Body: Encodable, Response: Decodable & Sendable>(_ path: String, method: String, body: Body) async throws -> Response {
-        var request = URLRequest(url: try url(path)); request.httpMethod = method; request.timeoutInterval = 25
+        var request = try self.request(try url(path)); request.httpMethod = method; request.timeoutInterval = 25
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(body)

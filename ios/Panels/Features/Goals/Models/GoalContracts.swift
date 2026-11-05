@@ -61,7 +61,10 @@ struct GoalRecord: Codable, Identifiable, Sendable, Equatable {
     let employeeBackend: String
     let employeeLaunchModel: String
     let employeeLaunchReasoningEffort: String?
-    let conversationId: String?
+    let holderKind: GoalHolder.Kind
+    let holderId: String?
+    let legacyConversationId: String?
+    var holder: GoalHolder? { GoalHolder(kind: holderKind, id: holderId) }
     let status: String
     let statusDate: String
     let nextRefreshAt: Double
@@ -108,4 +111,38 @@ struct GoalManualCommand: Codable, Equatable, Sendable {
     var value: Double? = nil
     var delta: Double? = nil
     var expectedWriteRevision: Int? = nil
+}
+
+/// The server's goal holder: Chief or a particular Manager, never a goal.
+struct GoalHolder: Hashable, Sendable {
+    enum Kind: String, Codable, Sendable { case chief, manager }
+    let kind: Kind
+    let id: String?
+    init?(kind: Kind, id: String?) {
+        guard kind == .chief ? id == nil : id?.isEmpty == false else { return nil }
+        self.kind = kind; self.id = id
+    }
+    static let chief = GoalHolder(kind: .chief, id: nil)!
+    static func manager(_ id: String) -> GoalHolder { GoalHolder(kind: .manager, id: id)! }
+    var conversationOwner: ConversationOwner {
+        kind == .chief ? .chief : .manager(id!)
+    }
+    var pagePath: String { kind == .chief ? "/api/chief/page" : "/api/managers/\(id!)/page" }
+    func soleGoal(in goals: [GoalRecord]) -> GoalRecord? {
+        let held = self.goals(in: goals)
+        return held.count == 1 ? held.first : nil
+    }
+    func goals(in goals: [GoalRecord]) -> [GoalRecord] { goals.filter { $0.holder == self } }
+}
+struct HolderPage: Codable, Sendable {
+    let page: GoalJSON?
+    let pageRevision: Int
+}
+
+enum PageDocumentPresentation {
+    static func hasTickets(_ blocks: [GoalJSON]) -> Bool {
+        blocks.contains { block in
+            block.type == "tickets" || hasTickets(block["blocks"].array) || block["views"].array.contains { hasTickets($0["blocks"].array) }
+        }
+    }
 }

@@ -18,13 +18,15 @@ struct WorkspaceView: View {
     @State private var settledLoading = false
     @State private var settledRequestedOffset = 0
     @State private var settledError: String?
+    @State private var goals: GoalsResponse?
+    @State private var goalsError: String?
     @State private var chiefSignal: ConversationSignal?
     @State private var chiefSignalError: String?
     @State private var loadingMore = false
 
     private var hasContent: Bool { store.chief != nil || store.managerPage != nil || store.ticketPage != nil }
     private var refreshError: String? {
-        store.errors["Workspace"] ?? store.errors["Tickets"] ?? store.errors["Chief"] ?? chiefSignalError
+        store.errors["Workspace"] ?? store.errors["Tickets"] ?? store.errors["Chief"] ?? chiefSignalError ?? goalsError
     }
 
     private var motion: Animation? { reduceMotion ? nil : PanelsTheme.Motion.disclosure }
@@ -41,11 +43,11 @@ struct WorkspaceView: View {
                 if hasContent {
                     WorkspaceCard(title: store.chief?.label ?? "Chief of Staff", chief: true,
                                   route: .chief, signal: chiefSignal, groups: groups["chief"] ?? [],
-                                  previewChanged: setPreviewOpen, open: open)
+                                  goals: goals?.goals ?? [], previewChanged: setPreviewOpen, open: open)
                     ForEach(managers) { manager in
                         WorkspaceCard(title: manager.title, project: manager.project, route: .orchestrator(manager.id),
                                       signal: manager.conversationSignal, groups: groups[manager.id] ?? [],
-                                      previewChanged: setPreviewOpen, open: open)
+                                      goals: goals?.goals ?? [], previewChanged: setPreviewOpen, open: open)
                     }
                     if store.managerPage?.nextOffset != nil || store.ticketPage?.nextOffset != nil {
                         Button {
@@ -89,9 +91,10 @@ struct WorkspaceView: View {
         .onDisappear { visible = false; store.workspaceVisible = false }
         .onChange(of: store.revision, initial: true) { _, _ in if visible { updateGroups() } }
         .onChange(of: store.baseURL) { _, _ in
-            groups = [:]; managers = []; settled = nil; chiefSignal = nil
+            groups = [:]; managers = []; settled = nil; chiefSignal = nil; goals = nil; goalsError = nil
             settledError = nil; chiefSignalError = nil; settledOpen = false; settledRequestedOffset = 0
         }
+        .modifier(GoalBoundaryRefresh(at: goals?.nextRefreshAt) { await loadGoals(store.client) })
         .task(id: "\(store.baseURL.absoluteString):\(store.revision):\(visible)") { if visible { await refreshSupplementary() } }
         }
     }
@@ -200,7 +203,16 @@ struct WorkspaceView: View {
         let api = store.client
         async let signalRead: () = loadChiefSignal(api)
         async let settledRead: () = loadSettled(api, through: settledRequestedOffset)
-        _ = await (signalRead, settledRead)
+        async let goalsRead: () = loadGoals(api)
+        _ = await (signalRead, settledRead, goalsRead)
+    }
+
+    private func loadGoals(_ api: APIClient) async {
+        do {
+            let response = try await api.goals()
+            guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
+            goals = response; goalsError = nil
+        } catch { if !Task.isCancelled, api.baseURL == store.baseURL { goalsError = error.localizedDescription } }
     }
 
     private func loadChiefSignal(_ api: APIClient) async {

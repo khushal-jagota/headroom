@@ -87,8 +87,9 @@ class ManagerValue(TypedDict):
 
 
 class GoalValue(TypedDict):
+    holder_kind: Literal["chief", "manager"]
+    holder_id: str | None
     title: str
-    conversation_id: str | None
     active: bool
     completed: bool
     created_at: int

@@ -16,7 +16,7 @@ struct RecapDelivery: Decodable, Sendable {
 extension APIClient {
     func requestRecap(target: Principal) async throws -> RecapDelivery {
         struct Body: Encodable { let target: Principal }
-        var request = URLRequest(url: try url("/api/recap-requests"))
+        var request = try self.request(try url("/api/recap-requests"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(Body(target: target))
@@ -45,7 +45,7 @@ extension APIClient {
         try await writeAgentFields("/api/tickets/\(id)/\(backlogged ? "backlog" : "resume")", method: "POST", body: [String: String]())
     }
     private func writeAgentFields<Body: Encodable>(_ path: String, method: String, body: Body) async throws {
-        var request = URLRequest(url: try url(path))
+        var request = try self.request(try url(path))
         request.httpMethod = method; request.timeoutInterval = 25
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)

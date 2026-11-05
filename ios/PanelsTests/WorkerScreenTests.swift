@@ -3,7 +3,11 @@ import XCTest
 
 final class WorkerScreenTests: XCTestCase {
     private func worker(_ changes: [String: Any] = [:]) throws -> ManagerTicket {
+#if SWIFT_PACKAGE
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "manager", withExtension: "json", subdirectory: "Fixtures"))
+#else
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "manager", withExtension: "json"))
+#endif
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         let tickets = try XCTUnwrap(root["tickets"] as? [[String: Any]])
         var row = try XCTUnwrap(tickets.first)
@@ -60,16 +64,18 @@ final class WorkerScreenTests: XCTestCase {
         try await api.setWorkerBacklog("worker", backlogged: false)
     }
 
-    func testChiefRefreshRetainsLoadedWindowAndScopesEveryPage() async throws {
+    func testHolderRefreshRetainsLoadedWindowAndScopesEveryPage() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [WorkerScreenMockProtocol.self]
         let session = URLSession(configuration: config)
         defer { session.invalidateAndCancel() }
         let api = APIClient(baseURL: URL(string: "https://panels.invalid")!, session: session)
-        let result = try await api.chiefWorkers(filter: .done, through: 30)
-        XCTAssertEqual(result.tickets.map(\.id), ["first", "second"])
-        XCTAssertEqual(result.page.offset, 30)
-        XCTAssertNil(result.page.nextOffset)
+        for holder in [GoalHolder.chief, .manager("holder")] {
+            let result = try await api.holderTickets(holder, filter: .done, through: 30)
+            XCTAssertEqual(result.tickets.map(\.id), ["first", "second"])
+            XCTAssertEqual(result.page.offset, 30)
+            XCTAssertNil(result.page.nextOffset)
+        }
     }
 }
 
@@ -123,8 +129,13 @@ private final class WorkerScreenMockProtocol: URLProtocol, @unchecked Sendable {
                 data = Data("{}".utf8)
             } else if url.path == "/api/tickets" {
                 let query = Dictionary(uniqueKeysWithValues: (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
-                guard request.httpMethod == "GET", query["manager_kind"] == "chief", query["stage"] == "done", query["include_terminal"] == "true" else { throw URLError(.badServerResponse) }
+                guard request.httpMethod == "GET", ["chief", "manager"].contains(query["manager_kind"] ?? ""),
+                      query["manager_kind"] != "manager" || query["manager_id"] == "holder", query["stage"] == "done", query["include_terminal"] == "true" else { throw URLError(.badServerResponse) }
+#if SWIFT_PACKAGE
+                let fixture = try XCTUnwrap(Bundle.module.url(forResource: "tickets", withExtension: "json", subdirectory: "Fixtures"))
+#else
                 let fixture = try XCTUnwrap(Bundle(for: WorkerScreenTests.self).url(forResource: "tickets", withExtension: "json"))
+#endif
                 let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as? [String: Any])
                 var row = try XCTUnwrap((root["tickets"] as? [[String: Any]])?.first)
                 let offset = query["offset"] == "30" ? 30 : 0

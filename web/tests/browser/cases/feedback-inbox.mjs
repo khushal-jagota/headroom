@@ -37,7 +37,7 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
     deployment = {...deployment, state,
       valid_until:new Date(Date.now()+(state === "back_up" ? 86400000 : 600000)).toISOString(),
       success_display_until:state === "back_up" ? new Date(Date.now()+300000).toISOString() : null};
-    await queryClient.invalidateQueries({queryKey:["deployment-status"]});
+    await queryClient.invalidateQueries({queryKey:["updates"]});
   };
   class QuietEventSource { constructor() { setTimeout(() => (this.onopen as any)?.({}), 0); } onopen = null; onmessage = null; onerror = null; addEventListener() {} removeEventListener() {} close() {} }
   (globalThis as any).EventSource = QuietEventSource;
@@ -60,7 +60,9 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
       if (key === "/api/deployment-status") return json({ key, epoch: "fixture", revision: "1", body: deployment });
       if (key === "/api/feedback/count") return json({ key, epoch: "fixture", revision: String(response().open_count), body: { open_count: response().open_count } });
     }
-    if (path === "/api/updates") return json({configured:false, available:null, request:null, activity:"unknown", detail:null});
+    if (path === "/api/updates") return json({configured:false, available:null, request:null, activity:"unknown", detail:null,
+      state: deployment.state === 'preparing' ? 'updating' : deployment.state === 'restarting' ? 'restarting' : ['problem','unknown'].includes(deployment.state) ? 'failed' : 'up_to_date',
+      allowed_actions: [], phase: deployment.state, app_sha: servedSha, deadline_at:null, restart_deadline_at:deployment.valid_until});
     if (path.startsWith("/api/meta")) return json({ app_sha: servedSha });
     if (path === "/api/review") return json({ items: [], running_worker_count: 0 });
     if (path === "/api/feedback/count" && method === "GET") return json({ open_count: response().open_count });

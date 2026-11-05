@@ -10,7 +10,7 @@ extension APIClient: ConversationServing {
 
     func changeHeldPrompt(_ id: String, heldID: String, discard: Bool) async throws -> ConversationHeldChange {
         let path = "/api/conversation/conversations/\(id)/held-prompts/\(heldID)" + (discard ? "" : "/promote")
-        var request = URLRequest(url: try url(path))
+        var request = try self.request(try url(path))
         request.httpMethod = discard ? "DELETE" : "POST"
         if !discard {
             request.httpBody = Data(#"{"mode":"steer"}"#.utf8)
@@ -21,13 +21,14 @@ extension APIClient: ConversationServing {
         return try Self.decoder().decode(ConversationHeldChange.self, from: data)
     }
     func interruptConversation(_ id: String) async throws {
-        var request = URLRequest(url: try url("/api/conversation/conversations/\(id)/interrupt"))
+        var request = try self.request(try url("/api/conversation/conversations/\(id)/interrupt"))
         request.httpMethod = "POST"
         let (data, response) = try await session.data(for: request)
         try Self.validate(response, data: data)
     }
     func conversationConfiguration(_ owner: ConversationOwner, id: String?) async throws -> ConversationConfiguration {
-        try await get(id.map { "/api/conversation/conversations/\($0)" } ?? owner.path + "/start-values")
+        guard let path = owner.path else { throw APIError(status: 410, message: "Goal conversations are retired. Open the goal to talk to its holder.") }
+        return try await get(id.map { "/api/conversation/conversations/\($0)" } ?? path + "/start-values")
     }
     func conversationSnapshot(_ id: String, lens: ConversationLens, transcript: Bool) async throws -> ConversationSnapshot {
         try await get("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: String(transcript))])
@@ -62,7 +63,8 @@ extension APIClient: ConversationServing {
         return text
     }
     func sendConversation(_ owner: ConversationOwner, message: ConversationSend) async throws -> ConversationDelivery {
-        var request = URLRequest(url: try url(owner.path + "/send"))
+        guard let path = owner.path else { throw APIError(status: 410, message: "Goal conversations are retired. Open the goal to talk to its holder.") }
+        var request = try self.request(try url(path + "/send"))
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -82,7 +84,7 @@ extension APIClient {
         AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let task = Task {
                 do {
-                    var request = URLRequest(url: try url("/api/conversation/conversations/\(id)/view/tail", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]))
+                    var request = try self.request(try url("/api/conversation/conversations/\(id)/view/tail", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]))
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.timeoutInterval = 120
                     let (bytes, response) = try await session.bytes(for: request)

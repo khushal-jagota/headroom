@@ -13,6 +13,14 @@ struct ArtifactTarget: Hashable, Identifiable, Sendable {
         !path.split(separator: "/", omittingEmptySubsequences: false).contains { $0.isEmpty || $0 == "." || $0 == ".." }
     }
 
+    static func isRetiredGoalURL(_ url: URL, baseURL: URL) -> Bool {
+        guard url.scheme == baseURL.scheme, url.host == baseURL.host, url.port == baseURL.port else { return false }
+        if url.path.hasPrefix("/files/goals/") { return true }
+        guard let fragment = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedFragment,
+              let preview = URLComponents(string: fragment), preview.path == "/preview" else { return false }
+        return preview.queryItems?.contains { $0.name == "source" && $0.value == "goal" } == true
+    }
+
     static func from(_ url: URL, baseURL: URL, title: String? = nil) -> Self? {
         guard url.scheme == baseURL.scheme, url.host == baseURL.host, url.port == baseURL.port else { return nil }
         if let fragment = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedFragment,
@@ -20,16 +28,16 @@ struct ArtifactTarget: Hashable, Identifiable, Sendable {
             let query = preview.queryItems ?? []
             func value(_ name: String) -> String? { query.first { $0.name == name }?.value }
             let source = value("source")
-            let kind: ArtifactOwner.Kind = source == "goal" ? .goal : source == "ticket" ? .ticket : .manager
-            let ownerKey = source == "goal" ? "goal" : source == "ticket" ? "ticket" : source == "sprint-item" ? "item" : "manager"
-            guard ["ticket", "manager", "sprint-item", "goal"].contains(source ?? ""),
+            let kind: ArtifactOwner.Kind = source == "ticket" ? .ticket : .manager
+            let ownerKey = source == "ticket" ? "ticket" : source == "sprint-item" ? "item" : "manager"
+            guard ["ticket", "manager", "sprint-item"].contains(source ?? ""),
                   let id = value(ownerKey), isSafePath(id), !id.contains("/"),
                   let path = value("path"), isSafePath(path) else { return nil }
             return Self(owner: .init(kind: kind, id: id), path: path, title: title ?? (path as NSString).lastPathComponent)
         }
         let parts = url.path.split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count >= 5, parts[1] == "files",
-              let kind = ["tickets": ArtifactOwner.Kind.ticket, "managers": .manager, "sprint-items": .manager, "goals": .goal][String(parts[2])] else { return nil }
+              let kind = ["tickets": ArtifactOwner.Kind.ticket, "managers": .manager, "sprint-items": .manager][String(parts[2])] else { return nil }
         let id = String(parts[3])
         let path = parts.dropFirst(4).joined(separator: "/")
         guard isSafePath(id), !id.contains("/"), isSafePath(path) else { return nil }

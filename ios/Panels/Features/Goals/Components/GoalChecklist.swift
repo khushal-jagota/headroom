@@ -2,7 +2,7 @@ import SwiftUI
 
 struct GoalChecklist: View {
     let block: GoalJSON
-    let session: GoalSession
+    let session: PageSession
     var supplementary = false
     var preview = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -87,7 +87,7 @@ struct GoalChecklist: View {
                             .animation(reduceMotion ? nil : PanelsTheme.Goal.appEase(0.15), value: done)
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }.buttonStyle(.plain).disabled(filed)
-                    GoalDateControl(value: item["deadline"].string, label: "Item deadline", tone: GoalPresentation.deadlineTone(item["deadline"].string, completed: done, today: session.goal?.statusDate), revision: session.goal?.revision ?? 0) { date, revision in
+                    GoalDateControl(value: item["deadline"].string, label: "Item deadline", tone: GoalPresentation.deadlineTone(item["deadline"].string, completed: done, today: session.statusDate), revision: session.revision) { date, revision in
                         await session.updateBlock(block.id, revision: revision) { old in
                             old.setting("items", .array(old["items"].array.map { $0.id == item.id ? $0.setting("deadline", date.map(GoalJSON.string) ?? .null) : $0 }))
                         }
@@ -117,7 +117,7 @@ struct GoalChecklist: View {
             withAnimation(reduceMotion ? .linear(duration: 0.15) : PanelsTheme.Goal.cubicOut(PanelsTheme.Goal.itemCollapse)) {
                 optimistic[item.id] = nil; held.remove(item.id)
                 if done, expanded == item.id {
-                    let accepted = GoalPresentation.checklists(session.goal?.page["blocks"].array ?? []).first { $0.id == block.id }
+                    let accepted = GoalPresentation.checklists(session.page?["blocks"].array ?? []).first { $0.id == block.id }
                     expanded = GoalPresentation.nextChecklistItem(accepted ?? block, after: item.id)
                 }
                 if !done { expanded = item.id }

@@ -33,7 +33,7 @@ import json
 import sqlite3
 from typing import Any, Literal
 
-from tests.unit.test_conversation_view_projection import FIXTURES, database
+from tests.support.conversation_view_database import FIXTURES, database
 from tests.unit.test_conversation_view_storage import event, prompt
 
 from planner.conversation.views.api import _changes

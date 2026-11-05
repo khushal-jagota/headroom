@@ -51,18 +51,36 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 
 _Last verified: 2026-11-04._
 
-## Native iOS setup
 
-The native app registers each token for its exact app ID and Apple environment through
-the server's authenticated owner access. Removing that registration stops future sends
-to that token. Revocation remains available if the Apple key is later removed. The
-server stores tokens in its database; private Apple keys stay in server secrets.
+## Native iOS push
 
-The native bundle `com.khushaljagota.panels` has Push Notifications enabled under
-Blue Door Labs; Release signing requests production APNs. App registration is
-still disabled by default. The remaining deployment inputs and the
-registration and notification contracts are in [the native notification guide](../ios/NOTIFICATIONS.md).
-Actual Apple delivery and signed physical-device behavior still need live testing.
+The native app uses Apple Push Notification service (APNs). The browser keeps its
+existing Web Push path. Each path records delivery separately for the same attention
+edge and notification preference. Native retries stop after five minutes or five attempts.
+No Apple credentials means no native network calls and no claim of successful delivery.
 
-Code paths: `src/planner/notifications/apns.py`, `src/planner/notifications/apns_data.py`,
-`src/planner/notifications/config.py`, and `ios/Panels/Features/Notifications/`.
+Set these environment inputs on the server before the owner deploys this change:
+
+- `PLAN_APNS_KEY_PATH`: the private `.p8` key file, outside source control.
+- `PLAN_APNS_KEY_ID`: the Apple key ID.
+- `PLAN_APNS_TEAM_ID`: the Apple developer team ID.
+- `PLAN_APNS_BUNDLE_IDS`: the allowed bundle IDs, separated by commas.
+
+Use a canonical HTTPS origin and the configured Tailscale ingress. Device registration
+requires the owner identity from that ingress. A token or client identity header is not
+a login. `PUT /api/notifications/apns/devices` registers the device token, bundle ID, and
+`development` or `production` environment. `DELETE` revokes the same registration even
+after the operator removes the key. Tokens never appear in adapter logs.
+
+For TestFlight, use an Apple developer membership, an App Store Connect app with the
+matching bundle ID, push capability, and the production APNs environment. Enable
+`APNS_REGISTRATION_ENABLED` in the signed app after the server integration is ready.
+The `.p8` key stays on the server. It does not belong in the app or its build inputs.
+See [the native setup guide](../ios/NOTIFICATIONS.md) for the app settings.
+
+The owner must deploy the server and install the new signed TestFlight build separately.
+Check native reads, an explicit owner action, foreground refresh, and conversation output.
+Enable notifications, then trigger a permitted attention edge while the app is closed.
+Check lock-screen delivery and the destination after a tap. A simulator injection does
+not prove Apple delivery, signing, provisioning, or trusted access from the phone.
+These physical-device checks need the owner and configured Apple credentials.

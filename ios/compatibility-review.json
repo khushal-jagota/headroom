@@ -1,0 +1,6 @@
+{
+  "oldest_supported_build": 1,
+  "decision": "compatible",
+  "contract_sha256": "3aec3a5e858725f90985444b0f90ef05c655754bbf800ed1b195849b9ba49466",
+  "evidence": "Merged main decd9734cd817d3bea0c372edc51c876f92fce64 into the native branch. Native build 1 remains compatible with the server contracts reviewed on main: new holder fields are additive, removed goal-owned send/start/artifact routes still return 404 without running work, and the minimum stays 1. This branch updates the next native app to explicit holders, holder conversations, authored holder documents and Tickets blocks, filters retired goal Review/file routes, and carries main request identity/update gate and the phone-store date-field migration into the newer native code. Authored backend changes preserve historical migration files and reconcile main Mac-contact ancestry before a forward native/goal-holder join; HTTP contracts are unchanged. Validation is scoped to Foundation host/URLProtocol, local SQLite migration tests, focused backend/web checks and an unsigned generic compile; no signed-device, deployed-server, APNs or TestFlight runtime validation."
+}

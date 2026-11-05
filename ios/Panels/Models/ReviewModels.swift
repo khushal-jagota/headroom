@@ -43,7 +43,7 @@ struct ReviewItem: Codable, Identifiable, Sendable {
         case "chief": return .chief
         case "manager": return ownerId.map(ConversationOwner.manager)
         case "ticket": return ownerId.map(ConversationOwner.ticket)
-        case "goal": return ownerId.map(ConversationOwner.goal)
+        case "goal": return nil
         default: return nil
         }
     }
@@ -66,5 +66,17 @@ struct ReviewItem: Codable, Identifiable, Sendable {
         recap = try c.decodeIfPresent(String.self, forKey: .recap)
         proposal = try c.decodeIfPresent(ReviewProposalItem.self, forKey: .proposal)
         messages = try c.decodeIfPresent([ReviewItem].self, forKey: .messages) ?? []
+    }
+}
+
+// Cached Review responses can still contain retired goal-owned messages.
+// Drop them at admission so neither the queue nor badge opens those items.
+extension ReviewResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        items = try c.decode([ReviewItem].self, forKey: .items).compactMap { card in
+            card.keepingComponents { $0.ownerKind != "goal" }
+        }
+        runningWorkerCount = try c.decode(Int.self, forKey: .runningWorkerCount)
     }
 }
