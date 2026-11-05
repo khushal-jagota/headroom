@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import select
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -314,14 +315,22 @@ def _claude_update_command() -> tuple[str, ...]:
 # --- what a command that runs out of time leaves behind ------------------------------------
 
 
-def _still_alive(process_id: int) -> bool:
+def _exits(process_id: int, *, within_seconds: float) -> bool:
+    """A zombie or a reaped PID has exited. A pidfd becomes readable when it exits."""
     try:
-        os.kill(process_id, 0)
+        descriptor = os.pidfd_open(process_id)
     except ProcessLookupError:
-        return False
-    except PermissionError:
         return True
-    return True
+    try:
+        try:
+            stat = Path(f"/proc/{process_id}/stat").read_text()
+        except FileNotFoundError:
+            return True
+        if stat.rsplit(")", 1)[1].split()[0] == "Z":
+            return True
+        return bool(select.select([descriptor], [], [], within_seconds)[0])
+    finally:
+        os.close(descriptor)
 
 
 def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
@@ -349,11 +358,9 @@ def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
         assert "did not answer within" in outcome.standard_error
 
         child_process_id = int(child_process_id_file.read_text().strip())
-        for _ in range(100):
-            if not _still_alive(child_process_id):
-                break
-            await asyncio.sleep(0.05)
-        assert not _still_alive(child_process_id), (
+        # The group's SIGKILL lands asynchronously, and the orphan stays a zombie until
+        # init reaps it. Either way it is no longer running.
+        assert _exits(child_process_id, within_seconds=5), (
             f"the command's own child ({child_process_id}) outlived it"
         )
 

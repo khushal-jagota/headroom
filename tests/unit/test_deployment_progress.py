@@ -44,7 +44,7 @@ def lifecycle(tmp_path: Path) -> Path:
 def launch(
     tmp_path: Path, lifecycle: Path, script: str, *, cleanup: bool = False,
     active: bool = True, parent: bool = False, writer: Path | None = None,
-    shutdown_grace: float = 0.08,
+    receipt_recovery_deadline: float = deployment_progress.RECEIPT_RECOVERY_DEADLINE_SECONDS,
 ) -> subprocess.Popen[bytes]:
     if sys.platform != "linux":
         pytest.skip("Deployment runner supervision requires Linux prctl, /proc and pidfds")
@@ -65,14 +65,15 @@ def launch(
         +
         "from scripts.deployment_progress import supervise, Timings; "
         f"raise SystemExit(supervise(Path({str(command)!r}), cleanup={cleanup!r}, "
-        f"timings=Timings(renewal=0.08, poll=0.01, shutdown_grace={shutdown_grace})))"
+        "timings=Timings(renewal=0.08, poll=0.01, shutdown_grace=0.08, "
+        f"receipt_recovery_deadline={receipt_recovery_deadline})))"
     )
     if parent:
         # Persist PID before waiting. Killing this parent simulates runner loss.
         code = (
             "import subprocess, sys; from pathlib import Path; "
             f"p=subprocess.Popen([sys.executable, '-c', {code!r}]); "
-            f"Path({str(tmp_path / 'supervisor.pid')!r}).write_text(str(p.pid)); p.wait()"
+            f"Path({str(tmp_path / 'supervisor.pid')!r}).write_text(f'{{p.pid}}\\n'); p.wait()"
         )
     return subprocess.Popen(
         [sys.executable, "-c", code], cwd=ROOT, env=environment,
@@ -101,16 +102,49 @@ def lock(path: Path) -> TextIO:
     return stream
 
 
+def complete_line(path: Path) -> bool:
+    # File creation precedes its write. The terminator marks a complete record.
+    return path.exists() and path.read_text().endswith("\n")
+
+
+def opens_lock(pid: int, lifecycle: Path) -> bool:
+    """Whether the supervisor has the renewal lock file open, as renew does to wait on it."""
+    lock_file = os.stat(lifecycle.with_suffix(lifecycle.suffix + ".lock"))
+    for name in os.listdir(f"/proc/{pid}/fd"):
+        try:
+            opened = os.stat(f"/proc/{pid}/fd/{name}")
+        except FileNotFoundError:
+            continue
+        if (opened.st_dev, opened.st_ino) == (lock_file.st_dev, lock_file.st_ino):
+            return True
+    return False
+
+
+def hold_lock_while_renew_waits(lifecycle: Path, supervisor_pid: int) -> TextIO:
+    """Hold the writer lock and return once a renewal is waiting for it."""
+    while True:
+        stream = lock(lifecycle)
+        # A descriptor seen now may belong to a renewal that has just unlocked and not
+        # yet closed it. Let that renewal finish and take the lock between renewals.
+        if not opens_lock(supervisor_pid, lifecycle):
+            break
+        stream.close()
+        wait_until(lambda: not opens_lock(supervisor_pid, lifecycle))
+    # Renew opens the lock before it polls for it, and closes it only after holding it.
+    # With the lock held here, any descriptor opened from now on is a renewal waiting.
+    try:
+        wait_until(lambda: opens_lock(supervisor_pid, lifecycle))
+    except BaseException:
+        stream.close()
+        raise
+    return stream
+
+
 def test_periodic_renewal_preserves_bash_semantics_and_child_status(
     tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
 ) -> None:
     before = record(lifecycle)
-    # The command can exit mid-renewal; receipt recovery then starts a writer, which
-    # alone takes about 80ms to start, so recovery needs more than the 80ms default.
-    process = launch(
-        tmp_path, lifecycle, "sleep 0.45\nfalse | true\necho should-not-run\n",
-        shutdown_grace=0.5,
-    )
+    process = launch(tmp_path, lifecycle, "sleep 0.45\nfalse | true\necho should-not-run\n")
     processes.append(process)
     wait_until(lambda: record(lifecycle)["updated_at"] != before["updated_at"])
     first = record(lifecycle)
@@ -153,8 +187,7 @@ def test_long_cleanup_renews_while_healthy(
     tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
 ) -> None:
     record_initial = record(lifecycle)
-    # As above: an exit mid-renewal needs room to recover the receipt.
-    process = launch(tmp_path, lifecycle, "sleep 0.45\n", cleanup=True, shutdown_grace=0.5)
+    process = launch(tmp_path, lifecycle, "sleep 0.45\n", cleanup=True)
     processes.append(process)
     wait_until(lambda: record(lifecycle)["updated_at"] != record_initial["updated_at"])
     first = record(lifecycle)
@@ -196,9 +229,9 @@ def test_cancellation_and_parent_loss_stop_owned_descendants_during_lock_wait(
     if detached:
         # Match smoke_candidate: Python starts a server in its own session, then waits.
         child_code = (
-            "import signal, time; from pathlib import Path; "
+            "import os, signal, time; from pathlib import Path; "
             "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-            f"Path({str(pidfile)!r}).write_text(str(__import__('os').getpid())); "
+            f"Path({str(pidfile)!r}).write_text(str(os.getpid()) + '\\n'); "
             "time.sleep(60)"
         )
         helper = tmp_path / "detached.py"
@@ -215,11 +248,15 @@ def test_cancellation_and_parent_loss_stop_owned_descendants_during_lock_wait(
         parent=parent_loss,
     )
     processes.append(process)
-    wait_until(pidfile.exists)
+    wait_until(lambda: complete_line(pidfile))
     descendant_pid = int(pidfile.read_text())
+    # Bash finished writing the leader record before it started the descendant.
     leader_pid = int(leader.read_text())
-    with lock(lifecycle):
-        time.sleep(0.14)  # Periodic renew is now waiting on the writer lock.
+    supervisor = tmp_path / "supervisor.pid"
+    if parent_loss:
+        wait_until(lambda: complete_line(supervisor))
+    supervisor_pid = int(supervisor.read_text()) if parent_loss else process.pid
+    with hold_lock_while_renew_waits(lifecycle, supervisor_pid):
         before = lifecycle.read_bytes()
         process.terminate()
         process.communicate(timeout=3)
@@ -319,8 +356,7 @@ def test_exited_adopted_child_is_reaped_before_owned_command_finishes(
         f"while [ ! -e {release} ]; do sleep 0.02; done\nexit 7\n",
     )
     processes.append(process)
-    # File creation precedes its write. The terminator marks a complete PID record.
-    wait_until(lambda: pidfile.exists() and pidfile.read_text().endswith("\n"))
+    wait_until(lambda: complete_line(pidfile))
     adopted_pid = int(pidfile.read_text())
     wait_until(lambda: not Path(f"/proc/{adopted_pid}").exists())
     assert process.poll() is None
@@ -518,10 +554,7 @@ def test_command_exit_preserves_committed_receipt_before_writer_stdout(
     mode: str, final: str, status: int,
 ) -> None:
     writer = controlled_writer(tmp_path, lifecycle, mode)
-    process = launch(
-        tmp_path, lifecycle, controlled_command(tmp_path, final), writer=writer,
-        shutdown_grace=0.5,
-    )
+    process = launch(tmp_path, lifecycle, controlled_command(tmp_path, final), writer=writer)
     processes.append(process)
     # Pause after the real replacement (and normally fsync), before writer stdout.
     wait_until((tmp_path / "writer.pid").exists)
@@ -550,10 +583,7 @@ def test_command_exit_before_commit_cancels_without_receipt_or_new_write(
     tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
 ) -> None:
     writer = controlled_writer(tmp_path, lifecycle, "precommit")
-    process = launch(
-        tmp_path, lifecycle, controlled_command(tmp_path, "exit 7"), writer=writer,
-        shutdown_grace=0.5,
-    )
+    process = launch(tmp_path, lifecycle, controlled_command(tmp_path, "exit 7"), writer=writer)
     processes.append(process)
     wait_until((tmp_path / "writer.pid").exists)
     before = lifecycle.read_bytes()
@@ -583,7 +613,11 @@ def test_reconciliation_failure_is_explicit_and_preserves_error_precedence(
     writer = controlled_writer(tmp_path, lifecycle, mode)
     process = launch(
         tmp_path, lifecycle, controlled_command(tmp_path, f"exit {child_status}"), writer=writer,
-        shutdown_grace=0.5,
+        # Only the timeout case is about the recovery deadline. The rest must recover.
+        receipt_recovery_deadline=(
+            0.5 if mode == "recovery-timeout"
+            else deployment_progress.RECEIPT_RECOVERY_DEADLINE_SECONDS
+        ),
     )
     processes.append(process)
     marker = "recovery.pid" if mode == "ordinary-error" else "writer.pid"
@@ -610,9 +644,7 @@ def test_receipt_recovery_excludes_competing_transition(
     tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
 ) -> None:
     writer = controlled_writer(tmp_path, lifecycle, "competing")
-    process = launch(
-        tmp_path, lifecycle, controlled_command(tmp_path), writer=writer, shutdown_grace=0.5,
-    )
+    process = launch(tmp_path, lifecycle, controlled_command(tmp_path), writer=writer)
     processes.append(process)
     wait_until((tmp_path / "writer.pid").exists)
     committed = record(lifecycle)
