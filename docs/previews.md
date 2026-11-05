@@ -30,7 +30,7 @@ The tailnet is the gate: only tailnet members reach the origin. It is not local 
 
 ## The load it places on Headroom
 
-Preview traffic runs inside Headroom's process. Headroom caps concurrent requests and WebSockets, globally and per preview, and limits transfer. Excess gets a busy response at once, with no queue. These bounds protect ordinary Headroom work from the proxy. They do not limit the app's own CPU or memory.
+Preview traffic runs inside Headroom's process. Headroom caps concurrent requests and WebSockets, globally and per preview, and limits transfer. Streams share the transfer limit in the order they ask, so a busy preview cannot starve one of its own requests. Excess gets a busy response at once, with no queue. These bounds protect ordinary Headroom work from the proxy. They do not limit the app's own CPU or memory.
 
 ## Decisions that shape it
 

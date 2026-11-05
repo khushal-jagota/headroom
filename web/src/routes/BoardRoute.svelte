@@ -24,7 +24,7 @@
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
   import { buildWorkspaceRail, workspaceListRecap, type WorkspaceRailItem } from "../lib/workspaceRail";
-  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
+  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController, listenForUserScroll } from "../lib/workspaceRailInteraction";
   import { correctedWorkspaceAddress, whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import { parseUtilityPath, type UtilityHref, type WorkspaceUtility } from "../lib/utilityAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
@@ -263,8 +263,8 @@
   $effect(() => { address.selection; untrack(() => { if (hoverGoalId) dismissHover(); }); });
   $effect(()=>{const id=hoverGoalId;if(id&&!presentation.goalRails?.some(holder=>!holder.sole&&holder.rows.some(goal=>goal.id===id)))untrack(dismissHover);});
   function scrollHover(event: Event): void {
-    if (!hoverGoalId) { hover.leave(); return; }
-    if (goalHoverElement?.contains(event.target as Node)) return;
+    // Only the person's own scrolling dismisses a row preview (listenForUserScroll).
+    if (!hoverGoalId || goalHoverElement?.contains(event.target as Node)) return;
     // Layout and query refreshes can move outer scroll positions. Explicit user
     // input below owns dismissal; the panel's scroll observer owns repositioning.
     hover.keepOpen();
@@ -295,7 +295,14 @@
     const click = (event: MouseEvent) => goalPreviewInput.click(event);
     window.addEventListener('pointerdown',outside); window.addEventListener('wheel',wheel,{passive:true});
     window.addEventListener('scroll',scrollHover,true); window.addEventListener('keydown',key); window.addEventListener('click',click,true);
+    const stopUserScroll = listenForUserScroll(window, event => {
+      const target = event.target as Node | null;
+      // A key on the previewed row itself moves focus, which opens the next preview.
+      if (hoverGoalId || hoverElement?.contains(target) || (event.type === 'keydown' && hoverTarget?.contains(target))) return;
+      hover.leave();
+    });
     return () => {
+      stopUserScroll();
       blurGoalPreviewInput(goalHoverElement);
       window.removeEventListener('pointerdown',outside); window.removeEventListener('wheel',wheel);
       window.removeEventListener('scroll',scrollHover,true); window.removeEventListener('keydown',key); window.removeEventListener('click',click,true);
@@ -567,6 +574,9 @@
   .board-workspace-right { position:relative; z-index:0; }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); border-right:0; }
   .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
+  /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
+     included, without becoming a scroller that a hover could slide sideways. */
+  .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
   .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
   .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
   .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
