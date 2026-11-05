@@ -204,9 +204,6 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
                 "UPDATE conversations SET workspace_path_policy='absolute' "
                 "WHERE conversation_id='historical'"
             )
-            conn.execute(
-                "INSERT INTO conversation_reply_credits VALUES('current',1,'ticket','t_one')"
-            )
             conn.execute("CREATE INDEX retained_workspace_index ON conversations(workspace_folder)")
             conn.execute(
                 "CREATE TRIGGER retained_workspace_trigger AFTER UPDATE ON conversations "
@@ -215,7 +212,9 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
             tables = [
                 row[0]
                 for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name!='alembic_version'"
+                    # retire_explicit_reply_requirement drops the reply credits table.
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name NOT IN ('alembic_version','conversation_reply_credits')"
                 )
             ]
             rows = {name: list(conn.execute(f'SELECT * FROM "{name}"')) for name in tables}
@@ -342,9 +341,6 @@ def test_executor_workspace_upgrade_preserves_populated_history_and_schema(tmp_p
             assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
             assert conn.execute("SELECT COUNT(*) FROM conversation_events").fetchone()[0] > 0
             assert conn.execute("SELECT COUNT(*) FROM ticket_conversations").fetchone()[0] > 0
-            assert (
-                conn.execute("SELECT COUNT(*) FROM conversation_reply_credits").fetchone()[0] == 1
-            )
         finally:
             conn.close()
     finally:
