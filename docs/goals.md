@@ -29,7 +29,7 @@ Headroom records the date a goal completes. For a numeric goal, the background c
 
 The completion date against the deadline gives the result. On or before the deadline is a hit. Later is a miss. An unfinished goal becomes a miss when its deadline passes. `panels goal` and the API report each result and the hit rate across all goals that have one. The browser does not show them.
 
-Completion and active state are separate. A finished goal stays in Active goals until someone deactivates it. Reactivation keeps the completion.
+Completion and active state are separate. A finished goal stays on its holder's page until someone deactivates it. Reactivation keeps the completion.
 
 ## Charts and measurements
 
@@ -48,9 +48,9 @@ Khushal edits most text on the page in place. Checklist wording belongs to the h
 ## Where it shows up
 
 - The **goal page**, with its holder's conversation beside it.
-- **Holder pages.** Chief and each Manager have a page in the same page kit, where Tickets is one of the blocks. A Manager with one goal is shown as that goal under the Manager's name, and both its Goal and Manager links open that page. A Manager with several goals shows goal cards. `panels goal make-manager` turns a Chief goal into a new Manager that holds it.
+- **Holder pages.** Chief and each Manager have a page in the same page kit, where Tickets is one of the blocks. A Manager with one goal is shown as that goal under the Manager's name, and both its Goal and Manager links open that page. A Manager with several goals shows goal cards. The Chief always shows its goals as cards, even when it holds only one. `panels goal make-manager` turns a Chief goal into a new Manager that holds it.
 - **Active goals** inside the Chief card in the rail. Hovering or holding a row opens a preview with the main display, which Khushal can check or edit from there.
-- The **goals overview**, with cards and a table.
+- **All goals**, a table of every goal, opened from Goals in the main navigation.
 - `panels goal` for agents: list, show, create, edit, read, and artifact commands. `panels goal schema` prints the accepted request shapes with examples, so agents read those before a write.
 
 ## Decisions that shape it

@@ -11,7 +11,6 @@ export type { WorkspaceUtility };
 export type WorkspaceSelection =
   | { kind: "none" }
   | { kind: "chief" }
-  | { kind: "goals" }
   | { kind: "goal"; id: string }
   // `path` is the screen's own position, the same path its standalone page uses. Empty
   // means the screen's default, which is what a rail icon asks for.
@@ -38,7 +37,6 @@ export type WorkspaceOpening = {
   markedTicketId: string | null;
   chiefMarked: boolean;
   markedGoalId: string | null;
-  allGoals: boolean;
   markedUtility: WorkspaceUtility | null;
   markedUtilityPath: string[];
 };
@@ -65,7 +63,6 @@ function parseSelection(segments: string[]): WorkspaceSelection | null {
   if (segments[1] === "chief-of-staff" && segments.length === 2) {
     return { kind: "chief" };
   }
-  if (segments[1] === "goals" && segments.length === 2) return { kind: "goals" };
   if (segments[1] === "goal" && segments.length === 3) return { kind: "goal", id: decodeSegment(segments[2]) };
   if (segments[1] === "utility" && segments.length >= 3 && isWorkspaceUtility(segments[2])) {
     // Segments stay as they arrived. The screen's own parser decodes what it owns, and
@@ -104,7 +101,7 @@ export function parseWorkspaceAddress(hash: string): WorkspaceAddress | null {
   const params = new URLSearchParams(query);
   const asked = params.get("view");
   const view = asked === "items" ? "managers" : asked === "tickets" || asked === "managers" ? asked : null;
-  const openFile = selection.kind === "ticket" || selection.kind === "chief" || selection.kind === "goal" || selection.kind === "goals" ? targetFromPreviewQuery(params) : null;
+  const openFile = selection.kind === "ticket" || selection.kind === "chief" || selection.kind === "goal" ? targetFromPreviewQuery(params) : null;
   return { selection, view: view ?? impliedWorkspaceView(selection), openFile,
     ...(params.get("conversation") ? {selectedConversationId: params.get("conversation")} : {}) };
 }
@@ -119,13 +116,12 @@ export function workspaceAddress(
   const parts: string[] = [];
   if (selectedConversationId) parts.push(`conversation=${encodeURIComponent(selectedConversationId)}`);
   if (view && view !== impliedWorkspaceView(selection)) parts.push(`view=${view}`);
-  if (openFile && (selection.kind === "ticket" || selection.kind === "chief" || selection.kind === "goal" || selection.kind === "goals")) parts.push(previewQuery(openFile));
+  if (openFile && (selection.kind === "ticket" || selection.kind === "chief" || selection.kind === "goal")) parts.push(previewQuery(openFile));
   return parts.length === 0 ? path : `${path}?${parts.join("&")}`;
 }
 
 function selectionPath(selection: WorkspaceSelection): string {
   if (selection.kind === "none") return "#/workspace";
-  if (selection.kind === "goals") return "#/workspace/goals";
   if (selection.kind === "goal") return `#/workspace/goal/${encodeURIComponent(selection.id)}`;
   if (selection.kind === "chief") return "#/workspace/chief-of-staff";
   if (selection.kind === "utility") {
@@ -178,9 +174,8 @@ export function whatTheAddressOpens(address: WorkspaceAddress): WorkspaceOpening
     openManagerId: selection.kind === "manager" ? selection.id : openedFromManagerId,
     markedManagerId: selection.kind === "manager" ? selection.id : null,
     markedTicketId: selection.kind === "ticket" ? selection.id : null,
-    chiefMarked: selection.kind === "chief" || selection.kind === "goal" || selection.kind === "goals",
+    chiefMarked: selection.kind === "chief" || selection.kind === "goal",
     markedGoalId: selection.kind === "goal" ? selection.id : null,
-    allGoals: selection.kind === "goals",
     markedUtility: selection.kind === "utility" ? selection.utility : null,
     markedUtilityPath: selection.kind === "utility" ? selection.path : []
   };

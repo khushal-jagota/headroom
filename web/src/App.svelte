@@ -52,6 +52,7 @@
     switch (route.name) {
       case "review": return cachedImport("./ReviewRoute.svelte", () => import("./routes/ReviewRoute.svelte"));
       case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./routes/IdeasRoute.svelte"));
+      case "goals": return cachedImport("./GoalsRoute.svelte", () => import("./routes/GoalsRoute.svelte"));
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./routes/SettingsRoute.svelte"));
       case "backends": return cachedImport("./BackendsRoute.svelte", () => import("./routes/BackendsRoute.svelte"));
       case "preview": return cachedImport("./FilePreviewRoute.svelte", () => import("./routes/FilePreviewRoute.svelte"));
@@ -59,7 +60,7 @@
     }
   });
   let routeShape = $derived(route.name === "review" ? "block" as const
-    : ["ideas", "backends"].includes(route.name) ? "rows" as const : "document" as const);
+    : ["ideas", "goals", "backends"].includes(route.name) ? "rows" as const : "document" as const);
 
   let moreOpen = $state(false);
   let moreMenuElement = $state<HTMLDivElement | null>(null);
@@ -206,6 +207,8 @@
           {#await import("./routes/ReviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "ideas"}
           {#await import("./routes/IdeasRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
+        {:else if route.name === "goals"}
+          {#await import("./routes/GoalsRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "settings"}
           {#await import("./routes/SettingsRoute.svelte") then view}<view.default section={route.params.section} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "backends"}

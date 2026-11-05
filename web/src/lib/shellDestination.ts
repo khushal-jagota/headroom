@@ -2,7 +2,7 @@ import { canonicalShellHash } from "./shellRouting";
 import { impliedWorkspaceView, parseWorkspaceAddress, workspaceAddress, type WorkspaceAddress } from "./workspaceAddress";
 import { parseUtilityPath } from "./utilityAddress";
 
-type DestinationName = "workspace" | "review" | "ideas" | "settings" | "backends" | "preview" | "vps" | "unknown";
+type DestinationName = "workspace" | "review" | "ideas" | "goals" | "settings" | "backends" | "preview" | "vps" | "unknown";
 /** One parsed address for the persistent shell. Pane keys never key the shell itself. */
 export type ShellDestination = {
   [Name in DestinationName]: { name: Name; params: Record<string, string>; key: string; hash: string; workspace?: WorkspaceAddress }
@@ -27,6 +27,8 @@ export function parseShellDestination(incoming: string): ShellDestination {
     try { id = decodeURIComponent(id); } catch { /* Keep malformed segments intact. */ }
     return redirect({ kind: "ticket", id });
   }
+  // All goals used to open inside the Chief's frame. Old links land on its own destination.
+  if (name === "workspace" && segments[1] === "goals" && segments.length === 2) return { name: "goals", params: {}, key: "goals", hash: "#/goals" };
   if (name === "workspace") {
     const address = parseWorkspaceAddress(hash);
     if (!address) return unknown();
@@ -41,7 +43,7 @@ export function parseShellDestination(incoming: string): ShellDestination {
     if ("tab" in detail) params.tab = detail.tab;
     params.roleKind = detail.roleKind;
     if (detail.roleId) params.id = detail.roleId;
-  } else if (!["review", "ideas", "preview", "vps"].includes(name) || segments.length > 1) return unknown();
+  } else if (!["review", "ideas", "goals", "preview", "vps"].includes(name) || segments.length > 1) return unknown();
   const key = name === "backends" ? "backends" : `${segments.join("/")}${query}`;
   return { name: name as Exclude<DestinationName, "workspace">, params, key, hash };
 }
