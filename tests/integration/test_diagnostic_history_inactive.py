@@ -30,7 +30,7 @@ def test_startup_restart_and_background_loops_never_expire_and_reconcile_offline
         if key.startswith("PLAN_"):
             monkeypatch.delenv(key)
     database = tmp_path / "planner.db"
-    seed_archive(database, initialize_runtime=True)
+    seed_archive(database)
     before = _events(database)
     for _restart in range(2):
         with TestClient(make_app(tmp_path, test_mode=False)) as client:
@@ -53,7 +53,7 @@ def test_startup_restart_and_background_loops_never_expire_and_reconcile_offline
         _migration_tree_through(offline_path, historical, "owner_message_preview")
         # Current runtime readers require current migrations. This archive stays
         # historical until the real startup below performs its upgrade.
-        seed_archive(database, initialize_runtime=False)
+        seed_archive(database)
     report = read_report(database, as_of_unix=AS_OF)
     assert sum(len(decision.candidates) for decision in report.decisions) == 2
     apply_report(database, report, confirmed=True)
