@@ -27,6 +27,7 @@ from anyio.abc import Process
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     CLINotFoundError,
+    SystemMessage,
     TaskNotificationMessage,
     TaskStartedMessage,
     TaskUpdatedMessage,
@@ -44,7 +45,6 @@ from tests.support.conversation_claude_agent_sdk_bench import (
     _write,
 )
 
-from planner.conversation.backends import claude_agent_sdk
 from planner.conversation.backends.claude_agent_sdk import (
     _ClaudeCleanupTransport,
     _ClaudeProtocolTransport,
@@ -153,12 +153,26 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
     _run(exercise)
 
 
-def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_end_them(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_background_tasks_follow_claudes_live_set_and_a_dying_child_does_not_end_them(
+    tmp_path: Path,
 ) -> None:
-    """Task news arrives when no turn runs. Claude stops every task while it is terminated,
-    and those tasks ended with the session, not on their own.
+    """Claude's live set alone says which tasks are live, so an end it never announced
+    still clears the task. Claude stops every task while it is terminated, and those tasks
+    ended with the session, not on their own. The frames follow claude's real order.
     """
+
+    def live(*task_ids: str, ambient: str | None = None) -> SystemMessage:
+        tasks: list[dict[str, object]] = [
+            {"task_id": task_id, "task_type": "local_bash", "description": f"sleep for {task_id}"}
+            for task_id in task_ids
+        ]
+        if ambient is not None:
+            watcher = {"task_id": ambient, "task_type": "monitor", "description": "watch"}
+            tasks.append({**watcher, "ambient": True})
+        return SystemMessage(
+            subtype="background_tasks_changed",
+            data={"type": "system", "subtype": "background_tasks_changed", "tasks": tasks},
+        )
 
     def started(task_id: str) -> TaskStartedMessage:
         return TaskStartedMessage(
@@ -192,33 +206,33 @@ def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_
             session_id=SESSION_ID,
         )
 
-    monkeypatch.setattr(
-        claude_agent_sdk, "STOPPED_BACKGROUND_TASK_PROOF_OF_LIFE_SECONDS", 0.01
-    )
-
     async def exercise() -> None:
         start = _start_request(workspace_folder=tmp_path)
         child, sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=SESSION_ID)
         clients[0].say(
+            live("a", ambient="w"),
             started("a"),
             updated("a", "completed"),
             notified("a", "completed"),
-            # Stopped by the agent: the session goes on, which proves it survived the stop.
+            live(ambient="w"),
+            # Stopped by the agent, which goes on working: the stop is the task's own end.
+            live("b"),
             started("b"),
             updated("b", "killed"),
+            live(),
             _assistant(TextBlock(text="stopped it")),
-            # Stopped between turns: the child is still up a while later.
-            started("d"),
-            notified("d", "stopped"),
-        )
-        await clients[0].until_taken_in()
-        await asyncio.sleep(0.05)
-        clients[0].say(
+            # A shell whose end claude never announced leaves the live set all the same.
+            live("e"),
+            started("e"),
+            live(),
+            _assistant(TextBlock(text="carrying on")),
             # Stopped while claude itself is being terminated: the stream ends next.
+            live("c"),
             started("c"),
             notified("c", "stopped"),
             updated("c", "killed"),
+            live(),
         )
         clients[0].end_the_stream()
         await clients[0].until_taken_in()
@@ -228,10 +242,11 @@ def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_
             BackgroundTaskEnded(task_id="a", task_status="completed"),
             BackgroundTaskStarted(task_id="b", task_description="sleep for b"),
             BackgroundTaskEnded(task_id="b", task_status="killed"),
-            BackgroundTaskStarted(task_id="d", task_description="sleep for d"),
-            BackgroundTaskEnded(task_id="d", task_status="stopped"),
+            BackgroundTaskStarted(task_id="e", task_description="sleep for e"),
+            BackgroundTaskEnded(task_id="e", task_status="unreported"),
             BackgroundTaskStarted(task_id="c", task_description="sleep for c"),
-            BackendStreamEnded(),
+            BackgroundTaskEnded(task_id="c", task_status="killed"),
+            BackendStreamEnded(background_tasks_stopped_as_the_stream_ended=("sleep for c",)),
         ]
         await child.stop()
 

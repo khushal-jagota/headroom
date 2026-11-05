@@ -642,9 +642,14 @@ class BackendStreamEnded:
 
     Reported whether or not a turn was running, and never for a stop the core asked
     for. Anything the child was still running ended with it.
+
+    ``background_tasks_stopped_as_the_stream_ended`` holds the descriptions of tasks
+    already reported ended as stopped, when the child never acted again after those
+    stops. A backend being terminated stops its tasks on the way out, so they ended with
+    the session too.
     """
 
-    pass
+    background_tasks_stopped_as_the_stream_ended: tuple[str, ...] = ()
 
 
 type BackendEventValue = (

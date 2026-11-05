@@ -4467,8 +4467,9 @@ class SqliteProcessConversationSystem:
                         conn, conversation_id, args.task_id
                     )
                 elif live and isinstance(args, BackendStreamEnded):
-                    lost_background_tasks = self._store.take_background_tasks_in_transaction(
-                        conn, conversation_id
+                    lost_background_tasks = (
+                        *args.background_tasks_stopped_as_the_stream_ended,
+                        *self._store.take_background_tasks_in_transaction(conn, conversation_id),
                     )
                 return {"applied": live}, written
 
@@ -4504,6 +4505,8 @@ class SqliteProcessConversationSystem:
                     state.record = replace(state.record, composer_catalog=args.composer_catalog)
                 elif live and background_task_news:
                     self._note_background_task_news(state, args)
+                    if self._live_tail is not None:
+                        self._live_tail.views.publish_status_changed(conversation_id)
                 if predicted is not None and predicted.ended:
                     self._settle_phase(state)
                     should_drain = True

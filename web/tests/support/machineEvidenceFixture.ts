@@ -19,7 +19,7 @@ export function installMachineEvidenceFixture(): void {
   const questions=[{question_id:'one',header:'First',question:'Choose one',options:[{label:'One',description:''}],multi_select:false,allow_other:true},
     {question_id:'two',header:'Second',question:'Choose two',options:[{label:'Two',description:''}],multi_select:false,allow_other:false}];
   const id=()=>kind==='permission'?publicId:'public-turn:user_input:native-questions';
-  const status=()=>({diagnostics_expired:false,runtime_epoch:'fixture',revision:1,activity_at_unix_milliseconds:1,authority:'current',turn_key:'turn:1',turn_running:true,stopped_without_ending:false,
+  const status=()=>({diagnostics_expired:false,runtime_epoch:'fixture',revision:1,activity_at_unix_milliseconds:1,authority:'current',turn_key:'turn:1',turn_running:true,stopped_without_ending:false,background_tasks:[],
     pending_permission:kind==='permission'&&!answered?{kind,request_id:id(),row_key:'e2',source_sequence:2}:null,pending_user_input:kind==='user_input'&&!answered&&!requestGone?{kind,request_id:id(),row_key:'e2',source_sequence:2}:null,
     plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,
     rest:{latest_happened:null,latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:null,latest_owner_message_preview:null,last_boundary_failed:false,

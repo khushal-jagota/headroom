@@ -237,6 +237,15 @@ class ConversationViewLiveOutput:
             watcher.notify(durable=False)
 
     @_locked
+    def publish_status_changed(self, conversation_id: str) -> None:
+        """Wake open readers for a status fact that has no row, such as a background task."""
+        state = self._conversations.get(conversation_id)
+        if state is not None:
+            state.revision += 1
+        for watcher in tuple(self._subscriptions.get(conversation_id, ())):
+            watcher.notify(durable=False)
+
+    @_locked
     def status(self, conversation_id: str) -> tuple[int, int | None]:
         state = self._conversations.get(conversation_id)
         return (state.revision, state.activity_at) if state is not None else (0, None)

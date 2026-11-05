@@ -28,6 +28,10 @@ def database(events: list[dict[str, Any]]) -> sqlite3.Connection:
         "CREATE TABLE conversation_events(conversation_id TEXT,sequence INTEGER,kind TEXT,"
         "payload TEXT,created_at INTEGER,PRIMARY KEY(conversation_id,sequence))"
     )
+    conn.execute(
+        "CREATE TABLE conversation_background_tasks(conversation_id TEXT,task_id TEXT,"
+        "task_description TEXT,PRIMARY KEY(conversation_id,task_id))"
+    )
     install_expiry_metadata(conn)
     for sql in SCHEMA_STATEMENTS:
         conn.execute(sql)
