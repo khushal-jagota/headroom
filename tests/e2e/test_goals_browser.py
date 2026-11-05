@@ -741,6 +741,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(page.locator("[data-goal-page]")).to_have_attribute(
         "data-native-edit-proof", "retained", timeout=WAIT_MS
     )
+    # The field stays locked until the page reads the saved goal back, so the
+    # old title cannot flash. Playwright fill fails at once on a locked field.
+    expect(title_editor).to_have_attribute("contenteditable", "true", timeout=WAIT_MS)
     title_editor.fill("Discard this unsaved title", timeout=WAIT_MS)
     title_editor.press("Escape", timeout=WAIT_MS)
     expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
