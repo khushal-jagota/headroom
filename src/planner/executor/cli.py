@@ -24,12 +24,22 @@ def executor_group() -> None:
 @click.option("--application-revision", required=True)
 @click.option("--panels-server-url", required=True)
 def run(executor_id: str, application_revision: str, panels_server_url: str) -> None:
-    from planner.executor.mac_service import MacService
-
     try:
         validate_executor_launch(executor_id, application_revision, panels_server_url)
     except ValueError as error:
         raise click.ClickException(str(error)) from error
+    from planner.executor.update_configuration import MAC_RUNTIME_CHILD_ENV
+
+    if os.environ.get(MAC_RUNTIME_CHILD_ENV) != "1":
+        from planner.executor.runtime_bootstrap import main as bootstrap_main
+
+        bootstrap_main([
+            "executor", "run", "--executor-id", executor_id,
+            "--application-revision", application_revision,
+            "--panels-server-url", panels_server_url,
+        ])
+    from planner.executor.mac_service import MacService
+
     asyncio.run(
         MacService(
             paths=executor_paths(),

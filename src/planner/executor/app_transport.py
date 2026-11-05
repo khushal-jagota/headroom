@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
+from pydantic import TypeAdapter, ValidationError
 from starlette.requests import HTTPConnection
-from starlette.responses import StreamingResponse
+from starlette.responses import FileResponse, StreamingResponse
 
+from planner.environments.mac_updates import MacUpdateService
+from planner.environments.update_requests import UpdateConflict
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import EXECUTOR_GENERATION_HEADER, EXECUTOR_INCARNATION_HEADER
 from planner.executor.link import ServerWebSocketPeer
+from planner.executor.update_configuration import MAX_MAC_UPDATE_RESPONSE_BYTES
+from planner.executor.update_contracts import MacUpdateCheck, MacUpdateReport
 from planner.executor.vps_transport import VpsExecutor
 
 
@@ -19,11 +25,14 @@ def build_executor_router() -> APIRouter:
 
     router = APIRouter()
 
-    def endpoint_for(connection: HTTPConnection) -> VpsExecutor:
+    def require_ingress(connection: HTTPConnection) -> None:
         try:
             require_executor_ingress(connection.scope, connection.app.state.executor_id)
         except ValueError as error:
             raise HTTPException(403, str(error)) from error
+
+    def endpoint_for(connection: HTTPConnection) -> VpsExecutor:
+        require_ingress(connection)
         endpoint = getattr(connection.app.state, "executor_endpoint", None)
         if not isinstance(endpoint, VpsExecutor):
             raise HTTPException(503, "executor endpoint unavailable")
@@ -43,6 +52,47 @@ def build_executor_router() -> APIRouter:
         ):
             raise HTTPException(409, "executor generation is not current")
         return identity
+
+    def updates_for(request: Request) -> MacUpdateService:
+        # Recovery must remain available before work-protocol/generation admission.
+        require_ingress(request)
+        service = getattr(request.app.state, "mac_updates", None)
+        if not isinstance(service, MacUpdateService):
+            raise HTTPException(503, "Mac update service unavailable")
+        return service
+
+    @router.get("/api/executor/update")
+    async def update_target(request: Request) -> MacUpdateCheck:
+        try:
+            return await asyncio.to_thread(updates_for(request).check)
+        except (UpdateConflict, OSError, ValueError) as error:
+            raise HTTPException(409, str(error)) from error
+
+    @router.get("/api/executor/update/{request_id}/archive")
+    async def update_archive(request: Request, request_id: str) -> FileResponse:
+        try:
+            path = await asyncio.to_thread(updates_for(request).archive, request_id)
+        except (UpdateConflict, OSError, ValueError) as error:
+            raise HTTPException(409, str(error)) from error
+        return FileResponse(path, media_type="application/gzip")
+
+    @router.post("/api/executor/update")
+    async def update_report(request: Request) -> dict[str, bool]:
+        service = updates_for(request)
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > MAX_MAC_UPDATE_RESPONSE_BYTES:
+                raise HTTPException(413, "Mac update report exceeds its size limit")
+        try:
+            report = TypeAdapter(MacUpdateReport).validate_json(bytes(body), strict=True)
+            endpoint = getattr(request.app.state, "executor_endpoint", None)
+            health = endpoint.health() if endpoint is not None else {}
+            # Do not yield between the live generation snapshot and its receipt.
+            service.report(report, health)
+        except (ValidationError, UpdateConflict, OSError, ValueError) as error:
+            raise HTTPException(409, str(error)) from error
+        return {"confirmed": report.phase == "current"}
 
     @router.websocket("/api/executor/connect")
     async def connect(socket: WebSocket) -> None:

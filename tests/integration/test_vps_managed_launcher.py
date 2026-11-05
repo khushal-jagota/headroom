@@ -28,6 +28,9 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
         "src/planner/core/config.py",
         "src/planner/core/contracts.py",
         "src/planner/core/errors.py",
+        "src/planner/notifications/__init__.py",
+        "src/planner/notifications/config.py",
+        "src/planner/notifications/contracts.py",
     }
     for name in source_files:
         target = app / name

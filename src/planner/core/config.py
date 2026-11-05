@@ -16,6 +16,8 @@ import yaml
 
 from planner.core.errors import ErrorCode, PlannerError
 from planner.environments.app import AppValidationError, validate_app_sha
+from planner.notifications.config import load_apns_config
+from planner.notifications.contracts import APNsConfig
 
 # ConversationStore retries only rolled-back SQLite writer contention.
 CONVERSATION_WRITE_LOCK_RETRY_SECONDS: Final = 0.05
@@ -54,6 +56,7 @@ class Config:
     test_mode: bool
     fake_now: str | None
     executor_id: str | None = None
+    apns: APNsConfig | None = None
     app_sha: str | None = None
     credential_key_path: str = "data/credential-secrets/key"
     measure_source_timeout_seconds: int = 30
@@ -341,4 +344,5 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         fake_now=fake_now,
         executor_id=executor_id,
         app_sha=app_sha,
+        apns=load_apns_config(env),
     )

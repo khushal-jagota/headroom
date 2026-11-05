@@ -477,6 +477,13 @@ def run(browser, urls):
             path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
         if path == "deployment-status":
             result = {"state": "idle"}
+        elif path == "updates":
+            result = {
+                "configured": False, "available": None, "request": None,
+                "activity": "unknown", "detail": None, "state": "up_to_date",
+                "allowed_actions": [], "phase": None, "app_sha": None,
+                "deadline_at": None, "restart_deadline_at": None, "mac_status": None,
+            }
         elif path == "chief/conversation":
             result = {"conversation_id": chief_pointer}
         elif path == "chief/conversation/send":

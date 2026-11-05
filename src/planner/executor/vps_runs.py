@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -28,6 +29,7 @@ from planner.executor.clock import now_ms
 from planner.executor.link import Link
 from planner.executor.link_files import settled_io
 from planner.executor.protocol import (
+    AcceptanceReceipt,
     CanonicalSkillSnapshot,
     ChildCommand,
     ChildInventory,
@@ -40,6 +42,7 @@ from planner.executor.protocol import (
     WithdrawCommands,
     WithdrawResult,
     as_object,
+    encode_command_for_peer,
     type_adapter,
 )
 from planner.executor.skills import read_canonical_skill_snapshot
@@ -54,6 +57,8 @@ class MacRunConversations(Protocol):
     ) -> None: ...
 
     async def interrupt_runs_of_replaced_host(self, current_incarnation: str) -> None: ...
+
+    async def confirm_remote_child_termination(self, reference: ChildReference) -> None: ...
 
     async def stop_interrupted_remote_child(
         self, reference: ChildReference, child: MacRemoteChild
@@ -204,7 +209,14 @@ class MacRuns:
 
     def assign_child(self, start: ResolvedConversationStart) -> ChildReference:
         if self.identity is None or not self.ready:
-            raise BackendSpawnFailed("The Mac executor has no reconciled connection")
+            from planner.execution_identity import TicketLocale
+            from planner.tickets.locale_configuration import execution_unavailable_reason
+
+            conn = db.connect(self.db_path)
+            try:
+                raise BackendSpawnFailed(execution_unavailable_reason(conn, TicketLocale.macos))
+            finally:
+                conn.close()
         child = ChildReference(
             self.identity.executor_incarnation, str(uuid4()), start.conversation_id
         )
@@ -288,7 +300,7 @@ class MacRuns:
     ) -> bool:
         command = pending.command
         emit = (
-            self._emit_answer(command, identity, writer)
+            self._emit_answer(pending, identity, writer)
             if command.operation
             in (
                 ChildOperation.answer_permission_ask,
@@ -313,7 +325,7 @@ class MacRuns:
         command = pending.command
 
         def admit() -> bool:
-            if self._initial_command_cancelled(command) or pending.future.done():
+            if self._initial_command_cancelled(command) or self._fence_closed_command(pending):
                 return False
             if identity != self.identity or writer is not self.link:
                 raise ConnectionError("command input generation changed")
@@ -326,18 +338,23 @@ class MacRuns:
 
         return await writer.tell(
             WireMessageKind.command,
-            as_object(command),
+            encode_command_for_peer(command, identity.protocol_version),
             request_id=command.command_id,
             admit=admit,
         )
 
     async def _emit_answer(
-        self, command: ChildCommand, identity: ExecutorIdentity, writer: Link
+        self, pending: _PendingCommand, identity: ExecutorIdentity, writer: Link
     ) -> bool:
+        if self._fence_closed_command(pending):
+            return False
+        command = pending.command
         child = self.children.get(command.child.child_id)
         emitted = False
 
         def admit_answer() -> bool:
+            if self._fence_closed_command(pending):
+                return False
             if not self.ready or self.link is not writer or self.identity != identity:
                 raise ConnectionError("answer connection changed")
             return (
@@ -353,7 +370,7 @@ class MacRuns:
                 return
             emitted = await writer.tell(
                 WireMessageKind.command,
-                as_object(command),
+                encode_command_for_peer(command, identity.protocol_version),
                 request_id=command.command_id,
                 admit=admit_answer,
             )
@@ -417,6 +434,14 @@ class MacRuns:
         pending = _PendingCommand(command, future)
         self.pending_commands[command.command_id] = pending
         try:
+            if command.operation is not ChildOperation.stop:
+                try:
+                    closed = await settled_io(self.store.has_closed_child_assignment, command.child)
+                except (OSError, sqlite3.Error):
+                    self._settle_uncertain(pending, "executor_child_authority_unconfirmed")
+                else:
+                    if closed:
+                        self._settle_uncertain(pending, "executor_child_stopped")
             if self.ready and self.link is not None:
                 identity, writer = self.identity, self.link
                 assert identity is not None
@@ -431,6 +456,31 @@ class MacRuns:
         finally:
             if future.done():
                 self.pending_commands.pop(command.command_id, None)
+
+    @staticmethod
+    def _settle_uncertain(pending: _PendingCommand, reason: str) -> None:
+        if not pending.future.done():
+            pending.future.set_result(CommandOutcome(
+                pending.command.command_id,
+                pending.command.child,
+                CommandDisposition.uncertain,
+                {"reason": reason},
+            ))
+
+    def _fence_closed_command(self, pending: _PendingCommand) -> bool:
+        """Read exact closure at the final send point, after writer backpressure."""
+        if pending.future.done():
+            return True
+        if pending.command.operation is ChildOperation.stop:
+            return False
+        try:
+            closed = self.store.has_closed_child_assignment(pending.command.child)
+        except (OSError, sqlite3.Error):
+            self._settle_uncertain(pending, "executor_child_authority_unconfirmed")
+            return True
+        if closed:
+            self._settle_uncertain(pending, "executor_child_stopped")
+        return closed
 
     def authority(self, child: ChildReference) -> Principal:
         binding = self.store.child_assignment(child)
@@ -454,6 +504,8 @@ class MacRuns:
         # Closed assignments admit only their retained exact stop proof.
         # They grant no callback, command-result or new native-work authority.
         pending = self.pending_commands.get(outcome.command_id)
+        if pending is not None and pending.command.child != outcome.child:
+            raise ValueError("child_stopped conflicts with pending child")
         if not (
             self.store.has_closed_child_assignment(outcome.child)
             and pending is not None
@@ -465,6 +517,40 @@ class MacRuns:
             raise ValueError("child_stopped requires successful exact-child stop")
         if pending is not None and pending.command.operation is not ChildOperation.stop:
             raise ValueError("child_stopped conflicts with pending command")
+
+    async def accept_stop_receipt(
+        self, outcome: CommandOutcome, receipt: AcceptanceReceipt
+    ) -> None:
+        """Settle authoritative termination without making FIFO wait for another stop."""
+        if (
+            receipt.result.get("stop_command_id") != outcome.command_id
+            or receipt.result.get("stopped_child") != as_object(outcome.child)
+        ):
+            # Older receipts prove only their original solicited exchange. They
+            # never grant a new unsolicited retirement from a replayed payload.
+            if "stop_command_id" not in receipt.result:
+                self._resolve_command(outcome, stop_proven=True)
+            return
+        pending = self.pending_commands.get(outcome.command_id)
+        if pending is not None and pending.command.child == outcome.child:
+            self._resolve_command(outcome, stop_proven=True)
+            return
+        if not await settled_io(self.store.has_closed_child_assignment, outcome.child):
+            await settled_io(self.store.close_child, outcome.child, now_ms())
+        for waiting in tuple(self.pending_commands.values()):
+            if (
+                waiting.command.child == outcome.child
+                and waiting.command.operation is not ChildOperation.stop
+            ):
+                self._settle_uncertain(waiting, "executor_child_stopped")
+        # Another retirement can wait for a different stop of this exact child.
+        # ACK this journal suffix before core settlement, so replay can finish.
+        if hasattr(self, "conversations"):
+            task = asyncio.create_task(
+                self.conversations.confirm_remote_child_termination(outcome.child)
+            )
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
 
     def _resolve_command(self, outcome: CommandOutcome, *, stop_proven: bool = False) -> None:
         pending = self.pending_commands.get(outcome.command_id)
