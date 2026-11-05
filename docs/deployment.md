@@ -62,6 +62,8 @@ The commit is the boundary.
 
 The deploy writes a plain status file at each step, with no lease or renewal. If the runner disappears before the commit, work stays closed and the file retains its last recorded step. The file does not admit traffic or restore data. Panels sends no unfinished-deploy alert. No maximum outage is promised. If the recorded commit matches the available app and admission is open, only the final report remains uncertain. That owner notice ends five minutes after the last status update.
 
+An older server may accept an install before its runner can recognise the receipt. The runner reads old and new receipts through the same defaults. If an already accepted legacy attempt is stuck before shutdown, an operator can explicitly recover it through the same install job. Recovery first proves the prior app is still healthy, work remains paused, and the saved request and failure match. It grants a new bounded attempt for that pinned release; it never silently selects a newer release. See the [legacy recovery runbook](../ops/panels-environments/recover-legacy-update.md).
+
 One server answer supplies the update state and allowed actions. A waiting request can change to Update now. The sidebar card moves through Updating and Restarting to **Update complete · Refresh**. The browser reconnects after a restart and preserves a message draft until Refresh is safe. The Mac has separate status and work.
 
 The browser offers a refresh when its loaded app differs from the server. Each write carries the loaded page version, and the server rejects an outdated version.
