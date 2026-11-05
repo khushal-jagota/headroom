@@ -5,7 +5,7 @@ import { tick } from "svelte";
 import type { BoardCard, BoardManager, ManagerWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
 import { buildWorkspaceRail, railTicketEligible, refreshWorkspaceRailSignals, stabilizeWorkspaceRail, workspaceWorkerStageSentence, workspaceListRecap } from "../src/lib/workspaceRail";
-import { railDomMatches } from "../src/lib/workspaceRailDom";
+import { railDomMatches } from "./support/workspaceRailDom";
 import { createRailMotionController, type WorkspaceRailPresentation } from "../src/lib/workspaceRailMotion";
 
 const quiet = {
@@ -415,11 +415,11 @@ describe("manager rail projection", () => {
 });
 
 // Shared-publication adoption: these are browser adapters, not a new Signal policy.
-import { createNavigationCollection } from '../src/lib/navigation/collection';
+import { createNavigationCollection } from './support/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
 import { navigationWorkspacePresentation, navigationTicketMasthead, navigationReviewPresentation, navigationWorkingAgentCount, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
 import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
-import { encodeCursor } from '../src/lib/navigation/validation';
+import { encodeCursor } from './support/navigation/fixtures';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
 const sourceTicket:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'source-ticket',value:{
   title:'Source Ticket',recap:'Full source recap.\n'+'Body continues. '.repeat(20),recap_preview:'Source recap',worker_type:'coding',stage_label:'Implementation',workflow_label:'Coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,

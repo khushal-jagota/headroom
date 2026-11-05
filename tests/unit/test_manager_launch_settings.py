@@ -8,6 +8,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation.contracts import (
     ConversationBackendKey as Backend,
@@ -18,7 +19,6 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryStarted,
 )
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FakeClock

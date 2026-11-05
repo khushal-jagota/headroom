@@ -2,7 +2,7 @@ import { canonicalShellHash } from "./shellRouting";
 import { impliedWorkspaceView, parseWorkspaceAddress, workspaceAddress, type WorkspaceAddress } from "./workspaceAddress";
 import { parseUtilityPath } from "./utilityAddress";
 
-type DestinationName = "workspace" | "review" | "ideas" | "feedback" | "settings" | "backends" | "preview" | "vps" | "dev" | "unknown";
+type DestinationName = "workspace" | "review" | "ideas" | "settings" | "backends" | "preview" | "vps" | "unknown";
 /** One parsed address for the persistent shell. Pane keys never key the shell itself. */
 export type ShellDestination = {
   [Name in DestinationName]: { name: Name; params: Record<string, string>; key: string; hash: string; workspace?: WorkspaceAddress }
@@ -32,10 +32,7 @@ export function parseShellDestination(incoming: string): ShellDestination {
     if (!address) return unknown();
     return workspace(address);
   }
-  if (name === "dev") {
-    if (segments.length !== 2 || segments[1] !== "goal-components") return unknown();
-    params.sub = segments[1];
-  } else if (name === "settings" || name === "backends") {
+  if (name === "settings" || name === "backends") {
     const placement = parseUtilityPath(name === "settings" ? "settings" : "usage", segments.slice(1));
     if (!placement) return unknown();
     const detail = placement.utility === "settings" ? placement.settings : placement.utility === "usage" ? placement.usage : null;
@@ -44,7 +41,7 @@ export function parseShellDestination(incoming: string): ShellDestination {
     if ("tab" in detail) params.tab = detail.tab;
     params.roleKind = detail.roleKind;
     if (detail.roleId) params.id = detail.roleId;
-  } else if (!["review", "ideas", "feedback", "preview", "vps"].includes(name) || segments.length > 1) return unknown();
+  } else if (!["review", "ideas", "preview", "vps"].includes(name) || segments.length > 1) return unknown();
   const key = name === "backends" ? "backends" : `${segments.join("/")}${query}`;
   return { name: name as Exclude<DestinationName, "workspace">, params, key, hash };
 }

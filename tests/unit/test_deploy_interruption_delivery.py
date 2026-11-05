@@ -281,18 +281,11 @@ def test_occurrence_mismatch_and_completed_turn_stay_historical(tmp_path: Path) 
 
 
 def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    import shutil
     from dataclasses import replace
 
-    from tests.unit.test_db import _migration_tree_through
-
-    from planner.core import db
-
     path = tmp_path / "legacy.db"
-    shipped = db.MIGRATIONS_DIRECTORY
-    tree = _migration_tree_through(tmp_path, monkeypatch, "rename_managers")
     conn = connect(str(path))
     create_schema(conn)
     conn.execute(
@@ -303,8 +296,10 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
     conn.execute(
         "INSERT INTO conversation_lifecycle_facts VALUES ('c','turn','1',1,'turn','intent',NULL)"
     )
-    conn.execute("CREATE TABLE signal_publication_meta(singleton INTEGER, runtime_epoch TEXT)")
-    conn.execute("INSERT INTO signal_publication_meta VALUES (1,'legacy-epoch')")
+    conn.execute(
+        "INSERT OR REPLACE INTO signal_publication_meta "
+        "(singleton,scope,runtime_epoch,sequence) VALUES (1,'fixture','legacy-epoch',0)"
+    )
     conn.commit()
     legacy = CapturedTurn(
         "c", 1, None, "legacy-epoch", "intent", "Interrupted worker", "unknown", None, None, None
@@ -332,32 +327,8 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
             turns=(),
         ),
     )
-    shutil.copy(
-        shipped / "versions/deploy_interruption_accounts.py",
-        tree / "versions/deploy_interruption_accounts.py",
-    )
-    shutil.copy(
-        shipped / "versions/notice_suppression_audit.py",
-        tree / "versions/notice_suppression_audit.py",
-    )
-    shutil.copy(
-        shipped / "versions/automatic_deployment_recovery.py",
-        tree / "versions/automatic_deployment_recovery.py",
-    )
-    create_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM conversation_turn_occurrences").fetchone()[0] == 0
     assert conn.execute("SELECT status FROM conversation_lifecycle_facts").fetchone()[0] == "intent"
-    # The historical phase above proves the legacy occurrence fallback. A current
-    # runtime requires the complete supported schema, including native execution
-    # evidence and persisted workspace policy. Upgrade before constructing it.
-    # This two-column table is legacy epoch evidence, not an initialized Signal
-    # producer. Keep it out of migrations that reinstall producer-owned triggers.
-    conn.execute("DROP TABLE signal_publication_meta")
-    conn.commit()
-    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", shipped)
-    create_schema(conn)
-    conn.execute("CREATE TABLE signal_publication_meta(singleton INTEGER, runtime_epoch TEXT)")
-    conn.execute("INSERT INTO signal_publication_meta VALUES (1,'legacy-epoch')")
     conn.commit()
     conn.close()
 

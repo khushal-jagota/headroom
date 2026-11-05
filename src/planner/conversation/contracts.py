@@ -118,9 +118,6 @@ class SignalBatch:
 
     base_cursor: SignalCursor
     cursor: SignalCursor
-    batch_id: str
-    operation_ids: tuple[str, ...]
-    fingerprint: str
     replacements: tuple[ConversationSignalPublicationV1, ...]
     deletions: tuple[SignalDeletion, ...]
     associations: tuple[SignalAssociationEffect, ...]
@@ -161,9 +158,6 @@ class SignalInvalidation:
     reason: Literal[
         "initializing",
         "authority_lost",
-        "publication_failed",
-        "commit_uncertain",
-        "install_failed",
         "detached",
         "shutdown",
     ]
@@ -187,20 +181,6 @@ class SignalAvailability:
     reason: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class SignalKnowledge:
-    """Unavailable knowledge has no current publication or fabricated runtime facts."""
-
-    conversation_id: str
-    availability: SignalAvailability
-    current: ConversationSignalPublicationV1 | None
-    durable: SignalDurableFacts | None
-
-    def __post_init__(self) -> None:
-        if self.current is not None:
-            object.__setattr__(self, "current", replace(self.current))
-
-
 class SignalUnavailable(RuntimeError):
     """Producer truth or the requested attachment generation is unavailable."""
 
@@ -221,16 +201,6 @@ class SignalAttachment(Protocol):
 
 class SignalPublicationSource(Protocol):
     """Public operations of the domain coordinator, with no storage implementation."""
-
-    def read_durable_signal_knowledge(
-        self,
-        connection: sqlite3.Connection,
-        conversation_ids: tuple[str, ...],
-        expected_generation: int,
-        /,
-    ) -> tuple[SignalKnowledge, ...]:
-        """Read durable facts in the supplied transaction and validate its generation."""
-        ...
 
     def signal_availability(self) -> SignalAvailability:
         """Read atomic availability without admission to current facts or source writes."""

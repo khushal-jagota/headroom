@@ -327,8 +327,7 @@ class GoalWriteFields(GoalCommonFields, total=False):
 
 
 class GoalCreateFields(GoalCommonFields, total=False):
-    # The existing create writer accepts and ignores this compatibility field.
-    expected_revision: object
+    pass
 
 
 class BinaryGoalCreateBody(GoalCreateFields):
@@ -348,7 +347,7 @@ type GoalCreateBody = BinaryGoalCreateBody | QuantitativeGoalCreateBody
 
 
 class GoalEditBody(GoalWriteFields):
-    expected_revision: int
+    pass
 
 
 @dataclass(frozen=True, slots=True)

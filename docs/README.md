@@ -16,7 +16,6 @@ The word list lives in [`CONTEXT.md`](../CONTEXT.md), the engineering rules in [
 - [Ticket lifecycle](tickets.md) — one bounded piece of work, its stages, proposals, and the ceiling that decides who must look.
 - [Worker types](worker-types.md) — the workflows Headroom ships, and where each one pulls a person in.
 - [Worker steps](worker-steps.md) — how a ready Ticket receives its next prompt.
-- [Schedules](schedules.md) — Tickets created at an exact time.
 - [Skills](skills.md) — the instructions an agent actually reads, and who may change them.
 
 ## People, attention, and screens
@@ -28,7 +27,6 @@ The word list lives in [`CONTEXT.md`](../CONTEXT.md), the engineering rules in [
 - [Historical attention](attention.md) — where Khushal's recorded involvement went between two dates.
 - [Ideas](ideas.md) — possibilities kept before they become work.
 - [Projects](projects.md) — the catalog that classifies work and points at a folder.
-- [Feedback](feedback.md) — notes captured from any page for an agent to handle.
 - [Design](design.md) — how the visual principles show up, and the shared page kit.
 - [Live screens](live-updates.md) — why an open screen moves after a write.
 - [Usage](usage.md) — allowance, recorded spend, and backend setup.
@@ -50,6 +48,5 @@ The word list lives in [`CONTEXT.md`](../CONTEXT.md), the engineering rules in [
 - [Backups](backups.md) — verified snapshots and the stopped restore.
 - [Previews](previews.md) — one tailnet link to a Ticket's own dev server.
 - [VPS](vps.md) — machine measurements and the status summary.
-- [Diagnostic history](diagnostic-history.md) — the event record, kept until the owner decides to expire it.
 
 _Last verified: 2026-11-04._

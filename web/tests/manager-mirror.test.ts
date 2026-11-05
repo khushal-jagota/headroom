@@ -14,7 +14,6 @@ import {
 } from "../src/lib/workItemPresentation";
 import { buildWorkspaceRail } from "../src/lib/workspaceRail";
 import { workspaceHeading, managerHeading, ticketFacts } from "./support/screenReadings";
-import { feedbackTicketStateLabel } from "../src/lib/feedback";
 
 function ticket(
   id: string,
@@ -148,14 +147,8 @@ describe("the shared Item and Ticket presentation", () => {
     expect(workItemTicketGroupKey(legacy)).toBe("awaiting_approval");
   });
 
-  it("preserves Feedback labels with raw backlog facts", () => {
-    const rows = [ticket("review", { is_backlogged: true, awaiting_approval: true }),
-      ticket("done", { is_backlogged: true, stage: "done" })];
-    expect(rows.map(feedbackTicketStateLabel)).toEqual(["Needs your approval", "Done"]);
-    expect(rows.map((row) => workItemTicketGroupKey(row))).toEqual(["backlog", "backlog"]);
-  });
 
-  it("uses projected completion and failure facts in the Item, rail, and Feedback", () => {
+  it("uses projected completion and failure facts in the Item and rail", () => {
     const completed = ticket("completed-history", { stage: "done", agent_state: "idle" });
     const unfinished = ticket("unfinished-failure", { agent_state: "errored" });
     const rows = [completed, unfinished];
@@ -169,8 +162,6 @@ describe("the shared Item and Ticket presentation", () => {
     expect(rail.items[0].groups.map((group) => [group.label, group.cards.map((row) => row.id)]))
       .toEqual([["Errored", [unfinished.id]]]);
 
-    expect(feedbackTicketStateLabel(completed)).toBe("Done");
-    expect(feedbackTicketStateLabel(unfinished)).toBe("Errored");
     expect(conversationSignalReading(completed)).not.toContain("data-conversation-signal");
   });
 

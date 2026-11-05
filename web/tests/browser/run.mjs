@@ -103,8 +103,9 @@ async function runSelected(entries, options, receipt, requiredCompanions) {
     receipt.timing.prepareSeconds = (performance.now() - prepareStarted) / 1000;
     const output = join(temporary, "dist");
     const buildStarted = performance.now();
-    await build({root: webRoot, base: "/", configFile: false, resolve: { alias: usageAliases }, logLevel: "warn", plugins: [svelte()], worker: { plugins: markdownWorkerPlugins },
-      build: {outDir: output, emptyOutDir: true, rollupOptions: {input: prepared.flatMap(case_ => case_.inputs)}}});
+    // Keep redirected scratch hosts under their logical web root during the build.
+    await build({root: webRoot, base: "/", configFile: false, resolve: { alias: usageAliases, preserveSymlinks: true }, logLevel: "warn", plugins: [svelte()], worker: { plugins: markdownWorkerPlugins },
+      build: {outDir: output, emptyOutDir: true, rollupOptions: {preserveSymlinks: true, input: prepared.flatMap(case_ => case_.inputs)}}});
     receipt.timing.sharedBuildSeconds = (performance.now() - buildStarted) / 1000;
     const serverStarted = performance.now();
     const types = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".woff2": "font/woff2"};

@@ -156,12 +156,7 @@ class CurrentAttentionKnowledge(TypedDict):
     durable: DurableSignal
 
 
-class DurableAttentionKnowledge(TypedDict):
-    current: None
-    durable: DurableSignal
-
-
-type AttentionKnowledge = CurrentAttentionKnowledge | DurableAttentionKnowledge
+type AttentionKnowledge = CurrentAttentionKnowledge
 
 
 class ConversationValue(TypedDict):

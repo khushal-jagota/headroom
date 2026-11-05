@@ -12,6 +12,7 @@ import json
 import os
 import pwd
 import socket
+import sqlite3
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, closing, contextmanager
 from pathlib import Path
@@ -30,7 +31,27 @@ from planner.core.config import load_config
 from planner.core.db import connect
 from planner.core.server import create_app
 from planner.navigation.contracts import SCHEMA_VERSION, SUPPORTED_SEMANTICS
+from planner.navigation.data import snapshot as source_snapshot
 from planner.navigation.delivery_authority import DeliveryUnavailable
+from planner.navigation.views.contracts import VIEW_PROJECTION_VERSION, ViewRequest
+from planner.navigation.views.delivery import ScopedDeliveryRuntime
+from planner.navigation.views.read import request
+
+
+def navigation_query(conversation_id: str | None = None) -> ViewRequest:
+    return request(
+        {
+            "projection_version": VIEW_PROJECTION_VERSION,
+            "scope_generation": 1,
+            "locale": "en-US",
+            "selected": None,
+            "selected_conversation_id": None,
+            "review_conversation_ids": [] if conversation_id is None else [conversation_id],
+            "review_skipped_keys": [],
+            "review_priority_keys": [],
+            "windows": [],
+        }
+    )
 
 
 def require_provider_auth(backend: ConversationBackendKey) -> dict[str, str]:
@@ -140,12 +161,15 @@ async def provider_application(
                 assert isinstance(runtime.store.signal_coordinator, SignalPublicationCoordinator)
                 assert app.state.conversation_system is runtime.system
                 async with _provider_client(app, listener, receipts) as client:
-                    snapshot = await client.get("/api/navigation/snapshot")
+                    snapshot = await client.get(
+                        "/api/navigation/view/snapshot",
+                        params={"view": json.dumps(navigation_query())},
+                    )
                     assert snapshot.status_code == 200, snapshot.text
                     value = snapshot.json()
                     assert value["mode"] == "current"
-                    assert value["snapshot"]["schema_version"] == SCHEMA_VERSION
-                    assert value["snapshot"]["semantics"] == SUPPORTED_SEMANTICS
+                    assert value["coverage"]["schema_version"] == SCHEMA_VERSION
+                    assert value["coverage"]["semantics"] == SUPPORTED_SEMANTICS
                     with closing(connect(str(database), 5_000)) as connection:
                         source = connection.execute(
                             "SELECT scope,runtime_epoch FROM signal_publication_meta "
@@ -162,7 +186,7 @@ async def provider_application(
                         {
                             "signal_enabled": True,
                             "mode": value["mode"],
-                            "schema_version": value["snapshot"]["schema_version"],
+                            "schema_version": value["coverage"]["schema_version"],
                             "scope": installed[0],
                             "runtime_epoch": installed[1],
                             "installation_id": installed[2],
@@ -174,7 +198,9 @@ async def provider_application(
             if len(receipts.get("application_lifetimes", [])) > lifetimes_before:
                 assert app.state.conversation is None
                 try:
-                    after_shutdown, _ = await app.state.navigation_delivery.current_snapshot()
+                    after_shutdown, _ = await ScopedDeliveryRuntime(
+                        app.state.navigation_delivery
+                    ).snapshot(navigation_query())
                 except DeliveryUnavailable:
                     pass
                 else:
@@ -252,15 +278,28 @@ async def assert_navigation_attention(
     working: bool,
     awaiting_answer: bool,
 ) -> None:
-    response = await client.get("/api/navigation/snapshot")
+    response = await client.get(
+        "/api/navigation/view/snapshot",
+        params={"view": json.dumps(navigation_query(conversation_id))},
+    )
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["mode"] == "current"
+    # These fixtures create conversations without a Ticket or Manager owner.
+    # The public scoped view correctly excludes them. Inspect their producer's
+    # existing internal projection without recreating the removed public endpoint.
+    database = Path(os.environ["PLAN_DB_PATH"]).resolve()
+    with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+        projected = source_snapshot(connection)
     rows = [
         row
-        for row in payload["snapshot"]["records"]
+        for row in projected["records"]
         if row["kind"] == "conversation" and row["id"] == conversation_id
     ]
+    assert not any(
+        row["kind"] == "conversation" and row["id"] == conversation_id
+        for row in payload["content"]["records"]
+    )
     assert len(rows) == 1, rows
     attention = rows[0]["value"]["attention"]["current"]
     assert attention is not None
@@ -270,7 +309,7 @@ async def assert_navigation_attention(
     receipts.setdefault("navigation_checkpoints", []).append(
         {
             "checkpoint": checkpoint,
-            "revision": payload["snapshot"]["revision"],
+            "revision": projected["revision"],
             "conversation_id": conversation_id,
             "attention": json.loads(json.dumps(attention)),
         }

@@ -201,13 +201,11 @@ def native_tool_commands(root: Path, contract: RuntimeContract) -> list[list[str
     ]
     for path in (
         modules / "@anthropic-ai/claude-code-linux-x64/claude",
-        modules / "@anthropic-ai/claude-agent-sdk-linux-x64/claude",
         modules / "@anthropic-ai/claude-code/bin/claude.exe",
         site / "claude_agent_sdk/_bundled/claude",
         site / "playwright/driver/node",
         vendor / "bin/codex",
         vendor / "codex-resources/bwrap",
-        vendor / "codex-resources/zsh/bin/zsh",
         vendor / "codex-path/rg",
     ):
         commands.append([str(path), "--version"])

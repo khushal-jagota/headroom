@@ -86,7 +86,7 @@
   );
   let sharedWorkerSkill = $derived(indexedSkills.get("panels-worker"));
   // The canonical role can use the retained row until the owner applies the skill manifest.
-  let managerSkill = $derived(indexedSkills.get("panels-manager") ?? indexedSkills.get("panels-sprint-item-supervisor"));
+  let managerSkill = $derived(indexedSkills.get("panels-manager"));
   let roleSkill = $derived(stableRoleId === "panels-manager" ? managerSkill : stableRoleId ? indexedSkills.get(stableRoleId) : undefined);
   let roleSkillProfile = $derived(
     stableRoleId ? roleSkillProfiles[stableRoleId] : undefined

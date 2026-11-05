@@ -5,7 +5,6 @@
  import {queries} from '../../lib/queryCatalogue';
  import {refreshAtBoundary} from '../../lib/goals/presentation';
  import {goalQueries} from '../../lib/goals/queries';
- import {conversationOwnerImpact} from '../../lib/workspaceNavigationImpact';
  import {navigationApplication} from '../../lib/navigation/application.svelte';
  import {mutateJson} from '../../lib/mutate';
  import {fetchJson} from '../../lib/api';
@@ -37,13 +36,13 @@
  $effect(()=>{if(goal&&holderConversationId!==undefined&&requestedApplied!==requestedConversationId){requestedApplied=requestedConversationId;legacyBrowsing=requestedConversationId===goal.legacy_conversation_id;selectedPastConversationId=requestedConversationId&&requestedConversationId!==holderConversationId?requestedConversationId:null;if(requestedConversationId&&!openedFile)conversationState='opened';}});
  $effect(()=>{if(goal)navigation?.owner.setDemand('goal',{selected:legacyBrowsing&&selectedPastConversationId?{kind:'goal',id}:holder,selected_conversation_id:selectedPastConversationId,windows:[]});return()=>navigation?.owner.setDemand('goal',undefined);});
  $effect(()=>{void readBackends().then(value=>backends=value).catch(()=>undefined);});
- async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson<DeliveredMessage>(`${conversationPath}/send`,{method:'POST',body,responseMetadata});const view=navigation?.state.effective;const delivered=navigation?await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,holder.kind,holder.id),operation,'send goal message'):await operation();currentConversationId=delivered.conversation_id;return delivered;}
- async function reset(){const operation=(responseMetadata?: import('../../lib/api').FetchOptions['responseMetadata'])=>mutateJson(`${conversationPath}/reset`,{method:'POST',responseMetadata});const view=navigation?.state.effective;if(navigation)await navigation.runCommand(conversationOwnerImpact(view?navigation.presentationFor(view):undefined,holder.kind,holder.id),operation,'reset goal conversation');else await operation();selectedPastConversationId=null;currentConversationId=null;}
+ async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const delivered=await mutateJson<DeliveredMessage>(`${conversationPath}/send`,{method:'POST',body});currentConversationId=delivered.conversation_id;return delivered;}
+ async function reset(){await mutateJson(`${conversationPath}/reset`,{method:'POST'});selectedPastConversationId=null;currentConversationId=null;}
  let promoting=$state(false);
  async function makeManager(){
   if(!goal||promoting)return;
   promoting=true;
-  try{const result=await fetchJson<{manager_id:string}>(`/api/goals/${encodeURIComponent(id)}/make-manager`,{method:'POST',body:{expected_revision:goal.revision}});window.location.hash=workspaceAddress({kind:'manager',id:result.manager_id});void queryClient.invalidateQueries();}catch(failure){error=failure;}finally{promoting=false;}
+  try{const result=await fetchJson<{manager_id:string}>(`/api/goals/${encodeURIComponent(id)}/make-manager`,{method:'POST',body:{}});window.location.hash=workspaceAddress({kind:'manager',id:result.manager_id});void queryClient.invalidateQueries();}catch(failure){error=failure;}finally{promoting=false;}
  }
  let holderLabel=$derived(holder.kind==='chief'?'Chief of Staff':navigation?.selectors.effective?navigation.presentationFor(navigation.selectors.effective).managersById.get(holder.id)?.title??'Manager':'Manager');
 </script>

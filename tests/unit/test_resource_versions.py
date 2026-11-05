@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from typing import cast
 
 import pytest
 from fastapi import FastAPI, Request
 
 from planner.core import change_signal
 from planner.core.db import connect
-from planner.feedback.resource_versions import FeedbackResources
 from planner.resource_versions import api
 from planner.resource_versions.contracts import ResourceSnapshot
 from planner.resource_versions.data import install_source_triggers, source_revision
@@ -46,37 +46,35 @@ def test_source_counters_are_atomic_narrow_and_reads_emit_no_change(
     resource_db: sqlite3.Connection,
 ) -> None:
     conn = resource_db
+    key = "/api/workers/chief-of-staff/settings"
+    provider = ChiefResources()
     signals: list[None] = []
     unsubscribe = change_signal.subscribe(lambda: signals.append(None))
     try:
-        before = source_revision(conn, "feedback-count", "all")
+        before = source_revision(conn, "chief-settings", "chief_of_staff")
         conn.execute("BEGIN")
-        conn.execute(
-            "INSERT INTO feedback_notes(id,text,state,created_at,updated_at) "
-            "VALUES ('n','a','open',1,1)"
-        )
-        assert source_revision(conn, "feedback-count", "all") != before
+        conn.execute("UPDATE chief_settings SET recap='a'")
+        assert source_revision(conn, "chief-settings", "chief_of_staff") != before
         conn.rollback()
-        assert source_revision(conn, "feedback-count", "all") == before
+        assert source_revision(conn, "chief-settings", "chief_of_staff") == before
         assert signals == []
-        conn.execute(
-            "INSERT INTO feedback_notes(id,text,state,created_at,updated_at) "
-            "VALUES ('n','a','open',1,1)"
-        )
-        inserted = source_revision(conn, "feedback-count", "all")
-        conn.execute("UPDATE feedback_notes SET text='b' WHERE id='n'")
-        assert source_revision(conn, "feedback-count", "all") == inserted
+        conn.execute("UPDATE chief_settings SET recap='a'")
+        updated = source_revision(conn, "chief-settings", "chief_of_staff")
+        conn.execute("UPDATE chief_settings SET recap=recap")
+        assert source_revision(conn, "chief-settings", "chief_of_staff") == updated
+        snapshot = provider.capture(conn, request(), key)
+        assert snapshot is not None
         signals.clear()
         for _ in range(3):
-            result = asyncio.run(
-                api.resource_versions(json.dumps(["/api/feedback/count"]), request(), conn)
-            )
-            body = asyncio.run(api.resource_body("/api/feedback/count", request(), conn))
-            assert result["resources"][0]["revision"] == body["revision"] == inserted
-            assert body["body"] == {"open_count": 1}
+            result = asyncio.run(api.resource_versions(json.dumps([key]), request(), conn))
+            body = asyncio.run(api.resource_body(key, request(), conn))
+            assert result["resources"][0]["revision"] == body["revision"] == snapshot.revision
+            assert isinstance(body["body"], dict)
+            settings = cast(dict[str, object], body["body"])
+            assert settings["recap"] == "a"
         assert signals == []
-        conn.execute("UPDATE feedback_notes SET state='handled',handled_at=2 WHERE id='n'")
-        assert source_revision(conn, "feedback-count", "all") != inserted
+        conn.execute("UPDATE chief_settings SET recap='b'")
+        assert source_revision(conn, "chief-settings", "chief_of_staff") != updated
     finally:
         unsubscribe()
 
@@ -87,7 +85,9 @@ def test_body_uses_the_same_snapshot_as_its_version(
     conn = resource_db
     path = conn.execute("PRAGMA database_list").fetchone()[2]
     other = connect(path)
-    source = FeedbackResources()
+    source = ChiefResources()
+    key = "/api/workers/chief-of-staff/settings"
+    conn.execute("UPDATE chief_settings SET recap='before'")
 
     class ConcurrentCommit:
         def capture(
@@ -95,19 +95,20 @@ def test_body_uses_the_same_snapshot_as_its_version(
         ) -> ResourceSnapshot | None:
             snapshot = source.capture(connection, req, key)
             assert snapshot is not None
-            other.execute(
-                "INSERT INTO feedback_notes(id,text,state,created_at,updated_at) "
-                "VALUES ('concurrent','x','open',1,1)"
-            )
+            other.execute("UPDATE chief_settings SET recap='after'")
             return snapshot
 
     try:
-        previous = source_revision(conn, "feedback-count", "all")
+        previous = source.capture(conn, request(), key)
+        assert previous is not None
         monkeypatch.setattr(api, "PROVIDERS", (ConcurrentCommit(),))
-        body = asyncio.run(api.resource_body("/api/feedback/count", request(), conn))
-        assert body["revision"] == previous
-        assert body["body"] == {"open_count": 0}
-        assert source_revision(conn, "feedback-count", "all") != previous
+        body = asyncio.run(api.resource_body(key, request(), conn))
+        assert body["revision"] == previous.revision
+        assert isinstance(body["body"], dict)
+        settings = cast(dict[str, object], body["body"])
+        assert settings["recap"] == "before"
+        current = source.capture(conn, request(), key)
+        assert current is not None and current.revision != previous.revision
     finally:
         other.close()
 

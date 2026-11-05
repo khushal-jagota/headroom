@@ -583,7 +583,6 @@ def test_request_transaction_and_receipt_companions_use_production_signal_admiss
         host = build(db, signal=signal)
         signal.initialize()
         binding.attach()
-        signal.coordinator.admit_runtime()
         conn = signal.connect()
         conn.close()
         try:

@@ -193,7 +193,7 @@
   aria-hidden={statusKey === null ? "true" : undefined} style={motionStyle}>
   <div role="status" aria-live="polite" inert={closing ? true : undefined}>
     {#if displayedWord}
-      <div class="status-card" class:mac-only={displayedWord === "mac" && !displayedHealth} data-state={card?.state ?? (displayedHealth?.state === "degraded" ? "wrong" : "changing")}
+      <div class="status-card" class:mac-only={displayedWord === "mac" && !displayedHealth} data-state={card?.state ?? "changing"}
         data-connection-status data-connection-state={connectionState} data-status-state={statusState}
         >
         {#if card}
@@ -210,10 +210,9 @@
         {/if}
         <MacStatus health={effectiveStatus?.mac_status} />
         {#if displayedHealth}
-          <span class="navigation-health" data-navigation-health={displayedHealth.state} data-state={displayedHealth.state === "degraded" ? "wrong" : "changing"}>
+          <span class="navigation-health" data-navigation-health={displayedHealth.state} data-state={"changing"}>
             <span class="status-mark" aria-hidden="true"></span>
             <span class="navigation-health-text"><span>Navigation {displayedHealth.state}</span>
-              {#if displayedHealth.state === "degraded" && displayedHealth.availability.reason !== null}<span class="navigation-reason">{displayedHealth.availability.reason}</span>{/if}
             </span>
           </span>
         {/if}
@@ -257,8 +256,6 @@
   .navigation-health { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
   .navigation-health .status-mark { align-self: start; margin-top: .4em; }
   .navigation-health-text { min-width: 0; overflow-wrap: anywhere; }
-  .navigation-reason { display: block; white-space: pre-wrap; }
-  .navigation-health[data-state="wrong"] .status-mark { background: var(--accent-error); }
   .status-mark { width: 7px; height: 7px; flex: none; border-radius: var(--radius-pill); background: var(--accent-bright); }
   .status-card[data-state="wrong"] .status-mark { background: var(--accent-error); }
   .status-card[data-state="changing"] .status-mark { animation: status-pulse 1.6s var(--motion-ease) infinite; }

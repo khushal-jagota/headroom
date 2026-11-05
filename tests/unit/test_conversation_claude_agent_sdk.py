@@ -153,6 +153,96 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
     _run(exercise)
 
 
+def test_a_claude_model_change_rebinds_the_child_and_preserves_the_conversation(
+    tmp_path: Path,
+) -> None:
+    """A same-provider model change must cross Claude's fresh-child boundary."""
+    from claude_agent_sdk import ResultMessage
+
+    from planner.conversation.backends.claude_agent_sdk import (
+        ClaudeAgentSdkBackendChildFactory,
+        ClaudeAgentSdkChildLaunch,
+    )
+    from planner.conversation.contracts import (
+        ConversationBackendKey,
+        ConversationStartRequest,
+        PromptDeliveryStarted,
+    )
+    from planner.conversation.live_tail import ConversationLiveTail
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.conversation.storage import ConversationStore
+    from planner.conversation.system import SqliteProcessConversationSystem
+    from planner.core.db import connect, create_schema
+
+    db_path = str(tmp_path / "claude-model-change.db")
+    conn = connect(db_path)
+    create_schema(conn)
+    conn.close()
+
+    async def exercise() -> None:
+        clients: list[_ScriptedClaudeSdkClient] = []
+
+        def make(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
+            client = _ScriptedClaudeSdkClient(options)
+            clients.append(client)
+            return client
+
+        store = ConversationStore(db_path)
+        system = SqliteProcessConversationSystem(
+            store=store,
+            message_files=ConversationMessageFiles(db_path),
+            backend_child_factories={
+                key: ClaudeAgentSdkBackendChildFactory(
+                    ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")),
+                    client_factory=make,
+                )
+                for key in ConversationBackendKey
+            },
+            live_tail=ConversationLiveTail(),
+        )
+
+        async def finish(client: _ScriptedClaudeSdkClient, session: str) -> None:
+            client.say(ResultMessage(
+                subtype="success", duration_ms=1, duration_api_ms=1,
+                is_error=False, num_turns=1, session_id=session,
+            ))
+            await client.until_taken_in()
+            await system.wait_until_quiescent()
+
+        try:
+            await system.start_conversation(ConversationStartRequest(
+                conversation_id="claude-model-change", backend_key=ConversationBackendKey.claude,
+                model="opus", workspace_folder=tmp_path,
+            ))
+            first = await system.send(
+                "claude-model-change", text_message_content("First turn"), sender_label="owner",
+            )
+            assert isinstance(first, PromptDeliveryStarted)
+            session = clients[0].options.session_id
+            assert session is not None
+            await finish(clients[0], session)
+            changed = await system.send(
+                "claude-model-change", text_message_content("Use Sonnet"),
+                sender_label="owner", model_change="sonnet",
+            )
+            assert isinstance(changed, PromptDeliveryStarted)
+            assert [client.options.model for client in clients] == ["opus", "sonnet"]
+            assert clients[0].disconnected
+            assert len(clients[0].prompts) == 1
+            assert clients[1].options.resume == session
+            assert len(clients[1].prompts) == 1
+            assert "Use Sonnet" in clients[1].prompts[0]
+            record = await store.read_conversation("claude-model-change")
+            assert record is not None
+            assert record.model == "sonnet"
+            assert record.vendor_session_cursor == session
+            await finish(clients[1], session)
+        finally:
+            await system.shutdown()
+
+    _run(exercise)
+
+
 def test_background_tasks_are_reported_between_turns_and_a_dying_child_does_not_end_them(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

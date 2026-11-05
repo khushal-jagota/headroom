@@ -75,7 +75,7 @@ def _refuse_to_make_a_real_backend_child(
             f"        conversation_system_for_test=InMemoryConversationSystem(),\n"
             f"    )\n"
             f"\n"
-            f"from planner.conversation.in_memory_conversation_system. If this test "
+            f"from tests.support.in_memory_conversation_system. If this test "
             f"genuinely means to reach a vendor CLI, it belongs with the opt-in exercises "
             f"that are gated behind a PANELS_REAL_* variable, not in the ordinary suite."
         )

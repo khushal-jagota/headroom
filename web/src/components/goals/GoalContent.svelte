@@ -9,7 +9,7 @@
  import {resolveGoalPrimaryDisplay} from '../../lib/goals/primaryDisplay';
  import {createGoalPageContext} from '../../lib/goals/pageContext';
  import type {GoalEditBody,GoalResponse} from '../../lib/goals/contracts';
- import {PAGE_CONTEXT,PAGE_HOLDER,type PageContext} from '../../lib/pageKit/context';
+ import {PAGE_CONTEXT,PAGE_HOLDER,type PageContext,type PageTextDraft} from '../../lib/pageKit/context';
  import PageDocument from '../pageKit/PageDocument.svelte';
  import PageChart from '../pageKit/PageChart.svelte';
  import PageChecklist from '../pageKit/PageChecklist.svelte';
@@ -23,19 +23,26 @@
  setContext(PAGE_HOLDER,()=>goal.holder_kind==='manager'?{kind:'manager',id:goal.holder_id!}:{kind:'chief',id:'chief'});
  const sessions=createGoalRequestSessions();
  let editor=$derived(createGoalEditor(id));
- function save(patch:Omit<GoalEditBody,'expected_revision'>,revision?:number){return editor.write(patch,revision);}
- function updateBlock(blockId:string,update:Parameters<typeof editor.updateBlock>[1],revision?:number){return editor.updateBlock(blockId,update,revision);}
+ function save(patch:GoalEditBody){return editor.write(patch);}
+ function updateBlock(blockId:string,update:Parameters<typeof editor.updateBlock>[1]){return editor.updateBlock(blockId,update);}
+ const textDrafts = new Map<string, PageTextDraft>();
  const authorText: NonNullable<PageContext['authorText']> = {
+  draft(blockId, field) {
+   const key=JSON.stringify([id,blockId,field]);
+   let draft=textDrafts.get(key);
+   if(!draft){const created=$state<PageTextDraft>({value:null,error:null,saving:false});draft=created;textDrafts.set(key,created);}
+   return draft;
+  },
   begin(blockId) {
-   const ownerId = goal.id, revision = goal.revision;
+   const ownerId = goal.id;
    const captured = createGoalEditor(ownerId);
-   return update => captured.updateBlock(blockId, update, revision);
+   return update => captured.updateBlock(blockId, update);
   }
  };
  setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
   goalId:()=>id,goal:()=>goal,readings:()=>readings.data,narrow:()=>narrow,sessions:()=>sessions,
  },{manualSession:measureId=>sessions.manual(id,measureId),updateBlock,authorText}));
- async function change(patch:Omit<GoalEditBody,'expected_revision'>){try{await save(patch);error=null;}catch(e){error=e;}}
+ async function change(patch:GoalEditBody){try{await save(patch);error=null;}catch(e){error=e;}}
  let display=$derived(resolveGoalPrimaryDisplay(goal));
  let checklist=$derived(display.checklist);
  let renderedPage=$derived(pageWithoutSelectedChecklistForRender(goal.page,checklist?.id??null));

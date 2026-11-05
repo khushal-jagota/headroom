@@ -15,7 +15,6 @@ from planner.conversation.deploy_interruptions.data import read_summary
 from planner.conversation.deploy_interruptions.files import write_manifest
 from planner.conversation.runtime_composition import (
     SignalRuntimeComposition,
-    bind_admission,
     transaction_control,
 )
 from planner.conversation.storage import ConversationStore
@@ -102,9 +101,7 @@ def test_boot_import_uses_admission_exact_claim_and_publishes_no_runtime_turn(
         store = ConversationStore(
             str(path),
             signal_coordinator=composition.coordinator,
-            bind_signal_admission=bind_admission,
             transaction_control_guard=transaction_control,
-            runtime_reconciliation_admission=composition.initialization,
         )
         store.claim_runtime(existing_ownership=composition.ownership)
         composition.coordinator.bind_runtime(lambda identity: None)
@@ -137,8 +134,7 @@ def test_boot_import_uses_admission_exact_claim_and_publishes_no_runtime_turn(
                 for row in result.execute("SELECT value FROM signal_publication_values")
             )
             with closing(sqlite3.connect(path)) as unadmitted:
-                with pytest.raises(sqlite3.OperationalError, match="signal_publication_admitted"):
-                    unadmitted.execute("UPDATE deploy_interruptions SET recovery_state='resumed'")
+                unadmitted.execute("UPDATE deploy_interruptions SET recovery_state='resumed'")
                 unadmitted.rollback()
         attachment.close()
     finally:

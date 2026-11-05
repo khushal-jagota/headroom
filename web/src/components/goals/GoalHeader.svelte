@@ -4,10 +4,7 @@
  import type {InlineEditDraft} from '../../lib/inlineEditDraft';
  import {createGoalEditor} from '../../lib/goals/editing';
  import {deadlineTone,deadlineColor} from '../../lib/goals/presentation';
- import {goalQueries} from '../../lib/goals/queries';
- import {queryClient} from '../../lib/queryClient';
  import {queries} from '../../lib/queryCatalogue';
- import {PlannerFetchError} from '../../lib/api';
  import InlineEdit from '../InlineEdit.svelte';
  import ErrorLine from '../ErrorLine.svelte';
 
@@ -45,8 +42,7 @@
  async function write(edit:Edit,patch:GoalWriteFields){
   const accepted=edit.accepted,editor=edit.editor;
   if(!accepted||!editor)throw new Error('Focus this field before another edit.');
-  try{
-   const saved=await editor.write(patch,accepted.revision);
+  const saved=await editor.write(patch);
    // A previous field can save while focus enters its pristine sibling. Only
    // this known local acceptance advances that sibling's unused snapshot.
    for(const sibling of Object.values(fields)){
@@ -55,12 +51,6 @@
     }
    }
    edit.accepted=null;edit.editor=null;edit.dirty=false;
-  }catch(error){
-   if(error instanceof PlannerFetchError&&error.status===409){
-    await queryClient.invalidateQueries({queryKey:goalQueries.detail(accepted.id).queryKey}).catch(()=>undefined);
-   }
-   throw error;
-  }
  }
  async function saveText(edit:Edit,field:'title'|'why',raw:string){
   if(field==='title'&&!raw.trim())throw new Error('Enter a goal title.');

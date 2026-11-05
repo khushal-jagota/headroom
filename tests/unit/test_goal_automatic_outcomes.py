@@ -17,6 +17,7 @@ from planner.goals.contracts import Goal, GoalCompletionRule
 from planner.goals.outcomes import reconcile_completions
 from planner.goals.rule_evaluation import evaluate_completion_date, parse_completion_rule
 from planner.goals.scheduling import GoalCompletionParticipant
+from planner.measure_sources.schedule_loop import SourceScheduleLoop
 from planner.measures import actions as measure_actions
 from planner.measures import manual
 from planner.measures.contracts import (
@@ -28,7 +29,6 @@ from planner.measures.contracts import (
     UpdateMeasureBody,
 )
 from planner.measures.data import transaction
-from planner.scheduled_tickets.runtime import ScheduledTicketLoop
 
 
 def finish_line(measure_id: str, *, first_date: str = "2026-10-25") -> GoalCompletionRule:
@@ -76,7 +76,7 @@ def test_background_clock_persists_and_corrects_an_inactive_achievement_without_
     goal = numeric_goal(tmp_db, finish_line(measure.id))
     clock = FakeClock(datetime.fromtimestamp(NOW, UTC))
     participant = GoalCompletionParticipant()
-    loop = ScheduledTicketLoop(
+    loop = SourceScheduleLoop(
         str(tmp_db.execute("PRAGMA database_list").fetchone()[2]),
         clock,
         participants=(participant,),
@@ -106,7 +106,7 @@ def test_background_clock_persists_and_corrects_an_inactive_achievement_without_
     saved = actions.update_goal(
         tmp_db,
         goal.id,
-        {"expected_revision": saved.revision, "completion_rule": rule},
+        {"completion_rule": rule},
         principal=OWNER_PRINCIPAL,
         now=NOW,
     )

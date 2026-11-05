@@ -12,9 +12,9 @@ import httpx
 import pytest
 from click.testing import CliRunner, Result
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.cli.main import main
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect
@@ -274,9 +274,9 @@ def test_goal_artifact_commands_preserve_targets_text_and_lifecycle(
     listed = _goal_invoke(runner, holder_id, "list", goal_id, "--json")
     assert listed.exit_code == 0, listed.output
     assert json.loads(listed.stdout) == {"goal_id": goal_id, "artifacts": [path]}
-    for revision, changes in ((1, {"completed": True}), (2, {"active": False})):
+    for changes in ({"completed": True}, {"active": False}):
         changed = client.patch(
-            f"/api/goals/{goal_id}", json={"expected_revision": revision, **changes}
+            f"/api/goals/{goal_id}", json=changes
         )
         assert changed.status_code == 200, changed.text
         assert client.get(url).content == b"updated\r\n"
@@ -347,7 +347,6 @@ def test_goal_record_commands_emit_saved_pages_in_human_and_json_modes(
         edited = runner.invoke(
             main, ["goal", "edit", goal_id, *options],
             input=json.dumps({
-                "expected_revision": record["revision"],
                 "page": {**saved_page, "summary": "Updated context"},
             }),
         )

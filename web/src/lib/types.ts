@@ -22,12 +22,10 @@ export type DeploymentStatus = {
   target_sha: string | null;
   outcome: DeploymentOutcome | null;
   detail: string | null;
-  valid_until: string | null;
   success_display_until: string | null;
   installation_confirmed?: boolean;
   work_paused?: boolean;
   unknown_display_until?: string | null;
-  attention_status?: "pending" | "queued" | "started" | "delivery_uncertain" | "resolved" | "superseded" | null;
 };
 
 export type VpsMetricState = "healthy" | "warning" | "critical" | "unavailable";
@@ -141,36 +139,6 @@ export type ProjectSummary = {
 
 export type ProjectsResponse = {
   projects: ProjectSummary[];
-};
-
-export type ScheduleCadence =
-  | "daily"
-  | "every_planning_day"
-  | "current_sprint_day_four"
-  | "current_sprint_final_day";
-
-export type ScheduledTask = {
-  manager_kind?: "chief" | "manager";
-  manager?: Principal;
-  id: string;
-  enabled: boolean;
-  cadence: ScheduleCadence;
-  local_time: string;
-  title: string;
-  worker_type: string;
-  kickoff_note: string;
-  deadline: string | null;
-  project_id: string | null;
-  manager_id: string | null;
-  employee_backend: string | null;
-  employee_launch_model: string | null;
-  blocked_by_ticket_ids: string[];
-  created_at: number;
-  updated_at: number;
-};
-
-export type SchedulesResponse = {
-  schedules: ScheduledTask[];
 };
 
 export type TicketFieldValues = Record<string, string>;

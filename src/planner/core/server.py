@@ -15,7 +15,7 @@ from time import monotonic as _monotonic
 from typing import Any, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -38,7 +38,13 @@ from planner.conversation.video_uploads.service import VideoUploadService
 from planner.conversation.views.api import router as conversation_views_router
 from planner.core import change_signal
 from planner.core.clock import Clock
-from planner.core.config import HOST, Config
+from planner.core.config import (
+    DB_BUSY_TIMEOUT_MS,
+    HOST,
+    SHUTDOWN_GRACE_SECONDS,
+    SSE_HEARTBEAT_MS,
+    Config,
+)
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
 from planner.core.request_guidance import preserve_authored_request_examples
@@ -79,20 +85,18 @@ from planner.environments.vps_status import (
     collect_vps_status,
     collect_vps_status_summary,
 )
-from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
 from planner.ideas.api import router as ideas_router
 from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
-from planner.managers.api import legacy_router as legacy_managers_router
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
+from planner.measure_sources.participants import SlotParticipantFactory
 from planner.measures.api import router as measures_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.navigation.delivery import create_delivery_runtime
-from planner.navigation.middleware import NavigationCommandFenceMiddleware
 from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
 from planner.previews.api import handle_preview_error
@@ -104,14 +108,8 @@ from planner.previews.transport import PreviewTransport
 from planner.projects.api import router as projects_router
 from planner.resource_versions.api import router as resource_versions_router
 from planner.runtime.workspaces import register_workspace_root
-from planner.scheduled_tickets.api import router as scheduled_tickets_router
-from planner.scheduled_tickets.participants import SlotParticipantFactory
 from planner.server_lifecycle.runtime import application_runtime
 from planner.skill_sources import provision_workspace_skills
-from planner.skill_versions import (
-    reconcile_managed_skill_versions,
-    reconcile_provisional_worker_step_bindings,
-)
 from planner.tickets.api import router as tickets_router
 from planner.tickets.workspace.api import router as ticket_workspace_router
 from planner.worker_settings.api import router as worker_settings_router
@@ -207,7 +205,6 @@ def create_app(
     @asynccontextmanager
     async def _configured_lifespan(app: FastAPI) -> AsyncIterator[None]:
         Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
         from planner.tickets import data as tickets_data
 
         recovery_task: asyncio.Task[None] | None = None
@@ -223,7 +220,7 @@ def create_app(
 
         async def shutdown_dependents() -> None:
             app.state.conversation = None
-            deadline = _monotonic() + float(config.shutdown_grace_seconds)
+            deadline = _monotonic() + float(SHUTDOWN_GRACE_SECONDS)
             failures: list[BaseException] = []
 
             async def attempt(operation: Awaitable[None]) -> None:
@@ -267,7 +264,7 @@ def create_app(
                 raise failures[0]
 
         remembered_codex_login_rejection = DurableCodexLoginRejection(
-            config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
+            config.db_path, busy_timeout_ms=DB_BUSY_TIMEOUT_MS
         )
         backend_factories = (
             backend_child_factories_for_test
@@ -304,8 +301,8 @@ def create_app(
 
             async with application_runtime(
                 db_path=config.db_path,
-                db_busy_timeout_ms=config.db_busy_timeout_ms,
-                sse_heartbeat_ms=config.sse_heartbeat_ms,
+                db_busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
+                sse_heartbeat_ms=SSE_HEARTBEAT_MS,
                 backend_child_factories=backend_factories,
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
                 navigation_delivery=navigation_delivery,
@@ -319,8 +316,6 @@ def create_app(
 
                     ExecutorStore.interrupt_after_restart(audit_conn)
                     audit_conn.commit()
-                    reconcile_managed_skill_versions(audit_conn)
-                    reconcile_provisional_worker_step_bindings(audit_conn)
                 finally:
                     audit_conn.close()
 
@@ -475,7 +470,6 @@ def create_app(
                                     "The app is installed, but setup did not complete. "
                                     "Chief review is required."
                                 )
-                                import logging
 
                                 logging.getLogger(__name__).error(
                                     "Deferred setup failed after app %s committed",
@@ -537,11 +531,6 @@ def create_app(
     app.state.previews = preview_service
     app.state.preview_transport = preview_transport
     app.state.video_uploads = video_uploads
-    app.add_middleware(
-        NavigationCommandFenceMiddleware,
-        conn_factory=conn_factory,
-        db_path=config.db_path,
-    )
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
@@ -635,7 +624,9 @@ def create_app(
     event_stream_patterns: list[re.Pattern[str]] = []
 
     def include_router(router: APIRouter, prefix: str = "") -> None:
-        app.include_router(router, prefix=prefix)
+        from planner.core.authority.intake import request_admission
+
+        app.include_router(router, prefix=prefix, dependencies=[Depends(request_admission)])
         event_stream_patterns.extend(event_stream_route_patterns(router.routes, prefix))
 
     for domain_router in (
@@ -647,9 +638,7 @@ def create_app(
         conversation_history_router,
         projects_router,
         managers_router,
-        legacy_managers_router,
         ideas_router,
-        scheduled_tickets_router,
         measure_sources_router,
         measures_router,
         datasets_router,
@@ -658,7 +647,6 @@ def create_app(
         credentials_router,
         credential_requests_router,
         notifications_router,
-        feedback_router,
         worker_settings_router,
         message_delivery_router,
         membership_router,
@@ -666,7 +654,6 @@ def create_app(
     ):
         include_router(domain_router, prefix="/api")
     include_router(previews_router)
-    include_router(navigation_delivery.router)
     include_router(scoped_navigation.router)
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
@@ -795,7 +782,7 @@ def create_app(
     @answers_with_an_event_stream
     async def changes() -> StreamingResponse:
         return StreamingResponse(
-            change_stream(config.sse_heartbeat_ms),
+            change_stream(SSE_HEARTBEAT_MS),
             media_type="text/event-stream",
         )
 

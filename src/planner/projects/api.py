@@ -6,7 +6,6 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 
-from planner.core.authority import owner_only, require_above
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
@@ -86,7 +85,6 @@ async def read_projects(
 
 @router.post("/projects")
 async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("projects"))
     body = _marshal_create_project(raw)
     project = projects_data.create_project(
         conn,
@@ -102,7 +100,6 @@ async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) 
 async def update_project(
     project_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("projects"))
     body = _marshal_update_project(raw)
     folder_path: dict[str, Any] = {}
     if "folder_path" in body:

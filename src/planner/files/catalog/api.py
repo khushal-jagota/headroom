@@ -10,15 +10,12 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 from urllib.parse import quote, unquote, urlsplit
 
 import anyio.to_thread
 from fastapi import APIRouter, Request
 
-from planner.core import authority
 from planner.core.authctx import request_context
-from planner.core.authority import require_above_or_self
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import goal_files
 from planner.files.catalog.config import (
@@ -198,13 +195,9 @@ def _read(
     conn = request.app.state.conn_factory()
     try:
         conn.execute("BEGIN")
-        if kind == "manager":
-            require_above_or_self(
-                conn, request_context(request).principal, authority.manager(owner_id)
-            )
-        elif kind == "goal":
+        if kind == "goal":
             goal_files.require_goal(conn, request_context(request).principal, owner_id)
-        else:
+        elif kind == "ticket":
             if conn.execute("SELECT 1 FROM tickets WHERE id=?", (owner_id,)).fetchone() is None:
                 raise PlannerError(ErrorCode.not_found, "ticket not found", {})
         configured_db = Path(request.app.state.config.db_path)
@@ -262,13 +255,12 @@ def _read(
 @router.get("/artifact-catalog/{kind}/{owner_id}")
 async def artifact_catalog(
     request: Request,
-    kind: ArtifactOwnerKind | Literal["sprint_item"],
+    kind: ArtifactOwnerKind,
     owner_id: str,
     directory: str = "",
     offset: int = 0,
     limit: int = PAGE_SIZE,
 ) -> ArtifactDirectoryPage:
-    canonical_kind: ArtifactOwnerKind = "manager" if kind == "sprint_item" else kind
     return await anyio.to_thread.run_sync(
-        _read, request, canonical_kind, owner_id, directory, offset, limit
+        _read, request, kind, owner_id, directory, offset, limit
     )

@@ -3,7 +3,7 @@
   import ManagerChildrenSection from "./ManagerChildrenSection.svelte";
   let { principal, publication, onHover = undefined, onLeave = () => undefined }: {
     principal: ManagerPrincipal;
-    publication?: import("../lib/navigation/collection").NavigationPublication;
+    publication?: import("../lib/navigation/publication").NavigationPublication;
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave?: () => void;
   } = $props();

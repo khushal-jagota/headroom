@@ -9,8 +9,8 @@ from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.api_app import _app
 from tests.unit.test_measure_persistence import NOW, source, taken
-from tests.unit.test_scheduled_ticket_authority import _app
 
 from planner.core import db
 from planner.core.clock import TestClock as FakeClock
@@ -259,12 +259,11 @@ def test_manual_authority_validation_and_http_state_contract(tmp_db: Connection)
     measure = manual_measure(tmp_db, zone="America/Los_Angeles")
     now = int(datetime(2026, 10, 28, 0, 30, tzinfo=UTC).timestamp())
     request = replacement("owner", "2026-10-27", 0, 0)
-    for actor in (
-        Principal(PrincipalKind.goal, "goal-fixture"),
-        Principal(PrincipalKind.ticket, "ticket-fixture"),
-    ):
-        with pytest.raises(PlannerError):
-            manual.write_value(tmp_db, measure.id, request, principal=actor, now=now)
+    from tests.unit.test_goal_pages import create as create_goal
+    from tests.unit.test_ticket_backlog_retirement import create as create_ticket
+
+    unbound_goal = create_goal(tmp_db)
+    unassigned_ticket = create_ticket(tmp_db)
     external = taken(tmp_db, source(tmp_db))
     with pytest.raises(PlannerError, match="manual measure"):
         manual.write_value(tmp_db, external.id, request, principal=OWNER_PRINCIPAL, now=now)
@@ -280,6 +279,15 @@ def test_manual_authority_validation_and_http_state_contract(tmp_db: Connection)
     app = _app(tmp_db)
     app.state.clock = FakeClock(datetime.fromtimestamp(now, UTC))
     with TestClient(app) as client:
+        for headers in (
+            {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": unbound_goal.id},
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": unassigned_ticket},
+        ):
+            denied = client.post(
+                f"/api/measures/{measure.id}/manual-writes", json=request, headers=headers
+            )
+            assert denied.status_code == 400, denied.text
+            assert denied.json()["error"]["code"] == "agent_forbidden"
         initial_key = f"/api/measures/{measure.id}/manual-state"
         initial = client.get(initial_key)
         assert initial.status_code == 200, initial.text
@@ -412,7 +420,6 @@ def test_goal_writes_require_its_current_saved_manual_binding(tmp_db: Connection
         tmp_db,
         goal.id,
         {
-            "expected_revision": 1,
             "kind": "binary",
             "primary_checklist_block_id": None,
             "primary_chart": None,
@@ -427,10 +434,12 @@ def test_goal_writes_require_its_current_saved_manual_binding(tmp_db: Connection
 
 
 def test_manager_writes_only_manual_measures_bound_to_its_held_goals(tmp_db: Connection) -> None:
-    """The previous goal-only capability must follow its holder after promotion."""
+    """Command intake grants manual writes only for the Manager's current bindings."""
     from tests.unit.test_goal_pages import create
 
+    from planner.core.authority.intake import admit_command
     from planner.goals import actions as goals
+    from planner.measures.contracts import ManualWriteResult
 
     measure = manual_measure(tmp_db)
     foreign = manual_measure(tmp_db)
@@ -446,22 +455,31 @@ def test_manager_writes_only_manual_measures_bound_to_its_held_goals(tmp_db: Con
     manager_id, moved = goals.make_manager(
         tmp_db,
         goal.id,
-        expected_revision=goal.revision,
         principal=CHIEF_PRINCIPAL,
         clock=FakeClock(datetime.fromtimestamp(NOW, UTC)),
     )
     actor = Principal(PrincipalKind.manager, manager_id)
     request = replacement("holder-manual", "2026-10-27", 4, 0)
-    accepted = manual.write_value(tmp_db, measure.id, request, principal=actor, now=NOW)
+    def write(measure_id: str) -> ManualWriteResult:
+        admit_command(
+            tmp_db, actor, "POST", "/api/measures/{measure_id}/manual-writes",
+            {"measure_id": measure_id}, request,
+        )
+        return manual.write_value(tmp_db, measure_id, request, principal=actor, now=NOW)
+
+    accepted = write(measure.id)
     assert accepted.receipt.actor == actor
     with pytest.raises(PlannerError):
-        manual.write_value(tmp_db, foreign.id, request, principal=actor, now=NOW)
+        admit_command(
+            tmp_db, actor, "POST", "/api/measures/{measure_id}/manual-writes",
+            {"measure_id": foreign.id}, request,
+        )
     goals.update_goal(
         tmp_db,
         moved.id,
-        {"expected_revision": moved.revision, "holder_kind": "chief", "holder_id": None},
+        {"holder_kind": "chief", "holder_id": None},
         principal=OWNER_PRINCIPAL,
         now=NOW,
     )
     with pytest.raises(PlannerError):
-        manual.write_value(tmp_db, measure.id, request, principal=actor, now=NOW)
+        write(measure.id)

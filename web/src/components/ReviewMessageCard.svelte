@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack, type Snippet } from 'svelte';
+  import { onMount, untrack, type Snippet } from 'svelte';
   import { createQuery } from '@tanstack/svelte-query';
   import type { ReviewMessageItem } from '../lib/types';
   import { queries } from '../lib/queryCatalogue';
@@ -7,8 +7,7 @@
   import { navigationApplication } from '../lib/navigation/application.svelte';
   import { PlannerFetchError } from '../lib/api';
   import { mutateJson } from '../lib/mutate';
-  import { conversationOwnerImpact } from '../lib/workspaceNavigationImpact';
-  import { ticketCommandImpact } from '../lib/ticketNavigationImpact';
+
   import { readConversation, readEventsAfter, advanceOwnerRead, messageContentOf, type DeliveredMessage } from '../lib/conversation/wire';
   import { mintOutgoingMessage, recallOutgoingMessages, rememberOutgoingMessages, type OutgoingMessage } from '../lib/conversation/outgoing';
   import { readComposerDraft, writeComposerDraft } from '../lib/conversation/composerDraft';
@@ -25,9 +24,9 @@
   import SkeletonRegion from './SkeletonRegion.svelte';
   import ErrorLine from './ErrorLine.svelte';
 
-  let { item, onSkip, onResolved, onRendered, onBusy, footer, embedded=false }: {
+  let { item, onSkip, onResolved, onBusy, footer, embedded=false }: {
     embedded?:boolean; item:ReviewMessageItem; onSkip:()=>void; onResolved:(through:number)=>void;
-    onRendered?:()=>void; onBusy?:(busy:boolean)=>void; footer?:Snippet;
+    onBusy?:(busy:boolean)=>void; footer?:Snippet;
   } = $props();
   const navigation = navigationApplication()!;
   // The route keys this component by conversation, never by changing attention facts.
@@ -66,8 +65,6 @@
       if(destroyed)return;
       events=unreadOwnerMessages(rows,view.owner_read_through_sequence);
       loaded=true;
-      await tick();
-      onRendered?.();
       if(events.length===0 && !text && !files.length && !images.length && !attempt) onResolved?.(view.owner_read_through_sequence);
     } catch(problem) { if(!destroyed) error=problem; }
   }
@@ -130,12 +127,12 @@
       }
       const sending=attempt;
       const effective=navigation.state.effective;
-      const impact=item.owner_kind==='ticket' ? ticketCommandImpact(effective,item.owner_id,'conversation') : conversationOwnerImpact(effective?navigation.presentationFor(effective):undefined,item.owner_kind,item.owner_id);
+
       retryingUnknown=true;
-      const result=await navigation.runCommand(impact,responseMetadata=>mutateJson<DeliveredMessage>(reviewReplyEndpoint(item),{method:'POST',responseMetadata,body:{
+      const result=await mutateJson<DeliveredMessage>(reviewReplyEndpoint(item),{method:'POST',body:{
         conversation_id:conversationId,content:sending.content,sender_label:'owner',mode:'queue',sender_message_id:sending.messageId,
         sent_at_unix_milliseconds:sending.sentAtUnixMilliseconds,owner_read_through_sequence:sending.ownerReadThroughSequence
-      }}),'send review reply');
+      }});
       if(result.fate==='started' || result.fate==='injected' || result.fate==='queued') { await accepted(sending.ownerReadThroughSequence!); }
       else { if(result.fate!=='uncertain')await clearAttempt(); error=new Error(fateSentence(result) || 'The reply did not reach the agent.'); }
     } catch(problem){

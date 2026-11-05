@@ -2,7 +2,7 @@ name: Development dependency safety
 
 on:
   pull_request:
-    branches: [staging, main]
+    branches: [staging, main, sweep/guard-sweep]
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:

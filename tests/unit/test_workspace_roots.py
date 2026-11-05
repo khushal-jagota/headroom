@@ -9,9 +9,9 @@ from sqlite3 import Connection
 
 import pytest
 import yaml
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation.contracts import ConversationStartRequest
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core import server
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as Clock

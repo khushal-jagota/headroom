@@ -13,13 +13,13 @@ const done = (itemId: string) => (block: ChecklistBlock): ChecklistBlock => ({ .
 
 describe('goal writes across control lifetimes', () => {
   it('serializes editors for the captured goal, applies fresh documents, and lets another goal proceed', async () => {
-    const saved = new Map([['first', goal('first')], ['second', goal('second')]]), gate = deferred<void>();
+    const saved = new Map([['first', goal('first')], ['second', goal('second')]]), gate = deferred<void>(), firstStarted = deferred<void>();
     const writes: Array<[string, GoalEditBody]> = [];
     const io = {
       read: async (id: string) => saved.get(id)!,
       write: async (id: string, body: GoalEditBody) => {
         writes.push([id, body]);
-        if (writes.length === 1) await gate.promise;
+        if (writes.length === 1) { firstStarted.resolve(); await gate.promise; }
         const accepted = { ...saved.get(id)!, ...body, revision: saved.get(id)!.revision + 1 };
         saved.set(id, accepted); return accepted;
       }, refresh: async () => undefined,
@@ -27,23 +27,24 @@ describe('goal writes across control lifetimes', () => {
     const first = createGoalEditor('first', io), reopened = createGoalEditor('first', io);
     const one = first.updateBlock('steps', block => done('one')(block as ChecklistBlock));
     const two = reopened.updateBlock('steps', block => done('two')(block as ChecklistBlock));
+    await firstStarted.promise;
     await createGoalEditor('second', io).write({ completed: true });
     expect(writes.map(([id]) => id)).toEqual(['first', 'second']);
     gate.resolve(); await Promise.all([one, two]);
-    expect(writes[2][1].expected_revision).toBe(2);
+    expect(writes[2][1]).not.toHaveProperty('expected_revision');
     expect((writes[2][1].page!.blocks[0] as ChecklistBlock).items.map(item => item.state)).toEqual(['done', 'done']);
   });
 
-  it('keeps accepted writes successful when refresh fails, rejects absent blocks, and preserves explicit stale revisions', async () => {
+  it('keeps accepted writes successful when refresh fails, rejects absent blocks, and reports write failures', async () => {
     const write = vi.fn(async (_id: string, body: GoalEditBody) => ({ ...goal('captured'), ...body, revision: 2 }));
     const editor = createGoalEditor('captured', { read: async () => goal('captured'), write, refresh: async () => { throw new Error('Read unavailable'); } });
-    await expect(editor.write({ completed: true }, 0)).resolves.toMatchObject({ completed: true, revision: 2 });
-    expect(write.mock.calls[0][1].expected_revision).toBe(0);
+    await expect(editor.write({ completed: true })).resolves.toMatchObject({ completed: true, revision: 2 });
+    expect(write.mock.calls[0][1]).not.toHaveProperty('expected_revision');
     await expect(editor.updateBlock('removed', block => block)).rejects.toThrow('no longer exists');
     expect(write).toHaveBeenCalledTimes(1);
     const stale = vi.fn(async () => { throw new Error('Stale revision'); });
     const rejected = createGoalEditor('captured', { read: async () => goal('captured'), write: stale, refresh: async () => undefined });
-    await expect(rejected.write({ completed: false }, 0)).rejects.toThrow('Stale revision');
+    await expect(rejected.write({ completed: false })).rejects.toThrow('Stale revision');
     expect(stale).toHaveBeenCalledTimes(1);
   });
 
@@ -163,7 +164,6 @@ describe('checklist date drafts and receipts',()=>{
   const io={
    read:async()=>saved,
    write:async(_id:string,body:GoalEditBody)=>{
-    if(body.expected_revision!==saved.revision)throw new Error('Stale revision');
     saved={...saved,...body,revision:saved.revision+1};return saved;
    },refresh:async()=>undefined,
   };
@@ -174,13 +174,13 @@ describe('checklist date drafts and receipts',()=>{
    if(block.type!=='checklist')throw new Error('Checklist missing');
    return {...block,items:block.items.map(item=>item.id==='one'?{...item,deadline}:item)};
   };
-  const dated=date.run(command,()=>editor.updateBlock('steps',setDate(command.deadline),command.revision));
+  const dated=date.run(command,()=>editor.updateBlock('steps',setDate(command.deadline)));
   const completed=editor.updateBlock('steps',block=>done('one')(block as ChecklistBlock));
   await Promise.all([dated,completed]);
   expect(saved.page.blocks[0]).toMatchObject({id:'steps',items:[{id:'one',label:'One',state:'done',deadline:'2026-10-30'},{id:'two',state:'open'}]});
-  await editor.updateBlock('steps',setDate(null),saved.revision);
+  await editor.updateBlock('steps',setDate(null));
   expect(saved.page.blocks[0]).toMatchObject({items:[{id:'one',state:'done',deadline:null},{id:'two',state:'open'}]});
-  await expect(editor.updateBlock('steps',setDate('2026-11-01'),command.revision)).rejects.toThrow('Stale revision');
-  expect(saved.page.blocks[0]).toMatchObject({items:[{deadline:null},{}]});
+  await editor.updateBlock('steps',setDate('2026-11-01'));
+  expect(saved.page.blocks[0]).toMatchObject({items:[{deadline:'2026-11-01'},{}]});
  });
 });

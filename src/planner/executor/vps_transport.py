@@ -277,13 +277,11 @@ class VpsExecutor:
         if not read.path.startswith(
             (
                 "/api/tickets",
-                "/api/items",
                 "/api/managers",
                 "/api/sprint",
                 "/api/projects",
                 "/api/worker-types",
                 "/api/skills",
-                "/api/feedback",
                 "/files/sprint-items/",
                 "/files/managers/",
             )

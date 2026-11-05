@@ -7,8 +7,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any, cast
 
-from planner.core import authority
-from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
+from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.goals.contracts import PageDocument, PageReadingSubject
 from planner.goals.logic.documents import prepare_document
@@ -30,23 +29,7 @@ def read_page(conn: sqlite3.Connection, manager_id: str | None) -> dict[str, Any
 def write_page(
     conn: sqlite3.Connection, manager_id: str | None, body: dict[str, Any], *, principal: Principal
 ) -> dict[str, Any]:
-    if manager_id is None:
-        if principal.kind not in (PrincipalKind.owner, PrincipalKind.chief):
-            raise PlannerError(
-                ErrorCode.agent_forbidden, "only the owner or Chief can edit Chief's page"
-            )
-    else:
-        authority.require_above_or_self(conn, principal, authority.manager(manager_id))
     with transaction(conn):
-        current = read_page(conn, manager_id)
-        if (
-            type(body.get("expected_revision")) is not int
-            or body["expected_revision"] != current["page_revision"]
-        ):
-            raise PlannerError(
-                ErrorCode.stale_claim,
-                "holder page changed; read the accepted document before editing again",
-            )
         try:
             page = (
                 None

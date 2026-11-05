@@ -2,6 +2,7 @@ import multiprocessing
 import os
 import sqlite3
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +21,10 @@ from planner.managed_skills import (
 )
 from planner.skill_sources import (
     RETIRED_PANELS_SKILL_NAMES,
+    WORKER_ONLY_SKILL_NAMES,
     provision_native_backend_skills,
     provision_workspace_skills,
 )
-from planner.skill_versions import reconcile_managed_skill_versions
 from planner.worker_settings import service
 
 
@@ -64,6 +65,9 @@ def test_supervisor_edit_reaches_every_backend_home_from_one_managed_source(
 
     canonical = managed / "panels-manager"
     for home in homes.values():
+        for hidden in WORKER_ONLY_SKILL_NAMES:
+            assert not (home / "skills" / hidden).exists()
+            assert (managed / hidden / "SKILL.md").is_file()
         exposed = home / "skills" / "panels-manager"
         assert exposed.resolve() == canonical.resolve()
         assert "Future conversations read this revision" in (exposed / "SKILL.md").read_text(
@@ -81,14 +85,14 @@ def test_native_skills_directory_preserves_custom_entries_and_replaces_panels_co
     (native_skills / "custom" / "SKILL.md").write_text("custom", encoding="utf-8")
     (native_skills / "panels-worker-coding").mkdir()
     (native_skills / "panels-worker-coding" / "SKILL.md").write_text("stale", encoding="utf-8")
-    for retired_skill_name in RETIRED_PANELS_SKILL_NAMES:
+    for retired_skill_name in RETIRED_PANELS_SKILL_NAMES | WORKER_ONLY_SKILL_NAMES:
         (native_skills / retired_skill_name).write_text("retired", encoding="utf-8")
 
     provision_native_backend_skills(tmp_path / "provider", tmp_path)
     provision_native_backend_skills(tmp_path / "provider", tmp_path)
 
     assert (native_skills / "custom" / "SKILL.md").read_text(encoding="utf-8") == "custom"
-    for retired_skill_name in RETIRED_PANELS_SKILL_NAMES:
+    for retired_skill_name in RETIRED_PANELS_SKILL_NAMES | WORKER_ONLY_SKILL_NAMES:
         assert not (native_skills / retired_skill_name).exists()
     assert (native_skills / "panels-worker-coding").resolve() == (
         managed / "panels-worker-coding"
@@ -291,7 +295,8 @@ def test_owner_edit_stands_in_the_row_and_the_file_when_version_history_fails(
     assert edited != before.decode("utf-8")
     assert 'description: "changed"' in edited
     assert path.read_bytes() == edited.encode("utf-8")
-    reconcile_managed_skill_versions(conn)
+    monkeypatch.undo()
+    service.save_skill(conn, "panels", {"description": "changed"}, now=2, database_parent=tmp_path)
     assert (
         conn.execute(
             "SELECT content FROM managed_skill_versions WHERE skill_name = ? AND content = ?",
@@ -349,10 +354,15 @@ def test_file_failure_reports_saved_state_and_startup_repairs_the_copy(
 def test_reviewed_skill_batch_is_atomic_and_retains_original_versions(
     tmp_path: Path, database: sqlite3.Connection
 ) -> None:
-    import hashlib
 
-    reconcile_managed_skill_versions(database)
     before = read_skill_source(database, "panels")
+    service.save_skill(
+        database,
+        "panels",
+        {"description": service.read_skill(database, "panels").description},
+        now=0,
+        database_parent=tmp_path,
+    )
     original_versions = list(database.execute("SELECT id,content FROM managed_skill_versions"))
     target = before + "\nOwner custom text remains exact.\n"
     created = "---\nname: reviewed-manager\ndescription: New role\n---\n\nFull source.\n"
@@ -361,18 +371,19 @@ def test_reviewed_skill_batch_is_atomic_and_retains_original_versions(
             {
                 "name": "panels",
                 "source_text": target,
-                "expected_sha256": hashlib.sha256(before.encode()).hexdigest(),
             },
-            {"name": "reviewed-manager", "source_text": created, "expected_sha256": "0" * 64},
+            {"name": "reviewed-manager", "source_text": created},
         ]
     }
-    with pytest.raises(PlannerError, match="hash changed"):
+    valid_source = batch["skills"][1]["source_text"]
+    batch["skills"][1]["source_text"] = "invalid skill"
+    with pytest.raises(PlannerError):
         service.apply_skills(database, batch, now=21, database_parent=tmp_path)
     assert read_skill_source(database, "panels") == before
     assert not database.execute(
         "SELECT 1 FROM managed_skills WHERE skill_name='reviewed-manager'"
     ).fetchone()
-    batch["skills"][1]["expected_sha256"] = None
+    batch["skills"][1]["source_text"] = valid_source
     service.apply_skills(database, batch, now=21, database_parent=tmp_path)
     assert read_skill_source(database, "panels") == target
     assert (tmp_path / "skills/reviewed-manager/SKILL.md").read_text() == created
@@ -385,10 +396,9 @@ def test_reviewed_skill_batch_is_atomic_and_retains_original_versions(
         )
 
 
-def test_full_skill_batch_retry_republishes_only_the_exact_applied_target(
+def test_full_skill_batch_retry_republishes_and_later_application_replaces_current_source(
     tmp_path: Path, database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import hashlib
 
     before = read_skill_source(database, "panels")
     target = before + "\nReviewed source.\n"
@@ -397,7 +407,6 @@ def test_full_skill_batch_retry_republishes_only_the_exact_applied_target(
             {
                 "name": "panels",
                 "source_text": target,
-                "expected_sha256": hashlib.sha256(before.encode()).hexdigest(),
             }
         ]
     }
@@ -426,8 +435,12 @@ def test_full_skill_batch_retry_republishes_only_the_exact_applied_target(
         now=23,
         database_parent=tmp_path,
     )
-    with pytest.raises(PlannerError, match="hash changed"):
-        service.apply_skills(database, batch, now=24, database_parent=tmp_path)
+    service.apply_skills(database, batch, now=24, database_parent=tmp_path)
+    assert read_skill_source(database, "panels") == target
+    assert (tmp_path / "skills/panels/SKILL.md").read_text() == target
+    assert database.execute(
+        "SELECT updated_at FROM managed_skills WHERE skill_name='panels'"
+    ).fetchone()[0] == 24
 
 
 def test_manager_skill_primary_identity_matches_the_generated_role() -> None:
@@ -443,8 +456,7 @@ def test_manager_skill_primary_identity_matches_the_generated_role() -> None:
     assert "PLAN_SPRINT_ITEM_ID" not in primary and "PLAN\\_SPRINT" not in primary
     plain_source = source.replace("`", "").replace("\\_", "_")
     assert (
-        "If PLAN_MANAGER_ID is absent, use the retained PLAN_SPRINT_ITEM_ID "
-        "for the same Manager."
+        "If PLAN_MANAGER_ID is absent, use the retained PLAN_SPRINT_ITEM_ID for the same Manager."
     ) in plain_source
 
 
@@ -457,7 +469,10 @@ def test_workspace_skill_link_is_repeatable_and_reads_live_managed_edits(
     provision_workspace_skills(workspace, tmp_path)
     exposed = workspace / ".agents/skills"
     assert exposed.is_symlink()
-    assert exposed.resolve() == managed.resolve()
+    assert exposed.resolve() == (tmp_path / "agent-skill-home/skills").resolve()
+    for hidden in WORKER_ONLY_SKILL_NAMES:
+        assert not (exposed / hidden).exists()
+        assert (managed / hidden / "SKILL.md").is_file()
     original_link = exposed.lstat().st_ino
     provision_workspace_skills(workspace, tmp_path)
     assert exposed.lstat().st_ino == original_link
@@ -517,7 +532,7 @@ def test_workspace_skill_setup_preserves_every_existing_conflict(
     with pytest.raises(FileExistsError) as caught:
         provision_workspace_skills(workspace, tmp_path)
     assert str(conflict) in str(caught.value)
-    assert str(managed_skills_home(tmp_path)) in str(caught.value)
+    assert str(tmp_path / "agent-skill-home/skills") in str(caught.value)
     assert conflict.lstat().st_ino == before.st_ino
     assert retained.read_text() == "foreign content"
     if link_target is not None:
@@ -530,19 +545,51 @@ def test_workspace_skill_setup_preserves_every_existing_conflict(
         assert (conflict / "custom.txt").read_text() == "custom skill"
 
 
-def test_workspace_skill_setup_rechecks_exclusive_creation_race(
+def test_workspace_skill_setup_preserves_foreign_link_after_creation_race(
     tmp_path: Path, database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     del database
     workspace = tmp_path / "workspace"
     (workspace / ".agents").mkdir(parents=True)
-    exposed = workspace / ".agents/skills"
+    foreign = tmp_path / "foreign-skills"
+    foreign.mkdir()
+    retained = foreign / "SKILL.md"
+    retained.write_text("Foreign skill bytes")
     real_symlink = os.symlink
+    raced: list[Path] = []
 
-    def concurrent_creator(src: str | Path, dst: str, *, dir_fd: int | None = None) -> None:
-        real_symlink(src, dst, dir_fd=dir_fd)
+    def concurrent_creator(
+        src: str | Path,
+        dst: str | Path,
+        target_is_directory: bool = False,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        # The native projection races before the workspace link exists.
+        real_symlink(foreign, dst, target_is_directory, dir_fd=dir_fd)
+        raced.append(Path(dst))
         raise FileExistsError(dst)
 
     monkeypatch.setattr("planner.skill_sources.os.symlink", concurrent_creator)
-    provision_workspace_skills(workspace, tmp_path)
-    assert exposed.resolve() == managed_skills_home(tmp_path).resolve()
+    with pytest.raises(FileExistsError):
+        provision_workspace_skills(workspace, tmp_path)
+    assert len(raced) == 1
+    assert raced[0].parent == tmp_path / "agent-skill-home/skills"
+    assert raced[0].resolve() == foreign
+    assert retained.read_text() == "Foreign skill bytes"
+    assert not (workspace / ".agents/skills").exists()
+
+
+def test_workspace_migrates_only_its_previous_managed_skill_link(
+    tmp_path: Path, database: sqlite3.Connection
+) -> None:
+    del database
+    workspace = tmp_path / "workspace"
+    (workspace / ".agents").mkdir(parents=True)
+    exposed = workspace / ".agents/skills"
+    exposed.symlink_to(managed_skills_home(tmp_path), target_is_directory=True)
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        list(workers.map(lambda _: provision_workspace_skills(workspace, tmp_path), range(8)))
+    assert (exposed / "panels/SKILL.md").is_file()
+    assert not (exposed / "panels-worker-personal-task").exists()
+    assert (managed_skills_home(tmp_path) / "panels-worker-personal-task/SKILL.md").is_file()

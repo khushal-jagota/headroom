@@ -61,7 +61,8 @@ it('retains optional host capability references without granting absent capabili
  const source={goalId:()=> 'first',goal:()=>goal('first'),readings:()=>undefined,narrow:()=>true,sessions:()=>sessions};
  const updateBlock:PageContext['updateBlock']=async()=>undefined;
  const manualSession:PageContext['manualSession']=measureId=>sessions.manual('first',measureId);
- const authorText:PageContext['authorText']={begin:()=>async()=>undefined};
+ const draft={value:null,error:null,saving:false};
+ const authorText:PageContext['authorText']={draft:()=>draft,begin:()=>async()=>undefined};
  const card=createGoalPageContext(source,{updateBlock});
  expect(card.updateBlock).toBe(updateBlock);
  expect('manualSession' in card).toBe(false);
