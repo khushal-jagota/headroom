@@ -659,6 +659,8 @@ class _UncertainConversationSystem(_RetirementDelegate):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         return PromptDeliveryUncertain()
@@ -796,6 +798,8 @@ class _QueueingConversationSystem(_RetirementDelegate):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         if not await self._system.is_running(self._conversation_id):
@@ -1218,7 +1222,6 @@ def test_custom_guidance_reaches_first_payload_but_not_later_stage(
     )
     first = world.conversations.backend_prompt_writes(conversation_id)[0].text
     if first_sender == "owner":
-        assert first.startswith("[Authenticated Panels reply requirement]")
         assert first.endswith("owner:\nFirst owner message")
         assert first.index("CUSTOM KICKOFF GUIDE") < first.index("owner:\nFirst owner message")
     world.conversations.complete_running_turn(conversation_id)

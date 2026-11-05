@@ -79,7 +79,7 @@ def validate_schema_ancestry(database: Path, migrations: Path = MIGRATIONS_DIREC
         except (CommandError, ResolutionError) as exc:
             raise ValueError("The installed database has unknown schema ancestry.") from exc
         if floor not in ancestors and revision not in {
-            "goal_holders", "canonical_manager_identities"
+            "goal_holders", "retire_explicit_reply_requirement", "canonical_manager_identities"
         }:
             raise ValueError("The installed database precedes the supported update schema floor.")
 

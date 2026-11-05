@@ -274,7 +274,7 @@
     const latest = reader?.status?.rest.latest_happened ?? rows.at(-1);
     if (latest?.kind === "turn_ended" && latest.ending === "completed") return null;
     const kind = latest?.kind;
-    return kind && ["prompt_refused", "prompt_uncertain", "prompt_discarded", "explicit_reply_missing", "turn_stopped", "turn_ended"].includes(kind)
+    return kind && ["prompt_refused", "prompt_uncertain", "prompt_discarded", "turn_stopped", "turn_ended"].includes(kind)
       ? restLine?.text ?? null : null;
   });
   let activityKnown = $derived(!activityUncertain && (reader ? typeof reader.status?.turn_running === "boolean" : true));

@@ -706,6 +706,11 @@ def test_runner_accepts_direct_upgrade_entry_and_head_but_refuses_unknown_schema
         conn.execute("INSERT INTO alembic_version VALUES ('goal_holders')")
     validate_schema_ancestry(database)
     with sqlite3.connect(database) as conn:
+        conn.execute(
+            "UPDATE alembic_version SET version_num = 'retire_explicit_reply_requirement'"
+        )
+    validate_schema_ancestry(database)
+    with sqlite3.connect(database) as conn:
         conn.execute("UPDATE alembic_version SET version_num = 'canonical_manager_identities'")
     validate_schema_ancestry(database)
     # The direct entry is valid only in a candidate graph that declares it.

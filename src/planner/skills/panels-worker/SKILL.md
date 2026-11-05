@@ -55,7 +55,7 @@ When the current approved step creates a Ticket, load and follow `panels-ticket-
 
 File proposals canonically and stop at the gate. Let Panels route review and continuation. Do not duplicate a proposal or its status in chat. Enter Consequences only through system admission.
 
-Explicit owner requests and authenticated reply requirements still apply.
+Explicit owner requests still apply.
 
 ## To be a useful worker:
 

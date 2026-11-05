@@ -83,8 +83,6 @@ def project_rest_event(
             if len(encoded) <= STATUS_INLINE_BODY_BYTES
             else {"kind": "deferred", "reference": _body_reference(row, encoded)},
         }
-    if body["kind"] == "explicit_reply_missing":
-        return body
     if body["kind"] == "turn_ended" and body["ending"] != event.ConversationTurnEnding.completed:
         return {**body, "error_summary": excerpt(body["error_summary"] or "") or None}
     return None

@@ -7,13 +7,10 @@ import sqlite3
 from planner.conversation.contracts import (
     ConversationMessageContent,
     ConversationSystem,
-    ConversationTurnReference,
     NativeMessageOperation,
     PromptDeliveryMode,
     PromptDeliveryQueued,
-    PromptDeliveryRefused,
     PromptDeliveryStarted,
-    PromptDeliverySuppressed,
 )
 from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext
@@ -35,21 +32,6 @@ from planner.runtime.logic.conversation_start_resolution import (
 )
 from planner.tickets import data as tickets_data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
-
-
-async def revision_source_turn(
-    conversations: ConversationSystem,
-    conn: sqlite3.Connection,
-    *,
-    ctx: RequestContext,
-) -> ConversationTurnReference | None:
-    """Capture the exact source turn that the committed rejection answers."""
-    if ctx.principal.kind is PrincipalKind.owner:
-        return None
-    source_conversation_id = _sender_conversation_id(conn, ctx.principal)
-    if source_conversation_id is None:
-        return None
-    return await conversations.active_turn_reference(source_conversation_id)
 
 
 def sender_label(ctx: RequestContext) -> str:
@@ -120,7 +102,6 @@ async def send_message(
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     retain_created_conversation: bool = False,
-    expects_reply: bool = True,
     system_message: bool = False,
     admission: MessageAdmission | None = None,
     recording_receipt: NativeMessageOperation | None = None,
@@ -128,12 +109,7 @@ async def send_message(
     """Send one text message to one resolved Panels conversation owner.
 
     ``system_message`` records an automatic action as Panels without changing the caller's
-    authority or launch choices. Only trusted internal callers select it. A system action
-    creates no reply requirement and cannot settle the caller's existing reply obligation.
-
-    ``expects_reply`` is False for a message whose answer is a thing the recipient does
-    rather than words it sends back. Such a message adds no reply requirement to the wire
-    prompt and leaves no missing-reply marker when the turn ends.
+    authority or launch choices. Only trusted internal callers select it.
     """
     caller = ctx.principal
     if owner_read_through_sequence is not None and (
@@ -152,14 +128,6 @@ async def send_message(
     )
     prompt_mode = _prompt_mode(mode)
     sender = None if system_message else caller
-    source_turn = None
-    if not system_message and caller.kind is not PrincipalKind.owner:
-        source_conversation_id = _sender_conversation_id(conn, caller)
-        if source_conversation_id is not None:
-            source_turn = await conversations.active_turn_reference(source_conversation_id)
-    is_reply = bool(
-        source_turn is not None and await conversations.turn_expects_reply(source_turn, recipient)
-    )
 
     if recipient.kind is PrincipalKind.owner:
         if caller.kind is PrincipalKind.owner:
@@ -222,7 +190,6 @@ async def send_message(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=not system_message and expects_reply and not is_reply,
                     now=clock.now_unix(),
                     recording_receipt=recording_receipt,
                 )
@@ -259,7 +226,6 @@ async def send_message(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=not system_message and expects_reply and not is_reply,
                     recording_receipt=recording_receipt,
                 )
         elif recipient.kind is PrincipalKind.manager:
@@ -317,7 +283,6 @@ async def send_message(
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                         sender=sender,
                         recipient=recipient,
-                        reply_requested=not system_message and expects_reply and not is_reply,
                         required_manager_id=item_id,
                         retain_created_conversation=retain_created_conversation,
                         recording_receipt=recording_receipt,
@@ -358,16 +323,8 @@ async def send_message(
     if admission is not None:
         admission.finish(delivered.fate)
 
-    result = MessageDeliveryResult(
+    return MessageDeliveryResult(
         recipient=recipient,
         conversation_id=delivered.conversation_id,
         fate=delivered.fate,
     )
-    if (
-        source_turn is not None
-        and not isinstance(delivered.fate, (PromptDeliveryRefused, PromptDeliverySuppressed))
-        and delivered.newly_accepted
-        and (recording_receipt is None or recording_receipt.composed_confirmed)
-    ):
-        await conversations.record_explicit_reply(source_turn, recipient)
-    return result

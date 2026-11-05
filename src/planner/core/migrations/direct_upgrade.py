@@ -1,4 +1,4 @@
-"""Apply the retained sweep changes to the one supported staging entry."""
+"""Apply the retained sweep changes to the supported staging entries."""
 
 import json
 import sqlite3

@@ -19,7 +19,6 @@ import type {
   PlanEntry,
   PromptDeliveryMode,
   PromptDeliveryRefusalReason,
-  Principal,
   UserInputAnswers,
   UserInputQuestion
 } from "./wire";
@@ -90,13 +89,6 @@ export type TranscriptRow =
       /** The record calls this one a message to the owner rather than ordinary output.
        *  It is the only kind of row that counts as a reply somebody is owed. */
       toOwner: boolean;
-    }
-  | {
-      key: string;
-      kind: "explicit_reply_missing";
-      sequence: number;
-      createdAt: number;
-      promptSender: Principal;
     }
   | {
       key: string;
@@ -377,15 +369,6 @@ export function transcriptRows(
           toOwner: event.kind === "message_to_owner"
         });
         break;
-      case "explicit_reply_missing":
-        rows.push({
-          key: `e${sequence}`,
-          kind: "explicit_reply_missing",
-          sequence,
-          createdAt,
-          promptSender: event.payload.prompt_sender
-        });
-        break;
       case "tool_call_started":
         toolCallRowIndex.set(event.payload.tool_call_id, rows.length);
         rows.push({
@@ -609,20 +592,6 @@ export function transcriptRows(
   }
 
   return rows;
-}
-
-export function principalLabel(principal: Principal): string {
-  switch (principal.kind) {
-    case "owner": return "owner";
-    case "chief": return "Chief";
-    case "ticket": return `Ticket ${principal.id}`;
-    case "manager": return `Manager ${principal.id}`;
-    case "goal": return `Goal ${principal.id}`;
-  }
-}
-
-export function explicitReplyMissingSentence(principal: Principal): string {
-  return `No explicit message was sent to ${principalLabel(principal)}.`;
 }
 
 function newestCreatedAt(feed: ConversationFeed): number {
