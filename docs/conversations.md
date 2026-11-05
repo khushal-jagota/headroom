@@ -63,11 +63,11 @@ New conversation ends the running turn, discards held work, and links a fresh co
 
 ## Worker resources on Linux
 
-Each Claude or Codex Ticket agent and its tools run in a separate systemd user service. Memory exhaustion stops that Worker unit and reports the cause in its conversation. Other Workers and Panels stay available.
+Each Claude or Codex Ticket agent and its tools run in a separate systemd user service. It keeps a Worker's processes apart from the Panels server and stops them all when the Worker ends. Workers have no memory cap. When the machine runs out of memory, Linux kills one process and everything else carries on. Every agent's tool shells mark themselves to be killed first, so a test or browser goes before an agent, and the live service asks to go last.
 
 Each Worker receives a disk directory for temporary files. The directory survives across turns until the agent process stops. Unit shutdown stops its tools before cleanup. Account and login probes keep their separate lifetime. Non-Linux platforms retain their existing launch path.
 
-The host must supply the Worker slice and its CPU and memory limits before Linux Workers can start. A missing budget stops the launch with an error. The [user-service inputs](../ops/panels-environments/README.md#worker-resource-units) describe installation and the operator-owned restart.
+The host must supply the Worker slice and its lower CPU weight before Linux Workers can start. A missing slice stops the launch with an error. The [user-service inputs](../ops/panels-environments/README.md#worker-resource-units) describe installation and the operator-owned restart.
 
 ## Models and asks
 

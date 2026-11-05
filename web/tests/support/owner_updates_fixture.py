@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tempfile
-from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +12,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.conversation.contracts import ConversationSystem
-from planner.core.db import connect, create_schema
+from planner.conversation.runtime_composition import SignalRuntimeComposition
+from planner.core.db import connect
 from planner.environments.app import AppManifest
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.runtime_contracts import RuntimeContract
@@ -70,8 +70,15 @@ class OwnerUpdatesFixture:
         )
         self.store = FileUpdateRequestStore(Path(self.directory.name) / "request.json")
         database_path = Path(self.directory.name) / "planner.db"
-        with closing(connect(str(database_path))) as connection:
-            create_schema(connection)
+        # Cutover captures the stopped database through the current Signal schema.
+        # Prepare an empty runtime, then release its ownership before that capture.
+        runtime = SignalRuntimeComposition(str(database_path), 1000)
+        try:
+            runtime.bootstrap()
+            runtime.coordinator.bind_runtime(lambda _identity: None)
+            runtime.initialize()
+        finally:
+            runtime.close()
         self.service = UpdateService(
             self.provider,
             self.store,

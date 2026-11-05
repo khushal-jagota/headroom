@@ -195,7 +195,7 @@ def test_workflow_requires_same_run_native_artifact_before_publication() -> None
     )
     assert jobs["suites"]["needs"] == "prepare"
     assert "if" not in jobs["suites"]
-    assert jobs["deploy"]["if"] == (
+    assert jobs["publish"]["if"] == (
         "${{ always() && inputs.operation != 'mac-build' "
         "&& (inputs.operation != 'adopt' || inputs.rehearsal) }}"
     )
@@ -211,7 +211,7 @@ def test_workflow_requires_same_run_native_artifact_before_publication() -> None
     commands = "\n".join(step.get("run", "") for step in native["steps"])
     assert 'platform.machine() == "arm64"' in commands
     assert '--revision "$PANELS_REQUESTED_SHA" --run-id "$GITHUB_RUN_ID"' in commands
-    deploy = workflow["jobs"]["deploy"]
+    deploy = workflow["jobs"]["publish"]
     assert "mac-runtime" in deploy["needs"]
     download = next(
         step

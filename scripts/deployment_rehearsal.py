@@ -88,14 +88,24 @@ def start() -> None:
     current = Path(os.environ["PANELS_CURRENT_ROOT"])
     app_home = Path(os.environ["PANELS_APP_HOME"])
     baseline = os.environ["PANELS_BASELINE_SHA"]
-    source = root / "baseline-source"
-    subprocess.run(["git", "worktree", "add", "--detach", str(source), baseline], check=True)
-    with (root / "gate/baseline-build.log").open("w") as log:
-        subprocess.run([
-            sys.executable, "-m", "planner", "environment", "app-build",
-            "--source-root", str(source), "--requested-sha", baseline,
-            "--candidate-app", str(current / "app"),
-        ], check=True, stdout=log, stderr=subprocess.STDOUT)
+    # The workflow restores this build from its cache, keyed by the baseline SHA.
+    # On a miss, build it once here and the workflow saves it for later runs.
+    cached = Path(os.environ["PANELS_BASELINE_APP_CACHE"])
+    if not cached.exists():
+        source = root / "baseline-source"
+        subprocess.run(["git", "worktree", "add", "--detach", str(source), baseline], check=True)
+        with (root / "gate/baseline-build.log").open("w") as log:
+            subprocess.run([
+                sys.executable, "-m", "planner", "environment", "app-build",
+                "--source-root", str(source), "--requested-sha", baseline,
+                "--candidate-app", str(cached),
+            ], check=True, stdout=log, stderr=subprocess.STDOUT)
+    shutil.copytree(cached, current / "app", symlinks=True)
+    from planner.environments.app import validate_app_manifest
+
+    # The copy must still be the exact baseline build: SHA and artifact digest.
+    validate_app_manifest(current / "app/manifest.json", expected_sha=baseline,
+                          require_runtime=True)
     for directory in (app_home, current / "data", current / "logs", current / "run"):
         directory.mkdir(parents=True, exist_ok=True)
     config = current / "data/config.yaml"
@@ -205,7 +215,7 @@ def capture_synthetic_state(current: Path, health_url: str, gate: Path) -> None:
 def check_selection() -> None:
     require_rehearsal()
     selection = json.loads((Path(os.environ["PANELS_GATE_DIR"]) / "selection.json").read_text())
-    if "tests/unit/test_conversation_codex_bindings.py" not in selection["unit"]:
+    if "tests/integration/test_conversation_codex_bindings.py" not in selection["integration"]:
         raise ValueError("rehearsal must exercise Codex bindings")
     if not selection["e2e"]:
         raise ValueError("rehearsal must exercise the E2E report boundary")

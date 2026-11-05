@@ -31,7 +31,10 @@ def create_app_archive(app: Path, archive: Path) -> str:
     if archive.resolve().is_relative_to(app.resolve()):
         raise ValueError("archive must be outside the candidate app")
     # Exclusive creation prevents accidentally replacing an already proved archive.
-    with archive.open("xb") as stream, tarfile.open(fileobj=stream, mode="w:gz") as bundle:
+    # Level 1 seals the 2.8 GB tree in under a minute; level 9 took six for 10% less.
+    with archive.open("xb") as stream, tarfile.open(
+        fileobj=stream, mode="w:gz", compresslevel=1
+    ) as bundle:
         for path in sorted(app.rglob("*")):
             if path.is_symlink() and os.path.isabs(os.readlink(path)):
                 raise ValueError("app archive requires relative symlinks")
