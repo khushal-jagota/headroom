@@ -458,7 +458,11 @@ def verify_settled_fold(page, url, fixture, evidence):
             const body = section.querySelector('[data-settled-scroll]');
             const rows = [...section.querySelectorAll('[data-settled-item]')];
             const animations = section.getAnimations({subtree:true});
-            samples.push({ms:performance.now()-start, height:section.getBoundingClientRect().height,
+            // The final keyframe of the section's running height animation is where
+            // the fold says it will come to rest.
+            const target = section.getAnimations().map(a => a.effect?.getKeyframes().at(-1)?.height)
+              .filter(height => typeof height === 'string').map(parseFloat).at(-1) ?? null;
+            samples.push({ms:performance.now()-start, height:section.getBoundingClientRect().height, target,
               body:body?.getBoundingClientRect().height ?? 0, rows:rows.length,
               bodyPresent:!!body, expanded:section.querySelector('button').getAttribute('aria-expanded'),
               cap:parseFloat(getComputedStyle(section).maxHeight),
@@ -492,10 +496,16 @@ def verify_settled_fold(page, url, fixture, evidence):
         assert max(heights) - min(heights) > 20, samples
         low, high = min(heights), max(heights)
         assert sum(low + 2 < value < high - 2 for value in heights) >= 3, samples
-        # A stale animation target used to disappear and jump to intrinsic height.
-        assert all(abs(current["height"] - previous["height"]) < 2
-                   for previous, current in zip(samples, samples[1:], strict=False)
-                   if not current["sectionEffects"]), samples
+        # A stale animation target used to disappear and jump to intrinsic height. Once
+        # no animation runs, the height is the last target and stays there. This compares
+        # against the target, not the previous frame, so skipped frames cannot fail it.
+        target = None
+        for sample in samples:
+            if sample["sectionEffects"]:
+                target = sample["target"] if sample["target"] is not None else target
+            elif target is not None:
+                assert abs(sample["height"] - target) <= 1, (target, sample, samples)
+        assert target is not None and not samples[-1]["sectionEffects"], samples[-4:]
         assert abs(heights[-1] - heights[-3]) < 1, samples[-4:]
         assert all(sample["rowEffects"] == 0 for sample in samples), samples
         assert samples[-1]["expanded"] == ("true" if opening else "false"), samples[-1]
@@ -1056,16 +1066,25 @@ def verify_rail_pagination(page, url, fixture, evidence):
             'order':page.evaluate('window.__navigationOrder'),'held':page.evaluate('window.__heldNavigation.length'),
             'heldFrames':page.evaluate('window.__heldNavigationFrames'),
             'members':members('rail_tickets')},indent=2))
+        if queued:
+            # The exit fade lasts 160 ms, and a loaded runner can spend longer than that
+            # between seeing it start and delivering the wheel. Hold the fade paused from
+            # the moment it is created, so the wheel always lands while it is pending.
+            page.evaluate("""()=>{
+              const animate=Element.prototype.animate;
+              window.__restoreAnimate=()=>{Element.prototype.animate=animate;};
+              window.__heldExit=[];
+              Element.prototype.animate=function(frames,options){
+                const animation=animate.call(this,frames,options);
+                if(this.dataset?.ticketId==='page_worker_00' && Array.isArray(frames) && frames.some(k=>'opacity' in k)){
+                  animation.pause();window.__heldExit.push(animation);
+                }
+                return animation;
+              };
+            }""")
         page.mouse.move(900, 600)
         if queued:
-            # Hold the actual exit until native input starts. Driver round trips must
-            # not consume its short duration before the wheel reaches the browser.
-            page.wait_for_function("""()=>{
-              const exit=document.querySelector('[data-ticket-id="page_worker_00"]')?.getAnimations()
-                .find(a=>a.playState==='running' && a.effect?.getKeyframes().some(k=>'opacity' in k));
-              if(!exit)return false;
-              exit.pause();exit.currentTime=0;window.__heldOpacityExit=exit;return true;
-            }""")
+            page.wait_for_function('window.__heldExit.length>0')
             bounds = scroll.bounding_box()
             page.mouse.move(bounds['x']+1,bounds['y']+30)
             scroll.evaluate("""n=>{
@@ -1075,7 +1094,6 @@ def verify_rail_pagination(page, url, fixture, evidence):
                 if(!event.isTrusted)return;
                 n.removeEventListener('wheel',wheel,true);
                 window.__exitWheel={ms:performance.now(),trusted:event.isTrusted,before:n.scrollTop,deltaY:event.deltaY};
-                window.__heldOpacityExit.play();
               };
               n.addEventListener('wheel',wheel,{capture:true});
               const continued=event=>{
@@ -1085,7 +1103,7 @@ def verify_rail_pagination(page, url, fixture, evidence):
                 n.removeEventListener('scroll',continued,true);
                 const row=document.querySelector('[data-ticket-id="page_worker_17"]');
                 const exit=document.querySelector('[data-ticket-id="page_worker_00"]');
-                const exitRunning=exit?.getAnimations().some(a=>a.playState==='running'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
+                const exitRunning=exit?.getAnimations().some(a=>a.playState!=='finished'&&a.effect?.getKeyframes().some(k=>'opacity' in k))??false;
                 window.__exitContinued={top:row.getBoundingClientRect().top,scrollTop:n.scrollTop,ms:performance.now(),
                   trusted:event.isTrusted,exitRunning,wheel:window.__exitWheel};
                 window.__exitScrollTake=()=>{
@@ -1104,6 +1122,8 @@ def verify_rail_pagination(page, url, fixture, evidence):
             continued = page.evaluate('window.__exitContinued')
             assert continued['exitRunning'] and continued['wheel']['trusted'] and continued['wheel']['deltaY']>0, continued
             assert continued['scrollTop']-continued['wheel']['before']>20 and continued['ms']>=continued['wheel']['ms'], continued
+            # Let the held fade finish, so the exit publishes under the continued scroll.
+            page.evaluate('window.__restoreAnimate();window.__heldExit.forEach(a=>a.play())')
         after_view = page_changed('rail_tickets', prior)
         if queued:
             page.evaluate('window.__exitScrollTake();window.__captureExitScroll=false')

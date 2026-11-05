@@ -71,7 +71,7 @@ def launch(
         code = (
             "import subprocess, sys; from pathlib import Path; "
             f"p=subprocess.Popen([sys.executable, '-c', {code!r}]); "
-            f"Path({str(tmp_path / 'supervisor.pid')!r}).write_text(str(p.pid)); p.wait()"
+            f"Path({str(tmp_path / 'supervisor.pid')!r}).write_text(f'{{p.pid}}\\n'); p.wait()"
         )
     return subprocess.Popen(
         [sys.executable, "-c", code], cwd=ROOT, env=environment,

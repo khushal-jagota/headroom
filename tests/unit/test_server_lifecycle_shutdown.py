@@ -11,7 +11,11 @@ from pathlib import Path
 import pytest
 
 from planner.server_lifecycle.contracts import ProcessIdentity, ShutdownPolicy
-from planner.server_lifecycle.logic.shutdown import decide_shutdown, select_shutdown_policy
+from planner.server_lifecycle.logic.shutdown import (
+    adopt_rechecked_launch_policy,
+    decide_shutdown,
+    select_shutdown_policy,
+)
 from planner.server_lifecycle.process_identity import read_process_identity
 from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease, ServerSupervisor
 
@@ -76,6 +80,10 @@ def test_same_identity_manager_reexec_retains_authority_and_unknown_never_gains_
         current_parent_pid=1,
         manager_identity=None,
     ).accepted
+    # A later check speaks for the launch parent only while it is still the parent.
+    unverified = ShutdownPolicy("guarded", 1168, None)
+    reparented = ShutdownPolicy("guarded", 1, replace(MANAGER, pid=1))
+    assert adopt_rechecked_launch_policy(unverified, reparented) == unverified
 
 
 @pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="Linux proc identity")
@@ -102,6 +110,11 @@ def test_refusal_is_visible_and_names_emergency_exact_pid(
     )
     supervisor._shutdown_policy = ShutdownPolicy("guarded", 1168, None)
     monkeypatch.setattr("planner.server_lifecycle.supervisor.os.getppid", lambda: 1168)
+    # The check repeated at each signal still cannot verify the parent.
+    monkeypatch.setattr(
+        "planner.server_lifecycle.supervisor.capture_shutdown_policy",
+        lambda: ShutdownPolicy("guarded", 1168, None),
+    )
     supervisor._dispatch_signal(signal.SIGTERM, 71)
     first = capsys.readouterr().err
     assert "refused SIGTERM from sender PID 71" in first
@@ -110,6 +123,38 @@ def test_refusal_is_visible_and_names_emergency_exact_pid(
     assert not supervisor._operator_shutdown_requested
     supervisor._dispatch_signal(signal.SIGINT, None)
     assert "refused SIGINT from unknown sender" in capsys.readouterr().err
+
+
+def test_unverified_launch_parent_is_checked_again_when_a_shutdown_signal_arrives(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A launch check that failed under load must not refuse every later manager stop.
+    supervisor = ServerSupervisor(
+        launch_root=tmp_path,
+        interpreter="unused",
+        environ={},
+        control_socket_path=tmp_path / "control.sock",
+        lease=PortScopedServerLifecycleLease(tmp_path / "lease", 9999),
+    )
+    supervisor._shutdown_policy = ShutdownPolicy("guarded", 1168, None)
+    monkeypatch.setattr("planner.server_lifecycle.supervisor.os.getppid", lambda: 1168)
+    rechecks: list[ShutdownPolicy] = []
+
+    def recheck() -> ShutdownPolicy:
+        rechecks.append(ShutdownPolicy("guarded", 1168, MANAGER))
+        return rechecks[-1]
+
+    monkeypatch.setattr("planner.server_lifecycle.supervisor.capture_shutdown_policy", recheck)
+    monkeypatch.setattr(
+        "planner.server_lifecycle.supervisor.revalidate_manager_identity", lambda manager: manager
+    )
+    supervisor._dispatch_signal(signal.SIGTERM, 71)
+    assert "sender is not the authorized systemd manager" in capsys.readouterr().err
+    assert not supervisor._operator_shutdown_requested
+    supervisor._dispatch_signal(signal.SIGTERM, 1168)
+    assert supervisor._operator_shutdown_requested
+    # Once verified, the parent is not checked from scratch again.
+    assert len(rechecks) == 1
 
 
 @pytest.mark.parametrize("path", ["/usr/lib/systemd/systemd (deleted)", "/tmp/systemd"])

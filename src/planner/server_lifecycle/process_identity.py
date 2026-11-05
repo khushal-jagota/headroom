@@ -94,8 +94,32 @@ def read_authenticated_manager_identity(
         return ProcessIdentity(
             pid, int(after), None, None, None, "dbus_manager", selected_bus, expected_uid
         )
-    except (OSError, ValueError, IndexError, KeyError, TypeError, subprocess.SubprocessError):
+    except (
+        OSError,
+        ValueError,
+        IndexError,
+        KeyError,
+        TypeError,
+        subprocess.SubprocessError,
+    ) as error:
+        # A check that could not finish says nothing about who the manager is. Say why,
+        # so a refusal that follows is not a mystery.
+        print(
+            f"Panels could not read systemd manager credentials for PID {pid} "
+            f"on the {selected_bus} bus: {_describe_check_failure(error)}",
+            file=sys.stderr,
+            flush=True,
+        )
         return None
+
+
+def _describe_check_failure(error: Exception) -> str:
+    if isinstance(error, subprocess.TimeoutExpired):
+        return f"busctl did not answer within {error.timeout}s"
+    if isinstance(error, subprocess.CalledProcessError):
+        detail = (error.stderr or "").strip()
+        return f"busctl exited with status {error.returncode}" + (f": {detail}" if detail else "")
+    return f"{type(error).__name__}: {error}"
 
 
 def revalidate_manager_identity(manager: ProcessIdentity) -> ProcessIdentity | None:
