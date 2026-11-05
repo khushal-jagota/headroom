@@ -345,7 +345,6 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 conversation_id,
                 content.text_message_content("Measured turn"),
                 sender_label="owner",
-                reply_requested=False,
             )
         elif action == "finish":
             await fixture["children"][conversation_id].finish()

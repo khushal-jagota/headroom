@@ -94,9 +94,6 @@ def test_attention_crosses_real_message_door_with_panels_identity_and_deduplicat
         writes = system.backend_prompt_writes("c_chief")
         assert len(writes) == 1
         assert writes[0].text == "Panels:\n" + pending.message
-        turn = await system.active_turn_reference("c_chief")
-        assert turn is not None
-        assert not await system.turn_expects_reply(turn, CHIEF_PRINCIPAL)
         observation = next(o for o in system.observations("c_chief")
                            if o.sender_message_id == pending.sender_message_id)
         assert observation.sender is None

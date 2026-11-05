@@ -104,7 +104,6 @@ async def _deliver(
                 sender_label="Panels",
                 sender=Principal(PrincipalKind.ticket, ticket_id),
                 recipient=OWNER_PRINCIPAL,
-                credit_explicit_reply=False,
             )
         return
     if target.kind is PrincipalKind.ticket:
@@ -118,7 +117,6 @@ async def _deliver(
                 conversation_id=ticket.conversation_id,
                 sender_label="Panels",
                 mode=PromptDeliveryMode.queue,
-                reply_requested=False,
                 now=now,
             )
     elif target.kind is PrincipalKind.manager:
@@ -138,7 +136,6 @@ async def _deliver(
                     ),
                     sender_label="Panels",
                     mode=PromptDeliveryMode.queue,
-                    reply_requested=False,
                     required_manager_id=item.id,
                 )
     else:
@@ -154,7 +151,6 @@ async def _deliver(
                 ),
                 sender_label="Panels",
                 mode=PromptDeliveryMode.queue,
-                reply_requested=False,
             )
     if isinstance(delivered.fate, PromptDeliverySuppressed):
         _LOG.info(

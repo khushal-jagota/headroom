@@ -183,7 +183,7 @@ def test_notice_actual_wire_receipt_and_fresh_worker_link(
                 wire = backend.written_texts()[0]
                 assert "[Panels deployment interruption context]" in wire
                 if not actual_restart:
-                    assert wire.startswith("[Authenticated Panels reply requirement]")
+                    assert wire.startswith("[Panels deployment interruption context]")
                     assert wire.index("[Panels deployment interruption context]") < wire.index(
                         "Inspect current work"
                     )
@@ -461,7 +461,7 @@ def test_suppressed_review_preserves_interruption_context_for_next_actual_send(
             )
             assert isinstance(fate, PromptDeliveryStarted)
             wire = final.backend("c").written_texts()[0]
-            assert wire.startswith("[Authenticated Panels reply requirement]")
+            assert wire.startswith("[Panels deployment interruption context]")
             assert wire.count("[Panels deployment interruption context]") == 1
             assert wire.index("[Panels deployment interruption context]") < wire.index(
                 "Inspect current work"
@@ -503,7 +503,7 @@ def test_rebind_preserves_interruption_context_in_the_actual_backend_prompt(tmp_
             assert backend.session_starts == 2
             assert len(backend.writes) == 1
             wire = backend.writes[0].text
-            assert wire.startswith("[Authenticated Panels reply requirement]")
+            assert wire.startswith("[Panels deployment interruption context]")
             assert wire.count("[Panels deployment interruption context]") == 1
             assert wire.index("[Panels deployment interruption context]") < wire.index(
                 "Inspect after deploy"

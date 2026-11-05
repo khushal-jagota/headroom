@@ -15,12 +15,10 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     ConversationSystem,
-    ConversationTurnReference,
     PromptDeliveryMode,
     PromptDeliveryStarted,
-    PromptDeliverySuppressed,
 )
-from planner.conversation.events import ExplicitReplyMissingEventPayload, PromptEventPayload
+from planner.conversation.events import PromptEventPayload
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
@@ -37,19 +35,6 @@ from planner.message_delivery import recap_request, service
 from planner.runtime import conversation_start
 from planner.runtime.conversation_start import DeliveredMessage
 from planner.tickets import data as tickets_data
-
-ACTIVE_TURN_TIMEOUT_SECONDS = 10
-
-
-async def _wait_for_active_turn(
-    system: ConversationSystem, conversation_id: str
-) -> ConversationTurnReference:
-    async with asyncio.timeout(ACTIVE_TURN_TIMEOUT_SECONDS):
-        while True:
-            turn = await system.active_turn_reference(conversation_id)
-            if turn is not None:
-                return turn
-            await asyncio.sleep(0)
 
 
 def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a_loop(
@@ -87,15 +72,14 @@ def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a
             content: object,
             **kwargs: object,
         ) -> DeliveredMessage:
-            receipt = await system.send_with_receipt(
+            fate = await system.send(
                 "c_worker",
                 cast(MessageContent, content),
                 sender_label=cast(str, kwargs["sender_label"]),
                 sender=cast(Principal, kwargs["sender"]),
                 recipient=cast(Principal, kwargs["recipient"]),
-                reply_requested=cast(bool, kwargs["reply_requested"]),
             )
-            return DeliveredMessage("c_worker", receipt.fate, receipt.newly_accepted)
+            return DeliveredMessage("c_worker", fate)
 
         async def send_to_agent(
             system: ConversationSystem,
@@ -105,15 +89,14 @@ def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a
             _values: object,
             **kwargs: object,
         ) -> DeliveredMessage:
-            receipt = await system.send_with_receipt(
+            fate = await system.send(
                 "c_chief",
                 cast(MessageContent, content),
                 sender_label=cast(str, kwargs["sender_label"]),
                 sender=cast(Principal, kwargs["sender"]),
                 recipient=cast(Principal, kwargs["recipient"]),
-                reply_requested=cast(bool, kwargs["reply_requested"]),
             )
-            return DeliveredMessage("c_chief", receipt.fate, receipt.newly_accepted)
+            return DeliveredMessage("c_chief", fate)
 
         monkeypatch.setattr(conversation_start, "send_to_ticket_conversation", send_to_ticket)
         monkeypatch.setattr(conversation_start, "send_to_agent_conversation", send_to_agent)
@@ -128,14 +111,8 @@ def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a
             "Please report",
         )
         worker_write = conversations.backend_prompt_writes("c_worker")[-1]
-        assert "panels send-message --chief" in worker_write.text
-        assert worker_write.text.index("Authenticated Panels reply requirement") < (
-            worker_write.text.index("Chief:\nPlease report")
-        )
+        assert worker_write.text == "Chief:\nPlease report"
 
-        # An automatic action on the worker's behalf cannot discharge its Chief debt.
-        worker_turn = await conversations.active_turn_reference("c_worker")
-        assert worker_turn is not None
         await service.send_message(
             conversations,
             tmp_db,
@@ -145,27 +122,10 @@ def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a
             "Automatic action",
             system_message=True,
         )
-        assert await conversations.turn_expects_reply(worker_turn, chief)
         assert conversations.backend_prompt_writes("c_chief")[-1].text == (
             "Panels:\nAutomatic action"
         )
         conversations.complete_running_turn("c_chief")
-
-        # A pre-wire suppression cannot answer this turn, even when a caller supplies
-        # the default freshness flag. Only a real accepted message pays the reply debt.
-        async def suppressed_send(*args: object, **kwargs: object) -> DeliveredMessage:
-            return DeliveredMessage("c_chief", PromptDeliverySuppressed("obsolete"))
-
-        with monkeypatch.context() as suppression_patch:
-            suppression_patch.setattr(
-                conversation_start, "send_to_agent_conversation", suppressed_send
-            )
-            suppressed = await service.send_message(
-                conversations, tmp_db, fake_clock, RequestContext(worker), chief,
-                "Obsolete reply",
-            )
-            assert isinstance(suppressed.fate, PromptDeliverySuppressed)
-            assert await conversations.turn_expects_reply(worker_turn, chief)
 
         await service.send_message(
             conversations,
@@ -178,11 +138,6 @@ def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a
         )
         chief_write = conversations.backend_prompt_writes("c_chief")[-1]
         assert message_content_text(chief_write.content) == "Ticket t_worker:\nReport delivered"
-        assert "Authenticated Panels reply requirement" not in chief_write.text
-
-        worker_turn = await conversations.active_turn_reference("c_worker")
-        assert worker_turn is not None
-        assert await conversations.turn_expects_reply(worker_turn, chief) is False
 
         await service.send_message(
             conversations,
@@ -217,9 +172,7 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
         "read_agent_conversation",
         lambda _conn, key: f"c_{key}",
     )
-    monkeypatch.setattr(
-        conversation_start, "manager_resolve", lambda _conn, _item: object()
-    )
+    monkeypatch.setattr(conversation_start, "manager_resolve", lambda _conn, _item: object())
 
     async def send_to_agent(
         system: ConversationSystem,
@@ -230,15 +183,14 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
         **kwargs: object,
     ) -> DeliveredMessage:
         conversation_id = f"c_{agent_key}"
-        receipt = await system.send_with_receipt(
+        fate = await system.send(
             conversation_id,
             cast(MessageContent, content),
             sender_label=cast(str, kwargs["sender_label"]),
             sender=cast(Principal, kwargs["sender"]),
             recipient=cast(Principal, kwargs["recipient"]),
-            reply_requested=cast(bool, kwargs["reply_requested"]),
         )
-        return DeliveredMessage(conversation_id, receipt.fate, receipt.newly_accepted)
+        return DeliveredMessage(conversation_id, fate)
 
     monkeypatch.setattr(conversation_start, "send_to_agent_conversation", send_to_agent)
 
@@ -270,30 +222,20 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
                 assert message_content_text(prompts[0].content) == text
                 assert prompts[0].sender_label == f"Manager {sender.id}"
             first_wire = (await subject.backend_writes("c_si_second"))[-1].text
-            assert first_wire.startswith("[Authenticated Panels reply requirement]")
-            assert "panels send-message --manager si_first" in first_wire
-            assert first_wire.endswith("Manager si_first:\nCoordinate")
+            assert first_wire == "Manager si_first:\nCoordinate"
             reply_wire = (await subject.backend_writes("c_si_first"))[-1].text
             assert reply_wire == "Manager si_second:\nAgreed"
-            turn = await _wait_for_active_turn(subject.system, "c_si_second")
-            assert not await subject.system.turn_expects_reply(turn, first)
 
     asyncio.run(exercise())
 
 
-def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_message(
+def test_a_recap_request_clears_the_line_it_replaces_and_queues_behind_a_refused_steer(
     tmp_db: Connection,
     tmp_path: Path,
     fake_clock: PlannerTestClock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The recap is the whole answer, so this press must leave no reply debt.
-
-    An ordinary owner message obliges the agent to send one explicit reply before its
-    turn ends, and records a missing-reply marker when it does not. On a control the
-    owner can press on every row in the rail, that marker is an unread mark per press.
-    Nothing else covers the one send in Panels whose answer is not words.
-    """
+    """The press clears the recap first, then reaches the agent as a Panels message."""
 
     expected_request = (
         "File a short, top-level recap with your recap tool. "
@@ -326,16 +268,15 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
         modes.append(cast(PromptDeliveryMode, kwargs["mode"]))
         if kwargs["mode"] is PromptDeliveryMode.steer:
             assert cleared == [("t_worker", {"recap": ""})]
-        receipt = await system.send_with_receipt(
+        fate = await system.send(
             "c_worker",
             cast(MessageContent, content),
             mode=cast(PromptDeliveryMode, kwargs["mode"]),
             sender_label=cast(str, kwargs["sender_label"]),
             sender=cast(Principal | None, kwargs["sender"]),
             recipient=cast(Principal, kwargs["recipient"]),
-            reply_requested=cast(bool, kwargs["reply_requested"]),
         )
-        return DeliveredMessage("c_worker", receipt.fate, receipt.newly_accepted)
+        return DeliveredMessage("c_worker", fate)
 
     monkeypatch.setattr(conversation_start, "send_to_ticket_conversation", send_to_ticket)
 
@@ -355,8 +296,6 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
                 subject.system, tmp_db, fake_clock, RequestContext(owner), worker, "Work"
             )
             assert isinstance(result.fate, PromptDeliveryStarted), result.fate
-            owner_turn = await _wait_for_active_turn(subject.system, "c_worker")
-            assert await subject.system.turn_expects_reply(owner_turn, owner)
             await subject.tell_agent("c_worker", {"command": "reject_steer"})
             await recap_request.request_recap(
                 subject.system, tmp_db, fake_clock, RequestContext(owner), worker
@@ -369,7 +308,6 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
             assert len(writes) == 2
             assert writes[1].text == f"Panels:\n{expected_request}"
             assert writes[1].mode is PromptDeliveryMode.queue
-            assert "Authenticated Panels reply requirement" not in writes[1].text
             await subject.complete_running_turn("c_worker")
             events = await subject.recorded_events("c_worker")
             prompts = [e.payload for e in events if isinstance(e.payload, PromptEventPayload)]
@@ -379,11 +317,6 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
             assert prompts[1].sender_label == "Panels"
             assert prompts[1].recipient == worker
             assert message_content_text(prompts[1].content) == expected_request
-            missing = [
-                e.payload for e in events if isinstance(e.payload, ExplicitReplyMissingEventPayload)
-            ]
-            assert len(missing) == 1  # The ordinary owner turn still owes its answer.
-            assert missing[0].prompt_sender == owner
 
     asyncio.run(exercise())
 

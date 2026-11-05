@@ -58,7 +58,8 @@ class ConversationEventKind(StrEnum):
     prompt_discarded = "prompt_discarded"
     agent_message = "agent_message"
     message_to_owner = "message_to_owner"
-    explicit_reply_missing = "explicit_reply_missing"
+    # Retired: stored history only, never written. See RetiredExplicitReplyMissingEventPayload.
+    retired_explicit_reply_missing = "explicit_reply_missing"
     tool_call_started = "tool_call_started"
     tool_call_finished = "tool_call_finished"
     permission_asked = "permission_asked"
@@ -335,15 +336,15 @@ class AgentMessageEventPayload:
 
 
 @dataclass(frozen=True, slots=True)
-class ExplicitReplyMissingEventPayload:
-    """A turn ended without an explicit message to one of its prompt senders.
+class RetiredExplicitReplyMissingEventPayload:
+    """A retired marker that a turn ended without an explicit reply to one prompt sender.
 
-    This is a system marker, not an addressed message. ``prompt_sender`` identifies the
-    person whose delivered prompt went unanswered without making the marker itself a
-    message to that person.
+    Panels no longer asks agents to reply to each sender, and nothing writes this kind.
+    Records written before then still hold it, so it still loads, and every view shows
+    nothing for it. ``prompt_sender`` is kept only so the stored row reads back exactly.
     """
 
-    kind: ClassVar[ConversationEventKind] = ConversationEventKind.explicit_reply_missing
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.retired_explicit_reply_missing
 
     prompt_sender: Principal
 
@@ -536,7 +537,7 @@ type ConversationEventPayload = (
     | PromptDiscardedEventPayload
     | MessageToOwnerEventPayload
     | AgentMessageEventPayload
-    | ExplicitReplyMissingEventPayload
+    | RetiredExplicitReplyMissingEventPayload
     | ToolCallStartedEventPayload
     | ToolCallFinishedEventPayload
     | PermissionAskedEventPayload
@@ -729,7 +730,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case AgentMessageEventPayload():
             return message_content_json_entries(payload.content)
-        case ExplicitReplyMissingEventPayload():
+        case RetiredExplicitReplyMissingEventPayload():
             return {
                 "prompt_sender": {
                     "kind": payload.prompt_sender.kind.value,
@@ -933,11 +934,11 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.agent_message:
             return AgentMessageEventPayload(content=message_content_from_stored(stored))
-        case ConversationEventKind.explicit_reply_missing:
+        case ConversationEventKind.retired_explicit_reply_missing:
             prompt_sender = _optional_principal(stored, "prompt_sender")
             if prompt_sender is None:
                 raise ValueError("explicit_reply_missing requires prompt_sender")
-            return ExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
+            return RetiredExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
         case ConversationEventKind.tool_call_started:
             return ToolCallStartedEventPayload(
                 tool_call_id=_text(stored, "tool_call_id"),

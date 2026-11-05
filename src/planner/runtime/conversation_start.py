@@ -34,7 +34,6 @@ from weakref import WeakValueDictionary
 
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import (
-    AddressedPromptDeliveryReceipt,
     ConversationBackendKey,
     ConversationMessageContent,
     ConversationStartRequest,
@@ -45,7 +44,6 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
-    PromptDeliverySuppressed,
     WorkspacePathPolicy,
 )
 from planner.conversation.logic.conversation_start_resolution import (
@@ -387,64 +385,6 @@ class DeliveredMessage:
 
     conversation_id: str | None
     fate: PromptDeliveryFate
-    newly_accepted: bool = True
-
-
-async def _send_with_addressed_receipt(
-    system: ConversationSystem,
-    conversation_id: str,
-    content: MessageContent,
-    *,
-    sender_label: str,
-    mode: PromptDeliveryMode,
-    model_change: str | None = None,
-    reasoning_effort_change: str | None = None,
-    reasoning_effort_is_set: bool = False,
-    owner_read_through_sequence: int | None = None,
-    sender_message_id: str | None,
-    sent_at_unix_milliseconds: int | None,
-    sender: Principal | None,
-    recipient: Principal | None,
-    reply_requested: bool,
-    record_refusal: bool = False,
-    recording_receipt: NativeMessageOperation | None = None,
-) -> AddressedPromptDeliveryReceipt:
-    """Keep recipient attribution and freshness for caller-authored and system sends."""
-    if recipient is not None:
-        return await system.send_with_receipt(
-            conversation_id,
-            content,
-            sender_label=sender_label,
-            mode=mode,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            reasoning_effort_is_set=reasoning_effort_is_set,
-            owner_read_through_sequence=owner_read_through_sequence,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
-            reply_requested=reply_requested,
-            record_refusal=record_refusal,
-            recording_receipt=recording_receipt,
-        )
-    fate = await system.send(
-        conversation_id,
-        content,
-        sender_label=sender_label,
-        mode=mode,
-        model_change=model_change,
-        reasoning_effort_change=reasoning_effort_change,
-        reasoning_effort_is_set=reasoning_effort_is_set,
-        owner_read_through_sequence=owner_read_through_sequence,
-        sender_message_id=sender_message_id,
-        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-        recording_receipt=recording_receipt,
-    )
-    return AddressedPromptDeliveryReceipt(
-        fate=fate,
-        newly_accepted=not isinstance(fate, (PromptDeliveryRefused, PromptDeliverySuppressed)),
-    )
 
 
 async def send_to_ticket_conversation(
@@ -463,7 +403,6 @@ async def send_to_ticket_conversation(
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
-    reply_requested: bool = True,
     worker_type_registry: WorkerTypeRegistry | None = None,
     retain_backend_start_failure: bool = False,
     now: int,
@@ -540,7 +479,6 @@ async def send_to_ticket_conversation(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
             worker_type_registry=worker_type_registry,
             now=now,
             recording_receipt=recording_receipt,
@@ -569,7 +507,6 @@ async def send_to_ticket_conversation(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
-        reply_requested=reply_requested,
         now=now,
         recording_receipt=recording_receipt,
     )
@@ -590,7 +527,6 @@ async def _send_into_the_conversation_the_ticket_is_in(
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
-    reply_requested: bool,
     now: int,
     recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
@@ -607,8 +543,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
     own values — and the value it keeps for a field this message did not change is read
     back now rather than taken from before the send, for the same reason.
     """
-    receipt = await _send_with_addressed_receipt(
-        system,
+    fate = await system.send(
         sending_into,
         content,
         sender_label=sender_label,
@@ -621,10 +556,8 @@ async def _send_into_the_conversation_the_ticket_is_in(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
-        reply_requested=reply_requested,
         recording_receipt=recording_receipt,
     )
-    fate = receipt.fate
     if isinstance(fate, PromptDeliveryStarted) and (
         runs_under.model is not None
         or runs_under.reasoning_effort is not None
@@ -646,7 +579,6 @@ async def _send_into_the_conversation_the_ticket_is_in(
     return DeliveredMessage(
         conversation_id=sending_into,
         fate=fate,
-        newly_accepted=receipt.newly_accepted,
     )
 
 
@@ -665,7 +597,6 @@ async def _make_a_conversation_and_send_into_it(
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
-    reply_requested: bool,
     worker_type_registry: WorkerTypeRegistry | None,
     retain_backend_start_failure: bool = False,
     now: int,
@@ -717,15 +648,13 @@ async def _make_a_conversation_and_send_into_it(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
             now=now,
             recording_receipt=recording_receipt,
         )
     # From here the conversation is this call's own: it was made here, on the values this
     # message says it runs under, so the message has nothing to change and carries none.
     try:
-        receipt = await _send_with_addressed_receipt(
-            system,
+        fate = await system.send(
             making,
             await _message_content_for(content, making),
             sender_label=sender_label,
@@ -738,10 +667,8 @@ async def _make_a_conversation_and_send_into_it(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
             recording_receipt=recording_receipt,
         )
-        fate = receipt.fate
         if isinstance(fate, PromptDeliveryStarted):
             tickets_data.write_ticket_last_chosen_configuration(
                 conn,
@@ -768,9 +695,7 @@ async def _make_a_conversation_and_send_into_it(
     ):
         # This exact conversation holds the refusal for explicit recovery. Do not
         # relink it: a concurrent reset can already have selected a newer one.
-        return DeliveredMessage(
-            conversation_id=making, fate=fate, newly_accepted=receipt.newly_accepted
-        )
+        return DeliveredMessage(conversation_id=making, fate=fate)
     if isinstance(fate, PromptDeliveryRefused):
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now
@@ -778,12 +703,10 @@ async def _make_a_conversation_and_send_into_it(
         return DeliveredMessage(
             conversation_id=None,
             fate=fate,
-            newly_accepted=receipt.newly_accepted,
         )
     return DeliveredMessage(
         conversation_id=making,
         fate=fate,
-        newly_accepted=receipt.newly_accepted,
     )
 
 
@@ -969,7 +892,6 @@ async def send_to_agent_conversation(
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
-    reply_requested: bool = True,
     required_manager_id: str | None = None,
     retain_created_conversation: bool = False,
     recording_receipt: NativeMessageOperation | None = None,
@@ -1019,8 +941,7 @@ async def send_to_agent_conversation(
             # Made here, on the values this message says it runs under, so the message has
             # nothing to change and carries none.
             try:
-                receipt = await _send_with_addressed_receipt(
-                    system,
+                fate = await system.send(
                     making,
                     await _message_content_for(content, making),
                     sender_label=sender_label,
@@ -1030,11 +951,9 @@ async def send_to_agent_conversation(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=reply_requested,
                     record_refusal=retain_created_conversation,
                     recording_receipt=recording_receipt,
                 )
-                fate = receipt.fate
             except BaseException:
                 if not retain_created_conversation:
                     await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
@@ -1045,12 +964,10 @@ async def send_to_agent_conversation(
                 return DeliveredMessage(
                     conversation_id=making if retain_created_conversation else None,
                     fate=fate,
-                    newly_accepted=receipt.newly_accepted,
                 )
             return DeliveredMessage(
                 conversation_id=making,
                 fate=fate,
-                newly_accepted=receipt.newly_accepted,
             )
         # The race went the other way. The conversation made here will never be spoken
         # into, so it is let go of, and the message joins the agent's on the ordinary
@@ -1064,8 +981,7 @@ async def send_to_agent_conversation(
             "the agent is not in that conversation",
             {"agent_key": agent_key, "conversation_id": conversation_id},
         )
-    receipt = await _send_with_addressed_receipt(
-        system,
+    fate = await system.send(
         sending_into,
         await _message_content_for(content, sending_into),
         sender_label=sender_label,
@@ -1078,14 +994,12 @@ async def send_to_agent_conversation(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
-        reply_requested=reply_requested,
         record_refusal=retain_created_conversation,
         recording_receipt=recording_receipt,
     )
     return DeliveredMessage(
         conversation_id=sending_into,
-        fate=receipt.fate,
-        newly_accepted=receipt.newly_accepted,
+        fate=fate,
     )
 
 

@@ -49,6 +49,9 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "conversation_background_tasks",
         # Goal holders and holder pages leave diagnostic events and views unchanged.
         "goal_holders",
+        # Retiring the reply requirement drops an unused table and deletes derived view
+        # rows; diagnostic events and view schemas stay unchanged.
+        "retire_explicit_reply_requirement",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

@@ -144,7 +144,7 @@ class DeploymentAttentionObserver:
             "the smallest necessary action. Do not infer failure from a missing report. "
             "Do not restart, restore, run a deployment, or alter the lifecycle without "
             "owner authorization. Ask the owner only when a concrete decision or action "
-            "needs him. This is a Panels system notice, with no reply requirement."
+            "needs him. This is a Panels system notice."
         )
         return self.store.ensure(DeploymentAttention(
             evidence_identity=identity,
@@ -172,7 +172,7 @@ class DeploymentAttentionObserver:
                     system, conn, self.clock, RequestContext(OWNER_PRINCIPAL),
                     CHIEF_PRINCIPAL, attention.message,
                     sender_message_id=attention.sender_message_id,
-                    expects_reply=False, system_message=True,
+                    system_message=True,
                 )
             except Exception as exc:
                 return self.store.save(replace(attention, detail=f"Chief delivery failed: {exc}"))
