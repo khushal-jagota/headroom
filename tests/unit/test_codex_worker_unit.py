@@ -1,7 +1,7 @@
 """The Codex adapter contains Workers, without containing shared account probes.
 
 The unit lifecycle itself has separate coverage. These cases reuse the scripted Codex
-wire to prove the adapter selects containment from explicit identity and publishes OOM.
+wire to prove the adapter selects containment from explicit identity.
 """
 
 from __future__ import annotations
@@ -19,25 +19,19 @@ from tests.support.conversation_codex_app_server_bench import (
 )
 
 from planner.conversation.contracts import ConversationRoleMaterials
-from planner.conversation.events import ConversationTurnEnding
 from planner.conversation.message_content import text_message_content
+from planner.conversation.tool_shell_kill_priority import TOOL_SHELL_STARTUP
 from planner.conversation.worker_unit import WorkerUnit, WorkerUnitError
 
 
 class _ObservedUnit:
-    def __init__(self, environment: Mapping[str, str], *, oom: bool) -> None:
+    def __init__(self, environment: Mapping[str, str]) -> None:
         self.environment = dict(environment)
         self.environment["TMPDIR"] = environment["TEST_DISK_TMP"]
-        self.oom = oom
-        self.finished = False
         self.stopped = False
 
     def argv(self, original: Sequence[str]) -> tuple[str, ...]:
         return tuple(original)
-
-    async def finish(self) -> str | None:
-        self.finished = True
-        return "Worker stopped because it exceeded its memory limit." if self.oom else None
 
     async def stop(self) -> None:
         self.stopped = True
@@ -50,7 +44,7 @@ def test_only_explicit_worker_identity_selects_containment(
 
     async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerUnit:
         assert working_directory == tmp_path
-        unit = _ObservedUnit(environment, oom=False)
+        unit = _ObservedUnit(environment)
         units.append(unit)
         return cast(WorkerUnit, unit)
 
@@ -79,47 +73,13 @@ def test_only_explicit_worker_identity_selects_containment(
             assert len(units) == 1
             assert units[0].environment["PLAN_TICKET_ID"] == "this-worker"
             assert scripted.launched()["environment"]["TMPDIR"] == str(tmp_path / "disk-temp")
-            assert not units[0].stopped and not units[0].finished
+            assert units[0].environment["BASH_ENV"] == str(TOOL_SHELL_STARTUP)
+            assert not units[0].stopped
             scripted.sink.expect_another_turn()
             await scripted.write_prompt(2, text_message_content("second turn"))
             await scripted.sink.wait_for_the_turn_to_end()
             assert len(units) == 1
         assert units[0].stopped
-
-    _run(exercise)
-
-
-def test_a_worker_oom_reason_reaches_the_failed_turn(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    units: list[_ObservedUnit] = []
-
-    async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerUnit:
-        unit = _ObservedUnit(environment, oom=True)
-        units.append(unit)
-        return cast(WorkerUnit, unit)
-
-    monkeypatch.setattr(WorkerUnit, "create", create)
-    monkeypatch.setenv("TEST_DISK_TMP", str(tmp_path))
-
-    async def exercise() -> None:
-        start = replace(
-            _resolved_start(tmp_path),
-            role_materials=ConversationRoleMaterials(
-                role_text="Worker",
-                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),),
-            ),
-        )
-        script = {"turns": [{"actions": [{"do": "sleep", "seconds": 0.05}, {"do": "die"}]}]}
-        async with _scripted_child(tmp_path, script=script) as scripted:
-            await scripted.child.start(start, vendor_session_cursor=None)
-            await scripted.write_prompt(1, text_message_content("use memory"))
-            await scripted.sink.wait_for_the_turn_to_end()
-            assert scripted.sink.endings == [ConversationTurnEnding.failed]
-            assert scripted.sink.error_summaries == [
-                "Worker stopped because it exceeded its memory limit."
-            ]
-            assert units[0].finished
 
     _run(exercise)
 
@@ -132,7 +92,7 @@ def test_worker_launch_failure_cleans_up_its_prepared_unit(
     units: list[_ObservedUnit] = []
 
     async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerUnit:
-        unit = _ObservedUnit(environment, oom=False)
+        unit = _ObservedUnit(environment)
         units.append(unit)
         return cast(WorkerUnit, unit)
 
@@ -167,7 +127,7 @@ def test_failed_unit_stop_keeps_the_handle_for_a_retry(
     stop_calls = 0
 
     async def create(environment: Mapping[str, str], working_directory: Path) -> WorkerUnit:
-        unit = _ObservedUnit(environment, oom=False)
+        unit = _ObservedUnit(environment)
         units.append(unit)
         return cast(WorkerUnit, unit)
 

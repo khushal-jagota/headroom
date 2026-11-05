@@ -81,6 +81,7 @@ def _start_server(
     port: int | None = None,
     server_module: str | None = None,
     database_name: str = "planning.db",
+    owner_read_trace: bool = False,
 ) -> ServerHandle:
     started_at = time.monotonic()
     # A1: the log file is opened from THIS process before the subprocess exists;
@@ -121,18 +122,18 @@ def _start_server(
 
     env.update(homes)
 
-    # Hooks are dormant unless the exact proof activates its runtime scope marker.
-    # Install at the ordinary startup boundary; never restart/reset a server for tracing.
-    env["PANELS_E2E_OWNER_READ_TRACE"] = str(srvdir / "owner-read-trace.jsonl")
+    # The owner-read trace hook is a sitecustomize, so every interpreter started with it
+    # on PYTHONPATH imports FastAPI and the conversation store before doing anything else:
+    # about 1.5 CPU-seconds in each of the supervisor, its trampoline and the application.
+    # Only the one proof that reads the trace pays for it. Its hooks stay dormant until
+    # that proof activates its runtime scope marker; install them at the ordinary startup
+    # boundary and never restart or reset a server for tracing.
+    trace_hook_path: tuple[str, ...] = ()
+    if owner_read_trace:
+        env["PANELS_E2E_OWNER_READ_TRACE"] = str(srvdir / "owner-read-trace.jsonl")
+        trace_hook_path = (str(REPO_ROOT / "tests/e2e/approval_message_trace"),)
     env["PYTHONPATH"] = os.pathsep.join(
-        filter(
-            None,
-            (
-                str(REPO_ROOT / "tests/e2e/approval_message_trace"),
-                str(REPO_ROOT),
-                env.get("PYTHONPATH", ""),
-            ),
-        )
+        filter(None, (*trace_hook_path, str(REPO_ROOT), env.get("PYTHONPATH", "")))
     )
 
     log = log_path.open("wb")
@@ -374,6 +375,21 @@ def api() -> ApiHelper:
 def rail_server(tmp_path: Path) -> Iterator[ServerHandle]:
     handle = _start_server(
         tmp_path / "rail", server_module="tests.e2e.rail_server", database_name="rail-proof.db"
+    )
+    try:
+        yield handle
+    finally:
+        _stop_server(handle)
+
+
+@pytest.fixture
+def owner_read_traced_rail_server(tmp_path: Path) -> Iterator[ServerHandle]:
+    """The rail host with the owner-read trace hook installed in its child."""
+    handle = _start_server(
+        tmp_path / "rail",
+        server_module="tests.e2e.rail_server",
+        database_name="rail-proof.db",
+        owner_read_trace=True,
     )
     try:
         yield handle

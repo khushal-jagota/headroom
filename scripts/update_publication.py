@@ -1,4 +1,8 @@
-"""Publication-only helpers. All executable proofs consume the sealed archive."""
+"""Publication-only helpers. All executable proofs consume the sealed archive.
+
+The receipt runs in the final publication job, which has the proofs but not the
+archive, and imports only the standard library and this checkout's source.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from planner.environments.app import AppManifest
-from planner.environments.deployment_gate import smoke_candidate
 from planner.environments.runtime_contracts import parse_optional_runtime_contract
 from planner.environments.update_artifacts import (
     APP_ARCHIVE_NAME,
@@ -86,24 +89,30 @@ def validate_target_proof(
 
 def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
-    parser.add_argument("operation", choices=("selection", "seal", "smoke", "rehearsal", "receipt"))
+    parser.add_argument(
+        "operation",
+        choices=("selection", "seal", "smoke", "rehearsal", "unchanged", "receipt"),
+    )
     args = parser.parse_args()
     gate = Path(os.environ["PANELS_GATE_DIR"])
     archive = gate / APP_ARCHIVE_NAME
     requested = os.environ["PANELS_REQUESTED_SHA"]
-    candidate = Path(os.environ["PANELS_CANDIDATE_APP"])
     if args.operation == "selection":
         source = Path(os.environ["PANELS_CANDIDATE_SOURCE"])
         (gate / "selection.json").write_text(json.dumps(full_selection(source)) + "\n")
     elif args.operation == "seal":
+        candidate = Path(os.environ["PANELS_CANDIDATE_APP"])
         digest = create_app_archive(candidate, archive)
         (gate / "archive-sha256.txt").write_text(digest + "\n")
         (gate / "manifest.json").write_bytes((candidate / "manifest.json").read_bytes())
     elif args.operation in {"smoke", "rehearsal"}:
         digest = (gate / "archive-sha256.txt").read_text().strip()
+        candidate = Path(os.environ["PANELS_CANDIDATE_APP"])
         destination = candidate.with_name(args.operation + "-candidate")
         manifest = extract_app_archive(archive, destination, digest, requested)
         if args.operation == "smoke":
+            from planner.environments.deployment_gate import smoke_candidate
+
             smoke_candidate(destination, requested)
             (gate / "smoke.json").write_text(
                 json.dumps(
@@ -130,6 +139,10 @@ def main() -> None:
             )
             with Path(os.environ["GITHUB_ENV"]).open("a") as stream:
                 stream.write(f"PANELS_CANDIDATE_APP={destination}\n")
+    elif args.operation == "unchanged":
+        # The build job runs this after every proof, just before it uploads the archive.
+        if hash_archive(archive) != (gate / "archive-sha256.txt").read_text().strip():
+            raise ValueError("sealed archive changed before publication")
     else:
         # manifest.json is a copy beside the archive, not an executable tree.
         value = json.loads((gate / "manifest.json").read_text())
@@ -142,9 +155,7 @@ def main() -> None:
         for name in ("smoke.json", "replacement-proof.json"):
             if not (gate / name).is_file():
                 raise ValueError(f"publication proof is missing: {name}")
-        digest = hash_archive(archive)
-        if digest != (gate / "archive-sha256.txt").read_text().strip():
-            raise ValueError("sealed archive changed before publication")
+        digest = (gate / "archive-sha256.txt").read_text().strip()
         smoke = json.loads((gate / "smoke.json").read_text())
         if smoke != {
             "requested_sha": requested,

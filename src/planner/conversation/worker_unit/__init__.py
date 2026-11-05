@@ -19,10 +19,7 @@ from pathlib import Path
 
 from planner.conversation.worker_unit.config import (
     CONTROL_TIMEOUT_SECONDS,
-    OOM_REASON,
     SLICE_CPU_WEIGHT_MAX,
-    SLICE_MEMORY_MAX_BYTES,
-    WORKER_MEMORY_MAX,
     WORKER_SLICE,
     WORKER_TEMP_ROOT,
 )
@@ -97,7 +94,6 @@ class WorkerUnit:
         self.working_directory = working_directory
         self.slice_name = slice_name
         self._finished = False
-        self._reason: str | None = None
 
     @classmethod
     async def create(
@@ -109,22 +105,19 @@ class WorkerUnit:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+\.slice", slice_name):
             raise WorkerUnitError("Invalid Worker slice name")
         code, text = await _control(
-            "show", slice_name, "--property=LoadState", "--property=MemoryMax",
-            "--property=CPUWeight",
+            "show", slice_name, "--property=LoadState", "--property=CPUWeight",
         )
         properties = _properties(text)
         try:
-            memory = int(properties.get("MemoryMax", "0"))
             weight = int(properties.get("CPUWeight", "0"))
         except ValueError:
-            memory = weight = 0
+            weight = 0
         if (
             code or properties.get("LoadState") != "loaded"
-            or not 0 < memory <= SLICE_MEMORY_MAX_BYTES
             or not 0 < weight <= SLICE_CPU_WEIGHT_MAX
         ):
             raise WorkerUnitError(
-                f"Worker slice {slice_name} is unavailable or lacks its resource limits. "
+                f"Worker slice {slice_name} is unavailable or lacks its lower CPU weight. "
                 "Install the Worker slice before starting Workers."
             )
         # The worker slice is a child of panels.slice. Its weight alone does not
@@ -200,25 +193,15 @@ class WorkerUnit:
         return (
             "systemd-run", "--user", "--quiet", "--wait", "--pipe",
             "--service-type=exec", "--expand-environment=no", f"--unit={self.name}",
-            f"--slice={self.slice_name}", f"--property=MemoryMax={WORKER_MEMORY_MAX}",
-            "--property=MemorySwapMax=0",
-            "--property=OOMPolicy=kill", "--property=KillMode=control-group",
+            # A process killed for memory ends alone; the agent and its turn go on.
+            f"--slice={self.slice_name}",
+            "--property=OOMPolicy=continue", "--property=KillMode=control-group",
             "--property=NoNewPrivileges=yes",
             f"--property=EnvironmentFile={directory}/environment",
             f"--property=WorkingDirectory={str(self.working_directory).replace('%', '%%')}",
             f"--property=ExecStopPost=/bin/rm -rf -- {shlex.quote(directory)}",
             "--", executable, *original[1:],
         )
-
-    async def finish(self) -> str | None:
-        """Read the OOM result before the failed unit is released, then clean up."""
-        if self._finished:
-            return self._reason
-        code, text = await _control("show", self.name, "--property=Result", "--property=LoadState")
-        if not code and _properties(text).get("Result") == "oom-kill":
-            self._reason = OOM_REASON
-        await self.stop()
-        return self._reason
 
     async def stop(self) -> None:
         """Stop every descendant before deleting temporary files."""

@@ -3,23 +3,29 @@
 Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. A push produces a sealed, checked release on disposable hosted machines. The live workspace changes only when Khushal asks for one of those releases, and then it gets exactly those bytes. The host never builds code, and a push never installs itself.
 
 ```text
-push to main → checks → build once → seal archive → prove on clean root → smoke → rehearsal
-                                                                                    │
+push to main ─┬→ suites (unit, integration, e2e, browser) ─────────────────────────────────┐
+              ├→ static checks (ruff, mypy, frontend, vitest) ─────────────────────────────┤
+              └→ build once → seal archive → prove on clean root → smoke → rehearsal ──────┤
+                                                                                           │
+                                                                     all passed → receipt
+                                                                                           │
                                                               retained release (archive + proof)
-                                                                                    │
+                                                                                           │
 owner asks (now or when idle) → pinned request → host runner → admit → stop → snapshot
-                                                                                    │
+                                                                                           │
                           replace app → health → commit → reopen work → skills → route check
 ```
 
 ## What it is made of
 
-- **Publication.** A GitHub workflow on hosted machines. It runs the checks and suites against one commit, builds once, seals the archive, and proves it before anyone can install it.
+- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and the static checks run on their own machines. At the same time another machine builds once, seals the archive, proves it, and rehearses the install on a throwaway copy of a known-good release. A last machine waits for all of them. It checks the proofs against the digest the build machine reported and writes the receipt. Panels offers a release only when the whole run passed and the receipt exists, so nothing can be installed before every check passes. Domain checks include their permission behavior; shared or unknown changes select all default suites.
 - **The sealed release.** An archive plus a proof record. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages, including the Claude Code and Codex CLIs.
 - **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. Replacement changes only `app`. See [Environments](environments.md).
 - **The deployment runner.** A self-hosted GitHub runner on the VPS, used only to install.
 - **The owner's install request.** A small file beside the live data, outside the database and its snapshots, and the update actions in the shell status pill.
 - **The lifecycle record.** Durable evidence of each install attempt and how it ended. The status pill, the [VPS](vps.md) summary, and Chief read it.
+
+The test suites run on several processes at once. Each test process builds the current database once by replaying every migration, then copies it into each new test database; a test of a migration, or of a database that already holds data, still gets the real replay.
 
 ## What a release needs from the host
 
