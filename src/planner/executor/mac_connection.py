@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.clock import now_ms
 from planner.executor.link import Link
-from planner.executor.protocol import ConnectionState, ExecutorHealth
+from planner.executor.protocol import ConnectionState, ExecutorHealth, JsonObject
 
 
 @dataclass
@@ -16,6 +16,7 @@ class MacConnection:
     state: ConnectionState = ConnectionState.disconnected
     lost_at_ms: int | None = None
     admission_stopped: bool = False
+    refusal: JsonObject | None = None
 
     def ready_link(self) -> Link | None:
         return self.link if self.state is ConnectionState.ready else None

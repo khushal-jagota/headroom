@@ -58,6 +58,14 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     }
   }
 
+  function observeAppSha(appSha: string | null): void {
+    if (!options.bootSha || !appSha) return;
+    const updateAvailable = appSha !== options.bootSha;
+    if (!updateAvailable) reloadStarted = false;
+    publish({ updateAvailable, reloadRequested: updateAvailable ? snapshot.reloadRequested : false });
+    reloadIfReady();
+  }
+
   function check(): Promise<boolean> {
     if (checkInFlight) return checkInFlight;
     checkInFlight = (async () => {
@@ -140,7 +148,7 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     return () => subscribers.delete(subscriber);
   }
 
-  return { start, stop, check, requestReload, subscribe };
+  return { start, stop, check, requestReload, subscribe, observeAppSha };
 }
 
 // One monitor for the whole app. ShellStatus is mounted once per breakpoint and both
@@ -193,4 +201,9 @@ export async function mutationHeaders(headers?: HeadersInit): Promise<Record<str
   const bootSha = await checkReleaseBeforeMutation();
   if (bootSha) result["X-Panels-App-SHA"] = bootSha;
   return result;
+}
+
+/** Reconciled update status supplies the running version without a second status read. */
+export function observeRunningAppSha(appSha: string | null): void {
+  sharedMonitor?.observeAppSha(appSha);
 }

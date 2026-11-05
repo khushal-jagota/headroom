@@ -1377,7 +1377,13 @@ def gauge_visual_equivalence(browser, url):
                     summary.tap()
                     expect(summary).to_have_attribute("aria-expanded", "true")
                 expect(support.get_by_role("meter")).to_be_visible()
-                support.get_by_role("meter").scroll_into_view_if_needed()
+                # Expansion changes the clipped scroller's geometry. Scroll the
+                # observed figure after that expansion, before its reveal proof.
+                wait_for_capture_stability(support)
+                support.get_by_role("meter").evaluate("""node =>
+                  (node.closest('figure') ?? node).scrollIntoView({
+                    block:'center',inline:'nearest',behavior:'instant'})""")
+                expect(support.get_by_role("meter")).to_be_in_viewport(ratio=0.5)
                 wait_for_gauge_settled(support)
                 row["surfaces"][identity + ":support-expanded"] = snapshot(support)
                 if output:

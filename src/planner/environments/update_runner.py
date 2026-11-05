@@ -97,15 +97,7 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
         raise ValueError("Runner inputs differ from the pinned owner request.")
     validate_release(release)
     validate_schema_ancestry(database)
-    installed = validate_app_manifest(root / "app" / "manifest.json", require_runtime=False)
-    if installed.app_sha == release.manifest.app_sha:
-        store.transition(
-            request.request_id,
-            frozenset({"dispatched"}),
-            "failed",
-            detail="The pinned application is already installed.",
-        )
-        raise ValueError("The pinned application is already installed. No service action occurred.")
+    validate_app_manifest(root / "app" / "manifest.json", require_runtime=False)
     repository = os.environ.get("GITHUB_REPOSITORY") or os.environ.get("PLAN_UPDATE_REPOSITORY")
     if repository is None:
         raise ValueError("The update repository is not configured.")
@@ -130,17 +122,19 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
         prior_manifest = validate_app_manifest(
             root / "app" / "manifest.json", require_runtime=False
         )
-        lifecycle.start(
-            deployment_id,
-            release.manifest.app_sha,
-            expected_deployment_id=previous.deployment_id if previous else None,
-            prior_sha=prior_manifest.app_sha,
-        )
+        with store.dispatch_guard(request.request_id):
+            lifecycle.start(
+                deployment_id,
+                release.manifest.app_sha,
+                expected_deployment_id=previous.deployment_id if previous else None,
+                prior_sha=prior_manifest.app_sha,
+            )
         # deploy_app holds its existing deployment lock here. The request-file lock
         # is acquired only inside the server's workspace admission callback.
         response = httpx.post(
             arguments.health_url.removesuffix("/api/health")
             + f"/api/updates/requests/{request.request_id}/claim",
+            json={"deployment_id": deployment_id},
             timeout=30,
         )
         recorded = store.read()
@@ -201,6 +195,7 @@ def apply(arguments: argparse.Namespace) -> dict[str, object]:
             deployment_id=deployment_id,
             before_stop=claim,
             lifecycle_transition=publish,
+            installation_guard=lambda: store.installation_guard(request.request_id),
         )
     if result.status in {"succeeded", "unchanged"}:
         store.transition(request.request_id, frozenset({"applying", "dispatched"}), "applied")
@@ -261,16 +256,18 @@ def main() -> int:
                                 f"App {arguments.app_sha} is installed. Runner reporting failed."
                             ),
                         )
-                    else:
+                    elif (
+                        committed is not None
+                        and committed.deployment_id
+                        == (recorded.deployment_id or arguments.request_id)
+                        and committed.phase in {"failed", "rolled_back"}
+                    ):
                         store.transition(
-                            recorded.request_id,
-                            frozenset({"applying"}),
-                            "applying",
-                            detail=(
-                                "Recovery required: runner application or its receipt is "
-                                "uncertain. Inspect recorded recovery paths."
-                            ),
+                            recorded.request_id, frozenset({"applying"}), "failed",
+                            detail=committed.detail or "The update did not install.",
                         )
+                    # Otherwise the server settles from serving proof or deadline.
+                    # A missing runner report never reopens or renews authority.
         except UpdateConflict:
             # Cancellation or another final receipt won the compare-and-swap.
             pass

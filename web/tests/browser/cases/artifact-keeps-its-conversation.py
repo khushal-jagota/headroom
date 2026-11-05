@@ -207,7 +207,7 @@ def run(browser, urls):
         "/api/worker-types": manifest,
         "/api/feedback/count": {"open_count": 0},
         "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
-        "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None},
+        "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None, "state": "up_to_date", "allowed_actions": [], "phase": None, "app_sha": None, "deadline_at": None, "restart_deadline_at": None},
         "/api/meta": {"test_mode": True, "app_sha": None},
         "/api/review": {"items": [], "running_worker_count": 0},
         "/api/conversation/backends": {"backends": []},

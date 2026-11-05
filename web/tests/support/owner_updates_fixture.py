@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import tempfile
-from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.conversation.contracts import ConversationSystem
-from planner.core.db import connect, create_schema
+from planner.conversation.runtime_composition import SignalRuntimeComposition
+from planner.core.db import connect
 from planner.environments.app import AppManifest
+from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_api import router
 from planner.environments.update_contracts import (
@@ -63,19 +65,32 @@ class OwnerUpdatesFixture:
         self.provider = FakeProvider()
         self.activity = ActivityProbe()
         self.current_sha = "a" * 40
+        self.lifecycle = DeploymentLifecycleStore(
+            Path(self.directory.name) / "deployment-lifecycle.json"
+        )
         self.store = FileUpdateRequestStore(Path(self.directory.name) / "request.json")
         database_path = Path(self.directory.name) / "planner.db"
-        with closing(connect(str(database_path))) as connection:
-            create_schema(connection)
+        # Cutover captures the stopped database through the current Signal schema.
+        # Prepare an empty runtime, then release its ownership before that capture.
+        runtime = SignalRuntimeComposition(str(database_path), 1000)
+        try:
+            runtime.bootstrap()
+            runtime.coordinator.bind_runtime(lambda _identity: None)
+            runtime.initialize()
+        finally:
+            runtime.close()
         self.service = UpdateService(
             self.provider,
             self.store,
             lambda: cast(ConversationSystem, self.activity),
             connection_factory=lambda: connect(str(database_path)),
             current_app_sha=self.current_sha,
+            lifecycle_store=self.lifecycle,
         )
         app = FastAPI()
         app.state.updates = self.service
+        self._app = app
+        self.mac_status = None
         app.include_router(router, prefix="/api")
 
         @app.get("/api/meta")
@@ -84,6 +99,19 @@ class OwnerUpdatesFixture:
 
         self.client = TestClient(app)
         self.client.__enter__()
+
+    @property
+    def mac_status(self) -> dict[str, object] | None:
+        return self._mac_status
+
+    @mac_status.setter
+    def mac_status(self, value: dict[str, object] | None) -> None:
+        self._mac_status = value
+        # Disabled execution has no endpoint. A configured endpoint always
+        # returns the same dictionary contract as the production executor.
+        self._app.state.executor_endpoint = (
+            None if value is None else SimpleNamespace(health=lambda: value)
+        )
 
     def close(self) -> None:
         self.client.__exit__(None, None, None)

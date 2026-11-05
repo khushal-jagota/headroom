@@ -1,0 +1,12 @@
+{
+  "aps": {
+    "alert": {
+      "title": "iOS app \u00b7 Needs an answer",
+      "body": "The worker is waiting. Open the ticket and answer the question."
+    },
+    "sound": "default",
+    "thread-id": "panels-ticket"
+  },
+  "server_url": "https://panels-vps.tail687c57.ts.net",
+  "route": "/#/workspace/notify-ticket"
+}

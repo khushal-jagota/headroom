@@ -65,6 +65,7 @@ def test_refused_valid_frames_advance_contact_and_history_survives_loss(
     assert endpoint.health()["last_contact_at_ms"] is None
     tick = [100]
     monkeypatch.setattr(link_module, "now_ms", lambda: tick[0])
+    monkeypatch.setattr(vps, "now_ms", lambda: tick[0])
 
     async def run() -> None:
         writer = Writer()
@@ -87,7 +88,7 @@ def test_refused_valid_frames_advance_contact_and_history_survives_loss(
         await task
         assert endpoint.health()["connection_state"] == "disconnected"
         assert endpoint.health()["last_contact_at_ms"] == 200
-        assert _endpoint(tmp_db, fake_clock).health()["last_contact_at_ms"] is None
+        assert _endpoint(tmp_db, fake_clock).health()["last_contact_at_ms"] == 200
 
     asyncio.run(run())
 
@@ -107,6 +108,7 @@ def test_malformed_or_superseded_frame_does_not_advance_contact(
 
             tick = [100]
             monkeypatch.setattr(link_module, "now_ms", lambda tick=tick: tick[0])
+            monkeypatch.setattr(vps, "now_ms", lambda tick=tick: tick[0])
             writer = Writer()
             writer.feed_data(encode_message(_hello()))
             task = asyncio.create_task(endpoint.session(writer))

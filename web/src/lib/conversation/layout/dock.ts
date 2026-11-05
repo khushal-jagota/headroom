@@ -77,7 +77,8 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     reader = host.querySelector<HTMLElement>('.ticket-reading, .manager-reading');
     layer = pane?.closest<HTMLElement>('.conversation-layer') ?? null;
     const rect = host.getBoundingClientRect();
-    const bounds = visibleHostBounds(rect, visibleViewport());
+    const menuOpen = !!pane?.querySelector('.chat-menu, .chat-add-menu, .listbox-picker-panel, .chat-overflow-menu');
+    const bounds = visibleHostBounds(rect, visibleViewport(menuOpen));
     set('--conversation-visible-top', bounds.top);
     set('--conversation-visible-bottom', bounds.bottom);
     set('--conversation-visible-left', bounds.left);
