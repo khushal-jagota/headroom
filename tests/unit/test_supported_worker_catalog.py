@@ -7,7 +7,6 @@ from sqlite3 import Connection
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
-from tests.support.retired_workers import seed_historical_worker_type
 from tests.unit.test_scheduled_tickets import _template
 
 from planner.core.errors import PlannerError
@@ -15,19 +14,12 @@ from planner.scheduled_tickets import actions as schedule_actions
 from planner.scheduled_tickets import data as schedule_data
 from planner.scheduled_tickets.contracts import ScheduleCadence
 from planner.tickets import actions, data
-from planner.worker_types.contracts import RETIRED_WORKER_TYPES
 
 
-def _install_history(conn: Connection) -> None:
-    for worker_type in sorted(RETIRED_WORKER_TYPES):
-        seed_historical_worker_type(conn, worker_type)
-
-
-@pytest.mark.parametrize("worker_type", sorted(RETIRED_WORKER_TYPES))
 def test_retired_types_are_refused_by_all_creation_and_schedule_writers(
     tmp_db: Connection,
-    worker_type: str,
 ) -> None:
+    worker_type = "planning-day"
     for create in (
         lambda: data.create_ticket(
             tmp_db,

@@ -9,7 +9,6 @@ declaration was meant to.
 
 import pytest
 from tests.support.fresh_schema_template import install_fresh_schema_template
-from tests.support.navigation_historical_source import historical_sources as historical_sources
 from tests.support.server_fixtures import (  # noqa: F401  imported to register them as fixtures here
     _reusable_server,
     api,
