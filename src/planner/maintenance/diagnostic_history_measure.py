@@ -88,6 +88,7 @@ _RAW_PAYLOAD_FIELDS = {
         "recipient",
     },
     "agent_message": {"text", "content", "markdown"},
+    # Retired kind: stored history only, never written again.
     "explicit_reply_missing": {"prompt_sender"},
     "tool_call_started": {"tool_call_id", "title", "tool_kind", "detail"},
     "tool_call_finished": {"tool_call_id", "tool_call_status", "detail"},
