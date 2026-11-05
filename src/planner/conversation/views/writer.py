@@ -585,6 +585,37 @@ def backfill_projection(conn: sqlite3.Connection) -> None:
         conversation_after = conversation_id
 
 
+def repair_rest_line_after_deleting_rows(conn: sqlite3.Connection, conversation_id: str) -> None:
+    """Repair one conversation's rest line after a migration deleted projected rows outright.
+
+    A latest-happened pointer that named a deleted row falls back to the latest remaining
+    row with rest text, as it does for a row marked removed. The status line reads the
+    target row's cached rest summary, which is cleared on rows nothing references, so every
+    referenced row without one gets it rebuilt from its source event.
+    """
+    _repair_rest_pointer(conn, conversation_id)
+    for referenced in _rest_references(conn, conversation_id):
+        if conn.execute(
+            "SELECT 1 FROM conversation_view_rows WHERE conversation_id=? AND sequence=? "
+            "AND rest_summary IS NULL",
+            (conversation_id, referenced),
+        ).fetchone():
+            conn.execute(
+                "UPDATE conversation_view_rows SET rest_summary=? "
+                "WHERE conversation_id=? AND sequence=?",
+                (
+                    _rest_summary(
+                        conn,
+                        conversation_id,
+                        referenced,
+                        _source(conn, conversation_id, referenced),
+                    ),
+                    conversation_id,
+                    referenced,
+                ),
+            )
+
+
 def _repair_rest_pointer(conn: sqlite3.Connection, conversation_id: str) -> None:
     for lens in ("full", "focus"):
         column = f"latest_{lens}_happened_sequence"

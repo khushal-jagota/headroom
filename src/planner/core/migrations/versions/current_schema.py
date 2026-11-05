@@ -12,7 +12,7 @@ from typing import cast
 from alembic import op
 
 revision = "canonical_manager_identities"
-down_revision = "goal_holders"
+down_revision = "retire_explicit_reply_requirement"
 branch_labels = None
 depends_on = None
 
@@ -169,7 +169,6 @@ BASELINE_STATEMENTS: tuple[str, ...] = (
     "CREATE TABLE mac_inbox_positions (\n        sender_id TEXT NOT NULL, conversation_id TEXT NOT NULL,\n        sequence INTEGER NOT NULL CHECK(sequence>0), submission_id TEXT NOT NULL,\n        disposition TEXT NOT NULL CHECK(disposition IN ('dispatching','accepted','refused','uncertain')),\n        result_json TEXT NOT NULL,\n        PRIMARY KEY(sender_id,conversation_id))",
     "CREATE TABLE executor_child_assignments (\n        executor_incarnation TEXT NOT NULL, child_id TEXT NOT NULL, conversation_id TEXT NOT NULL,\n        principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL, created_at_ms INTEGER NOT NULL,\n        closed_at_ms INTEGER, PRIMARY KEY(executor_incarnation,child_id))",
     "CREATE TABLE mac_runs (\n        conversation_id TEXT PRIMARY KEY, executor_incarnation TEXT NOT NULL, child_id TEXT NOT NULL,\n        principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL, turn_number INTEGER NOT NULL,\n        delivery_uncertain INTEGER NOT NULL CHECK(delivery_uncertain IN (0,1)),\n        stop_state TEXT NOT NULL CHECK(stop_state IN ('open','stopping','closed')))",
-    "CREATE TABLE conversation_reply_credits (\n        conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,\n        turn_number INTEGER NOT NULL, principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL,\n        PRIMARY KEY(conversation_id,turn_number,principal_kind,principal_id))",
     "CREATE TABLE \"conversations\" (\n  conversation_id   TEXT PRIMARY KEY,\n  backend_key       TEXT NOT NULL,\n  model             TEXT,\n  reasoning_effort  TEXT,\n  workspace_folder  TEXT NOT NULL,\n  role_text         TEXT,\n  identity_environment_variables TEXT NOT NULL DEFAULT '[]',\n  access            TEXT NOT NULL,\n  vendor_session_cursor TEXT,\n  latest_sequence   INTEGER NOT NULL DEFAULT 0,\n  created_at        INTEGER NOT NULL\n, composer_catalog TEXT NOT NULL DEFAULT '[]', latest_agent_activity_at INTEGER, latest_agent_activity_sequence INTEGER NOT NULL DEFAULT 0, automatically_compacted_through_sequence INTEGER NOT NULL DEFAULT 0, owner_read_through_sequence INTEGER NOT NULL DEFAULT 0 CHECK (owner_read_through_sequence >= 0), automatic_compaction_attempted_through_sequence INTEGER NOT NULL DEFAULT 0, workspace_path_policy TEXT NOT NULL DEFAULT 'home_relative' CHECK (workspace_path_policy IN ('home_relative', 'absolute', 'executor_default')))",
     "CREATE INDEX idx_conversations_automatic_compaction_due ON conversations(latest_agent_activity_at, latest_agent_activity_sequence, automatic_compaction_attempted_through_sequence)",
     "CREATE TABLE manager_launch_defaults (singleton INTEGER PRIMARY KEY CHECK(singleton=1), employee_backend TEXT NOT NULL, employee_launch_model TEXT NOT NULL, employee_launch_reasoning_effort TEXT)",

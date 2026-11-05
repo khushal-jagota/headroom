@@ -46,12 +46,8 @@ _ROLE_DIRECTIVE_PREFIX: Final = (
     "Start with the `panels` skill. It explains the system and is necessary, "
     "then drill through to your identity through the skills layers."
 )
-_ROLE_REPLY_REQUIREMENT: Final = (
-    " When a message starts with a reply requirement, reply once to each sender it lists "
-    "before you finish the turn, using the exact panels send-message target it gives."
-)
 WORKER_ROLE_TEXT: Final = (
-    f"{_ROLE_DIRECTIVE_PREFIX} You are a ticket worker.{_ROLE_REPLY_REQUIREMENT}"
+    f"{_ROLE_DIRECTIVE_PREFIX} You are a ticket worker."
 )
 
 
@@ -72,7 +68,7 @@ def _home_folder_text(shared_workspace_folder: Path, *, extra: str = "") -> str:
 def chief_role_text(shared_workspace_folder: Path) -> str:
     return (
         f"{_ROLE_DIRECTIVE_PREFIX} You are a chief of staff."
-        f"{_home_folder_text(shared_workspace_folder)}{_ROLE_REPLY_REQUIREMENT}"
+        f"{_home_folder_text(shared_workspace_folder)}"
     )
 
 
@@ -83,7 +79,6 @@ def manager_role_text(shared_workspace_folder: Path) -> str:
             shared_workspace_folder,
             extra=" Keep it out of artifacts/, which is what the owner sees.",
         )
-        + _ROLE_REPLY_REQUIREMENT
     )
 
 

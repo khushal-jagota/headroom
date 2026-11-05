@@ -133,6 +133,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -179,6 +180,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -262,6 +264,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -344,6 +347,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -652,6 +656,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "steer",
             "sentAtUnixMilliseconds": 102000
           },
@@ -680,6 +685,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 105000
           },
@@ -731,6 +737,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "steer",
               "sentAtUnixMilliseconds": 102000
             },
@@ -769,6 +776,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 105000
             },
@@ -834,6 +842,7 @@
               }
             ],
             "senderLabel": "worker",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -862,6 +871,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "steer",
             "sentAtUnixMilliseconds": 102000
           },
@@ -899,6 +909,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 105000
           },
@@ -941,6 +952,7 @@
                 }
               ],
               "senderLabel": "worker",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -992,6 +1004,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "steer",
               "sentAtUnixMilliseconds": 102000
             },
@@ -1044,6 +1057,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 105000
             },
@@ -1218,6 +1232,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -1247,6 +1262,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -1308,6 +1324,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -1332,6 +1349,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 102000
           },
@@ -1356,6 +1374,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 104000
           },
@@ -1385,6 +1404,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -1432,6 +1452,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 102000
             },
@@ -1479,6 +1500,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 104000
             },
@@ -1687,6 +1709,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": "same",
             "mode": "queue",
             "sentAtUnixMilliseconds": 102000
           },
@@ -1702,6 +1725,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "steer",
             "sentAtUnixMilliseconds": 103000
           },
@@ -1716,7 +1740,8 @@
                 "text": "Discarded"
               }
             ],
-            "senderLabel": "owner"
+            "senderLabel": "owner",
+            "senderMessageId": "refused"
           }
         ],
         "items": [
@@ -1735,6 +1760,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": "same",
               "mode": "queue",
               "sentAtUnixMilliseconds": 102000
             },
@@ -1768,6 +1794,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "steer",
               "sentAtUnixMilliseconds": 103000
             },
@@ -1787,7 +1814,8 @@
                   "text": "Discarded"
                 }
               ],
-              "senderLabel": "owner"
+              "senderLabel": "owner",
+              "senderMessageId": "refused"
             },
             "behindTheFoldOf": null
           }
@@ -1820,6 +1848,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": "same",
             "mode": "queue",
             "sentAtUnixMilliseconds": 102000
           },
@@ -1835,6 +1864,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "steer",
             "sentAtUnixMilliseconds": 103000
           },
@@ -1849,7 +1879,8 @@
                 "text": "Discarded"
               }
             ],
-            "senderLabel": "owner"
+            "senderLabel": "owner",
+            "senderMessageId": "refused"
           },
           {
             "key": "e7",
@@ -1877,6 +1908,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": "same",
               "mode": "queue",
               "sentAtUnixMilliseconds": 102000
             },
@@ -1910,6 +1942,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "steer",
               "sentAtUnixMilliseconds": 103000
             },
@@ -1929,7 +1962,8 @@
                   "text": "Discarded"
                 }
               ],
-              "senderLabel": "owner"
+              "senderLabel": "owner",
+              "senderMessageId": "refused"
             },
             "behindTheFoldOf": null
           },
@@ -2105,6 +2139,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -2210,6 +2245,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -2367,6 +2403,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -2472,6 +2509,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -2618,7 +2656,7 @@
     }
   },
   {
-    "name": "failed-input-without-request-and-missing-reply",
+    "name": "failed-input-without-request-and-retired-missing-reply",
     "stopped": false,
     "owner_sender_label": "owner",
     "events": [
@@ -2690,6 +2728,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -2704,16 +2743,6 @@
             "deadReason": null,
             "answers": null,
             "failureDetail": "Invalid input request"
-          },
-          {
-            "key": "e3",
-            "kind": "explicit_reply_missing",
-            "sequence": 3,
-            "createdAt": 102,
-            "promptSender": {
-              "kind": "owner",
-              "id": "owner"
-            }
           },
           {
             "key": "e4",
@@ -2741,6 +2770,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -2773,21 +2803,6 @@
               "deadReason": null,
               "answers": null,
               "failureDetail": "Invalid input request"
-            },
-            "behindTheFoldOf": null
-          },
-          {
-            "kind": "row",
-            "key": "e3",
-            "row": {
-              "key": "e3",
-              "kind": "explicit_reply_missing",
-              "sequence": 3,
-              "createdAt": 102,
-              "promptSender": {
-                "kind": "owner",
-                "id": "owner"
-              }
             },
             "behindTheFoldOf": null
           },
@@ -2834,6 +2849,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -2848,16 +2864,6 @@
             "deadReason": null,
             "answers": null,
             "failureDetail": "Invalid input request"
-          },
-          {
-            "key": "e3",
-            "kind": "explicit_reply_missing",
-            "sequence": 3,
-            "createdAt": 102,
-            "promptSender": {
-              "kind": "owner",
-              "id": "owner"
-            }
           },
           {
             "key": "e4",
@@ -2885,6 +2891,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -2917,21 +2924,6 @@
               "deadReason": null,
               "answers": null,
               "failureDetail": "Invalid input request"
-            },
-            "behindTheFoldOf": null
-          },
-          {
-            "kind": "row",
-            "key": "e3",
-            "row": {
-              "key": "e3",
-              "kind": "explicit_reply_missing",
-              "sequence": 3,
-              "createdAt": 102,
-              "promptSender": {
-                "kind": "owner",
-                "id": "owner"
-              }
             },
             "behindTheFoldOf": null
           },
@@ -3052,6 +3044,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -3116,6 +3109,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -3227,6 +3221,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -3291,6 +3286,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -3583,6 +3579,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 101000
           },
@@ -3616,6 +3613,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 101000
             },
@@ -3695,6 +3693,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 101000
           },
@@ -3854,6 +3853,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 101000
             },
@@ -4099,6 +4099,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -4144,6 +4145,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -4226,6 +4228,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -4271,6 +4274,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -4450,6 +4454,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -4491,6 +4496,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "steer",
             "sentAtUnixMilliseconds": 0
           }
@@ -4511,6 +4517,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -4580,6 +4587,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "steer",
               "sentAtUnixMilliseconds": 0
             },
@@ -4614,6 +4622,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "queue",
             "sentAtUnixMilliseconds": 100000
           },
@@ -4655,6 +4664,7 @@
               }
             ],
             "senderLabel": "owner",
+            "senderMessageId": null,
             "mode": "steer",
             "sentAtUnixMilliseconds": 0
           }
@@ -4675,6 +4685,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "queue",
               "sentAtUnixMilliseconds": 100000
             },
@@ -4744,6 +4755,7 @@
                 }
               ],
               "senderLabel": "owner",
+              "senderMessageId": null,
               "mode": "steer",
               "sentAtUnixMilliseconds": 0
             },

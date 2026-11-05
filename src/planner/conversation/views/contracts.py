@@ -21,7 +21,6 @@ from planner.conversation.events import (
     UserInputAnswer,
     UserInputQuestion,
 )
-from planner.core.contracts import Principal
 from planner.credentials.requests.contracts import CredentialRequestRowBody
 
 VIEW_PROTOCOL_VERSION = 1
@@ -35,7 +34,6 @@ type ViewRowKind = Literal[
     "prompt_uncertain",
     "prompt_discarded",
     "agent_message",
-    "explicit_reply_missing",
     "tool_call",
     "permission_ask",
     "user_input",
@@ -97,11 +95,6 @@ class AgentMessageRowBody(TypedDict):
     kind: Literal["agent_message"]
     content: list[ViewMessagePiece]
     to_owner: bool
-
-
-class MissingReplyRowBody(TypedDict):
-    kind: Literal["explicit_reply_missing"]
-    prompt_sender: Principal
 
 
 class ToolCallRowBody(TypedDict):
@@ -170,7 +163,6 @@ type ViewRowBody = (
     | RefusedPromptRowBody
     | UndeliveredPromptRowBody
     | AgentMessageRowBody
-    | MissingReplyRowBody
     | ToolCallRowBody
     | PermissionRowBody
     | UserInputRowBody
@@ -330,12 +322,7 @@ class ViewRestTool(TypedDict):
 
 
 type ViewRestEvent = (
-    ViewRestText
-    | ViewRestDelivery
-    | ViewRestTool
-    | MissingReplyRowBody
-    | TurnEndingRowBody
-    | MarkerRowBody
+    ViewRestText | ViewRestDelivery | ViewRestTool | TurnEndingRowBody | MarkerRowBody
 )
 
 

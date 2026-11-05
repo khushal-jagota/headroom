@@ -15,17 +15,18 @@ name: Publish checked app and adopt owner request
         default: false
         type: boolean
       baseline_sha:
-        description: Full known-good SHA to serve before a rehearsal (must differ)
+        description: Full known-good SHA for rehearsal or still-serving prior SHA for legacy recovery
         required: false
         type: string
       operation:
-        description: Publish a candidate, build the Mac runtime, or adopt an owner request
+        description: Publish, build Mac runtime, adopt, or recover an accepted legacy owner request
         required: true
         default: publish
         type: choice
         options:
           - publish
           - adopt
+          - recover-legacy
           - mac-build
       request_id:
         description: request id
@@ -51,17 +52,21 @@ name: Publish checked app and adopt owner request
         description: archive sha256
         required: false
         type: string
+      failed_deployment_id:
+        description: Exact admission_evidence_uncertain attempt to recover; recovery only
+        required: false
+        type: string
 permissions:
   contents: read
   actions: read
 concurrency:
-  group: ${{ inputs.operation == 'adopt' && !inputs.rehearsal && 'production-deploy' || format('publish-{0}', github.run_id) }}
+  group: ${{ (inputs.operation == 'adopt' || inputs.operation == 'recover-legacy') && !inputs.rehearsal && 'production-deploy' || format('publish-{0}', github.run_id) }}
   cancel-in-progress: false
 env:
   PANELS_REQUESTED_SHA: ${{ inputs.commit_sha || github.sha }}
 jobs:
   prepare:
-    if: ${{ inputs.operation != 'mac-build' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
+    if: ${{ inputs.operation != 'recover-legacy' && inputs.operation != 'mac-build' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -100,7 +105,7 @@ jobs:
           include-hidden-files: true
           retention-days: 30
   mac-runtime:
-    if: ${{ inputs.operation != 'adopt' || inputs.rehearsal }}
+    if: ${{ inputs.operation != 'recover-legacy' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
     # GitHub's documented standard macos-15 label is arm64. Intel uses macos-15-intel.
     runs-on: macos-15
     timeout-minutes: 30
@@ -818,7 +823,7 @@ jobs:
         if: ${{ always() }}
   publish:
     needs: [prepare, suites, checks, build, mac-runtime]
-    if: ${{ always() && inputs.operation != 'mac-build' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
+    if: ${{ always() && inputs.operation != 'recover-legacy' && inputs.operation != 'mac-build' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -938,7 +943,7 @@ jobs:
           retention-days: 30
 
   adopt:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'adopt' && !inputs.rehearsal && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.operation == 'adopt' || inputs.operation == 'recover-legacy') && !inputs.rehearsal && github.ref == 'refs/heads/main' }}
     runs-on:
       - self-hosted
       - linux
@@ -962,6 +967,9 @@ jobs:
       - name: Apply pinned owner request
         id: owner_apply
         env:
+          UPDATE_OPERATION: ${{ inputs.operation }}
+          UPDATE_FAILED_DEPLOYMENT_ID: ${{ inputs.failed_deployment_id }}
+          UPDATE_PRIOR_SHA: ${{ inputs.baseline_sha }}
           UPDATE_REQUEST_ID: ${{ inputs.request_id }}
           UPDATE_PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
           UPDATE_ARTIFACT_ID: ${{ inputs.artifact_id }}
@@ -971,13 +979,21 @@ jobs:
           UPDATE_APP_SHA: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
+          operation_arguments=(apply)
+          if [ "$UPDATE_OPERATION" = recover-legacy ]; then
+            operation_arguments=(recover-legacy --failed-deployment-id "$UPDATE_FAILED_DEPLOYMENT_ID"
+              --prior-sha "$UPDATE_PRIOR_SHA" --deployment-id "$PANELS_DEPLOYMENT_ID")
+          fi
           # A separate unit owns the install even if the caller belongs to Panels.
           systemd-run --user --wait --collect --pipe \
             --unit="panels-adoption-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --working-directory="$GITHUB_WORKSPACE" \
             --setenv=GH_TOKEN --setenv=GITHUB_REPOSITORY --setenv=PANELS_DEPLOYMENT_ID \
-            "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.update_runner apply \
-            --request-id "$UPDATE_REQUEST_ID"
+            "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.update_runner "${operation_arguments[@]}" \
+            --request-id "$UPDATE_REQUEST_ID" --publication-run-id "$UPDATE_PUBLICATION_RUN_ID" \
+            --artifact-id "$UPDATE_ARTIFACT_ID" --proof-artifact-id "$UPDATE_PROOF_ARTIFACT_ID" \
+            --app-sha "$UPDATE_APP_SHA" --artifact-digest "$UPDATE_ARTIFACT_DIGEST" \
+            --archive-sha256 "$UPDATE_ARCHIVE_SHA256"
       - name: Provision agent skills after local adoption
         id: owner_provision
         run: |

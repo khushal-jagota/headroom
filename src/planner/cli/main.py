@@ -477,10 +477,7 @@ def send_message(
     body_file: str | None,
     as_json: bool,
 ) -> None:
-    """Send one message to one Panels conversation owner.
-
-    An addressed agent turn must send one explicit reply before it completes.
-    """
+    """Send one message to one Panels conversation owner."""
     targets = sum(
         1
         for selected in (

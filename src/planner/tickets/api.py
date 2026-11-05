@@ -1040,13 +1040,11 @@ async def reject_ticket_proposal(
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
-    conversations: Conversations,
 ) -> JsonDict:
     """Send a parked proposal back, with guidance for the executing agent or without."""
     body = RejectionBody(message=body_opt_str(raw, "message"))
     now = clk.now_unix()
-    ticket = await tickets_actions.reject_ticket_proposal(
-        conversations,
+    ticket = tickets_actions.reject_ticket_proposal(
         conn,
         ticket_id,
         message=body["message"],

@@ -392,7 +392,6 @@ async def _admitted_tell_a_worker_it_lost_its_memory(
                     sender_label=LOOP_SENDER_LABEL,
                     mode=PromptDeliveryMode.queue,
                     sender_message_id=worker_memory.new_memory_notice_message_id(),
-                    reply_requested=False,
                     worker_type_registry=worker_type_registry,
                     now=now(),
                 )

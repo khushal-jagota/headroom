@@ -33,8 +33,12 @@
     min-width:0; min-height:var(--conversation-target); }
   .c2-rest-activity { display:flex; align-items:center; gap:var(--space-2); min-width:0; }
   [data-conversation-rest-line] { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  /* The arrow alone answers dock hover and rest-bar focus. Its backing aligns with the input's right edge. */
   .c2-rest-control { display:grid; place-items:center; width:var(--conversation-target); height:var(--conversation-target);
-    flex:none; margin-right:calc(var(--space-2) * -1); }
+    flex:none; border-radius:var(--radius-pill); color:var(--text-muted); background-color:transparent;
+    transition:color var(--motion-base) var(--motion-ease), background-color var(--motion-base) var(--motion-ease); }
+  :global([data-conversation-dock-hover]) .c2-rest-control, .c2-rest:focus-visible .c2-rest-control {
+    color:var(--text-strong); background-color:var(--wash-selected); }
   .c2-rest-control svg { width:calc(var(--conversation-glyph) - var(--space-2)); height:calc(var(--conversation-glyph) - var(--space-2));
     fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .c2-rest:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:var(--space-1); border-radius:var(--radius-sm); }
@@ -45,5 +49,5 @@
     border-radius:var(--radius-pill); border:1.5px solid var(--text-faintest); border-top-color:var(--text-muted);
     animation:spin var(--motion-loop-spin) linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
-  @media (prefers-reduced-motion:reduce) { .c2-mark--running { animation:none; } }
+  @media (prefers-reduced-motion:reduce) { .c2-mark--running { animation:none; } .c2-rest-control { transition:none; } }
 </style>

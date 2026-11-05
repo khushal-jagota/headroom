@@ -1,6 +1,8 @@
 """Owner adoption finalization executes against disposable durable records."""
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -79,13 +81,56 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
     assert next(step for step in workflow["jobs"]["publish"]["steps"]
                 if step.get("name") == "Retain publication proof")["with"]["retention-days"] == 30
     commands = "\n".join(step.get("run", "") for step in adoption["steps"])
-    assert "update_runner apply" in commands
+    assert 'update_runner "${operation_arguments[@]}"' in commands
     assert "systemd-run --user --wait --collect --pipe" in commands
     assert '--unit="panels-adoption-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in commands
     assert "app-build" not in commands and "pytest" not in commands
-    # The runner reads pinned publication identifiers from the request receipt.
-    for key in ("REQUEST_ID", "APP_SHA"):
+    for key in ("REQUEST_ID", "PUBLICATION_RUN_ID", "ARTIFACT_ID", "PROOF_ARTIFACT_ID",
+                "APP_SHA", "ARTIFACT_DIGEST", "ARCHIVE_SHA256"):
         assert f'"$UPDATE_{key}"' in commands
+
+
+@pytest.mark.parametrize("operation", ["adopt", "recover-legacy"])
+def test_legacy_recovery_reuses_serialized_owner_adoption(
+    tmp_path: Path, operation: str,
+) -> None:
+    """Exercise the actual shell: recovery must stay isolated and retain every pin."""
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    assert "recover-legacy" in workflow["on"]["workflow_dispatch"]["inputs"]["operation"]["options"]
+    assert "inputs.operation == 'recover-legacy'" in workflow["concurrency"]["group"]
+    jobs = workflow["jobs"]
+    for name in ("prepare", "mac-runtime", "publish"):
+        assert "inputs.operation != 'recover-legacy'" in jobs[name]["if"]
+    assert "inputs.operation == 'recover-legacy'" in jobs["adopt"]["if"]
+    step = next(s for s in jobs["adopt"]["steps"] if s.get("id") == "owner_apply")
+    command = tmp_path / "systemd-run"
+    recorded = tmp_path / "arguments"
+    command.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$RECORDED_ARGUMENTS"\n')
+    command.chmod(0o755)
+    variables = {
+        "UPDATE_OPERATION": operation, "UPDATE_FAILED_DEPLOYMENT_ID": "failed-attempt",
+        "UPDATE_PRIOR_SHA": "a" * 40, "UPDATE_REQUEST_ID": "request",
+        "UPDATE_PUBLICATION_RUN_ID": "1", "UPDATE_ARTIFACT_ID": "2",
+        "UPDATE_PROOF_ARTIFACT_ID": "3", "UPDATE_APP_SHA": "b" * 40,
+        "UPDATE_ARTIFACT_DIGEST": "c" * 64, "UPDATE_ARCHIVE_SHA256": "d" * 64,
+        "GITHUB_RUN_ID": "4", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_WORKSPACE": str(tmp_path),
+        "PANELS_DEPLOY_VENV": str(tmp_path / "venv"), "PANELS_DEPLOYMENT_ID": "4-1",
+        "RECORDED_ARGUMENTS": str(recorded), "PATH": str(tmp_path) + os.pathsep + os.defpath,
+    }
+    subprocess.run(["/bin/bash", "-e", "-c", step["run"]], env=variables, check=True)
+    arguments = recorded.read_text().splitlines()
+    assert arguments[:4] == ["--user", "--wait", "--collect", "--pipe"]
+    assert arguments[arguments.index("planner.environments.update_runner") + 1] == (
+        "recover-legacy" if operation == "recover-legacy" else "apply"
+    )
+    assert arguments[arguments.index("--request-id") + 1] == "request"
+    assert arguments[arguments.index("--app-sha") + 1] == "b" * 40
+    if operation == "recover-legacy":
+        for flag, value in (("--failed-deployment-id", "failed-attempt"),
+                            ("--prior-sha", "a" * 40), ("--deployment-id", "4-1")):
+            assert arguments[arguments.index(flag) + 1] == value
+    else:
+        assert "--failed-deployment-id" not in arguments
 
 
 def test_publication_preserves_existing_isolated_suite_report_boundaries() -> None:
@@ -240,7 +285,7 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
 
     from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
     from planner.environments.update_contracts import OwnerUpdateRequest
-    from planner.environments.update_requests import CANCELLED_DETAIL, FileUpdateRequestStore
+    from planner.environments.update_requests import FileUpdateRequestStore
 
     root = tmp_path / "current"
     (root / "data").mkdir(parents=True)
@@ -248,7 +293,7 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
     path = root / "data" / "deployment-lifecycle.json"
     store = DeploymentLifecycleStore(path)
     requests = FileUpdateRequestStore(root / "data" / "owner-update-request.json")
-    request = OwnerUpdateRequest("first", release(), "now", "requested", "2026-10-30T00:00:00Z")
+    request = OwnerUpdateRequest("first", release(), "now", "dispatched", "2026-10-30T00:00:00Z")
     requests.create(request)
     if case != "replacement_no_lifecycle":
         store.start("123-1", sha, expected_deployment_id=None)
@@ -261,7 +306,7 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
         ), detail="Observed health or recovery failure.")
     elif case in {"cancelled", "replacement", "same_sha_stale",
                   "replacement_no_lifecycle", "missing_receipt"}:
-        requests.transition("first", frozenset({"requested"}), "failed", detail=CANCELLED_DETAIL)
+        requests.transition("first", frozenset({"dispatched"}), "cancelled")
         if case != "cancelled":
             requests.create(replace(request, request_id="replacement"))
         if case == "same_sha_stale":
@@ -329,8 +374,7 @@ def test_adoption_finalizer_reports_own_evidence_without_service_actions(
         assert report["status"] == "superseded"
         assert "Update canceled before installation" in report["detail"]
         archived = requests.read_for_reporting("first")
-        assert archived is not None and archived.state == "failed"
-        assert archived.detail == CANCELLED_DETAIL
+        assert archived is not None and archived.state == "cancelled"
         return
     assert recorded is not None
     if case == "missing_receipt":

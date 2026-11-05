@@ -24,14 +24,13 @@ async def run_automatic_recovery(system: ConversationSystem, store: Conversation
             return
         identity = recovery_message_identity(tuple(ref.interruption_id for ref in references))
         try:
-            await system.send_with_receipt(
+            await system.send(
                 conversation_id,
                 text_message_content(
                     "Inspect the interrupted work and continue the current authorized step."
                 ),
                 sender_label="Panels deployment recovery",
                 sender_message_id=identity,
-                reply_requested=False,
                 record_refusal=True,
                 recovery_references=references,
             )

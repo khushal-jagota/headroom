@@ -123,7 +123,7 @@ def test_audit_records_one_fault_and_preserves_other_tickets(
             )
         )
         assert len(sent) == 1
-        assert sent[0][1]["system_message"] and not sent[0][1]["expects_reply"]
+        assert sent[0][1]["system_message"]
         assert "SENSITIVE_TEST" not in str(sent[0][0][5])
         # Only the dedicated audit mark controls the diagnostic. Ordinary human text
         # cannot erase it, and successful validation clears it without changing claims.

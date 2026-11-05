@@ -139,7 +139,6 @@ def test_saved_model_and_null_effort_reach_reused_conversation(
             conversation_start.manager_resolve(tmp_db, latest),
             conversation_id=first.conversation_id,
             sender_label="Panels",
-            reply_requested=False,
             required_manager_id=item.id,
         )
         assert notice.conversation_id == first.conversation_id

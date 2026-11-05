@@ -19,7 +19,6 @@ from planner.conversation.events import (
     PromptDiscardedEventPayload,
     PromptEventPayload,
 )
-from planner.conversation.storage import ConversationStore
 from planner.core.authctx import RequestContext
 from planner.core.authority.intake import admit_command
 from planner.core.clock import Clock
@@ -213,7 +212,7 @@ class AgentWrites:
         if previous is not None:
             return previous
         operation = NativeMessageOperation(envelope.sender_id, envelope.submission_id)
-        operation.in_commit = partial(self._record_delivery, envelope, write, recipient, operation)
+        operation.in_commit = partial(self._record_delivery, envelope, recipient)
         connection = connect(self.db_path)
         try:
             try:
@@ -321,33 +320,24 @@ class AgentWrites:
     def _record_delivery(
         self,
         envelope: QueuedEnvelope,
-        write: CliWrite,
         recipient: Principal,
-        operation: NativeMessageOperation,
         conn: sqlite3.Connection,
         conversation_id: str,
         payload: object,
         admission: NativeMessageAdmission | None,
     ) -> None:
-        composed = False
         if isinstance(payload, MessageToOwnerEventPayload):
             fate: JsonObject = {"fate": "recorded"}
-            composed = True
         elif isinstance(payload, PromptEventPayload) and admission is not None:
             fate = cast(JsonObject, delivery_fate_json(admission.fate))
-            composed = admission.composed_content_delivered
         elif isinstance(payload, PromptDeliveryUncertainEventPayload):
             fate = {"fate": "uncertain"}
-            composed = admission.composed_content_delivered if admission else False
         elif isinstance(payload, PromptDeliveryRefusedEventPayload):
             fate = {"fate": "refused", "refusal_reason": payload.refusal_reason.value}
         elif isinstance(payload, PromptDiscardedEventPayload):
             fate = {"fate": "discarded"}
         else:
             return
-        if composed and write.turn is not None:
-            ConversationStore.credit_reply_in_transaction(conn, write.turn, recipient)
-        operation.composed_confirmed = composed
         current = conn.execute(
             "SELECT submission_id,disposition FROM mac_inbox_positions "
             "WHERE sender_id=? AND conversation_id=?",

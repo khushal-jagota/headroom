@@ -1,8 +1,9 @@
-"""Foreground GitHub step shell with owned command cleanup."""
+"""Foreground GitHub step shell: freshness belongs to an active, owned command."""
 from __future__ import annotations
 
 import argparse
 import ctypes
+import json
 import os
 import signal
 import subprocess
@@ -11,8 +12,17 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+# The runner uses system Python before it installs dependencies. Import the
+# stdlib-only lifecycle contract from this exact control checkout.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from planner.environments import deployment_lifecycle  # noqa: E402
+
+RENEW_INTERVAL_SECONDS = 60.0
 POLL_INTERVAL_SECONDS = 0.05
 SHUTDOWN_GRACE_SECONDS = 2.0
+# Bounds one whole receipt recovery run, including starting its Python writer. It is
+# not a wait after a signal, so it does not share the shutdown grace.
+RECEIPT_RECOVERY_DEADLINE_SECONDS = 2.0
 TERMINAL_PHASES = {"succeeded", "failed", "rolled_back"}
 LIFECYCLE_WRITER = (
     Path(__file__).resolve().parents[1] / "src/planner/environments/deployment_lifecycle.py"
@@ -23,11 +33,17 @@ LIFECYCLE_WRITER = (
 class Timings:
     """Tests inject short timings through Python, never through runner environment."""
 
+    renewal: float = RENEW_INTERVAL_SECONDS
     poll: float = POLL_INTERVAL_SECONDS
     shutdown_grace: float = SHUTDOWN_GRACE_SECONDS
+    receipt_recovery_deadline: float = RECEIPT_RECOVERY_DEADLINE_SECONDS
 
 
 DEFAULT_TIMINGS = Timings()
+
+
+class _CommandComplete(Exception):
+    """A completed command cancels lock acquisition before any renewal starts."""
 
 
 def process_identity(pid: int) -> str | None:
@@ -128,14 +144,14 @@ def _shutdown(process: subprocess.Popen[bytes], timings: Timings) -> None:
 
 
 def _direct_children() -> list[int]:
-    # This dedicated supervisor starts only the owned command.
+    # This dedicated supervisor starts only the command and renewal subprocesses.
     # As a subreaper, its other direct children can only be their orphaned descendants.
     path = Path(f"/proc/self/task/{os.getpid()}/children")
     return [int(value) for value in path.read_text().split()]
 
 
 def _reap_exited_adopted_children(excluded: set[int]) -> None:
-    # Popen owns the command status. Only adopted children belong here.
+    # Popen owns the command and renewal statuses. Only adopted children belong here.
     for pid in _direct_children():
         if pid in excluded:
             continue
@@ -200,9 +216,9 @@ def _shutdown_adopted_children(timings: Timings) -> None:
 def supervise(
     script: Path, *, cleanup: bool = False, timings: Timings = DEFAULT_TIMINGS,
 ) -> int:
-    """Run Bash and preserve command failures and cancellation."""
+    """Run Bash with bounded, interruptible renewal; preserve command failures."""
     if os.environ.get("PANELS_DEPLOYMENT_PROGRESS_ACTIVE") != "true":
-        # Bootstrap keeps the runner's normal shell ownership.
+        # Bootstrap has no lifecycle to renew and keeps the runner's normal shell ownership.
         os.execvp("bash", ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)])
     parent_pid = os.getppid()
     parent_identity = process_identity(parent_pid)
@@ -214,8 +230,12 @@ def supervise(
 
     previous = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGINT, signal.SIGTERM)}
     command: subprocess.Popen[bytes] | None = None
+    renewal: subprocess.Popen[bytes] | None = None
+
     def reap_adopted_children() -> None:
-        _reap_exited_adopted_children({command.pid} if command is not None else set())
+        _reap_exited_adopted_children({
+            process.pid for process in (command, renewal) if process is not None
+        })
 
     def interrupted() -> bool:
         return bool(
@@ -223,26 +243,190 @@ def supervise(
             or process_identity(parent_pid) != parent_identity
         )
 
+    def check_renewal_active() -> None:
+        reap_adopted_children()
+        if interrupted():
+            raise InterruptedError
+        if command is not None and command.poll() is not None:
+            raise _CommandComplete
+
+    def emit_receipt(lifecycle: deployment_lifecycle.DeploymentLifecycle) -> bool:
+        if lifecycle.phase in TERMINAL_PHASES:
+            return False
+        payload = lifecycle.to_public_dict()
+        evidence = {
+            field: payload[field]
+            for field in ("deployment_id", "phase", "updated_at", "expires_at")
+        }
+        print(
+            "Deployment lifecycle renewed: " + json.dumps(evidence, separators=(",", ":")),
+            flush=True,
+        )
+        return True
+
+    def run_writer(
+        arguments: list[str], descriptors: tuple[int, ...], *, recovery: bool = False,
+    ) -> tuple[bytes, bytes, int, bool]:
+        """One owned subprocess path for renewal and bounded read/sync recovery."""
+        nonlocal renewal, cancelled
+        renewal = subprocess.Popen(
+            [sys.executable, str(LIFECYCLE_WRITER), *arguments], pass_fds=descriptors,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+        )
+        deadline = time.monotonic() + timings.receipt_recovery_deadline
+        stopped = False
+        timed_out = False
+        while renewal.poll() is None:
+            reap_adopted_children()
+            if recovery:
+                # Keep interruption status, but allow this bounded reconciliation.
+                if interrupted():
+                    cancelled = cancelled or signal.SIGTERM
+                timed_out = time.monotonic() >= deadline
+            else:
+                stopped = interrupted() or (command is not None and command.poll() is not None)
+            if stopped or timed_out:
+                _shutdown(renewal, timings)
+                break
+            time.sleep(timings.poll)
+        stdout, stderr = renewal.communicate()
+        status = renewal.returncode
+        renewal = None
+        if timed_out:
+            raise RuntimeError("renewal receipt recovery timed out")
+        assert status is not None
+        return stdout, stderr, status, stopped
+
+    def recover_receipt(
+        path: Path, deployment_id: str, lock_fd: int, baseline_fd: int,
+    ) -> deployment_lifecycle.DeploymentLifecycle | None:
+        stdout, stderr, status, _ = run_writer(
+            ["recover-renewal-receipt", "--path", str(path), "--deployment-id", deployment_id,
+             "--lock-fd", str(lock_fd), "--baseline-fd", str(baseline_fd)],
+            (lock_fd, baseline_fd), recovery=True,
+        )
+        if status:
+            raise RuntimeError(
+                "renewal receipt recovery failed: "
+                + (stderr.decode(errors="replace").strip() or f"exit status {status}")
+            )
+        payload = json.loads(stdout)
+        if not isinstance(payload, dict) or type(payload.get("committed")) is not bool:
+            raise ValueError("invalid renewal receipt recovery result")
+        if not payload["committed"]:
+            return None
+        return deployment_lifecycle.parse_renewal_result(payload.get("lifecycle"), deployment_id)
+
+    def renew_locked(path: Path, deployment_id: str, lock_fd: int, baseline_fd: int) -> bool:
+        check_renewal_active()
+        stdout, stderr, status, stopped = run_writer(
+            ["renew", "--path", str(path),
+             "--deployment-id", deployment_id, "--lock-fd", str(lock_fd)],
+            (lock_fd,),
+        )
+        failure: Exception | None = None
+        result: deployment_lifecycle.DeploymentLifecycle | None = None
+        expected_stop = stopped and status in (-signal.SIGTERM, -signal.SIGKILL)
+        if status and (not expected_stop or stderr.strip()):
+            failure = RuntimeError(stderr.decode(errors="replace").strip() or "renewal failed")
+        if status == 0:
+            try:
+                result = deployment_lifecycle.parse_renewal_result(
+                    json.loads(stdout), deployment_id,
+                )
+            except (RuntimeError, ValueError, KeyError) as exc:
+                failure = exc
+        if result is None:
+            try:
+                result = recover_receipt(path, deployment_id, lock_fd, baseline_fd)
+            except (RuntimeError, ValueError, KeyError, OSError) as exc:
+                failure = RuntimeError(f"{failure}; {exc}" if failure else str(exc))
+        active = emit_receipt(result) if result is not None else False
+        if interrupted():
+            if failure is not None:
+                print(
+                    f"Deployment freshness renewal failed: {failure}", file=sys.stderr, flush=True,
+                )
+            raise InterruptedError
+        if failure is not None:
+            raise failure
+        return active and not stopped
+
+    def renew() -> bool:
+        """Own the lock through receipt emission, including bounded recovery."""
+        nonlocal renewal
+        path = Path(os.environ["PANELS_LIFECYCLE_PATH"])
+        deployment_id = os.environ["PANELS_DEPLOYMENT_ID"]
+        try:
+            with deployment_lifecycle.renewal_lock(
+                path, check_active=check_renewal_active,
+            ) as lock_fd:
+                baseline_fd = deployment_lifecycle.open_renewal_baseline(path)
+                try:
+                    return renew_locked(path, deployment_id, lock_fd, baseline_fd)
+                finally:
+                    # No borrowed descriptor holder can outlive the retained lock.
+                    if renewal is not None:
+                        _shutdown(renewal, timings)
+                        renewal.communicate()
+                        renewal = None
+                    os.close(baseline_fd)
+        except _CommandComplete:
+            return False
+
     try:
         _enable_child_reaping()
+        if interrupted():
+            raise InterruptedError
+        active = os.environ.get("PANELS_DEPLOYMENT_PROGRESS_ACTIVE") == "true"
+        renewal_failed = False
+        if active:
+            try:
+                active = renew()
+            except InterruptedError:
+                raise
+            except (RuntimeError, ValueError, KeyError, OSError) as exc:
+                print(f"Deployment freshness renewal refused: {exc}", file=sys.stderr, flush=True)
+                renewal_failed = True
+                active = False
+                if not cleanup:
+                    return 1
         if interrupted():
             raise InterruptedError
         command = subprocess.Popen(
             ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)],
             start_new_session=True,
         )
+        next_renewal = time.monotonic() + timings.renewal
         while command.poll() is None:
             reap_adopted_children()
             if interrupted():
                 raise InterruptedError
+            if active and time.monotonic() >= next_renewal:
+                # Recheck immediately before renew; a completed command earns no lease.
+                if command.poll() is not None:
+                    break
+                try:
+                    active = renew()
+                except InterruptedError:
+                    raise
+                except (RuntimeError, ValueError, KeyError, OSError) as exc:
+                    print(
+                        f"Deployment freshness renewal failed: {exc}", file=sys.stderr, flush=True,
+                    )
+                    renewal_failed = True
+                    active = False
+                next_renewal = time.monotonic() + timings.renewal
             time.sleep(timings.poll)
         if interrupted():
             raise InterruptedError
         status = command.wait()
-        return (128 - status if status < 0 else status)
+        return (128 - status if status < 0 else status) or int(renewal_failed)
     except InterruptedError:
         return 128 + (cancelled or signal.SIGTERM)
     finally:
+        if renewal is not None:
+            _shutdown(renewal, timings)
         if command is not None:
             _shutdown(command, timings)
         _shutdown_adopted_children(timings)

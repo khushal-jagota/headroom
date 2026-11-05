@@ -118,7 +118,7 @@ class MacUpdateService:
     def _retain_applied(self, request: OwnerUpdateRequest | None) -> None:
         if (
             request is not None
-            and request.state == "done"
+            and request.state == "applied"
             and request.release.mac is not None
             and request.release.manifest.app_sha == self.current_app_sha
             and self._archive_path(request.release).is_file()
@@ -184,7 +184,7 @@ class MacUpdateService:
     def _selected_request(self) -> OwnerUpdateRequest | None:
         request = self.store.read()
         self._retain_applied(request)
-        if request is not None and request.state != "failed":
+        if request is not None and request.state not in {"cancelled", "failed"}:
             return request
         retained = self._applied.read()
         if retained is not None and retained.release.manifest.app_sha == self.current_app_sha:
@@ -204,7 +204,7 @@ class MacUpdateService:
                     request.request_id,
                     request.release.manifest.app_sha,
                     request.mode,
-                    request.state == "done"
+                    request.state == "applied"
                     and request.release.manifest.app_sha == self.current_app_sha,
                     mac.archive_sha256,
                     mac.archive_size,
