@@ -230,7 +230,6 @@ def test_owner_guidance_reaches_only_the_named_tickets_actual_backend_prompt(
             assert _conversation_id(db_path, other_ticket_id) is None
             writes = await subject.backend_writes(conversation_id)
             assert len(writes) == 1
-            assert writes[0].text.startswith("[Authenticated Panels reply requirement]\n")
             assert writes[0].text.endswith(f"owner:\n{text}")
             assert writes[0].text.count(text) == 1
             assert writes[0].sender_label == "owner"

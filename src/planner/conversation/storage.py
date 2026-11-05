@@ -33,7 +33,7 @@ from uuid import uuid4
 from pydantic import JsonValue
 
 from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
-from planner.conversation.backends.contracts import BackendSpawnFailed, TurnToken
+from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
@@ -56,7 +56,6 @@ from planner.conversation.events import (
     AutomaticCompactionResult,
     ConversationEventKind,
     ConversationEventPayload,
-    ExplicitReplyMissingEventPayload,
     ModelChangedEventPayload,
     PromptDeliveryRefusedEventPayload,
     PromptDeliveryUncertainEventPayload,
@@ -1384,9 +1383,7 @@ class ConversationStore:
                     lifecycle,
                     recording_receipt=recording_receipt,
                     extra_recording_receipts=extra_recording_receipts,
-                    native_message_admission=NativeMessageAdmission(
-                        PromptDeliveryStarted(), composed_content_delivered
-                    ),
+                    native_message_admission=NativeMessageAdmission(PromptDeliveryStarted()),
                 )
                 interruption_data.settle_delivery(
                     conn,
@@ -1548,25 +1545,6 @@ class ConversationStore:
         together is numbered consecutively with no gap for anyone else to write into: the
         transaction is immediate, so a second writer is waiting for this one's lock.
         """
-        # Durable reply credit wins over an ending prepared from a stale live snapshot.
-        turn_number = max((fact.turn_number for fact in lifecycle), default=0)
-        if turn_number and any(
-            isinstance(payload, ExplicitReplyMissingEventPayload) for payload in payloads
-        ):
-            recipients = {
-                tuple(row)
-                for row in conn.execute(
-                    "SELECT principal_kind,principal_id FROM conversation_reply_credits "
-                    "WHERE conversation_id=? AND turn_number=?",
-                    (conversation_id, turn_number),
-                )
-            }
-            payloads = tuple(
-                payload
-                for payload in payloads
-                if not isinstance(payload, ExplicitReplyMissingEventPayload)
-                or (payload.prompt_sender.kind.value, payload.prompt_sender.id) not in recipients
-            )
         if self._event_participant is not None:
             with transaction_control_guard(cast(ChangeSignallingConnection, conn)):
                 payloads += self._event_participant(conn, conversation_id, payloads)
@@ -1993,15 +1971,6 @@ class ConversationStore:
             payloads,
             always_announce=always_announce,
             strict_outcome=self.signal_coordinator is not None,
-        )
-
-    @staticmethod
-    def credit_reply_in_transaction(
-        conn: sqlite3.Connection, turn: TurnToken, recipient: Principal
-    ) -> None:
-        conn.execute(
-            "INSERT OR IGNORE INTO conversation_reply_credits VALUES (?,?,?,?)",
-            (turn.conversation_id, turn.turn_number, recipient.kind.value, recipient.id),
         )
 
     def read_conversation_records(

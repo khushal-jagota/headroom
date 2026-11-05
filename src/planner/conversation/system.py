@@ -93,11 +93,9 @@ from planner.conversation.backends.contracts import (
     VendorSessionCursorRebound,
 )
 from planner.conversation.contracts import (
-    AddressedPromptDeliveryReceipt,
     AnswerFate,
     ConversationBackendKey,
     ConversationStartRequest,
-    ConversationTurnReference,
     DeploymentRecoveryReference,
     HeldPrompt,
     HeldPromptPromotionFate,
@@ -142,9 +140,6 @@ from planner.conversation.lifecycle import (
 )
 from planner.conversation.lifecycle_storage import read_facts
 from planner.conversation.live_tail import ConversationLiveTail
-from planner.conversation.logic.addressed_reply import (
-    with_authenticated_reply_directive,
-)
 from planner.conversation.logic.backend_events import (
     interpret_backend_event,
     interpret_turn_ending,
@@ -294,8 +289,6 @@ def _ending_context(running: RunningTurn) -> TurnEndingContext:
         running.automatic_compaction,
         running.compaction_confirmed,
         running.automatic_notice,
-        tuple(running.prompt_senders),
-        tuple(running.explicit_reply_recipients),
     )
 
 
@@ -328,7 +321,6 @@ class _AdmittedSenderMessage:
     sender_label: str
     sender: Principal | None = None
     recipient: Principal | None = None
-    reply_requested: bool = True
     recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
     settled: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -355,7 +347,6 @@ class _Message:
     snapshot_sent_at_unix_milliseconds: int
     sender: Principal | None
     recipient: Principal | None
-    reply_requested: bool
     queue_reason: PromptQueueReason
     owner_read_through_sequence: int | None
     acknowledge_owner_on_failure: bool = True
@@ -707,49 +698,10 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
-        reply_requested: bool = True,
-        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
-        recording_receipt: NativeMessageOperation | None = None,
-    ) -> PromptDeliveryFate:
-        receipt = await self.send_with_receipt(
-            conversation_id,
-            content,
-            sender_label=sender_label,
-            mode=mode,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            reasoning_effort_is_set=reasoning_effort_is_set,
-            owner_read_through_sequence=owner_read_through_sequence,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
-            reply_requested=reply_requested,
-            recovery_references=recovery_references,
-            recording_receipt=recording_receipt,
-        )
-        return receipt.fate
-
-    async def send_with_receipt(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
-        model_change: str | None = None,
-        reasoning_effort_change: str | None = None,
-        reasoning_effort_is_set: bool = False,
-        owner_read_through_sequence: int | None = None,
-        sender_message_id: str | None = None,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-        reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
         recording_receipt: NativeMessageOperation | None = None,
-    ) -> AddressedPromptDeliveryReceipt:
+    ) -> PromptDeliveryFate:
         """Send a message in. See the contract; the two sender-minted fields are extra.
 
         ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own facts
@@ -764,12 +716,10 @@ class SqliteProcessConversationSystem:
                 raise ValueError("record_refusal requires a sender_message_id")
             state = await self._conversation_state(conversation_id)
             if state is None:
-                return AddressedPromptDeliveryReceipt(
-                    PromptDeliveryRefused(PromptDeliveryRefusalReason.no_such_conversation), False
-                )
+                return PromptDeliveryRefused(PromptDeliveryRefusalReason.no_such_conversation)
             return await self._own_settlement(
                 state,
-                self._send_with_receipt(
+                self._send(
                     conversation_id,
                     content,
                     sender_label=sender_label,
@@ -781,7 +731,6 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=reply_requested,
                     recovery_references=recovery_references,
                     record_refusal=record_refusal,
                     reasoning_effort_is_set=reasoning_effort_is_set,
@@ -789,7 +738,7 @@ class SqliteProcessConversationSystem:
                 ),
             )
 
-    async def _send_with_receipt(
+    async def _send(
         self,
         conversation_id: str,
         content: MessageContent,
@@ -803,12 +752,11 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
-        reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
         record_refusal: bool = False,
         reasoning_effort_is_set: bool = False,
         recording_receipt: NativeMessageOperation | None = None,
-    ) -> AddressedPromptDeliveryReceipt:
+    ) -> PromptDeliveryFate:
         """Send a message in. See the contract; the two sender-minted fields are extra.
 
         ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own facts
@@ -819,11 +767,8 @@ class SqliteProcessConversationSystem:
         require_message_content(content)
         state = await self._conversation_state(conversation_id)
         if state is None:
-            return AddressedPromptDeliveryReceipt(
-                fate=PromptDeliveryRefused(
-                    refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
-                ),
-                newly_accepted=False,
+            return PromptDeliveryRefused(
+                refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
             )
         state.last_touched_monotonic = self._monotonic_now()
 
@@ -858,7 +803,6 @@ class SqliteProcessConversationSystem:
             reasoning_effort_is_set=reasoning_effort_is_set,
             recipient=recipient,
             recovery_references=recovery_references,
-            reply_requested=reply_requested,
             sender=sender,
             sender_label=sender_label,
             sender_message_id=sender_message_id,
@@ -885,10 +829,7 @@ class SqliteProcessConversationSystem:
                                 raise ValueError(
                                     "sender_message_id already names a different message"
                                 )
-                            return AddressedPromptDeliveryReceipt(
-                                fate=PromptDeliveryQueued(queue_position=position),
-                                newly_accepted=False,
-                            )
+                            return PromptDeliveryQueued(queue_position=position)
                 if settled is not None:
                     # The first send of this same message has not finished. Its fate is
                     # this call's answer too, so this waits for it and then reads what it
@@ -908,30 +849,20 @@ class SqliteProcessConversationSystem:
                             fate: PromptDeliveryFate = PromptDeliveryInjected()
                         else:
                             fate = PromptDeliveryStarted()
-                        return AddressedPromptDeliveryReceipt(fate, newly_accepted=False)
+                        return fate
                     if isinstance(payload, PromptDeliveryUncertainEventPayload):
-                        return AddressedPromptDeliveryReceipt(
-                            PromptDeliveryUncertain(), newly_accepted=False
-                        )
+                        return PromptDeliveryUncertain()
                     if (
                         isinstance(payload, PromptDiscardedEventPayload)
                         and payload.suppression_reason
                     ):
-                        return AddressedPromptDeliveryReceipt(
-                            PromptDeliverySuppressed(payload.suppression_reason),
-                            newly_accepted=False,
-                        )
+                        return PromptDeliverySuppressed(payload.suppression_reason)
                     reason = getattr(
                         payload,
                         "refusal_reason",
                         PromptDeliveryRefusalReason.write_to_backend_failed,
                     )
-                    return AddressedPromptDeliveryReceipt(
-                        PromptDeliveryRefused(
-                            refusal_reason=reason,
-                        ),
-                        newly_accepted=False,
-                    )
+                    return PromptDeliveryRefused(refusal_reason=reason)
                 async with state.lock:
                     if (
                         state.record.latest_sequence != observed_sequence
@@ -950,7 +881,6 @@ class SqliteProcessConversationSystem:
                         sender_label=sender_label,
                         sender=sender,
                         recipient=recipient,
-                        reply_requested=reply_requested,
                         recovery_references=recovery_references,
                     )
                 break
@@ -1004,10 +934,7 @@ class SqliteProcessConversationSystem:
                                 record.owner_read_through_sequence,
                             ),
                         )
-            return AddressedPromptDeliveryReceipt(
-                fate=fate,
-                newly_accepted=not isinstance(fate, PromptDeliveryRefused),
-            )
+            return fate
         finally:
             if sender_message_id is not None:
                 async with state.lock:
@@ -1051,7 +978,6 @@ class SqliteProcessConversationSystem:
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
-        credit_explicit_reply: bool = True,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> None:
         """Append an owner-bound message under the conversation's ordering lock."""
@@ -1068,7 +994,6 @@ class SqliteProcessConversationSystem:
                 recipient=recipient,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                credit_explicit_reply=credit_explicit_reply,
                 recording_receipt=recording_receipt,
             ),
         )
@@ -1083,7 +1008,6 @@ class SqliteProcessConversationSystem:
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
-        credit_explicit_reply: bool = True,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> None:
         """Append an owner-bound message under the conversation's ordering lock."""
@@ -1118,53 +1042,6 @@ class SqliteProcessConversationSystem:
                 ),
                 recording_receipt=recording_receipt,
             )
-            if credit_explicit_reply:
-                self._credit_explicit_reply(state, recipient)
-
-    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
-        """Capture the active turn under the same lock that ends it."""
-        state = await self._conversation_state(conversation_id)
-        if state is None:
-            return None
-        async with state.lock:
-            running = state.running_turn
-            if running is None:
-                return None
-            return ConversationTurnReference(conversation_id, running.token.turn_number)
-
-    async def turn_expects_reply(
-        self, turn: ConversationTurnReference, recipient: Principal
-    ) -> bool:
-        """Return whether ``recipient`` is an unanswered sender on the named turn."""
-        state = await self._conversation_state(turn.conversation_id)
-        if state is None:
-            return False
-        async with state.lock:
-            running = state.running_turn
-            return bool(
-                running is not None
-                and running.token.turn_number == turn.turn_number
-                and recipient in running.prompt_senders
-                and recipient not in running.explicit_reply_recipients
-            )
-
-    async def record_explicit_reply(
-        self, turn: ConversationTurnReference, recipient: Principal
-    ) -> None:
-        """Credit an accepted explicit send to the source turn, without another row."""
-        state = await self._conversation_state(turn.conversation_id)
-        if state is None:
-            return
-        async with state.lock:
-            running = state.running_turn
-            if running is not None and running.token.turn_number == turn.turn_number:
-                running.explicit_reply_recipients.add(recipient)
-
-    @staticmethod
-    def _credit_explicit_reply(state: _ConversationState, recipient: Principal) -> None:
-        running = state.running_turn
-        if running is not None:
-            running.explicit_reply_recipients.add(recipient)
 
     async def retirement_is_confirmed(self, conversation_id: str) -> bool:
         """Require an actual cleanup receipt or proof that no source ever started."""
@@ -1638,13 +1515,6 @@ class SqliteProcessConversationSystem:
         if mode is HeldPromptPromotionMode.send_now:
             assert reservation is not None
             try:
-                reply_senders = (
-                    (held.sender,)
-                    if held.reply_requested
-                    and held.sender is not None
-                    and held.recipient is not None
-                    else ()
-                )
                 reservation.automatic_notice = await self._persist(
                     state,
                     partial(
@@ -1664,7 +1534,6 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change=held.reasoning_effort_change,
                     automatic_compaction=False,
                     messages=(held,),
-                    reply_senders=reply_senders,
                 )
             except PromptWriteFailed:
                 await self._record_delivery_uncertainty(state, reservation, (held,))
@@ -2331,12 +2200,9 @@ class SqliteProcessConversationSystem:
             return _SteerAttempt(attempt, PromptDeliverySuppressed(suppression_reason))
         adapter_error: Exception | None = None
         try:
-            wire_content = with_authenticated_reply_directive(
-                message.content, self._reply_senders(messages)
-            )
             outcome = await child.steer(
                 turn_token,
-                wire_content,
+                message.content,
                 sender_content=message.content,
                 sender_label=message.sender_label,
             )
@@ -2496,7 +2362,6 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=None,
                     sender=None,
                     recipient=None,
-                    reply_requested=True,
                     recovery_references=(),
                     owner_read_through_sequence=None,
                     content=text_message_content(AUTOMATIC_COMPACTION_PROMPT),
@@ -2604,13 +2469,6 @@ class SqliteProcessConversationSystem:
                 reasoning_effort_change=message.reasoning_effort_change,
                 automatic_compaction=reservation.automatic_compaction,
                 messages=(message,),
-                reply_senders=(
-                    (message.sender,)
-                    if message.reply_requested
-                    and message.sender is not None
-                    and message.recipient is not None
-                    else ()
-                ),
                 recording_receipt=message.recording_receipt,
             )
         except asyncio.CancelledError:
@@ -2665,18 +2523,6 @@ class SqliteProcessConversationSystem:
             refusal_reason=refusal,
         )
 
-    @staticmethod
-    def _reply_senders(messages: tuple[_Message, ...]) -> tuple[Principal, ...]:
-        return tuple(
-            dict.fromkeys(
-                message.sender
-                for message in messages
-                if message.reply_requested
-                and message.sender is not None
-                and message.recipient is not None
-            )
-        )
-
     async def _admit_dispatch_messages(
         self,
         state: _ConversationState,
@@ -2720,7 +2566,6 @@ class SqliteProcessConversationSystem:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool,
-        reply_senders: tuple[Principal, ...] = (),
         messages: tuple[_Message, ...] = (),
         reasoning_effort_is_set: bool = False,
         recording_receipt: NativeMessageOperation | None = None,
@@ -2736,7 +2581,6 @@ class SqliteProcessConversationSystem:
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             automatic_compaction=automatic_compaction,
-            reply_senders=reply_senders,
             messages=messages,
             reasoning_effort_is_set=reasoning_effort_is_set,
         )
@@ -2833,7 +2677,6 @@ class SqliteProcessConversationSystem:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool,
-        reply_senders: tuple[Principal, ...] = (),
         messages: tuple[_Message, ...] = (),
         reasoning_effort_is_set: bool = False,
     ) -> _PromptDeliveryAttempt:
@@ -2886,7 +2729,6 @@ class SqliteProcessConversationSystem:
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             automatic_compaction=automatic_compaction,
-            reply_senders=reply_senders,
             messages=messages,
             reasoning_effort_is_set=effort_is_set,
             interruption_notice=interruption_notice,
@@ -2905,7 +2747,6 @@ class SqliteProcessConversationSystem:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool,
-        reply_senders: tuple[Principal, ...] = (),
         messages: tuple[_Message, ...] = (),
         reasoning_effort_is_set: bool = False,
         interruption_notice: str | None = None,
@@ -2956,14 +2797,13 @@ class SqliteProcessConversationSystem:
             content = one_prompt_from(messages)
             sender_label = messages[0].sender_label
             sender_message_count = len(messages)
-            reply_senders = self._reply_senders(messages)
         if messages or wire_content is None:
             composed_content = await self._compose_prompt_content(state, content)
             if interruption_notice is not None:
                 composed_content = prefix_message_content_text(
                     composed_content, interruption_notice, "\n\n"
                 )
-            wire_content = with_authenticated_reply_directive(composed_content, reply_senders)
+            wire_content = composed_content
         if check_delivery_owner is not None:
             async with state.lock:
                 check_delivery_owner()
@@ -3235,23 +3075,6 @@ class SqliteProcessConversationSystem:
                 accepted_turn = RunningTurn(
                     token=reservation.token,
                     automatic_compaction=reservation.automatic_compaction,
-                    prompt_senders={
-                        principal: None
-                        for principal in (
-                            (
-                                message.sender
-                                if message.reply_requested and delivery.composed_content_delivered
-                                else None
-                            ),
-                            *(
-                                message.sender
-                                if message.reply_requested and delivery.composed_content_delivered
-                                else None
-                                for message in also_delivered
-                            ),
-                        )
-                        if principal is not None
-                    },
                     automatic_notice=reservation.automatic_notice,
                 )
                 # One transaction: the change, the conversation's new values and the
@@ -3495,15 +3318,6 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change=held.reasoning_effort_change,
                     automatic_compaction=False,
                     messages=batch,
-                    reply_senders=tuple(
-                        dict.fromkeys(
-                            message.sender
-                            for message in batch
-                            if message.reply_requested
-                            and message.sender is not None
-                            and message.recipient is not None
-                        )
-                    ),
                 )
             except PromptWriteFailed:
                 await self._record_delivery_uncertainty(state, reservation, batch)
@@ -3621,9 +3435,7 @@ class SqliteProcessConversationSystem:
             await self._append_event(
                 state,
                 _prompt_row(message, mode=PromptDeliveryMode.steer),
-                native_message_admission=NativeMessageAdmission(
-                    fate, getattr(outcome, "composed_content_delivered", False) is True
-                ),
+                native_message_admission=NativeMessageAdmission(fate),
                 lifecycle=(
                     () if attempt is None else (replace(attempt, status=LifecycleStatus.injected),)
                 ),
@@ -3642,8 +3454,6 @@ class SqliteProcessConversationSystem:
                 state.running_turn.automatic_notice = (
                     state.running_turn.automatic_notice and automatic_notice
                 )
-                if message.reply_requested and message.sender is not None:
-                    state.running_turn.prompt_senders.setdefault(message.sender, None)
             return PromptDeliveryInjected()
         if isinstance(outcome, BackendSteerRefused):
             await self._append_event(
@@ -3654,9 +3464,7 @@ class SqliteProcessConversationSystem:
                 lifecycle=(
                     () if attempt is None else (replace(attempt, status=LifecycleStatus.refused),)
                 ),
-                native_message_admission=NativeMessageAdmission(
-                    fate, getattr(outcome, "composed_content_delivered", False) is True
-                ),
+                native_message_admission=NativeMessageAdmission(fate),
                 owner_read_through_sequence=(
                     message.owner_read_through_sequence
                     if message.acknowledge_owner_on_failure
@@ -3671,9 +3479,7 @@ class SqliteProcessConversationSystem:
         await self._append_event(
             state,
             _uncertain_row(message, mode=PromptDeliveryMode.steer),
-            native_message_admission=NativeMessageAdmission(
-                fate, outcome.composed_content_delivered is True
-            ),
+            native_message_admission=NativeMessageAdmission(fate),
             lifecycle=(
                 () if attempt is None else (replace(attempt, status=LifecycleStatus.unknown),)
             ),
@@ -3692,12 +3498,10 @@ class SqliteProcessConversationSystem:
             and state.running_turn.token == turn_token
         ):
             # The backend may have accepted the text. Treating it as part of this turn
-            # avoids a false silence marker and matches the delivery's non-retry fate.
+            # matches the delivery's non-retry fate.
             state.running_turn.automatic_notice = (
                 state.running_turn.automatic_notice and automatic_notice
             )
-            if message.reply_requested and message.sender is not None:
-                state.running_turn.prompt_senders.setdefault(message.sender, None)
         return PromptDeliveryUncertain()
 
     # --- turns --------------------------------------------------------------------------
@@ -4024,7 +3828,6 @@ class SqliteProcessConversationSystem:
                     text_message_content(_lost_background_task_prompt(task_description)),
                     sender_label=LOST_BACKGROUND_TASK_SENDER_LABEL,
                     mode=PromptDeliveryMode.queue,
-                    reply_requested=False,
                 )
             except asyncio.CancelledError:
                 raise

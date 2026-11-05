@@ -182,7 +182,6 @@ async def _admitted_deliver_batch(
                             sender_label=WAKE_SENDER_LABEL,
                             mode=PromptDeliveryMode.queue,
                             sender_message_id=batch.sender_message_id,
-                            reply_requested=False,
                             now=now(),
                         )
                     else:
@@ -197,7 +196,6 @@ async def _admitted_deliver_batch(
                             sender_label=WAKE_SENDER_LABEL,
                             mode=PromptDeliveryMode.queue,
                             sender_message_id=batch.sender_message_id,
-                            reply_requested=False,
                             required_manager_id=required_manager_id,
                         )
                 except BaseException:

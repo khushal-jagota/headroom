@@ -110,20 +110,19 @@ async def dispatch(
                     status, reason = "refused", "requesting_conversation_retired"
                 else:
                     try:
-                        receipt = await runtime.system.send_with_receipt(
+                        fate = await runtime.system.send(
                             origin,
                             text_message_content(str(attempt["prompt"])),
                             sender_label="Panels credential request result",
                             sender_message_id=str(attempt["sender_message_id"]),
                             mode=PromptDeliveryMode.steer,
-                            reply_requested=False,
                             record_refusal=True,
                         )
                     except Exception:
                         # A missing response is not evidence that no provider received the result.
                         status = "uncertain"
                     else:
-                        match receipt.fate:
+                        match fate:
                             case PromptDeliveryStarted():
                                 status = "started"
                             case PromptDeliveryInjected():

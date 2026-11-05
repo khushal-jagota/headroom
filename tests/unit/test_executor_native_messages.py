@@ -62,7 +62,7 @@ class CrashAfterCanonicalOwnerMessage(SqliteProcessConversationSystem):
 
 
 @pytest.mark.parametrize("committed", [True, False])
-def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
+def test_help_replay_after_domain_commit_keeps_original_holder(
     tmp_db: Connection,
     tmp_path: Path,
     committed: bool,
@@ -168,15 +168,6 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
             saved = lookup_receipt(store, envelope.sender_id, envelope.submission_id)
             assert saved is not None
             assert saved.result["fate"] == ("recorded" if committed else "uncertain")
-            assert (
-                bool(
-                    tmp_db.execute(
-                        "SELECT 1 FROM conversation_reply_credits WHERE conversation_id='c_source' "
-                        "AND principal_kind='owner' AND principal_id='owner'"
-                    ).fetchone()
-                )
-                is committed
-            )
             changed = data.accept_proposal(
                 tmp_db,
                 ticket.id,
@@ -201,15 +192,6 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
                 "conversation_id": "c_source" if committed else None,
                 "fate": "recorded" if committed else "uncertain",
             }
-            assert (
-                bool(
-                    tmp_db.execute(
-                        "SELECT 1 FROM conversation_reply_credits WHERE conversation_id='c_source' "
-                        "AND principal_kind='owner' AND principal_id='owner'"
-                    ).fetchone()
-                )
-                is committed
-            )
             assert system.owner_deliveries == int(committed)
             assert native_calls == native_before
             rows = tmp_db.execute(
