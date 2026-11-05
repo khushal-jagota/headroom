@@ -120,7 +120,7 @@ STAGING_ONLY_TABLES = (
 def _staging_shape(tmp_path: Path) -> Path:
     """Keep retained schema real and reinstate only the tables the upgrade removes."""
     path = tmp_path / "staging.db"
-    with closing(connect(path)) as conn:
+    with closing(connect(str(path))) as conn:
         create_schema(conn)
         for statement in STAGING_ONLY_TABLES:
             conn.execute(statement)
@@ -131,7 +131,7 @@ def _staging_shape(tmp_path: Path) -> Path:
 
 
 def test_fresh_schema_has_no_reply_credits(tmp_path: Path) -> None:
-    with closing(connect(tmp_path / "fresh.db")) as conn:
+    with closing(connect(str(tmp_path / "fresh.db"))) as conn:
         create_schema(conn)
         assert conn.execute(
             "SELECT 1 FROM sqlite_master WHERE name='conversation_reply_credits'"
@@ -157,7 +157,7 @@ def test_upgrade_deletes_marker_rows_and_moves_the_rest_line_to_what_remains(
     tmp_path: Path, entry: str,
 ) -> None:
     path = _staging_shape(tmp_path)
-    with closing(connect(path)) as conn:
+    with closing(connect(str(path))) as conn:
         _make_conversation(conn, "retired", compacted=0)
         for sequence, (kind, payload) in enumerate(EVENTS, start=1):
             encoded = json.dumps(payload)
