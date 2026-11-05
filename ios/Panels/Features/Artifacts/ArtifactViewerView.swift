@@ -82,7 +82,7 @@ struct ArtifactViewerView: View {
                 switch activeConversationOwner {
                 case .ticket(let id): conversationID = try await store.client.ticket(id).conversationId
                 case .manager(let id): conversationID = try await store.client.manager(id).manager.conversationId
-                case .goal(let id): conversationID = try await store.client.goal(id).conversationId
+                case .goal: break
                 case .chief: conversationID = try await store.client.chiefConversation().conversationId
                 }
             } catch { /* The owner send door remains available when detail cannot be read. */ }
@@ -137,6 +137,7 @@ struct ArtifactViewerView: View {
         }
     }
     private func follow(_ url: URL) {
+        if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
         if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
             if target.id != self.target.id { linkedArtifact = target }
         } else if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") { openURL(url) }

@@ -26,7 +26,7 @@ struct RouteDestination: View {
         case .chief: ChiefView()
         case .conversation(let owner, let id):
             switch owner {
-            case .goal(let goalID): GoalView(goalID: goalID, openConversationID: id)
+            case .goal: ContentUnavailableView("Goal conversation retired", systemImage: "bubble.left", description: Text("Open the goal to talk to its holder."))
             case .chief: ChiefView(openConversationID: id)
             case .manager(let managerID): OrchestratorView(managerID: managerID, openConversationID: id)
             case .ticket(let ticketID): TicketView(ticketID: ticketID, openConversationID: id)

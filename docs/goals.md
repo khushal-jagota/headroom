@@ -8,7 +8,6 @@ A goal is an outcome Khushal wants by a date, with a page that shows how close i
 - **The page.** A flexible document in the shared page kit: text, checklists, tables, layouts, and charts. The page is a dashboard for Khushal. Steps are checklists and numbers are charts. Text adds context that the checklists and charts do not show.
 - **The main display.** One checkbox, one checklist, or one chart that stands for the goal in cards, the overview, and the rail.
 - **A completion rule.** What counts as done. See below.
-- **A file folder.** Notes, research, and evidence that the page can link to.
 
 ```
  measures ─────────────────────► charts on the page
@@ -49,7 +48,7 @@ Khushal edits most text on the page in place. Checklist wording belongs to the h
 
 - The **goal page**, with its holder's conversation beside it.
 - **Holder pages.** Chief and each Manager have a page in the same page kit, where Tickets is one of the blocks. A Manager with one goal is shown as that goal under the Manager's name, and both its Goal and Manager links open that page. A Manager with several goals shows goal cards. `panels goal make-manager` turns a Chief goal into a new Manager that holds it.
-- **Active goals** inside the Chief card in the rail. Hovering or holding a row opens a preview with the main display, which Khushal can check or edit from there.
+- **Active goals** inside their holder’s card in the rail or iPhone Workspace. Hovering or holding a row opens a preview with the main display, which Khushal can check or edit from there.
 - The **goals overview**, with cards and a table.
 - `panels goal` for agents: list, show, create, edit, read, and artifact commands. `panels goal schema` prints the accepted request shapes with examples, so agents read those before a write.
 
@@ -64,6 +63,6 @@ Khushal edits most text on the page in place. Checklist wording belongs to the h
 
 - `src/planner/goals/`: records, the writer, completion rules, outcomes, holders, and the background check. `src/planner/managers/pages.py`: Chief and Manager page documents.
 - `src/planner/measures/` and `src/planner/datasets/`: the numbers that charts and rules read.
-- `web/src/components/goals/` and `web/src/lib/goals/`: the page, rail, previews, and overview.
+- `web/src/components/goals/` and `web/src/lib/goals/`: the page, rail, previews, and overview. `ios/Panels/Features/Goals/`: the native holder and goal documents, sharing the existing chart and checklist animations.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-05._

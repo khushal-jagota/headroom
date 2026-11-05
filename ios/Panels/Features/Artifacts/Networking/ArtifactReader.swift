@@ -22,7 +22,7 @@ extension APIClient {
 
     func artifactDocument(_ target: ArtifactTarget) async throws -> ArtifactDocument {
         let remoteURL = try artifactURL(target)
-        var request = URLRequest(url: remoteURL)
+        var request = try self.request(remoteURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 30
         let (download, response) = try await session.download(for: request)

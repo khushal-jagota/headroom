@@ -4,8 +4,9 @@ struct AllGoalsView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
     @State private var goals: [GoalRecord] = []
+    @State private var managers: [ManagerSummary] = []
     @State private var projects: [GoalJSON] = []
-    @State private var sessions: [String: GoalSession] = [:]
+    @State private var sessions: [String: PageSession] = [:]
     @State private var filters = GoalFilters()
     @State private var draft = GoalFilters()
     @State private var selectedFilter: Int?
@@ -57,7 +58,7 @@ struct AllGoalsView: View {
         let values = readings(goal)
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text(goal.title).font(.body.weight(.medium)).foregroundStyle(PanelsTheme.strong)
+                Text(displayName(goal)).font(.body.weight(.medium)).foregroundStyle(PanelsTheme.strong)
                 Spacer(minLength: 8)
             }
             HStack(spacing: 8) {
@@ -72,6 +73,10 @@ struct AllGoalsView: View {
                 Text("Target  " + format(goal, values.1)).foregroundStyle(PanelsTheme.Goal.faint)
             }.font(.footnote).monospacedDigit()
         }.padding(.vertical, 20).contentShape(Rectangle())
+    }
+    private func displayName(_ goal: GoalRecord) -> String {
+        guard let holder = goal.holder, holder.kind == .manager, holder.soleGoal(in: goals) != nil else { return goal.title }
+        return managers.first { $0.id == holder.id }?.title ?? "Manager"
     }
     private func format(_ goal: GoalRecord, _ value: Double?) -> String {
         if let block = GoalPresentation.primaryChart(goal), block.kind != "binary" { return GoalChartPresentation.format(block, value) }
@@ -134,11 +139,12 @@ struct AllGoalsView: View {
         let api = store.client
         do {
             async let response = api.goals()
+            async let managerResponse = api.managers()
             async let projectResponse: GoalJSON = api.get("/api/projects")
-            let (list, projects) = try await (response, projectResponse); try Task.checkCancellation()
+            let (list, projects, managers) = try await (response, projectResponse, managerResponse); try Task.checkCancellation()
             guard api.baseURL == store.baseURL else { return }
-            goals = list.goals; nextRefreshAt = list.nextRefreshAt; self.projects = projects["projects"].array; loaded = true; error = nil
-            for goal in goals { sessions[goal.id] = GoalSession.session(id: goal.id, api: api, initial: goal) }
+            self.managers = managers.managers; goals = list.goals; nextRefreshAt = list.nextRefreshAt; self.projects = projects["projects"].array; loaded = true; error = nil
+            for goal in goals { sessions[goal.id] = PageSession.session(id: goal.id, api: api, initial: goal) }
             await withTaskGroup(of: Void.self) { group in
                 for session in sessions.values { group.addTask { await session.refresh() } }
             }

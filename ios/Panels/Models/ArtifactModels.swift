@@ -1,7 +1,7 @@
 import Foundation
 
 struct ArtifactOwner: Hashable, Sendable {
-    enum Kind: String, Sendable { case ticket, manager, goal }
+    enum Kind: String, Sendable { case ticket, manager }
     let kind: Kind
     let id: String
 }
@@ -20,9 +20,9 @@ struct ArtifactEntry: Codable, Identifiable, Sendable {
 
 extension ArtifactOwner {
     var conversationOwner: ConversationOwner {
-        switch kind { case .ticket: .ticket(id); case .manager: .manager(id); case .goal: .goal(id) }
+        switch kind { case .ticket: .ticket(id); case .manager: .manager(id) }
     }
     var collection: String {
-        switch kind { case .ticket: "tickets"; case .manager: "managers"; case .goal: "goals" }
+        switch kind { case .ticket: "tickets"; case .manager: "managers" }
     }
 }

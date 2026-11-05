@@ -11,7 +11,7 @@ struct NativePushAPI: NativePushRegistering {
         try await write(device, method: "DELETE")
     }
     private func write(_ device: NativePushRegistration, method: String) async throws {
-        var request = URLRequest(url: try client.url("/api/notifications/apns/devices"))
+        var request = try client.request(try client.url("/api/notifications/apns/devices"))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(device)

@@ -69,7 +69,7 @@ struct TicketView: View {
         .navigationDestination(item: $linkedArtifact) { RouteDestination(route: $0) }
         .environment(\.openURL, OpenURLAction { url in
             if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { linkedArtifact = route; return .handled }
-            return .systemAction
+            return ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) ? .discarded : .systemAction
         })
     }
 

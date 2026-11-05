@@ -7,7 +7,7 @@ extension APIClient {
         AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let task = Task {
                 do {
-                    var request = URLRequest(url: try url("/api/changes"))
+                    var request = try self.request(try url("/api/changes"))
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.cachePolicy = .reloadIgnoringLocalCacheData
                     request.timeoutInterval = 120

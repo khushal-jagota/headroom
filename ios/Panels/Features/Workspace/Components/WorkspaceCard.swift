@@ -18,6 +18,7 @@ struct WorkspaceCard: View {
     let route: AppRoute
     let signal: ConversationSignal?
     let groups: [WorkspaceTicketGroup]
+    var goals: [GoalRecord] = []
     let previewChanged: (Bool) -> Void
     let open: (AppRoute) -> Void
     @Environment(AppStore.self) private var store
@@ -65,7 +66,8 @@ struct WorkspaceCard: View {
             .accessibilityIdentifier(chief ? "workspace-chief" : "workspace-orchestrator")
             .modifier(WorkspaceContextMenu(route: route, title: title, parent: project, ticket: nil,
                                            signal: signal, previewChanged: previewChanged, open: open))
-            if chief { WorkspaceGoals(open: open).padding(.top, 12) }
+            if chief { WorkspaceGoals(holder: .chief, goals: goals, open: open).padding(.top, 12) }
+            else if case .orchestrator(let id) = route { WorkspaceGoals(holder: .manager(id), goals: goals, open: open).padding(.top, 12) }
             ForEach(rows) { row in
                 switch row {
                 case .heading(let section):

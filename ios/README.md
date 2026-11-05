@@ -675,14 +675,19 @@ physical-device behavior or a live Mac/VPS round trip from the iPhone.
 
 ## Goals
 
-Active goals sit inside the Chief card in Workspace. A tap opens the goal; a long
-press shows its main display and an Open action. A binary goal without a checklist
+Active goals sit inside their Chief or Manager holder's card in Workspace. A tap
+opens the goal; a long press shows its main display and an Open action. A binary goal without a checklist
 also offers Mark done or Mark not done. Manual charts offer their configured
-increments, such as Add 100 words. Chief shows the same active goals with working
-checklists and manual charts; All goals includes inactive goals and filters for
-each column.
+increments, such as Add 100 words. Chief and Managers show their own goals with
+working checklists and manual charts. A Manager with one goal displays that goal
+under the Manager's name; multiple goals use cards. Holder documents use the same
+native page renderer, including Tickets blocks; when none is authored the page
+keeps its own paged Tickets list. All goals includes inactive goals and column filters.
 
-A goal page uses the existing conversation, file reader and Review message controls.
+A goal page opens its holder's conversation. Previous goal transcripts use the
+existing historical reader and remain read only. Retired goal-owned Review rows
+and file links cannot open; old queued goal sends keep their words without replay.
+Ordinary Ticket and Manager files still use the native reader.
 Project, deadline, state, title and explanation can be edited in place. Saved page
 text can be edited too; Markdown keeps its links and offers Edit on a long press.
 Tables sort without changing the stored row order. Grids stack on the phone.

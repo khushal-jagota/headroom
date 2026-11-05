@@ -4,24 +4,20 @@ struct GoalView: View {
     let goalID: String
     var openConversationID: String? = nil
     @Environment(AppStore.self) private var store
-    @State private var session: GoalSession?
+    @State private var session: PageSession?
     var body: some View {
         Group {
             if let session {
                 GoalDetailContent(session: session, openConversationID: openConversationID)
             } else { ScreenLoadingView(title: "goal") }
-        }.task(id: store.baseURL) { session = GoalSession.session(id: goalID, api: store.client) }
+        }.task(id: store.baseURL) { session = PageSession.session(id: goalID, api: store.client) }
     }
 }
 private struct GoalDetailContent: View {
-    let session: GoalSession
+    let session: PageSession
     var openConversationID: String?
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.openURL) private var openURL
-    @State private var projects: [GoalJSON] = []
-    @State private var files = false
-    @State private var selectedArtifact: ArtifactTarget?
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
@@ -29,13 +25,34 @@ private struct GoalDetailContent: View {
                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 }) {
                     Menu {
-                        Button("Files", systemImage: "folder") { files = true }
                         Button("Copy link", systemImage: "link") {
                             var link = URLComponents(url: store.baseURL, resolvingAgainstBaseURL: false)
                             link?.fragment = "/workspace/goal/\(session.id)"; UIPasteboard.general.url = link?.url
                         }
                     } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("Goal actions")
                 }
+                GoalDocumentContent(session: session)
+            }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, 32)
+        }.panelsScreen().toolbar(.hidden, for: .navigationBar)
+            .modifier(GoalHolderConversation(session: session, openConversationID: openConversationID))
+            .screenLoadState("goal", hasContent: session.goal != nil, error: session.readError, showsRefreshError: false) { await session.refresh() }
+            .panelsRefreshable { await session.refresh() }
+            .task(id: "\(store.revision):\(scenePhase == .active)") { if scenePhase == .active { await session.refresh() } }
+            .modifier(GoalBoundaryRefresh(at: session.nextRefreshAt) { await session.refresh() })
+            .environment(\.pageTicketHolder, session.goal?.holder)
+            .modifier(PageArtifactNavigation(holder: session.goal?.holder))
+            .accessibilityIdentifier("goal-screen")
+    }
+}
+
+/// The same goal document appears on its own page and under a sole-goal Manager.
+struct GoalDocumentContent: View {
+    let session: PageSession
+    var showsTitle = true
+    @Environment(AppStore.self) private var store
+    @State private var projects: [GoalJSON] = []
+    var body: some View {
+        VStack(alignment: .leading, spacing: 28) {
                 if let goal = session.goal {
                     header(goal)
                     GoalSaveFailure(session: session)
@@ -47,21 +64,13 @@ private struct GoalDetailContent: View {
                         Text(source["source_name"].text + ": " + source["health"].text).font(.caption).foregroundStyle(PanelsTheme.Goal.attention)
                     }
                     GoalPageBlocks(blocks: GoalPresentation.withoutChecklist(goal.page["blocks"].array, id: GoalPresentation.primaryChecklist(goal)?.id), session: session).padding(.top, 12)
+                    if let legacy = goal.legacyConversationId, let holder = goal.holder {
+                        NavigationLink("Previous goal conversation", value: AppRoute.conversation(owner: holder.conversationOwner, id: legacy))
+                            .font(.footnote)
+                    }
                 }
-            }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, 32)
-        }.panelsScreen().toolbar(.hidden, for: .navigationBar)
-            .conversationNavigation(owner: .goal(session.id), conversationID: session.goal?.conversationId, title: session.goal?.title ?? "Goal", openConversationID: openConversationID, refreshError: session.readError, retry: { await session.refresh() })
-            .screenLoadState("goal", hasContent: session.goal != nil, error: session.readError, showsRefreshError: false) { await session.refresh() }
-            .panelsRefreshable { await session.refresh() }
-            .task(id: "\(store.revision):\(scenePhase == .active)") { if scenePhase == .active { await session.refresh(); await loadProjects() } }
+        }.task(id: "\(store.baseURL):\(store.revision)") { await session.refresh(); await loadProjects() }
             .modifier(GoalBoundaryRefresh(at: session.nextRefreshAt) { await session.refresh() })
-            .environment(\.openURL, OpenURLAction { url in
-                if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selectedArtifact = target; return .handled }
-                return .systemAction
-            })
-            .navigationDestination(item: $selectedArtifact) { target in ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, conversationOwner: .goal(session.id)) }
-            .navigationDestination(isPresented: $files) { ScrollView { ArtifactListView(owner: .init(kind: .goal, id: session.id)).padding() }.panelsScreen().navigationTitle("Files") }
-            .accessibilityIdentifier("goal-screen")
     }
     private func header(_ goal: GoalRecord) -> some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -69,8 +78,10 @@ private struct GoalDetailContent: View {
                 HStack(spacing: 12) { metadata(goal) }
                 VStack(alignment: .leading, spacing: 8) { metadata(goal) }
             }.panelsScaledFont(size: 12, weight: .medium)
-            GoalEditableText(value: goal.title, label: "Goal title", session: session, path: ["title"])
-                .panelsScaledFont(size: 30, relativeTo: .title, weight: .semibold).foregroundStyle(PanelsTheme.strong)
+            if showsTitle {
+                GoalEditableText(value: goal.title, label: "Goal title", session: session, path: ["title"])
+                    .panelsScaledFont(size: 30, relativeTo: .title, weight: .semibold).foregroundStyle(PanelsTheme.strong)
+            }
             GoalEditableText(value: goal.why, label: "Why this goal matters", session: session, path: ["why"], multiline: true)
                 .panelsScaledFont(size: 14, weight: .medium).foregroundStyle(PanelsTheme.Goal.faint)
         }
@@ -91,5 +102,33 @@ private struct GoalDetailContent: View {
     }
     private func loadProjects() async {
         if let response: GoalJSON = try? await store.client.get("/api/projects") { projects = response["projects"].array }
+    }
+}
+
+private struct GoalHolderConversation: ViewModifier {
+    let session: PageSession
+    var openConversationID: String?
+    @Environment(AppStore.self) private var store
+    @State private var conversationID: String?
+    @State private var resolvedHolder: GoalHolder?
+    @State private var error: String?
+    func body(content: Content) -> some View {
+        Group {
+            if let holder = session.goal?.holder {
+                content.conversationNavigation(owner: holder.conversationOwner, conversationID: resolvedHolder == holder ? conversationID : nil,
+                    title: session.goal?.title ?? "Goal", openConversationID: openConversationID,
+                    refreshError: error ?? session.readError, retry: { await session.refresh(); await load() })
+                    .id(holder)
+            } else { content }
+        }.task(id: "\(store.baseURL):\(String(describing: session.goal?.holder)):\(store.revision)") { await load() }
+    }
+    private func load() async {
+        guard let holder = session.goal?.holder else { return }
+        let api = store.client
+        do {
+            let current = try await api.currentConversation(holder.conversationOwner)
+            guard !Task.isCancelled, api.baseURL == store.baseURL, session.goal?.holder == holder else { return }
+            conversationID = current; resolvedHolder = holder; error = nil
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
 }

@@ -128,7 +128,7 @@ struct GoalPlainPress: ButtonStyle {
 }
 
 struct GoalSaveFailure: View {
-    let session: GoalSession
+    let session: PageSession
     var body: some View {
         if let error = session.saveError {
             VStack(alignment: .leading, spacing: 8) {

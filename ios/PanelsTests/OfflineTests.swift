@@ -271,3 +271,24 @@ private final class OfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(model.rows.first?.text, "Words")
     }
 }
+
+extension OfflineTests {
+    func testRequiredUpdateRetainsPendingIdentityAndDraftWithoutReplay() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let api = APIClient(baseURL: URL(string: "https://update-\(UUID().uuidString).invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        store.saveDraft("More unsent words", server: server, id: "draft")
+        let message = ConversationSend(conversationId: "c", content: [.init(text: "Pending words")], senderMessageId: "stable", sentAtUnixMilliseconds: 123)
+        let outbox = Outbox(store: store)
+        try outbox.save(PendingWork(id: "stable", created: .now, kind: .message, owner: .chief, message: message), server: server)
+        NativeBuildGate.requireUpdate(api.baseURL)
+        await outbox.drain(api: api)
+        let saved = try XCTUnwrap(outbox.entries(server).first)
+        XCTAssertEqual(saved.state, .waiting)
+        XCTAssertEqual(saved.message?.senderMessageId, "stable")
+        XCTAssertEqual(saved.message?.content.first?.text, "Pending words")
+        XCTAssertEqual(store.draft(server: server, id: "draft"), "More unsent words")
+    }
+}

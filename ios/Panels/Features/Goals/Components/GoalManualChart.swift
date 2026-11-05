@@ -145,7 +145,7 @@ private struct GoalNumberField: UIViewRepresentable {
 
 struct GoalManualChart: View {
     let block: GoalJSON
-    let session: GoalSession
+    let session: PageSession
     var integrated = false
     var preview = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

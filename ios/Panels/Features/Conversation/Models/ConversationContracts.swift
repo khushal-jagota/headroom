@@ -3,11 +3,11 @@ import Foundation
 // Subset of conversation/views/contracts.py, shared with the web projection.
 enum ConversationOwner: Codable, Hashable, Sendable {
     case chief, manager(String), ticket(String), goal(String)
-    var path: String {
+    var path: String? {
         switch self {
         case .chief: return "/api/chief/conversation"
         case .manager(let id): return "/api/managers/\(id)/conversation"
-        case .goal(let id): return "/api/goals/\(id)/conversation"
+        case .goal: return nil
         case .ticket(let id): return "/api/tickets/\(id)/conversation"
         }
     }

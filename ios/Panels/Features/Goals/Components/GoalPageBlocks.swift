@@ -3,7 +3,7 @@ import SwiftUI
 /// Recursive native renderer for the twelve headroom.page block kinds.
 struct GoalPageBlocks: View {
     let blocks: [GoalJSON]
-    let session: GoalSession
+    let session: PageSession
     var body: some View {
         VStack(alignment: .leading, spacing: 32) {
             ForEach(blocks, id: \.id) { block in GoalPageBlock(block: block, session: session) }
@@ -12,10 +12,12 @@ struct GoalPageBlocks: View {
 }
 private struct GoalPageBlock: View {
     let block: GoalJSON
-    let session: GoalSession
+    let session: PageSession
+    @Environment(\.pageTicketHolder) private var holder
     @State private var selectedView: String?
     @ViewBuilder var body: some View {
         switch block.type {
+        case "tickets": if let holder { HolderTickets(holder: holder) }
         case "text": edit(block["text"].text, "Text", ["text"], markdown: true).panelsScaledFont(size: 18)
         case "chart": GoalChart(block: block, session: session)
         case "checklist": GoalChecklist(block: block, session: session, supplementary: true)
@@ -94,7 +96,7 @@ private struct GoalPageBlock: View {
                                 .panelsScaledFont(size: 13, weight: .medium).foregroundStyle(current?.id == view.id ? PanelsTheme.strong : PanelsTheme.Goal.faint)
                                 .accessibilityAddTraits(current?.id == view.id ? .isSelected : [])
                                 .contextMenu {
-                                    Button("Edit view label") { session.textDrafts[block.id + ":views." + String(index) + ".label"] = .init(text: view["label"].text, revision: session.goal?.revision ?? 0) }
+                                    Button("Edit view label") { session.textDrafts[block.id + ":views." + String(index) + ".label"] = .init(text: view["label"].text, revision: session.revision) }
                                 }
                             if session.textDrafts[block.id + ":views." + String(index) + ".label"] != nil {
                                 edit(view["label"].text, "View label", ["views", String(index), "label"])
@@ -113,7 +115,7 @@ private struct GoalPageBlock: View {
 /// survives sorting. Deliberate owner exception to the web's nested table frame.
 private struct GoalPageTable: View {
     let block: GoalJSON
-    let session: GoalSession
+    let session: PageSession
     @State private var sortColumn: Int?
     @State private var ascending = true
     private var rows: [(Int, GoalJSON)] {

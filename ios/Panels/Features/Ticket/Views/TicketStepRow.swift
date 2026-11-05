@@ -103,7 +103,7 @@ struct TicketStepPage: View {
             .navigationDestination(item: $artifact) { RouteDestination(route: $0) }
             .environment(\.openURL, OpenURLAction { url in
                 if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { artifact = route; return .handled }
-                return .systemAction
+                return ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) ? .discarded : .systemAction
             })
     }
     private func load() async {

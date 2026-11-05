@@ -4,7 +4,7 @@ import Observation
 struct GoalEditableText: View {
     let value: String
     let label: String
-    let session: GoalSession
+    let session: PageSession
     var blockID: String? = nil
     var path: [String]
     var markdown = false
@@ -33,7 +33,7 @@ struct GoalEditableText: View {
                     .accessibilityAction(named: "Edit " + label) { if editable { begin() } }
             }
         }
-        .onChange(of: session.goal?.revision) { _, _ in
+        .onChange(of: session.revision) { _, _ in
             if session.saveError == nil, session.submittedTextKey == key {
                 session.textDrafts[key] = nil; session.submittedTextKey = nil; focused = false
             }
@@ -43,7 +43,7 @@ struct GoalEditableText: View {
     }
     private func begin() {
         guard editable, !session.busy, !session.hasPendingEdit, session.textDrafts[key] == nil else { return }
-        session.textDrafts[key] = .init(text: value, revision: session.goal?.revision ?? 0); focused = true
+        session.textDrafts[key] = .init(text: value, revision: session.revision); focused = true
     }
     private func commit() {
         guard let draft, !session.busy, session.saveError == nil else { return }

@@ -6,7 +6,7 @@ import XCTest
     private func goal() throws -> GoalRecord {
         try APIClient.decoder().decode(GoalRecord.self, from: Data(Self.goalWire.utf8))
     }
-    static let goalWire = #"{"id":"g","project_id":"project_personal","title":"Release","why":"Help people","kind":"binary","active":true,"completed":false,"completion_date":null,"completion_rule":null,"outcome":"pending","primary_checklist_block_id":"chosen","deadline":"2026-11-04","primary_chart":null,"page":{"kind":"headroom.page","version":1,"title":"Release","summary":"","blocks":[{"type":"section","id":"section","title":"Steps","views":[{"id":"a","label":"Plan","blocks":[{"type":"checklist","id":"chosen","items":[{"id":"one","label":"First","state":"open"}]}]}]}]},"revision":5,"created_at":1,"updated_at":1,"employee_backend":"codex","employee_launch_model":"gpt-6","employee_launch_reasoning_effort":null,"conversation_id":"c","status":"attention","status_date":"2026-11-04","next_refresh_at":1793836800}"#
+    static let goalWire = #"{"id":"g","project_id":"project_personal","title":"Release","why":"Help people","kind":"binary","active":true,"completed":false,"completion_date":null,"completion_rule":null,"outcome":"pending","primary_checklist_block_id":"chosen","deadline":"2026-11-04","primary_chart":null,"page":{"kind":"headroom.page","version":1,"title":"Release","summary":"","blocks":[{"type":"section","id":"section","title":"Steps","views":[{"id":"a","label":"Plan","blocks":[{"type":"checklist","id":"chosen","items":[{"id":"one","label":"First","state":"open"}]}]}]}]},"revision":5,"created_at":1,"updated_at":1,"employee_backend":"codex","employee_launch_model":"gpt-6","employee_launch_reasoning_effort":null,"holder_kind":"chief","holder_id":null,"legacy_conversation_id":"c","status":"attention","status_date":"2026-11-04","next_refresh_at":1793836800}"#
 
     /// One corpus proof covers the cross-language presentation boundary using the
     /// current web's functions, not copied expectations or another browser host.
@@ -124,20 +124,15 @@ import XCTest
         filter.dueFrom = ""; filter.state = "inactive"
         XCTAssertFalse(filter.matches(record, current: nil, target: 3))
     }
-    func testGoalOwnerUsesTheRealConversationAndArtifactDoors() throws {
+    func testGoalLinksStillOpenTheGoalWhileRetiredOwnersHaveNoConversationDoor() {
         let item = ReviewItem(reviewItemType: "message", title: "Release", waitingSince: 1, conversationId: "c", ownerKind: "goal", ownerId: "g")
-        XCTAssertEqual(item.owner, .goal("g"))
-        XCTAssertEqual(item.owner?.path, "/api/goals/g/conversation")
-        let base = URL(string: "https://panels.example")!
-        let target = try XCTUnwrap(ArtifactTarget.from(URL(string: "https://panels.example/files/goals/g/proof.md")!, baseURL: base))
-        XCTAssertEqual(target.owner.conversationOwner, .goal("g"))
-        XCTAssertEqual(try APIClient(baseURL: base).artifactURL(target).path, "/files/goals/g/proof.md")
-        XCTAssertEqual(ArtifactTarget.from(target.previewURL(baseURL: base), baseURL: base), target)
+        XCTAssertNil(item.owner)
+        XCTAssertNil(ConversationOwner.goal("g").path)
         XCTAssertEqual(NotificationRouting.destination("#/workspace/goal/g"), .goal("g"))
     }
     func testConflictingTextRetryKeepsCapturedRevisionAndDiscardUsesAcceptedGoal() async throws {
         GoalProtocol.state.reset(try goal())
-        let api = client(); let session = GoalSession(id: "g", api: api, goal: try goal())
+        let api = client(); let session = PageSession(id: "g", api: api, goal: try goal())
         GoalProtocol.state.conflictGoal()
         await session.save(["title": .string("Draft")], revision: 5)
         XCTAssertNotNil(session.saveError)
@@ -178,6 +173,72 @@ import XCTest
         editor.accept(old)
         XCTAssertEqual(editor.state?.writeRevision, 2)
     }
+
+    func testHolderPlacementAndNestedTicketsUseCurrentServerFields() throws {
+        let chiefGoal = try goal()
+        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+        var fields = try JSONSerialization.jsonObject(with: encoder.encode(chiefGoal)) as! [String: Any]
+        fields["id"] = "managed"; fields["holder_kind"] = "manager"; fields["holder_id"] = "m"
+        let managed = try APIClient.decoder().decode(GoalRecord.self, from: JSONSerialization.data(withJSONObject: fields))
+        XCTAssertEqual(GoalHolder.chief.goals(in: [chiefGoal, managed]).map(\.id), ["g"])
+        XCTAssertEqual(GoalHolder.manager("m").goals(in: [chiefGoal, managed]).map(\.id), ["managed"])
+        XCTAssertTrue(GoalHolder.manager("other").goals(in: [chiefGoal, managed]).isEmpty)
+        XCTAssertEqual(GoalHolder.manager("m").soleGoal(in: [chiefGoal, managed])?.id, "managed")
+        XCTAssertNil(GoalHolder.manager("m").soleGoal(in: [managed, managed]))
+        XCTAssertNil(GoalHolder.manager("other").soleGoal(in: [chiefGoal, managed]))
+        XCTAssertEqual(managed.holder?.conversationOwner, .manager("m"))
+        XCTAssertEqual(chiefGoal.holder?.conversationOwner, .chief)
+        XCTAssertEqual(chiefGoal.legacyConversationId, "c")
+        let page = try json(#"[{"type":"section","blocks":[],"views":[{"blocks":[{"type":"tickets","id":"t"}]}]}]"#)
+        XCTAssertTrue(PageDocumentPresentation.hasTickets(page.array))
+        XCTAssertFalse(PageDocumentPresentation.hasTickets(chiefGoal.page["blocks"].array))
+    }
+
+    func testHolderPageEditsUseHolderRevisionAndPreserveTheDocument() async throws {
+        GoalProtocol.state.reset(try goal())
+        let session = PageSession.holder(.manager("holder-test"), api: client())
+        await session.refresh()
+        XCTAssertTrue(session.hasContent)
+        XCTAssertNil(session.goal)
+        XCTAssertEqual(session.revision, 4)
+        XCTAssertEqual(session.readings?.goalId, "holder-test")
+        await session.updateBlock("chosen", revision: 3) { $0.setting("title", .string("Changed")) }
+        XCTAssertNotNil(session.saveError)
+        XCTAssertEqual(session.revision, 4)
+        XCTAssertEqual(GoalProtocol.state.writes().last?["expected_revision"].number, 3)
+        await session.discard()
+        await session.updateBlock("chosen", revision: 4) { $0.setting("title", .string("Changed")) }
+        XCTAssertNil(session.saveError)
+        XCTAssertEqual(session.revision, 5)
+        XCTAssertEqual(GoalPresentation.checklists(session.page?["blocks"].array ?? []).first?["title"].text, "Changed")
+        XCTAssertEqual(session.page?["blocks"].array.first?["title"].text, "Steps")
+        XCTAssertEqual(GoalProtocol.state.writes().count, 2)
+    }
+
+    func testRetiredReviewArtifactsAndPersistedGoalSendsHaveNoRequestDoor() async throws {
+        GoalProtocol.state.reset(try goal())
+        let api = client()
+        let data = Data(#"{"items":[{"review_item_type":"message","title":"Old","waiting_since":1,"owner_kind":"goal","owner_id":"g","conversation_id":"old"},{"review_item_type":"message","title":"Chief","waiting_since":2,"owner_kind":"chief","owner_id":"chief","conversation_id":"current"}],"running_worker_count":0}"#.utf8)
+        let review = try APIClient.decoder().decode(ReviewResponse.self, from: data)
+        XCTAssertEqual(review.items.map(\.title), ["Chief"])
+        for link in ["/files/goals/g/plan.md", "/#/preview?source=goal&goal=g&path=plan.md"] {
+            let url = URL(string: link, relativeTo: api.baseURL)!.absoluteURL
+            XCTAssertNil(ArtifactTarget.from(url, baseURL: api.baseURL))
+            XCTAssertTrue(ArtifactTarget.isRetiredGoalURL(url, baseURL: api.baseURL))
+        }
+        let store = LocalStore(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("phone.store"))
+        let outbox = Outbox(store: store)
+        let legacyOwner = try JSONDecoder().decode(ConversationOwner.self, from: Data(#"{"goal":{"_0":"g"}}"#.utf8))
+        let message = ConversationSend(conversationId: nil, content: [.init(text: "Saved words")], senderMessageId: "retired", sentAtUnixMilliseconds: 1)
+        try outbox.save(PendingWork(id: "retired", created: .now, kind: .message, owner: legacyOwner, message: message), server: LocalStore.server(api.baseURL))
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.entries(LocalStore.server(api.baseURL)).first?.state, .changed)
+        do { _ = try await api.sendConversation(legacyOwner, message: message); XCTFail("Retired owner sent") }
+        catch { XCTAssertEqual((error as? APIError)?.status, 410) }
+        do { _ = try await api.conversationConfiguration(legacyOwner, id: "old"); XCTFail("Retired owner opened") }
+        catch { XCTAssertEqual((error as? APIError)?.status, 410) }
+        XCTAssertEqual(GoalProtocol.state.requests(), [])
+    }
     private func client() -> APIClient {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [GoalProtocol.self]
         return APIClient(baseURL: URL(string: "https://goals-tests.example")!, session: URLSession(configuration: config))
@@ -202,8 +263,12 @@ private final class GoalProtocolState: @unchecked Sendable {
     private var goal: GoalRecord?
     private var goalWrites: [GoalJSON] = []
     private var commands: [GoalJSON] = []
+    private var paths: [String] = []
+    private var holderRevision = 4
+    private var document: GoalJSON = .null
+    func requests() -> [String] { lock.lock(); defer { lock.unlock() }; return paths }
     static let manualState = #"{"measure_id":"m","definition_revision":1,"write_revision":1,"timezone":"UTC","current_date":"2026-11-04","date":"2026-11-04","observation":{"value":5},"latest_observation":{"value":5}}"#
-    func reset(_ value: GoalRecord) { lock.lock(); defer { lock.unlock() }; goal = value; goalWrites = []; commands = [] }
+    func reset(_ value: GoalRecord) { lock.lock(); defer { lock.unlock() }; goal = value; goalWrites = []; commands = []; paths = []; holderRevision = 4; document = value.page }
     func conflictGoal() {
         lock.lock(); defer { lock.unlock() }
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -225,6 +290,18 @@ private final class GoalProtocolState: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         let path = request.url!.path
+        paths.append(path)
+        if path == "/api/managers/holder-test/page/readings" {
+            return (200, Data("{\"goal_id\":\"holder-test\",\"revision\":\(holderRevision),\"status\":\"neutral\",\"status_date\":\"2026-11-05\",\"next_refresh_at\":1794000000,\"values\":[],\"sources\":[],\"charts\":{}}".utf8))
+        }
+        if path == "/api/managers/holder-test/page" {
+            if request.httpMethod == "PATCH" {
+                let body = try JSONDecoder().decode(GoalJSON.self, from: bodyData(request)); goalWrites.append(body)
+                if body["expected_revision"].number != Double(holderRevision) { return (409, Data(#"{"error":{"message":"Holder page changed"}}"#.utf8)) }
+                document = body["page"]; holderRevision += 1
+            }
+            return (200, try encoder.encode(HolderPage(page: document, pageRevision: holderRevision)))
+        }
         if path.hasSuffix("/manual-state") { return (200, Data(Self.manualState.utf8)) }
         if path.hasSuffix("/manual-writes") {
             let body = try JSONDecoder().decode(GoalJSON.self, from: bodyData(request))

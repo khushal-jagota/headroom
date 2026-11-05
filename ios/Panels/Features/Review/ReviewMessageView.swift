@@ -170,6 +170,7 @@ private struct ReviewMessageContent: View {
         }
     }
     private func follow(_ url: URL) {
+        if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
         if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selectedArtifact = target }
         else { openURL(url) }
     }

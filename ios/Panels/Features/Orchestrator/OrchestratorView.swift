@@ -23,20 +23,9 @@ struct OrchestratorView: View {
                     }
                 }
                 if let detail {
-                    if detail.tickets.isEmpty {
-                        Text("No workers yet").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                    }
-                    WorkerSections(tickets: detail.tickets)
+                    HolderContent(holder: .manager(managerID))
                     VStack(spacing: 0) {
                         Divider().overlay(PanelsTheme.border)
-                        NavigationLink {
-                            AgentReadingPage(title: "Goal", originalText: detail.goal) { text in
-                                try await store.client.saveManagerGoal(managerID, goal: text)
-                                await store.refresh()
-                            }
-                        } label: {
-                            Text("Goal").frame(maxWidth: .infinity, minHeight: 50, alignment: .leading).contentShape(Rectangle())
-                        }.buttonStyle(.plain).accessibilityIdentifier("manager-goal")
                         ArtifactsRow(owner: ArtifactOwner(kind: .manager, id: managerID), count: detail.artifacts.count)
                     }.font(PanelsTheme.TypeScale.body)
                 }

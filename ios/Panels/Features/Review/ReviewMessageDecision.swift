@@ -35,7 +35,7 @@ extension APIClient {
     }
     func currentConversation(_ owner: ConversationOwner) async throws -> String? {
         switch owner {
-        case .goal(let id): return try await goal(id).conversationId
+        case .goal: return nil
         case .chief: return try await chiefConversation().conversationId
         case .ticket(let id): return try await ticket(id).conversationId
         case .manager(let id): return try await manager(id).manager.conversationId
