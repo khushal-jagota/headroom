@@ -1,6 +1,6 @@
 {
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "contract_sha256": "6bac17158819893b30d8ad5db0cb76de52d628c98a955c209f0c275405b0c81c",
-  "evidence": "Source review of the pre-Mac pin adoption fix keeps native build 1 compatible. The only backend edit is src/planner/environments/update_runner.py: a new matches_pinned_release helper used by the deployment runner's two evidence checks. That module is a standalone entry point run by the deployment workflow; no server route, serializer or contract imports it, and no Swift source references it. Owner update request and status payloads, PublishedUpdate and OwnerUpdateRequest shapes, and every API route are unchanged. Prior review (goal holders on staging 58224211a) stands for everything else."
+  "contract_sha256": "8743fe227fdd5926680eea3306094598aa2843c9ae4837c11752a6dcb5b5dec3",
+  "evidence": "Source review of the launch-parent recheck keeps native build 1 compatible. The only backend edits are in src/planner/server_lifecycle: logic/shutdown.py adds two pure policy helpers, supervisor.py rechecks an unverified launch parent when SIGINT or SIGTERM arrives, and process_identity.py prints why a busctl check failed. These run only in the local supervisor process that owns the server's lifetime. No server route, serializer, payload shape or contract changes, and no Swift source references server_lifecycle. Prior review (pre-Mac pin adoption fix) stands for everything else."
 }
