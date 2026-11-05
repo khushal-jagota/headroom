@@ -30,7 +30,7 @@ def test_startup_restart_and_background_loops_never_expire_and_reconcile_offline
         if key.startswith("PLAN_"):
             monkeypatch.delenv(key)
     database = tmp_path / "planner.db"
-    seed_archive(database)
+    seed_archive(database, initialize_runtime=True)
     before = _events(database)
     for _restart in range(2):
         with TestClient(make_app(tmp_path, test_mode=False)) as client:
