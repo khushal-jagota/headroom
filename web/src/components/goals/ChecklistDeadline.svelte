@@ -1,10 +1,8 @@
 <script lang="ts">
   import { getContext, untrack } from 'svelte';
   import type { ChecklistItem } from '../../lib/goals/contracts';
-  import { createGoalEditor } from '../../lib/goals/editing';
   import { PlannerFetchError } from '../../lib/api';
   import { queryClient } from '../../lib/queryClient';
-  import { goalQueries } from '../../lib/goals/queries';
   import { deadlineColor, deadlineTone, goalDateText } from '../../lib/goals/presentation';
   import type { ChecklistDeadlineCommand } from '../../lib/goals/requestSessions';
   import { PAGE_CONTEXT, type PageContext } from '../../lib/pageKit/context';
@@ -15,7 +13,7 @@
   const goalId = untrack(() => context?.goalId);
   const capturedBlockId = untrack(() => blockId);
   const capturedItemId = untrack(() => item.id);
-  const editor = goalId ? createGoalEditor(goalId) : undefined;
+  const editor = untrack(()=>context?.updateBlock);
   const session = untrack(() => context?.checklistDeadlineSession?.(capturedBlockId, capturedItemId));
   const editable = Boolean(editor && context?.updateBlock && session);
   const uid = `item-date-${Math.random().toString(36).slice(2, 9)}`;
@@ -53,17 +51,14 @@
     if (!session || !editor || session.current?.status === 'pending') return;
     admissionError = null;
     try {
-      await session.run(command, () => editor.updateBlock(capturedBlockId, block => {
+      await session.run(command, () => editor(capturedBlockId, block => {
         if (block.type !== 'checklist' || !block.items.some(candidate => candidate.id === capturedItemId)) throw new Error('This checklist item no longer exists.');
         return { ...block, items: block.items.map(candidate => candidate.id === capturedItemId ? { ...candidate, deadline: command.deadline } : candidate) };
       }, command.revision));
     } catch (error) {
       // Keep the failed draft, but refresh accepted revisions for a later explicit edit.
       if (error instanceof PlannerFetchError && error.status === 409 && goalId) {
-        await Promise.allSettled([
-          queryClient.invalidateQueries({ queryKey: goalQueries.detail(goalId).queryKey }),
-          queryClient.invalidateQueries({ queryKey: goalQueries.list().queryKey, exact: true }),
-        ]);
+        await queryClient.invalidateQueries().catch(()=>undefined);
       }
       // Submitted failures remain in the parent-owned receipt after unmount.
       if (!session.current) admissionError = error;

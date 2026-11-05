@@ -5,7 +5,7 @@ import type {createGoalRequestSessions} from './requestSessions';
 /** Keep accepted values live while each host retains its identity and capabilities. */
 export function createGoalPageContext(source:{
  goalId:()=>string;
- goal:()=>GoalResponse|null|undefined;
+ goal:()=>(Pick<GoalResponse,'revision'|'completed'|'status'> & Partial<Pick<GoalResponse,'status_date'>>)|null|undefined;
  readings:()=>GoalReadingsResponse|null|undefined;
  narrow:()=>boolean;
  sessions:()=>ReturnType<typeof createGoalRequestSessions>;

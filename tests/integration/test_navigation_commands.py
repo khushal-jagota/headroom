@@ -319,6 +319,10 @@ def test_manager_mutations_remain_in_the_navigation_command_inventory() -> None:
         assert not is_navigation_command("PUT", prefix + "/launch-defaults")
         assert is_navigation_command("PUT", prefix + "/example/launch-defaults")
         assert ("PUT", prefix + "/{item_id}/launch-defaults") not in excluded
+    for path in ("/api/chief/page", "/api/managers/{item_id}/page"):
+        assert ("PATCH", path) in excluded
+        assert not is_navigation_command("PATCH", path)
+    assert is_navigation_command("POST", "/api/goals/example/make-manager")
     for manager_router in (router, legacy_router):
         for route in manager_router.routes:
             if isinstance(route, APIRoute):

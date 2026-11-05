@@ -6,7 +6,7 @@ Khushal, Chief, Managers, Workers, and goal agents all call the same routes. The
 
 ## Who can call
 
-The server knows five kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, a **Ticket** (its Worker), and a **goal** (its agent). The browser and an ordinary `panels` call are the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
+The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). Goals have no agent; old goal transcripts stay readable history. The browser and an ordinary `panels` call are the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
 
 ## Position
 
@@ -14,10 +14,9 @@ The server knows five kinds of caller: the **owner** (Khushal), **Chief**, a **M
 Khushal ─┬─ everything
 Chief ───┘
 
-Manager ─ its current child Tickets
+Manager ─ its held goals and current child Tickets
 
 Ticket ─── nothing
-Goal ───── nothing
 ```
 
 A Manager stands above a Ticket because the Ticket is assigned to it. Move the Ticket and the old Manager no longer stands above it. A Ticket stands above nothing, so its Worker cannot decide its own proposal. That is the rule answering, not an extra ban. (A Worker type could declare something its Tickets stand above. No current type does.)
@@ -26,7 +25,7 @@ The same rule covers owner-level configuration: schedules, skills, Worker types,
 
 ## Your own record
 
-Acting as yourself is a different question from standing above something. A Worker files proposals, writes its recap, and asks for help on its own Ticket. A Manager writes its own goal, recap, and artifacts. A goal agent edits its own goal and page. The chain does not decide these.
+Acting as yourself is a different question from standing above something. A Worker files proposals, writes its recap, and asks for help on its own Ticket. A Manager writes its own goal, recap, and artifacts. Chief or the holding Manager edits a goal and its page through the same chain. The chain does not decide these.
 
 Proposing is the Ticket speaking about its own work, so nobody, including Khushal, proposes on a Ticket's behalf.
 

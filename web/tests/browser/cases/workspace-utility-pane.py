@@ -117,7 +117,7 @@ def run(browser, urls):
             source = fixture["navigation_response"](board, {"chief_of_staff": card_fixture.get("chief", {"label": "Chief"})})
             source["snapshot"]["records"].extend(
                 {"kind": "goal", "id": goal["id"], "value": {key: goal[key] for key in (
-                    "title", "conversation_id", "active", "completed", "created_at", "updated_at")}}
+                    "title", "holder_kind", "holder_id", "active", "completed", "created_at", "updated_at")}}
                 for goal in card_fixture.get("goals", [])
             )
             view = json.loads(parse_qs(parts.query)["view"][0])
@@ -397,7 +397,9 @@ def run(browser, urls):
     verify_conversation_overlay(browser, url)
 
     assert not errors, errors
-    unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
+    unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff",
+                                                                         # A Chief goal shows Chief's conversation.
+                                                                         "/api/chief/conversation"))]
     assert not unwanted, unwanted
     context.close()
     metrics.close()
@@ -2379,7 +2381,7 @@ def verify_selection_washes(page, url, fixture, evidence):
 
     # Goals use the same selected-row geometry inside Chief, before its Workers.
     goal = {"id": "wash_goal", "title": "Ship the rail", "active": True, "completed": False,
-            "kind": "binary", "conversation_id": None, "created_at": 1, "updated_at": 1,
+            "kind": "binary", "holder_kind": "chief", "holder_id": None, "legacy_conversation_id": None, "created_at": 1, "updated_at": 1,
             "project_id": None, "why": "", "deadline": None, "primary_chart": None,
             "primary_checklist_block_id": None, "revision": 0, "status": "neutral",
             "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400,
