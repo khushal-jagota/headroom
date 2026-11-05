@@ -67,11 +67,12 @@ def seed_archive(database: Path) -> None:
             )
         maintenance.rebuild_projection(conn, "history")
         conn.commit()
+    # Bootstrap installs the Signal publication tables and source triggers that
+    # maintenance writes through. Initialization would read current-schema tables
+    # that the retained historical archive does not have, so the fixture stops here.
     runtime = SignalRuntimeComposition(str(database), 1000)
     try:
         runtime.bootstrap()
-        runtime.coordinator.bind_runtime(lambda _identity: None)
-        runtime.initialize()
     finally:
         runtime.close()
 

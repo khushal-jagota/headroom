@@ -61,15 +61,20 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
     assert "github.ref == 'refs/heads/main'" in adoption["if"]
     assert adoption["runs-on"] == ["self-hosted", "linux", "production", "panels-deploy"]
     assert workflow["permissions"] == {"contents": "read", "actions": "read"}
-    steps = {step.get("name"): step for step in publication["steps"]}
-    names = list(steps)
-    assert names.index("Build exact candidate once") < names.index(
+    build = [step.get("name") for step in workflow["jobs"]["build"]["steps"]]
+    assert build.index("Build exact candidate once") < build.index(
         "Seal immutable executable archive"
     )
-    assert names.index("Seal immutable executable archive") < names.index(
-        "Smoke exact retained archive"
+    assert build.index("Seal immutable executable archive") < build.index(
+        "Execute sealed archive on Debian target"
+    ) < build.index("Smoke exact retained archive") < build.index(
+        "Pack sealed candidate for publication"
     )
-    assert names.index("Smoke exact retained archive") < names.index("Deploy exact app")
+    steps = {step.get("name"): step for step in publication["steps"]}
+    names = list(steps)
+    assert names.index("Accept sealed candidate from the build job") < names.index(
+        "Extract exact archive for disposable replacement"
+    ) < names.index("Deploy exact app")
     assert names.index("Collect rehearsal proof") < names.index(
         "Write immutable publication receipt"
     )
@@ -116,44 +121,81 @@ def test_publication_preserves_existing_isolated_suite_report_boundaries() -> No
     )
 
 
-def test_parallel_publication_requires_all_suites_before_any_candidate_work() -> None:
+def test_build_runs_beside_suites_and_nothing_publishes_before_both_succeed() -> None:
     jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
-    preparation, suites, publication = jobs["prepare"], jobs["suites"], jobs["deploy"]
+    preparation, suites, build, publication = (
+        jobs["prepare"], jobs["suites"], jobs["build"], jobs["deploy"])
     assert suites["needs"] == "prepare"
+    assert build["needs"] == "prepare"
     assert suites["strategy"] == {"fail-fast": False,
                                   "matrix": {"suite": ["unit", "integration", "e2e", "browser"]}}
-    assert publication["needs"] == ["prepare", "suites"]
+    assert publication["needs"] == ["prepare", "suites", "build"]
     assert "always()" in publication["if"]
-    for job in (preparation, suites, publication):
+    for job in (preparation, suites, build, publication):
         assert job["runs-on"] == "ubuntu-24.04"
         assert job["steps"][0]["with"]["ref"] == "${{ github.sha }}"
         assert not job.get("continue-on-error")
         assert all(not step.get("continue-on-error") for step in job["steps"])
+    # The candidate is built once, by the build job, after its static checks pass.
+    assert [sum("app-build" in step.get("run", "") for step in job["steps"])
+            for job in (preparation, suites, build, publication)] == [0, 0, 1, 0]
+    built = {step.get("name"): step for step in build["steps"]}
+    order = list(built)
+    for check in ("Ruff at requested source", "mypy at requested source",
+                  "Frontend check at requested source", "Typechecked Vitest at requested source"):
+        assert order.index(check) < order.index("Build exact candidate once")
+    for name in ("Build exact candidate once", "Seal immutable executable archive",
+                 "Execute sealed archive on Debian target", "Smoke exact retained archive",
+                 "Pack sealed candidate for publication", "Hand sealed candidate to publication"):
+        assert "if" not in built[name]
+    handoff = built["Hand sealed candidate to publication"]["with"]
+    assert build["outputs"]["candidate_record_sha256"] == (
+        "${{ steps.candidate.outputs.candidate_record_sha256 }}"
+    )
+    assert built["Pack sealed candidate for publication"]["id"] == "candidate"
+    assert "publication_checks.py pack-candidate" in (
+        built["Pack sealed candidate for publication"]["run"]
+    )
     steps = {step.get("name"): step for step in publication["steps"]}
     names = list(steps)
     gate_name = "Collect checked suite evidence and require successful prerequisites"
     gate = steps[gate_name]
     assert "always()" in gate["if"]
     assert gate["env"]["PANELS_PREREQUISITES"] == (
-        '{"prepare":"${{ needs.prepare.result }}","suites":"${{ needs.suites.result }}"}'
+        '{"prepare":"${{ needs.prepare.result }}","suites":"${{ needs.suites.result }}",'
+        '"build":"${{ needs.build.result }}"}'
     )
     assert "publication_checks.py collect" in gate["run"]
-    assert names.index("Set deployment paths") < names.index(gate_name)
-    assert names.index(gate_name) < names.index("Provision offline Hermes packaging prerequisite")
-    assert names.index(gate_name) < names.index("Start known-good rehearsal release")
-    assert names.index("Validate collected suite reports at requested source") < (
-        names.index("Build exact candidate once")
+    accept_name = "Accept sealed candidate from the build job"
+    accept = steps[accept_name]
+    assert accept["env"]["PANELS_CANDIDATE_RECORD_SHA256"] == (
+        "${{ needs.build.outputs.candidate_record_sha256 }}"
     )
-    for name in ("Provision offline Hermes packaging prerequisite", "Build exact candidate once",
-                 "Seal immutable executable archive", "Retain exact executable archive",
-                 "Write immutable publication receipt"):
+    assert "publication_checks.py accept-candidate" in accept["run"]
+    assert steps["Download sealed candidate"]["with"]["name"] == handoff["name"]
+    assert "github.run_attempt" in handoff["name"]
+    assert names.index("Set deployment paths") < names.index(gate_name)
+    assert names.index(gate_name) < names.index("Download sealed candidate") < names.index(
+        accept_name
+    ) < names.index("Provision offline Hermes packaging prerequisite")
+    assert names.index(accept_name) < names.index("Start known-good rehearsal release")
+    assert names.index("Validate collected suite reports at requested source") < (
+        names.index("Extract exact archive for disposable replacement")
+    )
+    for name in ("Download sealed candidate", accept_name,
+                 "Provision offline Hermes packaging prerequisite",
+                 "Extract exact archive for disposable replacement", "Deploy exact app",
+                 "Retain exact executable archive", "Write immutable publication receipt"):
         assert "if" not in steps[name]
-    assert sum("app-build" in step.get("run", "") for step in publication["steps"]) == 1
-    assert not any("app-build" in step.get("run", "") for step in suites["steps"])
+    # Only the gated job retains the release that owner adoption can install.
+    for job in (preparation, suites, build):
+        for step in job["steps"]:
+            if "actions/upload-artifact@" in step.get("uses", ""):
+                assert step["with"]["name"] not in {"panels-app", "panels-publication-proof"}
     downloads = [step for step in publication["steps"]
                  if "actions/download-artifact@" in step.get("uses", "")]
-    assert len(downloads) == 5
-    assert len({step["with"]["path"] for step in downloads}) == 5
+    assert len(downloads) == 6
+    assert len({step["with"]["path"] for step in downloads}) == 6
     assert all("github.run_attempt" in step["with"]["name"] for step in downloads)
 
 

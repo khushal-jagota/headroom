@@ -480,7 +480,8 @@ async def boot(
     reconnect_interval: float | None = None,
 ) -> ExecutorHarness:
     if reconnect_interval is not None:
-        # Tests with explicit disconnect barriers can shorten retry polling.
+        # Fixtures that reconnect accelerate this timer. The rest keep the shipped
+        # interval, so nothing they prove may wait for it.
         monkeypatch.setattr(
             "planner.executor.mac_service.RECONNECT_INTERVAL_SECONDS", reconnect_interval
         )
@@ -1396,10 +1397,16 @@ def test_vps_core_recreation_stops_old_child_before_fresh_send(
         harness = await boot(tmp_path, monkeypatch, reconnect_interval=0.02)
         assert harness.endpoint.runs.link is not None
         assert harness.mac.connection.link is not None
+        # The Mac stays away until the new core exists, as the shipped interval ensured.
+        resume = pause_reconnection(harness, monkeypatch)
         try:
             await asyncio.wait_for(harness.endpoint.close(), 2)
             await harness.native.raise_ask()
-            await harness.restart_vps_core()
+            await harness.restart_vps_core(wait_ready=False)
+            resume.set()
+            await eventually(
+                lambda: harness.endpoint.runs.ready, "VPS core restart did not reconcile"
+            )
             await eventually(lambda: harness.native.stop_count == 1, "old child was not stopped")
             state = harness.system._conversations["c_scripted"]
             await eventually(lambda: not state.child_is_quarantined, "stop proof did not settle")
@@ -1412,6 +1419,7 @@ def test_vps_core_recreation_stops_old_child_before_fresh_send(
             assert isinstance(delivery, PromptDeliveryStarted)
             assert harness.native.start_count == harness.native.prompt_count == 2
         finally:
+            resume.set()
             await harness.close()
 
     asyncio.run(run())
@@ -2067,9 +2075,8 @@ def test_input_descriptor_must_validate_before_provider_invocation(
     asyncio.run(run())
 
 
-async def hold_reconnection(
-    harness: ExecutorHarness, monkeypatch: pytest.MonkeyPatch
-) -> asyncio.Event:
+def pause_reconnection(harness: ExecutorHarness, monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """Hold every later Mac connection attempt until the returned event is set."""
     resume = asyncio.Event()
     connected = harness.mac._connected
 
@@ -2078,6 +2085,13 @@ async def hold_reconnection(
         await connected()
 
     monkeypatch.setattr(harness.mac, "_connected", paused)
+    return resume
+
+
+async def hold_reconnection(
+    harness: ExecutorHarness, monkeypatch: pytest.MonkeyPatch
+) -> asyncio.Event:
+    resume = pause_reconnection(harness, monkeypatch)
     assert harness.endpoint.runs.link is not None
     harness.endpoint.runs.link.close()
     await eventually(lambda: not harness.endpoint.runs.ready, "link did not disconnect")
