@@ -12,7 +12,6 @@ import type {
   EmployeeConfigurationSnapshot,
   ManagerPrincipal,
   ManagerChildFilter,
-  DeploymentStatus,
   IdeasResponse,
   NotificationSettingsResponse,
   ProjectsResponse,
@@ -22,7 +21,6 @@ import type {
   ManagerWorkspaceContent,
   TicketDetail,
   TicketSummariesResponse,
-  VpsStatusSummary,
   WorkerManagementDetail,
   WorkersResponse
 } from "./types";
@@ -71,10 +69,6 @@ export const queries = {
   updates: () => jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
   recordedUsage: (input: UsageSummaryInput) =>
     jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
-  deploymentStatus: () =>
-    versionedJsonQuery<DeploymentStatus>(["deployment-status"], "/api/deployment-status"),
-  vpsStatusSummary: () =>
-    jsonQuery<VpsStatusSummary>(["vps-status-summary"], "/api/vps-status-summary"),
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
   managerTicketSummaries: (principal: ManagerPrincipal, filter: ManagerChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(

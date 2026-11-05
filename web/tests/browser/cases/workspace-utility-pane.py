@@ -163,7 +163,6 @@ def run(browser, urls):
                 "/api/goals": {"goals": card_fixture.get("goals", []), "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
                 "/api/worker-types?supported=true": {"worker_types": manifests},
                 "/api/worker-types": {"worker_types": manifests},
-                "/api/deployment-status": {"state": "preparing", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))},
             }.get(key)
             # A Chief-owned goal uses the Chief composer and its launch settings.
             # Admit this exact selected-owner resource, not unrelated Chief reads.
@@ -183,10 +182,9 @@ def run(browser, urls):
             route.fulfill(json={"key": key, "epoch": "fixture", "revision": "1", "body": inner})
             return
         if path == "/api/updates":
-            route.fulfill(json={"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None,
-                                "state": "updating" if fold["release_sha"] == "fixture-boot" else "up_to_date", "allowed_actions": [],
-                                "phase": "preparing", "app_sha": fold["release_sha"], "deadline_at": None,
-                                "restart_deadline_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))})
+            route.fulfill(json={"state": "updating" if fold["release_sha"] == "fixture-boot" else "up_to_date", "allowed_actions": [],
+                                "activity": "unknown", "available": None, "attempt": None, "app_sha": fold["release_sha"], "detail": None,
+                                "deadline_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600)), "mac_details": None})
             return
         if path == "/api/goals":
             result = {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400}
@@ -1265,8 +1263,7 @@ def verify_conversation_overlay(browser, url):
             "/api/tickets/t_overlay0/conversation/start-values": {"backend_key":"codex","model":None,"reasoning_effort":None},
             "/api/worker-types?supported=true": manifest,
             "/api/worker-types": manifest,
-            "/api/deployment-status": {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None},
-            "/api/updates": {"configured": False, "available": None, "request": None, "activity": "unknown", "detail": None, "state": "up_to_date", "allowed_actions": [], "phase": None, "app_sha": None, "deadline_at": None, "restart_deadline_at": None},
+            "/api/updates": {"state": "up_to_date", "allowed_actions": [], "activity": "unknown", "available": None, "attempt": None, "app_sha": "fixture-boot", "detail": None, "deadline_at": None, "mac_details": None},
             "/api/meta": {"test_mode": True, "app_sha": None},
             "/api/review": {"items": [], "running_worker_count": 0},
         }
@@ -1515,7 +1512,7 @@ def verify_rail_overflow(page, fixture, evidence):
     grip = page.get_by_role("separator", name="Resize workspace panel")
     proof = []
 
-    def status_geometry(word="Updating Panels"):
+    def status_geometry(word="Updating…"):
         status = page.locator(".status-card:visible")
         expect(status).to_contain_text(word)
         bounds = status.bounding_box()
@@ -1524,9 +1521,15 @@ def verify_rail_overflow(page, fixture, evidence):
         assert bounds and rail_bounds and viewport
         assert bounds["x"] >= rail_bounds["x"] and bounds["x"] + bounds["width"] <= rail_bounds["x"] + rail_bounds["width"] + 1, bounds
         assert bounds["y"] >= 0 and bounds["y"] + bounds["height"] <= viewport["height"], bounds
-        for scroller in [active, *([settled] if settled.count() else [])]:
-            box = scroller.bounding_box()
-            assert box and box["y"] + box["height"] <= bounds["y"] + 1, (box, bounds)
+        # Desktop: between the active work and Settled. Phone: above the bottom bar, below both.
+        box = active.bounding_box()
+        assert box and box["y"] + box["height"] <= bounds["y"] + 1, (box, bounds)
+        settled_head = head.bounding_box()
+        assert settled_head
+        if viewport["width"] > 720:
+            assert bounds["y"] + bounds["height"] <= settled_head["y"] + 1, (settled_head, bounds)
+        else:
+            assert settled_head["y"] + settled_head["height"] <= bounds["y"] + 1, (settled_head, bounds)
         return bounds
 
     def geometry(scroller):
@@ -1664,25 +1667,18 @@ def verify_rail_overflow(page, fixture, evidence):
     }, indent=2))
 
 
-def verify_owner_updates(browser, url, *, problem_only=False):
-    """Browser clicks cross real owner routes and durable receipts on the existing host.
+def verify_owner_updates(browser, url):
+    """One update card from press to done, across native dialogs and a lost connection.
 
-    The existing App host proves persistent card DOM, native dialogs, phone layout,
-    safe Refresh, and closed-stream recovery. The provider is synthetic.
+    The existing App host proves the retained card DOM at desktop and phone sizes,
+    native dialogs, the rail placement, page dimming and closed-stream recovery.
+    The update server is a double of the contract shape: its rules have their own tests.
     A synthetic SHA change proves browser refresh safety, not service deployment.
     """
-    from dataclasses import replace
-
     started = time.perf_counter()
-    from tests.support.staged_update_cutover import StagedCutover
-
     backend = OwnerUpdatesFixture()
-    cutover = StagedCutover(Path(backend.directory.name) / "staged")
-    backend.provider.offered = replace(backend.provider.offered, manifest=cutover.manifest)
-    backend.service.refresh_available(force=True)
     navigation = runpy.run_path(str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py"))
     source = navigation["navigation_response"]({}, {"chief_of_staff": {"label": "Chief", "conversation_id": "bounded-reader"}})
-    deployment = {"state": "idle", "deployed_sha": None, "target_sha": None, "outcome": None, "detail": None, "valid_until": None, "success_display_until": None}
     posts = []
     documents = []
     navigation_health = {"mode": "current", "generation": 1, "reason": None}
@@ -1698,13 +1694,11 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         parts = urlsplit(route.request.url)
         path = parts.path
         if path.startswith("/api/updates") or path == "/api/meta":
+            body = route.request.post_data_json if route.request.method != "GET" else None
             if route.request.method != "GET":
-                posts.append({"path": path, "body": route.request.post_data_json,
-                              "boot_sha": route.request.headers.get("x-panels-app-sha")})
-            response = backend.client.request(route.request.method, path,
-                                              content=route.request.post_data,
-                                              headers={"Content-Type": "application/json"})
-            route.fulfill(status=response.status_code, content_type="application/json", body=response.content)
+                posts.append({"path": path, "body": body, "app_sha": route.request.headers.get("x-panels-app-sha")})
+            status, answer = backend.respond(route.request.method, path, body)
+            route.fulfill(status=status, json=answer)
             return
         if path == "/api/navigation/view/snapshot":
             view = json.loads(parse_qs(parts.query)["view"][0])
@@ -1722,7 +1716,6 @@ def verify_owner_updates(browser, url, *, problem_only=False):
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
             "/api/worker-types?supported=true": {"worker_types": []},
             "/api/feedback/count": {"open_count": 0},
-            "/api/deployment-status": deployment,
             "/api/review": {"items": [], "running_worker_count": 0},
         }
         body = values.get(key, {})
@@ -1737,8 +1730,11 @@ def verify_owner_updates(browser, url, *, problem_only=False):
     page.route("**/api/**", respond)
     page.route(url + "?*", host_with_boot_sha)
     card = page.locator(".status-card:visible")
-    dialog = page.locator("[data-update-dialog][open]")
+    action = card.locator(".status-action")
+    info = card.get_by_role("button", name="Update details", exact=True)
+    dialog = page.locator("[data-update-dialog]:is([open])")
     box = page.locator("[data-conversation-input]")
+    dimmed = page.locator(".board-workspace-right")
 
     def signal():
         with page.expect_response(lambda response: urlsplit(response.url).path == "/api/updates" and response.status == 200):
@@ -1755,154 +1751,106 @@ def verify_owner_updates(browser, url, *, problem_only=False):
     def retained():
         assert page.evaluate("window.__updateCards.every(node => node.isConnected && [...document.querySelectorAll('.status-card')].includes(node))")
 
+    def no_restarting_text():
+        assert "Restarting" not in page.evaluate("document.body.innerText")
+
     try:
         page.goto(url + "?overlay=1&owner-updates=1#/workspace/chief-of-staff", wait_until="domcontentloaded")
         expect(box).to_be_visible()
         expect(card).to_contain_text("Update available")
         page.evaluate("window.__updateCards = [...document.querySelectorAll('.status-card')]")
         assert page.evaluate("window.__updateCards.length") == 2
+        # Desktop: the card sits between the active work and Settled, not in the rail foot.
+        placement = card.evaluate("""node => {
+          const box = node.getBoundingClientRect();
+          const active = document.querySelector('[data-active-work-scroll]').getBoundingClientRect();
+          const settled = document.querySelector('.settled-head').getBoundingClientRect();
+          return {inFoot: Boolean(node.closest('.rail-foot')), belowActive: active.bottom <= box.top + 1, aboveSettled: box.bottom <= settled.top + 1};
+        }""")
+        assert placement == {"inFoot": False, "belowActive": True, "aboveSettled": True}, placement
         capture("available")
 
-        # The retained Mac refusal is independent of VPS completion and actions.
-        # Read it through the same real update route, without a second query.
-        identity = {"protocol_version": 18, "application_revision": "old-mac-revision", "spool_format_version": 5,
-                    "executor_incarnation": "mac", "connection_generation": 1}
-        backend.mac_status = {"identity": None, "connection_state": "disconnected", "last_contact_at_ms": 1000,
-                              "refusal": {"reason": "Mac needs update", "peer_identity": identity,
-                                          "server_identity": {**identity, "application_revision": "new-server-revision", "protocol_version": 19},
-                                          "refused_at_ms": 1000}}
-        # No publication is available. The VPS answer is now up_to_date.
-        from unittest.mock import patch
-        with patch.object(backend.provider, "available", return_value=None):
-            backend.service.refresh_available(force=True)
-            signal()
-            expect(card.locator("[data-mac-status='refused']")).to_be_visible()
-            expect(card).to_have_attribute("data-status-state", "up_to_date")
-            expect(card).not_to_contain_text("Update available")
-            expect(card).to_contain_text("The Mac is not connected.")
-            capture("mac-refused-vps-current")
-        backend.service.refresh_available(force=True)
+        # The Mac's diagnostics are not a separate block in the shell.
+        backend.mac_details = {"identity": None, "connection_state": "disconnected", "last_contact_at_ms": 1000, "refusal": None, "update": None}
         signal()
-        expect(card).to_contain_text("Update available")
-        expect(card.locator("[data-mac-status='refused']")).to_be_visible()
-        retained()
-        # A compatible connection hides retained refusal evidence, as before.
-        backend.mac_status = {**backend.mac_status, "connection_state": "ready"}
-        signal()
-        expect(card.locator("[data-mac-status]")).to_have_count(0)
-        expect(card).to_contain_text("Update available")
-        backend.mac_status = {**backend.mac_status, "connection_state": "disconnected", "refusal": None}
-        signal()
-        expect(card.locator("[data-mac-status]")).to_have_count(0)
-        backend.mac_status = None
+        expect(page.locator("[data-mac-status]")).to_have_count(0)
 
-        backend.activity.activity = "busy"
+        backend.activity = "busy"
         signal()
-        card.get_by_role("button", name="Update available Update", exact=True).click()
+        action.click()
         expect(dialog).to_be_visible()
+        expect(dialog).to_contain_text("A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.")
         expect(dialog).to_contain_text("Work is running. Updating now interrupts it.")
         assert len(posts) == 0
         page.keyboard.press("Escape")
-        expect(card.get_by_role("button")).to_be_focused()
-        card.get_by_role("button").click()
+        expect(action).to_be_focused()
+        action.click()
         page.screenshot(path=str(evidence / "offer-dialog.png"))
         dialog.get_by_role("button", name="When work finishes", exact=True).click()
         expect(card).to_contain_text("Update waits for work to finish")
-        pinned = backend.store.read()
-        assert pinned is not None and pinned.state == "requested" and pinned.mode == "idle"
+        assert posts[-1] == {"path": "/api/updates/install", "body": {"app_sha": "b" * 40, "mode": "idle", "confirm_activity": False}, "app_sha": "a" * 40}
         retained()
         capture("waiting")
-        card.get_by_role("button").click()
+        action.click()
+        expect(dialog).to_contain_text("Panels updates as soon as running work finishes.")
         dialog.get_by_role("button", name="Cancel update", exact=True).click()
         expect(card).to_contain_text("Update available")
-        assert backend.store.read().state == "failed"
-        expect(card).not_to_contain_text("canceled")
+        assert posts[-1]["path"] == "/api/updates/attempts/attempt-1/cancel"
         retained()
 
-        # Queue and promote the same pinned request, with no second publication request.
-        card.get_by_role("button").click()
+        # Queue, then promote the same attempt. The dialog closes at once.
+        action.click()
         dialog.get_by_role("button", name="When work finishes", exact=True).click()
         expect(card).to_contain_text("Update waits for work to finish")
-        pending = backend.store.read()
-        assert pending is not None
-        card.get_by_role("button").click()
+        action.click()
         dialog.get_by_role("button", name="Update now", exact=True).click()
-        expect(card).to_contain_text("Updating Panels")
-        receipt = backend.store.read()
-        assert receipt is not None and receipt.request_id == pending.request_id
-        assert receipt.state == "installing" and receipt.mode == "now" and receipt.confirm_activity
-        assert posts[-1]["path"].endswith("/" + receipt.request_id + "/now")
-        assert len(backend.provider.dispatched) == 1
+        expect(dialog).to_have_count(0)
+        expect(card).to_contain_text("Updating…")
+        expect(card.locator(".status-track")).to_be_visible()
+        assert posts[-1] == {"path": "/api/updates/attempts/attempt-2/now", "body": {"confirm_activity": True}, "app_sha": "a" * 40}
         retained()
         capture("updating")
 
-        # A failure exposes a valid-release retry and preserves the same card nodes.
-        observed = cutover.apply(backend.store, backend.lifecycle, Path(backend.directory.name) / "planner.db", fail=True)
-        backend.current_sha = observed
-        backend.service.current_app_sha = observed
+        # A failure has Try again on the card and plain facts behind the info button.
+        backend.fail_install("The new version did not pass its health check, so Panels went back to the previous version and its data.")
         signal()
         expect(card).to_contain_text("Update didn't install")
+        expect(action).to_have_text("Try again")
+        info.click()
+        expect(dialog).to_contain_text("The new version did not pass its health check")
+        expect(dialog).to_contain_text("aaaaaaaa (previous)")
+        expect(dialog).to_contain_text("Not changed")
+        dialog.get_by_role("button", name="Close", exact=True).click()
         retained()
         capture("failed")
-        card.get_by_role("button").click()
-        dialog.get_by_role("button", name="Try again", exact=True).click()
-        expect(card).to_contain_text("Updating Panels")
-        receipt = backend.store.read()
-        assert receipt is not None and receipt.request_id != pending.request_id
-        assert len(backend.provider.dispatched) == 2
+        action.click()
+        expect(card).to_contain_text("Updating…")
+        assert posts[-1]["path"] == "/api/updates/attempts/attempt-2/retry"
         retained()
 
-        # A second failure with an expired publication has only Not now.
-        backend.store.transition(receipt.request_id, frozenset({"installing"}), "failed")
-        offered = backend.provider.offered
-        backend.provider.offered = replace(offered, expires_at="2000-01-01T00:00:00Z")
-        backend.service.refresh_available(force=True)
-        signal()
-        expect(card).to_contain_text("Update didn't install")
-        card.get_by_role("button").click()
-        expect(dialog.get_by_role("button", name="Try again", exact=True)).to_have_count(0)
-        dialog.get_by_role("button", name="Not now", exact=True).click()
-        backend.provider.offered = offered
-        backend.service.refresh_available(force=True)
-
-        # No active update means a lost connection immediately offers Try now.
+        # The restart drops the connection. Before the deadline that is still Updating….
         page.evaluate("window.__ownerUpdatesDisconnect()")
-        expect(card).to_contain_text("Can't reach Panels")
-        expect(page.locator(".board-workspace-right")).to_have_css("opacity", "0.5")
-        retained()
-        capture("unreachable")
-        page.evaluate("window.__ownerUpdatesOffline = false")
-        card.get_by_role("button").click()
-        expect(card).to_contain_text("Update didn't install")
-        expect(page.locator(".board-workspace-right")).to_have_css("opacity", "1")
-        card.get_by_role("button").click()
-        dialog.get_by_role("button", name="Try again", exact=True).click()
-        expect(card).to_contain_text("Updating Panels")
-        receipt = backend.store.read()
-        assert receipt is not None
-        previous_lifecycle = backend.lifecycle.read().lifecycle
-        backend.lifecycle.start(receipt.request_id, offered.manifest.app_sha, prior_sha=cutover.observed_sha(),
-                                expected_deployment_id=previous_lifecycle.deployment_id if previous_lifecycle else None)
-        backend.lifecycle.transition(receipt.request_id, "restarting")
-        signal()
-        expect(card).to_contain_text("Restarting")
-        expect(page.locator(".board-workspace-right")).to_have_css("opacity", "0.5")
-        retained()
-        capture("restarting")
-        # CLOSED recovery repeats until availability returns. No manual reload.
-        page.evaluate("window.__ownerUpdatesDisconnect()")
+        expect(dimmed).to_have_css("opacity", "0.5")
+        expect(card).to_contain_text("Updating…")
+        no_restarting_text()
         page.wait_for_timeout(3100)
-        expect(card).to_contain_text("Restarting")
+        expect(card).to_contain_text("Updating…")
+        retained()
+        capture("updating-disconnected")
+        backend.finish_install()
         page.evaluate("window.__ownerUpdatesOffline = false")
         expect(card).to_have_attribute("data-connection-state", "connected", timeout=7000)
-        retained()
+        expect(dimmed).to_have_css("opacity", "1")
+        # The new server answers while the Mac still updates. The page is behind, and it is still one update.
+        expect(card).to_contain_text("Updating…")
+        no_restarting_text()
 
-        observed = cutover.apply(backend.store, backend.lifecycle, Path(backend.directory.name) / "planner.db")
-        backend.current_sha = observed
-        backend.service.current_app_sha = observed
+        # The Mac cannot be reached. This page is behind and cannot write, so it refreshes first.
+        backend.mac_details = {"identity": None, "connection_state": "disconnected", "last_contact_at_ms": int(time.time() * 1000) - 14 * 60_000,
+                               "refusal": None, "update": None}
+        backend.mac_outcome("mac_unreachable")
         signal()
         expect(card).to_contain_text("Update complete")
-        expect(page.locator(".board-workspace-right")).to_have_css("opacity", "1")
         retained()
         capture("complete")
         draft = "Keep this unsent draft across the revision change."
@@ -1913,24 +1861,56 @@ def verify_owner_updates(browser, url, *, problem_only=False):
         assert not health.evaluate("node => Boolean(node.closest('button'))")
         health.click()
         assert page.evaluate("document === window.__beforeUpdateDocument")
-        card.get_by_role("button").click()
+        page.locator("[data-shell-refresh]:visible").click()
         page.wait_for_function("document !== window.__beforeUpdateDocument")
         expect(box).to_be_visible()
         assert documents == ["a" * 40, "b" * 40]
+
+        # After Refresh the Mac failure the server kept shows. Its details sit behind the info button only.
+        expect(card).to_contain_text("Can't reach the Mac")
+        page.evaluate("window.__updateCards = [...document.querySelectorAll('.status-card')]")
+        expect(card).not_to_contain_text("Last contact")
+        info.click()
+        expect(dialog).to_contain_text("14 minutes ago")
+        expect(dialog).to_contain_text("bbbbbbbb (updated)")
+        dialog.get_by_role("button", name="Try again", exact=True).click()
+        expect(card).to_contain_text("Updating…")
+        assert posts[-1]["path"] == "/api/updates/attempts/attempt-3/retry-mac"
+        retained()
+
+        backend.mac_outcome("mac_failed", "The new Mac runtime did not start in 60 seconds, so the Mac went back to its previous version.")
+        signal()
+        expect(card).to_contain_text("Mac didn't update")
+        retained()
+        capture("mac-failed")
+        action.click()
+        expect(card).to_contain_text("Updating…")
+        assert posts[-1]["path"] == "/api/updates/attempts/attempt-3/retry-mac"
+        retained()
+
+        # The Mac is current and this page is current: the card leaves.
+        backend.mac_outcome("up_to_date")
+        signal()
         expect(card).to_have_count(0)
+
+        # No update runs, so a lost connection immediately offers Try now.
+        page.evaluate("window.__ownerUpdatesDisconnect()")
+        expect(card).to_contain_text("Can't reach Panels")
+        expect(dimmed).to_have_css("opacity", "0.5")
+        capture("unreachable")
+        page.evaluate("window.__ownerUpdatesOffline = false")
+        action.click()
+        expect(card).to_have_count(0)
+        expect(dimmed).to_have_css("opacity", "1")
         assert errors == [], errors
         (evidence / "proof.json").write_text(json.dumps({
             "seconds": round(time.perf_counter() - started, 3), "newHosts": 1,
-            "stagedOutcomes": cutover.outcomes, "stagedProcessStarts": len(cutover.process.pids),
-            "dispatchCount": len(backend.provider.dispatched), "requests": posts, "documentVersions": documents,
-            "boundary": "Full App and native dialogs -> actual FastAPI update routes -> durable request/lifecycle records; synthetic external dispatcher",
-            "cardIdentity": "Both desktop and phone card nodes retained across waiting, updating, failure, retry, restart, and complete",
-            "cutover": "Actual deploy_app file replacement, rollback, and disposable HTTP health supply the browser version; archive admission, repository dispatch, remain synthetic.",
+            "requests": posts, "documentVersions": documents,
+            "boundary": "Full App and native dialogs -> contract double of /api/updates and its action routes",
+            "cardIdentity": "Both desktop and phone card nodes retained from Update available through waiting, updating, failure, retry, lost connection and complete, and after Refresh through the Mac failures",
         }, indent=2))
     finally:
         context.close()
-        cutover.close()
-        backend.close()
 
 
 def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):

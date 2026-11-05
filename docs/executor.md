@@ -67,7 +67,7 @@ Each machine reads its own model lists. The VPS retains the Mac's last answer fo
 
 Health shows connection readiness and last contact. A version refusal shows “Mac needs update” with both versions. Mac Tickets use the same refusal reason. Last contact and refusal survive restart. A compatible reconnect clears the refusal. Until then, it describes historical contact, not current presence.
 
-The update status includes the Mac's target, progress, and failure beside the VPS result. An update completes when the VPS is done. A Mac that still waits for its target does not imply that it is offline.
+The update card's information button shows the Mac's target and progress beside the VPS result. A Mac that has not yet picked up its target is not shown as offline.
 
 ## What runs on the Mac
 
@@ -81,9 +81,9 @@ One installation lives in the owner's normal account:
 
 **Permissions.** macOS asks for protected-folder consent on behalf of a responsible app. Panels uses a signed app so that macOS can associate consent with Panels. Its Apple Development signature is for this Mac only, without distribution or notarization.
 
-**Updates.** One owner approval names the release and timing for both machines. “Update now” stops connected Mac agents before VPS installation. “When work finishes” waits for idle work. The Mac checks while connected and after reconnect or wake. Its authenticated update channel works even when its work protocol is too old.
+**Updates.** One press of Update covers both machines with the same timing: “Update now” stops connected Mac agents, and “When work finishes” waits for idle work. The VPS keeps the release's Mac archive from the moment the release is ready, and a current Mac downloads and unpacks it ahead of time without stopping work. The Mac checks while connected and after reconnect or wake, through an authenticated channel that works even when its work protocol is too old.
 
-The VPS retains the approved Mac archive and target outside database rollback and publication expiry. After VPS success, the Mac installs those bytes beside its previous runtime. If the candidate fails to report readiness, the supervisor reverts. The launcher and data folder stay in place.
+The Mac sees its target once the VPS pauses work and installs it once the VPS install is done; the VPS never waits for it. The new runtime goes beside the previous one, and if it does not report readiness, the supervisor reverts. The launcher and data folder stay in place. A failure or a missing report shows on the update card, where **Try again for the Mac** sends a fresh target ([Deployment](deployment.md#the-card-and-the-mac)).
 
 Saved results and their files remain in the outbox through the swap. A planned handoff retains their original authority until the VPS receives them. It does not repeat provider calls or restore stopped agents. Ordinary maintenance still waits for an empty outbox before exit.
 

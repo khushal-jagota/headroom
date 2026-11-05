@@ -1,8 +1,6 @@
 """Real process boundaries: command exit and cancellation clean up owned children."""
 from __future__ import annotations
 
-import fcntl
-import json
 import os
 import signal
 import subprocess
@@ -10,12 +8,11 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import TextIO
 from unittest.mock import Mock
 
 import pytest
 from scripts import deployment_progress
-from scripts.deployment_progress import LIFECYCLE_WRITER, process_identity
+from scripts.deployment_progress import process_identity
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -29,21 +26,8 @@ def wait_until(predicate: Callable[[], bool], timeout: float = 5) -> None:
     raise AssertionError("process condition did not become true")
 
 
-@pytest.fixture
-def lifecycle(tmp_path: Path) -> Path:
-    path = tmp_path / "lifecycle.json"
-    subprocess.run(
-        [sys.executable, str(LIFECYCLE_WRITER), "start", "--path", str(path),
-         "--deployment-id", "run-1", "--requested-sha", "a" * 40],
-        check=True, capture_output=True,
-    )
-    return path
-
-
 def launch(
-    tmp_path: Path, lifecycle: Path, script: str, *, cleanup: bool = False,
-    active: bool = True, parent: bool = False, writer: Path | None = None,
-    shutdown_grace: float = 0.08,
+    tmp_path: Path, script: str, *, active: bool = True, shutdown_grace: float = 0.08,
 ) -> subprocess.Popen[bytes]:
     if sys.platform != "linux":
         pytest.skip("Deployment runner supervision requires Linux prctl, /proc and pidfds")
@@ -53,35 +37,17 @@ def launch(
         key: value for key, value in os.environ.items()
         if not key.startswith(("PLAN_", "PANELS_REAL_"))
     }
-    environment.update(
-        PANELS_DEPLOYMENT_PROGRESS_ACTIVE=str(active).lower(),
-        PANELS_LIFECYCLE_PATH=str(lifecycle), PANELS_DEPLOYMENT_ID="run-1",
-    )
+    environment.update(PANELS_DEPLOYMENT_PROGRESS_ACTIVE=str(active).lower())
     code = (
         "from pathlib import Path; "
-        "from scripts import deployment_progress; "
-        + (f"deployment_progress.LIFECYCLE_WRITER = Path({str(writer)!r}); " if writer else "")
-        +
         "from scripts.deployment_progress import supervise, Timings; "
-        f"raise SystemExit(supervise(Path({str(command)!r}), cleanup={cleanup!r}, "
+        f"raise SystemExit(supervise(Path({str(command)!r}), "
         f"timings=Timings(poll=0.01, shutdown_grace={shutdown_grace})))"
     )
-    if parent:
-        # Persist PID before waiting. Killing this parent simulates runner loss.
-        code = (
-            "import subprocess, sys; from pathlib import Path; "
-            f"p=subprocess.Popen([sys.executable, '-c', {code!r}]); "
-            f"Path({str(tmp_path / 'supervisor.pid')!r}).write_text(f'{{p.pid}}\\n'); p.wait()"
-        )
     return subprocess.Popen(
         [sys.executable, "-c", code], cwd=ROOT, env=environment,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
-
-
-def record(path: Path) -> dict[str, object]:
-    value: dict[str, object] = json.loads(path.read_text())
-    return value
 
 
 @pytest.fixture
@@ -94,74 +60,30 @@ def processes() -> Iterator[list[subprocess.Popen[bytes]]]:
         process.communicate(timeout=5)
 
 
-def lock(path: Path) -> TextIO:
-    stream = path.with_suffix(path.suffix + ".lock").open("a+")
-    fcntl.flock(stream, fcntl.LOCK_EX)
-    return stream
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def test_owned_commands_preserve_status_and_exit_code(
-    tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
+    tmp_path: Path, processes: list[subprocess.Popen[bytes]],
 ) -> None:
-    before = lifecycle.read_bytes()
-    process = launch(tmp_path, lifecycle, "echo $$\nexit 7\n", active=False)
+    process = launch(tmp_path, "echo $$\nexit 7\n", active=False)
     processes.append(process)
     stdout, stderr = process.communicate(timeout=5)
     assert process.returncode == 7
     assert stdout == f"{process.pid}\n".encode()
     assert stderr == b""
-    assert lifecycle.read_bytes() == before
-    subprocess.run(
-        [sys.executable, str(LIFECYCLE_WRITER), "transition", "--path", str(lifecycle),
-         "--deployment-id", "run-1", "--phase", "failed"],
-        check=True, capture_output=True,
-    )
-    before = lifecycle.read_bytes()
-    process = launch(tmp_path, lifecycle, "sleep 0.25\n")
+    process = launch(tmp_path, "sleep 0.25\n")
     processes.append(process)
     stdout, stderr = process.communicate(timeout=5)
     assert process.returncode == 0
     assert stdout == stderr == b""
-    assert lifecycle.read_bytes() == before
-
-
-def test_owned_command_does_not_wait_for_status_lock(
-    tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
-) -> None:
-    started = tmp_path / "started"
-    release = tmp_path / "release"
-    process = launch(tmp_path, lifecycle,
-                     f"touch {started}\nwhile [ ! -e {release} ]; do sleep 0.02; done\n")
-    processes.append(process)
-    wait_until(started.exists)
-    with lock(lifecycle):
-        before = lifecycle.read_bytes()
-        time.sleep(0.14)
-        release.touch()
-        assert process.wait(timeout=2) == 0
-        assert lifecycle.read_bytes() == before
 
 
 @pytest.mark.parametrize("detached", [False, True])
 def test_descendant_shutdown_survives_bash_leader_exit(
-    tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
+    tmp_path: Path, processes: list[subprocess.Popen[bytes]],
     detached: bool,
 ) -> None:
     pidfile = tmp_path / "descendant.pid"
     command = "setsid sleep 60" if detached else "sleep 60"
-    process = launch(tmp_path, lifecycle, f"{command} &\necho $! > {pidfile}\nexit 0\n")
+    process = launch(tmp_path, f"{command} &\necho $! > {pidfile}\nexit 0\n")
     processes.append(process)
     assert process.wait(timeout=5) == 0
     descendant_pid = int(pidfile.read_text())
@@ -169,7 +91,7 @@ def test_descendant_shutdown_survives_bash_leader_exit(
 
 
 def test_exited_adopted_child_is_reaped_before_owned_command_finishes(
-    tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
+    tmp_path: Path, processes: list[subprocess.Popen[bytes]],
 ) -> None:
     pidfile = tmp_path / "adopted.pid"
     release = tmp_path / "release"
@@ -182,7 +104,7 @@ def test_exited_adopted_child_is_reaped_before_owned_command_finishes(
         "    os._exit(0)\n"
     )
     process = launch(
-        tmp_path, lifecycle,
+        tmp_path,
         f"{sys.executable} {helper}\n"
         f"while [ ! -e {release} ]; do sleep 0.02; done\nexit 7\n",
     )

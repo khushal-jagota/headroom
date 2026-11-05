@@ -15,7 +15,8 @@
   import ShellStatus from "./components/ShellStatus.svelte";
   import { atUpdateDeadline } from "./lib/updates/deadline";
   import { UPDATE_RECOVERY_POLL_MS } from "./lib/updates/config";
-  import { updatePresentation, dimsUpdatePage } from "./lib/updates/logic/presentation";
+  import { updatePresentation } from "./lib/updates/logic/presentation";
+  import { settleUpdateStarting, updateStarting } from "./lib/updates/api";
   import { mutateJson } from "./lib/mutate";
 
   import { parseShellDestination, type ShellDestination } from "./lib/shellDestination";
@@ -27,7 +28,7 @@
   let reviewCount = $derived(displayed ? navigation.presentationFor(displayed).globalCounts?.review ?? navigation.presentationFor(displayed).review.items.length : 0);
 
   const updates = createQuery(() => ({ ...queries.updates(),
-    refetchInterval: (query) => $connectionStatus !== "connected" || ["waiting", "updating", "restarting"].includes(query.state.data?.body.state ?? "")
+    refetchInterval: (query) => $connectionStatus !== "connected" || $updateStarting !== null || ["waiting", "updating"].includes(query.state.data?.body.state ?? "")
       ? UPDATE_RECOVERY_POLL_MS : false,
     refetchIntervalInBackground: true, retry: false
   }));
@@ -35,14 +36,17 @@
   $effect(() => {
     const status = updates.data;
     observeRunningAppSha(status?.app_sha ?? null);
+    settleUpdateStarting(status);
     updateClock = Date.now();
   });
+  // A lost connection stops counting as the update at the server's deadline.
   $effect(() => {
-    const expires = Date.parse(updates.data?.available?.expires_at ?? "");
-    if (!Number.isFinite(expires) || expires <= Date.now()) return;
-    return atUpdateDeadline(expires, () => { void updates.refetch(); });
+    const deadline = Date.parse(updates.data?.deadline_at ?? "");
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) return;
+    return atUpdateDeadline(deadline, () => { updateClock = Date.now(); });
   });
-  const updateState = $derived(updatePresentation(updates.data, $connectionStatus, $releaseState, updateClock));
+  const update = $derived(updatePresentation({ status: updates.data, connection: $connectionStatus,
+    pageIsBehind: $releaseState.updateAvailable, starting: $updateStarting !== null, now: updateClock }));
   let route = $state<ShellDestination>(parseRoute());
   const routeModule = $derived.by(() => {
     switch (route.name) {
@@ -153,8 +157,8 @@
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} onfocusin={onWindowFocusIn} />
 
 <div class="shell">
-  <main class="shell-content" class:update-dimmed={dimsUpdatePage(updateState)}>
-    <BoardRoute address={workspaceRouteAddress} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} />
+  <main class="shell-content" class:update-dimmed={update.dimmed}>
+    <BoardRoute address={workspaceRouteAddress} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} {railStatus} />
   </main>
   {#if moreOpen}<button type="button" class="compact-scrim" aria-label="Close navigation menu" onclick={closeMore}></button>{/if}
   <nav class="compact-bar workspace-mobile-nav" aria-label="Destinations" bind:this={compactFoot}>
@@ -170,7 +174,7 @@
         {/each}
       </div>
     {/if}
-    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={updateState} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={update.state} now={updateClock} />
     <div class="compact-bar-row">
       <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
       <a href="#/workspace" class="bar-item" data-screen="workspace" aria-current={selectedDestination === "workspace" ? "page" : undefined}>Workspace</a>
@@ -181,7 +185,6 @@
 
 {#snippet foot()}
   <div class="rail-foot" bind:this={desktopFoot}>
-    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={updateState} />
     <nav class="rail-utilities workspace-utility-nav" aria-label="Destinations">
       {#each SHELL_DESTINATIONS as destination}
         <a href={destination.href} class="utility" data-screen={destination.key} aria-label={destination.label} aria-current={selectedDestination === destination.key ? "page" : undefined}>
@@ -192,6 +195,11 @@
       {/each}
     </nav>
   </div>
+{/snippet}
+
+<!-- The desktop card sits between the active work and Settled. Phone has its own above the bar. -->
+{#snippet railStatus()}
+  <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={update.state} now={updateClock} />
 {/snippet}
 
 {#snippet destinationPane()}

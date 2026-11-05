@@ -47,7 +47,10 @@ def create_app_archive(app: Path, archive: Path) -> str:
 def extract_app_archive(
     archive: Path, destination: Path, archive_sha256: str, expected_sha: str
 ) -> AppManifest:
-    """Validate safe paths, exact bytes, runtime identity, and preserved modes."""
+    """Validate safe paths, exact bytes, runtime identity, and preserved modes.
+
+    The archive checksum covers every byte, so no whole-tree digest is computed again.
+    """
     if hash_archive(archive) != archive_sha256:
         raise ValueError("app archive hash differs from publication receipt")
     if destination.exists():
@@ -79,5 +82,6 @@ def extract_app_archive(
             if not member.issym() and stat.S_IMODE(path.stat().st_mode) != member.mode:
                 raise ValueError("app archive did not preserve permissions")
     return validate_app_manifest(
-        destination / "manifest.json", expected_sha=expected_sha, require_runtime=True
+        destination / "manifest.json", expected_sha=expected_sha, require_runtime=True,
+        verify_artifact_digest=False,
     )

@@ -44,9 +44,10 @@ labels `production` and `panels-deploy`; GitHub adds `self-hosted` and `linux`. 
 unit requires that configured runner and runs its `run.sh`; the deploy workflow
 requests exactly those four labels.
 
-The workflow builds the requested exact commit in runner-temporary storage and deploys
-only `~/Deployments/Panels/current/app`. It controls live with `systemctl --user` and
-leaves `current/data` and `current/logs` in place.
+Panels now installs its own updates. The runner remains for one release only: the
+installed 53d64f0fd server installs the first self-installing release through the
+workflow's bridge `adopt` job (see `docs/deployment.md`). The next release deletes that
+job; then stop and disable `panels-deployment-runner.service` and unregister the runner.
 
 ## Commands and non-production
 

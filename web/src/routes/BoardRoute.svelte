@@ -38,7 +38,7 @@
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
 
   import type { Snippet } from "svelte";
-  let { address, externalPane, railFoot }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet } = $props();
+  let { address, externalPane, railFoot, railStatus }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet; railStatus?: Snippet } = $props();
   const navigation = (() => {
     const context = navigationApplication();
     if (!context) throw new Error("Workspace requires the application navigation owner");
@@ -374,6 +374,11 @@
             {/each}
             {#if settleError}<p role="alert">{settleError}</p>{/if}
             </div>
+          </div>
+          </ResourceState>
+          <!-- Outside the loading region, so the one card never remounts and shows while the workspace cannot load. -->
+          {#if railStatus}<div class="rail-status">{@render railStatus()}</div>{/if}
+          {#if workspace}
             <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
               <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>({workspace?.globalCounts?.settled ?? rail.settledItems.length})</span></span></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 10 3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               {#if presentation.settledBodyOpen ?? settledOpen}
@@ -389,8 +394,7 @@
                 </div>
               {/if}
             </div>
-          </div>
-          </ResourceState>
+          {/if}
           </div>
           {#if railFoot}{@render railFoot()}{/if}
         </section>
@@ -516,6 +520,7 @@
   .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { opacity:1; transform:translate(-50%,-50%) scaleY(1); }
   .resizing .rail-grip::after { background:var(--text-strong); }
   .resizing { user-select:none; cursor:col-resize; }
+  .rail-status { flex:none; padding-top:var(--space-2); }
   .settled { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); }
   .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); padding:var(--space-2) calc(var(--space-3) + var(--border-hairline)); border:0; background:none; width:100%; font:inherit; color:var(--text-faint); cursor:pointer; }
   .settled-head:hover { color:var(--text-strong); }
@@ -536,6 +541,8 @@
     .rail-grip::after { transition:none; }
   }
   @media(max-width:720px) {
+    /* Phone shows the card above the bottom bar instead. */
+    .rail-status { display:none; }
     .approved-rail-shell { grid-template-columns:1fr; }
     .rail-grip { display:none; }
     .board-workspace-shell--chief .approved-rail,

@@ -1,4 +1,4 @@
-"""Approve once, retain recovery bytes, and confirm only the actual target generation.
+"""The Mac target follows the update attempt; recovery bytes outlive it; old Macs still read it.
 
 In-process HTTP reuses the trusted ingress boundary. No browser, server, or Mac starts.
 """
@@ -7,254 +7,339 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 import tarfile
 import zipfile
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal
 from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.unit.test_owner_updates import Provider, release
+from pydantic import TypeAdapter
 
 from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
+from planner.environments.app import AppManifest
 from planner.environments.mac_updates import MacUpdateService
-from planner.environments.update_api import router as updates_router
-from planner.environments.update_contracts import PublishedMacUpdate
-from planner.environments.update_requests import FileUpdateRequestStore, UpdateConflict
-from planner.environments.update_service import UpdateService
+from planner.environments.runtime_contracts import RuntimeContract
+from planner.environments.update_attempts import (
+    FileUpdateAttemptStore,
+    UpdateConflict,
+    import_legacy_request,
+    utc_now,
+)
+from planner.environments.update_contracts import (
+    PublishedMacUpdate,
+    PublishedUpdate,
+    UpdateAttempt,
+    UpdateAttemptState,
+)
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.app_transport import build_executor_router
+from planner.executor.update_configuration import MAX_MAC_UPDATE_RESPONSE_BYTES
 from planner.executor.update_contracts import MacUpdateReport
 
+RUNNING_SHA = "a" * 40
+TARGET_SHA = "b" * 40
+NEXT_SHA = "c" * 40
+HEADERS = {"tailscale-user-login": "owner@example.test", "X-Panels-Executor-ID": "configured-mac"}
 
-class MacProvider(Provider):
-    def __init__(self, *, manifest_revision: str | None = None) -> None:
-        super().__init__()
-        archive = BytesIO()
-        with tarfile.open(fileobj=archive, mode="w:gz") as tar:
-            for name, content in (
-                (
-                    "mac-runtime.json",
-                    json.dumps(
-                        {
-                            "schema_version": 1,
-                            "application_revision": manifest_revision
-                            or self.offered.manifest.app_sha,
-                            "platform": "darwin",
-                            "architecture": "arm64",
-                        }
-                    ).encode(),
-                ),
-                ("python/bin/python3", b"fixture executable"),
-            ):
-                member = tarfile.TarInfo(name)
-                member.size = len(content)
-                member.mode = 0o755
-                tar.addfile(member, BytesIO(content))
-        self.archive = archive.getvalue()
-        self.offered = replace(
-            self.offered,
-            mac=PublishedMacUpdate(4, hashlib.sha256(self.archive).hexdigest(), len(self.archive)),
-        )
+
+def release(app_sha: str = TARGET_SHA) -> PublishedUpdate:
+    return PublishedUpdate(
+        1, 2, 3,
+        AppManifest(app_sha, "c" * 64, "d" * 64, RuntimeContract("3.12.12", "f" * 64)),
+        "e" * 64,
+        "video_upload_ledger",
+        (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+    )
+
+
+def runtime_archive(application_revision: str) -> bytes:
+    archive = BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+        for name, content in (
+            ("mac-runtime.json", json.dumps({
+                "schema_version": 1, "application_revision": application_revision,
+                "platform": "darwin", "architecture": "arm64",
+            }).encode()),
+            ("python/bin/python3", b"fixture executable"),
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            member.mode = 0o755
+            tar.addfile(member, BytesIO(content))
+    return archive.getvalue()
+
+
+class MacProvider:
+    """Serves one Mac runtime artifact per release, keyed by its Mac artifact id."""
+
+    def __init__(self) -> None:
+        self.archives: dict[int, bytes] = {}
         self.downloads: list[int] = []
+
+    def publish(
+        self, app_sha: str = TARGET_SHA, *, manifest_revision: str | None = None
+    ) -> PublishedUpdate:
+        archive = runtime_archive(manifest_revision or app_sha)
+        artifact_id = len(self.archives) + 4
+        self.archives[artifact_id] = archive
+        mac = PublishedMacUpdate(artifact_id, hashlib.sha256(archive).hexdigest(), len(archive))
+        return replace(release(app_sha), mac=mac)
+
+    def available(self) -> PublishedUpdate | None:
+        return None
 
     def download_artifact(self, artifact_id: int, destination: Path) -> None:
         self.downloads.append(artifact_id)
         with zipfile.ZipFile(destination, "w") as artifact:
-            artifact.writestr("panels-mac-runtime.tar.gz", self.archive)
-            artifact.writestr("mac-runtime-publication.json", json.dumps({
-                "application_revision": self.offered.manifest.app_sha,
-            }))
+            artifact.writestr("panels-mac-runtime.tar.gz", self.archives[artifact_id])
+            artifact.writestr("mac-runtime-publication.json", "{}")
 
 
-def services(
+def attempt(
+    published: PublishedUpdate,
+    state: UpdateAttemptState,
+    *,
+    mode: Literal["now", "idle"] = "now",
+    mac_attempt_id: str | None = "mac_one",
+) -> UpdateAttempt:
+    now = utc_now()
+    return UpdateAttempt(
+        attempt_id=uuid4().hex, from_sha=RUNNING_SHA, to_sha=published.manifest.app_sha,
+        mode=mode, confirm_activity=True, state=state, created_at=now, updated_at=now,
+        release=published, mac_attempt_id=mac_attempt_id,
+    )
+
+
+def mac_service(
     tmp_path: Path,
-    provider: MacProvider,
-    health: dict[str, object] | None = None,
-) -> tuple[UpdateService, MacUpdateService]:
-    store = FileUpdateRequestStore(tmp_path / "request.json")
-    mac = MacUpdateService(tmp_path / "mac", store, provider, "a" * 40)
-    updates = UpdateService(
+    provider: MacProvider | None,
+    current_app_sha: str = RUNNING_SHA,
+    ready: PublishedUpdate | None = None,
+) -> MacUpdateService:
+    return MacUpdateService(
+        tmp_path / "mac-updates",
+        FileUpdateAttemptStore(tmp_path / "update-attempt.json"),
         provider,
-        store,
-        lambda: None,
-        connection_factory=lambda: sqlite3.connect(":memory:"),
-        prepare_mac_update=mac.prepare,
-        mac_ready_for_dispatch=lambda request: mac.ready_for_dispatch(request, health or {}),
+        current_app_sha,
+        lambda: ready,
     )
-    return updates, mac
 
 
-def test_immediate_dispatch_waits_for_stop_of_the_current_connected_mac(tmp_path: Path) -> None:
+def write(service: MacUpdateService, value: UpdateAttempt) -> None:
+    """Put this attempt in the record, whatever it held before."""
+    service.attempts.path.unlink(missing_ok=True)
+    service.attempts.create(value)
+
+
+def executor_app(service: MacUpdateService) -> FastAPI:
+    app = FastAPI()
+    app.state.executor_id = "configured-mac"
+    app.state.mac_updates = service
+    app.include_router(build_executor_router())
+    app.add_middleware(
+        TrustedIngressMiddleware,
+        config=TrustedIngressConfig("tailscale", "owner@example.test", "https://panels.example.test"),
+    )
+    return app
+
+
+def test_target_follows_attempt_state_and_activates_only_once_the_vps_runs_it(
+    tmp_path: Path,
+) -> None:
+    """Risk: the Mac stops before the VPS pauses, or swaps before the VPS runs the release."""
     provider = MacProvider()
-    identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, str(uuid4()), 1)
-    health: dict[str, object] = {"identity": asdict(identity), "connection_state": "ready"}
-    updates, mac = services(tmp_path, provider, health)
-    request = updates.request(provider.offered, "now", confirm_activity=True)
-    assert not updates.dispatch_pending()
-    assert not provider.dispatched
-    assert mac.ready_for_dispatch(request, {"connection_state": "disconnected"})
-    assert mac.ready_for_dispatch(replace(request, mode="idle"), health)
-    report = MacUpdateReport(
-        request.request_id, request.release.manifest.app_sha, "ready_to_restart", identity=identity
+    published = provider.publish()
+    before = mac_service(tmp_path, provider)
+    before.prepare(published)
+    write(before, attempt(published, "waiting", mode="idle"))
+    assert before.check().target is None
+    for state in ("preparing", "installing"):
+        write(before, attempt(published, state, mode="idle"))
+        target = before.check().target
+        assert target is not None and not target.activate
+        assert (target.request_id, target.application_revision, target.mode) == (
+            "mac_one", TARGET_SHA, "idle"
+        )
+        assert target.archive_path == "/api/executor/update/mac_one/archive"
+    write(before, attempt(published, "done"))
+    # A done release the VPS does not run must not hold the Mac stopped.
+    assert before.check().target is None
+    after = mac_service(tmp_path, None, TARGET_SHA)
+    target = after.check().target
+    assert target is not None and target.activate and target.request_id == "mac_one"
+    assert after.archive("mac_one").read_bytes() == provider.archives[4]
+
+
+def test_retry_mac_presents_a_new_target_with_no_saved_failure(tmp_path: Path) -> None:
+    """Risk: a retried Mac keeps its failed report or the server accepts the stale target."""
+    provider = MacProvider()
+    published = provider.publish()
+    service = mac_service(tmp_path, provider, TARGET_SHA)
+    service.prepare(published)
+    done = attempt(published, "done")
+    write(service, done)
+    service.report(MacUpdateReport("mac_one", TARGET_SHA, "failed", "fixture failure"), {})
+    assert service.phase("mac_one") == "failed"
+    service.attempts.change(
+        done.attempt_id, frozenset({"done"}), lambda value: replace(value, mac_attempt_id="mac_two")
     )
-    mac.report(report, health)
-    identity = replace(identity, connection_generation=2)
-    health["identity"] = asdict(identity)
-    assert not updates.dispatch_pending()
-    with pytest.raises(UpdateConflict, match="current connection"):
-        mac.report(report, health)
-    mac.report(replace(report, identity=identity), health)
-    assert updates.dispatch_pending()
-    assert provider.dispatched[0].request_id == request.request_id
+    target = service.check().target
+    assert target is not None and target.request_id == "mac_two" and target.activate
+    assert service.phase("mac_two") is None
+    status = service.status()
+    assert status is not None and (status.request_id, status.phase) == ("mac_two", "waiting")
+    with pytest.raises(UpdateConflict):
+        service.report(MacUpdateReport("mac_one", TARGET_SHA, "waiting"), {})
+    with pytest.raises(UpdateConflict):
+        service.archive("mac_one")
+    service.report(MacUpdateReport("mac_two", TARGET_SHA, "waiting"), {})
+    assert service.phase("mac_two") == "waiting"
 
 
 @pytest.mark.parametrize("damage", ["source", "digest", "size"])
-def test_mac_archive_is_verified_before_request_can_authorize_dispatch(
-    tmp_path: Path,
-    damage: str,
-) -> None:
-    provider = MacProvider(manifest_revision="c" * 40 if damage == "source" else None)
-    mac_publication = provider.offered.mac
-    assert mac_publication is not None
+def test_mac_archive_is_verified_before_it_is_pinned(tmp_path: Path, damage: str) -> None:
+    """Risk: bytes that differ from the publication become a Mac target."""
+    provider = MacProvider()
+    published = provider.publish(manifest_revision=NEXT_SHA if damage == "source" else None)
+    mac = published.mac
+    assert mac is not None
     if damage == "digest":
-        provider.offered = replace(
-            provider.offered, mac=replace(mac_publication, archive_sha256="0" * 64)
-        )
+        published = replace(published, mac=replace(mac, archive_sha256="0" * 64))
     if damage == "size":
-        provider.offered = replace(
-            provider.offered,
-            mac=replace(mac_publication, archive_size=len(provider.archive) + 1),
-        )
-    updates, mac = services(tmp_path, provider)
+        published = replace(published, mac=replace(mac, archive_size=mac.archive_size + 1))
+    service = mac_service(tmp_path, provider)
     with pytest.raises(UpdateConflict):
-        updates.request(provider.offered, "now", confirm_activity=True)
-    assert updates.store.read() is None
-    assert not provider.dispatched
-    assert mac.check().target is None
+        service.prepare(published)
+    assert not list((tmp_path / "mac-updates/archives").glob("*.tar.gz"))
 
 
-def test_approved_bytes_and_last_applied_target_survive_expiry_and_replaced_request(
+def test_last_done_target_survives_a_failed_successor_and_publication_expiry(
     tmp_path: Path,
 ) -> None:
+    """Risk: a Mac that missed an update loses the release the VPS runs after a later failure."""
     provider = MacProvider()
-    updates, mac = services(tmp_path, provider)
-    request = updates.request(provider.offered, "now", confirm_activity=True)
-    target = mac.check().target
-    assert target is not None and not target.activate and target.mode == "now"
-    assert mac.archive(request.request_id).read_bytes() == provider.archive
-    updates.store.transition(request.request_id, frozenset({"requested"}), "done")
-    # A new VPS process sees the target release. Preserve it before replacement.
-    mac = MacUpdateService(mac.root, updates.store, None, provider.offered.manifest.app_sha)
-    mac.prepare(release())
-    assert mac.check().target is not None
-    successor = replace(request, request_id="successor", state="requested", release=release())
-    updates.store.create(successor)
-    unavailable = mac.status()
-    assert unavailable is not None and unavailable.phase == "unavailable"
-    assert mac.check().target is None
-    updates.store.transition("successor", frozenset({"requested"}), "failed",
-        detail="Update canceled before installation. The previous version stayed active.")
-    # No repository/provider remains. An expired receipt still authorizes its pinned bytes.
-    retained = FileUpdateRequestStore(mac.root / "applied.json")
-    saved = retained.read()
-    assert saved is not None
-    retained.create(
-        replace(saved, release=replace(saved.release, expires_at="2000-01-01T00:00:00Z"))
-    )
-    recovered = MacUpdateService(mac.root, updates.store, None, provider.offered.manifest.app_sha)
+    published = provider.publish()
+    service = mac_service(tmp_path, provider, TARGET_SHA)
+    service.prepare(published)
+    write(service, attempt(published, "done"))
+    successor = provider.publish(NEXT_SHA)
+    # Prefetch of the next release retains the done attempt before a press replaces it.
+    service.prepare(successor)
+    write(service, attempt(successor, "failed", mac_attempt_id="mac_next"))
+    # A new process with no provider still serves the retained, now expired, receipt.
+    applied = json.loads((tmp_path / "mac-updates/applied.json").read_text())
+    applied["release"]["expires_at"] = "2000-01-01T00:00:00Z"
+    (tmp_path / "mac-updates/applied.json").write_text(json.dumps(applied))
+    recovered = mac_service(tmp_path, None, TARGET_SHA)
     target = recovered.check().target
-    assert target is not None and target.activate and target.request_id == request.request_id
-    assert recovered.archive(target.request_id).read_bytes() == provider.archive
-    assert provider.downloads == [4]
+    assert target is not None and target.activate and target.request_id == "mac_one"
+    assert recovered.archive("mac_one").read_bytes() == provider.archives[4]
+    assert provider.downloads == [4, 5]
 
 
-def test_recovery_routes_work_without_work_handshake_but_reject_untrusted_callers(
+def test_mac_stopped_by_the_legacy_server_activates_after_the_bridge(tmp_path: Path) -> None:
+    """Risk: a Mac the 53d64f0fd server stopped for its request stays stopped forever."""
+    provider = MacProvider()
+    published = provider.publish()
+    # The 53d64f0fd server pinned this archive and kept a request in applied.json.
+    mac_service(tmp_path, provider).prepare(published)
+    (tmp_path / "mac-updates/applied.json").write_text(json.dumps({"request_id": "old"}))
+    (tmp_path / "owner-update-request.json").write_text(json.dumps({
+        "request_id": "legacy_request", "state": "applied", "mode": "now",
+        "release": asdict(published),
+    }))
+    service = mac_service(tmp_path, None, TARGET_SHA)
+    assert import_legacy_request(service.attempts, tmp_path, TARGET_SHA) is not None
+    target = service.check().target
+    assert target is not None and target.activate and target.request_id == "legacy_request"
+    assert target.archive_path == "/api/executor/update/legacy_request/archive"
+
+
+def test_executor_routes_work_without_work_handshake_but_reject_untrusted_callers(
     tmp_path: Path,
 ) -> None:
+    """Risk: an untrusted caller reads runtime bytes, or a stale generation confirms current."""
     provider = MacProvider()
-    updates, mac = services(tmp_path, provider)
-    request = updates.request(provider.offered, "idle", confirm_activity=False)
-    app = FastAPI()
-    app.state.executor_id = "configured-mac"
-    app.state.mac_updates = mac
-    app.state.updates = updates
-    app.include_router(build_executor_router())
-    app.include_router(updates_router, prefix="/api")
-    app.add_middleware(
-        TrustedIngressMiddleware,
-        config=TrustedIngressConfig(
-            "tailscale", "owner@example.test", "https://panels.example.test"
-        ),
-    )
-    headers = {
-        "tailscale-user-login": "owner@example.test",
-        "X-Panels-Executor-ID": "configured-mac",
-    }
+    published, ready = provider.publish(), provider.publish(NEXT_SHA)
+    service = mac_service(tmp_path, provider, TARGET_SHA, ready)
+    service.prepare(published)
+    service.prepare(ready)
+    write(service, attempt(published, "done"))
+    app = executor_app(service)
     with TestClient(app) as client:
-        for path in ("/api/executor/update", f"/api/executor/update/{request.request_id}/archive"):
+        check = client.get("/api/executor/update", headers=HEADERS).json()
+        target, prefetch = check["target"], check["prefetch"]
+        for path in ("/api/executor/update", target["archive_path"], prefetch["archive_path"]):
             assert client.get(path).status_code == 403
-            assert (
-                client.get(path, headers={**headers, "X-Panels-Executor-ID": "other"}).status_code
-                == 403
-            )
-            assert (
-                client.get(
-                    path, headers={**headers, "Origin": "https://panels.example.test"}
-                ).status_code
-                == 403
-            )
-        target = client.get("/api/executor/update", headers=headers).json()["target"]
-        assert target["mode"] == "idle" and target["activate"] is False
-        assert client.get(target["archive_path"], headers=headers).content == provider.archive
-        assert (
-            client.get("/api/executor/update/not-approved/archive", headers=headers).status_code
-            == 409
-        )
-        updates.store.transition(request.request_id, frozenset({"requested"}), "done")
-        mac.current_app_sha = provider.offered.manifest.app_sha
+            assert client.get(
+                path, headers={**HEADERS, "X-Panels-Executor-ID": "other"}
+            ).status_code == 403
+            assert client.get(
+                path, headers={**HEADERS, "Origin": "https://panels.example.test"}
+            ).status_code == 403
+        assert client.get(target["archive_path"], headers=HEADERS).content == provider.archives[4]
+        assert client.get(prefetch["archive_path"], headers=HEADERS).content == provider.archives[5]
+        for refused in ("/api/executor/update/not-a-target/archive",
+                        f"/api/executor/update/prefetch/{target['archive_sha256']}"):
+            assert client.get(refused, headers=HEADERS).status_code == 409
         identity = ExecutorIdentity(
-            PROTOCOL_VERSION,
-            provider.offered.manifest.app_sha,
-            SPOOL_FORMAT_VERSION,
-            str(uuid4()),
-            2,
+            PROTOCOL_VERSION, TARGET_SHA, SPOOL_FORMAT_VERSION, str(uuid4()), 2
         )
-        report = MacUpdateReport(
-            request.request_id, identity.application_revision, "current", identity=identity
-        )
-        assert (
-            client.post("/api/executor/update", headers=headers, json=asdict(report)).status_code
-            == 409
-        )
-        health: dict[str, object] = {
-            "identity": asdict(identity),
-            "connection_state": "ready",
-            "last_contact_at_ms": 1234,
-            "refusal": None,
-        }
+        report = asdict(MacUpdateReport("mac_one", TARGET_SHA, "current", identity=identity))
+        assert client.post("/api/executor/update", headers=HEADERS, json=report).status_code == 409
+        health: dict[str, object] = {"identity": asdict(identity), "connection_state": "ready"}
         app.state.executor_endpoint = SimpleNamespace(health=lambda: health)
-        stale = replace(report, identity=replace(identity, connection_generation=1))
-        assert (
-            client.post("/api/executor/update", headers=headers, json=asdict(stale)).status_code
-            == 409
-        )
-        assert client.post("/api/executor/update", headers=headers, json=asdict(report)).json() == {
+        stale = {**report, "identity": {**report["identity"], "connection_generation": 1}}
+        assert client.post("/api/executor/update", headers=HEADERS, json=stale).status_code == 409
+        for changed in ({"phase": "invented"}, {"detail": "x" * 501}, {"request_id": "other"}):
+            assert client.post(
+                "/api/executor/update", headers=HEADERS, json={**report, **changed}
+            ).status_code == 409
+        assert client.post("/api/executor/update", headers=HEADERS, json=report).json() == {
             "confirmed": True
         }
-        status = client.get("/api/updates").json()["mac_status"]
-        assert status["connection_state"] == "ready"
-        assert status["last_contact_at_ms"] == 1234
-        assert status["update"]["phase"] == "current"
-        assert status["update"]["target_revision"] == identity.application_revision
-        for changed in ({"phase": "invented"}, {"detail": "x" * 501}, {"request_id": "other"}):
-            response = client.post(
-                "/api/executor/update", headers=headers, json={**asdict(report), **changed}
-            )
-            assert response.status_code == 409
+        assert service.phase("mac_one") == "current"
+
+
+# The check response shape the Mac runtimes of 53d64f0fd validate, copied from that commit.
+@dataclass(frozen=True, slots=True)
+class FieldMacUpdateTarget:
+    request_id: str
+    application_revision: str
+    mode: Literal["now", "idle"]
+    activate: bool
+    archive_sha256: str
+    archive_size: int
+    archive_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class FieldMacUpdateCheck:
+    schema_version: int
+    target: FieldMacUpdateTarget | None
+
+
+def test_mac_runtimes_in_the_field_read_the_check_response_with_prefetch(tmp_path: Path) -> None:
+    """Risk: the added prefetch field breaks or bloats the response old Mac runtimes validate."""
+    provider = MacProvider()
+    published, ready = provider.publish(), provider.publish(NEXT_SHA)
+    service = mac_service(tmp_path, provider, ready=ready)
+    service.prepare(published)
+    service.prepare(ready)
+    write(service, attempt(published, "installing"))
+    with TestClient(executor_app(service)) as client:
+        body = client.get("/api/executor/update", headers=HEADERS).content
+    assert len(body) <= MAX_MAC_UPDATE_RESPONSE_BYTES
+    assert json.loads(body)["prefetch"]["application_revision"] == NEXT_SHA
+    target = service.check().target
+    assert target is not None
+    seen = TypeAdapter(FieldMacUpdateCheck).validate_python(json.loads(body))
+    assert seen == FieldMacUpdateCheck(1, FieldMacUpdateTarget(**asdict(target)))

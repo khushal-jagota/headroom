@@ -1,7 +1,8 @@
 """Version-independent Mac update channel, separate from the work protocol.
 
-Targets come only from the owner-approved publication. A work-protocol refusal
+Targets come only from the owner's update attempt. A work-protocol refusal
 does not prevent an authenticated executor from obtaining its recovery target.
+Mac runtimes in the field read this shape: add only optional fields, which they ignore.
 """
 
 from __future__ import annotations
@@ -31,10 +32,25 @@ class MacUpdateTarget:
     archive_path: str
 
 
+def mac_prefetch_archive_path(archive_sha256: str) -> str:
+    return f"/api/executor/update/prefetch/{archive_sha256}"
+
+
+@dataclass(frozen=True, slots=True)
+class MacUpdatePrefetch:
+    """The ready release's runtime, which a Mac may download before any update starts."""
+
+    application_revision: str
+    archive_sha256: str
+    archive_size: int
+    archive_path: str
+
+
 @dataclass(frozen=True, slots=True)
 class MacUpdateCheck:
     schema_version: int
     target: MacUpdateTarget | None
+    prefetch: MacUpdatePrefetch | None = None
 
 
 @dataclass(frozen=True, slots=True)

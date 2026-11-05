@@ -29,12 +29,6 @@ from planner.navigation.delivery_authority import DeliveryAccess, DeliveryAdmiss
 
 SHA = "a" * 40
 STALE_SHA = "b" * 40
-STATUS_PATHS = ("/api/health", "/api/meta", "/api/deployment-status", "/api/updates")
-WAIT_PAYLOAD = {
-    "detail": (
-        "Installation is unconfirmed. Work remains paused. Chief review is required."
-    )
-}
 STALE_PAYLOAD = {
     "error": {
         "code": "validation",
@@ -87,8 +81,6 @@ class Harness:
 @pytest.fixture
 def harness() -> Harness:
     owner = FastAPI()
-    owner.state.update_startup_pending = False
-    owner.state.update_admission_closed = False
     admission = CountedAdmission()
     owner.state.conversation_system = SimpleNamespace(workspace_admission=admission)
     return Harness(owner, load_config(path=None, env={"PLAN_APP_SHA": SHA}), admission)
@@ -126,16 +118,12 @@ def test_exact_safe_methods_sha_precedence_and_write_lease(harness: Harness, met
         scope["headers"] = [(b"x-panels-app-sha", STALE_SHA.encode())]
         middleware = harness.wrap(answer)
         safe = method in {"GET", "HEAD", "OPTIONS"}
-        # A stale write wins over both closed admission gates and acquires no lease.
-        harness.owner.state.update_startup_pending = not safe
-        harness.owner.state.update_admission_closed = not safe
+        # A stale write is refused before it acquires a lease.
         sent = await invoke(middleware, scope)
         assert sent[0]["status"] == (200 if safe else 409)
         assert payload(sent) == ({"forwarded": True} if safe else STALE_PAYLOAD)
         assert harness.admission.entries == harness.admission.exits == 0
 
-        harness.owner.state.update_startup_pending = False
-        harness.owner.state.update_admission_closed = False
         scope["headers"] = [(b"x-panels-app-sha", SHA.encode())]
 
         async def endpoint(scope: Scope, receive: Receive, send: Send) -> None:
@@ -149,47 +137,11 @@ def test_exact_safe_methods_sha_precedence_and_write_lease(harness: Harness, met
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("closed_gate", ("update_startup_pending", "update_admission_closed"))
-def test_exact_status_and_static_exceptions_to_closed_gate(
-    harness: Harness, closed_gate: str
-) -> None:
-    async def run() -> None:
-        setattr(harness.owner.state, closed_gate, True)
-        cases = [(method, path, True) for path in STATUS_PATHS for method in ("GET", "POST")]
-        cases += [
-            ("GET", "/assets/app.css", True),
-            ("HEAD", "/assets/app.css", True),
-            ("GET", "/api", True),
-            ("OPTIONS", "/assets/app.css", False),
-            ("POST", "/assets/app.css", False),
-            ("GET", "/api/projects", False),
-            ("HEAD", "/api/projects", False),
-            ("OPTIONS", "/api/projects", False),
-            ("GET", "/api/health/", False),
-            ("GET", "/api/changes", False),
-            ("POST", "/api/changes", False),
-            ("POST", "/api/updates/requests", False),
-            ("POST", "/api/updates/requests/current/claim", False),
-            ("POST", "/api/updates/requests/current/now", False),
-            ("POST", "/api/updates/requests/current/cancel", False),
-            ("POST", "/api/updates/requests/current/delete", False),
-            ("GET", "/api/updates/claim", False),
-            ("POST", "/api/updates/claim", False),
-        ]
-        for method, path, allowed in cases:
-            sent = await invoke(harness.wrap(answer), harness.scope(method, path))
-            assert sent[0]["status"] == (200 if allowed else 503), (method, path)
-            assert payload(sent) == ({"forwarded": True} if allowed else WAIT_PAYLOAD)
-        assert harness.admission.entries == harness.admission.exits == 0
-
-    asyncio.run(run())
-
-
 def test_update_prefix_excludes_lease_but_not_sha_and_absent_system_forwards(
     harness: Harness,
 ) -> None:
     async def run() -> None:
-        for path in (*STATUS_PATHS, "/api/updates/claim", "/api/updates-extra"):
+        for path in ("/api/updates", "/api/updates/install", "/api/updates-extra"):
             scope = harness.scope("POST", path)
             assert (await invoke(harness.wrap(answer), scope))[0]["status"] == 200
             scope["headers"] = [(b"x-panels-app-sha", STALE_SHA.encode())]
@@ -305,7 +257,6 @@ def test_write_lease_releases_once_on_error_disconnect_or_cancellation(
 def test_non_http_scope_and_callables_pass_through_unchanged(harness: Harness, kind: str) -> None:
     async def run() -> None:
         scope: Scope = {"type": kind}
-        harness.owner.state.update_startup_pending = True
 
         async def send(message: Message) -> None:
             raise AssertionError("unexpected send")
@@ -466,13 +417,3 @@ def test_connected_header_timeout_still_logs_and_returns_500_at_uvicorn_boundary
     asyncio.run(run())
 
 
-def test_paused_start_allows_only_the_status_resource_body(harness: Harness) -> None:
-    async def run() -> None:
-        harness.owner.state.update_startup_pending = True
-        for key, expected in (
-            ("/api/deployment-status", 200), ("/api/projects", 503), ("", 503),
-        ):
-            scope = harness.scope("GET", "/api/resource-body")
-            scope["query_string"] = ("key=" + key).encode()
-            assert (await invoke(harness.wrap(answer), scope))[0]["status"] == expected
-    asyncio.run(run())

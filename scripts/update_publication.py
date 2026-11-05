@@ -30,6 +30,7 @@ from planner.environments.update_artifacts import (
     extract_app_archive,
     hash_archive,
 )
+from planner.environments.update_configuration import STAGED_APP_PREFIX
 from planner.environments.update_contracts import (
     SUPPORTED_UPDATE_SCHEMA_FLOOR,
     UPDATE_ARTIFACT_RETENTION_DAYS,
@@ -173,7 +174,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument(
         "operation",
-        choices=("selection", "seal", "smoke", "rehearsal", "unchanged", "receipt"),
+        choices=("selection", "seal", "smoke", "stage", "unchanged", "receipt"),
     )
     args = parser.parse_args()
     gate = Path(os.environ["PANELS_GATE_DIR"])
@@ -187,40 +188,29 @@ def main() -> None:
         digest = create_app_archive(candidate, archive)
         (gate / "archive-sha256.txt").write_text(digest + "\n")
         (gate / "manifest.json").write_bytes((candidate / "manifest.json").read_bytes())
-    elif args.operation in {"smoke", "rehearsal"}:
+    elif args.operation == "smoke":
         digest = (gate / "archive-sha256.txt").read_text().strip()
-        candidate = Path(os.environ["PANELS_CANDIDATE_APP"])
-        destination = candidate.with_name(args.operation + "-candidate")
+        destination = Path(os.environ["PANELS_CANDIDATE_APP"]).with_name("smoke-candidate")
         manifest = extract_app_archive(archive, destination, digest, requested)
-        if args.operation == "smoke":
-            from planner.environments.deployment_gate import smoke_candidate
+        from planner.environments.candidate_smoke import smoke_candidate
 
-            smoke_candidate(destination, requested)
-            (gate / "smoke.json").write_text(
-                json.dumps(
-                    {
-                        "requested_sha": requested,
-                        "artifact_digest": manifest.artifact_digest,
-                        "archive_sha256": digest,
-                        "passed": True,
-                    }
-                )
-                + "\n"
+        smoke_candidate(destination, requested)
+        (gate / "smoke.json").write_text(
+            json.dumps(
+                {
+                    "requested_sha": requested,
+                    "artifact_digest": manifest.artifact_digest,
+                    "archive_sha256": digest,
+                    "passed": True,
+                }
             )
-        else:
-            (gate / "evidence.json").write_text(
-                json.dumps(
-                    {
-                        "requested_sha": requested,
-                        "artifact_digest": manifest.artifact_digest,
-                        "publication_run_id": int(os.environ["GITHUB_RUN_ID"]),
-                        "archive_sha256": digest,
-                    }
-                )
-                + "\n"
-            )
-            with Path(os.environ["GITHUB_ENV"]).open("a") as stream:
-                stream.write(f"PANELS_CANDIDATE_APP={destination}\n")
+            + "\n"
+        )
+    elif args.operation == "stage":
+        # Stage beside the known-good app, where the server stages a prefetched release.
+        digest = (gate / "archive-sha256.txt").read_text().strip()
+        current = Path(os.environ["PANELS_CURRENT_ROOT"])
+        extract_app_archive(archive, current / f"{STAGED_APP_PREFIX}{requested}", digest, requested)
     elif args.operation == "unchanged":
         # The build job runs this after every proof, just before it uploads the archive.
         if hash_archive(archive) != (gate / "archive-sha256.txt").read_text().strip():

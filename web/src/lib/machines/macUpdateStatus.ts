@@ -14,10 +14,6 @@ const labels: Record<Update["phase"], string> = {
 
 export const macUpdateLabel = (update: Update): string => labels[update.phase];
 
-export function macUpdateNeedsNotice(update: MacStatus["update"]): boolean {
-  return Boolean(update && update.phase !== "current");
-}
-
 export function macUpdateNeedsAttention(update: MacStatus["update"]): boolean {
   return Boolean(update && ["failed", "reverted", "unavailable"].includes(update.phase));
 }

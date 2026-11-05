@@ -13,10 +13,6 @@ from pathlib import Path
 
 POLL_INTERVAL_SECONDS = 0.05
 SHUTDOWN_GRACE_SECONDS = 2.0
-TERMINAL_PHASES = {"succeeded", "failed", "rolled_back"}
-LIFECYCLE_WRITER = (
-    Path(__file__).resolve().parents[1] / "src/planner/environments/deployment_lifecycle.py"
-)
 
 
 @dataclass(frozen=True)
@@ -197,9 +193,7 @@ def _shutdown_adopted_children(timings: Timings) -> None:
         time.sleep(timings.poll)
 
 
-def supervise(
-    script: Path, *, cleanup: bool = False, timings: Timings = DEFAULT_TIMINGS,
-) -> int:
+def supervise(script: Path, *, timings: Timings = DEFAULT_TIMINGS) -> int:
     """Run Bash and preserve command failures and cancellation."""
     if os.environ.get("PANELS_DEPLOYMENT_PROGRESS_ACTIVE") != "true":
         # Bootstrap keeps the runner's normal shell ownership.
@@ -252,10 +246,9 @@ def supervise(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cleanup", action="store_true")
     parser.add_argument("script", type=Path)
     arguments = parser.parse_args()
-    return supervise(arguments.script, cleanup=arguments.cleanup)
+    return supervise(arguments.script)
 
 
 if __name__ == "__main__":

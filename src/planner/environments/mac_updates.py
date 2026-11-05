@@ -1,4 +1,10 @@
-"""Retain the approved Mac runtime independently of publication expiry and VPS rollback."""
+"""Retain the Mac runtime of each update independently of publication expiry and VPS rollback.
+
+Layout under `<data>/mac-updates`: `archives/<archive_sha256>.tar.gz` holds pinned
+runtimes, `reports/<sha256(request_id)>.json` the Mac's last report per target, and
+`applied.json` the last done attempt whose release the VPS runs. The 53d64f0fd server
+used the same archive and report layout, which the bridge relies on.
+"""
 
 from __future__ import annotations
 
@@ -11,19 +17,24 @@ import tarfile
 import tempfile
 import threading
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from pathlib import Path, PurePosixPath
 
 from planner.core import change_signal
-from planner.environments.deployment_lifecycle import _atomic_write
-from planner.environments.update_contracts import (
-    OwnerUpdateRequest,
-    PublishedUpdate,
-    UpdateProvider,
-    UpdateRequestStore,
+from planner.environments.update_attempts import (
+    FileUpdateAttemptStore,
+    UpdateConflict,
+    atomic_write_json,
+    attempt_to_dict,
+    parse_attempt,
 )
-from planner.environments.update_requests import FileUpdateRequestStore, UpdateConflict
+from planner.environments.update_contracts import (
+    PublishedUpdate,
+    UpdateAttempt,
+    UpdateAttemptState,
+    UpdateProvider,
+)
 from planner.executor.update_configuration import (
     MAC_RUNTIME_ARCHIVE_NAME,
     MAC_RUNTIME_MANIFEST_NAME,
@@ -35,27 +46,35 @@ from planner.executor.update_configuration import (
 from planner.executor.update_contracts import (
     MAC_UPDATE_SCHEMA_VERSION,
     MacUpdateCheck,
+    MacUpdatePhase,
+    MacUpdatePrefetch,
     MacUpdateReport,
     MacUpdateStatus,
     MacUpdateTarget,
+    mac_prefetch_archive_path,
 )
+
+# From these states on the VPS has stopped its own work for the attempt, so the Mac may too.
+_MAC_TARGET_STATES: frozenset[UpdateAttemptState] = frozenset({"preparing", "installing", "done"})
 
 
 class MacUpdateService:
-    """One authenticated executor's target, archive, and independent progress receipt."""
+    """One authenticated executor's target, archive, prefetch, and progress receipt."""
 
     def __init__(
         self,
         root: Path,
-        store: UpdateRequestStore,
+        attempts: FileUpdateAttemptStore,
         provider: UpdateProvider | None,
         current_app_sha: str | None,
+        ready_release: Callable[[], PublishedUpdate | None],
     ) -> None:
-        self.root, self.store, self.provider = root, store, provider
+        self.root, self.attempts, self.provider = root, attempts, provider
         self.current_app_sha = current_app_sha
-        self._applied = FileUpdateRequestStore(root / "applied.json")
+        self.ready_release = ready_release
+        self._applied_path = root / "applied.json"
         self._lock = threading.RLock()
-        self._retain_applied(self.store.read())
+        self._retain_applied(self.attempts.read())
 
     def _archive_path(self, release: PublishedUpdate) -> Path:
         mac = release.mac
@@ -113,22 +132,36 @@ class MacUpdateService:
             or manifest.get("architecture") != "arm64"
             or not python_exists
         ):
-            raise UpdateConflict("The Mac runtime does not match the approved source and platform.")
+            raise UpdateConflict("The Mac runtime does not match its source and platform.")
 
-    def _retain_applied(self, request: OwnerUpdateRequest | None) -> None:
+    def _read_applied(self) -> UpdateAttempt | None:
+        try:
+            return parse_attempt(json.loads(self._applied_path.read_text()))
+        except FileNotFoundError:
+            return None
+        except (ValueError, KeyError, TypeError):
+            # The 53d64f0fd server kept a request here; it names a release this server
+            # does not run, so it can never be the retained target.
+            return None
+
+    def _retain_applied(self, attempt: UpdateAttempt | None) -> None:
+        """Keep the last done attempt the VPS runs, so a later failed attempt cannot hide it."""
         if (
-            request is not None
-            and request.state == "done"
-            and request.release.mac is not None
-            and request.release.manifest.app_sha == self.current_app_sha
-            and self._archive_path(request.release).is_file()
+            attempt is not None
+            and attempt.state == "done"
+            and attempt.mac_attempt_id is not None
+            and attempt.release.mac is not None
+            and attempt.to_sha == self.current_app_sha
+            and self._archive_path(attempt.release).is_file()
         ):
-            retained = self._applied.read()
-            if retained is None or retained.request_id != request.request_id:
-                self._applied.create(request)
+            retained = self._read_applied()
+            if retained is None or (retained.attempt_id, retained.mac_attempt_id) != (
+                attempt.attempt_id, attempt.mac_attempt_id
+            ):
+                atomic_write_json(self._applied_path, attempt_to_dict(attempt))
 
     def prepare(self, release: PublishedUpdate) -> None:
-        """Pin bytes before approval can dispatch or the provider can expire them."""
+        """Pin the bytes before the release shows as available or the provider expires them."""
         try:
             self._prepare(release)
         except (tarfile.TarError, zipfile.BadZipFile) as error:
@@ -136,8 +169,8 @@ class MacUpdateService:
 
     def _prepare(self, release: PublishedUpdate) -> None:
         with self._lock:
-            # Preserve the last success before the single request record is replaced.
-            self._retain_applied(self.store.read())
+            # Preserve the last success before a new attempt replaces the record.
+            self._retain_applied(self.attempts.read())
             if release.mac is None:
                 return
             destination = self._archive_path(release)
@@ -166,8 +199,8 @@ class MacUpdateService:
                         raise UpdateConflict("The Mac runtime artifact is invalid.")
                     runtime = artifact.getinfo(MAC_RUNTIME_ARCHIVE_NAME)
                     if runtime.file_size != release.mac.archive_size:
-                        raise UpdateConflict("The Mac runtime artifact size differs from approval.")
-                    # The owner-approved VPS proof pins these bytes. The optional
+                        raise UpdateConflict("The Mac runtime artifact size differs.")
+                    # The VPS publication receipt pins these bytes. The optional
                     # build proof travels beside them but grants no separate authority.
                     with artifact.open(runtime) as source, candidate.open("xb") as output:
                         shutil.copyfileobj(source, output)
@@ -181,88 +214,116 @@ class MacUpdateService:
                 finally:
                     os.close(directory)
 
-    def _selected_request(self) -> OwnerUpdateRequest | None:
-        request = self.store.read()
-        self._retain_applied(request)
-        if request is not None and request.state != "failed":
-            return request
-        retained = self._applied.read()
-        if retained is not None and retained.release.manifest.app_sha == self.current_app_sha:
+    def _selected_attempt(self) -> UpdateAttempt | None:
+        attempt = self.attempts.read()
+        self._retain_applied(attempt)
+        if (
+            attempt is not None
+            and attempt.state in _MAC_TARGET_STATES
+            and attempt.release.mac is not None
+            and attempt.mac_attempt_id is not None
+            # A done release the VPS no longer runs would stop the Mac without activating.
+            and (attempt.state != "done" or attempt.to_sha == self.current_app_sha)
+        ):
+            return attempt
+        retained = self._read_applied()
+        if retained is not None and retained.to_sha == self.current_app_sha:
             return retained
         return None
 
+    def _target(self) -> MacUpdateTarget | None:
+        attempt = self._selected_attempt()
+        if attempt is None:
+            return None
+        mac, request_id = attempt.release.mac, attempt.mac_attempt_id
+        assert mac is not None and request_id is not None
+        if not self._archive_path(attempt.release).is_file():
+            raise UpdateConflict("The Mac runtime archive for this update is unavailable.")
+        return MacUpdateTarget(
+            request_id,
+            attempt.to_sha,
+            attempt.mode,
+            attempt.state == "done" and attempt.to_sha == self.current_app_sha,
+            mac.archive_sha256,
+            mac.archive_size,
+            # Mac runtimes in the field accept exactly this path for their target.
+            f"/api/executor/update/{request_id}/archive",
+        )
+
+    def _prefetch_release(self) -> PublishedUpdate | None:
+        """The ready release, while its Mac runtime is pinned here."""
+        release = self.ready_release()
+        if release is None or release.mac is None:
+            return None
+        try:
+            return release if self._archive_path(release).is_file() else None
+        except UpdateConflict:
+            return None
+
     def check(self) -> MacUpdateCheck:
         with self._lock:
-            request = self._selected_request()
-            target = None
-            if request is not None and request.release.mac is not None:
-                archive = self._archive_path(request.release)
-                if not archive.is_file():
-                    raise UpdateConflict("The approved Mac runtime archive is unavailable.")
-                mac = request.release.mac
-                target = MacUpdateTarget(
-                    request.request_id,
-                    request.release.manifest.app_sha,
-                    request.mode,
-                    request.state == "done"
-                    and request.release.manifest.app_sha == self.current_app_sha,
-                    mac.archive_sha256,
-                    mac.archive_size,
-                    f"/api/executor/update/{request.request_id}/archive",
+            release = self._prefetch_release()
+            prefetch = None
+            # Offered also while it is the target: a stopped Mac then activates from disk.
+            if release is not None and release.mac is not None:
+                prefetch = MacUpdatePrefetch(
+                    release.manifest.app_sha,
+                    release.mac.archive_sha256,
+                    release.mac.archive_size,
+                    mac_prefetch_archive_path(release.mac.archive_sha256),
                 )
-            return MacUpdateCheck(MAC_UPDATE_SCHEMA_VERSION, target)
+            return MacUpdateCheck(MAC_UPDATE_SCHEMA_VERSION, self._target(), prefetch)
 
     def _report_path(self, request_id: str) -> Path:
         return self.root / "reports" / (hashlib.sha256(request_id.encode()).hexdigest() + ".json")
 
+    def _saved_status(self, request_id: str) -> MacUpdateStatus | None:
+        try:
+            value = json.loads(self._report_path(request_id).read_text())
+        except FileNotFoundError:
+            return None
+        return MacUpdateStatus(**value["status"])
+
     def status(self) -> MacUpdateStatus | None:
         with self._lock:
-            request = self._selected_request()
-            if request is None:
-                return None
-            revision = request.release.manifest.app_sha
-            if request.release.mac is None:
+            current = self.attempts.read()
+            if (
+                current is not None
+                and current.state in _MAC_TARGET_STATES
+                and current.release.mac is None
+            ):
                 return MacUpdateStatus(
-                    request.request_id,
-                    revision,
+                    current.mac_attempt_id or current.attempt_id,
+                    current.to_sha,
                     "unavailable",
                     "This publication has no Mac runtime. The Mac requires a manual update.",
                 )
-            try:
-                value = json.loads(self._report_path(request.request_id).read_text())
-            except FileNotFoundError:
-                return MacUpdateStatus(
-                    request.request_id,
-                    revision,
-                    "waiting",
-                    "The Mac waits for this approved update.",
-                )
-            return MacUpdateStatus(**value["status"])
-
-    def ready_for_dispatch(self, request: OwnerUpdateRequest, health: Mapping[str, object]) -> bool:
-        """A sleeping Mac catches up later. A connected Mac first confirms its stop."""
-        if (
-            request.mode != "now"
-            or request.release.mac is None
-            or health.get("connection_state") not in {"ready", "reconciling"}
-        ):
-            return True
-        with self._lock:
-            try:
-                saved = json.loads(self._report_path(request.request_id).read_text())
-            except FileNotFoundError:
-                return False
-            return bool(
-                saved["status"]["request_id"] == request.request_id
-                and saved["status"]["target_revision"] == request.release.manifest.app_sha
-                and saved["status"]["phase"] == "ready_to_restart"
-                and saved["identity"] is not None
-                and saved["identity"] == health.get("identity")
+            attempt = self._selected_attempt()
+            if attempt is None or attempt.mac_attempt_id is None:
+                return None
+            return self._saved_status(attempt.mac_attempt_id) or MacUpdateStatus(
+                attempt.mac_attempt_id,
+                attempt.to_sha,
+                "waiting",
+                "The Mac waits for this update.",
             )
+
+    def phase(self, mac_attempt_id: str) -> MacUpdatePhase | None:
+        """The Mac's last reported phase for this target, if it reported one."""
+        with self._lock:
+            saved = self._saved_status(mac_attempt_id)
+            return None if saved is None or saved.phase == "unavailable" else saved.phase
+
+    def reported_at(self, mac_attempt_id: str) -> float | None:
+        """When the Mac last reported on this target; it re-reports each poll while it waits."""
+        try:
+            return self._report_path(mac_attempt_id).stat().st_mtime
+        except FileNotFoundError:
+            return None
 
     def report(self, report: MacUpdateReport, health: Mapping[str, object]) -> MacUpdateStatus:
         with self._lock:
-            target = self.check().target
+            target = self._target()
             if (
                 target is None
                 or report.request_id != target.request_id
@@ -272,7 +333,7 @@ class MacUpdateService:
                     and len(report.detail) > MAX_MAC_UPDATE_DETAIL_CHARACTERS
                 )
             ):
-                raise UpdateConflict("The Mac update report does not match its approved target.")
+                raise UpdateConflict("The Mac update report does not match its target.")
             if report.phase == "current" and (
                 not target.activate
                 or report.identity is None
@@ -290,7 +351,7 @@ class MacUpdateService:
             result = MacUpdateStatus(
                 target.request_id, target.application_revision, report.phase, report.detail
             )
-            _atomic_write(
+            atomic_write_json(
                 self._report_path(target.request_id),
                 {
                     "status": asdict(result),
@@ -302,11 +363,17 @@ class MacUpdateService:
 
     def archive(self, request_id: str) -> Path:
         with self._lock:
-            selected = self._selected_request()
-            retained = self._applied.read()
-            for request in (selected, retained):
-                if request is not None and request.request_id == request_id:
-                    path = self._archive_path(request.release)
+            for attempt in (self._selected_attempt(), self._read_applied()):
+                if attempt is not None and attempt.mac_attempt_id == request_id:
+                    path = self._archive_path(attempt.release)
                     if path.is_file():
                         return path
-            raise UpdateConflict("The requested Mac runtime is not an approved target.")
+            raise UpdateConflict("The requested Mac runtime is not an update target.")
+
+    def prefetch_archive(self, archive_sha256: str) -> Path:
+        with self._lock:
+            release = self._prefetch_release()
+            mac = None if release is None else release.mac
+            if release is None or mac is None or mac.archive_sha256 != archive_sha256:
+                raise UpdateConflict("The requested Mac runtime is not the ready release.")
+            return self._archive_path(release)
