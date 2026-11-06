@@ -179,6 +179,8 @@ const CODE_RUN_JOINER = /^ ?[/+] ?$/;
  * back to its children, so the source round-trips unchanged.
  */
 function joinInlineCodeRuns(root: HTMLElement): void {
+  // A minimal document (tests, non-DOM renderers) has no selector support; there is nothing to join.
+  if (typeof root.querySelectorAll !== "function") return;
   for (const code of Array.from(root.querySelectorAll("code"))) {
     if (code.closest("pre") || code.parentElement?.classList.contains("markdown-code-run")) continue;
     const run: Node[] = [code];
