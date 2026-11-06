@@ -281,42 +281,63 @@
 
 /* Workspace selection tiers and travel. */
 :root {
-  /* The Manager you are inside: a tint quiet enough that only the open row reads as selected.
-   * The open row is one crisp fill, a clear step above hover, so the two never read as
-   * more and less of the same grey. */
-  --wash-context: rgb(255 255 255 / 4%);
+  /* The open row is one crisp fill and the pointer's is half of it (1:2), so hover never
+   * reads as selection. Nothing else in the rail is a grey fill. */
   --wash-selected: rgb(255 255 255 / 12%);
   --wash-hover: rgb(255 255 255 / 6%);
-  /* Rail geometry. Every rail text, from the Manager's name to a Ticket, the Settled row
-   * and the first destination icon, stands on one left edge: the rail edge plus the
-   * group pad. A row's fill sits --rail-row-inset inside its group, so the row's 8px
-   * radius is concentric with the group's 12px. */
+  /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
+   * (a Manager's header, a goal, a Ticket, Settled) sits --rail-edge in from the column on
+   * both sides; every text stands --rail-pad inside its fill, so all of it shares one left
+   * edge 18px in. Tickets are the one indent. */
   --rail-edge: 8px;
-  --rail-pad: 14px;
-  --rail-row-inset: 6px;
-  --rail-row-pad: calc(var(--rail-pad) - var(--rail-row-inset));
-  /* Tickets are the rail's one indent: they belong under their Manager. The indent is also
-   * the slot for a Ticket's quiet state mark (12px and a 6px gap). */
-  --rail-indent: 18px;
+  --rail-pad: 10px;
+  /* A row fills its whole block, so nothing sits between a block's edge and a row's fill.
+   * The shell's Settled rows still read these two names. */
+  --rail-row-inset: 0px;
+  --rail-row-pad: var(--rail-pad);
+  --rail-indent: 12px;
+  /* Every row: a 30px fill on a 32px pitch. A header with a project eyebrow is the same
+   * fill grown by the eyebrow's line. */
+  --rail-row-height: 30px;
+  --rail-row-gap: 2px;
+  --rail-head-pad: 4px;
+  /* The unread dot's column, kept on every row whether or not a dot is in it, so every
+   * title ends at one edge. */
+  --rail-mark-column: 16px;
+  /* A group heading binds to its rows: more air above it than below it. */
+  --rail-heading-above: 10px;
+  --rail-heading-below: 2px;
+  --rail-heading-line: 16px;
+  --rail-block-gap: 18px;
+  /* The list's edges: a short fade, only where rows continue past them, so a row's words
+   * keep their true tone up to the edge; and clear air under the last block when the list
+   * is scrolled to its end. */
+  --rail-edge-fade: 8px;
+  --rail-foot-clear: 12px;
+  /* Between the Settled row and the icon bar: the band the icons' names open into. */
+  --rail-foot-gap: 20px;
+  /* The list's scrollbar lives in the column's own edge, never inside the rows. */
+  --rail-scrollbar-width: 4px;
+  /* Room the list keeps above its first fill for the focus ring (2px clear, 1.5px wide). */
+  --rail-ring-room: 4px;
   /* Rail text: the Manager's name leads, a row (goal or Ticket) reads, a label whispers. */
   --rail-tone-rest: var(--tone-secondary);
-  /* A Manager's name at rest: a step brighter than a row at rest, so a bold dim name reads
-   * as quiet type, not washed out. */
   --rail-tone-title: var(--tone-secondary);
   /* A Manager's name: clearly above a row, but quieter than anything that needs you. */
   --type-rail-title: 16px;
   --rail-tone-label: var(--tone-tertiary);
+  /* The rail's floating surfaces (hover previews and the icon bar's tooltips): the shared
+   * raised plane, #2a2a2a with a fine 10% ring and one soft shadow. The values are the
+   * raised-plane tokens' own (--surface-raised, --border-raised, --shadow-float), written
+   * here until those land beside this block. */
+  --rail-float-surface: var(--surface-raised);
+  --rail-float-ring: var(--border-raised);
+  --rail-float-shadow: var(--shadow-float);
+  --rail-preview-width: 320px;
+  --rail-preview-pad: 14px;
+  --rail-preview-recap-lines: 3;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
-}
-
-/* Rail geometry, added with the rail's concentric pass. A group's radius is its row fill's
- * radius (8px) plus the row inset (6px), so a selected row sits concentric in its group. */
-:root {
-  --rail-group-radius: 14px;
-  /* The fill around a Manager's header reaches this far past the header's text above and
-   * below, the same air a row keeps inside its own fill. */
-  --rail-head-pad: 4px;
 }
 
 /* The main pane's page system: one column, one type ladder, one end at the composer.
