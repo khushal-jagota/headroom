@@ -7,7 +7,7 @@ export const RAIL_SETTLED_MAX_HEIGHT_SHARE = 0.5;
 export const RAIL_WIDTH_STORAGE_KEY = "panels.workspace.rail-width";
 export const RAIL_HOVER_ENTER_MS = 200;
 export const RAIL_HOVER_EXIT_MS = 90;
-export const RAIL_HOVER_RECAP_MAX_LINES = 2;
+export const RAIL_HOVER_RECAP_MAX_LINES = 5;
 export const RAIL_KEYBOARD_STEP = 8;
 export const RAIL_KEYBOARD_LARGE_STEP = 24;
 
@@ -203,94 +203,4 @@ export function railPreview(node: HTMLElement, options: RailPreviewOptions | nul
     update(next: typeof options) { current = next; if (!next) input.dispose(); },
     destroy() { input.dispose(); for (const [name, listener] of Object.entries(guarded)) node.removeEventListener(name, listener, capture(name)); }
   };
-}
-
-/** The longest run of whole words, then an ellipsis, that fits in ``lines`` lines of ``node``.
- * A recap that runs out ends at a word, never part of one. */
-type WordClampOptions = { text: string; lines: number };
-export function clampToWords(node: HTMLElement, options: WordClampOptions) {
-  let current = options;
-  let frame = 0;
-  const fits = () => node.scrollHeight <= Math.ceil(current.lines * (Number.parseFloat(getComputedStyle(node).lineHeight) || 20)) + 1;
-  const apply = () => {
-    frame = 0;
-    const text = current.text.trim();
-    node.textContent = text;
-    if (current.lines <= 0 || !node.isConnected || fits()) return;
-    const words = text.split(/\s+/);
-    let low = 0, high = words.length - 1;
-    while (low < high) {
-      const middle = Math.ceil((low + high) / 2);
-      node.textContent = `${words.slice(0, middle).join(" ").replace(/[\s,;:.\-–—]+$/, "")}…`;
-      if (fits()) low = middle; else high = middle - 1;
-    }
-    node.textContent = `${words.slice(0, Math.max(1, low)).join(" ").replace(/[\s,;:.\-–—]+$/, "")}…`;
-  };
-  const schedule = () => { if (!frame) frame = requestAnimationFrame(apply); };
-  // Only a change of width can change where the lines break.
-  let width = node.clientWidth;
-  const observer = new ResizeObserver(() => { if (node.clientWidth !== width) { width = node.clientWidth; schedule(); } });
-  observer.observe(node);
-  apply();
-  void document.fonts?.ready.then(schedule);
-  return {
-    update(next: WordClampOptions) { current = next; apply(); },
-    destroy() { observer.disconnect(); if (frame) cancelAnimationFrame(frame); }
-  };
-}
-
-/** A rail title too long for its row fades out at the row's text edge instead of ending in a
- * cut word and an ellipsis. This marks the titles that run out (data-title-overflow); the
- * stylesheet draws the fade. The text itself is never changed. */
-const RAIL_TITLES = ".item-title, .ticket-row-title, .row-title, .manager-eyebrow > span, .settled-title > span";
-export function railTitleFade(root: HTMLElement) {
-  let frame = 0;
-  const run = () => {
-    frame = 0;
-    for (const title of root.querySelectorAll<HTMLElement>(RAIL_TITLES))
-      title.toggleAttribute("data-title-overflow", title.scrollWidth > title.clientWidth + 0.5);
-  };
-  const schedule = () => { if (!frame) frame = requestAnimationFrame(run); };
-  // A title runs out when its row narrows or its words change.
-  const resize = new ResizeObserver(schedule);
-  const watch = () => { resize.disconnect(); resize.observe(root); for (const title of root.querySelectorAll<HTMLElement>(RAIL_TITLES)) resize.observe(title); schedule(); };
-  const mutation = new MutationObserver(watch);
-  mutation.observe(root, { subtree: true, childList: true, characterData: true });
-  watch();
-  void document.fonts?.ready.then(schedule);
-  return { destroy() { resize.disconnect(); mutation.disconnect(); if (frame) cancelAnimationFrame(frame); } };
-}
-
-/** The rail's list edges. At the top, a row (a header, a goal, a Ticket) that would cross the
- * edge waits until it fits, and a group heading waits with its first row. At the bottom, rows
- * run on under the edge and its short fade, as the references' lists do, and a heading waits
- * only while less than half of its first row would show, so the list never ends on a heading
- * without its rows. Waiting units keep their place; the stylesheet hides them
- * (data-rail-waiting). */
-const RAIL_UNITS = ".identity, .goal, .worker-row, .bucket-label";
-export function railWholeRows(list: HTMLElement) {
-  let frame = 0;
-  const run = () => {
-    frame = 0;
-    const box = list.getBoundingClientRect();
-    const top = box.top + list.clientTop - 0.5, bottom = box.top + list.clientTop + list.clientHeight + 0.5;
-    const clearOfTop = (rect: DOMRect) => rect.height > 0 && rect.top >= top;
-    for (const unit of list.querySelectorAll<HTMLElement>(RAIL_UNITS)) {
-      let shown = clearOfTop(unit.getBoundingClientRect());
-      if (shown && unit.matches(".bucket-label")) {
-        const first = unit.nextElementSibling?.getBoundingClientRect();
-        shown = !first || (clearOfTop(first) && Math.min(first.bottom, bottom) - first.top >= first.height / 2);
-      }
-      unit.toggleAttribute("data-rail-waiting", !shown);
-    }
-  };
-  const schedule = () => { if (!frame) frame = requestAnimationFrame(run); };
-  const resize = new ResizeObserver(schedule);
-  resize.observe(list);
-  const mutation = new MutationObserver(schedule);
-  mutation.observe(list, { subtree: true, childList: true });
-  list.addEventListener("scroll", schedule, { passive: true });
-  window.addEventListener("resize", schedule);
-  schedule();
-  return { destroy() { resize.disconnect(); mutation.disconnect(); list.removeEventListener("scroll", schedule); window.removeEventListener("resize", schedule); if (frame) cancelAnimationFrame(frame); } };
 }

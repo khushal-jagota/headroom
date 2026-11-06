@@ -1,12 +1,12 @@
 <script lang="ts">
   import MachineActivityMark from "./machines/MachineActivityMark.svelte";
   import MachineIdentity from "./machines/MachineIdentity.svelte";
-  import { macActivityKnown, macAvailability, machineName } from "../lib/ticketMachines";
+  import { macActivityKnown, macAvailability } from "../lib/ticketMachines";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
-  import { RAIL_HOVER_RECAP_MAX_LINES, clampToWords } from "../lib/workspaceRailInteraction";
+  import { RAIL_HOVER_RECAP_MAX_LINES } from "../lib/workspaceRailInteraction";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import RequestRecapAction from "./RequestRecapAction.svelte";
@@ -14,11 +14,9 @@
   /* ``recapTarget`` is the agent that can be asked for a fresh recap.
    * ``onKeepOpen`` and ``onLeave`` hand the panel the same hover intent the rows use, so
    * the pointer can cross the gap and press what is inside without the panel closing. */
-  let { visible, instant, target, title, kicker, recap = "", worker = null, holderState = "", rail, signal = undefined, conversationId = null, recapTarget = null, onKeepOpen, onLeave, element = $bindable<HTMLDivElement | null>(null) }: {
+  let { visible, instant, target, title, kicker, recap = "", worker = null, rail, signal = undefined, conversationId = null, recapTarget = null, onKeepOpen, onLeave, element = $bindable<HTMLDivElement | null>(null) }: {
     visible: boolean; instant: boolean; target: HTMLElement | null; title: string; kicker: string;
     recap?: string; worker?: WorkItemTicketFacts | null;
-    /** A Manager's or the Chief's state in one sentence, where a Ticket shows its stage. */
-    holderState?: string;
     rail: HTMLElement | null; cards?: readonly WorkItemTicketFacts[];
     signal?: Partial<ConversationSignal>; conversationId?: string | null;
     recapTarget?: { kind: "ticket" | "manager" | "chief"; id: string } | null;
@@ -28,7 +26,7 @@
   let currentWorker = $derived(worker);
   const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
   let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
-  let stageSentence = $derived(unknownMac ? macAvailability(health.isError ? undefined : health.data) : currentWorker ? workspaceWorkerStageSentence(currentWorker) : holderState);
+  let stageSentence = $derived(unknownMac ? macAvailability(health.isError ? undefined : health.data) : currentWorker ? workspaceWorkerStageSentence(currentWorker) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
   let recapIdentity = $derived(recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null);
   let pointerVisit = $state<{ target: HTMLElement | null; recapIdentity: string | null } | null>(null);
@@ -80,9 +78,8 @@
     const currentTarget = target;
     const currentRail = rail;
     const currentPanel = element;
-    /* The panel never covers the row it describes or the conversation dock. Beside the
-     * rail it opens past the rail's edge, level with its row. A row in a page list opens
-     * below the row, or above it when the dock leaves no room underneath. */
+    /* Beside the rail the panel opens past the rail's edge, level with its row, clear of the
+     * composer. A row in a page list places it as staging did. */
     const place = () => {
       const rect = currentTarget.getBoundingClientRect();
       const width = currentPanel.offsetWidth;
@@ -93,52 +90,17 @@
       const floor = Math.min(window.innerHeight, dock && dock.height > 0 ? dock.top : window.innerHeight) - 12;
       if (currentRail !== currentTarget) {
         const railRight = currentRail.getBoundingClientRect().right;
-        left = Math.max(12, Math.min(railRight + 12, window.innerWidth - width - 12));
-        top = Math.max(12, Math.min(rect.top - 8, floor - height));
+        // Next to its row: 8px past the rail's edge, its top level with the row's top.
+        left = Math.max(12, Math.min(railRight + 8, window.innerWidth - width - 12));
+        top = Math.max(12, Math.min(rect.top, floor - height));
         clearOfRail = left >= railRight;
         return;
       }
-      // A row in a page list runs the column's full width with its words at the left, so the
-      // panel opens beside the row's words, centred on the row and kept inside the window and
-      // above the composer. It never covers its own row's words, the words of the rows and
-      // headings it lies level with, or the counts and unread dots at the rows' right end;
-      // where the column leaves no such room it opens right of the column, else under the
-      // row, or over it when the composer leaves no room under it.
-      const row = currentTarget.querySelector<HTMLElement>(".ticket-row") ?? currentTarget;
-      const box = row.getBoundingClientRect();
-      // Beside its row the panel stays with its list (never more than 10px above the list's
-      // own heading) and clear of the composer by 8px.
-      const listTop = (currentTarget.closest(".page-tickets") ?? currentTarget.closest("section") ?? currentTarget).getBoundingClientRect().top;
-      const besideFloor = floor + 4;
-      const besideTop = Math.max(12, listTop - 10, Math.min(box.top + box.height / 2 - height / 2, besideFloor - height));
-      const list = currentTarget.closest("[data-manager-children], .manager-children") ?? currentTarget.parentElement;
-      const wordsRight = (element: Element | null) => {
-        let right = 0;
-        if (!element) return right;
-        const words = document.createRange(); words.selectNodeContents(element);
-        for (const line of words.getClientRects()) if (line.width) right = Math.max(right, line.right);
-        return right;
-      };
-      let clear = Math.max(box.left, wordsRight(row.querySelector(".ticket-row-title")));
-      for (const other of list?.querySelectorAll<HTMLElement>(".ticket-row, summary") ?? []) {
-        const near = other.getBoundingClientRect();
-        if (near.bottom > besideTop && near.top < besideTop + height)
-          clear = Math.max(clear, wordsRight(other.querySelector(".ticket-row-title, .manager-workspace-status-label")));
-      }
-      // The rows' right end keeps its counts and unread dots in view.
-      const columnEnd = (list ?? row).getBoundingClientRect().right - 48;
-      if (clear + 12 + width <= columnEnd) {
-        left = clear + 12;
-        top = besideTop;
-      } else if (box.right + 12 + width <= window.innerWidth - 12) {
-        left = box.right + 12;
-        top = besideTop;
-      } else {
-        left = Math.max(12, Math.min(box.left, window.innerWidth - width - 12));
-        top = box.bottom + 6 + height <= floor ? box.bottom + 6 : Math.max(12, box.top - 6 - height);
-      }
-      // Beside its row the pointer can cross straight to it and press the ask inside.
-      clearOfRail = top === besideTop;
+      // A row in a page list, as on staging: the panel opens 14px past the row's own box (the
+      // list's full width), 8px above the row's top, kept inside the window.
+      left = Math.max(12, Math.min(rect.right + 14, window.innerWidth - width - 12));
+      top = Math.max(12, Math.min(rect.top - 8, window.innerHeight - height - 12));
+      clearOfRail = left >= rect.right;
     };
     // Manifest arrival can change the height after the panel is already visible.
     const observer = new ResizeObserver(place);
@@ -168,51 +130,40 @@
     const moved = event.relatedTarget as Node | null;
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
-  <!-- The machine's mark leads the eyebrow, as it leads the Ticket's line on its page; its name
-       is the mark's accessible name and tooltip. -->
-  <div class="kicker">{#if currentWorker?.locale}<span class="kicker-machine" title={`Runs on ${machineName(currentWorker.locale)}`}><MachineIdentity locale={currentWorker.locale} /></span>{/if}<span class="kicker-place">{kicker}</span></div>
+  <div class="kicker">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span>{kicker}</span></div>
   <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
-  <!-- Where the Ticket is in its work belongs with its name, so every preview ends the same
-       way: the recap, then the ask for a fresh one. -->
-  {#if stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}
     <div bind:this={recapElement} class="recap" class:no-space={recapLines === 0 && !recapTarget}>
       {#key recapIdentity}
         <RecapSlot holdHeight={holdRecapHeight}>
-          {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text use:clampToWords={{ text: recapText, lines: recapLines }}></div>{/if}{/snippet}
+          {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
         </RecapSlot>
       {/key}
-      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
+      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} variant="secondary" class="recap-ask" />{/if}
     </div>
   {/if}
+  {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
-  /* A compact raised card on the rail's float surface: where it belongs (the machine's mark
-     and the place, in the Small voice), what it is (the title in the row voice), then the
-     recap as the body you opened it for, three lines at most and ending at a word, and the
-     ask for a fresh one as a quiet line under it. */
-  .rail-hover-panel { box-sizing:border-box; position:fixed; z-index:40; width:min(var(--rail-preview-width),calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--rail-preview-pad); border:var(--border-hairline) solid var(--rail-float-ring); border-radius:var(--radius-lg); background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); font-size:var(--type-row); line-height:normal; pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
+  /* Staging's preview, on the rail's float surface (a fill and a soft shadow, no ring): where it
+     belongs, what it is, the recap in its recessed field (up to five lines, the full text
+     kept), the ask at the right inside it as a filled secondary button, and a Ticket's stage
+     under it all. */
+  .rail-hover-panel { box-sizing:border-box; font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(var(--rail-preview-width),calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--rail-preview-pad); border:0; border-radius:var(--radius-lg); background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
-  .kicker { display:flex; align-items:center; gap:6px; min-width:0; font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); margin-bottom:4px; }
-  .kicker-place { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .kicker-machine { flex:none; display:inline-flex; align-items:center; }
-  .kicker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
-  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-row); font-weight:var(--weight-needs-you); line-height:20px; color:var(--tone-strong); overflow-wrap:anywhere; }
+  .kicker { display:flex; align-items:center; gap:var(--space-2); font-size:var(--type-small); font-weight:var(--weight-small); color:var(--tone-tertiary); margin-bottom:5px; }
+  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-body); font-weight:var(--weight-title); line-height:1.4; color:var(--tone-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
-  /* The recap is the body the preview is opened for: the page's body voice, given its own
-     space, and the only paragraph in the panel. */
-  .recap { margin-top:6px; font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
-  .recap-text { overflow:hidden; overflow-wrap:break-word; }
+  .recap { margin-top:var(--space-3); padding:var(--space-3); background:var(--surface-recessed); border-radius:var(--radius-md); font-size:var(--rail-preview-recap-size); line-height:1.5; color:var(--tone-primary); }
+  .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
-  /* The ask is a small outline button: the preview's one action, clearly an endpoint. */
-  .recap :global(.recap-ask) { display:flex; margin-top:10px; }
-  .recap :global(.recap-ask .request-recap-action) { height:24px; padding:0 var(--space-2); border-radius:6px; background:transparent; box-shadow:inset 0 0 0 var(--border-hairline) var(--button-outline-edge); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
-  .recap :global(.recap-ask .request-recap-action:hover) { background:var(--button-outline-fill-hover); color:var(--tone-strong); }
-  .doing { margin-top:2px; font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); }
+  /* The ask lives inside the recessed block, under the line it replaces, at the right. */
+  .recap :global(.recap-ask) { display:flex; justify-content:flex-end; margin-top:var(--space-2); font-size:var(--type-small); }
+  .doing { margin-top:var(--space-3); font-size:var(--type-small); color:var(--tone-secondary); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
 </style>
