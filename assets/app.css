@@ -7,27 +7,54 @@
   box-sizing: border-box;
 }
 
+/* The base voice is the Body role: 14px, regular, primary tone, 1.55 leading. Everything
+ * that does not name a role reads as body text. */
 body {
   margin: 0;
   background: var(--surface-1);
-  color: var(--text-default);
+  color: var(--tone-primary);
   font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.5;
-  font-weight: 500;
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+  font-weight: var(--weight-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 
 button,
-textarea {
+textarea,
+input,
+select {
   font: inherit;
 }
 
+/* Titles lead with the one title weight; bold inside text is the same semibold, never 700. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+b,
+strong {
+  font-weight: var(--weight-title);
+}
+
+/* THE focus ring (Direction v2, Outcome 6): one 1.5px accent line, 2px off every focusable
+ * control. The outline follows the control's radius, so the ring's radius is the control's
+ * radius + 2. Width, colour and offset are enforced here so no control can draw a second
+ * kind of ring; a control that delegates its ring (outline: none, with the ring drawn by
+ * its container) keeps doing so, because the line's style is not forced. */
 :focus-visible {
   outline: var(--focus-width) solid var(--focus-ring);
-  outline-offset: 2px;
+  outline-offset: var(--focus-offset);
+}
+
+:focus-visible {
+  outline-width: var(--focus-width) !important;
+  outline-color: var(--focus-ring) !important;
+  outline-offset: var(--focus-offset) !important;
 }
 
 .markdown pre,
@@ -183,32 +210,65 @@ textarea {
 /* --- Persistent rail and pane shell ------------------------------------- */
 .shell { position:relative; height:100dvh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .shell-content { flex:1; min-width:0; min-height:0; padding:0; }
-/* The destinations stand on the rail's text edge: the first icon's glyph lines up with the
-   names above it. */
-.rail-foot { position:relative; flex:none; padding:var(--space-3) var(--rail-edge) 0 calc(var(--rail-edge) + var(--rail-pad) - 7px); }
-/* The destinations: one row of quiet icons. A destination's name floats beside its icon as a
-   raised tooltip, over the row rather than in it, so nothing ever moves. */
-.rail-utilities { display:flex; align-items:center; gap:2px; }
-.utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--text-faintest); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
-.utility:hover { background:var(--wash-hover); color:var(--text-strong); }
-.utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:transparent; background:var(--wash-selected); color:var(--text-strong); }
+/* The destinations stand on the rail's text edge: the first icon's glyph (which starts 2px
+   inside its 18px box, 7px inside its 32px button) lines up with the names above it. */
+/* The space above the icons is the band their names open into, clear of the Settled label. */
+.rail-foot { position:relative; flex:none; padding:var(--rail-foot-gap) var(--rail-edge) 0 calc(var(--rail-edge) + var(--rail-pad) - 9px); }
+/* The destinations: one row of quiet icons. A destination's name floats above its icon as a
+   raised tooltip, clear of the row, so it never covers a neighbouring icon and nothing moves. */
+/* The row reserves the band its tooltips open into above the icons, without taking layout
+   space or the pointer from the Settled row under that band. */
+.rail-utilities { --rail-tooltip-band:28px; display:flex; align-items:center; gap:2px; padding-top:var(--rail-tooltip-band); margin-top:calc(var(--rail-tooltip-band) * -1); pointer-events:none; }
+.rail-utilities > .utility { pointer-events:auto; }
+.utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--tone-tertiary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.utility:hover { background:var(--wash-hover); color:var(--tone-strong); }
+.utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:transparent; background:var(--wash-selected); color:var(--tone-strong); }
 .utility:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:0; }
 .utility svg,.sheet-item svg { width:18px; height:18px; flex:none; }
-.count-badge { position:absolute; top:-2px; right:-2px; min-width:14px; height:14px; padding:0 3px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-1); font-size:10px; font-weight:660; line-height:14px; text-align:center; font-variant-numeric:tabular-nums; }
+.count-badge { position:absolute; top:-2px; right:-2px; min-width:18px; height:18px; padding:0 5px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-1); font-size:var(--type-small); font-weight:var(--weight-needs-you); line-height:18px; text-align:center; font-variant-numeric:tabular-nums; }
 /* On the rail the count sits beside its icon, never on top of it: the needs-you accent as
-   text on its own quiet slate, the same mark as every needs-you count on a page. */
+   text on its own quiet slate. It is the rail's one badge. */
 .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 6px 0 7px; }
-.rail-utilities .count-badge { position:static; min-width:20px; height:18px; padding:0 6px; border-radius:var(--radius-pill); background:var(--accent-badge); color:var(--accent-bright); box-shadow:none; font-size:11px; font-weight:640; line-height:18px; }
+.rail-utilities .count-badge { position:static; min-width:20px; height:18px; padding:0 6px; border-radius:var(--radius-pill); background:var(--accent-badge); color:var(--accent-bright); box-shadow:none; font-size:var(--type-small); font-weight:var(--weight-needs-you); line-height:18px; }
 .count-badge.hidden { display:none; }
-.utility-label { position:absolute; bottom:calc(100% + 6px); left:50%; z-index:6; padding:3px var(--space-2); border:var(--border-hairline) solid var(--border-color); border-radius:6px; background:var(--surface-raised); box-shadow:var(--shadow-float); color:var(--text-default); font-size:var(--type-xs); font-weight:500; line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
+.utility-label { position:absolute; bottom:calc(100% + 4px); left:50%; z-index:6; padding:2px var(--space-2); border:var(--border-hairline) solid var(--rail-float-ring); border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
 .utility:nth-child(1 of .utility) .utility-label { left:0; transform:none; }
 .utility:nth-last-child(1 of .utility) .utility-label { left:auto; right:0; transform:none; }
-/* In the rail's bottom row there is nothing clear above an icon, so the name sits to its right. */
-.rail-utilities .utility .utility-label,
-.rail-utilities .utility:nth-child(1 of .utility) .utility-label,
-.rail-utilities .utility:nth-last-child(1 of .utility) .utility-label { top:50%; bottom:auto; left:calc(100% + 6px); right:auto; transform:translateY(-50%); }
 .utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
 .utility:hover .utility-label { transition-delay:400ms; }
+/* The rail's list and its foot. BoardRoute draws them; their measures are the rail's.
+   The list's fills sit --rail-edge in from both sides of the column: its scrollbar is kept to
+   the column's own edge, drawn only while the pointer is over the list, so the right inset
+   matches the left with or without one. */
+/* The list's first fill still starts 12px down the rail: the list keeps --rail-ring-room of
+   its own above it, so a focus ring around the first header is never cut at the top. */
+.board-workspace-shell.approved-rail-shell .approved-rail { padding-top:calc(var(--space-3) - var(--rail-ring-room)); }
+.approved-rail-shell .approved-rail .active-work-scroll { padding:var(--rail-ring-room) max(0px, calc(var(--rail-edge) - var(--rail-scrollbar, 0px))) var(--rail-foot-clear) var(--rail-edge); scroll-padding-block:var(--rail-edge-fade); scrollbar-width:auto; scrollbar-color:auto; }
+.approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
+.approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar-track { background:transparent; }
+.approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar-thumb { border-radius:var(--radius-pill); background:transparent; }
+.approved-rail-shell .approved-rail .active-work-scroll:is(:hover, :active)::-webkit-scrollbar-thumb { background:var(--border-hover); }
+@supports not selector(::-webkit-scrollbar) { .approved-rail-shell .approved-rail .active-work-scroll { scrollbar-width:thin; scrollbar-color:var(--border-color) transparent; } }
+/* Where rows continue past an edge of the list, they fade into the rail over 8px. A list
+   that fits, or an edge with nothing past it, shows no fade. The fades
+   are layers over the list's box rather than a mask on the list, so a preview that opens
+   from a row is never masked with it. */
+.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail .rail-work .rail-work::before,
+.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail .rail-work .rail-work::after { content:""; position:absolute; z-index:3; left:0; right:0; height:var(--rail-edge-fade); pointer-events:none; opacity:0; transition:opacity var(--motion-fast) var(--motion-ease); }
+.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail .rail-work .rail-work::before { top:0; bottom:auto; background:linear-gradient(to bottom, var(--surface-rail), transparent); }
+.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail .rail-work .rail-work::after { bottom:0; background:linear-gradient(to top, var(--surface-rail), transparent); }
+.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail[data-rail-more-above] .rail-work .rail-work::before,
+.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail[data-rail-more-below] .rail-work .rail-work::after { opacity:1; }
+/* Settled: one row in the rail's row voice, its count a plain Small numeral after it. */
+.approved-rail-shell .approved-rail .settled-head { box-sizing:border-box; height:var(--rail-row-height); min-height:0; padding:0 var(--rail-pad); margin-inline:0; width:100%; border-radius:var(--radius-md); font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; color:var(--rail-tone-rest); }
+.approved-rail-shell .approved-rail .settled-head:hover { color:var(--tone-strong); }
+.approved-rail-shell .approved-rail .settled-head .count { margin-left:5px; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--rail-tone-label); }
+.approved-rail-shell .approved-rail .settled-chevron { color:var(--rail-tone-label); }
+.approved-rail-shell .approved-rail .settled-item + .settled-item { margin-top:var(--rail-row-gap); }
+.approved-rail-shell .approved-rail .settled-row { box-sizing:border-box; height:var(--rail-row-height); padding:0 var(--rail-pad); margin:0; font-size:var(--type-row); line-height:20px; }
+.approved-rail-shell .approved-rail .settled-title { color:var(--rail-tone-rest); }
+.approved-rail-shell .approved-rail .settled-title > span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; overflow-wrap:normal; }
+.approved-rail-shell .approved-rail .reopen { font-size:var(--type-small); color:var(--rail-tone-label); }
 @keyframes shell-panel-in { from { opacity:0; transform:translateY(var(--space-2)); } to { opacity:1; transform:none; } }
 .compact-bar { display:none; }
 .destination-pane { display:flex; flex-direction:column; flex:1; width:100%; height:100%; min-width:0; min-height:0; overflow:auto; }
@@ -222,10 +282,10 @@ textarea {
   .compact-bar { position:relative; display:block; flex:none; z-index:12; background:var(--surface-2); border-top:var(--border-hairline) solid var(--border-color); padding-bottom:env(safe-area-inset-bottom); }
   .compact-bar-row { display:flex; align-items:stretch; }
   .bar-item { position:relative; flex:1; display:flex; align-items:center; justify-content:center; gap:var(--space-2); min-height:var(--shell-nav-height); padding:var(--space-3) var(--space-2); border:0; background:transparent; color:var(--text-faintest); font:inherit; font-size:var(--type-sm); cursor:pointer; text-decoration:none; }
-  .bar-item[aria-current="page"] { color:var(--text-strong); font-weight:660; }
+  .bar-item[aria-current="page"] { color:var(--text-strong); font-weight:var(--weight-title); }
   .bar-item:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:-2px; }
   .bar-item .count-badge { position:static; box-shadow:none; }
-  .bar-caret { color:var(--text-faintest); font-size:10px; }
+  .bar-caret { color:var(--text-faintest); font-size:var(--type-small); }
   .destination-sheet { animation:shell-panel-in var(--motion-base) var(--motion-ease); position:absolute; z-index:14; inset:auto 0 100%; max-height:calc(100dvh - var(--shell-nav-height)); overflow:auto; padding:var(--space-2) var(--space-3) var(--space-5); border-top:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg) var(--radius-lg) 0 0; background:var(--surface-2); box-shadow:var(--shadow-float); }
   .sheet-grab { display:block; }
   .sheet-group { padding:var(--space-2) var(--space-2) var(--space-1); color:var(--text-faintest); font-size:var(--type-xs); letter-spacing:var(--tracking-label); text-transform:uppercase; }
@@ -678,44 +738,60 @@ textarea {
   margin-bottom: 0;
 }
 
-.markdown h1 {
-  font-size: var(--type-lg);
-}
-
-.markdown h2 {
-  font-size: var(--type-md);
-  font-weight: 660;
-}
-
-.markdown h3 {
-  font-size: var(--type-sm);
-  font-weight: 660;
-}
-
+/* Headings inside a document use two roles only: the Section head for h1-h3, and Small
+ * (tertiary) for the label-like h4-h6. Hierarchy is tone and space, not a ladder of sizes. */
 .markdown h1,
 .markdown h2,
 .markdown h3,
 .markdown h4,
 .markdown h5,
 .markdown h6 {
-  color: var(--text-strong);
   margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--type-page-section);
+  font-weight: var(--weight-title);
+  line-height: 1.4;
+  color: var(--tone-primary);
 }
 
 .markdown h4,
 .markdown h5,
 .markdown h6 {
-  font-size: var(--type-sm);
-  font-weight: 660;
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  color: var(--tone-tertiary);
 }
 
+/* Inline code: Small mono on a 7% lift, radius 4, 1px 4px, on the text's own baseline and in
+ * the text's own tone. A run such as `J`/`K` is joined into one lift by the renderer
+ * (.markdown-code-run), so it never reads as loose chips with a slash between them. */
 .markdown code {
   font-family: var(--font-mono);
-  font-size: 0.86em;
+  font-size: var(--type-code);
+  font-weight: var(--weight-body);
+  line-height: 1;
+  vertical-align: baseline;
   background: var(--surface-code);
-  padding: 0.1em 0.3em;
+  padding: var(--code-pad-y) var(--code-pad-x);
   border-radius: var(--radius-sm);
-  color: var(--text-default);
+  color: inherit;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.markdown .markdown-code-run {
+  font-family: var(--font-mono);
+  font-size: var(--type-code);
+  line-height: 1;
+  background: var(--surface-code);
+  padding: var(--code-pad-y) var(--code-pad-x);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.markdown .markdown-code-run code {
+  padding: 0;
+  background: none;
+  border-radius: 0;
 }
 
 .markdown pre {
@@ -725,6 +801,8 @@ textarea {
   padding: var(--space-3);
   border-radius: var(--radius-md);
   overflow-x: auto;
+  font-size: var(--type-code);
+  line-height: var(--leading-body);
 }
 
 .chat-thread .markdown pre {
@@ -734,6 +812,7 @@ textarea {
 .markdown pre code {
   background: none;
   padding: 0;
+  line-height: inherit;
 }
 
 .markdown ul,
@@ -747,7 +826,7 @@ textarea {
 }
 
 .markdown li::marker {
-  color: var(--text-faintest);
+  color: var(--tone-tertiary);
 }
 
 .markdown li > ul,
@@ -761,7 +840,7 @@ textarea {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   background: var(--surface-code);
-  color: var(--text-muted);
+  color: var(--tone-secondary);
 }
 
 .markdown hr {
@@ -776,7 +855,8 @@ textarea {
   width: 100%;
   margin: 0 0 var(--space-3);
   border-collapse: collapse;
-  font-size: var(--type-sm);
+  font-size: var(--type-body);
+  font-variant-numeric: tabular-nums;
   overflow-x: auto;
 }
 
@@ -809,10 +889,12 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Table heads are Small text in the tertiary tone, like every other label. */
 .markdown th {
-  color: var(--text-strong);
-  font-weight: 660;
-  background: var(--surface-recessed);
+  color: var(--tone-tertiary);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  vertical-align: bottom;
 }
 
 .markdown img {
@@ -826,8 +908,19 @@ textarea {
   vertical-align: middle;
 }
 
+/* A link is text in the strong tone with a quiet underline. The accent is kept for needs-you
+ * marks, so a link never borrows it. */
 .markdown a {
-  color: var(--accent-bright);
+  color: var(--tone-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--tone-faint);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color var(--motion-fast) var(--motion-ease);
+}
+
+.markdown a:hover {
+  text-decoration-color: var(--tone-secondary);
 }
 
 .chat-thread .markdown a {
@@ -855,11 +948,16 @@ textarea {
 }
 
 .file-preview-link {
-  color: var(--accent-bright);
-  font-size: var(--type-sm);
-  font-weight: 660;
-  text-decoration: none;
+  color: var(--tone-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--tone-faint);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
   overflow-wrap: anywhere;
+}
+
+.file-preview-link:hover {
+  text-decoration-color: var(--tone-secondary);
 }
 
 .file-preview-name-link {
@@ -982,13 +1080,13 @@ textarea {
 .file-preview-tile { display:grid; place-items:center; flex:none; width:var(--space-7); height:var(--space-7); border-radius:var(--radius-lg); background:var(--surface-recessed); color:var(--text-faint); }
 .file-preview-tile svg { width:calc(var(--space-5) - var(--border-strong)); height:calc(var(--space-5) - var(--border-strong)); }
 .file-preview-identity { flex:1; min-width:0; }
-.pv-name { display:block; color:var(--text-strong); font-size:var(--type-md); font-weight:660; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:none; }
+.pv-name { display:block; color:var(--tone-primary); font-size:var(--type-page-section); font-weight:var(--weight-title); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:none; }
 a.pv-name::after { content:""; position:absolute; inset:0; }
 a.pv-name:focus-visible { outline:0; }
 .file-preview-card--live .file-preview-band { position:relative; }
-.file-preview-kind { display:block; color:var(--text-faintest); font-size:var(--type-sm); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.pv-act { position:relative; z-index:1; flex:none; color:var(--accent-bright); font-size:var(--type-sm); font-weight:660; white-space:nowrap; text-decoration:none; padding:var(--space-1) var(--space-2); border-radius:var(--radius-sm); }
-.pv-act:hover { background-image:var(--interaction-hover); }
+.file-preview-kind { display:block; color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pv-act { position:relative; z-index:1; flex:none; display:inline-flex; align-items:center; height:var(--button-height); color:var(--tone-secondary); font-size:var(--type-button); font-weight:var(--weight-button); white-space:nowrap; text-decoration:none; padding:0 var(--button-pad-x); border-radius:var(--button-radius); }
+.pv-act:hover { background:var(--button-ghost-fill-hover); color:var(--tone-strong); }
 .pv-act:focus-visible, .file-preview-play:focus-visible, .file-preview-seek:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:calc(var(--space-1) / 2); }
 .file-preview--embedded .file-preview-frame { background:var(--surface-recessed); border-radius:0; }
 .file-preview--embedded .file-preview-name-link { display:block; margin-block-end:var(--space-1); }
@@ -1003,8 +1101,8 @@ a.pv-name:focus-visible { outline:0; }
 .file-preview-seek { display:flex; align-items:center; flex:1; min-width:var(--space-7); min-height:var(--space-7); cursor:pointer; }
 .file-preview-track { display:block; width:100%; height:var(--space-1); background:var(--surface-2); border-radius:var(--radius-pill); overflow:hidden; }
 .file-preview-progress { display:block; height:100%; background:var(--accent-bright); border-radius:var(--radius-pill); }
-.file-preview-time { flex:none; font-size:var(--type-sm); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
-.file-preview-failed-name { color:var(--text-strong); font-weight:660; }
+.file-preview-time { flex:none; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--tone-tertiary); font-variant-numeric:tabular-nums; }
+.file-preview-failed-name { color:var(--tone-strong); font-weight:var(--weight-title); }
 .chat-u .file-preview-card, .chat-u .file-preview-transport { border:var(--border-hairline) solid var(--border-color); }
 .file-preview-slot:has(> .file-preview--embedded .managed-html-fetch-notice), .file-preview--embedded:has(.managed-html-fetch-notice), .file-preview-card:has(.managed-html-fetch-notice), .file-preview-content:has(.managed-html-fetch-notice), .managed-html-document:has(> .managed-html-fetch-notice) { display:inline; margin:0; padding:0; border:0; border-radius:0; background:none; overflow:visible; }
 .file-preview-card:has(.managed-html-fetch-notice) > .file-preview-band { display:contents; }
@@ -1019,80 +1117,140 @@ a.pv-name:focus-visible { outline:0; }
 
 /* --- Buttons (shared style class, not a component) ----------------------- */
 
-/* THE BUTTON — one base + three variants. Quiet = the neutral bordered chip (default);
- * primary = the accent surface; pill = the borderless inline pill. */
+/* THE BUTTON (Direction v2, Outcome 5): one component (Button.svelte), one class, three
+ * variants. 28px tall, radius 8, padding 0 12, label 13.5/450. A hover adds one step.
+ *   primary   — inverse: an 88% white fill with dark ink.
+ *   secondary — a 13% white fill, no border, a secondary-tone label.
+ *   ghost     — no fill and a secondary-tone label until hovered (6% fill).
+ * The older variant names map onto these: quiet = secondary, pill = ghost. */
 .button {
-  cursor: pointer;
-  text-decoration: none;
-  transition: background var(--motion-fast) var(--motion-ease),
-    border-color var(--motion-fast) var(--motion-ease),
-    color var(--motion-fast) var(--motion-ease),
-    filter var(--motion-fast) var(--motion-ease);
-}
-
-.button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.button--quiet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--button-gap);
+  flex: none;
+  height: var(--button-height);
+  margin: 0;
+  padding: 0 var(--button-pad-x);
+  border: 0;
+  border-radius: var(--button-radius);
   background: transparent;
-  color: var(--text-default);
-  border: var(--border-hairline) solid var(--border-hover);
-  border-radius: var(--radius-md);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--type-sm);
-  font-weight: 590;
+  color: var(--tone-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--type-button);
+  font-weight: var(--weight-button);
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
 }
 
-.button--quiet:hover:not(:disabled) {
-  background-image: var(--interaction-hover);
-  color: var(--text-strong);
+.button svg {
+  flex: none;
+  width: var(--button-icon);
+  height: var(--button-icon);
 }
 
 .button--primary {
-  background: var(--accent-fill);
-  color: var(--surface-ink);
-  border: var(--border-hairline) solid var(--accent-fill);
-  border-radius: var(--radius-md);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--type-sm);
-  font-weight: 590;
+  background: var(--button-primary-fill);
+  color: var(--button-primary-ink);
 }
 
 .button--primary:hover:not(:disabled) {
-  background: var(--accent-fill-hover);
+  background: var(--button-primary-fill-hover);
 }
 
+.button--secondary,
+.button--quiet {
+  background: var(--button-secondary-fill);
+  color: var(--tone-secondary);
+}
+
+.button--secondary:hover:not(:disabled),
+.button--quiet:hover:not(:disabled) {
+  background: var(--button-secondary-fill-hover);
+  color: var(--tone-strong);
+}
+
+.button--ghost,
 .button--pill {
+  background: transparent;
+  color: var(--tone-secondary);
+}
+
+.button--ghost:hover:not(:disabled),
+.button--pill:hover:not(:disabled) {
+  background: var(--button-ghost-fill-hover);
+  color: var(--tone-strong);
+}
+
+.button:disabled {
+  color: var(--tone-faint);
+  cursor: default;
+}
+
+.button--primary:disabled {
+  background: var(--button-secondary-fill);
+}
+
+/* THE SEGMENTED CONTROL (Direction v2, Outcome 5): one component (SegmentedControl.svelte),
+ * one class. No track: each segment is a 28px, radius-8 button in the secondary tone; the
+ * selected segment carries the 12% selected fill and the strong tone; a hover adds one step. */
+.segmented {
   display: inline-flex;
   align-items: center;
-  font-size: var(--type-xs);
-  color: var(--text-muted);
-  background: var(--surface-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
-  white-space: nowrap;
+  gap: 2px;
+  height: var(--segment-height);
 }
 
-.button--pill:hover {
-  color: var(--text-strong);
+.segmented-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--segment-height);
+  margin: 0;
+  padding: 0 var(--button-pad-x);
+  border: 0;
+  border-radius: var(--segment-radius);
+  background: transparent;
+  color: var(--tone-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--type-button);
+  font-weight: var(--weight-button);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
+}
+
+.segmented-option:hover {
+  background: var(--segment-hover-fill);
+  color: var(--tone-strong);
+}
+
+.segmented-option[aria-pressed="true"] {
+  background: var(--segment-selected-fill);
+  color: var(--tone-strong);
 }
 
 /* --- Chips --------------------------------------------------------------- */
 
+/* A chip is Small text on the code lift: a label, never a control. */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  font-size: var(--type-xs);
-  font-weight: 590;
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  font-variant-numeric: tabular-nums;
   padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
   border: var(--border-hairline) solid transparent;
-  background: var(--surface-2);
-  color: var(--text-default);
+  background: var(--surface-code);
+  color: var(--tone-secondary);
   white-space: nowrap;
   line-height: 1.6;
 }
@@ -1100,8 +1258,8 @@ a.pv-name:focus-visible { outline:0; }
 
 .chip--project {
   background: transparent;
-  color: var(--text-muted);
-  border-color: var(--text-faint);
+  color: var(--tone-secondary);
+  border-color: var(--border-hover);
 }
 
 
@@ -1176,32 +1334,34 @@ button.list-row:hover .list-row-title {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
-  font-size: var(--type-sm);
+  font-size: var(--type-body);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   background: var(--error-surface);
 }
 
+/* The code is inline code: Small mono on the code lift, in the line's own tone. */
 .error-code {
   font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--accent-text);
-  background: var(--accent-surface);
-  padding: 0 var(--space-1);
+  font-size: var(--type-code);
+  color: var(--tone-primary);
+  background: var(--surface-code);
+  padding: var(--code-pad-y) var(--code-pad-x);
   border-radius: var(--radius-sm);
 }
 
 .error-message {
-  color: var(--text-default);
+  color: var(--tone-primary);
 }
 
 /* --- Quiet line (empty states, placeholders, unknown route) -------------- */
 
 /* A quiet line for empty/loading states. */
 .quiet-line {
-  color: var(--text-muted);
+  color: var(--tone-secondary);
   font-family: var(--font-ui);
-  font-size: var(--type-md);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
 }
 
 /* Wide step output (code wells, markdown pre) must scroll inside its own box, never
@@ -4724,20 +4884,24 @@ details:not([open]) > summary > .manager-workspace-chevron {
   }
 }
 
-/* A Ticket group: one quiet heading tier for every group, set at the Tickets' indent, with
-   the air above and below it kept to the row pitch. A group that needs the person is
-   named in a brighter, heavier tone at the same size. */
-.workspace-ticket-bucket { margin-top:0; }
-.manager-card > :not(.workspace-ticket-bucket) + .workspace-ticket-bucket { margin-top:var(--space-1); }
-.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:500; color:var(--rail-tone-label); padding:8px 0 2px var(--rail-indent); margin-bottom:0; border-bottom:0; }
-.workspace-ticket-bucket[data-tone="attention"] .bucket-label { color:var(--text-muted); font-weight:600; }
-/* A Ticket row's fill spans the same box as every other rail row; only its words step in. */
-.workspace-ticket-bucket .worker-row { position:relative; width:calc(100% + (var(--rail-row-pad) * 2)); display:grid; grid-template-columns:minmax(0,1fr) 8px; align-items:center; gap:var(--space-3); padding:5px var(--rail-row-pad) 5px calc(var(--rail-row-pad) + var(--rail-indent)); margin:0 calc(var(--rail-row-pad) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-ui); font-weight:500; line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+/* A Ticket group: one quiet heading, in the Small voice, at the Tickets' indent, with the
+   count of the rows it heads after it in the same tone. It binds to its rows: more air above
+   it than below. A heading is never heavier or brighter than the rows it introduces. */
+.workspace-ticket-bucket { margin-top:0; display:flex; flex-direction:column; }
+.workspace-ticket-bucket .bucket-label { box-sizing:border-box; padding:var(--rail-heading-above) var(--rail-pad) var(--rail-heading-below) calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; font-size:var(--type-small); font-weight:var(--weight-small); line-height:var(--rail-heading-line); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.workspace-ticket-bucket .bucket-label[data-count]::after { content:attr(data-count); margin-left:5px; }
+/* A Ticket row: the same 30px fill as every rail row, its words one indent in, its title
+   ending in an ellipsis before the column kept for its unread dot. A row that needs the
+   person is bright and a step heavier; every other row rests dim. */
+.workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:center; column-gap:0; width:100%; height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
+.workspace-ticket-bucket .worker-row + .worker-row { margin-top:var(--rail-row-gap); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
-.workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-.workspace-ticket-bucket .worker-row:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:1px; }
-.workspace-ticket-bucket .ticket-row-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.workspace-ticket-bucket .worker-row .conversation-signal-marks { justify-self:center; }
+.workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; }
+.workspace-ticket-bucket:is([data-bucket-key="awaiting_approval"], [data-bucket-key="awaiting_answer"], [data-bucket-key="errored"]) .worker-row,
+.workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--tone-strong); font-weight:var(--weight-needs-you); }
+.workspace-ticket-bucket .worker-row:is(:hover, [aria-current="page"]) { color:var(--tone-strong); }
+.workspace-ticket-bucket .worker-row:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 
 /* Approved skeleton system. */
 /* 1 — the region. Any element that can show a skeleton carries this. */
@@ -4870,26 +5034,27 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* One moving decoration per scroller keeps selection distinct from the rail content. */
 .approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) { position:relative; isolation:isolate; }
-/* One crisp fill marks the open item; the Manager you are inside is a far quieter tint
-   around its group, drawn while the Manager or one of its goals or Tickets is open. The item
-   sits --rail-row-inset inside the group, so its 8px radius is concentric with the group's. */
+/* One crisp fill marks the open item and a fill half as strong follows the pointer, both on
+   the row's own 30px box with the 8px radius. Nothing fills around a Manager's block: the
+   Manager you are inside is marked by its header (WorkspaceRailCard). */
 .rail-wash { position:absolute; pointer-events:none; z-index:0; border-radius:var(--radius-md); }
 .rail-wash[hidden] { display:none; }
-.rail-wash--group { background:var(--wash-context); border-radius:var(--rail-group-radius); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
 
 .rail-wash--hover { background:var(--wash-hover); }
+/* The one focus ring: a fine accent line 2px clear of the control, its radius the control's plus 2. */
 .rail-wash--focus { z-index:4; box-shadow:0 0 0 var(--focus-width) var(--focus-ring); }
 .approved-rail .rail-utilities .rail-wash { border-radius:var(--radius-md); }
+/* The focus layer stands --focus-offset clear of its control, so its radius is the control's plus that. */
+.approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) .rail-wash--focus { border-radius:calc(var(--radius-md) + var(--focus-offset, 2px)); }
 .approved-rail :is(.settled-item, .utility) { position:relative; z-index:1; }
 /* The pointed-at destination lifts above its neighbours, so its tooltip is never under the next icon. */
 .approved-rail .utility:is(:hover, :focus-visible) { z-index:5; }
 .approved-rail :is(.utility:hover, .utility[aria-current="page"], .utility[aria-expanded="true"]) { border-color:transparent; background:none; }
 .approved-rail :is(.item-head, .worker-row, .goal, .settled-title, .utility):focus-visible { outline:none; }
 .approved-rail .workspace-ticket-bucket .worker-row { background:none; }
-.approved-rail .workspace-ticket-bucket .worker-row:hover { color:var(--text-strong); }
 .approved-rail .bucket-label { border-bottom:0; }
-.approved-rail .settled-row:hover .settled-title, .approved-rail .settled-title[aria-current="page"] { color:var(--text-strong); }
+.approved-rail .settled-row:hover .settled-title, .approved-rail .settled-title[aria-current="page"] { color:var(--tone-strong); }
 
 /* === The main pane's page system ==========================================
  * One column, one top band, one type ladder and one end at the composer, on every page

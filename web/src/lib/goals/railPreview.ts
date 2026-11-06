@@ -1,6 +1,6 @@
 import { railPreview, RAIL_TOUCH_MOVE_TOLERANCE } from '../workspaceRailInteraction';
 
-export const GOAL_PREVIEW_WIDTH = 340;
+export const GOAL_PREVIEW_WIDTH = 320;
 export const GOAL_PREVIEW_GUTTER = 12;
 export const GOAL_PREVIEW_RAIL_GAP = 14;
 export const GOAL_PREVIEW_ANCHOR_OFFSET = 8;

@@ -7,7 +7,7 @@ export const RAIL_SETTLED_MAX_HEIGHT_SHARE = 0.5;
 export const RAIL_WIDTH_STORAGE_KEY = "panels.workspace.rail-width";
 export const RAIL_HOVER_ENTER_MS = 200;
 export const RAIL_HOVER_EXIT_MS = 90;
-export const RAIL_HOVER_RECAP_MAX_LINES = 5;
+export const RAIL_HOVER_RECAP_MAX_LINES = 3;
 export const RAIL_KEYBOARD_STEP = 8;
 export const RAIL_KEYBOARD_LARGE_STEP = 24;
 
@@ -203,4 +203,76 @@ export function railPreview(node: HTMLElement, options: RailPreviewOptions | nul
     update(next: typeof options) { current = next; if (!next) input.dispose(); },
     destroy() { input.dispose(); for (const [name, listener] of Object.entries(guarded)) node.removeEventListener(name, listener, capture(name)); }
   };
+}
+
+/** The longest run of whole words, then an ellipsis, that fits in ``lines`` lines of ``node``.
+ * A recap that runs out ends at a word, never part of one. */
+type WordClampOptions = { text: string; lines: number };
+export function clampToWords(node: HTMLElement, options: WordClampOptions) {
+  let current = options;
+  let frame = 0;
+  const fits = () => node.scrollHeight <= Math.ceil(current.lines * (Number.parseFloat(getComputedStyle(node).lineHeight) || 20)) + 1;
+  const apply = () => {
+    frame = 0;
+    const text = current.text.trim();
+    node.textContent = text;
+    if (current.lines <= 0 || !node.isConnected || fits()) return;
+    const words = text.split(/\s+/);
+    let low = 0, high = words.length - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      node.textContent = `${words.slice(0, middle).join(" ").replace(/[\s,;:.\-–—]+$/, "")}…`;
+      if (fits()) low = middle; else high = middle - 1;
+    }
+    node.textContent = `${words.slice(0, Math.max(1, low)).join(" ").replace(/[\s,;:.\-–—]+$/, "")}…`;
+  };
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(apply); };
+  // Only a change of width can change where the lines break.
+  let width = node.clientWidth;
+  const observer = new ResizeObserver(() => { if (node.clientWidth !== width) { width = node.clientWidth; schedule(); } });
+  observer.observe(node);
+  apply();
+  void document.fonts?.ready.then(schedule);
+  return {
+    update(next: WordClampOptions) { current = next; apply(); },
+    destroy() { observer.disconnect(); if (frame) cancelAnimationFrame(frame); }
+  };
+}
+
+/** Rail titles end in one ellipsis edge, and never in a space before it. CSS cuts a title at
+ * the last character that fits before the ellipsis; where that character is a space, the
+ * title's box is narrowed to the end of the word before it, so the ellipsis follows the word.
+ * The text itself is never changed. */
+const RAIL_TITLES = ".ticket-row-title, .row-title, .item-title";
+export function railEllipsis(root: HTMLElement) {
+  let frame = 0;
+  const canvas = document.createElement("canvas").getContext("2d");
+  const fit = (title: HTMLElement) => {
+    title.style.maxWidth = "";
+    const text = title.firstChild;
+    if (!(text instanceof Text) || title.childNodes.length !== 1 || title.scrollWidth <= title.clientWidth + 0.5) return;
+    const style = getComputedStyle(title);
+    if (!canvas) return;
+    canvas.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const box = title.getBoundingClientRect();
+    const limit = box.left + box.width - canvas.measureText("…").width;
+    const range = document.createRange();
+    const right = (end: number) => { range.setStart(text, 0); range.setEnd(text, end); return range.getBoundingClientRect().right; };
+    const value = text.data;
+    let low = 0, high = value.length;
+    while (low < high) { const middle = Math.ceil((low + high) / 2); if (right(middle) <= limit) low = middle; else high = middle - 1; }
+    const kept = value.slice(0, low).trimEnd().length;
+    if (kept === low || kept === 0) return;
+    title.style.maxWidth = `${right(kept) - box.left + canvas.measureText("…").width + 0.5}px`;
+  };
+  const run = () => { frame = 0; for (const title of root.querySelectorAll<HTMLElement>(RAIL_TITLES)) fit(title); };
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(run); };
+  // Only the rows' widths and the words can move a cut; a narrowed title never resizes its row.
+  const resize = new ResizeObserver(schedule);
+  const watch = () => { resize.disconnect(); resize.observe(root); for (const title of root.querySelectorAll<HTMLElement>(RAIL_TITLES)) if (title.parentElement) resize.observe(title.parentElement); schedule(); };
+  const mutation = new MutationObserver(watch);
+  mutation.observe(root, { subtree: true, childList: true, characterData: true });
+  watch();
+  void document.fonts?.ready.then(schedule);
+  return { destroy() { resize.disconnect(); mutation.disconnect(); if (frame) cancelAnimationFrame(frame); } };
 }
