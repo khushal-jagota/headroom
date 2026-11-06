@@ -30,18 +30,22 @@
   --surface-recessed: #141414;
   /* The workspace rail: one close step above the page, divided by a hairline. */
   --surface-rail: #212121;
-  /* The quiet tiers under the one filled action: a neutral fill for the secondary
-   * action, a smaller one for the tertiary ones (recap, backlog, skip, open). */
-  --fill-secondary: rgb(255 255 255 / 8%);
-  /* The filled primary action: the accent at full chroma, so it never reads chalky. */
-  --accent-fill: #8ea8ec;
-  --accent-fill-hover: #a4baf2;
+  /* The secondary action's fill (Direction v2: 13% white, no border). Older callers that
+   * paint a secondary action with it land on the shared button's secondary fill. */
+  --fill-secondary: var(--button-secondary-fill);
+  /* The filled primary action. Direction v2 makes it inverse (88% white with dark ink), not
+   * accent: the accent is kept for needs-you marks. */
+  --accent-fill: var(--button-primary-fill);
+  --accent-fill-hover: var(--button-primary-fill-hover);
   /* Inline code: a translucent lift that reads on every surface it lands on. */
-  --surface-code: rgb(255 255 255 / 6%);
-  /* Popovers, menus and hover previews: the one raised plane, with --shadow-float. */
-  --surface-raised: #252525;
-  /* The rounded composer field floats one clear step above the page. */
-  --surface-input: #2a2a2a;
+  --surface-code: rgb(255 255 255 / 7%);
+  /* Popovers, menus, tooltips and hover previews: the one raised plane. It carries a 1px
+   * ring (--border-raised) and --shadow-float. */
+  --surface-raised: #2a2a2a;
+  --border-raised: rgb(255 255 255 / 10%);
+  /* The composer field: one clear step above the page, with a 1px edge one step lighter. */
+  --surface-input: #303030;
+  --border-input: #404040;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;
@@ -53,13 +57,15 @@
   );
   --scrim: rgb(10 9 8 / 55%);
 
-  /* Text tokens — descending neutral emphasis. Every step clears the
-   * body-text contrast floor against all three neutral surfaces. */
-  --text-strong: #f2f2f2;
-  --text-default: #d8d8d8;
-  --text-muted: #bfbfbf;
-  --text-faint: #a6a6a6;
-  --text-faintest: #8e8e8e;
+  /* Text tokens, older names. Each lands on one of the five Direction v2 tones (the
+   * "Direction v2 roles" block below), so every existing use speaks the same ladder:
+   * strong 92 -> primary 84 -> secondary 62 -> tertiary 45 -> faint 32. */
+  --text-strong: var(--tone-strong);
+  --text-default: var(--tone-primary);
+  --text-muted: var(--tone-secondary);
+  --text-faint: var(--tone-secondary);
+  --text-faintest: var(--tone-tertiary);
+  --text-placeholder: var(--tone-faint);
 
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;
@@ -73,9 +79,10 @@
    * that it barely lifts off the page, which is what makes it right for them. */
   --accent-text: #dce6f8;
   --accent-attention: #d4ab6c; /* binary goals due today */
-  --type-chart-reading: 40px;
-  --type-chart-compact: 32px;
-  --type-chart-completion: 36px;
+  /* A chart's reading numeral stands on the page-title role: no seventh size. */
+  --type-chart-reading: var(--type-page-title);
+  --type-chart-compact: var(--type-page-title);
+  --type-chart-completion: var(--type-page-title);
   /* Approved chart-sheet surfaces and category palettes. These remain separate
    * from the shell so the production renderer preserves the approved examples. */
   --chart-surface: #202020;
@@ -89,9 +96,10 @@
   --chart-card-border: #ffffff12;
   --chart-grid: #ffffff14;
   --chart-border-strong: #ffffff24;
-  --chart-secondary: #bfbfbf;
-  --chart-muted: #a8a8a8;
-  --chart-legend: #a6a6a6;
+  /* Chart text: labels, captions, legends and axes are Small text in the tertiary tone. */
+  --chart-secondary: var(--tone-secondary);
+  --chart-muted: var(--tone-tertiary);
+  --chart-legend: var(--tone-tertiary);
   --chart-reference: #777777;
   --chart-range-surface: #171717;
   --chart-sample-control: #222222;
@@ -177,39 +185,76 @@
   --border-card: rgba(255, 255, 255, 0.07);
   --border-hover: rgba(255, 255, 255, 0.13);
   --border-focus: var(--focus-ring);
-  /* The keyboard focus ring, drawn the same way on every focusable control: a crisp, fine
-   * line in the accent's hue. It is a line, never a fill, so it cannot read as "needs you". */
-  --focus-ring: rgb(154 173 210 / 82%);
-  /* The focus ring's line: fine, and drawn on the control's own edge so it follows its radius. */
+  /* THE focus ring (Direction v2, Outcome 6), drawn the same way on every focusable control:
+   * a 1.5px line in the accent, 2px off the control. An outline follows the control's own
+   * radius, so at a 2px offset its radius is the control's radius + 2. It is a line, never a
+   * fill, so it cannot read as "needs you". */
+  --focus-ring: var(--accent-bright);
   --focus-width: 1.5px;
-  --shadow-float: 0 0 0 1px rgb(0 0 0 / 20%), 0 var(--space-1) var(--space-3) rgb(0 0 0 / 22%);
+  --focus-offset: 2px;
+  /* The floating plane's shadow: one soft drop, no dark ring (the ring is --border-raised). */
+  --shadow-float: 0 4px 12px rgb(0 0 0 / 24%);
 
-  /* Type — two font stacks and shared sans sizes. The prose/display/hero sizes
-   * preserve the former serif hierarchy under the owner's size-preservation exception. */
+  /* Type — two font stacks and the older size names. Each older name lands on one of the
+   * six Direction v2 roles (page title, section head, body, rail title, row, small), so
+   * no screen can reach a seventh size through them. */
   --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
-  --type-xs: 12px;
-  --type-sm: 13px;
-  --type-ui: 14px;
-  --type-md: 15px;
-  --type-lg: 16px;
+  --type-xs: var(--type-small);
+  --type-sm: var(--type-small);
+  --type-ui: var(--type-body);
+  --type-md: var(--type-body);
+  --type-lg: var(--type-page-section);
   /* Section headings on a page: the page system's section head, --type-page-section. */
   --type-section: var(--type-page-section);
-  --type-prose-lg: 15px;
+  --type-prose-lg: var(--type-body);
   /* The page title: the page system's title size, --type-page-title. */
   --type-display: var(--type-page-title);
-  --type-hero: 30px;
+  --type-hero: var(--type-page-title);
+  /* Inline code and other monospace runs inside text: Small size, so a mono run never looks
+   * larger than the sans text around it. */
+  --type-code: var(--type-small);
 
   /* Focusable chat controls (the composer's textarea and pickers). Separate from
    * the ladder because touch screens must raise them: iOS Safari zooms the whole
    * page into any focused field smaller than 16px. */
-  --type-input: var(--type-sm);
-  --type-input-compact: var(--type-xs);
+  --type-input: var(--type-body);
+  --type-input-compact: var(--type-small);
 
   /* Letter-spacing — tight on titles, open on uppercase labels, a hair on mono. */
-  --tracking-title: -0.012em;
+  --tracking-title: -0.01em;
   --tracking-label: 0.12em;
   --tracking-mono: 0.03em;
+}
+
+/* The shared controls (Direction v2, Outcome 5): one button, one segmented control. Every
+ * step is white over the control's own surface; a hover adds one step (6%). */
+:root {
+  --button-height: 28px;
+  --button-radius: var(--radius-md);
+  --button-pad-x: 12px;
+  --button-gap: 6px;
+  --button-icon: 14px;
+  --type-button: var(--type-row);
+  --weight-button: var(--weight-small);
+  --state-step: rgb(255 255 255 / 6%);
+  /* Primary: inverse. */
+  --button-primary-fill: rgb(255 255 255 / 88%);
+  --button-primary-fill-hover: rgb(255 255 255 / 94%);
+  --button-primary-ink: #181818;
+  /* Secondary: a 13% fill, no border, a secondary-tone label. */
+  --button-secondary-fill: rgb(255 255 255 / 13%);
+  --button-secondary-fill-hover: rgb(255 255 255 / 19%);
+  /* Ghost: no fill until hovered. */
+  --button-ghost-fill-hover: var(--state-step);
+  /* Segmented control: no track; the selected segment carries the selected fill. */
+  --segment-height: var(--button-height);
+  --segment-radius: var(--button-radius);
+  --segment-selected-fill: rgb(255 255 255 / 12%);
+  --segment-hover-fill: var(--state-step);
+  /* Inline code in text: Small mono on a 7% lift, 4px radius, 1px 4px padding. */
+  --code-pad-y: 1px;
+  --code-pad-x: 4px;
 }
 
 /* Touch screens get 16px chat inputs: anything smaller has iOS Safari zoom the

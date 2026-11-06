@@ -7,27 +7,54 @@
   box-sizing: border-box;
 }
 
+/* The base voice is the Body role: 14px, regular, primary tone, 1.55 leading. Everything
+ * that does not name a role reads as body text. */
 body {
   margin: 0;
   background: var(--surface-1);
-  color: var(--text-default);
+  color: var(--tone-primary);
   font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.5;
-  font-weight: 500;
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+  font-weight: var(--weight-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 
 button,
-textarea {
+textarea,
+input,
+select {
   font: inherit;
 }
 
+/* Titles lead with the one title weight; bold inside text is the same semibold, never 700. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+b,
+strong {
+  font-weight: var(--weight-title);
+}
+
+/* THE focus ring (Direction v2, Outcome 6): one 1.5px accent line, 2px off every focusable
+ * control. The outline follows the control's radius, so the ring's radius is the control's
+ * radius + 2. Width, colour and offset are enforced here so no control can draw a second
+ * kind of ring; a control that delegates its ring (outline: none, with the ring drawn by
+ * its container) keeps doing so, because the line's style is not forced. */
 :focus-visible {
   outline: var(--focus-width) solid var(--focus-ring);
-  outline-offset: 2px;
+  outline-offset: var(--focus-offset);
+}
+
+:focus-visible {
+  outline-width: var(--focus-width) !important;
+  outline-color: var(--focus-ring) !important;
+  outline-offset: var(--focus-offset) !important;
 }
 
 .markdown pre,
@@ -678,44 +705,60 @@ textarea {
   margin-bottom: 0;
 }
 
-.markdown h1 {
-  font-size: var(--type-lg);
-}
-
-.markdown h2 {
-  font-size: var(--type-md);
-  font-weight: 660;
-}
-
-.markdown h3 {
-  font-size: var(--type-sm);
-  font-weight: 660;
-}
-
+/* Headings inside a document use two roles only: the Section head for h1-h3, and Small
+ * (tertiary) for the label-like h4-h6. Hierarchy is tone and space, not a ladder of sizes. */
 .markdown h1,
 .markdown h2,
 .markdown h3,
 .markdown h4,
 .markdown h5,
 .markdown h6 {
-  color: var(--text-strong);
   margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--type-page-section);
+  font-weight: var(--weight-title);
+  line-height: 1.4;
+  color: var(--tone-primary);
 }
 
 .markdown h4,
 .markdown h5,
 .markdown h6 {
-  font-size: var(--type-sm);
-  font-weight: 660;
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  color: var(--tone-tertiary);
 }
 
+/* Inline code: Small mono on a 7% lift, radius 4, 1px 4px, on the text's own baseline and in
+ * the text's own tone. A run such as `J`/`K` is joined into one lift by the renderer
+ * (.markdown-code-run), so it never reads as loose chips with a slash between them. */
 .markdown code {
   font-family: var(--font-mono);
-  font-size: 0.86em;
+  font-size: var(--type-code);
+  font-weight: var(--weight-body);
+  line-height: 1;
+  vertical-align: baseline;
   background: var(--surface-code);
-  padding: 0.1em 0.3em;
+  padding: var(--code-pad-y) var(--code-pad-x);
   border-radius: var(--radius-sm);
-  color: var(--text-default);
+  color: inherit;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.markdown .markdown-code-run {
+  font-family: var(--font-mono);
+  font-size: var(--type-code);
+  line-height: 1;
+  background: var(--surface-code);
+  padding: var(--code-pad-y) var(--code-pad-x);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.markdown .markdown-code-run code {
+  padding: 0;
+  background: none;
+  border-radius: 0;
 }
 
 .markdown pre {
@@ -725,6 +768,8 @@ textarea {
   padding: var(--space-3);
   border-radius: var(--radius-md);
   overflow-x: auto;
+  font-size: var(--type-code);
+  line-height: var(--leading-body);
 }
 
 .chat-thread .markdown pre {
@@ -734,6 +779,7 @@ textarea {
 .markdown pre code {
   background: none;
   padding: 0;
+  line-height: inherit;
 }
 
 .markdown ul,
@@ -747,7 +793,7 @@ textarea {
 }
 
 .markdown li::marker {
-  color: var(--text-faintest);
+  color: var(--tone-tertiary);
 }
 
 .markdown li > ul,
@@ -761,7 +807,7 @@ textarea {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   background: var(--surface-code);
-  color: var(--text-muted);
+  color: var(--tone-secondary);
 }
 
 .markdown hr {
@@ -776,7 +822,8 @@ textarea {
   width: 100%;
   margin: 0 0 var(--space-3);
   border-collapse: collapse;
-  font-size: var(--type-sm);
+  font-size: var(--type-body);
+  font-variant-numeric: tabular-nums;
   overflow-x: auto;
 }
 
@@ -809,10 +856,12 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Table heads are Small text in the tertiary tone, like every other label. */
 .markdown th {
-  color: var(--text-strong);
-  font-weight: 660;
-  background: var(--surface-recessed);
+  color: var(--tone-tertiary);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  vertical-align: bottom;
 }
 
 .markdown img {
@@ -826,8 +875,19 @@ textarea {
   vertical-align: middle;
 }
 
+/* A link is text in the strong tone with a quiet underline. The accent is kept for needs-you
+ * marks, so a link never borrows it. */
 .markdown a {
-  color: var(--accent-bright);
+  color: var(--tone-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--tone-faint);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color var(--motion-fast) var(--motion-ease);
+}
+
+.markdown a:hover {
+  text-decoration-color: var(--tone-secondary);
 }
 
 .chat-thread .markdown a {
@@ -855,11 +915,16 @@ textarea {
 }
 
 .file-preview-link {
-  color: var(--accent-bright);
-  font-size: var(--type-sm);
-  font-weight: 660;
-  text-decoration: none;
+  color: var(--tone-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--tone-faint);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
   overflow-wrap: anywhere;
+}
+
+.file-preview-link:hover {
+  text-decoration-color: var(--tone-secondary);
 }
 
 .file-preview-name-link {
@@ -982,13 +1047,13 @@ textarea {
 .file-preview-tile { display:grid; place-items:center; flex:none; width:var(--space-7); height:var(--space-7); border-radius:var(--radius-lg); background:var(--surface-recessed); color:var(--text-faint); }
 .file-preview-tile svg { width:calc(var(--space-5) - var(--border-strong)); height:calc(var(--space-5) - var(--border-strong)); }
 .file-preview-identity { flex:1; min-width:0; }
-.pv-name { display:block; color:var(--text-strong); font-size:var(--type-md); font-weight:660; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:none; }
+.pv-name { display:block; color:var(--tone-primary); font-size:var(--type-page-section); font-weight:var(--weight-title); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:none; }
 a.pv-name::after { content:""; position:absolute; inset:0; }
 a.pv-name:focus-visible { outline:0; }
 .file-preview-card--live .file-preview-band { position:relative; }
-.file-preview-kind { display:block; color:var(--text-faintest); font-size:var(--type-sm); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.pv-act { position:relative; z-index:1; flex:none; color:var(--accent-bright); font-size:var(--type-sm); font-weight:660; white-space:nowrap; text-decoration:none; padding:var(--space-1) var(--space-2); border-radius:var(--radius-sm); }
-.pv-act:hover { background-image:var(--interaction-hover); }
+.file-preview-kind { display:block; color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pv-act { position:relative; z-index:1; flex:none; display:inline-flex; align-items:center; height:var(--button-height); color:var(--tone-secondary); font-size:var(--type-button); font-weight:var(--weight-button); white-space:nowrap; text-decoration:none; padding:0 var(--button-pad-x); border-radius:var(--button-radius); }
+.pv-act:hover { background:var(--button-ghost-fill-hover); color:var(--tone-strong); }
 .pv-act:focus-visible, .file-preview-play:focus-visible, .file-preview-seek:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:calc(var(--space-1) / 2); }
 .file-preview--embedded .file-preview-frame { background:var(--surface-recessed); border-radius:0; }
 .file-preview--embedded .file-preview-name-link { display:block; margin-block-end:var(--space-1); }
@@ -1003,8 +1068,8 @@ a.pv-name:focus-visible { outline:0; }
 .file-preview-seek { display:flex; align-items:center; flex:1; min-width:var(--space-7); min-height:var(--space-7); cursor:pointer; }
 .file-preview-track { display:block; width:100%; height:var(--space-1); background:var(--surface-2); border-radius:var(--radius-pill); overflow:hidden; }
 .file-preview-progress { display:block; height:100%; background:var(--accent-bright); border-radius:var(--radius-pill); }
-.file-preview-time { flex:none; font-size:var(--type-sm); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
-.file-preview-failed-name { color:var(--text-strong); font-weight:660; }
+.file-preview-time { flex:none; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--tone-tertiary); font-variant-numeric:tabular-nums; }
+.file-preview-failed-name { color:var(--tone-strong); font-weight:var(--weight-needs-you); }
 .chat-u .file-preview-card, .chat-u .file-preview-transport { border:var(--border-hairline) solid var(--border-color); }
 .file-preview-slot:has(> .file-preview--embedded .managed-html-fetch-notice), .file-preview--embedded:has(.managed-html-fetch-notice), .file-preview-card:has(.managed-html-fetch-notice), .file-preview-content:has(.managed-html-fetch-notice), .managed-html-document:has(> .managed-html-fetch-notice) { display:inline; margin:0; padding:0; border:0; border-radius:0; background:none; overflow:visible; }
 .file-preview-card:has(.managed-html-fetch-notice) > .file-preview-band { display:contents; }
@@ -1019,80 +1084,140 @@ a.pv-name:focus-visible { outline:0; }
 
 /* --- Buttons (shared style class, not a component) ----------------------- */
 
-/* THE BUTTON — one base + three variants. Quiet = the neutral bordered chip (default);
- * primary = the accent surface; pill = the borderless inline pill. */
+/* THE BUTTON (Direction v2, Outcome 5): one component (Button.svelte), one class, three
+ * variants. 28px tall, radius 8, padding 0 12, label 13.5/450. A hover adds one step.
+ *   primary   — inverse: an 88% white fill with dark ink.
+ *   secondary — a 13% white fill, no border, a secondary-tone label.
+ *   ghost     — no fill and a secondary-tone label until hovered (6% fill).
+ * The older variant names map onto these: quiet = secondary, pill = ghost. */
 .button {
-  cursor: pointer;
-  text-decoration: none;
-  transition: background var(--motion-fast) var(--motion-ease),
-    border-color var(--motion-fast) var(--motion-ease),
-    color var(--motion-fast) var(--motion-ease),
-    filter var(--motion-fast) var(--motion-ease);
-}
-
-.button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.button--quiet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--button-gap);
+  flex: none;
+  height: var(--button-height);
+  margin: 0;
+  padding: 0 var(--button-pad-x);
+  border: 0;
+  border-radius: var(--button-radius);
   background: transparent;
-  color: var(--text-default);
-  border: var(--border-hairline) solid var(--border-hover);
-  border-radius: var(--radius-md);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--type-sm);
-  font-weight: 590;
+  color: var(--tone-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--type-button);
+  font-weight: var(--weight-button);
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
 }
 
-.button--quiet:hover:not(:disabled) {
-  background-image: var(--interaction-hover);
-  color: var(--text-strong);
+.button svg {
+  flex: none;
+  width: var(--button-icon);
+  height: var(--button-icon);
 }
 
 .button--primary {
-  background: var(--accent-fill);
-  color: var(--surface-ink);
-  border: var(--border-hairline) solid var(--accent-fill);
-  border-radius: var(--radius-md);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--type-sm);
-  font-weight: 590;
+  background: var(--button-primary-fill);
+  color: var(--button-primary-ink);
 }
 
 .button--primary:hover:not(:disabled) {
-  background: var(--accent-fill-hover);
+  background: var(--button-primary-fill-hover);
 }
 
+.button--secondary,
+.button--quiet {
+  background: var(--button-secondary-fill);
+  color: var(--tone-secondary);
+}
+
+.button--secondary:hover:not(:disabled),
+.button--quiet:hover:not(:disabled) {
+  background: var(--button-secondary-fill-hover);
+  color: var(--tone-strong);
+}
+
+.button--ghost,
 .button--pill {
+  background: transparent;
+  color: var(--tone-secondary);
+}
+
+.button--ghost:hover:not(:disabled),
+.button--pill:hover:not(:disabled) {
+  background: var(--button-ghost-fill-hover);
+  color: var(--tone-strong);
+}
+
+.button:disabled {
+  color: var(--tone-faint);
+  cursor: default;
+}
+
+.button--primary:disabled {
+  background: var(--button-secondary-fill);
+}
+
+/* THE SEGMENTED CONTROL (Direction v2, Outcome 5): one component (SegmentedControl.svelte),
+ * one class. No track: each segment is a 28px, radius-8 button in the secondary tone; the
+ * selected segment carries the 12% selected fill and the strong tone; a hover adds one step. */
+.segmented {
   display: inline-flex;
   align-items: center;
-  font-size: var(--type-xs);
-  color: var(--text-muted);
-  background: var(--surface-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
-  white-space: nowrap;
+  gap: 2px;
+  height: var(--segment-height);
 }
 
-.button--pill:hover {
-  color: var(--text-strong);
+.segmented-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--segment-height);
+  margin: 0;
+  padding: 0 var(--button-pad-x);
+  border: 0;
+  border-radius: var(--segment-radius);
+  background: transparent;
+  color: var(--tone-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--type-button);
+  font-weight: var(--weight-button);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
+}
+
+.segmented-option:hover {
+  background: var(--segment-hover-fill);
+  color: var(--tone-strong);
+}
+
+.segmented-option[aria-pressed="true"] {
+  background: var(--segment-selected-fill);
+  color: var(--tone-strong);
 }
 
 /* --- Chips --------------------------------------------------------------- */
 
+/* A chip is Small text on the code lift: a label, never a control. */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  font-size: var(--type-xs);
-  font-weight: 590;
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  font-variant-numeric: tabular-nums;
   padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
   border: var(--border-hairline) solid transparent;
-  background: var(--surface-2);
-  color: var(--text-default);
+  background: var(--surface-code);
+  color: var(--tone-secondary);
   white-space: nowrap;
   line-height: 1.6;
 }
@@ -1100,8 +1225,8 @@ a.pv-name:focus-visible { outline:0; }
 
 .chip--project {
   background: transparent;
-  color: var(--text-muted);
-  border-color: var(--text-faint);
+  color: var(--tone-secondary);
+  border-color: var(--border-hover);
 }
 
 
@@ -1176,32 +1301,34 @@ button.list-row:hover .list-row-title {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
-  font-size: var(--type-sm);
+  font-size: var(--type-body);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   background: var(--error-surface);
 }
 
+/* The code is inline code: Small mono on the code lift, in the line's own tone. */
 .error-code {
   font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--accent-text);
-  background: var(--accent-surface);
-  padding: 0 var(--space-1);
+  font-size: var(--type-code);
+  color: var(--tone-primary);
+  background: var(--surface-code);
+  padding: var(--code-pad-y) var(--code-pad-x);
   border-radius: var(--radius-sm);
 }
 
 .error-message {
-  color: var(--text-default);
+  color: var(--tone-primary);
 }
 
 /* --- Quiet line (empty states, placeholders, unknown route) -------------- */
 
 /* A quiet line for empty/loading states. */
 .quiet-line {
-  color: var(--text-muted);
+  color: var(--tone-secondary);
   font-family: var(--font-ui);
-  font-size: var(--type-md);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
 }
 
 /* Wide step output (code wells, markdown pre) must scroll inside its own box, never
