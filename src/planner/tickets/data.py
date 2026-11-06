@@ -680,10 +680,11 @@ def _write_worker_step_claim(
     worker_step_claim: WorkerStepClaim,
     now: int,
     *,
-    notify_manager: bool = True,
+    error_reason: str | None = None,
+    notify_supervisor: bool = True,
 ) -> None:
     before = conn.execute(
-        "SELECT worker_step_claim,worker_step_claim_revision,manager_id,title "
+        "SELECT worker_step_claim,worker_step_claim_revision,manager_kind,manager_id,title "
         "FROM tickets WHERE id=?",
         (ticket_id,),
     ).fetchone()
@@ -699,26 +700,37 @@ def _write_worker_step_claim(
         ),
     )
     if (
-        notify_manager
+        notify_supervisor
         and before is not None
         and str(before["worker_step_claim"]) != worker_step_claim.value
         and worker_step_claim is WorkerStepClaim.errored
-        and before["manager_id"] is not None
-        and conn.execute(
-            "SELECT 1 FROM managers WHERE id=?",
-            (before["manager_id"],),
-        ).fetchone()
-        is not None
     ):
-        manager_wakes_data.create_worker_error_wake(
-            conn,
-            manager_id=str(before["manager_id"]),
-            ticket_id=ticket_id,
-            claim_revision=int(before["worker_step_claim_revision"]) + 1,
-            ticket_title=str(before["title"]),
-            now=now,
-        )
+        assert error_reason is not None, "an errored claim that notifies needs its reason"
+        supervisor = _assigned_supervisor(conn, before)
+        if supervisor is not None:
+            manager_wakes_data.create_worker_error_wake(
+                conn,
+                target=supervisor,
+                ticket_id=ticket_id,
+                claim_revision=int(before["worker_step_claim_revision"]) + 1,
+                ticket_title=str(before["title"]),
+                error_reason=error_reason,
+                now=now,
+            )
     capture_ticket_attention(conn, ticket_id, now)
+
+
+def _assigned_supervisor(conn: sqlite3.Connection, ticket_row: sqlite3.Row) -> Principal | None:
+    """The Chief for a Chief ticket, its Manager otherwise; None if that Manager is gone."""
+    if str(ticket_row["manager_kind"]) == "chief":
+        return CHIEF_PRINCIPAL
+    manager_id = ticket_row["manager_id"]
+    if (
+        manager_id is None
+        or conn.execute("SELECT 1 FROM managers WHERE id=?", (manager_id,)).fetchone() is None
+    ):
+        return None
+    return Principal(PrincipalKind.manager, str(manager_id))
 
 
 def _give_back_worker_step_claim(
@@ -1309,13 +1321,14 @@ def mark_worker_step_claim_errored(
     expected_claim: WorkerStepClaim,
     expected_claim_revision: int,
     now: int,
-    notify_manager: bool = True,
+    error_reason: str,
+    notify_supervisor: bool = True,
 ) -> bool:
     """Expose one failed claim, unless a later claim transition replaced it.
 
     An uncertain delivery cannot safely return a claim to readiness: the backend can
     have accepted the opener.  The errored claim leaves that uncertainty visible for
-    the existing Manager restart route.  The exact claim identity prevents an old
+    the existing supervisor restart route.  The exact claim identity prevents an old
     delivery result from overwriting a newer worker-step transition.
     """
     with _txn_without_nested_savepoint(conn):
@@ -1325,7 +1338,12 @@ def mark_worker_step_claim_errored(
         if ticket.worker_step_claim_revision != expected_claim_revision:
             return False
         _write_worker_step_claim(
-            conn, ticket_id, WorkerStepClaim.errored, now, notify_manager=notify_manager
+            conn,
+            ticket_id,
+            WorkerStepClaim.errored,
+            now,
+            error_reason=error_reason,
+            notify_supervisor=notify_supervisor,
         )
         return True
 
@@ -1356,10 +1374,13 @@ def mark_ticket_errored(
     ticket_id: str,
     *,
     now: int,
+    error_reason: str,
 ) -> Ticket:
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.errored, now)
+        _write_worker_step_claim(
+            conn, ticket_id, WorkerStepClaim.errored, now, error_reason=error_reason
+        )
         return _load_ticket_for_write(conn, ticket_id)
 
 

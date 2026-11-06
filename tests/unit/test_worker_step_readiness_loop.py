@@ -449,6 +449,7 @@ def test_restart_uses_the_current_errored_claim_generation_after_kill(world: _Wo
             expected_claim=claimed.worker_step_claim,
             expected_claim_revision=claimed.worker_step_claim_revision,
             now=world.clock.now_unix(),
+            error_reason="delivery uncertain",
         )
     admitted = world.ticket(ticket_id)
 
@@ -465,6 +466,7 @@ def test_restart_uses_the_current_errored_claim_generation_after_kill(world: _Wo
                 other_conn,
                 ticket_id,
                 now=world.clock.now_unix(),
+                error_reason="delivery uncertain",
             )
 
     async def start_current_step() -> WorkerStepStartResult:
@@ -626,6 +628,7 @@ def test_an_old_uncertain_delivery_cannot_error_a_newer_claim(world: _World) -> 
             expected_claim=first_claim.worker_step_claim,
             expected_claim_revision=first_claim.worker_step_claim_revision,
             now=4,
+            error_reason="delivery uncertain",
         )
 
     ticket = world.ticket(ticket_id)
@@ -1109,6 +1112,15 @@ def test_definite_start_failure_stays_failed_until_one_explicit_retry(
             for _ in range(3):
                 assert not (await start()).started
                 assert world.ticket(ticket_id) == failed
+            # A Chief ticket stores no Manager. Its failed start still tells the Chief, once.
+            with closing(world.connect()) as conn:
+                wakes = conn.execute(
+                    "SELECT target_kind,target_id,summary FROM manager_wakes "
+                    "WHERE ticket_id=? AND source_kind='worker_error'",
+                    (ticket_id,),
+                ).fetchall()
+            assert [(w[0], w[1]) for w in wakes] == [("chief", "chief")]
+            assert "could not start (backend_did_not_start)" in wakes[0][2]
             assert harness.spawned_conversation_ids == ["native-refusal-detail"]
             assert (await retry())["delivery_fate"] == "refused"
             failed_retry = world.ticket(ticket_id)
@@ -1152,7 +1164,8 @@ def test_definite_start_failure_cannot_erase_a_newer_claim(
         expected_claim: WorkerStepClaim,
         expected_claim_revision: int,
         now: int,
-        notify_manager: bool = True,
+        error_reason: str,
+        notify_supervisor: bool = True,
     ) -> bool:
         previous = world.ticket(ticket_id)
         assert tickets_data.release_worker_step_claim(
@@ -1176,7 +1189,8 @@ def test_definite_start_failure_cannot_erase_a_newer_claim(
             expected_claim=expected_claim,
             expected_claim_revision=expected_claim_revision,
             now=now,
-            notify_manager=notify_manager,
+            error_reason=error_reason,
+            notify_supervisor=notify_supervisor,
         )
 
     monkeypatch.setattr(tickets_data, "mark_worker_step_claim_errored", race)
