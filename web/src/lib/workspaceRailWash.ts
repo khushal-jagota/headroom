@@ -148,9 +148,8 @@ export function workspaceRailWash(root: HTMLElement) {
         if (host.hover.node.hidden) fadeIn(host.hover,hover.itemBox,ms('--motion-fast'));
         else draw(host.hover,hover.itemBox);
       } else if (!host.hover.node.hidden) fadeOut(host.hover,lastHover ?? host.node,false,ms('--motion-fast'));
-      // The ring stands the shared focus offset clear of its control.
-      const offset=parseFloat(css('--focus-offset'))||2;
-      if (focus?.host===host) {draw(host.focus,{left:focus.itemBox.left-offset,top:focus.itemBox.top-offset,width:focus.itemBox.width+2*offset,height:focus.itemBox.height+2*offset});host.focus.node.hidden=false;} else hide(host.focus);
+      // The layer takes the control's own box; its outline stands the focus offset clear of it.
+      if (focus?.host===host) {draw(host.focus,focus.itemBox);host.focus.node.hidden=false;} else hide(host.focus);
     }
     lastHover=hoverNode;
   }

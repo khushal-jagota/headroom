@@ -526,9 +526,9 @@
      whole stack above pane content without moving native controls out of DOM order. */
   .workspace-rail { position:relative; z-index:1; }
   .board-workspace-right { position:relative; z-index:0; }
-  /* The list's first fill still starts 12px down the rail: the list keeps --rail-ring-room of
-     its own above it, so a focus ring around the first header is never cut at the top. */
-  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:calc(var(--space-3) - var(--rail-ring-room)) 0 var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
+  /* The list's first fill starts --rail-top down the rail: the list keeps --rail-ring-room of
+     that inside itself, so a focus ring around the first header is never cut at the top. */
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:calc(var(--rail-top) - var(--rail-ring-room)) 0 var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
   .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
   /* Where rows continue past an edge of the list, they fade into the rail over 8px. A list
      that fits, or an edge with nothing past it, shows no fade. The fades are layers over the
