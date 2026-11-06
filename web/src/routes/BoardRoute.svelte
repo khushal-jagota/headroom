@@ -542,7 +542,10 @@
   @supports not selector(::-webkit-scrollbar) { .active-work-scroll { scrollbar-width:thin; scrollbar-color:var(--border-color) transparent; } }
 
   .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-width:thin; }
-  .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
+  /* The grip straddles the rail's edge above both panes. It keeps a compositing layer of its own:
+     without one Chromium squashes it with the page under it and, after some page changes, kept
+     showing stale fragments of the old page in the 5px of it over the page for seconds. */
+  .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); will-change:transform; cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
   .rail-grip::after { content:""; position:absolute; top:50%; left:50%; width:var(--space-1); height:var(--space-6); transform:translate(-50%,-50%) scaleY(var(--rail-grip-rest-scale)); border-radius:var(--radius-pill); background:var(--border-color); opacity:0; pointer-events:none; transition:opacity var(--motion-base) var(--motion-ease),background var(--motion-base) var(--motion-ease),transform var(--motion-enter) var(--motion-ease); }
   .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { opacity:1; transform:translate(-50%,-50%) scaleY(1); }
   .resizing .rail-grip::after { background:var(--text-strong); }
