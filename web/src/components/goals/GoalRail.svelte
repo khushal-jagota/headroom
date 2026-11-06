@@ -2,7 +2,7 @@
  import type {GoalRailStructure} from '../../lib/workspaceRailMotion';
  import NavigationWindowPages from '../NavigationWindowPages.svelte';
  import GoalReading from './GoalReading.svelte';
- import {goalDateText} from '../../lib/goals/presentation';
+ import {goalDateText,deadlineTone} from '../../lib/goals/presentation';
  import {resolveGoalPrimaryDisplay} from '../../lib/goals/primaryDisplay';
  import {checklistCounts} from '../../lib/goals/checklistCompletion';
  import type {GoalResponse} from '../../lib/goals/contracts';
@@ -32,9 +32,11 @@
  }
 </script>
 {#snippet state(goal:GoalResponse)}
- <!-- The goal's state in words, the same words its card and page use: red when it is behind,
-      the quiet Small voice otherwise, then when it is due. -->
- <span class="state">{#if progress(goal)}<span data-tone="neutral">{progress(goal)}</span>{:else}<GoalReading {goal}/>{/if}{#if goal.deadline}<time datetime={goal.deadline} aria-label={`Due ${goalDateText(goal.deadline)}`}>{goalDateText(goal.deadline)}</time>{/if}</span>
+ <!-- One thing on the right, in the Small voice: "Below target" (or "Overdue") in red when the
+      goal is off track; otherwise how far along it is ("2 of 6 done"); otherwise when it is
+      due; otherwise its state in words. The rest stays in the row's accessible name, and the
+      goal's preview and page show all of it. -->
+ <span class="state"><GoalReading {goal}/>{#if progress(goal)}<span class="progress">{progress(goal)}</span>{/if}{#if goal.deadline}<time datetime={goal.deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} aria-label={`Due ${goalDateText(goal.deadline)}`}>{goalDateText(goal.deadline)}</time>{/if}</span>
 {/snippet}
 <div>
 {#if rows.length||hasPager}
@@ -63,10 +65,15 @@ a{color:inherit;text-decoration:none}
 .goal{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);height:var(--rail-row-height);padding:0 var(--rail-pad);border-radius:var(--radius-md);touch-action:pan-y;font-size:var(--type-row);font-weight:var(--weight-body);line-height:20px;color:var(--rail-tone-rest);transition:color var(--motion-fast) var(--motion-ease)}
 .row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .goal:hover,.selected{color:var(--tone-strong)}
-.state{display:flex;align-items:baseline;gap:5px;font-size:var(--type-small);font-weight:var(--weight-small);line-height:16px;color:var(--rail-tone-label);font-variant-numeric:tabular-nums;white-space:nowrap}
-.state > :global(* + *)::before{content:"·";margin-right:5px;color:var(--rail-tone-label)}
+.state{position:relative;display:flex;align-items:baseline;font-size:var(--type-small);font-weight:var(--weight-small);line-height:16px;color:var(--rail-tone-label);font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Every word stays for assistive technology; only the one that matters most is drawn. */
+.state > :global(*){position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.state:has(> :global([data-tone=bad])) > :global([data-tone=bad]),
+.state:not(:has(> :global([data-tone=bad]))) > .progress,
+.state:not(:has(> :global([data-tone=bad]), > .progress)) > time,
+.state:not(:has(> :global([data-tone=bad]), > .progress, > time)) > :global([data-tone]){position:static;width:auto;height:auto;overflow:visible;clip-path:none}
 .state :global([data-tone]){color:inherit}
 .state :global([data-tone=bad]){color:var(--accent-error)}
-.state :global([data-tone=attention]){color:var(--accent-attention)}
+time[data-deadline-tone=attention]{color:var(--accent-attention)}
 .goal:focus-visible{outline:none}
 </style>

@@ -88,12 +88,14 @@
   .item-head[data-unread="true"] .item-title { color:var(--tone-strong); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--tone-strong); }
   /* The Manager you are inside: while its page or one of its goals or Tickets is open, its
-     header (the eyebrow and the name together) steps up, with the open row's fill under it.
-     A name that needs you is bright for one reason only, an unread message for you, and so
-     always carries the accent dot; the header of the place you are in never does, and its
-     eyebrow lifts with it, which a needs-you name's never does. */
-  .manager-card:has(:global([aria-current="page"])) .item-title { color:var(--tone-strong); }
-  .manager-card:has(:global([aria-current="page"])) .identity :global(.manager-eyebrow) { color:var(--tone-secondary); }
+     header (the eyebrow and the name together) goes to full brightness, and while one of its
+     goals or Tickets is open the header also takes a quiet fill of its own (the hover level)
+     above that item's selected fill. A name that needs you is bright for one reason only, an
+     unread message for you, and so always carries the accent dot; the header of the place you
+     are in never does, its eyebrow lifts with it and it stands in a fill. */
+  .manager-card:has(:global([aria-current="page"])) .item-title,
+  .manager-card:has(:global([aria-current="page"])) .identity :global(.manager-eyebrow > span) { color:var(--tone-strong); }
+  .manager-card:has(:global(:is(.worker-row, .goal)[aria-current="page"])) .identity { background:var(--wash-hover); }
   .item-head :global(.stage-mark--current-running),
   .bucket[data-tone="quiet"] :global(.stage-mark--current-running) { border-color:var(--border-color); border-top-color:var(--tone-tertiary); border-right-color:var(--tone-tertiary); }
   .bucket :global(.worker-row:focus-visible) { outline:none; }
