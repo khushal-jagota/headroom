@@ -45,7 +45,7 @@
 </div>
 
 <style>
-  .review-recap-request{margin-top:var(--space-2);font-size:var(--type-sm)}
+  .review-recap-request{display:flex;justify-content:flex-end;margin-top:var(--space-2);font-size:var(--type-sm)}
   .review-machine{display:inline-flex;align-items:center;margin-right:6px;color:var(--tone-tertiary)}
   .review-machine :global(.machine-identity){width:14px;height:14px;color:inherit}
 </style>

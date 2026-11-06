@@ -338,10 +338,10 @@
             <span class="page-eyebrow-sep" aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
           </div>
-          <!-- The Ticket's utilities sit at the band's right end, quiet and always shown, so
-               the decision below is the page's one call to action. -->
-          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal}>
-            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
+          <!-- The Ticket's utilities sit at the band's right end as ghosts, quiet and always
+               shown, so the decision below is the page's one call to action. -->
+          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} variant="ghost">
+            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" />{/snippet}
           </TicketLifecycleControls>{/if}
           </div>
           <div class="ticket-title-row">
@@ -512,6 +512,8 @@
 </section>
 
 <style>
+  /* The ticket's ghost page actions end with their label on the column's edge. */
+  .ticket-head .page-band > :global(.ticket-lifecycle) { margin-right:calc(var(--button-pad-x) * -1); }
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
   .ticket-head { padding-top:var(--page-top); }

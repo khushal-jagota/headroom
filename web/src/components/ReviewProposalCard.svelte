@@ -412,3 +412,8 @@
 {/if}
 
 </SkeletonRegion>
+
+<style>
+  /* An error state's actions about the queue sit at the right, like every button row. */
+  .review-card-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2); margin-top:var(--space-3); }
+</style>
