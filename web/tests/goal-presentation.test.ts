@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {chartData,chartHeadline,chartTone,comparisonText,missingReadingText,readingSuffix,formatReading,formatTrimmedReading,formatAxisTick,inspectedReading} from '../src/lib/charts/presentation';
+import {chartData,hasDateAxis,chartHeadline,chartTone,comparisonText,missingReadingText,readingSuffix,formatReading,formatTrimmedReading,formatAxisTick,inspectedReading} from '../src/lib/charts/presentation';
 import {updatePageBlock,deadlineTone,deadlineColor} from '../src/lib/goals/presentation';
 import type {ChartBlock,MeasureValue,Block} from '../src/lib/goals/contracts';
 const chart:ChartBlock={type:'chart',id:'balance',kind:'line',placement:'primary',measure_id:'balance',target:0,direction:'atleast',format:{prefix:'€',decimals:2}};
@@ -12,6 +12,14 @@ describe('goal charts',()=>{
   expect(data.map(d=>d.position)).toEqual([0,.5,1]);
   expect(formatReading(chart,-8.5)).toBe('€-8.50');
   expect(formatReading(chart,NaN)).toBe('No reading');
+ });
+ it('treats authored category labels as categories and measure or ISO-dated points as dates',()=>{
+  const authored=(labels:string[]):ChartBlock=>({type:'chart',id:'bars',kind:'bar',placement:'supporting',series:[{name:'Average',points:labels.map(label=>({label,value:1}))}]});
+  const categories=authored(['Type','Colour','Round 10']);
+  expect(hasDateAxis(categories,chartData(categories,[],'all'))).toBe(false);
+  const dated=authored(['2026-10-01','2026-10-02']);
+  expect(hasDateAxis(dated,chartData(dated,[],'all'))).toBe(true);
+  expect(hasDateAxis(chart,chartData(chart,[value('2026-10-01',1)],'all'))).toBe(true);
  });
  it('selects the week by dates rather than number of observations and respects static ranges',()=>{
   const values=[value('2026-09-30',20),value('2026-10-01',1),value('2026-10-07',null)];
