@@ -65,27 +65,27 @@
 </div>
 <style>
   .manager-card-slot { min-width:0; }
-  :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-3); }
-  /* Every Manager, the Chief included, is one text-only header. Its goals stand on the
-     name's left edge; Tickets are the one indent under it. */
-  .manager-card { --rail-child-indent:0px; box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:var(--space-2) var(--space-3); isolation:isolate; z-index:1; }
-  .manager-card.has-tickets { padding-bottom:var(--space-1); }
+  :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-1); }
+  /* Every Manager, the Chief included, is one text-only header: the project as a small
+     eyebrow, then the name. Its goals stand on the name's left edge as part of it; Tickets
+     are the one indent under it. The rail has exactly three text styles: the name, a row
+     (goal or Ticket) and a meta line (eyebrow, goal status, group label). */
+  .manager-card { --rail-child-indent:0px; box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:6px var(--space-3) var(--space-1); isolation:isolate; z-index:1; }
   .identity { display:flex; flex-direction:column; cursor:pointer; }
-  /* The project is the eyebrow above the name; hover-only Settle sits at its right end. */
   .identity > :global(.manager-eyebrow) { margin-bottom:0; }
-  .item-head { display:flex; align-items:center; gap:var(--space-2); width:100%; min-height:20px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .item-head { display:flex; align-items:center; gap:var(--space-2); width:100%; min-height:22px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   /* A title is dimmed unless it needs the user: an unread message for them, or the pointer or
-     the open page on it, brings it to full brightness. */
-  .item-title { flex:1; min-width:0; font-size:var(--type-md); font-weight:660; line-height:20px; letter-spacing:-0.01em; color:var(--text-faint); overflow-wrap:anywhere; }
+     the open page on it, brings it to full brightness. Dim is the rail's one resting tone,
+     shared by every title that does not need you, so it reads as calm rather than off. */
+  .item-title { flex:1; min-width:0; font-size:var(--type-md); font-weight:640; line-height:22px; letter-spacing:-0.012em; color:var(--text-faint); overflow-wrap:anywhere; transition:color var(--motion-fast) var(--motion-ease); }
   .item-head[data-unread="true"] .item-title { color:var(--text-strong); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--text-strong); }
-  /* A goal is part of its Manager's identity, so it stands flush with the name. Tickets are
-     the work list under it and step in once more. */
   .manager-card :global(.goals-rail), .manager-card :global(.sole-status) { padding-left:var(--rail-child-indent); }
   .manager-card > .bucket { padding-left:calc(var(--rail-child-indent) + var(--space-3)); }
-  /* One row style: titles that run out fade at the edge rather than break on a spaced ellipsis. */
-  .bucket :global(.ticket-row-title) { text-overflow:clip; mask-image:linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent); -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent); }
-  .bucket :global(.worker-row) { color:var(--text-faintest); }
+  /* One row style: a title that runs out fades at its own edge, and the unread mark keeps a
+     clear gap after the fade so it never reads as part of the word. */
+  .bucket :global(.ticket-row-title) { white-space:nowrap; overflow:hidden; text-overflow:clip; mask-image:linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent); -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent); }
+  .bucket :global(.worker-row) { color:var(--text-faint); }
   .bucket[data-bucket-key="awaiting_approval"] :global(.worker-row),
   .bucket[data-bucket-key="awaiting_answer"] :global(.worker-row),
   .bucket[data-bucket-key="errored"] :global(.worker-row),

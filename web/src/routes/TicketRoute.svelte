@@ -509,7 +509,7 @@
 <style>
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
-  .ticket-head { padding-top:var(--space-6); }
+  .ticket-head { padding-top:var(--space-4); }
   .worker-eyebrow { line-height:20px; min-height:24px; display:flex; align-items:center; gap:6px; font-size:var(--type-sm); color:var(--text-faint); }
   .ticket-title-row { display:block; margin-top:var(--space-2); }
   .worker-facts { display:flex; align-items:center; gap:6px; margin-top:var(--space-1); font-size:var(--type-sm); line-height:20px; color:var(--text-faint); }
@@ -518,17 +518,17 @@
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is
      written, and a gap that went with them would move the page. */
   .ticket-head :global([data-recap-slot]) { margin-top:var(--space-2); }
-  .ticket-head :global([data-recap]) { max-width:none; font-family:var(--font-ui); font-size:var(--type-ui); line-height:1.6; color:var(--text-muted); }
+  .ticket-head :global([data-recap]) { max-width:none; font-family:var(--font-ui); font-size:var(--type-ui); font-weight:500; line-height:22px; color:var(--text-muted); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }
-  .worker-current { margin-top:var(--space-6); }
+  .worker-current { margin-top:var(--space-5); }
   .worker-live-card { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }
   .worker-live-card h2 { margin:0; letter-spacing:-.008em; font-size:var(--type-md); font-weight:700; line-height:1.4; color:var(--text-strong); }
   .worker-ceiling-line { margin-top:var(--space-3); }
   .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:var(--type-ui); line-height:1.4; color:var(--text-muted); padding:var(--space-2) var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:none; text-align:left; }
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
-  .worker-bands { line-height:1.6; margin-top:var(--space-6); padding-bottom:var(--space-7); }
+  .worker-bands { line-height:1.6; margin-top:var(--space-4); padding-bottom:var(--space-7); }
   .worker-steps { border-top:1px solid var(--border-color); }
-  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-2); padding:10px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-sm); font-weight:590; color:var(--text-faint); cursor:pointer; list-style:none; }
+  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-sm); font-weight:550; color:var(--text-faint); cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }
   .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .band-count { margin-left:0; font-weight:500; color:var(--text-faintest); }

@@ -158,22 +158,25 @@
   {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
-  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(296px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-3) var(--space-4) var(--space-4); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-raised); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
+  /* A compact raised card: where it belongs (kicker), what it is (title), then the recap as the
+     body you opened it for. The ask is a quiet line under it, not a second button. */
+  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(288px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-3) 14px 14px; border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-raised); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
-  .kicker { display:flex; align-items:center; gap:6px; font-size:var(--type-xs); line-height:16px; color:var(--text-faintest); margin-bottom:2px; }
+  .kicker { display:flex; align-items:center; gap:6px; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faintest); margin-bottom:2px; }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
-  .title { font-size:var(--type-ui); font-weight:700; line-height:1.4; letter-spacing:-.006em; color:var(--text-strong); overflow-wrap:anywhere; }
+  .title { font-size:var(--type-ui); font-weight:640; line-height:20px; letter-spacing:-.006em; color:var(--text-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
   /* The name leads; the recap is the body the preview is opened for: bright, given its own
      space, and the only paragraph in the panel. */
-  .recap { margin-top:var(--space-3); font-size:var(--type-sm); line-height:1.55; color:var(--text-default); }
+  .recap { margin-top:var(--space-2); font-size:var(--type-sm); font-weight:500; line-height:20px; color:var(--text-default); }
   .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
-  /* The ask lives inside the recessed block, under the line it replaces. */
   .recap :global(.recap-ask) { display:flex; margin-top:var(--space-2); font-size:var(--type-xs); }
-  .doing { margin-top:var(--space-2); font-size:var(--type-xs); line-height:16px; color:var(--text-faint); }
+  .recap :global(.recap-ask .request-recap-action) { height:auto; padding:0; border-radius:var(--radius-sm); background:none; color:var(--text-faint); font-size:var(--type-xs); font-weight:500; line-height:16px; }
+  .recap :global(.recap-ask .request-recap-action:hover) { background:none; color:var(--text-strong); }
+  .doing { margin-top:var(--space-2); font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faint); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
 </style>

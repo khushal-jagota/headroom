@@ -107,7 +107,7 @@
  <div class="goal-context goal-facts">
   <span class="metadata deadline" class:empty={!deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)}>
    <span class="control-size date-size" aria-hidden="true">{dateText(deadline)}</span>
-   {#if deadline}<span class="date-display" aria-hidden="true" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{readableDate(deadline)}</span>{/if}
+   {#if deadline}<span class="date-display" aria-hidden="true" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>Due {readableDate(deadline)}</span>{/if}
    {#if !deadline}<span class="deadline-empty" aria-hidden="true">No deadline</span>{/if}
    <input type="date" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))} aria-label="By date" value={deadline} disabled={editFields.deadline.saving} onfocus={()=>start(editFields.deadline,true)} onclick={openDatePicker} oninput={e=>input(editFields.deadline,e.currentTarget)} onblur={e=>void commit(editFields.deadline,'deadline',e.currentTarget)} onkeydown={e=>keydown(e,editFields.deadline,'deadline')}/>
   </span>
@@ -154,7 +154,7 @@
  .empty:not(:focus-within) input{opacity:0}
  .signal{margin-left:auto}
  h1{font-size:var(--type-display);font-weight:740;line-height:1.25;letter-spacing:-.022em;margin:0;max-width:750px;color:var(--text-strong)}
- .why{font-size:var(--type-md);font-weight:500;line-height:1.6;color:var(--text-muted);margin-top:var(--space-2);max-width:650px}
+ .why{font-size:var(--type-ui);font-weight:500;line-height:22px;color:var(--text-muted);margin-top:var(--space-2);max-width:none}
  .why :global(.ed){min-height:1.6em;white-space:pre-wrap}
  h1,.why{overflow-wrap:anywhere}
  @container (max-width:640px){.goal-context{gap:var(--space-3)}h1{font-size:24px}}

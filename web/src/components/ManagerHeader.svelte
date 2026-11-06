@@ -59,7 +59,7 @@
 </header>
 
 <style>
-  .manager-workspace-head { padding-top:var(--space-6); }
+  .manager-workspace-head { padding-top:var(--space-4); }
   .manager-workspace-eyebrow-slot { display:flex; align-items:center; min-height:24px; font-size:var(--type-sm); line-height:20px; color:var(--text-faint); }
   .manager-workspace-title { font-family:var(--font-ui); font-size:var(--type-display); font-weight:740; line-height:1.25; letter-spacing:-0.022em; margin-top:var(--space-2); overflow-wrap:anywhere; }
   /* No padding on the clamped block itself: ClampedText measures its scrollHeight
@@ -67,6 +67,6 @@
   /* The gap sits on the animating slot, not inside it: a margin on the clamped block
      would stay behind the height the slot is measuring. */
   .manager-workspace-head :global([data-recap-slot]) { margin-top:var(--space-2); }
-  .manager-workspace-head :global(.manager-workspace-recap) { font-family:var(--font-ui); font-size:var(--type-ui); line-height:1.6; max-width:none; color:var(--text-muted); }
-  .manager-workspace-recap-ask { margin-top:var(--space-3); font-size:var(--type-sm); color:var(--text-muted); }
+  .manager-workspace-head :global(.manager-workspace-recap) { font-family:var(--font-ui); font-size:var(--type-ui); font-weight:500; line-height:22px; max-width:none; color:var(--text-muted); }
+  .manager-workspace-recap-ask { margin-top:var(--space-4); font-size:var(--type-sm); color:var(--text-muted); }
 </style>

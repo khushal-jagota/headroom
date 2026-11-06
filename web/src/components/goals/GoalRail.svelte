@@ -32,6 +32,19 @@
 {/if}
 </div>
 <style>
-.sole-status{display:flex;justify-content:flex-start;gap:6px;font-size:var(--type-xs);line-height:16px;margin-top:0;color:var(--text-faintest)}
-.goals-rail{margin-top:2px;font-size:var(--type-sm)}a{color:inherit;text-decoration:none}.goal{display:block;padding:6px var(--space-2);margin:0 calc(var(--space-2)*-1);border-radius:var(--radius-md);touch-action:pan-y;color:var(--text-muted)}.row-heading{display:flex;align-items:flex-start;gap:var(--space-2)}.row-title{flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:20px;font-weight:590;overflow-wrap:anywhere}.goal:hover,.selected{color:var(--text-strong)}.goal small{display:flex;justify-content:flex-start;flex-wrap:wrap;gap:0 6px;margin-top:0;font-size:var(--type-xs);line-height:16px;color:var(--text-faintest)}.goal small :global(span[data-tone]:not([data-tone=bad]):not([data-tone=good]):not([data-tone=attention])),.sole-status :global(span[data-tone]:not([data-tone=bad]):not([data-tone=good]):not([data-tone=attention])){color:inherit}.goal small > :global(*) + :global(*)::before,.sole-status > :global(*) + :global(*)::before{content:"·";margin-right:6px;color:var(--text-faintest)}time,.no-deadline{color:var(--text-faintest);white-space:nowrap}.goal:focus-visible{outline:none}
+/* A goal is part of its Manager: it stands on the name's edge, in the rail's row style, with
+   its status as a meta line. Like every rail title it rests dim and brightens when hovered
+   or open. */
+.sole-status{display:flex;justify-content:flex-start;gap:6px;font-size:var(--type-xs);font-weight:500;line-height:16px;margin-top:2px;color:var(--text-faintest)}
+.goals-rail{margin-top:2px;font-size:var(--type-sm)}
+a{color:inherit;text-decoration:none}
+.goal{display:block;padding:var(--space-1) var(--space-2);margin:0 calc(var(--space-2)*-1);border-radius:var(--radius-md);touch-action:pan-y;color:var(--text-faint);transition:color var(--motion-fast) var(--motion-ease)}
+.row-heading{display:flex;align-items:flex-start;gap:var(--space-2)}
+.row-title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;mask-image:linear-gradient(to right,#000 calc(100% - var(--space-5)),transparent);-webkit-mask-image:linear-gradient(to right,#000 calc(100% - var(--space-5)),transparent);line-height:20px;font-weight:500}
+.goal:hover,.selected{color:var(--text-strong)}
+.goal small{display:flex;justify-content:flex-start;flex-wrap:wrap;gap:0 6px;margin-top:0;font-size:var(--type-xs);font-weight:500;line-height:16px;color:var(--text-faintest)}
+.goal small :global(span[data-tone]:not([data-tone=bad]):not([data-tone=good]):not([data-tone=attention])),.sole-status :global(span[data-tone]:not([data-tone=bad]):not([data-tone=good]):not([data-tone=attention])){color:inherit}
+.goal small > :global(*) + :global(*)::before,.sole-status > :global(*) + :global(*)::before{content:"·";margin-right:6px;color:var(--text-faintest)}
+time,.no-deadline{color:var(--text-faintest);white-space:nowrap}
+.goal:focus-visible{outline:none}
 </style>

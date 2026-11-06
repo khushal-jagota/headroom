@@ -41,7 +41,7 @@
   /* Popovers, menus and hover previews: the one raised plane, with --shadow-float. */
   --surface-raised: #252525;
   /* The rounded composer field floats one clear step above the page. */
-  --surface-input: #242424;
+  --surface-input: #262626;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;
@@ -172,9 +172,9 @@
   --border-card: rgba(255, 255, 255, 0.07);
   --border-hover: rgba(255, 255, 255, 0.13);
   --border-focus: var(--focus-ring);
-  /* The keyboard focus ring, drawn the same way on every focusable control: a 2px
-   * line in the accent's hue, softened so it never reads as a filled "needs you". */
-  --focus-ring: rgb(154 173 210 / 55%);
+  /* The keyboard focus ring, drawn the same way on every focusable control: a crisp 2px
+   * line in the accent's hue. It is a line, never a fill, so it cannot read as "needs you". */
+  --focus-ring: rgb(154 173 210 / 82%);
   --shadow-float: 0 0 0 1px rgb(0 0 0 / 22%), 0 var(--space-1) var(--space-4) rgb(0 0 0 / 28%);
 
   /* Type — two font stacks and shared sans sizes. The prose/display/hero sizes
@@ -228,9 +228,12 @@
 
 /* Workspace selection tiers and travel. */
 :root {
-  /* The Manager you are inside: a tint quiet enough that only the open row reads as selected. */
-  --wash-context: rgb(255 255 255 / 3%);
-  --wash-selected: #383838;
+  /* The Manager you are inside: a tint quiet enough that only the open row reads as selected.
+   * The open row is one crisp fill, a clear step above hover, so the two never read as
+   * more and less of the same grey. */
+  --wash-context: rgb(255 255 255 / 2.5%);
+  --wash-selected: rgb(255 255 255 / 11%);
+  --wash-hover: rgb(255 255 255 / 5%);
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }

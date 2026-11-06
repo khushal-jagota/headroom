@@ -21,12 +21,14 @@
   .hero-card { padding:var(--space-5); }
   .metric-top { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; min-height:40px; }
   .metric-top h2 { flex:1 1 170px; }
-  .ranges { display:flex; gap:2px; padding:3px; border:1px solid var(--chart-range-border); background:var(--chart-range-surface); border-radius:var(--radius-md); isolation:isolate; }
-  .ranges button { position:relative; border:0; background:transparent; color:var(--chart-muted); font:inherit; font-size:var(--type-xs); font-weight:590; padding:5px 12px; border-radius:6px; cursor:pointer; white-space:nowrap; transition:color var(--motion-fast) var(--motion-ease); }
+  /* One period switch everywhere: a quiet track, 28px segments, a flat lifted thumb whose 6px
+     radius sits concentric inside the track's 8px. Only its width changes with placement. */
+  .ranges { display:flex; gap:2px; padding:2px; border:0; background:rgb(255 255 255 / 4%); border-radius:var(--radius-md); isolation:isolate; }
+  .ranges button { position:relative; display:inline-flex; align-items:center; justify-content:center; height:28px; border:0; background:transparent; color:var(--chart-muted); font:inherit; font-size:var(--type-xs); font-weight:550; line-height:16px; padding:0 12px; border-radius:6px; cursor:pointer; white-space:nowrap; transition:color var(--motion-fast) var(--motion-ease); }
   .ranges button:hover { color:var(--text-default); }
   .ranges button>span:not(.range-selection) { position:relative; }
   .ranges button[aria-pressed=true] { color:var(--text-strong); }
-  .range-selection { position:absolute; inset:0; background:var(--chart-range-selected); border:1px solid var(--chart-grid); border-radius:6px; box-shadow:var(--chart-range-shadow); z-index:-1; }
+  .range-selection { position:absolute; inset:0; background:rgb(255 255 255 / 10%); border:0; border-radius:6px; box-shadow:none; z-index:-1; }
   .headline { margin:24px 0 28px; }
   .metric-value { height:44px; font-weight:590; letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1; }
   .missing-value { font-size:var(--type-chart-reading); }
@@ -42,7 +44,7 @@
   .compact .comparison { font-size:13px; }
   .compact .missing-value { font-size:var(--type-chart-compact); }
   .compact .ranges { width:100%; justify-content:space-between; }
-  .compact .ranges button { flex:1; padding:3px 8px; }
+  .compact .ranges button { flex:1; padding:0 8px; }
   .compact .caption { font-size:12px; }
   .chart-range-footer { margin-top:20px; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
@@ -53,14 +55,15 @@
   .integrated-card .headline { margin:var(--space-2) 0 var(--space-4); min-height:0; }
   .integrated-card .comparison { font-size:12px; }
   .integrated-card .caption { font-size:12px; }
-  .integrated-card .ranges button { padding:6px 8px; }
+  .integrated-card .ranges button { padding:0 8px; }
   .integrated-card .chart-range-footer { margin-top:var(--space-4); }
   /* The page card already reserves the room a standalone completion card holds. */
   .integrated-card.completion-card { min-height:0; }
   .integrated-card .completion-content { padding:var(--space-1) 0 0; }
-  .integrated-card .completion-headline { margin:0; min-height:0; gap:10px; }
-  .integrated-card .completion-glyph { width:20px; height:20px; }
-  .integrated-card .completion-word { font-size:var(--type-md); font-weight:590; letter-spacing:-.006em; color:var(--text-default); }
+  /* On a card the binary reading is a status line, not a second heading. */
+  .integrated-card .completion-headline { margin:0; min-height:0; gap:var(--space-2); }
+  .integrated-card .completion-glyph { width:16px; height:16px; }
+  .integrated-card .completion-word { font-size:var(--type-sm); font-weight:500; letter-spacing:0; line-height:20px; color:var(--text-muted); }
   .integrated-card .completion-context { margin-top:var(--space-2); font-size:var(--type-sm); }
   .bar-plot { position:relative; }
   .chart-empty-value { color:var(--chart-muted); text-align:center; padding:32px 0; }
@@ -110,7 +113,7 @@
     .integrated-card:not(.compact) { padding:0; border-radius:0; }
     .metric-card:not(.compact):not(.gauge-card) .metric-top h2 { flex-basis:100%; font-size:17px; }
     .metric-card:not(.compact) .ranges { width:100%; justify-content:space-between; }
-    .metric-card:not(.compact) .ranges button { flex:1; padding:7px 8px; }
+    .metric-card:not(.compact) .ranges button { flex:1; padding:0 8px; }
     .metric-card:not(.compact) .metric-value { height:40px; }
     .completion-word { font-size:36px; }
     .completion-card,.progress-card { min-height:260px; }

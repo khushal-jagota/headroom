@@ -155,4 +155,6 @@
   .error-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .error button { min-height: 44px; margin: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text-muted); font: inherit; cursor: pointer; }
   .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0; }
+  /* A mouse needs no 44px target; the row keeps the checklist's 36px pitch. */
+  @media (pointer: fine) { .field, .clear { min-height: 32px; } .clear { width: 32px; } }
 </style>

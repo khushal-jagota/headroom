@@ -25,10 +25,12 @@
 {#if feedback}<div class="c2-rest-feedback" role="status" data-conversation-dock-feedback>{feedback}</div>{/if}
 
 <style>
-  .c2-rest { display:flex; flex:none; flex-direction:column; align-items:stretch; gap:var(--space-1);
+    /* The status line is the composer's own header: it sits one small step above the field,
+     so the line, the latest message and the field read as one zone. */
+.c2-rest { display:flex; flex:none; flex-direction:column; align-items:stretch; gap:2px;
     width:100%; min-width:0;
-    border:0; padding:var(--space-2) 0 var(--space-4); background:transparent; color:var(--text-faint);
-    text-align:left; cursor:pointer; font:var(--type-sm)/1.5 var(--font-ui); font-weight:590; }
+    border:0; padding:var(--space-2) 0 var(--space-2); background:transparent; color:var(--text-faint);
+    text-align:left; cursor:pointer; font:var(--type-sm)/1.5 var(--font-ui); font-weight:500; }
   .c2-rest-status { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3);
     min-width:0; min-height:28px; }
   .c2-rest-activity { display:flex; align-items:center; gap:var(--space-2); min-width:0; }
@@ -43,7 +45,7 @@
     fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .c2-rest:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:var(--space-1); border-radius:var(--radius-md); }
   .c2-rest-preview { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden;
-    white-space:normal; color:var(--text-muted); font:var(--type-ui)/1.55 var(--font-ui); font-weight:500; }
+    white-space:normal; color:var(--text-muted); font:var(--type-sm)/20px var(--font-ui); font-weight:500; padding-bottom:var(--space-1); }
   .c2-rest-feedback { flex:none; padding-bottom:var(--space-2); color:var(--text-faint); font:var(--type-sm)/1.5 var(--font-ui); }
   .c2-mark--running { flex:none; width:calc(var(--space-2) + var(--border-strong)); height:calc(var(--space-2) + var(--border-strong));
     border-radius:var(--radius-pill); border:1.5px solid var(--text-faintest); border-top-color:var(--text-muted);

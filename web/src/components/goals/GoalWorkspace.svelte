@@ -56,5 +56,5 @@
  {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:${holder.kind}:${holder.id}`} label={holderLabel} composerPlaceholder={holder.kind==='manager'?'Message this manager…':'Message the Chief…'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={holder.kind==='manager'?holder:undefined} uploadOwner={holder}/>{/snippet}
 </ManagerFrame>
 <style>
-.goal-content{container-type:inline-size;max-width:900px;margin:0 auto;padding-top:var(--space-6)}.make-manager{border:0;background:none;color:var(--text-muted);font:inherit;font-size:12px;padding:0;cursor:pointer}.make-manager:hover{color:var(--text-strong)}@media(max-width:760px){.goal-content{padding-top:24px}}
+.goal-content{container-type:inline-size;max-width:900px;margin:0 auto;padding-top:var(--space-4)}.make-manager{border:0;background:none;color:var(--text-muted);font:inherit;font-size:12px;padding:0;cursor:pointer}.make-manager:hover{color:var(--text-strong)}@media(max-width:760px){.goal-content{padding-top:24px}}
 </style>

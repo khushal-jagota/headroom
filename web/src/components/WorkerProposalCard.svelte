@@ -113,14 +113,14 @@
   .proposal-prose { max-width:68ch; line-height:1.6; margin-top:var(--space-3); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
-  button { display:inline-flex; align-items:center; justify-content:center; height:32px; font:inherit; font-size:var(--type-sm); font-weight:590; line-height:20px; padding:0 14px; border:0; border-radius:var(--radius-md); cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  button { display:inline-flex; align-items:center; justify-content:center; height:32px; font:inherit; font-size:var(--type-sm); font-weight:550; line-height:20px; padding:0 14px; border:0; border-radius:var(--radius-md); cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   button:disabled { opacity:.5; cursor:default; }
   .reviewer { display:inline; height:auto; font:inherit; line-height:inherit; padding:0 4px; margin:0 -4px; background:transparent; color:inherit; border-radius:var(--radius-sm); }
   .reviewer:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .primary { background:var(--accent-fill); color:var(--surface-ink); }
+  .primary { background:var(--accent-fill); color:var(--surface-ink); font-weight:640; }
   .primary:hover:not(:disabled) { background:var(--accent-fill-hover); }
   .ghost { background:var(--fill-secondary); color:var(--text-default); padding:0 14px; }
-  .ghost:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
+  .ghost:hover { background-color:rgb(255 255 255 / 12%); color:var(--text-strong); }
   button:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
   .return-unavailable { color:var(--text-faintest); font-size:var(--type-sm); margin:var(--space-2) 0 0; }
   .return-note { margin-top:var(--space-4); }

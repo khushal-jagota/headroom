@@ -60,8 +60,10 @@ export function workspaceRailWash(root: HTMLElement) {
         const identity = local(node.closest('.identity')!.getBoundingClientRect());
         const status = group?.querySelector<HTMLElement>('[data-goal-status]')?.getBoundingClientRect();
         const bottom = status ? local(status).top + status.height : identity.top + identity.height;
-        itemBox.top = groupBox.top+inset;
-        itemBox.height = Math.min(bottom+2*inset,groupBox.top+groupBox.height-inset)-itemBox.top;
+        itemBox.top = Math.max(groupBox.top,identity.top-inset);
+        itemBox.height = Math.min(bottom+inset,groupBox.top+groupBox.height)-itemBox.top;
+        // The open Manager is itself the selection, so its group carries no second tint.
+        return {node,host,group,itemBox,groupBox:null};
       }
     }
     return {node,host,group,itemBox,groupBox};
@@ -124,10 +126,11 @@ export function workspaceRailWash(root: HTMLElement) {
       if (sameGroup) draw(next.host.item,next.itemBox,true);
       else fadeIn(next.host.item,next.itemBox,ms(deepen?'--motion-wash':'--motion-slow'));
       if (next.groupBox) {
-        if (sameGroup || deepen) draw(next.host.group,next.groupBox,Boolean(deepen));
+        if (next.host.group.node.hidden) fadeIn(next.host.group,next.groupBox,ms(sameGroup?'--motion-base':'--motion-slow'));
+        else if (sameGroup || deepen) draw(next.host.group,next.groupBox,Boolean(deepen));
         else fadeIn(next.host.group,next.groupBox,ms('--motion-slow'));
         next.host.group.node.hidden=false;
-      }
+      } else if (!next.host.group.node.hidden) fadeOut(next.host.group,next.node,true,ms('--motion-base'));
     }
     current=next;
   }

@@ -183,29 +183,30 @@ textarea {
 /* --- Persistent rail and pane shell ------------------------------------- */
 .shell { position:relative; height:100dvh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .shell-content { flex:1; min-width:0; min-height:0; padding:0; }
-.rail-foot { position:relative; flex:none; padding-top:var(--space-2); }
-.rail-utilities { display:flex; align-items:center; gap:4px; padding-right:64px; }
-.utility { position:relative; display:flex; flex:0 1 32px; align-items:center; justify-content:center; gap:6px; min-width:28px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--text-faint); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
-.utility:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-.utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:var(--accent-bright); color:var(--text-strong); }
-.utility:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
+.rail-foot { position:relative; flex:none; padding-top:var(--space-3); }
+/* The destinations: one row of quiet icons. A destination's name floats beside its icon as a
+   raised tooltip, over the row rather than in it, so nothing ever moves. */
+.rail-utilities { display:flex; align-items:center; gap:2px; }
+.utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--text-faintest); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.utility:hover { background:var(--wash-hover); color:var(--text-strong); }
+.utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:transparent; background:var(--wash-selected); color:var(--text-strong); }
+.utility:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:0; }
 .utility svg,.sheet-item svg { width:18px; height:18px; flex:none; }
 .count-badge { position:absolute; top:-2px; right:-2px; min-width:14px; height:14px; padding:0 3px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-1); font-size:10px; font-weight:660; line-height:14px; text-align:center; font-variant-numeric:tabular-nums; }
-/* On the rail the count sits beside its icon, never on top of it. */
-.rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 var(--space-2) 0 7px; }
-.rail-utilities .count-badge { position:static; min-width:18px; height:16px; padding:0 5px; box-shadow:none; font-size:11px; line-height:16px; }
+/* On the rail the count sits beside its icon, never on top of it: the needs-you accent as
+   text on its own quiet slate, the same mark as every needs-you count on a page. */
+.rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 6px 0 7px; }
+.rail-utilities .count-badge { position:static; min-width:20px; height:18px; padding:0 6px; border-radius:var(--radius-pill); background:var(--accent-surface); color:var(--accent-bright); box-shadow:none; font-size:11px; font-weight:640; line-height:18px; }
 .count-badge.hidden { display:none; }
-.utility-label { position:absolute; bottom:calc(100% + var(--space-2)); left:50%; z-index:6; padding:var(--space-1) var(--space-3); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-sm); background:var(--surface-2); color:var(--text-default); font-size:var(--type-sm); white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
+.utility-label { position:absolute; bottom:calc(100% + 6px); left:50%; z-index:6; padding:3px var(--space-2); border:var(--border-hairline) solid var(--border-color); border-radius:6px; background:var(--surface-raised); box-shadow:var(--shadow-float); color:var(--text-default); font-size:var(--type-xs); font-weight:500; line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
 .utility:nth-child(1 of .utility) .utility-label { left:0; transform:none; }
 .utility:nth-last-child(1 of .utility) .utility-label { left:auto; right:0; transform:none; }
-.utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
-.utility:hover .utility-label { transition-delay:400ms; }
-/* On the rail the name of the hovered or focused destination is a quiet caption at the
- * row's trailing end, inside the rail, clear of the focus ring and never over an icon. */
-.approved-rail .rail-utilities .utility, .rail-utilities .utility { position:static; }
+/* In the rail's bottom row there is nothing clear above an icon, so the name sits to its right. */
 .rail-utilities .utility .utility-label,
 .rail-utilities .utility:nth-child(1 of .utility) .utility-label,
-.rail-utilities .utility:nth-last-child(1 of .utility) .utility-label { top:50%; bottom:auto; left:auto; right:var(--space-2); transform:translateY(-50%); padding:0; border:0; background:none; color:var(--text-muted); font-size:var(--type-xs); font-weight:590; }
+.rail-utilities .utility:nth-last-child(1 of .utility) .utility-label { top:50%; bottom:auto; left:calc(100% + 6px); right:auto; transform:translateY(-50%); }
+.utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
+.utility:hover .utility-label { transition-delay:400ms; }
 @keyframes shell-panel-in { from { opacity:0; transform:translateY(var(--space-2)); } to { opacity:1; transform:none; } }
 .compact-bar { display:none; }
 .destination-pane { display:flex; flex-direction:column; flex:1; width:100%; height:100%; min-width:0; min-height:0; overflow:auto; }
@@ -1649,7 +1650,7 @@ button.list-row:hover .list-row-title {
 }
 .chat-box:focus-within {
   border-color: var(--focus-ring);
-  box-shadow: 0 0 0 1px var(--focus-ring);
+  box-shadow: 0 0 0 3px rgb(154 173 210 / 12%);
 }
 /* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
 .chat-box.drag {
@@ -2223,9 +2224,10 @@ select {
 
 .review-ticket-decision-line.review-ticket-decision-line--inline button,
 .review-ticket-decision-line.review-ticket-decision-line--inline a {
-  padding: 0 10px;
-  background: var(--fill-secondary);
-  color: var(--text-default);
+  height: 32px;
+  padding: 0 var(--space-3);
+  background: none;
+  color: var(--text-faint);
 }
 
 /* The review chamber's breadcrumb slot: the same height and voice as every page's. */
@@ -2233,7 +2235,7 @@ select {
   display: flex;
   align-items: center;
   min-height: 24px;
-  margin-top: var(--space-6);
+  margin-top: var(--space-4);
   margin-bottom: var(--space-2);
   color: var(--text-faint);
   font-size: var(--type-sm);
@@ -2252,15 +2254,15 @@ select {
   color: var(--text-faint);
   font-family: var(--font-ui);
   font-size: var(--type-sm);
-  font-weight: 590;
+  font-weight: 550;
   text-decoration: none;
   cursor: pointer;
-  transition: color var(--motion-base) var(--motion-ease);
+  transition: color var(--motion-base) var(--motion-ease), background-color var(--motion-base) var(--motion-ease);
 }
 
 .review-ticket-decision-line button:hover,
 .review-ticket-decision-line a:hover {
-  background-image: var(--interaction-hover);
+  background: var(--wash-hover);
   color: var(--text-strong);
 }
 
@@ -2325,13 +2327,14 @@ select {
 }
 
 .review-recap {
-  max-width: 60ch;
+  max-width: none;
   margin-top: var(--space-2);
   margin-bottom: var(--space-5);
   color: var(--text-muted);
   font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.6;
+  font-size: var(--type-ui);
+  font-weight: 500;
+  line-height: 22px;
 }
 
 .review-recap .markdown > :last-child {
@@ -3459,13 +3462,13 @@ select {
   background: none;
   pointer-events: none;
 }
-/* The dock is an opaque footer. Its edge is one hairline across the reading column;
- * the document itself dissolves over its last few pixels into the page plane before
- * that line, so nothing is cut and nothing shows through. */
+/* The dock is an opaque footer on the page's own plane: no rule, no card. The document
+ * dissolves over its last 48px into that plane, so whatever continues below the fold
+ * reads as more to scroll rather than as something cut. */
 .manager-reading:not(:has(.ticket-artifact)) > .manager-doc,
 .ticket-reading:not(:has(.ticket-artifact)) > .ticket-doc {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-5)), transparent);
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-5)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-7)), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-7)), transparent);
 }
 .conversation-layer > .conversation-column {
   position: relative;
@@ -3478,7 +3481,7 @@ select {
   right: 0;
   height: var(--border-hairline);
   background: var(--border-color);
-  opacity: var(--conversation-dock-line, 1);
+  opacity: var(--conversation-dock-line, 0);
   pointer-events: none;
 }
 .conversation-layer [data-conversation-pane] {
@@ -4763,10 +4766,13 @@ details:not([open]) > summary > .manager-workspace-chevron {
   }
 }
 
-/* Workspace ticket buckets share row geometry across buttons and message links. */
-.workspace-ticket-bucket { margin-top:var(--space-2); }
-.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:500; color:var(--text-faintest); padding:var(--space-1) 0 2px; margin-bottom:0; border-bottom:var(--border-hairline) solid var(--border-color); }
-.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--space-2) * 2)); display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-2); padding:6px var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+/* Workspace ticket buckets share row geometry across buttons and message links. A group
+   label is the rail's meta style: small, faint, and only as tall as its line. Rows keep one
+   even pitch (28px), and the unread mark sits in its own column a clear step after the
+   title's fade. */
+.workspace-ticket-bucket { margin-top:var(--space-1); }
+.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:500; color:var(--text-faintest); padding:2px 0; margin-bottom:0; border-bottom:var(--border-hairline) solid var(--border-color); }
+.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--space-2) * 2)); display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-3); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); font-weight:500; line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
 .workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:1px; }
@@ -4881,11 +4887,11 @@ details:not([open]) > summary > .manager-workspace-chevron {
   display:flex;
   align-items:center;
   gap:var(--space-2);
-  padding:10px var(--space-2);
+  padding:var(--space-2);
   margin-inline:calc(-1 * var(--space-2));
   border-radius:var(--radius-md);
   font-size:var(--type-sm);
-  font-weight:590;
+  font-weight:550;
   color:var(--text-faint);
   cursor:pointer;
   list-style:none;
@@ -4904,15 +4910,20 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* One moving decoration per scroller keeps selection distinct from the rail content. */
 .approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) { position:relative; isolation:isolate; }
+/* One crisp fill marks the open item; the Manager you are inside is a far quieter tint
+   around its group, drawn only while one of its goals or Tickets is open. The item sits
+   4px inside the group, so its 8px radius is concentric with the group's 12px. */
 .rail-wash { position:absolute; pointer-events:none; z-index:0; border-radius:var(--radius-md); }
 .rail-wash[hidden] { display:none; }
 .rail-wash--group { background:var(--wash-context); border-radius:var(--radius-lg); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
 
-.rail-wash--hover { background-image:var(--interaction-hover); }
+.rail-wash--hover { background:var(--wash-hover); }
 .rail-wash--focus { z-index:4; box-shadow:0 0 0 var(--border-strong) var(--focus-ring); }
-.approved-rail .rail-utilities .rail-wash { border-radius:var(--radius-sm); }
+.approved-rail .rail-utilities .rail-wash { border-radius:var(--radius-md); }
 .approved-rail :is(.settled-item, .utility) { position:relative; z-index:1; }
+/* The pointed-at destination lifts above its neighbours, so its tooltip is never under the next icon. */
+.approved-rail .utility:is(:hover, :focus-visible) { z-index:5; }
 .approved-rail :is(.utility:hover, .utility[aria-current="page"], .utility[aria-expanded="true"]) { border-color:transparent; background:none; }
 .approved-rail :is(.item-head, .worker-row, .goal, .settled-title, .utility):focus-visible { outline:none; }
 .approved-rail .workspace-ticket-bucket .worker-row { background:none; }

@@ -441,7 +441,7 @@
     color: var(--text-default);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 590;
+    font-weight: 500;
     line-height: 1.4;
     text-align: left;
   }
@@ -510,6 +510,16 @@
     overflow: hidden;
     clip: rect(0 0 0 0);
     border: 0;
+  }
+  /* A mouse needs no 44px target: rows keep one 36px pitch, like every list on the page. */
+  @media (pointer: fine) {
+    .step-inner { padding-block: 2px; }
+    .check { height: 32px; }
+    .step-inner:has(:global([data-item-deadline])) > .check { margin-top: 0; }
+    .step-title, .completed-title,
+    .step-heading:has(:global([data-item-deadline])) > .step-title,
+    .step-heading:has(:global([data-item-deadline])) > .completed-title { min-height: 32px; }
+    .group-toggle { min-height: 36px; font-weight: 500; }
   }
   @container (max-width: 380px) {
     .hide-label { display: none; }
