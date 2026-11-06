@@ -102,7 +102,7 @@ struct ReviewView: View {
                 }
             }
         }
-        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Review"]) { await store.refresh() }
+        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Review"]?.message) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).panelsScreen()
         .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:]; resolvedComponents = [] }
         .task(id: "\(store.baseURL):\(pending.prefix(30).map(\.id).joined(separator: ","))") {

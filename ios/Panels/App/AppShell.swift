@@ -12,30 +12,12 @@ struct AppShell: View {
     @State private var morePath: [AppRoute] = []
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            NavigationStack(path: $reviewPath) {
-                ReviewView(openTicket: { id in
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        workspacePath.append(.ticket(id))
-                        selectedTab = .workspace
-                    }
-                })
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
+        Group {
+            if store.serverUnreachable {
+                ServerUnreachableView { await store.refresh() }
+            } else {
+                tabs
             }
-                .tabItem { Label("Review", systemImage: "checkmark.circle") }
-                .badge(max(0, (store.review?.items.count ?? 0) - pendingDecisionCount)).tag(AppTab.review)
-            NavigationStack(path: $workspacePath) {
-                WorkspaceView()
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
-            }
-                .tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
-            NavigationStack(path: $morePath) {
-                MoreView()
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
-            }
-                .tabItem { Label { Text("More") } icon: { Image(uiImage: moreTabImage) } }.tag(AppTab.more)
         }
         .task {
             while !Task.isCancelled {
@@ -83,6 +65,34 @@ struct AppShell: View {
         }
         .task(id: "\(store.baseURL.absoluteString):\(scenePhase == .active)") {
             if scenePhase == .active { await store.run() }
+        }
+    }
+
+    private var tabs: some View {
+        TabView(selection: $selectedTab) {
+            NavigationStack(path: $reviewPath) {
+                ReviewView(openTicket: { id in
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        workspacePath.append(.ticket(id))
+                        selectedTab = .workspace
+                    }
+                })
+                    .navigationDestination(for: AppRoute.self) { detail($0) }
+            }
+                .tabItem { Label("Review", systemImage: "checkmark.circle") }
+                .badge(max(0, (store.review?.items.count ?? 0) - pendingDecisionCount)).tag(AppTab.review)
+            NavigationStack(path: $workspacePath) {
+                WorkspaceView()
+                    .navigationDestination(for: AppRoute.self) { detail($0) }
+            }
+                .tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
+            NavigationStack(path: $morePath) {
+                MoreView()
+                    .navigationDestination(for: AppRoute.self) { detail($0) }
+            }
+                .tabItem { Label { Text("More") } icon: { Image(uiImage: moreTabImage) } }.tag(AppTab.more)
         }
     }
 

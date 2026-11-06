@@ -4,6 +4,47 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ResourceRefreshTests: XCTestCase {
+    func testOnlyUnreachableTransportFailuresRequireTailscaleState() {
+        for code in [URLError.cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .notConnectedToInternet] {
+            XCTAssertTrue(ServerReadFailure(URLError(code)).isServerUnreachable, "\(code)")
+            XCTAssertTrue(ServerReadFailure(NSError(domain: NSURLErrorDomain, code: code.rawValue)).isServerUnreachable)
+        }
+        for code in [URLError.timedOut, .networkConnectionLost, .cancelled, .secureConnectionFailed, .badServerResponse] {
+            XCTAssertFalse(ServerReadFailure(URLError(code)).isServerUnreachable, "\(code)")
+        }
+        let failure = ServerReadFailure(APIError(status: 503, message: "Request failed on the reachable server."))
+        XCTAssertFalse(failure.isServerUnreachable)
+        XCTAssertEqual(failure.message, "Request failed on the reachable server.")
+        XCTAssertFalse(ServerReadFailure(NSError(domain: NSPOSIXErrorDomain, code: URLError.cannotFindHost.rawValue)).isServerUnreachable)
+    }
+
+    func testUnreachableReadsKeepSavedResponsesAndClearOnRecovery() async throws {
+#if SWIFT_PACKAGE
+        let fixtures = Bundle.module.url(forResource: "Fixtures", withExtension: nil)!
+#else
+        let fixtures = Bundle(for: Self.self).resourceURL!
+#endif
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(fixtures: fixtures) }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RefreshProtocol.self]
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: URLSession(configuration: config))
+        await store.refresh()
+        XCTAssertNotNil(store.review)
+        RefreshProtocol.state.withLock { $0.failure = .cannotFindHost }
+        await store.refresh()
+        XCTAssertTrue(store.serverUnreachable)
+        XCTAssertTrue(store.errors["Review"]?.isServerUnreachable == true)
+        XCTAssertNotNil(store.review, "The unavailable screen must not delete cached data")
+        RefreshProtocol.state.withLock { $0.failure = .badServerResponse }
+        await store.refresh()
+        XCTAssertFalse(store.serverUnreachable, "Other request failures retain the current refresh behavior")
+        XCTAssertNotNil(store.errors["Review"])
+        RefreshProtocol.state.withLock { $0.failure = nil }
+        await store.refresh()
+        XCTAssertFalse(store.serverUnreachable)
+        XCTAssertTrue(store.errors.isEmpty)
+    }
+
     func testChangeRefreshUsesCoherentVersionsAndKeepsOnlyVisibleWorkspaceReads() async throws {
 #if SWIFT_PACKAGE
         let fixtures = Bundle.module.url(forResource: "Fixtures", withExtension: nil)!
@@ -73,8 +114,10 @@ private struct RefreshFixture {
     var revision = "1"
     var epoch = "initial"
     var supportsVersions = true
+    var failure: URLError.Code?
     mutating func response(_ url: URL) throws -> Data {
         paths.append(url.path)
+        if let failure { throw URLError(failure) }
         if url.path == "/api/resource-versions" {
             if !supportsVersions { throw URLError(.unsupportedURL) }
             return try JSONSerialization.data(withJSONObject: ["epoch": epoch, "resources": ["/api/workers/chief-of-staff/settings", "/api/deployment-status"].map { ["key": $0, "revision": revision] }])

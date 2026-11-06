@@ -26,7 +26,7 @@ struct WorkspaceView: View {
 
     private var hasContent: Bool { store.chief != nil || store.managerPage != nil || store.ticketPage != nil }
     private var refreshError: String? {
-        store.errors["Workspace"] ?? store.errors["Tickets"] ?? store.errors["Chief"] ?? chiefSignalError ?? goalsError
+        store.errors["Workspace"]?.message ?? store.errors["Tickets"]?.message ?? store.errors["Chief"]?.message ?? chiefSignalError ?? goalsError
     }
 
     private var motion: Animation? { reduceMotion ? nil : PanelsTheme.Motion.disclosure }

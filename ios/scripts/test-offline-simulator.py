@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 REVIEW_COMPLETION = os.environ.get("PANELS_REVIEW_COMPLETION") == "1"
+REACHABILITY_SMOKE = os.environ.get("PANELS_REACHABILITY_SMOKE") == "1"
 DEVICE = os.environ.get("PANELS_OFFLINE_DEVICE") or (
     "566D051B-B6BB-4046-9038-66C05CCC2B96"
     if REVIEW_COMPLETION
@@ -252,7 +253,7 @@ def main() -> int:
     manual_receipts: dict[str, Any] = {}
     state: dict[str, Any] = {
         "offline": False,
-        "slow": not REVIEW_COMPLETION and not GOALS_SMOKE,
+        "slow": not REVIEW_COMPLETION and not GOALS_SMOKE and not REACHABILITY_SMOKE,
         "writes": [],
         "messages": [],
         "recording": None,
@@ -356,6 +357,9 @@ def main() -> int:
                 self.respond({})
                 return
             if self.disconnected():
+                return
+            if state.get("request_failed"):
+                self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
                 return
             if path == "/api/changes" or path.endswith("/view/tail"):
                 self.send_response(200)
@@ -707,6 +711,36 @@ def main() -> int:
     env = os.environ.copy()
     env["TEST_RUNNER_PANELS_OFFLINE_STUB_URL"] = url
     env["TEST_RUNNER_PANELS_REVIEW_COMPLETION"] = "1" if REVIEW_COMPLETION else "0"
+    control = None
+    if REACHABILITY_SMOKE:
+        port = server.server_port
+
+        class ConnectionControl(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                nonlocal server
+                action = self.path.removeprefix("/")
+                if action == "offline" and not state["offline"]:
+                    state["offline"] = True
+                    server.shutdown()
+                    server.server_close()
+                elif action == "online":
+                    state["request_failed"] = False
+                    if state["offline"]:
+                        state["offline"] = False
+                        server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+                        threading.Thread(target=server.serve_forever, daemon=True).start()
+                elif action == "request-failed":
+                    state["request_failed"] = True
+                else:
+                    self.send_error(400)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        control = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ConnectionControl)
+        threading.Thread(target=control.serve_forever, daemon=True).start()
+        env["TEST_RUNNER_PANELS_REACHABILITY_CONTROL_URL"] = f"http://127.0.0.1:{control.server_port}"
     try:
         return subprocess.call(
             [
@@ -758,6 +792,9 @@ def main() -> int:
         subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
         server.shutdown()
         server.server_close()
+        if control:
+            control.shutdown()
+            control.server_close()
 
 
 if __name__ == "__main__":
