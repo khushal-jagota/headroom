@@ -232,7 +232,10 @@
 /* The shared controls (Direction v2, Outcome 5): one button, one segmented control. Every
  * step is white over the control's own surface; a hover adds one step (6%). */
 :root {
-  --button-height: 28px;
+  /* Never shorter than staging's: a page's own actions were 27-29px there, its main
+   * actions (Mark done, Approve, Send it back) 37-39px. */
+  --button-height: 30px;
+  --button-main-height: 40px;
   --button-radius: var(--radius-md);
   --button-pad-x: 12px;
   --button-gap: 6px;
