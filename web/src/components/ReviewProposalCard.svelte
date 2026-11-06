@@ -339,9 +339,9 @@
       </div>
 
       {#snippet revisionEditor()}
-        <!-- One line for the Worker, always on the card: Send it back sends it as the return's
-             guidance, and Approve (or Cmd/Ctrl+Enter here) delivers it to the Worker and then
-             approves. -->
+        <!-- One line for the Worker, always on the card: Send it back (or Cmd/Ctrl+Enter here,
+             as on staging) sends it as the return's guidance, and Approve delivers it to the
+             Worker and then approves. -->
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
           <div class="review-revision-box" data-review-voice={voiceState.phase}>
             {#if voiceState.phase !== "idle"}
@@ -400,7 +400,7 @@
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.repeat) {
                     event.preventDefault();
                     event.currentTarget.closest("[data-approval-block]")
-                      ?.querySelector<HTMLButtonElement>("[data-accept]")?.click();
+                      ?.querySelector<HTMLButtonElement>("[data-send-back]")?.click();
                   }
                 }}
               ></textarea>
