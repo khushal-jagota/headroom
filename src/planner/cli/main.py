@@ -512,7 +512,10 @@ def send_message(
         as_json=as_json,
         json_body={"target": recipient, "message": text, "mode": mode},
     )
-    http.emit(data, as_json, f"message {data['fate']}")
+    human_result = f"message {data['fate']}"
+    if data["fate"] == "refused":
+        human_result += f": {data['refusal_reason']}"
+    http.emit(data, as_json, human_result)
 
 
 main.add_command(serve_command)
