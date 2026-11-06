@@ -2,11 +2,12 @@
   import type { ShellUtility } from "../lib/shellDestinations";
   let { name }: { name: ShellUtility } = $props();
 </script>
-<svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-  {#if name === "review"}<path d="M3 11h3.5l1.2 2h4.6l1.2-2H17M4.6 4h10.8l1.6 7v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4l1.6-7Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
-  {:else if name === "usage"}<path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-  {:else if name === "ideas"}<path d="M7 14h6m-5 3h4M6 10a5 5 0 1 1 8 0l-1 2H7Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-  {:else if name === "goals"}<circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.4" /><circle cx="10" cy="10" r="3.5" stroke="currentColor" stroke-width="1.4" /><circle cx="10" cy="10" r=".9" fill="currentColor" />
-  {:else if name === "vps"}<rect x="3" y="4" width="14" height="5" rx="1.2" stroke="currentColor" stroke-width="1.4" /><rect x="3" y="11" width="14" height="5" rx="1.2" stroke="currentColor" stroke-width="1.4" /><path d="M6 6.5h.01M6 13.5h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-  {:else}<path d="m8 3-.5 2-1.4.8-2-.5-2 3.4L3.5 10l.1 1.6-1.4 1.4 2 3.4 2-.5 1.4.8.5 2h4l.5-2 1.4-.8 2 .5 2-3.4-1.4-1.4.1-1.6 1.4-1.3-2-3.4-2 .5-1.4-.8-.5-2Z" transform="translate(0 -1)" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.2" />{/if}
+<!-- One icon family: a 24-unit grid, 1.6 strokes, round caps and joins. -->
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  {#if name === "review"}<path d="M3.5 13h4.25l1.5 2.5h5.5l1.5-2.5h4.25" /><path d="M6.2 5h11.6a1 1 0 0 1 .95.68L20.5 13v5a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18v-5l1.75-7.32A1 1 0 0 1 6.2 5Z" />
+  {:else if name === "usage"}<path d="M5.5 19.5v-6M12 19.5v-15M18.5 19.5v-9.5" />
+  {:else if name === "ideas"}<path d="M9.5 17.5h5M10.5 20.5h3" /><path d="M8.6 14.6A6 6 0 1 1 15.4 14.6c-.55.45-.9 1.05-.9 1.75v1.15h-5v-1.15c0-.7-.35-1.3-.9-1.75Z" />
+  {:else if name === "goals"}<circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="0.75" fill="currentColor" />
+  {:else if name === "vps"}<rect x="3.5" y="4" width="17" height="7" rx="2" /><rect x="3.5" y="13" width="17" height="7" rx="2" /><path d="M7.5 7.5h.01M7.5 16.5h.01" stroke-width="2" />
+  {:else}<path d="M4 7h9M17 7h3M4 17h3M11 17h9M4 12h4.5M12.5 12H20" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /><circle cx="10.5" cy="12" r="2" />{/if}
 </svg>

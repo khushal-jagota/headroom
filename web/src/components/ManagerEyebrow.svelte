@@ -12,7 +12,7 @@
   </button>
 </div>
 <style>
-  .manager-eyebrow { display:flex; align-items:center; gap:var(--space-2); min-height:17px; font-size:12px; font-weight:500; color:var(--text-faintest); }
+  .manager-eyebrow { display:flex; align-items:center; gap:var(--space-2); min-height:16px; font-size:var(--type-xs); font-weight:400; line-height:16px; color:var(--text-faintest); }
   .settle { margin-left:auto; display:inline-flex; align-items:center; gap:5px; color:var(--text-faint); white-space:nowrap; background:none; border:0; font:inherit; cursor:pointer; padding:0; transition:opacity var(--motion-fast) var(--motion-ease); }
   .settle svg { width:12px; height:12px; flex:none; }
   .rail { line-height:normal; }
@@ -20,5 +20,5 @@
   .rail .settle { flex-shrink:0; opacity:0; }
   :global(.manager-card .identity:hover) .settle, :global(.manager-card .identity:focus-within) .settle, .settle:focus-visible { opacity:1; }
   .settle:hover { color:var(--text-strong); }
-  .settle:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:3px; }
+  .settle:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:3px; }
 </style>

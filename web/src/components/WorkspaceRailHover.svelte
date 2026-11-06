@@ -130,20 +130,20 @@
   {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
-  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(340px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-4); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-2); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
+  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(320px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-4); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-raised); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
-  .kicker { display:flex; align-items:center; gap:var(--space-2); font-size:12px; color:var(--text-faintest); margin-bottom:5px; }
+  .kicker { display:flex; align-items:center; gap:6px; font-size:var(--type-xs); line-height:16px; color:var(--text-faint); margin-bottom:var(--space-1); }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
-  .title { font-size:var(--type-md); font-weight:600; line-height:1.4; color:var(--text-strong); overflow-wrap:anywhere; }
+  .title { font-size:var(--type-md); font-weight:600; line-height:1.4; letter-spacing:-.006em; color:var(--text-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
-  .recap { margin-top:var(--space-3); padding:var(--space-3); background:var(--surface-recessed); border-radius:var(--radius-md); font-size:12.5px; line-height:1.5; color:var(--text-default); }
+  .recap { margin-top:var(--space-2); font-size:var(--type-sm); line-height:1.5; color:var(--text-muted); }
   .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
   /* The ask lives inside the recessed block, under the line it replaces. */
-  .recap :global(.recap-ask) { display:flex; margin-top:var(--space-2); font-size:12px; }
-  .doing { margin-top:var(--space-3); font-size:12.5px; color:var(--text-faint); }
+  .recap :global(.recap-ask) { display:flex; margin-top:var(--space-2); font-size:var(--type-xs); }
+  .doing { margin-top:var(--space-3); padding-top:var(--space-3); border-top:var(--border-hairline) solid var(--border-color); font-size:var(--type-xs); line-height:16px; color:var(--text-faint); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
 </style>

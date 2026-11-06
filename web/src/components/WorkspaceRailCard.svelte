@@ -67,22 +67,24 @@
 </div>
 <style>
   .manager-card-slot { min-width:0; }
-  :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-3); }
-  .manager-card { box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:var(--space-3) calc(var(--space-3) + var(--border-hairline)) var(--space-3); isolation:isolate; z-index:1; }
-  .manager-card.has-tickets { padding-bottom:var(--space-2); }
+  :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-4); }
+  .manager-card { box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:var(--space-2) var(--space-3); isolation:isolate; z-index:1; }
+  .manager-card.has-tickets { padding-bottom:var(--space-1); }
   .identity { cursor:pointer; }
-  .item-head { display:flex; align-items:flex-start; gap:var(--space-2); margin-top:var(--space-1); width:100%; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
-  .item-title { flex:1; min-width:0; font-size:16px; font-weight:600; line-height:1.35; letter-spacing:-0.002em; color:var(--text-faintest); overflow-wrap:anywhere; }
+  .item-head { display:flex; align-items:center; gap:var(--space-2); margin-top:2px; width:100%; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .item-title { flex:1; min-width:0; font-size:var(--type-ui); font-weight:600; line-height:20px; letter-spacing:-0.006em; color:var(--text-default); overflow-wrap:anywhere; }
   .item-head[data-unread="true"] .item-title { color:var(--text-strong); }
-  .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--text-strong); }
-  .chief .item-head { align-items:center; margin-top:0; gap:10px; }
-  .chief .item-title { font-size:18px; }
-  .chief-icon { flex:none; width:26px; height:26px; border-radius:var(--radius-sm); object-fit:cover; }
-  .bucket :global(.worker-row) { color:var(--text-faintest); }
+  .identity:hover .item-title, .item-head[aria-current="page"] .item-title, .manager-card:has([aria-current="page"]) .item-title { color:var(--text-strong); }
+  .chief .item-head { margin-top:0; gap:var(--space-2); }
+  .chief .item-title { font-size:var(--type-md); }
+  .chief-icon { flex:none; width:22px; height:22px; border-radius:6px; object-fit:cover; }
+  /* A Manager's goals and Tickets sit one step in from its title, so the title reads as their parent. */
+  .manager-card > .bucket, .manager-card :global(.goals-rail), .manager-card :global(.sole-status) { padding-left:var(--space-3); }
+  .bucket :global(.worker-row) { color:var(--text-faint); }
   .bucket[data-bucket-key="awaiting_approval"] :global(.worker-row),
   .bucket[data-bucket-key="awaiting_answer"] :global(.worker-row),
   .bucket[data-bucket-key="errored"] :global(.worker-row),
-  .bucket :global(.worker-row[data-unread="true"]) { color:var(--text-strong); }
+  .bucket :global(.worker-row[data-unread="true"]) { color:var(--text-default); }
   .bucket :global(.worker-row:is(:hover, .ticket-row--active)) { background:none; color:var(--text-strong); }
   .item-head :global(.stage-mark--current-running),
   .bucket[data-tone="quiet"] :global(.stage-mark--current-running) { border-color:var(--border-color); border-top-color:var(--text-faintest); border-right-color:var(--text-faintest); }
