@@ -191,16 +191,16 @@
   .kicker-place { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   .kicker-machine { flex:none; display:inline-flex; align-items:center; }
   .kicker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
-  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-row); font-weight:var(--weight-needs-you); line-height:20px; color:var(--tone-strong); overflow-wrap:anywhere; }
+  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-body); font-weight:var(--weight-title); line-height:20px; color:var(--tone-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
   /* The recap is the body the preview is opened for: the page's body voice, given its own
      space, and the only paragraph in the panel. */
-  .recap { margin-top:6px; font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
+  .recap { margin-top:6px; font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-secondary); }
   .recap-text { overflow:hidden; overflow-wrap:break-word; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
   /* The ask is a small outline button: the preview's one action, clearly an endpoint. */
-  .recap :global(.recap-ask) { display:flex; margin-top:10px; }
+  .recap :global(.recap-ask) { display:flex; margin-top:var(--space-3); }
   .recap :global(.recap-ask .request-recap-action) { height:24px; padding:0 var(--space-2); border-radius:6px; background:transparent; box-shadow:inset 0 0 0 var(--border-hairline) var(--button-outline-edge); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
   .recap :global(.recap-ask .request-recap-action:hover) { background:var(--button-outline-fill-hover); color:var(--tone-strong); }
   .doing { margin-top:2px; font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); }

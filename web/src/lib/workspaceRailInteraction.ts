@@ -294,3 +294,46 @@ export function railWholeRows(list: HTMLElement) {
   schedule();
   return { destroy() { resize.disconnect(); mutation.disconnect(); list.removeEventListener("scroll", schedule); window.removeEventListener("resize", schedule); if (frame) cancelAnimationFrame(frame); } };
 }
+
+/** When a page opens, the rail shows where it is: the list scrolls just far enough that the
+ * whole block of the Manager you are inside is in view, frame included, if it fits; otherwise
+ * that the open item is. Standard reveal behaviour; it moves nothing that is already in view.
+ * ``key`` names the open page, so the reveal runs once each time a page opens. */
+export function railReveal(list: HTMLElement, key: string) {
+  let current = key;
+  let frame = 0;
+  // The rail's rows arrive after the page does, so for a short while after a page opens the
+  // reveal follows the list as it settles; anything the person does to the list ends it.
+  let settleUntil = 0;
+  const css = (name: string) => Number.parseFloat(getComputedStyle(list).getPropertyValue(name)) || 0;
+  const reveal = () => {
+    frame = 0;
+    if (performance.now() > settleUntil) return;
+    const open = list.querySelector<HTMLElement>('.manager-card [aria-current="page"]');
+    if (!open) return;
+    const view = list.getBoundingClientRect();
+    const viewTop = view.top + list.clientTop, viewBottom = viewTop + list.clientHeight;
+    const outset = css("--rail-context-outset");
+    const below = outset + css("--rail-edge-fade");
+    const block = open.closest<HTMLElement>(".manager-card")?.getBoundingClientRect();
+    const fill = (open.closest<HTMLElement>(".identity") ?? open).getBoundingClientRect();
+    const target = block && block.height + outset + below <= list.clientHeight ? block : fill;
+    const top = target.top - outset, bottom = target.bottom + below;
+    const delta = top < viewTop ? top - viewTop : bottom > viewBottom ? bottom - viewBottom : 0;
+    if (delta) list.scrollTop += delta;
+  };
+  const schedule = () => { if (!frame && performance.now() <= settleUntil) frame = requestAnimationFrame(reveal); };
+  const start = () => { settleUntil = performance.now() + 2000; schedule(); };
+  const stop = () => { settleUntil = 0; };
+  const resize = new ResizeObserver(schedule);
+  const watch = () => { resize.disconnect(); resize.observe(list); for (const card of list.querySelectorAll(".manager-card")) resize.observe(card); schedule(); };
+  const mutation = new MutationObserver(watch);
+  mutation.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-current"] });
+  for (const name of ["wheel", "touchstart", "keydown", "pointerdown"]) list.addEventListener(name, stop, { passive: true });
+  watch();
+  start();
+  return {
+    update(next: string) { if (next !== current) { current = next; start(); } },
+    destroy() { cancelAnimationFrame(frame); resize.disconnect(); mutation.disconnect(); for (const name of ["wheel", "touchstart", "keydown", "pointerdown"]) list.removeEventListener(name, stop); }
+  };
+}

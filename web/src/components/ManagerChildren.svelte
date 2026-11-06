@@ -23,12 +23,12 @@
      headings with a plain count, one row per Ticket on one pitch. Every fill (a heading's, a
      row's) reaches --list-outset past the page column on both sides, so the words inside
      stand on the column's own edge with the section head above them. */
-  .manager-children { --list-outset:var(--space-2); --list-row-height:32px; --list-heading-gap:calc(var(--rail-heading-above) - 2px); margin:calc(var(--list-heading-gap) * -1) 0 0; display:flex; flex-direction:column; }
+  .manager-children { --list-outset:var(--space-2); --list-row-height:32px; --list-heading-gap:8px; margin:calc(var(--list-heading-gap) * -1) 0 0; display:flex; flex-direction:column; }
   /* Every group is its own heading over its rows, the empty ones included, so Backlogged and
      Done read the same way on every page. */
   /* A heading binds to its rows: 10px from the row above to its words, 2px from its words to
      the next row's fill, as in the rail. Its own fill keeps 2px of that on each side. */
-  .manager-children :global(.manager-workspace-status > summary) { display:flex; align-items:center; gap:5px; min-height:0; height:calc(var(--rail-heading-line) + 4px); padding:0 var(--list-outset); margin:var(--list-heading-gap) calc(var(--list-outset) * -1) calc(var(--rail-heading-below) - 2px); font-family:var(--font-ui); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; letter-spacing:normal; border:0; border-radius:var(--radius-md); background:none; color:var(--tone-tertiary); font-variant-numeric:tabular-nums; list-style:none; cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .manager-children :global(.manager-workspace-status > summary) { display:flex; align-items:center; gap:5px; min-height:0; height:20px; padding:0 var(--list-outset); margin:var(--list-heading-gap) calc(var(--list-outset) * -1) 0; font-family:var(--font-ui); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; letter-spacing:normal; border:0; border-radius:var(--radius-md); background:none; color:var(--tone-tertiary); font-variant-numeric:tabular-nums; list-style:none; cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   .manager-children :global(.manager-workspace-status > summary::-webkit-details-marker) { display:none; }
   .manager-children :global(.manager-workspace-status:not([open]) > summary) { padding-bottom:0; }
   .manager-children :global(.manager-workspace-status > summary:hover) { background-color:var(--wash-hover); color:var(--tone-primary); }
