@@ -32,9 +32,9 @@
 {#if feedback}<div class="c2-rest-feedback" role="status" data-conversation-dock-feedback>{feedback}</div>{/if}
 
 <style>
-  /* The status line is the composer's own small print: Small, tertiary, one line, standing on
-     the composer's inner text edge just above it, so it reads as part of the composer zone
-     and never as the last line of the page. */
+  /* The status line is the composer's own small print: Small, tertiary, one line. Where it is
+     the floating composer's footer it starts on the composer's left edge (app.css), so it reads
+     as part of the composer zone and never as the last line of the page. */
   .c2-rest { display:flex; flex:none; flex-direction:column; align-items:stretch;
     width:100%; min-width:0;
     border:0; border-radius:var(--radius-md); padding:0 var(--composer-inset) var(--composer-status-gap); background:transparent; color:var(--tone-tertiary);

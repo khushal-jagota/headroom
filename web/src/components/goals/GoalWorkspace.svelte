@@ -50,7 +50,7 @@
 <ManagerFrame class="goal-workspace" bind:conversationState {openedFile} {onOpenFile}>
  <div class="goal-content" data-goal-page={id}>
  {#if goal}
- <GoalHeader {goal}>{#snippet mark()}{#if goal.holder_kind==='chief'}<Button variant="secondary" class="make-manager" disabled={promoting} aria-busy={promoting} onclick={makeManager}>{promoting?'Making Manager…':'Make it a Manager'}</Button>{/if}{/snippet}</GoalHeader>
+ <GoalHeader {goal}>{#snippet mark()}{#if goal.holder_kind==='chief'}<Button variant="outline" class="make-manager" disabled={promoting} aria-busy={promoting} onclick={makeManager}>{promoting?'Making Manager…':'Make it a Manager'}</Button>{/if}{/snippet}</GoalHeader>
  {#if error}<ErrorLine {error}/>{/if}
  <GoalContent {goal}/>
  <PageFold/>

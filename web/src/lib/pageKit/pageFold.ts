@@ -9,7 +9,11 @@
  * introduces, so it never stands alone. A unit taller than the whole reading area is always
  * shown, since no scroll position could show it whole.
  *
- * The split into units and the decision are pure; the caller measures and applies them. */
+ * The page is cut where its lines stop: at the boundary between the last line shown and the
+ * first that waits, never below the fold. Above the cut everything is drawn whole; below it
+ * nothing is, and a card's box that goes on under the zone fades out over --composer-fade.
+ *
+ * The split into units and the decisions are pure; the caller measures and applies them. */
 
 /** Elements read as one unit even though they contain others. */
 export const PAGE_FOLD_ATOMIC = [
@@ -57,4 +61,18 @@ export function foldedUnits(units: readonly FoldUnit[], fold: number, top: numbe
     if (units[index].head && folded[index + 1]) folded[index] = true;
   }
   return folded;
+}
+
+/** Where the page is cut: the top of the first unit that waits (a row boundary), or the bottom
+ *  of the lowest unit shown when a neighbouring column shows more, and never below the fold.
+ *  With nothing waiting, the cut is the fold. */
+export function foldCut(units: readonly FoldUnit[], folded: readonly boolean[], fold: number): number {
+  let waiting = Infinity;
+  let shown = -Infinity;
+  units.forEach((unit, index) => {
+    if (folded[index]) waiting = Math.min(waiting, unit.top);
+    else shown = Math.max(shown, unit.bottom);
+  });
+  if (waiting === Infinity) return fold;
+  return Math.min(fold, Math.max(waiting, shown));
 }

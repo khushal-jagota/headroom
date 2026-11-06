@@ -146,13 +146,21 @@ function TickLabel({ value, scale, height, format }: { value: number; scale: Sca
   </motion.span>;
 }
 
-/** Axis labels that fit: at most one per 76 pixels, counted back from the latest so the newest date always shows. */
+/** Axis labels that fit: at most one per 76 pixels, from the first point to the latest, so the
+ *  axis is dated from where the line starts to where it ends. The steps between labels are
+ *  equal whenever a step that divides the run leaves at least half the room filled; otherwise
+ *  they differ by one point at most. */
 function axisPicks(data: LineChartDatum[], width: number) {
   const labeled = data.flatMap((item, index) => item.axisLabel ? [index] : []);
   if (!width || !labeled.length) return [];
   const room = Math.max(2, Math.floor(width / 76));
-  const stride = Math.ceil(labeled.length / room);
-  return labeled.reverse().filter((_, rank) => rank % stride === 0).reverse();
+  if (labeled.length <= room) return labeled;
+  const run = labeled.length - 1;
+  let steps = room - 1;
+  for (let even = room - 1; even >= Math.ceil((room - 1) / 2); even -= 1) {
+    if (run % even === 0) { steps = even; break; }
+  }
+  return Array.from({ length: steps + 1 }, (_, rank) => labeled[Math.round(rank * run / steps)]!);
 }
 
 export function LineChart({ data, series, label, unit = "", height = 220, domain, formatValue, formatTick = value => compact.format(value), integerTicks = false, hiddenSeries, onActiveChange, onSelect, loading = false, emptyLabel = "No data for this range", categoryLabel = "Date", curve = "smooth", ref, className }: LineChartProps) {

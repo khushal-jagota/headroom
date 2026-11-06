@@ -167,18 +167,20 @@
         <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
           {disabled} sendDisabled={busy || !ready} sending={busy}
           sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>
-        <div class="review-read-row"><Button variant="ghost" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button><div class="review-card-trailing">{@render ownActions()}</div></div>
+        <div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div><Button variant="ghost" class="review-card-main" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button></div>
         {#if error}<ErrorLine {error}/>{/if}
       </div>
-    {:else if error}<ErrorLine {error}/><div class="review-read-row"><Button variant="secondary" onclick={()=>void load()}>Retry</Button><div class="review-card-trailing">{@render ownActions()}</div></div>{/if}
+    {:else if error}<ErrorLine {error}/><div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div><Button variant="secondary" class="review-card-main" onclick={()=>void load()}>Retry</Button></div>{/if}
   </SkeletonRegion>
   <!-- Until the card has drawn, the actions wait below it rather than vanish. -->
-  {#if !loaded && !error}<div class="review-read-row"><div class="review-card-trailing">{@render ownActions()}</div></div>{/if}
+  {#if !loaded && !error}<div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div></div>{/if}
 </div>
 {@render footer?.()}
 
 <style>
-  .review-card-trailing{display:flex;align-items:center;gap:var(--space-1);margin-left:auto}
+  /* The most important action stands furthest right; the actions about the queue lead the row. */
+  .review-card-utilities{display:flex;align-items:center;gap:var(--space-2)}
+  .review-read-row :global(.review-card-main){margin-left:auto}
   .review-message-card{margin-top:var(--space-5);padding:var(--space-5);background:var(--surface-2);border-radius:var(--radius-lg)}
   .review-message-run{font-family:var(--font-ui);font-size:var(--type-md);line-height:1.68}
   .review-message-said+.review-message-said{position:relative;margin-top:var(--space-5);padding-top:var(--space-4)}
