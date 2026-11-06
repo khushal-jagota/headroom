@@ -63,7 +63,7 @@
 .goals-rail{display:flex;flex-direction:column;gap:var(--rail-row-gap);margin-top:var(--rail-row-gap)}
 a{color:inherit;text-decoration:none}
 .goal{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);height:var(--rail-row-height);padding:0 var(--rail-pad);border-radius:var(--radius-md);touch-action:pan-y;font-size:var(--type-row);font-weight:var(--weight-body);line-height:20px;color:var(--rail-tone-rest);transition:color var(--motion-fast) var(--motion-ease)}
-.row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:clip}
 .goal:hover,.selected{color:var(--tone-strong)}
 .state{position:relative;display:flex;align-items:baseline;font-size:var(--type-small);font-weight:var(--weight-small);line-height:16px;color:var(--rail-tone-label);font-variant-numeric:tabular-nums;white-space:nowrap}
 /* Every word stays for assistive technology; only the one that matters most is drawn. */

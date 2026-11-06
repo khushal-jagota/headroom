@@ -138,6 +138,17 @@ export function workspaceAttentionGroups(
   return railGroups(cards.filter(railTicketEligible), true);
 }
 
+/** A Manager's or the Chief's state in one sentence, in the voice of a Ticket's stage
+ * sentence: how many of its open Tickets wait on the person, else whether it is working. */
+export function workspaceHolderStateSentence(groups: readonly WorkspaceTicketGroup[], working: boolean | undefined): string {
+  const open = groups.reduce((total, group) => total + group.cards.length, 0);
+  const waiting = groups.filter((group) => ["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key))
+    .reduce((total, group) => total + group.cards.length, 0);
+  if (waiting) return `${waiting} ${waiting === 1 ? "Ticket waits" : "Tickets wait"} on you.`;
+  if (working) return "Currently working.";
+  return open ? `${open} open ${open === 1 ? "Ticket" : "Tickets"}, none waiting on you.` : "No open Tickets.";
+}
+
 /** A popover recap operates like any other recap: the real text, or nothing. */
 export function workspaceListRecap(recap = ""): string {
   return recap.trim() ? recap : "";
