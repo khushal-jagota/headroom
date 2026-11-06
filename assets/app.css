@@ -218,7 +218,7 @@ strong {
    raised tooltip, clear of the row, so it never covers a neighbouring icon and nothing moves. */
 /* The row reserves the band its tooltips open into above the icons, without taking layout
    space or the pointer from the Settled row under that band. */
-.rail-utilities { --rail-tooltip-band:34px; display:flex; align-items:center; gap:2px; padding-top:var(--rail-tooltip-band); margin-top:calc(var(--rail-tooltip-band) * -1); pointer-events:none; }
+.rail-utilities { --rail-tooltip-band:32px; display:flex; align-items:center; gap:2px; padding-top:var(--rail-tooltip-band); margin-top:calc(var(--rail-tooltip-band) * -1); pointer-events:none; }
 .rail-utilities > .utility { pointer-events:auto; }
 .utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--tone-secondary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .utility:hover { background:var(--wash-hover); color:var(--tone-strong); }
@@ -4867,9 +4867,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
    heavier or brighter than the rows it introduces. */
 .workspace-ticket-bucket { margin-top:0; display:flex; flex-direction:column; }
 .workspace-ticket-bucket .bucket-label { box-sizing:border-box; padding:var(--rail-heading-above) var(--rail-pad) var(--rail-heading-below) calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; font-size:var(--rail-label-size); font-weight:var(--weight-small); line-height:var(--rail-heading-line); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-/* A Ticket row: the same 30px fill as every rail row, its words one indent in, its title
-   ending in an ellipsis before the column kept for its unread dot. A row that needs the
-   person is bright and a step heavier; every other row rests dim. */
+/* A Ticket row: the same 30px fill on the 32px pitch as every rail row, on the rail's one text
+   edge. A row that needs the person is bright; every other row rests dim (tone only). */
 .workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr); align-items:center; column-gap:0; width:100%; height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
 /* Only a row with an unread dot keeps a column for it; every other title runs to the row's padding. */
 .workspace-ticket-bucket .worker-row:has(.conversation-signal-marks) { grid-template-columns:minmax(0,1fr) var(--rail-mark-column); }
@@ -4881,8 +4880,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .approved-rail [data-title-overflow] { text-overflow:clip; -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--rail-title-fade)), transparent); mask-image:linear-gradient(to right, #000 calc(100% - var(--rail-title-fade)), transparent); }
 .workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; }
 .workspace-ticket-bucket:is([data-bucket-key="awaiting_approval"], [data-bucket-key="awaiting_answer"], [data-bucket-key="errored"]) .worker-row,
-.workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--tone-strong); }
-.workspace-ticket-bucket .worker-row:is(:hover, [aria-current="page"]) { color:var(--tone-strong); }
+.workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--rail-tone-bright); }
+.workspace-ticket-bucket .worker-row:is(:hover, [aria-current="page"]) { color:var(--rail-tone-bright); }
 .workspace-ticket-bucket .worker-row:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 
 /* Approved skeleton system. */
@@ -5043,7 +5042,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .approved-rail :is(.item-head, .worker-row, .goal, .settled-title, .utility):focus-visible { outline:none; }
 .approved-rail .workspace-ticket-bucket .worker-row { background:none; }
 .approved-rail .bucket-label { border-bottom:0; }
-.approved-rail .settled-row:hover .settled-title, .approved-rail .settled-title[aria-current="page"] { color:var(--tone-strong); }
+.approved-rail .settled-row:hover .settled-title, .approved-rail .settled-title[aria-current="page"] { color:var(--rail-tone-bright); }
 
 /* === The main pane's page system ==========================================
  * One column, one top band, one type ladder and one end at the composer, on every page

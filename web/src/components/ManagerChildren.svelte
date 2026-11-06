@@ -38,14 +38,15 @@
   .manager-children :global(.manager-workspace-status-body) { display:flex; flex-direction:column; gap:var(--rail-row-gap); padding:0; }
   .manager-children :global(.stage-mark) { width:7px; height:7px; }
   .manager-children :global(a:focus-visible), .manager-children :global(button:focus-visible), .manager-children :global(summary:focus-visible) { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
-  /* A row: the machine's mark at the left, the title in the body voice, the unread dot in a
+  /* A row hugs its words: its fill is the text and 8px either side (240px at least), so a
+     short title never sits in a wide band. A row: the machine's mark at the left, the title in the body voice, the unread dot in a
      column of its own at the right. A row that needs the person is bright and a step
      heavier; every other row rests dim, as in the rail. */
-  .manager-children :global(.ticket-row) { box-sizing:border-box; display:flex; align-items:center; gap:10px; width:calc(100% + var(--list-outset) * 2); max-width:none; min-height:var(--list-row-height); margin:0 calc(var(--list-outset) * -1); padding:6px var(--list-outset); border-radius:var(--radius-md); font-size:var(--type-body); font-weight:var(--weight-body); line-height:20px; color:var(--tone-secondary); transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .manager-children :global(.ticket-row) { box-sizing:border-box; display:flex; align-items:center; gap:10px; width:fit-content; min-width:240px; max-width:calc(100% + var(--list-outset) * 2); min-height:var(--list-row-height); margin:0 calc(var(--list-outset) * -1); padding:6px var(--list-outset); border-radius:var(--radius-md); font-size:var(--type-body); font-weight:var(--weight-body); line-height:20px; color:var(--tone-secondary); transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   .manager-children :global(.ticket-row .machine-identity) { color:var(--tone-tertiary); }
   .manager-children :global(.ticket-row:hover), .manager-children :global(.ticket-row:focus-visible) { background:var(--wash-hover); color:var(--tone-strong); }
   .manager-children :global(:is([data-workspace-group="awaiting_approval"], [data-workspace-group="awaiting_answer"]) .ticket-row) { color:var(--tone-strong); font-weight:var(--weight-needs-you); }
-  .manager-children :global(.ticket-row-title) { flex:1; min-width:0; display:block; overflow:visible; white-space:normal; overflow-wrap:anywhere; line-height:inherit; line-clamp:unset; -webkit-line-clamp:unset; -webkit-box-orient:initial; }
+  .manager-children :global(.ticket-row-title) { flex:0 1 auto; min-width:0; display:block; overflow:visible; white-space:normal; overflow-wrap:anywhere; line-height:inherit; line-clamp:unset; -webkit-line-clamp:unset; -webkit-box-orient:initial; }
   .manager-children :global(.ticket-row .conversation-signal-marks) { justify-content:flex-end; width:var(--rail-mark-column); }
   .manager-children :global(.manager-workspace-empty) { padding:0; color:var(--tone-tertiary); font-size:var(--type-small); }
   .manager-children :global(.child-pages) { display:flex; align-items:center; gap:var(--space-3); color:var(--tone-tertiary); font-family:var(--font-ui); font-size:var(--type-small); }

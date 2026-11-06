@@ -98,34 +98,37 @@
         clearOfRail = left >= railRight;
         return;
       }
-      // A row in a page list spans the whole column, so a panel level with it would cover
-      // the row it describes. The panel always shows all of itself, its recap included: under
-      // the row when it fits above the composer, else beside the row, centred on it. Either
-      // way it stands in the right part of the column, short of the rows' unread dots, and
-      // clear of every row's and heading's words, so it covers only empty row ends.
-      const title = currentTarget.querySelector(".ticket-row-title");
-      let titleEnd = rect.left;
-      if (title) { const words = document.createRange(); words.selectNodeContents(title); titleEnd = Math.min(rect.right, words.getBoundingClientRect().right); }
-      // The rows' unread dots stand in the row's last --rail-mark-column, inside its own end
-      // padding; the panel keeps a 24px gutter clear of that column.
+      // A row in a page list hugs its words, so the panel opens to the right of the row's end,
+      // centred on the row and kept inside the window and above the composer. It never
+      // overlaps its own row; where the window leaves no room to the right it opens under the
+      // row, or over it when the composer leaves no room under it.
       const row = currentTarget.querySelector<HTMLElement>(".ticket-row") ?? currentTarget;
-      const styles = getComputedStyle(row);
-      const markColumn = Number.parseFloat(styles.getPropertyValue("--rail-mark-column")) || 16;
-      const endPad = Number.parseFloat(styles.paddingRight) || 0;
-      const rightmost = row.getBoundingClientRect().right - endPad - markColumn - 24 - width;
-      const below = rect.bottom + 6;
-      top = below + height <= floor ? below : Math.max(12, Math.min(rect.top + rect.height / 2 - height / 2, floor - height));
-      // Every row's and heading's words the panel's band would cross stay to its left.
+      const box = row.getBoundingClientRect();
+      // Beside its row the panel stays with its list (never more than 10px above the list's
+      // own heading) and clear of the composer by 8px.
+      const listTop = (currentTarget.closest(".page-tickets") ?? currentTarget.closest("section") ?? currentTarget).getBoundingClientRect().top;
+      const besideFloor = floor + 4;
+      const besideTop = Math.max(12, listTop - 10, Math.min(box.top + box.height / 2 - height / 2, besideFloor - height));
+      // Beside the row it also clears the rows and headings it lies level with, which hug
+      // their words too, so it covers only empty column.
       const list = currentTarget.closest("[data-manager-children], .manager-children") ?? currentTarget.parentElement;
-      let wordsEnd = titleEnd;
-      for (const words of list?.querySelectorAll<HTMLElement>(".ticket-row-title, summary") ?? []) {
-        const range = document.createRange(); range.selectNodeContents(words);
-        for (const line of range.getClientRects()) if (line.bottom > top && line.top < top + height) wordsEnd = Math.max(wordsEnd, line.right);
+      let clear = box.right;
+      for (const other of list?.querySelectorAll<HTMLElement>(".ticket-row, summary") ?? []) {
+        const near = other.getBoundingClientRect();
+        if (near.bottom > besideTop && near.top < besideTop + height) {
+          if (other.matches("summary")) { const words = document.createRange(); words.selectNodeContents(other); for (const line of words.getClientRects()) if (line.width) clear = Math.max(clear, line.right); }
+          else clear = Math.max(clear, near.right);
+        }
       }
-      left = Math.max(12, Math.min(Math.max(rightmost, wordsEnd + 12), window.innerWidth - width - 12));
-      // Past every word it crosses, the pointer can reach it and press the ask inside while
-      // the titles stay free to point at. Clamped back over words, it stays a preview.
-      clearOfRail = left >= wordsEnd;
+      if (clear + 12 + width <= window.innerWidth - 12) {
+        left = clear + 12;
+        top = besideTop;
+      } else {
+        left = Math.max(12, Math.min(box.left, window.innerWidth - width - 12));
+        top = box.bottom + 6 + height <= floor ? box.bottom + 6 : Math.max(12, box.top - 6 - height);
+      }
+      // Beside its row the pointer can cross straight to it and press the ask inside.
+      clearOfRail = left >= box.right;
     };
     // Manifest arrival can change the height after the panel is already visible.
     const observer = new ResizeObserver(place);
@@ -192,13 +195,14 @@
   .title-text { flex:1; min-width:0; }
   /* The recap is the body the preview is opened for: the page's body voice, given its own
      space, and the only paragraph in the panel. */
-  .recap { margin-top:6px; font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-secondary); }
+  .recap { margin-top:6px; font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
   .recap-text { overflow:hidden; overflow-wrap:break-word; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
-  .recap :global(.recap-ask) { display:flex; margin-top:10px; font-size:var(--type-small); }
-  .recap :global(.recap-ask .request-recap-action) { height:auto; padding:0; border-radius:var(--radius-sm); background:none; box-shadow:none; color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
-  .recap :global(.recap-ask .request-recap-action:hover) { background:none; color:var(--tone-strong); }
+  /* The ask is a small outline button: the preview's one action, clearly an endpoint. */
+  .recap :global(.recap-ask) { display:flex; margin-top:10px; }
+  .recap :global(.recap-ask .request-recap-action) { height:24px; padding:0 var(--space-2); border-radius:6px; background:transparent; box-shadow:inset 0 0 0 var(--border-hairline) var(--button-outline-edge); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
+  .recap :global(.recap-ask .request-recap-action:hover) { background:var(--button-outline-fill-hover); color:var(--tone-strong); }
   .doing { margin-top:2px; font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
 </style>
