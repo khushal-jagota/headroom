@@ -72,17 +72,19 @@
   .manager-card.has-tickets { padding-bottom:var(--space-1); }
   .identity { display:flex; flex-direction:column; cursor:pointer; }
   /* The project is the eyebrow above the name; hover-only Settle sits at its right end. */
-  .identity > :global(.manager-eyebrow) { margin-bottom:2px; }
-  .item-head { display:flex; align-items:center; gap:var(--space-2); width:100%; min-height:24px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .identity > :global(.manager-eyebrow) { margin-bottom:0; }
+  .item-head { display:flex; align-items:center; gap:var(--space-2); width:100%; min-height:20px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   /* A title is dimmed unless it needs the user: an unread message for them, or the pointer or
      the open page on it, brings it to full brightness. */
-  .item-title { flex:1; min-width:0; font-size:var(--type-lg); font-weight:740; line-height:22px; letter-spacing:-0.014em; color:var(--text-faintest); overflow-wrap:anywhere; }
+  .item-title { flex:1; min-width:0; font-size:var(--type-md); font-weight:660; line-height:20px; letter-spacing:-0.01em; color:var(--text-faint); overflow-wrap:anywhere; }
   .item-head[data-unread="true"] .item-title { color:var(--text-strong); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--text-strong); }
   /* A goal is part of its Manager's identity, so it stands flush with the name. Tickets are
      the work list under it and step in once more. */
   .manager-card :global(.goals-rail), .manager-card :global(.sole-status) { padding-left:var(--rail-child-indent); }
   .manager-card > .bucket { padding-left:calc(var(--rail-child-indent) + var(--space-3)); }
+  /* One row style: titles that run out fade at the edge rather than break on a spaced ellipsis. */
+  .bucket :global(.ticket-row-title) { text-overflow:clip; mask-image:linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent); -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent); }
   .bucket :global(.worker-row) { color:var(--text-faintest); }
   .bucket[data-bucket-key="awaiting_approval"] :global(.worker-row),
   .bucket[data-bucket-key="awaiting_answer"] :global(.worker-row),

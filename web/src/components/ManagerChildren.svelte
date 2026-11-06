@@ -40,7 +40,7 @@
   .manager-children :global([data-workspace-group="awaiting_approval"] > summary), .manager-children :global([data-workspace-group="awaiting_answer"] > summary) { color:var(--text-default); }
   .manager-children :global([data-workspace-group="awaiting_approval"] .manager-workspace-count), .manager-children :global([data-workspace-group="awaiting_answer"] .manager-workspace-count) { color:var(--accent-bright); }
   .manager-children :global(a:focus-visible), .manager-children :global(button:focus-visible), .manager-children :global(summary:focus-visible) { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
-  .manager-children :global(.ticket-row) { width:100%; margin:0; padding:var(--space-2) var(--space-3); gap:var(--space-3); border-radius:var(--radius-md); font-size:var(--type-ui); line-height:20px; align-items:center; color:var(--text-muted); }
+  .manager-children :global(.ticket-row) { width:fit-content; max-width:100%; margin:0; padding:var(--space-2) var(--space-3); gap:var(--space-3); border-radius:var(--radius-md); font-size:var(--type-ui); line-height:20px; align-items:center; color:var(--text-muted); }
   .manager-children :global(.ticket-row:hover), .manager-children :global(.ticket-row:focus-visible) { color:var(--text-strong); }
   .manager-children :global(.ticket-row-title) { flex:1; min-width:0; display:block; overflow:visible; white-space:normal; overflow-wrap:anywhere; line-height:inherit; line-clamp:unset; -webkit-line-clamp:unset; -webkit-box-orient:initial; }
   .manager-children :global(.child-pages) { display:flex; align-items:center; gap:var(--space-3); color:var(--text-faint); font-family:var(--font-ui); font-size:var(--type-sm); }

@@ -524,6 +524,8 @@
   .rail-status { flex:none; padding-top:var(--space-2); }
   /* The rail's foot is a fixed band with one hairline edge; the list above ends at it. */
   .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); border-top:var(--border-hairline) solid var(--border-color); padding-top:var(--space-1); }
+  /* Whatever row the list stops on dissolves before the foot's edge; nothing is sliced. */
+  .settled::before { content:""; position:absolute; z-index:2; left:0; right:0; bottom:calc(100% + var(--border-hairline)); height:var(--space-7); background:linear-gradient(transparent, var(--surface-rail) 60%); pointer-events:none; }
   .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); padding:var(--space-2) calc(var(--space-3) + var(--border-hairline)); border:0; background:none; width:100%; font:inherit; color:var(--text-faint); cursor:pointer; }
   .settled-head:hover { color:var(--text-strong); }
   .settled-count { position:relative; display:inline-block; }

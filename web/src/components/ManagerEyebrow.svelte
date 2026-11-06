@@ -12,7 +12,7 @@
   </button>
 </div>
 <style>
-  .manager-eyebrow { display:flex; align-items:center; gap:var(--space-2); min-height:16px; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faint); }
+  .manager-eyebrow { display:flex; align-items:center; gap:var(--space-2); min-height:16px; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faintest); }
   .settle { margin-left:auto; display:inline-flex; align-items:center; gap:5px; color:var(--text-faint); white-space:nowrap; background:none; border:0; font:inherit; cursor:pointer; padding:0; transition:opacity var(--motion-fast) var(--motion-ease); }
   .settle svg { width:12px; height:12px; flex:none; }
   .rail { line-height:normal; }

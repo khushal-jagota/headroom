@@ -327,12 +327,11 @@
       <div class="ticket-reading">
       <main class="ticket-doc">
         <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
+          <!-- Every page's line above its title is its place; the Ticket's own facts sit under the title. -->
           <div class="worker-eyebrow" data-ticket-identity>
+            <span>Workspace</span>
+            <span aria-hidden="true">·</span>
             <span data-project-fact>{masthead.project || "No project"}</span>
-            <span aria-hidden="true">·</span>
-            <span data-ticket-type>{mastheadTypeLabel}</span>
-            <span aria-hidden="true">·</span>
-            <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title">
@@ -342,6 +341,11 @@
                 onSave={(raw) => patch({ title: raw })}
               />
               <MachineActivityMark locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} />
+            </div>
+            <div class="worker-facts">
+              <span data-ticket-type>{mastheadTypeLabel}</span>
+              <span aria-hidden="true">·</span>
+              <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
             </div>
             <RecapSlot>
             {#snippet children()}
@@ -508,12 +512,13 @@
   .ticket-head { padding-top:var(--space-6); }
   .worker-eyebrow { line-height:20px; min-height:24px; display:flex; align-items:center; gap:6px; font-size:var(--type-sm); color:var(--text-faint); }
   .ticket-title-row { display:block; margin-top:var(--space-2); }
+  .worker-facts { display:flex; align-items:center; gap:6px; margin-top:var(--space-1); font-size:var(--type-sm); line-height:20px; color:var(--text-faint); }
   .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:var(--type-display); font-weight:740; line-height:1.25; letter-spacing:-.022em; }
   .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is
      written, and a gap that went with them would move the page. */
   .ticket-head :global([data-recap-slot]) { margin-top:var(--space-2); }
-  .ticket-head :global([data-recap]) { max-width:none; font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; color:var(--text-muted); }
+  .ticket-head :global([data-recap]) { max-width:none; font-family:var(--font-ui); font-size:var(--type-ui); line-height:1.6; color:var(--text-muted); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }
   .worker-current { margin-top:var(--space-6); }
   .worker-live-card { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }
@@ -523,10 +528,10 @@
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
   .worker-bands { line-height:1.6; margin-top:var(--space-6); padding-bottom:var(--space-7); }
   .worker-steps { border-top:1px solid var(--border-color); }
-  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:var(--space-3) var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-sm); font-weight:590; color:var(--text-faint); cursor:pointer; list-style:none; }
+  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-2); padding:10px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-sm); font-weight:590; color:var(--text-faint); cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }
   .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .band-count { margin-left:auto; font-weight:500; color:var(--text-faintest); }
+  .band-count { margin-left:0; font-weight:500; color:var(--text-faintest); }
   .worker-step-rows { padding-bottom:var(--space-4); }
   .worker-step-rows :global(.disclosure--stage) { margin:0; border:0; }
   .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-ui); color:var(--text-muted); }

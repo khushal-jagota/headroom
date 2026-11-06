@@ -25,8 +25,8 @@
     <div class="review-eyebrow">Review</div>
   {:else}
   <div class="review-ticket-decision-line">
-    <button data-skip disabled={busy} onclick={onSkip}>Skip &rsaquo;</button>
-    <a data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket &rsaquo;</a>
+    <button data-skip disabled={busy} onclick={onSkip}>Skip</button>
+    <a data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket</a>
   </div>
   {/if}
   <div class="review-ticket-heading"><div class="review-ticket-heading-main">

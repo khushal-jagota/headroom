@@ -42,7 +42,7 @@
   .compact .comparison { font-size:13px; }
   .compact .missing-value { font-size:var(--type-chart-compact); }
   .compact .ranges { width:100%; justify-content:space-between; }
-  .compact .ranges button { flex:1; padding:5px 8px; }
+  .compact .ranges button { flex:1; padding:3px 8px; }
   .compact .caption { font-size:12px; }
   .chart-range-footer { margin-top:20px; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */

@@ -75,8 +75,9 @@
 </script>
 
 <section inert={disabled || busy || resolved} class="worker-proposal" data-approval-block data-mode="pending" data-field={proposal.field}>
-  <h2>{fieldLabelFor(lifecycle, proposal.field)} <span class="who">— for
-    <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}</button> to approve</span></h2>
+  <h2>{fieldLabelFor(lifecycle, proposal.field)}</h2>
+  <p class="who">For
+    <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}</button> to approve</p>
   <div class="proposal-prose">
     <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; onEditedBodyChange?.(raw); }} onCancel={() => proposal.body} />
   </div>
@@ -107,8 +108,8 @@
 </section>
 <style>
   .worker-proposal { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }
-  h2 { margin:0; letter-spacing:-.01em; font-size:var(--type-lg); font-weight:700; line-height:1.4; color:var(--text-strong); }
-  .who { font-size:var(--type-sm); font-weight:500; letter-spacing:0; color:var(--text-faint); }
+  h2 { margin:0; letter-spacing:-.01em; font-size:var(--type-lg); font-weight:640; line-height:1.4; color:var(--text-strong); }
+  .who { margin:2px 0 0; font-size:var(--type-sm); font-weight:500; letter-spacing:0; color:var(--text-faint); }
   .proposal-prose { max-width:68ch; line-height:1.6; margin-top:var(--space-3); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
@@ -116,9 +117,9 @@
   button:disabled { opacity:.5; cursor:default; }
   .reviewer { display:inline; height:auto; font:inherit; line-height:inherit; padding:0 4px; margin:0 -4px; background:transparent; color:inherit; border-radius:var(--radius-sm); }
   .reviewer:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .primary { background:var(--accent-bright); color:var(--surface-ink); }
-  .primary:hover:not(:disabled) { background:color-mix(in srgb, var(--accent-bright) 82%, var(--text-strong)); }
-  .ghost { background:transparent; color:var(--text-muted); padding:0 12px; }
+  .primary { background:var(--accent-fill); color:var(--surface-ink); }
+  .primary:hover:not(:disabled) { background:var(--accent-fill-hover); }
+  .ghost { background:var(--fill-secondary); color:var(--text-default); padding:0 14px; }
   .ghost:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   button:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
   .return-unavailable { color:var(--text-faintest); font-size:var(--type-sm); margin:var(--space-2) 0 0; }

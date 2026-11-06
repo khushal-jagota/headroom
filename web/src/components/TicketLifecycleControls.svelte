@@ -49,10 +49,10 @@
 <style>
   .ticket-lifecycle { margin-top:var(--space-4); font-size:13px; color:var(--text-muted); }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); }
-  .text-action { border:0; background:none; padding:var(--space-1) 0; color:var(--text-muted); font:inherit; font-weight:590; cursor:pointer; text-underline-offset:3px; text-decoration-thickness:1px; }
-  .text-action:hover { color:var(--text-strong); text-decoration-line:underline; text-decoration-color:var(--text-faintest); }
+  .text-action { display:inline-flex; align-items:center; height:28px; padding:0 10px; border:0; border-radius:var(--radius-md); background:var(--fill-secondary); color:var(--text-default); font:inherit; font-size:var(--type-sm); font-weight:590; cursor:pointer; text-decoration:none; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .text-action:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .text-action:disabled { cursor:default; opacity:.5; }
-  .separator { color:var(--text-faintest); }
+  .separator { display:none; }
   .state { color:var(--text-strong); font-weight:660; }
   .hint { margin:var(--space-2) 0; line-height:1.6; }
 </style>

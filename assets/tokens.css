@@ -29,7 +29,13 @@
   --surface-2: #202020;
   --surface-recessed: #141414;
   /* The workspace rail: one close step above the page, divided by a hairline. */
-  --surface-rail: #1d1d1d;
+  --surface-rail: #202020;
+  /* The quiet tiers under the one filled action: a neutral fill for the secondary
+   * action, a smaller one for the tertiary ones (recap, backlog, skip, open). */
+  --fill-secondary: rgb(255 255 255 / 8%);
+  /* The filled primary action: the accent at full chroma, so it never reads chalky. */
+  --accent-fill: #8ea8ec;
+  --accent-fill-hover: #a4baf2;
   /* Inline code: a translucent lift that reads on every surface it lands on. */
   --surface-code: rgb(255 255 255 / 6%);
   /* Popovers, menus and hover previews: the one raised plane, with --shadow-float. */
@@ -42,8 +48,8 @@
    * scrim dims everything behind an open layer. They are intentionally not a
    * symmetric light/dark pair. */
   --interaction-hover: linear-gradient(
-    rgb(255 255 255 / 4.5%),
-    rgb(255 255 255 / 4.5%)
+    rgb(255 255 255 / 6%),
+    rgb(255 255 255 / 6%)
   );
   --scrim: rgb(10 9 8 / 55%);
 
@@ -168,7 +174,7 @@
   --border-focus: var(--focus-ring);
   /* The keyboard focus ring, drawn the same way on every focusable control: a 2px
    * line in the accent's hue, softened so it never reads as a filled "needs you". */
-  --focus-ring: rgb(154 173 210 / 70%);
+  --focus-ring: rgb(154 173 210 / 55%);
   --shadow-float: 0 0 0 1px rgb(0 0 0 / 22%), 0 var(--space-1) var(--space-4) rgb(0 0 0 / 28%);
 
   /* Type — two font stacks and shared sans sizes. The prose/display/hero sizes
@@ -223,8 +229,8 @@
 /* Workspace selection tiers and travel. */
 :root {
   /* The Manager you are inside: a tint quiet enough that only the open row reads as selected. */
-  --wash-context: rgb(255 255 255 / 2.5%);
-  --wash-selected: #333333;
+  --wash-context: rgb(255 255 255 / 3%);
+  --wash-selected: #383838;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }

@@ -59,8 +59,8 @@
 
 <style>
   .request-recap { display:inline-flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
-  .request-recap-action { border:0; background:none; padding:var(--space-1) 0; color:var(--text-muted); font:inherit; font-weight:590; cursor:pointer; text-underline-offset:3px; text-decoration-thickness:1px; }
-  .request-recap-action:hover { color:var(--text-strong); text-decoration-line:underline; text-decoration-color:var(--text-faintest); }
+  .request-recap-action { display:inline-flex; align-items:center; height:28px; padding:0 10px; border:0; border-radius:var(--radius-md); background:var(--fill-secondary); color:var(--text-default); font:inherit; font-size:var(--type-sm); font-weight:590; cursor:pointer; text-decoration:none; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .request-recap-action:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .request-recap-action[aria-disabled="true"] { cursor:default; color:var(--text-faintest); }
   .request-recap-action[aria-disabled="true"]:hover { color:var(--text-faintest); }
   .request-recap-note { color:var(--text-faintest); font-size:var(--type-xs); }

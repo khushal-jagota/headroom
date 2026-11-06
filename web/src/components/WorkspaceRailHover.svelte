@@ -162,13 +162,13 @@
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
-  .kicker { display:flex; align-items:center; gap:6px; font-size:var(--type-xs); line-height:16px; color:var(--text-faint); margin-bottom:var(--space-1); }
+  .kicker { display:flex; align-items:center; gap:6px; font-size:var(--type-xs); line-height:16px; color:var(--text-faintest); margin-bottom:2px; }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
-  .title { font-size:var(--type-sm); font-weight:660; line-height:1.4; letter-spacing:0; color:var(--text-muted); overflow-wrap:anywhere; }
+  .title { font-size:var(--type-ui); font-weight:700; line-height:1.4; letter-spacing:-.006em; color:var(--text-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
-  /* The recap is why the preview is opened, so it leads: the brightest, largest text in
-     the panel, with the name above it a quieter label. */
-  .recap { margin-top:var(--space-2); font-size:var(--type-ui); line-height:1.5; color:var(--text-strong); }
+  /* The name leads; the recap is the body the preview is opened for: bright, given its own
+     space, and the only paragraph in the panel. */
+  .recap { margin-top:var(--space-3); font-size:var(--type-sm); line-height:1.55; color:var(--text-default); }
   .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }

@@ -67,6 +67,6 @@
   /* The gap sits on the animating slot, not inside it: a margin on the clamped block
      would stay behind the height the slot is measuring. */
   .manager-workspace-head :global([data-recap-slot]) { margin-top:var(--space-2); }
-  .manager-workspace-head :global(.manager-workspace-recap) { font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; max-width:none; color:var(--text-muted); }
+  .manager-workspace-head :global(.manager-workspace-recap) { font-family:var(--font-ui); font-size:var(--type-ui); line-height:1.6; max-width:none; color:var(--text-muted); }
   .manager-workspace-recap-ask { margin-top:var(--space-3); font-size:var(--type-sm); color:var(--text-muted); }
 </style>

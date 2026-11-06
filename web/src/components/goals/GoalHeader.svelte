@@ -93,6 +93,7 @@
   {/if}
  {/snippet}
  <div class="goal-context">
+  <span class="crumb">Workspace</span>
   <span class="metadata">
    <span class="control-size" aria-hidden="true">{projectName}</span>
    <select aria-label="Project" value={editFields.project_id.value??goal.project_id} disabled={editFields.project_id.saving} onfocus={()=>start(editFields.project_id,true)} onchange={e=>{input(editFields.project_id,e.currentTarget);void commit(editFields.project_id,'project_id',e.currentTarget);}} onkeydown={e=>keydown(e,editFields.project_id,'project_id')}>
@@ -100,6 +101,10 @@
     {#each projects.data?.projects??[] as project}<option value={project.id}>{project.name}</option>{/each}
    </select>
   </span>
+ </div>
+ {#each ['project_id','deadline','active'] as field}{@render failure(field as Field)}{/each}
+ <h1 oninput={()=>{if(!title)editFields.title.dirty=true;}}>{#if title}{@render title()}{:else}<InlineEdit value={goal.title} draft={editFields.title} placeholder="Goal title…" ariaLabel="Goal title" onStart={()=>start(editFields.title,true)} onCancel={()=>discard(editFields.title,'title')} onSave={raw=>saveText(editFields.title,'title',raw)}/>{/if}</h1>
+ <div class="goal-context goal-facts">
   <span class="metadata deadline" class:empty={!deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)}>
    <span class="control-size date-size" aria-hidden="true">{dateText(deadline)}</span>
    {#if deadline}<span class="date-display" aria-hidden="true" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{readableDate(deadline)}</span>{/if}
@@ -112,8 +117,6 @@
   </span>
   <span class="signal">{@render mark?.()}</span>
  </div>
- {#each ['project_id','deadline','active'] as field}{@render failure(field as Field)}{/each}
- <h1 oninput={()=>{if(!title)editFields.title.dirty=true;}}>{#if title}{@render title()}{:else}<InlineEdit value={goal.title} draft={editFields.title} placeholder="Goal title…" ariaLabel="Goal title" onStart={()=>start(editFields.title,true)} onCancel={()=>discard(editFields.title,'title')} onSave={raw=>saveText(editFields.title,'title',raw)}/>{/if}</h1>
  <div class="why" oninput={()=>editFields.why.dirty=true}><InlineEdit value={goal.why} draft={editFields.why} multiline placeholder="Why this goal matters…" ariaLabel="Why this goal matters" onStart={()=>start(editFields.why,true)} onCancel={()=>discard(editFields.why,'why')} onSave={raw=>saveText(editFields.why,'why',raw)}/></div>
  {/each}
 </header>
@@ -124,8 +127,12 @@
  .error-actions button:disabled{opacity:.65}
  .goal-heading{margin-bottom:var(--space-6)}
  .goal-context{min-height:24px}
+ .goal-context > .crumb + .metadata::before{top:2px}
+ .goal-context > .crumb{position:relative;padding:2px var(--space-1)}
+ /* The goal's own facts are a quiet line under its title; the line above is its place. */
+ .goal-context.goal-facts{margin:var(--space-1) calc(var(--space-1) * -1) 0}
  .goal-context{display:flex;align-items:baseline;gap:var(--space-3);margin:0 calc(var(--space-1) * -1) var(--space-2);color:var(--text-faint);font-size:var(--type-sm);font-weight:500;line-height:20px;flex-wrap:wrap}
- .goal-context > .metadata + .metadata::before{content:"·";position:absolute;top:2px;left:calc(var(--space-2) * -1 + 1px);line-height:inherit;color:var(--text-faintest);pointer-events:none}
+ .goal-context > .crumb + .metadata::before,.goal-context > .metadata + .metadata::before{content:"·";position:absolute;top:2px;left:calc(var(--space-2) * -1 + 1px);line-height:inherit;color:var(--text-faintest);pointer-events:none}
  .date-display{grid-area:1/1;padding:2px var(--space-1);white-space:pre;pointer-events:none}
  .deadline:not(:focus-within) .date-size{visibility:hidden;width:0;overflow:hidden}
  .deadline:not(:focus-within) .date-display + input{opacity:0}

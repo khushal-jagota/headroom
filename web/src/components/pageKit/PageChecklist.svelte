@@ -374,7 +374,7 @@
     padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-md);
   }
-  .step.current .step-inner { background: var(--wash-context); }
+  .step.current .step-inner { background: transparent; }
   .check {
     display: grid;
     width: 40px;
@@ -432,7 +432,7 @@
     flex: 1 1 auto;
     min-width: 0;
     width: 100%;
-    min-height: 40px;
+    min-height: 36px;
     align-items: center;
     margin: 0;
     padding: 0;
@@ -460,7 +460,7 @@
   .step.struck .strike-mark { background-size: 100% 1px; }
   /* Named for this disclosure, so the application-wide .panel card cannot style it. */
   .step-panel { overflow: hidden; }
-  .step-panel-inner { padding: 0 0 var(--space-3); }
+  .step-panel-inner { padding: 0 0 var(--space-2); }
   .detail { white-space: pre-wrap; max-width: 46ch; margin: 0; color: var(--text-faint); font-size: var(--type-sm); font-weight: 500; line-height: 1.45; }
   .blocked { margin: var(--space-2) 0 0; color: var(--accent-error); font-size: var(--type-sm); }
   .action {

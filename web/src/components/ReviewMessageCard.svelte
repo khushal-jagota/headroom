@@ -146,8 +146,8 @@
 <div bind:this={card} data-review-card data-review-item-type="message" data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
   {#snippet ownActions()}
     <div class="review-ticket-decision-line review-ticket-decision-line--inline">
-      {#if !embedded}<button data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip &rsaquo;</button>{/if}
-      <a data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={event=>{if(busy)event.preventDefault();}}>Open conversation &rsaquo;</a>
+      {#if !embedded}<button data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</button>{/if}
+      <a data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={event=>{if(busy)event.preventDefault();}}>Open conversation</a>
     </div>
     {@render decisionActions?.()}
   {/snippet}
