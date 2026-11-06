@@ -226,24 +226,3 @@ export function railTitleFade(root: HTMLElement) {
   void document.fonts?.ready.then(schedule);
   return { destroy() { resize.disconnect(); mutation.disconnect(); if (frame) cancelAnimationFrame(frame); } };
 }
-
-/** When a page opens and its item in the rail is off-screen, the list scrolls it into view:
- * nearest edge, instantly, once. Nothing else ever moves the list. ``key`` names the open
- * page; the item may arrive a few frames after the page does, so it is waited for. */
-export function railReveal(list: HTMLElement, key: string) {
-  let current = key;
-  let frame = 0;
-  let tries = 0;
-  const reveal = () => {
-    frame = 0;
-    const open = list.querySelector<HTMLElement>('.manager-card [aria-current="page"]');
-    if (!open) { if (++tries < 120) frame = requestAnimationFrame(reveal); return; }
-    (open.closest<HTMLElement>(".identity") ?? open).scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
-  };
-  const start = () => { tries = 0; cancelAnimationFrame(frame); frame = requestAnimationFrame(reveal); };
-  start();
-  return {
-    update(next: string) { if (next !== current) { current = next; start(); } },
-    destroy() { cancelAnimationFrame(frame); }
-  };
-}
