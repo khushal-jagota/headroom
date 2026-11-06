@@ -302,7 +302,7 @@
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
               onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}
-              {revisionEditor} trailingActions={decisionActions} />
+              {revisionEditor} utilityActions={decisionActions} />
             {/key}
           {:else if decisionActions}{@render decisionActions()}
           {/if}

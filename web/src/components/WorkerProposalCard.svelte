@@ -7,7 +7,7 @@
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
-  let { proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, initialReturnOpen = false, initialEditedBody, onEditedBodyChange, contextRow, trailingActions }: {
+  let { proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, initialReturnOpen = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions }: {
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
     manager: { id: string; title: string } | null;
     onAccept: (body: Record<string, unknown>) => Promise<unknown>;
@@ -21,8 +21,8 @@
     onEditedBodyChange?: (text: string) => void;
     returnUnavailableReason?: string;
     contextRow?: Snippet;
-    /** Actions about the decision itself rather than the proposal, at the row's far end. */
-    trailingActions?: Snippet;
+    /** Actions about the queue rather than the proposal (Skip, Open ticket): they lead the row. */
+    utilityActions?: Snippet;
   } = $props();
   let scopePicker = $state<{openApproval: (anchor?: HTMLElement) => void; openReviewer: (anchor?: HTMLElement) => void; readonly expanded: boolean; readonly controls: string | undefined} | undefined>();
   let draft = $state("");
@@ -88,15 +88,19 @@
     <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; onEditedBodyChange?.(raw); }} onCancel={() => proposal.body} />
   </div>
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
+  <!-- The most important action stands furthest right, as in a macOS dialog: the decision
+       group ends the row with Approve last; the actions about the queue lead it. -->
   <div class="actions">
-    <Button variant="primary" data-accept aria-haspopup={finalApproval ? undefined : "listbox"} aria-expanded={finalApproval ? undefined : scopePicker?.expanded ?? false} aria-controls={finalApproval ? undefined : scopePicker?.controls}
-      onkeydown={(event: KeyboardEvent) => { if (!finalApproval && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); scopePicker?.openApproval(event.currentTarget as HTMLElement); } }} disabled={disabled || busy || resolved || !nextCeiling}
-      onclick={(event) => finalApproval ? void completeScope({ approval:true, ceiling:"none", holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
-    {#if proposal.field !== "brief"}
-      <Button variant="secondary" data-send-back disabled={disabled || !canReturn || busy || resolved}
-        onclick={() => { if (canReturn) returning = true; }}>Send it back</Button>
-    {/if}
-    {#if trailingActions}<div class="trailing">{@render trailingActions()}</div>{/if}
+    {#if utilityActions}<div class="utilities">{@render utilityActions()}</div>{/if}
+    <div class="decision">
+      {#if proposal.field !== "brief"}
+        <Button variant="secondary" data-send-back disabled={disabled || !canReturn || busy || resolved}
+          onclick={() => { if (canReturn) returning = true; }}>Send it back</Button>
+      {/if}
+      <Button variant="primary" data-accept aria-haspopup={finalApproval ? undefined : "listbox"} aria-expanded={finalApproval ? undefined : scopePicker?.expanded ?? false} aria-controls={finalApproval ? undefined : scopePicker?.controls}
+        onkeydown={(event: KeyboardEvent) => { if (!finalApproval && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); scopePicker?.openApproval(event.currentTarget as HTMLElement); } }} disabled={disabled || busy || resolved || !nextCeiling}
+        onclick={(event) => finalApproval ? void completeScope({ approval:true, ceiling:"none", holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
+    </div>
   </div>
   <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {manager} below pendingStage={stage}
     approvalCeiling={nextCeiling} bind:controller={scopePicker}
@@ -106,25 +110,26 @@
     {#if revisionEditor}{@render revisionEditor()}{:else}
     <div class="return-note">
       <label>What needs changing<textarea data-revision-note bind:value={note} placeholder="What to do differently" disabled={busy || resolved}></textarea></label>
-      <div class="actions"><Button variant="primary" data-revision-send disabled={busy || resolved || !note.trim()} onclick={() => void sendBack()}>Send it back</Button><Button variant="ghost" onclick={() => returning = false}>Cancel</Button></div>
+      <div class="actions return-actions"><Button variant="ghost" onclick={() => returning = false}>Cancel</Button><Button variant="primary" data-revision-send disabled={busy || resolved || !note.trim()} onclick={() => void sendBack()}>Send it back</Button></div>
     </div>
     {/if}
   {/if}
   {#if error}<ErrorLine {error} />{/if}
 </section>
 <style>
-  /* THE CARD (page system). Its actions are the one Button: primary, then secondary, then
-     the decision's own ghost actions at the far end. */
+  /* THE CARD (page system). Its actions are the one Button. The most important stands
+     furthest right: the decision group (secondary, then primary) ends the row; the ghost
+     actions about the queue start it, their labels on the card's text edge. */
   .worker-proposal { padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
   .proposal-line { display:flex; align-items:center; flex-wrap:wrap; min-height:20px; color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
   h2 { margin:0; font:inherit; letter-spacing:0; color:inherit; }
   .proposal-line-sep { padding-inline:6px; }
   .who { margin:0; font:inherit; letter-spacing:0; color:inherit; }
-  /* The proposal's first paragraph leads as the card's title (the section-head role); the rest
+  /* The proposal's first paragraph leads at the section-head size, at 500 so the page title stays the one peak; the rest
      is body text, all in the primary tone and never wider than the prose measure. */
   .proposal-prose { max-width:var(--page-prose-measure); margin-top:var(--space-2); color:var(--tone-primary); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-body); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
-  .proposal-prose :global(.ed > p:first-child), .proposal-prose :global(.ed > .markdown > p:first-child), .proposal-prose :global(.ed > .markdown:first-child > :first-child:is(p)) { margin-bottom:var(--space-3); font-size:var(--type-page-section); font-weight:var(--weight-page-section); line-height:22px; color:var(--tone-strong); }
+  .proposal-prose :global(.ed > p:first-child), .proposal-prose :global(.ed > .markdown > p:first-child), .proposal-prose :global(.ed > .markdown:first-child > :first-child:is(p)) { margin-bottom:var(--space-3); font-size:var(--type-page-section); font-weight:var(--weight-page-lead); line-height:22px; color:var(--tone-strong); }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
   .reviewer { display:inline; height:auto; font:inherit; line-height:inherit; padding:0 4px; margin:0 -4px; border:0; background:transparent; color:inherit; border-radius:var(--radius-sm); cursor:pointer; }
   .reviewer:hover { background-image:var(--interaction-hover); color:var(--tone-strong); }
@@ -135,8 +140,9 @@
   textarea { display:block; margin-top:var(--space-2); width:100%; min-height:90px; padding:var(--space-3); background:var(--composer-surface); color:var(--tone-primary); border:var(--border-hairline) solid var(--composer-edge); border-radius:var(--radius-md); font:inherit; font-size:var(--type-body); }
   textarea:focus { outline:var(--focus-width) solid var(--focus-ring); outline-offset:calc(var(--border-hairline) * -1); border-color:transparent; }
   .context { margin-top:var(--space-4); }
-  /* Actions about the decision rather than the proposal follow it, 16px on, as ghosts. */
-  .trailing { display:flex; align-items:center; gap:var(--space-1); margin-left:calc(var(--space-4) - var(--space-2)); }
+  .utilities { display:flex; align-items:center; gap:var(--space-2); margin-left:calc(var(--button-pad-x) * -1); }
+  .decision { display:flex; align-items:center; gap:var(--space-2); margin-left:auto; }
+  .return-actions { justify-content:flex-end; }
   /* The picker's own trigger is hidden here, so its empty line must not add height. */
   .worker-proposal > :global(div:has(> [data-ceiling-picker])) { display:flex; }
 </style>

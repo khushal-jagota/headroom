@@ -31,6 +31,7 @@
     disabled = false,
     keepOpenWhenDisabled = false,
     showUsage = false,
+    tonedMark = false,
     below = false,
     chevron = "typed",
     label = "Model",
@@ -55,6 +56,8 @@
     chevron?: "typed" | "drawn" | "none";
     /** Usage belongs only beside the run choice in the conversation composer. */
     showUsage?: boolean;
+    /** The composer draws the provider mark in its chip's text tone rather than its colours. */
+    tonedMark?: boolean;
     below?: boolean;
     label?: string;
     attributes?: Record<string, string | undefined>;
@@ -215,7 +218,7 @@
   }}
 >
   {#snippet triggerContent(open)}
-    {#if activeBackendKey}<BackendMark backend={activeBackendKey} />{/if}
+    {#if activeBackendKey}<BackendMark backend={activeBackendKey} toned={tonedMark} />{/if}
     {#if triggerFace}<span class="model-picker-face">{view.modelFace}{#if view.effortFace}<span class="model-picker-effort">{view.effortFace}</span>{/if}</span>{/if}
   {/snippet}
   {#snippet beforeList()}

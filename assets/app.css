@@ -1082,10 +1082,12 @@ a.pv-name:focus-visible { outline:0; }
 
 /* --- Buttons (shared style class, not a component) ----------------------- */
 
-/* THE BUTTON (Direction v2, Outcome 5): one component (Button.svelte), one class, three
+/* THE BUTTON (Direction v2, Outcome 5): one component (Button.svelte), one class, four
  * variants. 28px tall, radius 8, padding 0 12, label 13.5/450. A hover adds one step.
  *   primary   — inverse: an 88% white fill with dark ink.
  *   secondary — a 13% white fill, no border, a secondary-tone label.
+ *   outline   — a page header's own actions: no fill, a 1px edge at 10% white, a
+ *               primary-tone label; a hover adds a 4% fill.
  *   ghost     — no fill and a secondary-tone label until hovered (6% fill).
  * The older variant names map onto these: quiet = secondary, pill = ghost. */
 .button {
@@ -1136,6 +1138,17 @@ a.pv-name:focus-visible { outline:0; }
 .button--secondary:hover:not(:disabled),
 .button--quiet:hover:not(:disabled) {
   background: var(--button-secondary-fill-hover);
+  color: var(--tone-strong);
+}
+
+.button--outline {
+  background: transparent;
+  box-shadow: inset 0 0 0 var(--border-hairline) var(--button-outline-edge);
+  color: var(--tone-primary);
+}
+
+.button--outline:hover:not(:disabled) {
+  background: var(--button-outline-fill-hover);
   color: var(--tone-strong);
 }
 
@@ -5378,13 +5391,15 @@ details:not([open]) > summary > .manager-workspace-chevron {
 :is(.manager-page, .ticket-page) > .conversation-layer > .conversation-column { pointer-events: auto; }
 /* The page passes under the zone along one fixed edge. Every line of text stops at the fold
  * (PageFold.svelte): a list row, table row, checklist item, paragraph or heading that would
- * cross it waits below, whole or not shown. Only a card's box goes on under the zone: it fades
- * out over --composer-fade, and a solid band of page sits between it and the composer. */
+ * cross it waits below, whole or not shown. The page is cut at the row boundary where its
+ * lines stop (--page-fold-cut, measured from the reading area's bottom): above it everything
+ * is drawn whole, below it nothing is; a card's box fades out over --composer-fade (12px) under
+ * that row, with no fade over any line. A solid band of page sits between it and the composer. */
 :is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) :is(.manager-doc, .ticket-doc) {
   /* Anything scrolled into view (a focused row, a found word) stops above the fold. */
   scroll-padding-bottom: var(--page-fold-clear);
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--page-fold-clear)), transparent calc(100% - var(--composer-zone) - var(--composer-band)));
-          mask-image: linear-gradient(to bottom, #000 calc(100% - var(--page-fold-clear)), transparent calc(100% - var(--composer-zone) - var(--composer-band)));
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--page-fold-cut, var(--page-fold-clear))), transparent calc(100% - var(--page-fold-cut, var(--page-fold-clear)) + var(--composer-fade)));
+          mask-image: linear-gradient(to bottom, #000 calc(100% - var(--page-fold-cut, var(--page-fold-clear))), transparent calc(100% - var(--page-fold-cut, var(--page-fold-clear)) + var(--composer-fade)));
 }
 [data-page-folded] {
   opacity: 0;
@@ -5418,7 +5433,18 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; }
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; }
 
-/* The status line is the composer's footer: small print under it on its inner edge. */
+/* The status line is the composer's footer: small print under it, starting on the composer's
+ * own left edge, its excerpt capped at --composer-excerpt with the chevron right after it. */
 .conversation-layer [data-conversation-rest-bar],
 .conversation-layer [data-conversation-dock-feedback] { order: 1; }
-.conversation-layer .conversation-column [data-conversation-rest-bar] { padding: var(--composer-status-gap) var(--composer-inset) 0; }
+.conversation-layer .conversation-column [data-conversation-rest-bar] { padding: var(--composer-status-gap) 0 0; }
+.conversation-layer .conversation-column [data-conversation-dock-feedback] { padding-inline: 0; }
+
+/* The run chips are small print: the model's name and its provider mark (drawn in the chip's
+ * own tone, ComposerRunControls) at 12.5px in the secondary tone, the reasoning effort a step
+ * quieter, the delivery chip the same. The placeholder stays tertiary, focused or not. */
+[data-conversation-composer] .chat-foot .listbox-picker-trigger { font-size: var(--type-small); font-weight: var(--weight-small); color: var(--tone-secondary); }
+[data-conversation-composer] .chat-foot .listbox-picker-trigger:hover { color: var(--tone-strong); }
+[data-conversation-composer] .chat-foot .model-picker-face { color: inherit; }
+[data-conversation-composer] .chat-foot .model-picker-effort { color: var(--tone-tertiary); }
+[data-conversation-composer] .chat-ta:focus::placeholder { color: var(--tone-tertiary); }

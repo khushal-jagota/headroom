@@ -4,9 +4,11 @@
    *  area's bottom, at every scroll position and for a page of any length. A unit waiting
    *  below the fold is drawn invisible rather than removed, so the page's layout, focus order
    *  and scroll length never change; units fade in and out over 120ms as they cross the line,
-   *  and a unit that takes focus is scrolled whole above it. */
+   *  and a unit that takes focus is scrolled whole above it. The reading area is cut at the
+   *  boundary where its lines stop (--page-fold-cut, from its bottom edge): a card going on
+   *  under the zone is drawn to that row boundary and its box fades out over 12px below it. */
   import { onMount } from "svelte";
-  import { foldedUnits, pageUnits, PAGE_FOLD_HEADS } from "../../lib/pageKit/pageFold";
+  import { foldCut, foldedUnits, pageUnits, PAGE_FOLD_HEADS } from "../../lib/pageKit/pageFold";
 
   let anchor = $state<HTMLSpanElement | null>(null);
 
@@ -20,6 +22,7 @@
     const clear = () => {
       for (const element of folded) element.removeAttribute("data-page-folded");
       folded = new Set();
+      scroller.style.removeProperty("--page-fold-cut");
     };
     const measure = () => {
       frame = 0;
@@ -28,10 +31,12 @@
       // The clear is a calc() of tokens, so it is measured as a length rather than parsed.
       const room = anchor?.getBoundingClientRect().height ?? 0;
       const units = pageUnits(scroller);
-      const decided = foldedUnits(units.map((unit) => {
+      const measured = units.map((unit) => {
         const rect = unit.getBoundingClientRect();
         return { top: rect.top, bottom: rect.bottom, head: unit.matches(PAGE_FOLD_HEADS) };
-      }), box.bottom - room, box.top);
+      });
+      const decided = foldedUnits(measured, box.bottom - room, box.top);
+      scroller.style.setProperty("--page-fold-cut", `${box.bottom - foldCut(measured, decided, box.bottom - room)}px`);
       const next = new Set<Element>();
       units.forEach((unit, index) => { if (decided[index]) next.add(unit); });
       // A unit crossing the fold fades rather than popping, in either direction.

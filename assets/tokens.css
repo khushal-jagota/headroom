@@ -247,6 +247,9 @@
   --button-secondary-fill-hover: rgb(255 255 255 / 19%);
   /* Ghost: no fill until hovered. */
   --button-ghost-fill-hover: var(--state-step);
+  /* Outline: no fill, a 1px edge at 10% white, a primary-tone label; a hover adds a 4% fill. */
+  --button-outline-edge: rgb(255 255 255 / 10%);
+  --button-outline-fill-hover: rgb(255 255 255 / 4%);
   /* Segmented control: no track; the selected segment carries the selected fill. */
   --segment-height: var(--button-height);
   --segment-radius: var(--button-radius);
@@ -376,6 +379,8 @@
   --tracking-page-title: -0.01em;
   --type-page-section: 15px;
   --weight-page-section: 600;
+  /* A card's lead paragraph: the section-head size, one step lighter than its title. */
+  --weight-page-lead: 500;
   --type-small-print: var(--type-small);
   --tone-small-print: var(--tone-tertiary);
   /* Every button on a page: one height, one radius, one label size. */
@@ -395,21 +400,22 @@
   --page-heading-above: 8px;
   --page-heading-below: 2px;
   --page-row-outset: 8px;
-  /* A checklist's progress is a segmented bar, one segment per step: done segments in the
-   * done green, the rest on this track. Its checks are 14px circles. */
-  --page-progress-height: 3px;
-  --page-progress-gap: 2px;
-  --page-progress-track: rgb(255 255 255 / 10%);
+  /* A checklist's progress is staging's ring: 40px, a 3px stroke in staging's strong tone
+   * (#f2f2f2) on staging's 10% track. Its checks are 14px circles. */
+  --page-ring-size: 40px;
+  --page-ring-fill: #f2f2f2;
+  --page-ring-track: rgb(255 255 255 / 10%);
   --page-check-size: 14px;
   /* A disclosure's chevron, drawn the same at the right end of every fold. */
   --page-chevron: 14px;
   /* The page keeps this much room under its last block, so it can scroll fully clear of
    * the composer zone. */
   --page-end-room: var(--space-7);
-  /* Above the composer: a solid band of page, and above it the fade a card's box takes as it
-   * goes under. Text never enters either: its lines stop at the fold above both. */
+  /* Above the composer: a solid band of page, and above it the 12px over which a card's box
+   * fades below the row where the page is cut. Text never enters either: its lines stop at
+   * the fold above both. */
   --composer-band: 24px;
-  --composer-fade: 24px;
+  --composer-fade: 12px;
   --page-fold-clear: calc(var(--composer-zone) + var(--composer-band) + var(--composer-fade));
   /* The composer: the reference composer's surface (10% white) with a 1px edge one step
    * lighter, radius 12. The status line above it is small print on its inner edge. */
@@ -423,8 +429,11 @@
   --composer-height: 44px;
   --composer-control: 32px;
   --composer-status-height: 24px;
+  /* The run chips (model, delivery) are small print: 12.5px, secondary tone; the provider mark
+   * is drawn at the same size in the same tone. */
+  --composer-mark: 12.5px;
   /* The latest message on the status line is an excerpt, never wider than this. */
-  --composer-excerpt: 360px;
+  --composer-excerpt: 280px;
   --composer-zone: calc(var(--composer-height) + var(--composer-status-gap) + var(--composer-status-height) + var(--space-4));
   /* Counts are plain small numerals after their label, in the label's own tone. */
   --count-tone: var(--tone-tertiary);

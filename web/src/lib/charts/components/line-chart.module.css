@@ -32,17 +32,18 @@
 /* First load with nothing to keep on screen: a calm band that breathes where the lines will be. */
 .skeleton { position: absolute; inset: 30% 0 25%; border-radius: 12px; background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--foreground) 5%, transparent)); animation: breathe 1.4s var(--ease-in-out) infinite alternate; }
 
-/* The value axis keeps 18px clear of the plot (the dashed target ends well before its labels)
-   and stands 4px inside the card's own inset. */
-.gutter { position: relative; grid-area: 1 / 2; padding-left: 18px; padding-right: 4px; }
+/* The plot's gutters are equal: the card's inset on its left, the same space between its right
+   end and the value axis (the dashed target ends well before its labels). The axis stands 4px
+   inside the card's own inset. */
+.gutter { position: relative; grid-area: 1 / 2; padding-left: var(--page-card-pad); padding-right: 4px; }
 /* Sizes the column to the widest tick, so the labels end where the card's padding does. */
 .gutterWidth { display: block; width: max-content; height: 0; overflow: hidden; visibility: hidden; }
 .gutterWidth b { display: block; font-size: var(--text-xs); line-height: 1; font-weight: inherit; font-variant-numeric: tabular-nums; }
-.tick { position: absolute; top: 0; left: 18px; right: 4px; display: block; height: 0; white-space: nowrap; pointer-events: none; }
-.tickText { display: block; text-align: right; transform: translateY(-50%); color: var(--tone-tertiary); font-size: var(--text-xs); font-weight: var(--weight-small); line-height: 1; font-variant-numeric: tabular-nums; }
+.tick { position: absolute; top: 0; left: var(--page-card-pad); right: 4px; display: block; height: 0; white-space: nowrap; pointer-events: none; }
+.tickText { display: block; text-align: right; transform: translateY(-50%); color: var(--tone-secondary); font-size: var(--text-xs); font-weight: var(--weight-small); line-height: 1; font-variant-numeric: tabular-nums; }
 
 .axis { position: relative; grid-area: 2 / 1; min-width: 0; }
-.axisLabel { position: absolute; top: 8px; color: var(--tone-tertiary); font-size: var(--text-xs); font-weight: var(--weight-small); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.axisLabel { position: absolute; top: 8px; color: var(--tone-secondary); font-size: var(--text-xs); font-weight: var(--weight-small); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .srOnly { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 

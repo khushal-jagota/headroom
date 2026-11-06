@@ -31,6 +31,7 @@
   models={view.pickerSource.models}
   backendEffortOptions={view.pickerSource.backendEffortOptions}
   showUsage
+  tonedMark
   disabled={view.disabled}
   attributes={{ "data-conversation-picker-model": "" }}
   afterChoose={() => {}}

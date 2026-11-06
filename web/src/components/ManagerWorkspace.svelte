@@ -216,7 +216,7 @@
           <div bind:this={headerElement}>
           {#snippet managerTitle()}<InlineEdit value={item.title} placeholder="(untitled Manager)" ariaLabel="Manager name" onSave={(value)=>saveItem("title",value)}/>{/snippet}
           {#snippet settleButton()}
-            <Button variant="secondary" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>{item.settled?'Reopen':'Settle'}</Button>
+            <Button variant="outline" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>{item.settled?'Reopen':'Settle'}</Button>
           {/snippet}
           {#snippet goalHeading()}
             {#if soleGoal}<GoalHeader goal={soleGoal}>
