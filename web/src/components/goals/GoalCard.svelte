@@ -22,12 +22,29 @@
  setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
   goalId:()=>goalId,goal:()=>goal,readings:()=>readings.data,narrow:()=>false,sessions:()=>sessions,
  },{updateBlock:editor.updateBlock}));
+ /* The whole card opens its goal. The title stays the one link (the card's single tab stop);
+    a press anywhere else on the card follows it, unless it lands on a control inside the card
+    (a check, the period switch, Hide/Show, "N completed", a button, an inline edit, a link,
+    the chart's explorer) or ends a text selection. */
+ let titleLink=$state<HTMLAnchorElement|null>(null);
+ const CONTROL='a[href],button,input,select,textarea,label,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="checkbox"],[role="slider"],[role="switch"],[role="tab"],[role="textbox"],[role="menu"],[role="menuitem"],[role="option"],[role="listbox"],[role="dialog"],[role="region"]';
+ function openFromCard(event:MouseEvent){
+  if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||!titleLink)return;
+  const card=event.currentTarget as HTMLElement;
+  for(const node of event.composedPath()){
+   if(node===card)break;
+   if(node instanceof Element&&node.matches(CONTROL))return;
+  }
+  if(!card.isConnected||(window.getSelection()?.toString()??'')!=='')return;
+  titleLink.click();
+ }
 </script>
 <!-- A yes-or-no goal has one fact to show, so its card is a compact row-card: the name over
      its line on the left, done or not on the right. -->
-<article class="goal-card" class:compact={goal.kind==='binary' && !checklist} data-goal-card={goal.id}>
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+<article class="goal-card" class:compact={goal.kind==='binary' && !checklist} data-goal-card={goal.id} onclick={openFromCard}>
  <header class="card-head">
-  <h2><a href={workspaceAddress({kind:'goal',id:goal.id})}>{goal.title}</a></h2>
+  <h2><a bind:this={titleLink} href={workspaceAddress({kind:'goal',id:goal.id})}>{goal.title}</a></h2>
   <div class="goal-meta"><span>{projectName}</span>{#if projectName}<span aria-hidden="true">·</span>{/if}<span data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{goal.deadline?`Due ${goalDateText(goal.deadline)}`:'No deadline'}</span></div>
  </header>
  <div class="card-progress">{#if checklist}{#key checklist.id}<PageChecklist block={checklist} presentation="normal"/>{/key}{:else if chart}<PageChart block={chart} projection={readings.data?.charts?.[chart.id]} values={readings.data?.values??[]} goalId={goal.id} completed={goal.completed} status={goal.status} compact integrated/>{:else}<p>No readings yet</p>{/if}</div>
@@ -36,7 +53,10 @@
 /* THE CARD (page system): a 1px edge at 7%, a 2% lift, radius 12, padding 20. The card's
    title is the section-head role; the line under it is small print: where the goal lives and
    when it is due. Its state is said in words inside the card, never drawn as a glyph. */
-.goal-card{display:flex;flex-direction:column;min-width:0;border:var(--border-hairline) solid var(--page-card-edge);border-radius:var(--page-card-radius);overflow:hidden;background:var(--page-card-fill)}
+.goal-card{display:flex;flex-direction:column;min-width:0;border:var(--border-hairline) solid var(--page-card-edge);border-radius:var(--page-card-radius);overflow:hidden;background:var(--page-card-fill);cursor:pointer}
+/* The card answers the pointer as one target; the title underlines with it. */
+.goal-card:hover{background-image:var(--interaction-hover)}
+.goal-card:hover .card-head a{color:var(--tone-strong);text-decoration-line:underline;text-decoration-color:var(--tone-tertiary)}
 .card-head{padding:var(--page-card-pad) var(--page-card-pad) 0}
 .goal-meta{display:flex;align-items:center;flex-wrap:wrap;margin-top:2px;font-size:var(--type-small);font-weight:var(--weight-small);line-height:18px;color:var(--tone-tertiary);font-variant-numeric:tabular-nums}
 .goal-meta [aria-hidden]{padding-inline:6px}
