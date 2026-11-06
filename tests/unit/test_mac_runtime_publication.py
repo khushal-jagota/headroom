@@ -186,31 +186,22 @@ def test_workflow_requires_same_run_native_artifact_before_publication() -> None
     )
     operation = workflow["on"]["workflow_dispatch"]["inputs"]["operation"]
     assert operation["default"] == "publish"
-    assert operation["options"] == ["publish", "adopt", "recover-legacy", "mac-build"]
+    assert operation["options"] == ["publish", "adopt", "mac-build"]
     jobs = workflow["jobs"]
     # The isolated build runs even if publication preparation is skipped.
     assert jobs["prepare"]["if"] == (
-        "${{ inputs.operation != 'recover-legacy' && inputs.operation != 'mac-build' "
+        "${{ inputs.operation != 'mac-build' "
         "&& (inputs.operation != 'adopt' || inputs.rehearsal) }}"
     )
     assert jobs["suites"]["needs"] == "prepare"
     assert "if" not in jobs["suites"]
     assert jobs["publish"]["if"] == (
-        "${{ always() && inputs.operation != 'recover-legacy' "
-        "&& inputs.operation != 'mac-build' "
+        "${{ always() && inputs.operation != 'mac-build' "
         "&& (inputs.operation != 'adopt' || inputs.rehearsal) }}"
-    )
-    assert jobs["adopt"]["if"] == (
-        "${{ github.event_name == 'workflow_dispatch' "
-        "&& (inputs.operation == 'adopt' || inputs.operation == 'recover-legacy') "
-        "&& !inputs.rehearsal && github.ref == 'refs/heads/main' }}"
     )
     native = jobs["mac-runtime"]
     assert "needs" not in native
-    assert native["if"] == (
-        "${{ inputs.operation != 'recover-legacy' "
-        "&& (inputs.operation != 'adopt' || inputs.rehearsal) }}"
-    )
+    assert native["if"] == "${{ inputs.operation != 'adopt' || inputs.rehearsal }}"
     # This is the documented arm64 label, not the unsupported macos-15-arm64 alias.
     assert native["runs-on"] == "macos-15"
     commands = "\n".join(step.get("run", "") for step in native["steps"])

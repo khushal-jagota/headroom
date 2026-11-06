@@ -1,4 +1,4 @@
-/** Browser timers overflow above 2^31-1 ms. Retained releases can outlive that. */
+/** Browser timers overflow above 2^31-1 ms. A server deadline is not bounded by the page. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 export function atUpdateDeadline(deadline: number, action: () => void): () => void {

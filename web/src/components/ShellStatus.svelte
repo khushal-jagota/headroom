@@ -1,53 +1,37 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { createQuery } from "@tanstack/svelte-query";
   import type { NavigationHealth } from "../lib/navigation/owner";
   import type { ConnectionStatus } from "../lib/changeStream";
-  import { queries } from "../lib/queryCatalogue";
-  import { releaseState, requestReleaseReload } from "../lib/releaseMonitor";
+  import { requestReleaseReload } from "../lib/releaseMonitor";
   import { retryChangeStream } from "../lib/changeStream";
   import UpdateActions from "./UpdateActions.svelte";
-  import MacStatus from "./machines/MacStatus.svelte";
-  import { macUpdateNeedsNotice } from "../lib/machines/macUpdateStatus";
   import type { UpdateStatus } from "../lib/updates/contracts";
-  import { updatePresentation, type UpdatePresentationState } from "../lib/updates/logic/presentation";
-  import { atUpdateDeadline } from "../lib/updates/deadline";
+  import { updateCard, type UpdateCardState } from "../lib/updates/logic/presentation";
   import { RAIL_MOTION } from "../lib/workspaceRailMotion";
 
-  type Card = { word: string; state: "changing" | "settled" | "wrong" | "done"; action?: string; detail?: string; track?: boolean; sentence?: boolean };
-  const CARDS: Partial<Record<UpdatePresentationState, Card>> = {
-    available: { word: "Update available", state: "settled", action: "Update" },
-    waiting: { word: "Update waits for work to finish", state: "changing", action: "View", sentence: true },
-    updating: { word: "Updating Panels", state: "changing", track: true },
-    restarting: { word: "Restarting", state: "changing", detail: "Back in a moment", track: true },
-    complete: { word: "Update complete", state: "done", action: "Refresh" },
-    held: { word: "Refresh waits until this message is safe", state: "changing", sentence: true },
-    failed: { word: "Update didn't install", state: "wrong", action: "View" },
-    unreachable: { word: "Can't reach Panels", state: "wrong", action: "Try now", detail: "Trying again every few seconds" }
-  };
-  let { connectionState, navigationHealth = null, status = undefined, presentation = undefined }: {
+  let { connectionState, navigationHealth = null, status, presentation, now }: {
     connectionState: ConnectionStatus; navigationHealth?: NavigationHealth;
-    status?: UpdateStatus; presentation?: UpdatePresentationState;
+    status: UpdateStatus | undefined; presentation: UpdateCardState | null; now: number;
   } = $props();
-  const updates = createQuery(() => ({ ...queries.updates(), enabled: status === undefined }));
-  const effectiveStatus = $derived(status ?? updates.data);
-  let clock = $state(Date.now());
-  const statusState = $derived(presentation ?? updatePresentation(effectiveStatus, connectionState, $releaseState, clock));
-  const hasMacRefusal = $derived(Boolean(effectiveStatus?.mac_status?.connection_state === "disconnected" && effectiveStatus.mac_status.refusal));
-  const hasMacUpdate = $derived(macUpdateNeedsNotice(effectiveStatus?.mac_status?.update));
-  const statusKey = $derived(statusState !== "up_to_date" ? statusState : hasMacRefusal || hasMacUpdate ? "mac" : navigationHealth ? "navigation" : null);
-  let displayedWord = $state<UpdatePresentationState | "navigation" | "mac" | null>(null);
+  // An update restarts Panels, which drops navigation for a moment. That is part of the
+  // one "Updating…" wait, not a second thing to report.
+  const shownHealth = $derived(presentation === "updating" ? null : navigationHealth);
+  const statusKey = $derived(presentation ?? (shownHealth ? "navigation" : null));
+  let displayedWord = $state<UpdateCardState | "navigation" | null>(null);
   let displayedHealth = $state.raw<NavigationHealth>(null);
   let textOut = $state(false);
   let actions = $state<UpdateActions | null>(null);
-  const card = $derived(displayedWord === null || (displayedWord === "navigation" || displayedWord === "mac") ? null : CARDS[displayedWord]);
+  // The card follows the displayed word, so its text changes with the crossfade.
+  const card = $derived(displayedWord === null || displayedWord === "navigation" ? null : updateCard(displayedWord, status));
   function activate(): void {
-    switch (statusState) {
-      case "available": actions?.openDialog("offer"); break;
+    if (!card?.action) return;
+    switch (card.action.does) {
+      case "offer": actions?.openDialog("offer"); break;
       case "waiting": actions?.openDialog("waiting"); break;
-      case "failed": actions?.openDialog("failed"); break;
-      case "complete": requestReleaseReload(); break;
-      case "unreachable": retryChangeStream(); break;
+      case "refresh": requestReleaseReload(); break;
+      case "reconnect": retryChangeStream(); break;
+      case "retry": void actions?.perform({ action: "retry" }, "failed"); break;
+      case "retry_mac": if (card.info) void actions?.perform({ action: "retry_mac" }, card.info); break;
     }
   }
   let open = $state(false);
@@ -117,17 +101,8 @@
   const motionStyle = `--glide-space:${RAIL_MOTION.space}ms;--glide-fade:${RAIL_MOTION.fadeIn}ms;--glide-delay:${RAIL_MOTION.fadeDelay}ms;--glide-exit:${RAIL_MOTION.exit}ms;--glide-ease:${RAIL_MOTION.ease};--glide-enter:${RAIL_MOTION.enter};--glide-leave:${RAIL_MOTION.leave}`;
 
   $effect(() => {
-    const now = Date.now();
-    clock = now;
-    const deadlines = [effectiveStatus?.restart_deadline_at ?? effectiveStatus?.deadline_at,
-      effectiveStatus?.available?.expires_at].map(value => Date.parse(value ?? "")).filter(value => value > now);
-    const cancel = deadlines.map(deadline => atUpdateDeadline(deadline, () => { clock = Date.now(); }));
-    return () => { for (const stop of cancel) stop(); };
-  });
-
-  $effect(() => {
     const word = statusKey;
-    const health = navigationHealth;
+    const health = shownHealth;
     let obsolete = false;
     let frame: number | undefined;
     let timer: number | undefined;
@@ -193,22 +168,24 @@
   aria-hidden={statusKey === null ? "true" : undefined} style={motionStyle}>
   <div role="status" aria-live="polite" inert={closing ? true : undefined}>
     {#if displayedWord}
-      <div class="status-card" class:mac-only={displayedWord === "mac" && !displayedHealth} data-state={card?.state ?? "changing"}
-        data-connection-status data-connection-state={connectionState} data-status-state={statusState}
-        >
+      <div class="status-card" data-state={card?.tone ?? "changing"}
+        data-connection-status data-connection-state={connectionState} data-status-state={presentation ?? "none"}>
         {#if card}
-          <button type="button" class="status-update" aria-disabled={!card.action ? "true" : undefined} tabindex={card.action ? 0 : -1}
-            data-shell-refresh={displayedWord === "complete" ? "" : undefined} onclick={activate}>
           <span class="status-base">
             <span class="status-mark" aria-hidden="true"></span>
             <span class:status-sentence={card.sentence} class:status-word={!card.sentence} class="swap" data-out={textOut ? "" : undefined}>{card.word}</span>
-            {#if card.action}<span class="swap status-action" data-out={textOut ? "" : undefined}>{card.action}</span>{/if}
+            {#if card.action}
+              <button type="button" class="swap status-action" data-out={textOut ? "" : undefined}
+                data-shell-refresh={card.action.does === "refresh" ? "" : undefined} onclick={activate}>{card.action.label}</button>
+            {/if}
+            {#if card.info}
+              <button type="button" class="swap status-info" class:status-info--alone={!card.action} aria-label="Update details" data-out={textOut ? "" : undefined}
+                data-update-info={card.info} onclick={() => card?.info && actions?.openDialog(card.info)}>i</button>
+            {/if}
           </span>
           {#if card.track}<span class="status-track" aria-hidden="true"><i></i></span>{/if}
           {#if card.detail}<span class="swap status-detail" data-out={textOut ? "" : undefined}>{card.detail}</span>{/if}
-          </button>
         {/if}
-        <MacStatus health={effectiveStatus?.mac_status} />
         {#if displayedHealth}
           <span class="navigation-health" data-navigation-health={displayedHealth.state} data-state={"changing"}>
             <span class="status-mark" aria-hidden="true"></span>
@@ -220,7 +197,7 @@
     {/if}
   </div>
 </div>
-{#if effectiveStatus}<UpdateActions bind:this={actions} status={effectiveStatus} now={clock} />{/if}
+{#if status}<UpdateActions bind:this={actions} {status} {now} />{/if}
 
 
 <style>
@@ -239,12 +216,7 @@
     opacity: 0; transform: translateY(calc(var(--space-1) * -1));
     transition: opacity var(--glide-exit) var(--glide-leave), transform var(--glide-exit) var(--glide-leave);
   }
-  .status-card.mac-only { padding: 0; margin-bottom: 0; border-radius: 0; background: transparent; }
   .status-card[data-state="wrong"] { background: var(--error-surface); color: var(--text-strong); }
-  .status-update:not([aria-disabled]) { cursor: pointer; }
-  .status-update:not([aria-disabled]):hover { background-image: var(--interaction-hover); }
-  .status-update:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: calc(-1 * var(--border-strong)); }
-  .status-update { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   .status-card[data-state="done"] .status-mark { background: var(--accent-done); }
   .swap { transition: opacity var(--motion-fast) var(--motion-ease); }
   .swap[data-out] { opacity: 0; }
@@ -262,11 +234,15 @@
   .navigation-health[data-state="changing"] .status-mark { background: var(--accent-bright); animation: status-pulse 1.6s var(--motion-ease) infinite; }
   .status-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status-sentence { min-width: 0; }
-  .status-action { flex: none; margin-left: auto; font-weight: 600; }
+  .status-action { flex: none; margin-left: auto; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+  .status-action:hover { text-decoration: underline; }
+  .status-info { flex: none; width: 16px; height: 16px; margin-left: var(--space-1); padding: 0; border: var(--border-hairline) solid currentColor; border-radius: var(--radius-pill); background: transparent; color: inherit; font: 600 10px/14px var(--font-ui); opacity: .75; cursor: pointer; }
+  .status-info--alone { margin-left: auto; }
+  .status-info:hover { opacity: 1; }
+  .status-action:focus-visible, .status-info:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: 2px; }
   @keyframes status-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   @media (max-width: 720px) {
     .status-card { margin: 0; border-radius: 0; padding: var(--space-3); }
-    .status-card.mac-only { padding: var(--space-3); }
   }
   @media (prefers-reduced-motion: reduce) {
     .status-slot, .status-card, .swap { transition-duration: 0ms; transition-delay: 0ms; }

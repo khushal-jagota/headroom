@@ -14,20 +14,18 @@ name: Publish checked app and adopt owner request
         required: false
         default: false
         type: boolean
-      baseline_sha:
-        description: Full known-good SHA for rehearsal or still-serving prior SHA for legacy recovery
-        required: false
-        type: string
       operation:
-        description: Publish, build Mac runtime, adopt, or recover an accepted legacy owner request
+        description: Publish a candidate, build the Mac runtime, or adopt (bridge for the installed 5622d2a81 server)
         required: true
         default: publish
         type: choice
         options:
           - publish
           - adopt
-          - recover-legacy
           - mac-build
+      # Bridge only: the inputs below are exactly what the installed 5622d2a81 server
+      # dispatches (GitHub refuses undeclared inputs). The next release deletes them,
+      # together with the `adopt` option and job.
       request_id:
         description: request id
         required: false
@@ -52,21 +50,17 @@ name: Publish checked app and adopt owner request
         description: archive sha256
         required: false
         type: string
-      failed_deployment_id:
-        description: Exact admission_evidence_uncertain attempt to recover; recovery only
-        required: false
-        type: string
 permissions:
   contents: read
   actions: read
 concurrency:
-  group: ${{ (inputs.operation == 'adopt' || inputs.operation == 'recover-legacy') && !inputs.rehearsal && 'production-deploy' || format('publish-{0}', github.run_id) }}
+  group: ${{ inputs.operation == 'adopt' && !inputs.rehearsal && 'production-deploy' || format('publish-{0}', github.run_id) }}
   cancel-in-progress: false
 env:
   PANELS_REQUESTED_SHA: ${{ inputs.commit_sha || github.sha }}
 jobs:
   prepare:
-    if: ${{ inputs.operation != 'recover-legacy' && inputs.operation != 'mac-build' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
+    if: ${{ inputs.operation != 'mac-build' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -106,7 +100,7 @@ jobs:
           include-hidden-files: true
           retention-days: 30
   mac-runtime:
-    if: ${{ inputs.operation != 'recover-legacy' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
+    if: ${{ inputs.operation != 'adopt' || inputs.rehearsal }}
     # GitHub's documented standard macos-15 label is arm64. Intel uses macos-15-intel.
     runs-on: macos-15
     timeout-minutes: 30
@@ -160,7 +154,7 @@ jobs:
     env:
       PANELS_SUITE: ${{ matrix.suite }}
       PANELS_REHEARSAL: 'true'
-      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '53d64f0fdbda071a7887945a0d4ddc113694cf21' }}
+      PANELS_BASELINE_SHA: '5622d2a81c8b45cbabd358fe2b2023b123c4b92b'
     defaults:
       run:
         shell: python3 scripts/deployment_progress.py {0}
@@ -459,7 +453,6 @@ jobs:
       - name: Remove suite temporary state
         env:
           PANELS_PROOF_RETENTION_OUTCOME: ${{ steps.suite_proof.outcome }}
-        shell: python3 scripts/deployment_progress.py --cleanup {0}
         run: python3 scripts/deployment_rehearsal.py cleanup
         if: ${{ always() }}
   checks:
@@ -578,7 +571,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PANELS_REHEARSAL: 'true'
-      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '53d64f0fdbda071a7887945a0d4ddc113694cf21' }}
+      PANELS_BASELINE_SHA: '5622d2a81c8b45cbabd358fe2b2023b123c4b92b'
     outputs:
       app_artifact_id: ${{ steps.app_artifact.outputs.artifact-id }}
       candidate_record_sha256: ${{ steps.candidate.outputs.candidate_record_sha256 }}
@@ -697,69 +690,13 @@ jobs:
             echo "$status" > "$PANELS_GATE_DIR/target-check.status.partial"
             mv "$PANELS_GATE_DIR/target-check.status.partial" "$PANELS_GATE_DIR/target-check.status"
           ) > "$PANELS_GATE_DIR/target-check.log" 2>&1 < /dev/null &
-      - name: Extract exact archive for disposable replacement
+      - name: Stage exact archive beside the known-good app
         run: |
-          "$PANELS_DEPLOY_VENV/bin/python" scripts/update_publication.py rehearsal
-      - name: Start deployment lifecycle
-        id: lifecycle_start
-        run: |
-          current_record="$(
-            python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" read \
-              --path "$PANELS_LIFECYCLE_PATH"
-          )"
-          expected_id="$(
-            python3 -c 'import json, sys; value=json.load(sys.stdin).get("deployment_id"); print(value if isinstance(value, str) else "")' \
-              <<< "$current_record"
-          )"
-          expected_args=()
-          if [ -n "$expected_id" ]; then
-            expected_args=(--expected-deployment-id "$expected_id")
-          fi
-          prior_sha="$(
-            python3 - "$PANELS_CURRENT_ROOT/app/manifest.json" <<'PY'
-          import json
-          import pathlib
-          import re
-          import sys
-
-          try:
-              value = json.loads(pathlib.Path(sys.argv[1]).read_text()).get("app_sha", "")
-          except (OSError, AttributeError, json.JSONDecodeError):
-              value = ""
-          print(value if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) else "")
-          PY
-          )"
-          prior_args=()
-          if [ -n "$prior_sha" ]; then
-            prior_args=(--prior-sha "$prior_sha")
-          fi
-          python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" start \
-            --path "$PANELS_LIFECYCLE_PATH" \
-            --deployment-id "$PANELS_DEPLOYMENT_ID" \
-            --requested-sha "$PANELS_REQUESTED_SHA" \
-            "${expected_args[@]}" \
-            "${prior_args[@]}"
+          "$PANELS_DEPLOY_VENV/bin/python" scripts/update_publication.py stage
           echo "PANELS_DEPLOYMENT_PROGRESS_ACTIVE=true" >> "$GITHUB_ENV"
-      - name: Deploy exact app
+      - name: Install candidate with the update installer
         run: |
-          env HOME="$PANELS_APP_HOME" "$PANELS_DEPLOY_VENV/bin/python" -m planner environment app-deploy \
-            --candidate-app "$PANELS_CANDIDATE_APP" \
-            --gate-evidence "$PANELS_GATE_DIR/evidence.json" \
-            --current-root "$PANELS_CURRENT_ROOT" \
-            --source-db "$PANELS_CURRENT_ROOT/data/planner.db" \
-            --backup-dir "$PANELS_CURRENT_ROOT/data/backups" \
-            --health-url "$PANELS_HEALTH_URL" \
-            --service-manager systemctl \
-            --service-name "$PANELS_SERVICE_NAME" \
-            --lifecycle-path "$PANELS_LIFECYCLE_PATH" \
-            --deployment-id "$PANELS_DEPLOYMENT_ID"
-      - name: Provision agent skills
-        run: |
-          "$PANELS_DEPLOY_VENV/bin/python" -m planner environment provision-skills \
-            --database-parent "$PANELS_CURRENT_ROOT/data" \
-            --hermes-home "$PANELS_APP_HOME/.hermes" \
-            --codex-home "$PANELS_APP_HOME/.codex" \
-            --claude-home "$PANELS_APP_HOME/.claude"
+          "$PANELS_DEPLOY_VENV/bin/python" scripts/deployment_rehearsal.py install
       - name: Wait for sealed archive on Debian target
         # Always wait, so cleanup never removes the sandbox root while the check runs.
         if: ${{ always() && steps.target_check_start.outcome == 'success' }}
@@ -776,31 +713,6 @@ jobs:
           done
           cat "$PANELS_GATE_DIR/target-check.log"
           exit "$(cat "$PANELS_GATE_DIR/target-check.status")"
-      - name: Finalize deployment lifecycle
-        shell: bash
-        if: ${{ always() && steps.lifecycle_start.outcome != 'skipped' && steps.lifecycle_start.outcome != '' }}
-        env:
-          PANELS_PRIOR_JOB_STATUS: ${{ job.status }}
-        run: |
-          if [ "$PANELS_PRIOR_JOB_STATUS" = "success" ]; then
-            phase=succeeded
-            detail="Deployment completed."
-            code=deployment_succeeded
-            serving_args=(--serving-sha "$PANELS_REQUESTED_SHA")
-          else
-            phase=failed
-            detail="Deployment workflow did not complete."
-            code=workflow_failed
-            serving_args=()
-          fi
-          python3 -I -S -B "$GITHUB_WORKSPACE/scripts/deployment_finalize.py" lifecycle transition \
-            --path "$PANELS_LIFECYCLE_PATH" \
-            --deployment-id "$PANELS_DEPLOYMENT_ID" \
-            --phase "$phase" \
-            --detail "$detail" \
-            --code "$code" \
-            --preserve-terminal \
-            "${serving_args[@]}"
       - name: Collect rehearsal proof
         env:
           PANELS_REHEARSAL_JOB_STATUS: ${{ job.status }}
@@ -851,13 +763,11 @@ jobs:
       - name: Remove rehearsal temporary state
         env:
           PANELS_PROOF_RETENTION_OUTCOME: ${{ steps.build_proof.outcome }}
-          PANELS_LIFECYCLE_START_OUTCOME: ${{ steps.lifecycle_start.outcome }}
-        shell: python3 scripts/deployment_progress.py --cleanup {0}
         run: python3 scripts/deployment_rehearsal.py cleanup
         if: ${{ always() }}
   publish:
     needs: [prepare, suites, checks, build, mac-runtime]
-    if: ${{ always() && inputs.operation != 'recover-legacy' && inputs.operation != 'mac-build' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
+    if: ${{ always() && inputs.operation != 'mac-build' && (inputs.operation != 'adopt' || inputs.rehearsal) }}
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -991,8 +901,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Bridge only: the installed 5622d2a81 server dispatches here to install the first
+  # self-installing release. It runs that installed version's own adopt steps, unchanged,
+  # from its own checkout. The next release deletes this job and its dispatch inputs.
   adopt:
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.operation == 'adopt' || inputs.operation == 'recover-legacy') && !inputs.rehearsal && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'adopt' && !inputs.rehearsal && github.ref == 'refs/heads/main' }}
     runs-on:
       - self-hosted
       - linux
@@ -1002,9 +915,25 @@ jobs:
       PANELS_REHEARSAL: 'false'
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Read installed release
+        id: installed
+        run: |
+          python3 -I - <<'PYTHON'
+          import json
+          import os
+          import pathlib
+          import re
+          manifest = pathlib.Path.home() / "Deployments/Panels/current/app/manifest.json"
+          sha = json.loads(manifest.read_text())["app_sha"]
+          if not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+              raise SystemExit(f"The installed app SHA is not a full commit SHA: {sha!r}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+              stream.write(f"sha={sha}\n")
+          PYTHON
+      - name: Check out installed release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ steps.installed.outputs.sha }}
       - name: Configure existing deployment paths
         run: python3 scripts/deployment_rehearsal.py configure
       - name: Prepare deployment control runtime
@@ -1014,11 +943,7 @@ jobs:
           "$PANELS_DEPLOY_VENV/bin/python" -m pip install -r requirements.txt
           "$PANELS_DEPLOY_VENV/bin/python" -m pip install --editable .
       - name: Apply pinned owner request
-        id: owner_apply
         env:
-          UPDATE_OPERATION: ${{ inputs.operation }}
-          UPDATE_FAILED_DEPLOYMENT_ID: ${{ inputs.failed_deployment_id }}
-          UPDATE_PRIOR_SHA: ${{ inputs.baseline_sha }}
           UPDATE_REQUEST_ID: ${{ inputs.request_id }}
           UPDATE_PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
           UPDATE_ARTIFACT_ID: ${{ inputs.artifact_id }}
@@ -1028,71 +953,16 @@ jobs:
           UPDATE_APP_SHA: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
-          operation_arguments=(apply)
-          if [ "$UPDATE_OPERATION" = recover-legacy ]; then
-            operation_arguments=(recover-legacy --failed-deployment-id "$UPDATE_FAILED_DEPLOYMENT_ID"
-              --prior-sha "$UPDATE_PRIOR_SHA" --deployment-id "$PANELS_DEPLOYMENT_ID")
-          fi
           # A separate unit owns the install even if the caller belongs to Panels.
           systemd-run --user --wait --collect --pipe \
             --unit="panels-adoption-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --working-directory="$GITHUB_WORKSPACE" \
             --setenv=GH_TOKEN --setenv=GITHUB_REPOSITORY --setenv=PANELS_DEPLOYMENT_ID \
-            "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.update_runner "${operation_arguments[@]}" \
+            "$PANELS_DEPLOY_VENV/bin/python" -m planner.environments.update_runner apply \
             --request-id "$UPDATE_REQUEST_ID" --publication-run-id "$UPDATE_PUBLICATION_RUN_ID" \
             --artifact-id "$UPDATE_ARTIFACT_ID" --proof-artifact-id "$UPDATE_PROOF_ARTIFACT_ID" \
             --app-sha "$UPDATE_APP_SHA" --artifact-digest "$UPDATE_ARTIFACT_DIGEST" \
             --archive-sha256 "$UPDATE_ARCHIVE_SHA256"
-      - name: Provision agent skills after local adoption
-        id: owner_provision
-        run: |
-          "$PANELS_DEPLOY_VENV/bin/python" -m planner environment provision-skills \
-            --database-parent "$PANELS_CURRENT_ROOT/data" \
-            --hermes-home "$PANELS_APP_HOME/.hermes" \
-            --codex-home "$PANELS_APP_HOME/.codex" \
-            --claude-home "$PANELS_APP_HOME/.claude"
-      - name: Check published HTTP/2
-        id: owner_published_route
-        env:
-          PANELS_PUBLISHED_ORIGIN: ${{ vars.PANELS_PUBLISHED_ORIGIN }}
-        run: python3 scripts/check_published_http2.py
-      - name: Finalize owner adoption lifecycle
-        if: ${{ always() }}
-        shell: bash
-        env:
-          UPDATE_REQUEST_ID: ${{ inputs.request_id }}
-          UPDATE_APP_SHA: ${{ inputs.commit_sha }}
-          UPDATE_APPLY_OUTCOME: ${{ steps.owner_apply.outcome }}
-          UPDATE_PROVISION_OUTCOME: ${{ steps.owner_provision.outcome }}
-          UPDATE_PUBLISHED_ROUTE_OUTCOME: ${{ steps.owner_published_route.outcome }}
-        run: |
-          set -euo pipefail
-          # Read the serving app after post-health checks. Never restore or restart here.
-          serving_sha="$(python3 - <<'PYTHON'
-          import json
-          import os
-          import pathlib
-          import re
-          import urllib.request
-          try:
-              manifest = json.loads((pathlib.Path(os.environ["PANELS_CURRENT_ROOT"]) / "app/manifest.json").read_text())
-              expected = manifest["app_sha"]
-              if re.fullmatch(r"[0-9a-f]{40}", expected) is None:
-                  raise ValueError("invalid installed SHA")
-              url = os.environ["PANELS_HEALTH_URL"] + "?expected_sha=" + expected
-              with urllib.request.urlopen(url, timeout=5) as response:
-                  health = json.load(response)
-              if isinstance(health, dict) and health.get("ready") is True and health.get("app_sha") == expected:
-                  print(expected)
-          except (OSError, ValueError, KeyError, TypeError):
-              pass
-          PYTHON
-          )"
-          python3 -I -S -B "$GITHUB_WORKSPACE/scripts/deployment_finalize.py" adoption \
-            --current-root "$PANELS_CURRENT_ROOT" --request-id "$UPDATE_REQUEST_ID" \
-            --deployment-id "$PANELS_DEPLOYMENT_ID" --app-sha "$UPDATE_APP_SHA" \
-            --apply-outcome "$UPDATE_APPLY_OUTCOME" --provision-outcome "$UPDATE_PROVISION_OUTCOME" \
-            --published-route-outcome "$UPDATE_PUBLISHED_ROUTE_OUTCOME" --serving-sha "$serving_sha"
       - name: Remove adoption temporary state
         if: ${{ always() }}
         run: python3 scripts/deployment_rehearsal.py cleanup

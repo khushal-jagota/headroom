@@ -1,6 +1,6 @@
 # VPS
 
-The VPS page is a glance at the machine that runs Headroom: CPU, memory, load, disk, network, services, and processes, with short trends. It exists so Khushal can see whether the host is healthy without a separate monitoring login. It does not deploy, back up, or alert. The installed commit, deployment outcome, and backup age are on the smaller status summary described in [Environments](environments.md).
+The VPS page is a glance at the machine that runs Headroom: CPU, memory, load, disk, network, services, and processes, with short trends. It exists so Khushal can see whether the host is healthy without a separate monitoring login. It does not deploy, back up, or alert.
 
 ## What it is made of
 

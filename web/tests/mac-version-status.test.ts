@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
 import MacStatus from "../src/components/machines/MacStatus.svelte";
 import { macAvailability, type ExecutorIdentity, type MacStatus as Health } from "../src/lib/ticketMachines";
-import { macUpdateNeedsNotice } from "../src/lib/machines/macUpdateStatus";
 
 const identity: ExecutorIdentity = { protocol_version: 18, application_revision: "old-mac-revision", spool_format_version: 5, executor_incarnation: "mac", connection_generation: 1 };
 const refused: Health = { identity: null, connection_state: "disconnected", last_contact_at_ms: 1000,
@@ -49,7 +48,6 @@ describe("Mac version evidence", () => {
     expect(html).toContain(label);
     expect(html).toContain("Target 0123456789ab");
     expect(html).not.toContain("Mac disconnected");
-    expect(macUpdateNeedsNotice(update)).toBe(phase !== "current");
   });
   it("keeps update failure and version-refusal evidence distinct", () => {
     const update = { request_id: "approved", target_revision: "next", phase: "failed" as const, detail: "The previous version stayed active." };

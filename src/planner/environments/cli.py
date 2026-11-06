@@ -23,13 +23,6 @@ from planner.environments.contracts import (
     FixedEnvironmentPort,
     ResolvedEnvironmentInstance,
 )
-from planner.environments.deployment import (
-    HttpHealthClient,
-    SubprocessServiceController,
-    deploy_app,
-    run_current_app_backup,
-)
-from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.hermes_home import (
     provision_planner_home_skills,
     resolve_hermes_python,
@@ -226,121 +219,6 @@ def backup_current(source_db: Path, backup_dir: Path, current_app: Path) -> None
     except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(str(snapshot))
-
-
-@environment.command("app-deploy")
-@click.option(
-    "--candidate-app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
-)
-@click.option("--current-root", type=click.Path(path_type=Path), required=True)
-@click.option("--source-db", type=click.Path(path_type=Path, dir_okay=False), required=True)
-@click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
-@click.option("--health-url", required=True)
-@click.option("--service-manager", type=click.Choice(["systemctl", "launchctl"]), required=True)
-@click.option("--service-name", required=True)
-@click.option("--lock-path", type=click.Path(path_type=Path))
-@click.option(
-    "--lifecycle-path",
-    type=click.Path(path_type=Path, dir_okay=False),
-)
-@click.option("--deployment-id")
-@click.option(
-    "--gate-evidence", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True
-)
-def app_deploy(
-    candidate_app: Path,
-    current_root: Path,
-    source_db: Path,
-    backup_dir: Path,
-    health_url: str,
-    service_manager: str,
-    service_name: str,
-    lock_path: Path | None,
-    lifecycle_path: Path | None,
-    deployment_id: str | None,
-    gate_evidence: Path,
-) -> None:
-    """Hard-cut over the deployed app with a verified snapshot and full recovery."""
-    if (lifecycle_path is None) != (deployment_id is None):
-        raise click.ClickException(
-            "--lifecycle-path and --deployment-id must be supplied together"
-        )
-    # Refuse self-stop before entering the handler that records deployment failures.
-    try:
-        service = SubprocessServiceController(service_manager, service_name)
-    except (OSError, RuntimeError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    lifecycle_store = (
-        DeploymentLifecycleStore(lifecycle_path) if lifecycle_path is not None else None
-    )
-
-    def publish_lifecycle(
-        phase: str,
-        *,
-        serving_sha: str | None,
-        detail: str | None,
-        code: str | None,
-    ) -> None:
-        assert lifecycle_store is not None and deployment_id is not None
-        lifecycle_store.transition(
-            deployment_id,
-            phase,  # type: ignore[arg-type]
-            serving_sha=serving_sha,
-            detail=detail,
-            code=code,
-        )
-
-    try:
-        from planner.environments.deployment_gate import read_gate_evidence
-
-        evidence = read_gate_evidence(gate_evidence)
-        if "publication_run_id" not in evidence:
-            if evidence["observation"]["health_url"] != health_url:
-                raise ValueError("gate evidence health URL differs from deployment health URL")
-        result = deploy_app(
-            gate_evidence=evidence,
-            deployment_id=deployment_id,
-            candidate_app=candidate_app,
-            current_root=current_root,
-            source_db=source_db,
-            backup=lambda revision: run_current_app_backup(
-                current_root, source_db, backup_dir, revision
-            ),
-            restore=lambda snapshot: restore_database_snapshot(
-                snapshot, source_db, live_stopped=True
-            ),
-            service=service,
-            health=HttpHealthClient(health_url),
-            lock_path=lock_path,
-            lifecycle_transition=publish_lifecycle if lifecycle_store is not None else None,
-        )
-    except (OSError, RuntimeError, ValueError) as exc:
-        if lifecycle_store is not None and deployment_id is not None:
-            lifecycle_store.transition(
-                deployment_id,
-                "failed",
-                detail="App deployment failed.",
-                code="app_deploy_failed",
-                preserve_terminal=True,
-            )
-        raise click.ClickException(str(exc)) from exc
-    if (
-        lifecycle_store is not None
-        and deployment_id is not None
-        and result.status not in {"succeeded", "unchanged", "rolled_back"}
-    ):
-        lifecycle_store.transition(
-            deployment_id,
-            "failed",
-            detail="App deployment did not complete.",
-            code="app_deploy_failed",
-            preserve_terminal=True,
-        )
-    payload = json.dumps(result.__dict__, sort_keys=True)
-    click.echo(payload)
-    if result.status not in {"succeeded", "unchanged"}:
-        detail = result.detail or "requested app is not running"
-        raise click.ClickException(f"app deployment {result.status}: {detail}")
 
 
 @environment.command("provision-skills")

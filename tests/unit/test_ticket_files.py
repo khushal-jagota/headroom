@@ -377,7 +377,12 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
             )
             assert conditional.status_code == 400
             assert conditional.json()["error"]["code"] == "agent_forbidden"
-            assert conditional.json()["error"]["detail"]["target_id"] == goal_id
+            # Removed actors fail at identity parsing; valid principals reach the
+            # goal authority gate before any file access or conditional response.
+            if headers["X-Plan-Actor"] == "goal":
+                assert conditional.json()["error"]["detail"] == {"actor": "goal"}
+            else:
+                assert conditional.json()["error"]["detail"]["target_id"] == goal_id
             assert client.get(catalog, headers=headers).status_code == 400
             assert client.put(url, json={"content": "stolen"}, headers=headers).status_code == 400
             assert client.delete(url, headers=headers).status_code == 400
