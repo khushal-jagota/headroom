@@ -104,9 +104,21 @@
       // row, or over it when the composer leaves no room under it.
       const row = currentTarget.querySelector<HTMLElement>(".ticket-row") ?? currentTarget;
       const box = row.getBoundingClientRect();
-      if (box.right + 12 + width <= window.innerWidth - 12) {
-        left = box.right + 12;
-        top = Math.max(12, Math.min(box.top + box.height / 2 - height / 2, floor - height));
+      const besideTop = Math.max(12, Math.min(box.top + box.height / 2 - height / 2, floor - height));
+      // Beside the row it also clears the rows and headings it lies level with, which hug
+      // their words too, so it covers only empty column.
+      const list = currentTarget.closest("[data-manager-children], .manager-children") ?? currentTarget.parentElement;
+      let clear = box.right;
+      for (const other of list?.querySelectorAll<HTMLElement>(".ticket-row, summary") ?? []) {
+        const near = other.getBoundingClientRect();
+        if (near.bottom > besideTop && near.top < besideTop + height) {
+          if (other.matches("summary")) { const words = document.createRange(); words.selectNodeContents(other); for (const line of words.getClientRects()) if (line.width) clear = Math.max(clear, line.right); }
+          else clear = Math.max(clear, near.right);
+        }
+      }
+      if (clear + 12 + width <= window.innerWidth - 12) {
+        left = clear + 12;
+        top = besideTop;
       } else {
         left = Math.max(12, Math.min(box.left, window.innerWidth - width - 12));
         top = box.bottom + 6 + height <= floor ? box.bottom + 6 : Math.max(12, box.top - 6 - height);

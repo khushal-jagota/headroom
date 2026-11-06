@@ -218,7 +218,7 @@ strong {
    raised tooltip, clear of the row, so it never covers a neighbouring icon and nothing moves. */
 /* The row reserves the band its tooltips open into above the icons, without taking layout
    space or the pointer from the Settled row under that band. */
-.rail-utilities { --rail-tooltip-band:34px; display:flex; align-items:center; gap:2px; padding-top:var(--rail-tooltip-band); margin-top:calc(var(--rail-tooltip-band) * -1); pointer-events:none; }
+.rail-utilities { --rail-tooltip-band:32px; display:flex; align-items:center; gap:2px; padding-top:var(--rail-tooltip-band); margin-top:calc(var(--rail-tooltip-band) * -1); pointer-events:none; }
 .rail-utilities > .utility { pointer-events:auto; }
 .utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--tone-secondary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .utility:hover { background:var(--wash-hover); color:var(--tone-strong); }

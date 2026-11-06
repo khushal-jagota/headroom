@@ -46,7 +46,7 @@
   .manager-children :global(.ticket-row .machine-identity) { color:var(--tone-tertiary); }
   .manager-children :global(.ticket-row:hover), .manager-children :global(.ticket-row:focus-visible) { background:var(--wash-hover); color:var(--tone-strong); }
   .manager-children :global(:is([data-workspace-group="awaiting_approval"], [data-workspace-group="awaiting_answer"]) .ticket-row) { color:var(--tone-strong); font-weight:var(--weight-needs-you); }
-  .manager-children :global(.ticket-row-title) { flex:1; min-width:0; display:block; overflow:visible; white-space:normal; overflow-wrap:anywhere; line-height:inherit; line-clamp:unset; -webkit-line-clamp:unset; -webkit-box-orient:initial; }
+  .manager-children :global(.ticket-row-title) { flex:0 1 auto; min-width:0; display:block; overflow:visible; white-space:normal; overflow-wrap:anywhere; line-height:inherit; line-clamp:unset; -webkit-line-clamp:unset; -webkit-box-orient:initial; }
   .manager-children :global(.ticket-row .conversation-signal-marks) { justify-content:flex-end; width:var(--rail-mark-column); }
   .manager-children :global(.manager-workspace-empty) { padding:0; color:var(--tone-tertiary); font-size:var(--type-small); }
   .manager-children :global(.child-pages) { display:flex; align-items:center; gap:var(--space-3); color:var(--tone-tertiary); font-family:var(--font-ui); font-size:var(--type-small); }
