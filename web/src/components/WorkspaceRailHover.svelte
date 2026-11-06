@@ -40,11 +40,8 @@
   let recapLines = $state(1);
   // Measure the fixed content, never the clamped recap. This keeps the budget
   // independent of the height that the budget itself produces.
-  // Under a page row the panel has only the room down to the window's foot; the recap gives
-  // up lines to fit it, so the panel is never cut off.
-  let roomBelow = $state<number | null>(null);
   $effect(() => {
-    recapText; stageSentence; title; kicker; roomBelow;
+    recapText; stageSentence; title; kicker;
     if (!visible || !element || !recapElement) return;
     const panel = element;
     const recapBox = recapElement;
@@ -95,7 +92,6 @@
       const dock = (document.querySelector(".conversation-layer .chat-box") ?? document.querySelector(".conversation-layer"))?.getBoundingClientRect();
       const floor = Math.min(window.innerHeight, dock && dock.height > 0 ? dock.top : window.innerHeight) - 12;
       if (currentRail !== currentTarget) {
-        roomBelow = null;
         const railRight = currentRail.getBoundingClientRect().right;
         left = Math.max(12, Math.min(railRight + 12, window.innerWidth - width - 12));
         top = Math.max(12, Math.min(rect.top - 8, floor - height));
@@ -103,9 +99,10 @@
         return;
       }
       // A row in a page list spans the whole column, so a panel level with it would cover
-      // the row it describes. It opens under the row, at the row's right end but short of the
-      // column kept for the rows' unread dots, so the row stays whole and the titles and dots
-      // of the rows below stay visible.
+      // the row it describes. The panel always shows all of itself, its recap included: under
+      // the row when it fits above the composer, else beside the row, centred on it. Either
+      // way it stands in the right part of the column, short of the rows' unread dots, and
+      // clear of every row's and heading's words, so it covers only empty row ends.
       const title = currentTarget.querySelector(".ticket-row-title");
       let titleEnd = rect.left;
       if (title) { const words = document.createRange(); words.selectNodeContents(title); titleEnd = Math.min(rect.right, words.getBoundingClientRect().right); }
@@ -116,14 +113,19 @@
       const markColumn = Number.parseFloat(styles.getPropertyValue("--rail-mark-column")) || 16;
       const endPad = Number.parseFloat(styles.paddingRight) || 0;
       const rightmost = row.getBoundingClientRect().right - endPad - markColumn - 24 - width;
-      left = Math.max(12, Math.min(Math.max(rightmost, titleEnd + 12), window.innerWidth - width - 12));
-      // Always under its row: never over the row, the heading above it or past the window.
-      top = rect.bottom + 6;
-      roomBelow = Math.max(0, window.innerHeight - 12 - top);
-      // Past the end of its row's title, the pointer can cross to it and press the ask inside
-      // while the titles below stay free to point at. Clamped back over the titles, it lies on
-      // the rows the pointer travels to, so it stays a preview.
-      clearOfRail = left >= titleEnd;
+      const below = rect.bottom + 6;
+      top = below + height <= floor ? below : Math.max(12, Math.min(rect.top + rect.height / 2 - height / 2, floor - height));
+      // Every row's and heading's words the panel's band would cross stay to its left.
+      const list = currentTarget.closest("[data-manager-children], .manager-children") ?? currentTarget.parentElement;
+      let wordsEnd = titleEnd;
+      for (const words of list?.querySelectorAll<HTMLElement>(".ticket-row-title, summary") ?? []) {
+        const range = document.createRange(); range.selectNodeContents(words);
+        for (const line of range.getClientRects()) if (line.bottom > top && line.top < top + height) wordsEnd = Math.max(wordsEnd, line.right);
+      }
+      left = Math.max(12, Math.min(Math.max(rightmost, wordsEnd + 12), window.innerWidth - width - 12));
+      // Past every word it crosses, the pointer can reach it and press the ask inside while
+      // the titles stay free to point at. Clamped back over words, it stays a preview.
+      clearOfRail = left >= wordsEnd;
     };
     // Manifest arrival can change the height after the panel is already visible.
     const observer = new ResizeObserver(place);
@@ -134,7 +136,7 @@
     return () => { observer.disconnect(); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
   });
 </script>
-<div bind:this={element} class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} style:max-height={roomBelow === null ? undefined : `${roomBelow}px`} data-rail-hover-panel aria-hidden={!visible}
+<div bind:this={element} class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}
   onpointerenter={(event) => {
     if (visible && event.pointerType !== "touch" && window.matchMedia("(hover: hover) and (pointer: fine)").matches)
       pointerVisit = { target, recapIdentity };

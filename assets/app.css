@@ -5009,6 +5009,10 @@ details:not([open]) > summary > .manager-workspace-chevron {
    corners stay concentric with theirs. */
 .rail-wash { position:absolute; pointer-events:none; z-index:0; border-radius:var(--radius-md); }
 .rail-wash[hidden] { display:none; }
+/* A row that would cross the list's edge waits, hidden in its place, until it fits; a heading
+   waits with its first row (railWholeRows). */
+.approved-rail [data-rail-waiting] { opacity:0; pointer-events:none; }
+.approved-rail :is(.identity, .goal, .worker-row, .bucket-label) { transition:opacity 120ms var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
 .rail-wash--group { background:none; box-shadow:inset 0 0 0 var(--border-hairline) var(--wash-context-edge); border-radius:var(--rail-context-radius); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
 
