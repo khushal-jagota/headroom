@@ -92,7 +92,6 @@ After each application save, Headroom updates changed conversation statuses and 
 - One input path, so whatever an agent knows from Headroom can be read in its notebook.
 - The fate reports delivery honestly, and nothing that may have reached the agent is retried automatically.
 - Each real agent identity has one home and one login. Headroom launches children against those homes and keeps no copy of a credential.
-- Claude sessions start with the user's ordinary hooks turned off, so local hooks do not inject context or side effects into Headroom's agents.
 
 ## Code
 
