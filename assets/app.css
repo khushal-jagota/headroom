@@ -210,22 +210,16 @@ strong {
 /* --- Persistent rail and pane shell ------------------------------------- */
 .shell { position:relative; height:100dvh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .shell-content { flex:1; min-width:0; min-height:0; padding:0; }
-/* The destinations stand on the rail's text edge: the first icon's glyph (which starts 2px
-   inside its 18px box, 7px inside its 32px button) lines up with the names above it. */
-/* The space above the icons is the band their names open into, clear of the Settled label. */
-/* The icon row sits centred in the foot under Settled: --rail-foot-gap above it and the same
-   below (with the rail's own 8px). Its first glyph (2px inside its 18px box, 5px inside its
-   28px button) stands on the names' text edge. */
-.rail-foot { position:relative; flex:none; padding:var(--rail-foot-gap) var(--rail-edge) calc(var(--rail-foot-gap) - var(--space-2)) calc(var(--rail-edge) + var(--rail-pad) - 7px); }
-/* The destinations: one row of quiet icons. A destination's name floats above its icon as a
-   raised tooltip, clear of the row, so it never covers a neighbouring icon and nothing moves. */
-/* The row reserves the band its tooltips open into above the icons, without taking layout
-   space or the pointer from the Settled row under that band. */
-.rail-utilities { --rail-tooltip-band:36px; display:flex; align-items:center; gap:6px; padding-top:var(--rail-tooltip-band); margin-top:calc(var(--rail-tooltip-band) * -1); pointer-events:none; }
-.rail-utilities > .utility { pointer-events:auto; }
-/* A destination's hit and hover shape hugs its icon (and the review count): 28px tall, 5px
-   around the glyph, so the focus ring 2px outside it stays close. */
-.utility { position:relative; display:flex; flex:0 0 28px; align-items:center; justify-content:center; gap:6px; min-width:28px; height:28px; padding:0; border:0; border-radius:var(--radius-md); background:transparent; color:var(--tone-secondary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+/* The foot as on staging: the icon row 8px under Settled and 12px off the rail's bottom (with
+   the rail's own 8px). Each destination is staging's 32px square; the first glyph (2px inside
+   its 18px box, 7px inside its button) stands on the names' text edge. */
+.rail-foot { position:relative; flex:none; padding:var(--space-2) var(--rail-edge) var(--space-1) calc(var(--rail-edge) + var(--rail-pad) - 9px); }
+/* The destinations: one row of quiet icons. A destination's name floats 8px above its icon as a
+   tooltip the moment the pointer is on it, as on staging: centred, the first one's name starting
+   at its icon and the last one's ending at it, so no name runs out of the rail. */
+.rail-utilities { display:flex; align-items:center; gap:var(--space-1); }
+/* A destination's hit and hover shape: staging's 32px square around its 18px icon. */
+.utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:0; border-radius:var(--radius-md); background:transparent; color:var(--tone-secondary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .utility:hover { background:var(--wash-hover); color:var(--tone-strong); }
 .utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:transparent; background:var(--wash-selected); color:var(--tone-strong); }
 .utility:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:0; }
@@ -233,12 +227,13 @@ strong {
 .count-badge { position:absolute; top:-2px; right:-2px; min-width:18px; height:18px; padding:0 5px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-1); font-size:var(--type-small); font-weight:var(--weight-needs-you); line-height:18px; text-align:center; font-variant-numeric:tabular-nums; }
 /* On the rail the count sits beside its icon, never on top of it: the needs-you accent as
    text on its own quiet slate. It is the rail's one badge. */
-.rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 5px; }
+.rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 7px; }
 .rail-utilities .count-badge { position:static; min-width:20px; height:18px; padding:0 6px; border-radius:var(--radius-pill); background:var(--accent-badge); color:var(--accent-bright); box-shadow:none; font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
 .count-badge.hidden { display:none; }
-.utility-label { position:absolute; bottom:calc(100% + var(--focus-offset) + var(--focus-width) + 8px); left:50%; z-index:6; padding:2px var(--space-2); border:0; border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
+.utility-label { position:absolute; bottom:calc(100% + var(--space-2)); left:50%; z-index:6; padding:2px var(--space-2); border:0; border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
+.utility:nth-child(1 of .utility) .utility-label { left:0; transform:none; }
+.utility:nth-last-child(1 of .utility) .utility-label { left:auto; right:0; transform:none; }
 .utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
-.utility:hover .utility-label { transition-delay:400ms; }
 @keyframes shell-panel-in { from { opacity:0; transform:translateY(var(--space-2)); } to { opacity:1; transform:none; } }
 .compact-bar { display:none; }
 .destination-pane { display:flex; flex-direction:column; flex:1; width:100%; height:100%; min-width:0; min-height:0; overflow:auto; }

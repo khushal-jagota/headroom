@@ -552,8 +552,9 @@
   .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); margin-inline:var(--rail-edge); border-top:var(--border-hairline) solid var(--border-color); padding-top:var(--space-1); }
   /* The list ends at the foot's hairline and is clipped there cleanly: no fade leaves a row
      half legible. Its bottom padding lets the last row scroll fully clear of the edge. */
-  /* Settled: one row in the rail's row voice, its count a plain Small numeral after it. */
-  .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); box-sizing:border-box; height:var(--rail-row-height); min-height:0; padding:0 var(--rail-pad); margin-inline:0; border:0; border-radius:var(--radius-md); background:none; width:100%; font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
+  /* Settled: one row in the rail's row voice, staging's 32px tall, its count a plain Small
+     numeral after it. */
+  .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); box-sizing:border-box; height:32px; min-height:0; padding:0 var(--rail-pad); margin-inline:0; border:0; border-radius:var(--radius-md); background:none; width:100%; font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
   .settled-head:hover { background:var(--wash-hover); color:var(--rail-tone-bright); }
   .settled-count { position:relative; display:inline-block; }
   .settled-chevron { width:14px; height:14px; flex:none; color:var(--rail-tone-label); transition:transform var(--motion-base) var(--motion-ease); }

@@ -361,8 +361,6 @@
    * up to the edge; and clear air under the last block when the list is scrolled to its end. */
   --rail-edge-fade: 8px;
   --rail-foot-clear: 12px;
-  /* Between the Settled row and the icon bar: the band the icons' names open into. */
-  --rail-foot-gap: 28px;
   /* The list's scrollbar lives in the column's own edge, never inside the rows. */
   --rail-scrollbar-width: 4px;
   /* Room the list keeps above its first fill for the focus ring (2px clear, 1.5px wide). */

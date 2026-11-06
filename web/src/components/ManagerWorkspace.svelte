@@ -216,7 +216,7 @@
           <div bind:this={headerElement}>
           {#snippet managerTitle()}<InlineEdit value={item.title} placeholder="(untitled Manager)" ariaLabel="Manager name" onSave={(value)=>saveItem("title",value)}/>{/snippet}
           {#snippet settleButton()}
-            <Button variant="outline" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>{item.settled?'Reopen':'Settle'}</Button>
+            <Button variant="ghost" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{item.settled?'Reopen':'Settle'}</Button>
           {/snippet}
           {#snippet goalHeading()}
             {#if soleGoal}<GoalHeader goal={soleGoal}>
@@ -296,6 +296,10 @@
      Manager's name; the rail is the way back. A phone has no rail, so there the line keeps
      its way back to the Workspace. */
   @media (min-width:721px) { .page-back, .page-back-sep { display:none; } }
+  /* Settle, as on staging: its check and its word, no edge, shown while the pointer is on the
+     page or the keyboard is on it. */
+  :global(.page-settle) { opacity:0; transition:opacity var(--motion-fast) var(--motion-ease); }
+  :global(.manager-doc:hover .page-settle), :global(.page-settle:focus-visible) { opacity:1; }
   .manager-workers { margin-top:var(--page-section-gap); }
   .manager-bands { margin-top:var(--page-section-gap); }
   .manager-goal { font-size:var(--type-body); line-height:var(--leading-body); color:var(--tone-primary); max-width:var(--page-prose-measure); }
