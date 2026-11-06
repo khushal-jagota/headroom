@@ -412,7 +412,11 @@ class ConversationStore:
             self._apply_signal_mutation(conn, admission)
             claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
             interruption_data.fail_recovery_claims(
-                conn, conversation_id, turn_number, now=self._integer_now()
+                conn,
+                conversation_id,
+                turn_number,
+                now=self._integer_now(),
+                error_reason="recovery after a deploy failed",
             )
             self._commit_rows(
                 conn,

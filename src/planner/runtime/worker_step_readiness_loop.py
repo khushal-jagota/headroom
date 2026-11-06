@@ -270,6 +270,7 @@ async def _admitted_start_ready_worker_step(
                     expected_claim=taken_claim,
                     expected_claim_revision=taken_claim_revision,
                     now=now(),
+                    error_reason=f"could not start ({fate.refusal_reason.value})",
                 )
             else:
                 give_the_claim_back()
@@ -290,6 +291,7 @@ async def _admitted_start_ready_worker_step(
                 expected_claim=taken_claim,
                 expected_claim_revision=taken_claim_revision,
                 now=now(),
+                error_reason="delivery uncertain",
             )
             if marked_errored:
                 _log.error(

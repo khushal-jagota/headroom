@@ -591,8 +591,12 @@ def test_real_error_transitions_use_claim_revisions_and_repeated_writes_do_not_d
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    first = tickets_data.mark_ticket_errored(tmp_db, ticket_id, now=200)
-    repeated = tickets_data.mark_ticket_errored(tmp_db, ticket_id, now=200)
+    first = tickets_data.mark_ticket_errored(
+        tmp_db, ticket_id, now=200, error_reason="delivery uncertain"
+    )
+    repeated = tickets_data.mark_ticket_errored(
+        tmp_db, ticket_id, now=200, error_reason="delivery uncertain"
+    )
     assert first.worker_step_claim_revision == repeated.worker_step_claim_revision == 1
     rows = _wake_rows(tmp_db)
     assert len(rows) == 1
@@ -667,10 +671,11 @@ def test_busy_manager_leaves_sources_unclaimed_so_later_wakes_combine(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=item_id,
+        target=Principal(PrincipalKind.manager, item_id),
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
+        error_reason="delivery uncertain",
         now=1,
     )
     batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=2)
@@ -689,10 +694,11 @@ def test_busy_manager_leaves_sources_unclaimed_so_later_wakes_combine(
     )
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=item_id,
+        target=Principal(PrincipalKind.manager, item_id),
         ticket_id=ticket_id,
         claim_revision=2,
         ticket_title="Managed ticket",
+        error_reason="delivery uncertain",
         now=51,
     )
     waiting = wake_data.claim_next_batch(tmp_db, process_token="process", now=52)
@@ -734,10 +740,11 @@ def test_running_wake_loop_does_not_spin_on_active_manager_bookkeeping(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=item_id,
+        target=Principal(PrincipalKind.manager, item_id),
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
+        error_reason="delivery uncertain",
         now=1,
     )
     agent_key = managers_data.manager_agent_key(item_id)
@@ -803,10 +810,11 @@ def test_definite_failure_waits_then_creates_a_new_attempt_id(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=item_id,
+        target=Principal(PrincipalKind.manager, item_id),
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
+        error_reason="delivery uncertain",
         now=1,
     )
     first = wake_data.claim_next_batch(tmp_db, process_token="one", now=10)
@@ -830,10 +838,11 @@ def test_restart_preserves_dispatching_as_uncertain_and_recovers_known_held_batc
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=item_id,
+        target=Principal(PrincipalKind.manager, item_id),
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
+        error_reason="delivery uncertain",
         now=1,
     )
     batch = wake_data.claim_next_batch(tmp_db, process_token="old", now=2)
@@ -866,10 +875,11 @@ def test_restart_preserves_dispatching_as_uncertain_and_recovers_known_held_batc
     )
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=item_id,
+        target=Principal(PrincipalKind.manager, item_id),
         ticket_id=second_ticket.id,
         claim_revision=1,
         ticket_title=second_ticket.title,
+        error_reason="delivery uncertain",
         now=6,
     )
     queued = wake_data.claim_next_batch(tmp_db, process_token="old", now=6)
@@ -904,10 +914,11 @@ def test_held_wake_is_marked_dispatching_before_it_can_leave_the_queue(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=item_id,
+        target=Principal(PrincipalKind.manager, item_id),
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
+        error_reason="delivery uncertain",
         now=1,
     )
     batch = wake_data.claim_next_batch(tmp_db, process_token="old", now=2)
@@ -955,10 +966,11 @@ def test_dequeue_marker_wins_the_race_with_the_queued_send_receipt(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=item_id,
+        target=Principal(PrincipalKind.manager, item_id),
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
+        error_reason="delivery uncertain",
         now=1,
     )
     batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=2)
@@ -1000,10 +1012,11 @@ def test_late_uncertain_manager_prevents_restart_replay(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=item_id,
+        target=Principal(PrincipalKind.manager, item_id),
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
+        error_reason="delivery uncertain",
         now=1,
     )
     batch = wake_data.claim_next_batch(tmp_db, process_token="old", now=2)
@@ -1061,10 +1074,11 @@ def test_delivery_uses_the_supervisor_boundary_and_closes_on_its_prompt(
     )
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=item_id,
+        target=Principal(PrincipalKind.manager, item_id),
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
+        error_reason="delivery uncertain",
         now=1,
     )
     batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=2)
@@ -1283,10 +1297,11 @@ def test_final_admission_discards_exact_mixed_batch_and_regroups_survivors(
     )
     wake_data.create_worker_error_wake(
         tmp_db,
-        manager_id=manager_id,
+        target=Principal(PrincipalKind.manager, manager_id),
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
+        error_reason="delivery uncertain",
         now=2,
     )
     batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=3)

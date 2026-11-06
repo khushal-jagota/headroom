@@ -228,6 +228,7 @@ def _create_tickets(
         conn,
         exploration.id,
         now=now,
+        error_reason="could not start (backend_did_not_start)",
     )
     return (
         coding,
