@@ -52,6 +52,7 @@
     switch (route.name) {
       case "review": return cachedImport("./ReviewRoute.svelte", () => import("./routes/ReviewRoute.svelte"));
       case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./routes/IdeasRoute.svelte"));
+      case "goals": return cachedImport("./GoalsRoute.svelte", () => import("./routes/GoalsRoute.svelte"));
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./routes/SettingsRoute.svelte"));
       case "backends": return cachedImport("./BackendsRoute.svelte", () => import("./routes/BackendsRoute.svelte"));
       case "preview": return cachedImport("./FilePreviewRoute.svelte", () => import("./routes/FilePreviewRoute.svelte"));
@@ -59,7 +60,7 @@
     }
   });
   let routeShape = $derived(route.name === "review" ? "block" as const
-    : ["ideas", "backends"].includes(route.name) ? "rows" as const : "document" as const);
+    : ["ideas", "goals", "backends"].includes(route.name) ? "rows" as const : "document" as const);
 
   let moreOpen = $state(false);
   let moreMenuElement = $state<HTMLDivElement | null>(null);
@@ -157,7 +158,7 @@
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} onfocusin={onWindowFocusIn} />
 
 <div class="shell">
-  <main class="shell-content" class:update-dimmed={update.dimmed}>
+  <main class="shell-content" class:update-dimmed={update.dimmed} class:update-in-progress={update.state === "updating"}>
     <BoardRoute address={workspaceRouteAddress} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} {railStatus} />
   </main>
   {#if moreOpen}<button type="button" class="compact-scrim" aria-label="Close navigation menu" onclick={closeMore}></button>{/if}
@@ -210,6 +211,8 @@
           {#await import("./routes/ReviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "ideas"}
           {#await import("./routes/IdeasRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
+        {:else if route.name === "goals"}
+          {#await import("./routes/GoalsRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "settings"}
           {#await import("./routes/SettingsRoute.svelte") then view}<view.default section={route.params.section} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "backends"}
@@ -228,6 +231,8 @@
 <style>
   .shell-content :global(.board-workspace-right) { transition: opacity var(--motion-slow) var(--motion-ease); }
   .shell-content.update-dimmed :global(.board-workspace-right) { opacity: .5; }
+  /* A read that fails while Panels restarts is the update, which the card already says. */
+  .shell-content.update-in-progress :global(.board-workspace-right .error-line) { visibility: hidden; }
   @media (prefers-reduced-motion: reduce) {
     .shell-content :global(.board-workspace-right) { transition: none; }
   }

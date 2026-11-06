@@ -19,7 +19,6 @@ import type {
   PlanEntry,
   PromptDeliveryMode,
   PromptDeliveryRefusalReason,
-  Principal,
   UserInputAnswers,
   UserInputQuestion
 } from "./wire";
@@ -90,13 +89,6 @@ export type TranscriptRow =
       /** The record calls this one a message to the owner rather than ordinary output.
        *  It is the only kind of row that counts as a reply somebody is owed. */
       toOwner: boolean;
-    }
-  | {
-      key: string;
-      kind: "explicit_reply_missing";
-      sequence: number;
-      createdAt: number;
-      promptSender: Principal;
     }
   | {
       key: string;
@@ -377,15 +369,6 @@ export function transcriptRows(
           toOwner: event.kind === "message_to_owner"
         });
         break;
-      case "explicit_reply_missing":
-        rows.push({
-          key: `e${sequence}`,
-          kind: "explicit_reply_missing",
-          sequence,
-          createdAt,
-          promptSender: event.payload.prompt_sender
-        });
-        break;
       case "tool_call_started":
         toolCallRowIndex.set(event.payload.tool_call_id, rows.length);
         rows.push({
@@ -611,20 +594,6 @@ export function transcriptRows(
   return rows;
 }
 
-export function principalLabel(principal: Principal): string {
-  switch (principal.kind) {
-    case "owner": return "owner";
-    case "chief": return "Chief";
-    case "ticket": return `Ticket ${principal.id}`;
-    case "manager": return `Manager ${principal.id}`;
-    case "goal": return `Goal ${principal.id}`;
-  }
-}
-
-export function explicitReplyMissingSentence(principal: Principal): string {
-  return `No explicit message was sent to ${principalLabel(principal)}.`;
-}
-
 function newestCreatedAt(feed: ConversationFeed): number {
   return feed.events[feed.events.length - 1]?.created_at ?? 0;
 }
@@ -716,6 +685,18 @@ export function workedSentence(durationSeconds: number | null): string {
 export function stoppedSentence(durationSeconds: number | null): string {
   if (durationSeconds === null || durationSeconds <= 0) return "You stopped this response";
   return `You stopped after ${formatDuration(durationSeconds)}`;
+}
+
+/** Background work the agent started that outlived its turn, named by its own description. */
+export function backgroundWorkSentence(taskDescriptions: readonly string[]): string {
+  return `Background work running: ${taskDescriptions.join(", ")}`;
+}
+
+/** The background tasks a conversation shows: none while a turn runs or activity is unknown. */
+export function backgroundTasksAfterTheTurn<T>(
+  status: { turn_running: boolean | null; background_tasks: readonly T[] } | null | undefined
+): readonly T[] {
+  return status?.turn_running === false ? status.background_tasks : [];
 }
 
 /** The live counter on a turn that is still going. */

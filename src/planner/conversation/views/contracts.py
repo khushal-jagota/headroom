@@ -21,7 +21,6 @@ from planner.conversation.events import (
     UserInputAnswer,
     UserInputQuestion,
 )
-from planner.core.contracts import Principal
 from planner.credentials.requests.contracts import CredentialRequestRowBody
 
 VIEW_PROTOCOL_VERSION = 1
@@ -35,7 +34,6 @@ type ViewRowKind = Literal[
     "prompt_uncertain",
     "prompt_discarded",
     "agent_message",
-    "explicit_reply_missing",
     "tool_call",
     "permission_ask",
     "user_input",
@@ -97,11 +95,6 @@ class AgentMessageRowBody(TypedDict):
     kind: Literal["agent_message"]
     content: list[ViewMessagePiece]
     to_owner: bool
-
-
-class MissingReplyRowBody(TypedDict):
-    kind: Literal["explicit_reply_missing"]
-    prompt_sender: Principal
 
 
 class ToolCallRowBody(TypedDict):
@@ -170,7 +163,6 @@ type ViewRowBody = (
     | RefusedPromptRowBody
     | UndeliveredPromptRowBody
     | AgentMessageRowBody
-    | MissingReplyRowBody
     | ToolCallRowBody
     | PermissionRowBody
     | UserInputRowBody
@@ -330,12 +322,7 @@ class ViewRestTool(TypedDict):
 
 
 type ViewRestEvent = (
-    ViewRestText
-    | ViewRestDelivery
-    | ViewRestTool
-    | MissingReplyRowBody
-    | TurnEndingRowBody
-    | MarkerRowBody
+    ViewRestText | ViewRestDelivery | ViewRestTool | TurnEndingRowBody | MarkerRowBody
 )
 
 
@@ -358,6 +345,13 @@ class ViewRestFacts(TypedDict):
     plan_progress: ViewPlanProgress
 
 
+class ViewBackgroundTask(TypedDict):
+    """A background task the agent started that is still live after its turn."""
+
+    task_id: str
+    task_description: str
+
+
 class ConversationViewStatus(TypedDict):
     diagnostics_expired: bool
     runtime_epoch: str
@@ -368,6 +362,8 @@ class ConversationViewStatus(TypedDict):
     turn_key: str | None
     turn_running: bool | None
     stopped_without_ending: bool
+    # Live background tasks, from the record the conversation's working signal reads.
+    background_tasks: list[ViewBackgroundTask]
     pending_permission: ViewRequestIdentity | None
     pending_user_input: ViewRequestIdentity | None
     # Plan bodies can also be oversized. Their versioned source is fetched on demand.

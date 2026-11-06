@@ -194,7 +194,7 @@ Approve canonically and let Panels start the next eligible step. Send necessary 
 The ceiling is what the Worker does unsupervised, and the holder is whoever supervises it:
 you, the owner, or a Manager.
 
-Explicit owner requests and authenticated reply requirements still apply.
+Explicit owner requests still apply.
 
 Today membership no longer governs continuation. Keep every other existing rule.
 Do not recreate daily or Sprint planning Tickets, routines, or replacement recurring

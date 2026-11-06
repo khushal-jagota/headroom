@@ -38,8 +38,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
     WorkspacePathPolicy,
 )
-from planner.conversation.logic.addressed_reply import with_runtime_prompt_context
-from planner.conversation.message_content import MessageFile
+from planner.conversation.message_content import MessageFile, prefix_message_content_text
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.execution_identity import (
@@ -558,7 +557,7 @@ class MacRunner:
         try:
             result = await child.native.write_prompt(
                 command.turn,
-                with_runtime_prompt_context(args.content, NATIVE_WORKER_CONTEXT),
+                prefix_message_content_text(args.content, NATIVE_WORKER_CONTEXT, "\n\n"),
                 sender_label=args.sender_label,
                 sender_content=args.sender_content,
                 sender_message_count=args.sender_message_count,
@@ -584,7 +583,7 @@ class MacRunner:
         self._mark_invoking(command)
         outcome = await child.native.steer(
             command.turn,
-            with_runtime_prompt_context(args.content, NATIVE_WORKER_CONTEXT),
+            prefix_message_content_text(args.content, NATIVE_WORKER_CONTEXT, "\n\n"),
             sender_content=args.sender_content,
             sender_label=args.sender_label,
         )

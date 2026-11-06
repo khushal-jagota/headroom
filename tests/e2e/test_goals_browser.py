@@ -600,9 +600,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(card.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
     )
-    page.get_by_role("region", name="Active goals", exact=True).get_by_role(
-        "link", name="All goals", exact=True
-    ).click(timeout=WAIT_MS)
+    page.locator('.rail-utilities a[data-screen="goals"]').click(timeout=WAIT_MS)
     row = page.get_by_role("row").filter(
         has=page.get_by_role("link", name="Publish a field guide", exact=True)
     )
@@ -743,6 +741,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(page.locator("[data-goal-page]")).to_have_attribute(
         "data-native-edit-proof", "retained", timeout=WAIT_MS
     )
+    # The field stays locked until the page reads the saved goal back, so the
+    # old title cannot flash. Playwright fill fails at once on a locked field.
+    expect(title_editor).to_have_attribute("contenteditable", "true", timeout=WAIT_MS)
     title_editor.fill("Discard this unsaved title", timeout=WAIT_MS)
     title_editor.press("Escape", timeout=WAIT_MS)
     expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)

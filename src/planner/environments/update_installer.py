@@ -210,6 +210,9 @@ def install(arguments: argparse.Namespace) -> int:
     for folder in root.glob(f"{PREVIOUS_APP_PREFIX}*"):
         if folder != previous:
             shutil.rmtree(folder, ignore_errors=True)
+    # Bridge only: the 5622d2a81 installer kept its previous app here. The next release
+    # deletes this line.
+    shutil.rmtree(root / "app-previous", ignore_errors=True)
     return 0
 
 

@@ -28,6 +28,10 @@ def database(events: list[dict[str, Any]]) -> sqlite3.Connection:
         "payload TEXT,created_at INTEGER,PRIMARY KEY(conversation_id,sequence))"
     )
     conn.execute(
+        "CREATE TABLE conversation_background_tasks(conversation_id TEXT,task_id TEXT,"
+        "task_description TEXT,PRIMARY KEY(conversation_id,task_id))"
+    )
+    conn.execute(
         "CREATE TABLE conversation_expired_ranges(conversation_id TEXT,first_sequence INTEGER,"
         "last_sequence INTEGER,cutoff_unix INTEGER,expired_at_unix INTEGER,event_count INTEGER,"
         "PRIMARY KEY(conversation_id,first_sequence))"

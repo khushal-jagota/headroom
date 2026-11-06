@@ -45,7 +45,7 @@ unit requires that configured runner and runs its `run.sh`; the deploy workflow
 requests exactly those four labels.
 
 Panels now installs its own updates. The runner remains for one release only: the
-installed 53d64f0fd server installs the first self-installing release through the
+installed 5622d2a81 server installs the first self-installing release through the
 workflow's bridge `adopt` job (see `docs/deployment.md`). The next release deletes that
 job; then stop and disable `panels-deployment-runner.service` and unregister the runner.
 

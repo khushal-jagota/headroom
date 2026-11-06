@@ -20,6 +20,7 @@
   import {refreshAtBoundary} from "../lib/goals/presentation";
   import ErrorLine from "./ErrorLine.svelte";
   import GoalsOverview from "./goals/GoalsOverview.svelte";
+  import {goalsForHolder} from "../lib/goals/holders";
   import ManagerHeader from "./ManagerHeader.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -36,7 +37,7 @@
   } from "../lib/conversation/wire";
 
   import type { ManagedFileTarget } from "../lib/filePreview";
-  let { allGoals = false, requestedConversationId = null, openedFile = null, onOpenFile }: { allGoals?: boolean; requestedConversationId?: string | null; openedFile?: ManagedFileTarget | null; onOpenFile?: (file: ManagedFileTarget | null) => void } = $props();
+  let { requestedConversationId = null, openedFile = null, onOpenFile }: { requestedConversationId?: string | null; openedFile?: ManagedFileTarget | null; onOpenFile?: (file: ManagedFileTarget | null) => void } = $props();
   const navigation = (() => {
     const value = navigationApplication();
     if (!value) throw new Error("Chief conversation requires the application navigation owner");
@@ -69,6 +70,8 @@
   const chiefPage=createQuery(()=>holderPageQuery({kind:'chief',id:'chief'}));
   const chiefSettings = createQuery(() => queries.chiefSettings());
   const goals=createQuery(()=>goalQueries.list());
+  // Like a Manager's page, but always cards: one held goal never turns this page into that goal.
+  let chiefHoldsGoals=$derived(goalsForHolder(goals.data?.goals??[],{kind:'chief',id:null}).held.length>0);
   $effect(()=>{if(goals.data)return refreshAtBoundary(goals.data.next_refresh_at,()=>void goals.refetch());});
 
   $effect(() => {
@@ -105,19 +108,15 @@
 <div class="chief-workspace-host" bind:this={root}>
 <ManagerFrame class="chief-workspace" bind:conversationState {openedFile} {onOpenFile}>
   {#if goals.error}<ErrorLine error={goals.error}/>{/if}
-  {#if allGoals}
-  <GoalsOverview goals={goals.data?.goals??[]} all/>
-  {:else}
   <ManagerHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
-  <GoalsOverview goals={goals.data?.goals??[]}/>
+  {#if chiefHoldsGoals}<GoalsOverview goals={goals.data?.goals??[]}/>{/if}
   {#if chiefPage.data?.page}<HolderDocument holder={{kind:"chief",id:"chief"}}/>{/if}
   {#if !hasTickets(chiefPage.data?.page)}<section class="manager-workers" aria-label="Workers">
     <PageTickets principal={{ kind: "chief", id: "chief" }} />
   </section>{/if}
-  {/if}
   {#snippet conversation()}
   <LiveConversation
     ownerLoading={!chief}

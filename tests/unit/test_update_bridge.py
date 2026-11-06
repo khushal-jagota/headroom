@@ -1,7 +1,7 @@
-"""The one-release bridge: the installed 53d64f0fd server installs this release.
+"""The one-release bridge: the installed 5622d2a81 server installs this release.
 
-Bridge only. The next release deletes this file with the `adopt` job and
-scripts/bridge_legacy_adopt.py.
+Its own installer runs unchanged. Bridge only: the next release deletes this file
+with the `adopt` job.
 """
 
 from __future__ import annotations
@@ -18,16 +18,15 @@ import yaml
 from alembic.script import ScriptDirectory
 from alembic.script.revision import ResolutionError
 from alembic.util.exc import CommandError
-from scripts.bridge_legacy_adopt import PATCHES, patched
 
-from planner.core.db import MIGRATIONS_DIRECTORY
+from planner.core.db import BASELINE_REVISION, MIGRATIONS_DIRECTORY
 from planner.environments.runtime_admission import native_tool_commands
 from planner.environments.runtime_contracts import RuntimeContract
 from planner.environments.update_contracts import SUPPORTED_UPDATE_SCHEMA_FLOOR
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 WORKFLOW = yaml.safe_load((REPOSITORY / ".github/workflows/deploy.yml").read_text())
-INSTALLED = "53d64f0fd"
+INSTALLED = "5622d2a81c8b45cbabd358fe2b2023b123c4b92b"
 
 
 def installed_source(path: str) -> str:
@@ -67,31 +66,28 @@ def test_dispatch_inputs_are_exactly_declared() -> None:
     assert "adopt" in declared["operation"]["options"]
 
 
-def test_patched_admission_and_floor_admit_this_release(tmp_path: Path) -> None:
-    """Risk: the old installer refuses this release's runtime or its migration graph."""
-    admission_path, runner_path = PATCHES
-    admission = installed_source(admission_path)
-    old_probes = function(patched(admission_path, admission), "native_tool_commands",
+def test_installed_admission_and_floor_admit_this_release(tmp_path: Path) -> None:
+    """Risk: the old installer, unchanged, refuses this release's runtime or migration graph."""
+    admission = installed_source("src/planner/environments/runtime_admission.py")
+    old_probes = function(admission, "native_tool_commands",
                           {"Path": Path, "RuntimeContract": object})
     contract = cast(RuntimeContract, None)
     assert old_probes(tmp_path, None) == native_tool_commands(tmp_path, contract)
 
-    database = tmp_path / "planner.db"
-    with sqlite3.connect(database) as conn:
-        conn.execute("CREATE TABLE alembic_version (version_num TEXT)")
-        conn.execute("INSERT INTO alembic_version VALUES ('goal_holders')")
-    runner = installed_source(runner_path)
-    namespace = {
+    runner = installed_source("src/planner/environments/update_runner.py")
+    validate = function(runner, "validate_schema_ancestry", {
         "Path": Path, "ScriptDirectory": ScriptDirectory, "ResolutionError": ResolutionError,
         "CommandError": CommandError, "sqlite3": sqlite3,
         "MIGRATIONS_DIRECTORY": MIGRATIONS_DIRECTORY,
-    }
-    original = function(runner, "validate_schema_ancestry", dict(namespace))
-    with pytest.raises(ValueError, match="precedes the supported update schema floor"):
-        original(database, MIGRATIONS_DIRECTORY)
-    function(patched(runner_path, runner), "validate_schema_ancestry", namespace)(
-        database, MIGRATIONS_DIRECTORY
-    )
+    })
+    # The live database stands at the installed release's head; this graph must know it.
+    installed_head = f'BASELINE_REVISION: Final = "{BASELINE_REVISION}"'
+    assert installed_head in installed_source("src/planner/core/db.py")
+    database = tmp_path / "planner.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute("CREATE TABLE alembic_version (version_num TEXT)")
+        conn.execute("INSERT INTO alembic_version VALUES (?)", (BASELINE_REVISION,))
+    validate(database, MIGRATIONS_DIRECTORY)
 
 
 def test_receipt_keeps_the_schema_floor_the_old_server_requires() -> None:

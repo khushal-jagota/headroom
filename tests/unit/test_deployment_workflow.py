@@ -1,6 +1,8 @@
 """The publication workflow keeps its hosted rehearsal and evidence boundaries."""
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -51,7 +53,7 @@ def test_publication_is_hosted_and_retains_its_evidence() -> None:
     publication = workflow["jobs"]["build"]
     assert publication["runs-on"] == "ubuntu-24.04"
     assert publication["env"]["PANELS_REHEARSAL"] == "true"
-    assert "53d64f0fdbda071a7887945a0d4ddc113694cf21" in (
+    assert "5622d2a81c8b45cbabd358fe2b2023b123c4b92b" in (
         publication["env"]["PANELS_BASELINE_SHA"]
     )
     assert workflow["permissions"] == {"contents": "read", "actions": "read"}
@@ -60,13 +62,15 @@ def test_publication_is_hosted_and_retains_its_evidence() -> None:
     assert names.index("Build exact candidate once") < names.index(
         "Seal immutable executable archive"
     )
-    assert names.index("Seal immutable executable archive") < names.index(
-        "Smoke exact retained archive"
+    start, wait = (
+        "Start sealed archive on Debian target beside the rehearsal",
+        "Wait for sealed archive on Debian target",
     )
     install = "Install candidate with the update installer"
-    assert names.index("Smoke exact retained archive") < names.index(
+    assert names.index("Seal immutable executable archive") < names.index(start)
+    assert names.index(start) < names.index(
         "Stage exact archive beside the known-good app"
-    ) < names.index(install) < names.index("Collect rehearsal proof")
+    ) < names.index(install) < names.index(wait) < names.index("Collect rehearsal proof")
     assert "deployment_rehearsal.py install" in steps[install]["run"]
     assert names.index("Collect rehearsal proof") < names.index("Check sealed archive is unchanged")
     assert "publication_checks.py verify-selection" in (
@@ -76,6 +80,33 @@ def test_publication_is_hosted_and_retains_its_evidence() -> None:
     assert steps["Retain exact executable archive"]["with"]["retention-days"] == 30
     assert next(step for step in workflow["jobs"]["publish"]["steps"]
                 if step.get("name") == "Retain publication proof")["with"]["retention-days"] == 30
+
+
+@pytest.mark.parametrize("exit_status", [0, 3])
+def test_debian_target_check_beside_rehearsal_returns_its_own_outcome(
+    tmp_path: Path, exit_status: int,
+) -> None:
+    """A failed Debian check must still fail the build after it runs in the background."""
+    steps = {step.get("name"): step
+             for step in yaml.safe_load(WORKFLOW.read_text())["jobs"]["build"]["steps"]}
+    start = steps["Start sealed archive on Debian target beside the rehearsal"]
+    wait = steps["Wait for sealed archive on Debian target"]
+    # The progress shell reaps descendants at step end, so the start must not use it.
+    assert start["shell"] == "bash" and "shell" not in wait
+    assert wait["if"] == "${{ always() && steps.target_check_start.outcome == 'success' }}"
+    python = tmp_path / "venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_text(f"#!/bin/sh\nsleep 0.2\necho target check ran\nexit {exit_status}\n")
+    python.chmod(0o755)
+    variables = {"PATH": os.defpath, "PANELS_DEPLOY_VENV": str(tmp_path / "venv"),
+                 "PANELS_GATE_DIR": str(tmp_path), "PANELS_REQUESTED_SHA": "a" * 40}
+    # Capturing output proves the background check does not hold the step output open.
+    subprocess.run(["bash", "-c", start["run"]], env=variables, check=True, timeout=5,
+                   capture_output=True)
+    result = subprocess.run(["bash", "-eo", "pipefail", "-c", wait["run"]], env=variables,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == exit_status
+    assert "target check ran" in result.stdout
 
 
 def test_publication_preserves_existing_isolated_suite_report_boundaries() -> None:

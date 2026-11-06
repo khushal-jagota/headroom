@@ -120,6 +120,7 @@ def conversation_status(conversation_id):
         "turn_key": None,
         "turn_running": False,
         "stopped_without_ending": False,
+        "background_tasks": [],
         "pending_permission": None,
         "pending_user_input": None,
         "plan": None,

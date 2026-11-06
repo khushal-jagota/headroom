@@ -173,7 +173,6 @@ async def notify_chief(
                 f"The Ticket '{row['title']}' is unusable because its saved record is invalid. "
                 f"Reason: {issue.reason}. Panels remains available. "
                 "Inspect this Ticket before any repair.",
-                expects_reply=False,
                 system_message=True,
             )
         except Exception:

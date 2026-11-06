@@ -246,10 +246,10 @@ def test_last_done_target_survives_a_failed_successor_and_publication_expiry(
 
 
 def test_mac_stopped_by_the_legacy_server_activates_after_the_bridge(tmp_path: Path) -> None:
-    """Risk: a Mac the 53d64f0fd server stopped for its request stays stopped forever."""
+    """Risk: a Mac the 5622d2a81 server stopped for its request stays stopped forever."""
     provider = MacProvider()
     published = provider.publish()
-    # The 53d64f0fd server pinned this archive and kept a request in applied.json.
+    # The 5622d2a81 server pinned this archive and kept a request in applied.json.
     mac_service(tmp_path, provider).prepare(published)
     (tmp_path / "mac-updates/applied.json").write_text(json.dumps({"request_id": "old"}))
     (tmp_path / "owner-update-request.json").write_text(json.dumps({
@@ -309,7 +309,7 @@ def test_executor_routes_work_without_work_handshake_but_reject_untrusted_caller
         assert service.phase("mac_one") == "current"
 
 
-# The check response shape the Mac runtimes of 53d64f0fd validate, copied from that commit.
+# The check response shape the Mac runtimes of 5622d2a81 validate, copied from that commit.
 @dataclass(frozen=True, slots=True)
 class FieldMacUpdateTarget:
     request_id: str

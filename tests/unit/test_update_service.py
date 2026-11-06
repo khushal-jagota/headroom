@@ -232,7 +232,7 @@ def test_retry_mac_gives_the_mac_a_new_target_and_settled_attempts_do_not_block(
 
 
 def test_legacy_request_becomes_a_done_attempt_for_the_waiting_mac(tmp_path: Path) -> None:
-    """Bridge: a Mac the 53d64f0fd server stopped gets activate for its old request id."""
+    """Bridge: a Mac the 5622d2a81 server stopped gets activate for its old request id."""
     data = tmp_path / "data"
     data.mkdir()
     store = FileUpdateAttemptStore(data / "update-attempt.json")

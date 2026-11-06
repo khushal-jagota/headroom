@@ -342,10 +342,10 @@ def run(browser, urls):
     for _ in range(20):
         page.keyboard.press("Shift+ArrowLeft")
     expect(grip).to_have_attribute("aria-valuenow", "232")
-    expect(rail.locator('.utility')).to_have_count(5)
+    expect(rail.locator('.utility')).to_have_count(6)
     rail_bounds = page.locator('.workspace-rail').bounding_box()
     assert rail_bounds and abs(rail_bounds['width'] - 232) < 2, rail_bounds
-    for name in ["Review", "Usage", "Ideas", "VPS", "Settings"]:
+    for name in ["Review", "Usage", "Ideas", "Goals", "VPS", "Settings"]:
         control = rail.get_by_label(name, exact=True)
         control.focus()
         label = control.locator('.utility-label')
@@ -1482,9 +1482,16 @@ def verify_conversation_overlay(browser, url):
         proof['hosts'].append({'name':name,'host':host,'titleChannel':title,'document':doc_open,'openedCard':card_open,'scrollTop':scroll_before,'retainedScrollHeight':highwater,'documentTail':final_box,'transcriptOpened':transcript_open,'scrollbackAnchor':anchor,'anchorChecks':anchor_proof,'collapse':{'before':collapse_before,'after':collapse_after},'keyboardCard':card_keyboard,'keyboardTranscript':keyboard_transcript,'artifact':artifact_proof})
         draft_before_dismissal = box.input_value()
         doc_before_dismissal = document.evaluate('e=>e.scrollTop')
-        point = {'x':host['x'] + host['width']/2, 'y':(host['y'] + pane.bounding_box()['y'])/2}
-        hit = page.evaluate('''point=>Boolean(document.elementFromPoint(point.x,point.y)?.closest('.ticket-doc,.manager-doc'))''', point)
-        assert hit, (name,point)
+        # A plain part of the document above the card: a link there would open another page.
+        point = page.evaluate('''([host, top]) => {
+          for (let y = host.y + 8; y < top - 8; y += 8) for (const x of [host.x + host.width / 2, host.x + 24]) {
+            const e = document.elementFromPoint(x, y);
+            if (e?.closest('.ticket-doc,.manager-doc') && !e.closest('a,button,input,textarea,[role=button]')) return {x, y};
+          }
+          return null;
+        }''', [host, pane.bounding_box()['y']])
+        hit = point is not None
+        assert hit, name
         page.mouse.click(point['x'], point['y'])
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         assert box.input_value() == draft_before_dismissal

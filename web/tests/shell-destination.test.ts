@@ -5,6 +5,7 @@ describe("persistent shell addresses", () => {
   it.each([
     ["#/config/chief-of-staff", "#/settings/config/chief-of-staff", "settings", { section: "config", roleKind: "agent", id: "chief_of_staff" }],
     ["#/vps", "#/vps", "vps", {}],
+    ["#/workspace/goals", "#/goals", "goals", {}],
   ])("normalizes %s without losing its selection", (input, hash, name, params) => {
     const destination = parseShellDestination(input);
     expect(destination).toMatchObject({ hash, name, params });

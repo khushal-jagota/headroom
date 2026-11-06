@@ -2,7 +2,7 @@
 
 Layout under `<data>/mac-updates`: `archives/<archive_sha256>.tar.gz` holds pinned
 runtimes, `reports/<sha256(request_id)>.json` the Mac's last report per target, and
-`applied.json` the last done attempt whose release the VPS runs. The 53d64f0fd server
+`applied.json` the last done attempt whose release the VPS runs. The 5622d2a81 server
 used the same archive and report layout, which the bridge relies on.
 """
 
@@ -140,7 +140,7 @@ class MacUpdateService:
         except FileNotFoundError:
             return None
         except (ValueError, KeyError, TypeError):
-            # The 53d64f0fd server kept a request here; it names a release this server
+            # The 5622d2a81 server kept a request here; it names a release this server
             # does not run, so it can never be the retained target.
             return None
 

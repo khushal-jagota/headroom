@@ -417,7 +417,7 @@
           {:else if opening.markedGoalId && !managerId}
             {#key opening.markedGoalId}<GoalWorkspace id={opening.markedGoalId} requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket}/>{/key}
           {:else if opening.chiefMarked && !managerId}
-            <ChiefConversation allGoals={opening.allGoals} requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket} />
+            <ChiefConversation requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket} />
           {:else if opening.markedUtility !== null && selectedPaneModule && placement}
           <!-- The pane owns the scroll for a utility screen. These screens are written as
                pages that let the document scroll, so without this they have no scroller of

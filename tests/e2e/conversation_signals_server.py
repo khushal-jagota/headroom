@@ -239,7 +239,6 @@ def build_app(config: Config) -> FastAPI:
             conversation_id,
             text_message_content("Bounded proof turn"),
             sender_label="Owner",
-            reply_requested=False,
         )
         return {"ok": True}
 
@@ -267,7 +266,6 @@ def build_app(config: Config) -> FastAPI:
                 text_message_content(f"queued message {number}"),
                 sender_label="owner",
                 sender_message_id=f"sender-{number}",
-                reply_requested=False,
             )
         return {"ok": True}
 

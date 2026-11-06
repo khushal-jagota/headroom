@@ -180,6 +180,8 @@ def test_healthy_install_swaps_apps_keeps_one_previous_and_records_steps(
     """Risk: a good install leaves the wrong app, stale rollback copies or an open attempt."""
     write_app(scratch.root / f".app-next-{TO_SHA}", TO_SHA)
     write_app(scratch.root / f".app-previous-{OLDER_SHA}", OLDER_SHA)
+    # Bridge only: where the 5622d2a81 installer kept its previous app.
+    write_app(scratch.root / "app-previous", OLDER_SHA)
     write_attempt(scratch, backup=str(scratch.root / "data/backups/snapshot"))
 
     result = scratch.run_installer()
@@ -208,6 +210,7 @@ def test_healthy_install_swaps_apps_keeps_one_previous_and_records_steps(
     assert json.loads((previous / "manifest.json").read_text())["app_sha"] == FROM_SHA
     retained = sorted(path.name for path in scratch.root.iterdir() if path.name.startswith("."))
     assert retained == [f".app-previous-{FROM_SHA}"]
+    assert not (scratch.root / "app-previous").exists()
 
 
 @pytest.mark.parametrize("backup", [True, False], ids=["with-backup", "without-backup"])

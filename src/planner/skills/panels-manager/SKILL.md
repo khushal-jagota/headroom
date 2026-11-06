@@ -89,7 +89,7 @@ callers you never touched. Do not call anything ready while a required result is
 red. Name the run you are relying on. A pass over the files you changed is "the changed
 files pass", which is true and is not the same claim as verified.
 
-Explicit owner requests and authenticated reply requirements still apply.
+Explicit owner requests still apply.
 
 ## Goal pages
 

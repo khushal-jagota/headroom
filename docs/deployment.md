@@ -5,7 +5,7 @@ Deployment is how a commit on `main` becomes the app the live host runs. Publica
 ```text
 push to main ─┬→ suites (unit, integration, e2e, browser) ──────────────────────┐
               ├→ static checks (ruff, mypy, frontend, vitest) ──────────────────┤
-              ├→ build once → seal → prove on clean root → smoke → rehearsal ───┤
+              ├→ build once → seal → prove on clean root, beside rehearsal ─────┤
               └→ native Mac build → sealed runtime → native proof ──────────────┤
                                                           all passed → receipt
                                                                                 │
@@ -19,7 +19,7 @@ installer unit: stop → swap folders → start → health ── healthy → do
 
 ## What it is made of
 
-- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and static checks run on their own machines while another builds once, seals the archive, proves it, and rehearses the install on a throwaway known-good release with the same installer the live host uses. A native Mac machine builds and proves the Mac runtime. A last machine checks every proof against the build and writes the receipt. Panels offers a release only when the whole run passed. Shared or unknown changes select all default suites.
+- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and static checks run on their own machines while another builds once and seals the archive. It then proves the archive on a clean Debian root and, at the same time, rehearses the install on a throwaway known-good release with the same installer the live host uses. A native Mac machine builds and proves the Mac runtime. A last machine checks every proof against the build and writes the receipt. Panels offers a release only when the whole run passed. Shared or unknown changes select all default suites.
 - **The sealed release.** An archive plus a receipt. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages, including the Claude Code and Codex CLIs.
 - **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. An install changes only `app`. The next release waits beside it, unpacked, and the previous one stays beside it after an install. See [Environments](environments.md).
 - **The installer.** One small program that uses only Python's standard library. It runs outside every app, so the app it replaces cannot break it.
@@ -39,7 +39,7 @@ The host supplies the glibc loader and a short named list of system libraries, N
 
 **The installer.** It stops the service that the server runs in, which the server reads from its own systemd cgroup, so a copy of Panels elsewhere can never stop the live one. It renames the current app aside, renames the waiting release into its place, starts the service, and waits for the new app to report its exact commit. A healthy answer comes from the process that serves Headroom, so work is already open. Startup also refreshes the agents' skill links. Interrupted conversations get one recovery prompt ([Conversations](conversations.md)). On success the installer marks the attempt done and keeps only the newest previous app.
 
-A new database starts from one complete schema. An existing staging database upgrades directly to it in one startup transaction. The current entry revision is staging's `goal_holders`, and the direct upgrade finishes at `canonical_manager_identities`. Before the sweep installs, its integration Ticket must hold a proof of that upgrade on a fresh copy of the live database. An upgrade refuses a database that still contains cancelled Tickets; resolve them through the prior supported version first.
+A new database starts from one complete schema. An existing staging database upgrades directly to it in one startup transaction. The oldest revision it upgrades is staging's `goal_holders`; the upgrade passes `retire_explicit_reply_requirement` and finishes at `canonical_manager_identities`, where the installed release already stands. A release refuses a database at a revision its own history does not contain. An upgrade refuses a database that still contains cancelled Tickets; resolve them through the prior supported version first.
 
 ## What can be undone
 
@@ -57,7 +57,7 @@ The publication carries a Mac runtime from the same source, and one press covers
 
 ## The one-release bridge
 
-The installed release before this design installs through the old route: it asks GitHub to run an `adopt` job on the self-hosted runner. That job stays for one release. It checks out the release the host is running, applies a small exact patch so the old installer accepts the new release's runtime and schema, and runs that old installer. On its first start the new server turns the old install request into a done attempt, so a Mac that the old server stopped receives its target and updates. The next release deletes the runner, the adopt job, its dispatch inputs, the patch, and that import.
+The installed release before this design installs through the old route: it asks GitHub to run an `adopt` job on the self-hosted runner. That job stays for one release. It checks out the release the host is running and runs that release's own installer, unchanged. This works from 5622d2a81, whose installer already accepts the new release's runtime, schema, receipt, and health answer; an older installed release refuses it before anything stops. On its first start the new server turns the old install request into a done attempt, so a Mac that the old server stopped receives its target and updates. The next release deletes the runner, the adopt job, its dispatch inputs, and that import.
 
 The deploy workflow never changes Tailscale Serve. A separate manual workflow restores the private route if it is lost.
 
@@ -89,7 +89,6 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 - `src/planner/environments/update_attempts.py`: the attempt record. `update_install.py`: the schema and backup decision and the installer's start. `update_installer.py`: the installer.
 - `src/planner/environments/runtime_packaging.py`, `runtime_contracts.py`, `runtime_admission.py`, and `scripts/runtime_target_proof.py`: the private runtime and host contract.
 - `src/planner/environments/mac_updates.py`: the Mac target and its progress.
-- `scripts/bridge_legacy_adopt.py`: the bridge patch, deleted with the bridge.
 - `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the card.
 - `scripts/dev`, `scripts/development_safety/`: the worktree guard.
 - `ops/panels-environments/`: user units and runner setup.

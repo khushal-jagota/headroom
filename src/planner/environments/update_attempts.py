@@ -216,7 +216,7 @@ class FileUpdateAttemptStore:
 def import_legacy_request(
     store: FileUpdateAttemptStore, data_directory: Path, running_sha: str | None
 ) -> UpdateAttempt | None:
-    """Bridge only, for the one release installed through 53d64f0fd's GitHub route.
+    """Bridge only, for the one release installed through 5622d2a81's GitHub route.
 
     That server stops a connected Mac before it dispatches. Its request becomes a
     `done` attempt, so the Mac receives `activate` for the request it waits on.

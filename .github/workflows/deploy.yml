@@ -15,7 +15,7 @@ name: Publish checked app and adopt owner request
         default: false
         type: boolean
       operation:
-        description: Publish a candidate, build the Mac runtime, or adopt (bridge for the installed 53d64f0fd server)
+        description: Publish a candidate, build the Mac runtime, or adopt (bridge for the installed 5622d2a81 server)
         required: true
         default: publish
         type: choice
@@ -23,7 +23,7 @@ name: Publish checked app and adopt owner request
           - publish
           - adopt
           - mac-build
-      # Bridge only: the inputs below are exactly what the installed 53d64f0fd server
+      # Bridge only: the inputs below are exactly what the installed 5622d2a81 server
       # dispatches (GitHub refuses undeclared inputs). The next release deletes them,
       # together with the `adopt` option and job.
       request_id:
@@ -152,7 +152,7 @@ jobs:
     env:
       PANELS_SUITE: ${{ matrix.suite }}
       PANELS_REHEARSAL: 'true'
-      PANELS_BASELINE_SHA: '53d64f0fdbda071a7887945a0d4ddc113694cf21'
+      PANELS_BASELINE_SHA: '5622d2a81c8b45cbabd358fe2b2023b123c4b92b'
     defaults:
       run:
         shell: python3 scripts/deployment_progress.py {0}
@@ -563,7 +563,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PANELS_REHEARSAL: 'true'
-      PANELS_BASELINE_SHA: '53d64f0fdbda071a7887945a0d4ddc113694cf21'
+      PANELS_BASELINE_SHA: '5622d2a81c8b45cbabd358fe2b2023b123c4b92b'
     outputs:
       app_artifact_id: ${{ steps.app_artifact.outputs.artifact-id }}
       candidate_record_sha256: ${{ steps.candidate.outputs.candidate_record_sha256 }}
@@ -665,16 +665,23 @@ jobs:
       - name: Prepare pinned Debian runtime proof root
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" scripts/runtime_target_root.py "$PANELS_GATE_DIR/target-root"
-      - name: Execute sealed archive on Debian target
+      - name: Start sealed archive on Debian target beside the rehearsal
+        id: target_check_start
+        # Plain bash: the progress shell reaps its descendants when its step ends.
+        # The Debian sandbox shares no state with the rehearsal install below.
+        shell: bash
         run: |
-          "$PANELS_DEPLOY_VENV/bin/python" scripts/runtime_target_proof.py prove \
-            --archive "$PANELS_GATE_DIR/panels-app.tar.gz" \
-            --requested-sha "$PANELS_REQUESTED_SHA" \
-            --target-root "$PANELS_GATE_DIR/target-root" \
-            --evidence "$PANELS_GATE_DIR/target"
-      - name: Smoke exact retained archive
-        run: |
-          "$PANELS_DEPLOY_VENV/bin/python" scripts/update_publication.py smoke
+          set -euo pipefail
+          (
+            status=0
+            "$PANELS_DEPLOY_VENV/bin/python" scripts/runtime_target_proof.py prove \
+              --archive "$PANELS_GATE_DIR/panels-app.tar.gz" \
+              --requested-sha "$PANELS_REQUESTED_SHA" \
+              --target-root "$PANELS_GATE_DIR/target-root" \
+              --evidence "$PANELS_GATE_DIR/target" || status=$?
+            echo "$status" > "$PANELS_GATE_DIR/target-check.status.partial"
+            mv "$PANELS_GATE_DIR/target-check.status.partial" "$PANELS_GATE_DIR/target-check.status"
+          ) > "$PANELS_GATE_DIR/target-check.log" 2>&1 < /dev/null &
       - name: Stage exact archive beside the known-good app
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" scripts/update_publication.py stage
@@ -682,6 +689,22 @@ jobs:
       - name: Install candidate with the update installer
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" scripts/deployment_rehearsal.py install
+      - name: Wait for sealed archive on Debian target
+        # Always wait, so cleanup never removes the sandbox root while the check runs.
+        if: ${{ always() && steps.target_check_start.outcome == 'success' }}
+        run: |
+          # The check's own sandbox run is bounded at 900 seconds.
+          deadline=$((SECONDS + 1200))
+          until [ -f "$PANELS_GATE_DIR/target-check.status" ]; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              cat "$PANELS_GATE_DIR/target-check.log"
+              echo "The Debian target check did not finish." >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          cat "$PANELS_GATE_DIR/target-check.log"
+          exit "$(cat "$PANELS_GATE_DIR/target-check.status")"
       - name: Collect rehearsal proof
         env:
           PANELS_REHEARSAL_JOB_STATUS: ${{ job.status }}
@@ -852,10 +875,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Bridge only: the installed 53d64f0fd server dispatches here to install the first
-  # self-installing release. It runs that installed version's own adopt steps from its
-  # own checkout, patched by scripts/bridge_legacy_adopt.py. The next release deletes
-  # this job, its dispatch inputs, and that script.
+  # Bridge only: the installed 5622d2a81 server dispatches here to install the first
+  # self-installing release. It runs that installed version's own adopt steps, unchanged,
+  # from its own checkout. The next release deletes this job and its dispatch inputs.
   adopt:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'adopt' && !inputs.rehearsal && github.ref == 'refs/heads/main' }}
     runs-on:
@@ -886,15 +908,6 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ steps.installed.outputs.sha }}
-      - name: Check out bridge patch from this release
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ github.sha }}
-          path: bridge-source
-          sparse-checkout: scripts/bridge_legacy_adopt.py
-          sparse-checkout-cone-mode: false
-      - name: Patch installed release for this release
-        run: python3 -I bridge-source/scripts/bridge_legacy_adopt.py "$GITHUB_WORKSPACE"
       - name: Configure existing deployment paths
         run: python3 scripts/deployment_rehearsal.py configure
       - name: Prepare deployment control runtime
