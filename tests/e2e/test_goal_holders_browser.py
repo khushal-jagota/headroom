@@ -1,11 +1,17 @@
-"""Promotion and the stable Goal URL use the same Manager name."""
+"""Goal promotion and retained URLs use the live Manager conversation.
+
+The browser and backend together prove that a retained legacy conversation cannot
+replace the composer, and that the first message creates the holder conversation.
+"""
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 
 from playwright.sync_api import BrowserContext, Page, expect
-from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
+from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle, capture_success
+from tests.support.connected_rows import _bind, _conversation
 from tests.support.server_fixtures import signal_server as signal_server
 
 
@@ -27,14 +33,21 @@ def test_goal_promotion_and_stable_url_share_manager_name(
             "primary_checklist_block_id": None,
         },
     )
+    legacy_conversation = "retained-goal-conversation"
+    _conversation(server, legacy_conversation)
+    _bind(server, "agent", f"goal_{goal['id']}", legacy_conversation)
     goal_route = f"#/workspace/goal/{goal['id']}"
     context = context_factory()
     page = open_page(context, server, goal_route, f'[data-goal-page="{goal["id"]}"]')
+    expect(page.get_by_text("Previous goal conversation", exact=True)).to_have_count(0)
     page.get_by_role("button", name="Make it a Manager", exact=True).click()
     page.wait_for_url("**/#/workspace/manager/*", timeout=WAIT_MS)
     manager_id = api.get(server, f"/api/goals/{goal['id']}")["holder_id"]
     host = page.locator(f'[data-manager-view="{manager_id}"]')
     expect(host.locator("h1")).to_contain_text(goal["title"])
+    expect(page.get_by_text("Previous goal conversation", exact=True)).to_have_count(0)
+    manager = api.get(server, f"/api/managers/{manager_id}/workspace")["manager"]
+    assert manager["conversation_id"] is None
 
     # The retained Goal URL edits the Manager name while its stored goal title stays hidden.
     page.goto(f"{server.base}/{goal_route}")
@@ -48,3 +61,41 @@ def test_goal_promotion_and_stable_url_share_manager_name(
     page.reload()
     expect(name_editor).to_have_text(name)
     expect(rail_title).to_have_text(name)
+
+    expect(page.get_by_text("Previous goal conversation", exact=True)).to_have_count(0)
+    page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
+    type_instead = page.get_by_role("button", name="Type instead", exact=True)
+    if type_instead.is_visible():
+        type_instead.click(timeout=WAIT_MS)
+    composer = page.locator("[data-conversation-input]")
+    expect(composer).to_be_editable(timeout=WAIT_MS)
+    composer.fill("Help launch this guide", timeout=WAIT_MS)
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/api/managers/{manager_id}/conversation/send"),
+        timeout=WAIT_MS,
+    ) as delivered:
+        composer.press("Enter", timeout=WAIT_MS)
+    assert delivered.value.ok, delivered.value.text()
+    conversation_id = delivered.value.json()["conversation_id"]
+    assert conversation_id != legacy_conversation
+    manager = api.get(server, f"/api/managers/{manager_id}/workspace")["manager"]
+    assert manager["conversation_id"] == conversation_id
+    wire = api.get(server, f"/api/test/signals/{conversation_id}/delivered")["texts"][-1]
+    assert "Help launch this guide" in wire
+    assert "You are the agent for goal " not in wire
+    api.direct_post(server, f"/api/test/signals/{conversation_id}/finish", {})
+    capture_success(page, "goal-holder-first-message.png")
+
+    # Both URLs reopen the same live composer without changing the retained rows.
+    page.goto(f"{server.base}/#/workspace/manager/{manager_id}")
+    expect(host).to_be_visible(timeout=WAIT_MS)
+    expect(page.get_by_text("Previous goal conversation", exact=True)).to_have_count(0)
+    expect(page.locator("[data-conversation-input]")).to_be_editable(timeout=WAIT_MS)
+    capture_success(page, "manager-holder-conversation.png")
+    with sqlite3.connect(server.db_path) as conn:
+        assert conn.execute(
+            "SELECT conversation_id FROM agents WHERE agent_key=?", (f"goal_{goal['id']}",)
+        ).fetchone() == (legacy_conversation,)
+        assert conn.execute(
+            "SELECT 1 FROM conversations WHERE conversation_id=?", (legacy_conversation,)
+        ).fetchone() == (1,)

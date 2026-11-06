@@ -25,7 +25,7 @@ The executor lets a Ticket's Worker use the Mac's files, apps, provider sign-ins
 
 ## Which work goes to the Mac
 
-Each Ticket has a locale, `vps` or `macos` (see [Tickets](tickets.md)). A `macos` Worker step gets an agent process on the Mac. VPS Tickets, the Chief, Managers, and goal agents stay on the VPS. Mac work waits until the Mac connects and completes its reconnect check.
+Each Ticket has a locale, `vps` or `macos` (see [Tickets](tickets.md)). A `macos` Worker step gets an agent process on the Mac. VPS Tickets, the Chief, and Managers stay on the VPS. Mac work waits until the Mac connects and completes its reconnect check.
 
 The VPS configuration names one executor ID. Only that executor is admitted. Without this configuration, the VPS runs everything locally.
 

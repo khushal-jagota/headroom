@@ -1,30 +1,23 @@
-"""Goal ownership reaches the backend, history, navigation and ordinary message routes."""
+"""Chief conversations retain their home across workspaces and resets."""
 
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
 from sqlite3 import Connection
-from typing import Any, cast
+from typing import cast
 from unittest.mock import Mock
 
-import pytest
-from click.testing import CliRunner
 from tests.unit.test_conversation_system import _FakeBackendChild, _Harness
 
-from planner.cli import http
-from planner.cli.main import main
 from planner.conversation.backends.contracts import BackendEventSink, RetainedBackendChildFactory
 from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.core.authctx import RequestContext, _classify
+from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as Clock
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
-    JsonDict,
-    Principal,
-    PrincipalKind,
 )
 from planner.executor.routing import LocaleBackendChildFactory
 from planner.message_delivery.service import send_message
@@ -56,34 +49,6 @@ class ChiefWorkspaceHarness(_Harness):
         return super()._make_child(
             resolved_start=resolved_start, event_sink=event_sink, message_files=message_files
         )
-
-
-def test_goal_cli_identity_and_address_are_distinct_from_ticket_and_manager(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("PLAN_ACTOR", "goal")
-    monkeypatch.setenv("PLAN_GOAL_ID", "goal_one")
-    monkeypatch.setenv("PLAN_CONVERSATION_ID", "goal_origin")
-    monkeypatch.delenv("PLAN_MANAGER_ID", raising=False)
-    monkeypatch.delenv("PLAN_SPRINT_ITEM_ID", raising=False)
-    assert http._headers() == {
-        "X-Plan-Actor": "goal",
-        "X-Plan-Goal-ID": "goal_one",
-        "X-Plan-Conversation-ID": "goal_origin",
-    }
-    assert _classify("goal", goal_id="goal_one").principal == Principal(
-        PrincipalKind.goal, "goal_one"
-    )
-    sent = []
-
-    def send(method: str, path: str, **kwargs: Any) -> JsonDict:
-        sent.append((method, path, kwargs["json_body"]))
-        return {"fate": "started"}
-
-    monkeypatch.setattr(http, "send", send)
-    result = CliRunner().invoke(main, ["send-message", "--goal", "goal_two", "--message", "hello"])
-    assert result.exit_code == 0, result.output
-    assert sent[0][2]["target"] == {"kind": "goal", "id": "goal_two"}
 
 
 def test_chief_keeps_its_home_folder_across_workspaces_and_reset(

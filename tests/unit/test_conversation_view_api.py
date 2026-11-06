@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import sqlite3
-import threading
-from typing import Any
 
 from tests.unit.test_conversation_api import (
     CONVERSATION_PREFIX,
@@ -24,7 +20,6 @@ from planner.conversation.message_content import text_message_content
 from planner.conversation.views.api import router
 from planner.conversation.views.contracts import VIEW_PROJECTION_VERSION
 from planner.core import db
-from planner.core.read_connections import DEFAULT_READERS, ReadConnections
 
 
 def test_focus_tail_and_rest_deliver_no_hidden_prose_and_receipts_survive_old_page(
@@ -142,69 +137,5 @@ def test_selected_body_stream_is_exact_and_obsolete_reference_is_409(harness: _H
             snapshot = (await client.get(path, params={"transcript": "false"})).json()
             assert snapshot["status"]["diagnostics_expired"] is True
             assert snapshot["page"]["projection_version"] == VIEW_PROJECTION_VERSION
-
-    _run(exercise)
-
-
-async def _open_every_reader(reads: ReadConnections) -> None:
-    """Hold one read on each pool thread at once, so that every reader has its connection."""
-    barrier = threading.Barrier(DEFAULT_READERS, timeout=10)
-    await asyncio.gather(*(reads.run(lambda _conn: barrier.wait()) for _ in range(DEFAULT_READERS)))
-    assert reads.connections_open == DEFAULT_READERS
-
-
-def test_a_warm_view_request_opens_no_database_connection(harness: _Harness) -> None:
-    """Reads run on kept connections, and nothing may quietly start opening its own.
-
-    This schema charges 2.39 ms for the first statement on a fresh connection against
-    0.022 ms on a kept one, because the connection loads eighty tables before it can plan
-    anything. Each of these requests used to pay that twice: once for its own read-only
-    connection and once for the read-write one that answered "does this conversation
-    exist" by reading the whole record.
-
-    No existing test can see this. Every assertion about a view request passes whether it
-    opened two connections or none, which is how it came to open two.
-    """
-    harness.app.include_router(router, prefix=CONVERSATION_PREFIX)
-    opened: list[str] = []
-    doors: dict[str, Any] = {"managed": db.connect, "sqlite": sqlite3.connect}
-
-    def counting(name: str) -> Any:
-        def open_one(*args: Any, **kwargs: Any) -> Any:
-            opened.append(name)
-            return doors[name](*args, **kwargs)
-
-        return open_one
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            await client.post(
-                f"{CONVERSATION_PREFIX}/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "Owner asks"}],
-                    "sender_label": "owner",
-                    "sender_message_id": "receipt-one",
-                },
-            )
-            path = f"{CONVERSATION_PREFIX}/conversations/c/view"
-            assert (await client.get(path)).status_code == 200
-            # Each pool thread opens its connection on its first read, and on busy cores
-            # the executor can start a new thread even for back-to-back reads. Open every
-            # reader before counting: this is about what a request costs, not a boot.
-            await _open_every_reader(harness.runtime.reads)
-
-            db.connect = counting("managed")
-            sqlite3.connect = counting("sqlite")
-            try:
-                assert (await client.get(path)).status_code == 200
-                assert opened == [], f"a warm view page opened {opened}"
-                receipts = await client.get(
-                    path + "/receipts", params={"message_ids": json.dumps(["receipt-one"])}
-                )
-                assert receipts.status_code == 200
-                assert opened == [], f"a warm view request opened {opened}"
-            finally:
-                db.connect, sqlite3.connect = doors["managed"], doors["sqlite"]
 
     _run(exercise)

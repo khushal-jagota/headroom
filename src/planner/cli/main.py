@@ -72,8 +72,6 @@ def caller_principal() -> dict[str, str]:
     actor = os.environ.get(_ACTOR_ENV, "").strip()
     ticket_id = os.environ.get(_TICKET_ID_ENV, "").strip()
     manager_id = os.environ.get(_MANAGER_ID_ENV, "").strip()
-    if actor == "goal" and os.environ.get("PLAN_GOAL_ID", "").strip():
-        return {"kind": "goal", "id": os.environ["PLAN_GOAL_ID"].strip()}
     if actor == "chief":
         return {"kind": "chief", "id": "chief"}
     if actor == "worker" and ticket_id:
@@ -444,7 +442,6 @@ environment_group.hidden = True
 @main.command("send-message")
 @click.option("--owner", is_flag=True, help="Send to Khushal.")
 @click.option("--chief", is_flag=True, help="Send to the Chief of Staff.")
-@click.option("--goal", "goal_id", default=None, help="Send to a goal agent.")
 @click.option("--ticket", "ticket_id", default=None, help="Send to a Ticket worker.")
 @click.option(
     "--manager",
@@ -471,7 +468,6 @@ def send_message(
     chief: bool,
     ticket_id: str | None,
     manager_id: str | None,
-    goal_id: str | None,
     mode: str,
     message: str | None,
     body_file: str | None,
@@ -485,13 +481,12 @@ def send_message(
             chief,
             ticket_id is not None,
             manager_id is not None,
-            goal_id is not None,
         )
         if selected
     )
     if targets != 1:
         http.fail_validation(
-            "send-message requires exactly one of --owner, --chief, --ticket, --manager, or --goal",
+            "send-message requires exactly one of --owner, --chief, --ticket, or --manager",
             as_json,
         )
     if (message is None) == (body_file is None):
@@ -508,8 +503,6 @@ def send_message(
         recipient = {"kind": "chief", "id": "chief"}
     elif ticket_id is not None:
         recipient = {"kind": "ticket", "id": ticket_id}
-    elif goal_id is not None:
-        recipient = {"kind": "goal", "id": goal_id}
     else:
         assert manager_id is not None
         recipient = {"kind": "manager", "id": manager_id}
