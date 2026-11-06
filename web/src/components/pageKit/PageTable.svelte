@@ -109,6 +109,9 @@
   }
 
   let numeric = $derived(block.columns.map((_, index) => numericColumn(index)));
+  /** A column where any cell carries a status keeps a dot slot in every cell, so its values
+   *  share one edge and one line whether or not they carry a dot. */
+  let toned = $derived(block.columns.map((_, index) => (block.cell_tones ?? []).some((row) => Boolean(row?.[index]))));
 
   let ordered = $derived.by(() => {
     const lines: Line[] = block.rows.map((cells, key) => ({ key, cells }));
@@ -422,7 +425,8 @@
                     data-numeric={numeric[index] ? "" : undefined}
                     data-tone={block.cell_tones?.[line.key]?.[index] ?? undefined}
                     data-missing={missing(cell) ? "" : undefined}
-                  ><div class="cell-copy">{#if block.cell_tones?.[line.key]?.[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}<PageText blockId={block.id} field={`rows.${line.key}.${index}`} value={cell} label={`${block.columns[index] ?? `Column ${index + 1}`}, row ${line.key + 1}`} update={(old, raw) => cellText(line.key, index, raw, old)} /></div></td>
+                    data-dot-slot={toned[index] ? "" : undefined}
+                  ><div class="cell-copy">{#if toned[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}<PageText blockId={block.id} field={`rows.${line.key}.${index}`} value={cell} label={`${block.columns[index] ?? `Column ${index + 1}`}, row ${line.key + 1}`} update={(old, raw) => cellText(line.key, index, raw, old)} /></div></td>
                 {/each}
               </tr>
             {/each}
@@ -523,10 +527,14 @@
   }
   td[data-primary] { color: var(--tone-primary); font-weight: var(--weight-body); }
   td[data-missing] { color: var(--tone-tertiary); }
-  /* A cell's status is its small dot alone; its value keeps the table's one text tone. */
+  /* A cell's status is its small dot alone; its value keeps the table's one text tone. In a
+     column with any status every cell keeps the dot's slot (empty where there is none), and
+     every numeric cell lays out the same way, so the values share one right edge and one line. */
   td[data-tone] { color: var(--tone-primary); }
-  td[data-tone] .cell-copy { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--type-body); }
-  .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--tone-tertiary); }
+  td[data-dot-slot] .cell-copy, td[data-numeric] .cell-copy { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  td[data-numeric] .cell-copy { justify-content: flex-end; }
+  .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: transparent; }
+  td[data-tone] .cell-status-dot { background: var(--tone-tertiary); }
   td[data-tone="good"] .cell-status-dot { background: var(--accent-done); }
   td[data-tone="attention"] .cell-status-dot { background: var(--accent-attention); }
   td[data-tone="bad"] .cell-status-dot { background: var(--accent-error); }

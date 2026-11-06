@@ -121,9 +121,9 @@
      furthest right: the decision group (secondary, then primary) ends the row; the ghost
      actions about the queue start it, their labels on the card's text edge. */
   .worker-proposal { padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
-  .proposal-line { display:flex; align-items:center; flex-wrap:wrap; min-height:20px; color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
+  .proposal-line { display:flex; align-items:center; flex-wrap:wrap; min-height:20px; color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
   h2 { margin:0; font:inherit; letter-spacing:0; color:inherit; }
-  .proposal-line-sep { padding-inline:6px; }
+  .proposal-line-sep { padding-inline:6px; color:var(--tone-tertiary); }
   .who { margin:0; font:inherit; letter-spacing:0; color:inherit; }
   /* The proposal's first paragraph leads at the section-head size, at 500 so the page title stays the one peak; the rest
      is body text, all in the primary tone and never wider than the prose measure. */

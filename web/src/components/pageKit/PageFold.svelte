@@ -6,7 +6,7 @@
    *  and scroll length never change; units fade in and out over 120ms as they cross the line,
    *  and a unit that takes focus is scrolled whole above it. The reading area is cut at the
    *  boundary where its lines stop (--page-fold-cut, from its bottom edge): a card going on
-   *  under the zone is drawn to that row boundary and its box fades out over 12px below it. */
+   *  under the zone is drawn to that row boundary and its box fades out over 32px below it. */
   import { onMount } from "svelte";
   import { foldCut, foldedUnits, pageUnits, PAGE_FOLD_HEADS } from "../../lib/pageKit/pageFold";
 

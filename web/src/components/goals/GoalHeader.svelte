@@ -125,7 +125,7 @@
  .error-actions{display:flex;gap:var(--space-3);margin-top:var(--space-2);margin-bottom:var(--space-3)}
  .error-actions button{border:0;background:none;padding:var(--space-1);color:var(--accent-bright);font:inherit;font-size:var(--type-small);cursor:pointer}
  .error-actions button:disabled{opacity:.65}
- .goal-heading{margin-bottom:var(--page-section-gap)}
+ .goal-heading{margin-bottom:var(--page-block-gap)}
  /* The one eyebrow pattern (app.css .page-eyebrow) on the page band's height. Each fact is
     its own quiet control; its 4px edit inset is taken back so the words start on the column. */
  .goal-context{min-height:var(--page-band-height);margin:0 calc(var(--space-1) * -1) 0}
