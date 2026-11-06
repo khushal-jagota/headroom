@@ -281,10 +281,13 @@
 
 /* Workspace selection tiers and travel. */
 :root {
-  /* The open row is one crisp fill and the pointer's is half of it (1:2), so hover never
-   * reads as selection. Nothing else in the rail is a grey fill. */
-  --wash-selected: rgb(255 255 255 / 14%);
-  --wash-hover: rgb(255 255 255 / 5%);
+  /* The open row is one quiet fill and the pointer's a third of it, so hover never reads as
+   * selection and the selection never outshines the page. Nothing else in the rail is a grey
+   * fill: the Manager you are inside is framed by a hairline, a line around a block rather
+   * than a fill on a row. */
+  --wash-selected: rgb(255 255 255 / 12%);
+  --wash-hover: rgb(255 255 255 / 4%);
+  --wash-context-edge: rgb(255 255 255 / 10%);
   /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
    * (a Manager's header, a goal, a Ticket, Settled) sits --rail-edge in from the column on
    * both sides; every text stands --rail-pad inside its fill, so all of it shares one left
@@ -298,12 +301,17 @@
    * The shell's Settled rows still read these two names. */
   --rail-row-inset: 0px;
   --rail-row-pad: var(--rail-pad);
-  --rail-indent: 12px;
+  /* Tickets and their headings stand on the Manager name's own text edge (owner decision):
+   * the header and the Ticket list are told apart by type and spacing, not by indent. */
+  --rail-indent: 0px;
   /* Every row: a 30px fill on a 32px pitch. A header with a project eyebrow is the same
    * fill grown by the eyebrow's line. */
   --rail-row-height: 30px;
   --rail-row-gap: 2px;
   --rail-head-pad: 4px;
+  /* A Manager's goals sit in its header, one compact line each under the name. */
+  --rail-goal-height: 24px;
+  --rail-goal-radius: 6px;
   /* The unread dot's column, kept on every row whether or not a dot is in it, so every
    * title ends at one edge. */
   --rail-mark-column: 16px;
@@ -316,7 +324,11 @@
   --rail-heading-above: 8px;
   --rail-heading-below: 2px;
   --rail-heading-line: 14px;
-  --rail-block-gap: 18px;
+  --rail-block-gap: 20px;
+  /* The frame around the Manager you are inside reaches this far past its block's fills, so
+   * its 12px corners are concentric with their 8px ones. */
+  --rail-context-outset: 4px;
+  --rail-context-radius: 12px;
   /* The list's edges: a short fade, only where rows continue past them, so a row's words
    * keep their true tone up to the edge; and clear air under the last block when the list
    * is scrolled to its end. */
@@ -328,18 +340,17 @@
   --rail-scrollbar-width: 4px;
   /* Room the list keeps above its first fill for the focus ring (2px clear, 1.5px wide). */
   --rail-ring-room: 4px;
-  /* Rail text: the Manager's name leads, a row (goal or Ticket) reads, a label whispers. A
-   * row at rest is 66% white on the page (#b0b0b0): clearly apart from the 45% labels above it
-   * and still clearly below the 92% of a row that needs the person. */
-  --rail-tone-rest: #b0b0b0;
-  /* A Manager's name at rest: 70% white, a step above a row at rest, so a dim semibold name
-   * reads as quiet type rather than washed out. */
-  --rail-tone-title: #bababa;
+  /* Rail text, as white over the page: a row that needs the person 92%, a row at rest 56%
+   * (#999999), a label 40% (#747474). The step from rest to bright is the needs-you signal, so
+   * it is wide; rest and label stay clearly apart. */
+  --rail-tone-rest: #999999;
+  /* A Manager's name at rest: 66%, a step above a row at rest. */
+  --rail-tone-title: #b0b0b0;
   /* A title too long for its row fades out over this width at the row's text edge. */
-  --rail-title-fade: 24px;
+  --rail-title-fade: 16px;
   /* A Manager's name: clearly above a row, but quieter than anything that needs you. */
   --type-rail-title: 15px;
-  --rail-tone-label: var(--tone-tertiary);
+  --rail-tone-label: #747474;
   /* The rail's floating surfaces (hover previews and the icon bar's tooltips): the raised
    * plane's #2a2a2a, with a lighter ring and shadow than a menu's, so a preview supports the
    * row it describes rather than sitting over the page. */

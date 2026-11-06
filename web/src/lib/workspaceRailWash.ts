@@ -1,5 +1,5 @@
 /** Rail decoration only. Selection and interaction remain owned by the existing controls. */
-type Box = { left: number; top: number; width: number; height: number };
+type Box = { left: number; top: number; width: number; height: number; radius?: string };
 type Layer = { node: HTMLDivElement; box: string; animation: Animation | null; fade: Animation | null; arrival: number };
 type Host = { node: HTMLElement; group: Layer; item: Layer; hover: Layer; focus: Layer };
 type Target = { node: HTMLElement; host: Host; group: HTMLElement | null; itemBox: Box; groupBox: Box | null };
@@ -49,18 +49,21 @@ export function workspaceRailWash(root: HTMLElement) {
     if (!host || !root.contains(node) || !node.getClientRects().length) return null;
     const base = host.node.getBoundingClientRect();
     const local = (rect: DOMRect): Box => ({left:rect.left-base.left+host.node.scrollLeft,top:rect.top-base.top+host.node.scrollTop,width:rect.width,height:rect.height});
-    // The block still groups an item with its Manager, so a selection moving inside one block
-    // travels; the Manager you are inside is marked by its header, not by a fill around it.
     const group = node.closest<HTMLElement>('.manager-card');
-    const groupBox = null;
-    // Every fill is its row's own box. A Manager's header is its project eyebrow and its name
-    // together: selected, hovered and focused as one block.
+    // The Manager you are inside is framed by a hairline around its whole block, reaching the
+    // outset past the block's fills so its corners stay concentric with theirs.
+    const outset = parseFloat(css('--rail-context-outset')) || 0;
+    const block = group ? local(group.getBoundingClientRect()) : null;
+    const groupBox = block ? {left:block.left-outset,top:block.top-outset,width:block.width+2*outset,height:block.height+2*outset} : null;
+    // Every fill is its row's own box with the row's own radius. A Manager's header is its
+    // project eyebrow and its name together: selected, hovered and focused as one block.
     const fill = node.matches('.item-head') ? node.closest<HTMLElement>('.identity') ?? node : node.closest<HTMLElement>('.settled-row') ?? node;
-    const itemBox = local(fill.getBoundingClientRect());
+    const itemBox: Box = {...local(fill.getBoundingClientRect()), radius:getComputedStyle(fill).borderRadius};
     return {node,host,group,itemBox,groupBox};
   }
   const style = (box: Box) => Object.fromEntries(properties.map(key=>[key,`${box[key]}px`]));
   function draw(part: Layer, box: Box, travel = false) {
+    part.node.style.borderRadius = box.radius ?? '';
     const next = style(box);
     const key = JSON.stringify(next);
     if (travel) part.arrival = performance.now()+ms('--motion-wash');

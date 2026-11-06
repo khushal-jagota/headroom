@@ -41,9 +41,6 @@
     }
   });
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
-  // A heading counts the rows under it. While the rail holds only part of this Manager's
-  // Tickets, that number would not be the group's, so the headings show none.
-  let countsComplete = $derived(!navigationWindow || (!navigationWindow.previous && !navigationWindow.next));
 </script>
 <div class="manager-card-slot">
 <section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
@@ -58,10 +55,10 @@
   </div>
   {#if beforeGroups}{@render beforeGroups()}{/if}
   {#each groups as group (group.key)}
-    <!-- Every group is named over its rows in one quiet heading, with how many rows it heads.
+    <!-- Every group is named over its rows in one quiet heading (no count in the rail).
          A heading never outranks its rows: the rows that need the person are the bright ones. -->
     <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key} data-tone={["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key) ? "attention" : "quiet"}>
-      <div class="bucket-label" data-rail-motion={`heading:${id}:${group.key}`} data-count={countsComplete ? group.cards.length : undefined}>{group.label}</div>
+      <div class="bucket-label" data-rail-motion={`heading:${id}:${group.key}`}>{group.label}</div>
       {#each group.cards as ticket (ticket.id)}
         <WorkerRow machine={false} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} data-rail-motion={`row:${ticket.id}`} onclick={() => { if (input(ticket).click()) onTicket(ticket.id); }} onpointerenter={(event: PointerEvent) => {event.stopPropagation(); input(ticket).pointerEnter(event);}} onpointerleave={(event: PointerEvent) => input(ticket).leave(event)} onpointerdown={(event: PointerEvent) => input(ticket).down(event)} onpointermove={(event: PointerEvent) => input(ticket).move(event)} onpointerup={() => input(ticket).end()} onpointercancel={() => input(ticket).cancel()} onfocus={(event: FocusEvent) => input(ticket).focus(event)} onblur={(event: FocusEvent) => input(ticket).leave(event)} />
       {/each}
@@ -79,7 +76,8 @@
      --rail-edge on each side; every text stands --rail-pad inside its fill. */
   .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:0; border:0; isolation:isolate; z-index:1; }
   .identity { box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; min-height:var(--rail-row-height); padding:var(--rail-head-pad) var(--rail-pad); border-radius:var(--radius-md); cursor:pointer; }
-  .item-head { display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:center; width:100%; min-height:22px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .item-head { display:grid; grid-template-columns:minmax(0,1fr); align-items:center; width:100%; min-height:22px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .item-head:has(> :global(.conversation-signal-marks)) { grid-template-columns:minmax(0,1fr) var(--rail-mark-column); }
   .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; }
   /* A name is dimmed unless it needs the person (an unread message for them); the pointer or
      the open page on it brings it to full brightness. It keeps one line and ends in an

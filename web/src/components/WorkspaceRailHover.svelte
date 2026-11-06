@@ -99,9 +99,10 @@
         return;
       }
       // A row in a page list spans the whole column, so a panel level with it would cover
-      // the row it describes. It opens under the row, at the row's right end but short of the
-      // column kept for the rows' unread dots, so the row stays whole and the titles and dots
-      // of the rows below stay visible; above the row when the composer leaves no room under it.
+      // the row it describes. The panel always shows all of itself, its recap included: under
+      // the row when it fits above the composer, else beside the row, centred on it. Either
+      // way it stands in the right part of the column, short of the rows' unread dots, and
+      // clear of every row's and heading's words, so it covers only empty row ends.
       const title = currentTarget.querySelector(".ticket-row-title");
       let titleEnd = rect.left;
       if (title) { const words = document.createRange(); words.selectNodeContents(title); titleEnd = Math.min(rect.right, words.getBoundingClientRect().right); }
@@ -112,14 +113,19 @@
       const markColumn = Number.parseFloat(styles.getPropertyValue("--rail-mark-column")) || 16;
       const endPad = Number.parseFloat(styles.paddingRight) || 0;
       const rightmost = row.getBoundingClientRect().right - endPad - markColumn - 24 - width;
-      left = Math.max(12, Math.min(Math.max(rightmost, titleEnd + 12), window.innerWidth - width - 12));
       const below = rect.bottom + 6;
-      const above = rect.top - 6 - height;
-      top = below + height <= floor ? below : above >= 12 ? above : Math.max(12, floor - height);
-      // Past the end of its row's title, the pointer can cross to it and press the ask inside
-      // while the titles below stay free to point at. Clamped back over the titles, it lies on
-      // the rows the pointer travels to, so it stays a preview.
-      clearOfRail = left >= titleEnd;
+      top = below + height <= floor ? below : Math.max(12, Math.min(rect.top + rect.height / 2 - height / 2, floor - height));
+      // Every row's and heading's words the panel's band would cross stay to its left.
+      const list = currentTarget.closest("[data-manager-children], .manager-children") ?? currentTarget.parentElement;
+      let wordsEnd = titleEnd;
+      for (const words of list?.querySelectorAll<HTMLElement>(".ticket-row-title, summary") ?? []) {
+        const range = document.createRange(); range.selectNodeContents(words);
+        for (const line of range.getClientRects()) if (line.bottom > top && line.top < top + height) wordsEnd = Math.max(wordsEnd, line.right);
+      }
+      left = Math.max(12, Math.min(Math.max(rightmost, wordsEnd + 12), window.innerWidth - width - 12));
+      // Past every word it crosses, the pointer can reach it and press the ask inside while
+      // the titles stay free to point at. Clamped back over words, it stays a preview.
+      clearOfRail = left >= wordsEnd;
     };
     // Manifest arrival can change the height after the panel is already visible.
     const observer = new ResizeObserver(place);
@@ -182,16 +188,16 @@
   .kicker-place { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   .kicker-machine { flex:none; display:inline-flex; align-items:center; }
   .kicker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
-  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-body); font-weight:var(--weight-title); line-height:20px; color:var(--tone-strong); overflow-wrap:anywhere; }
+  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-row); font-weight:var(--weight-needs-you); line-height:20px; color:var(--tone-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
   /* The recap is the body the preview is opened for: the page's body voice, given its own
      space, and the only paragraph in the panel. */
-  .recap { margin-top:6px; font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
+  .recap { margin-top:6px; font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-secondary); }
   .recap-text { overflow:hidden; overflow-wrap:break-word; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
   .recap :global(.recap-ask) { display:flex; margin-top:10px; font-size:var(--type-small); }
-  .recap :global(.recap-ask .request-recap-action) { height:auto; padding:0; border-radius:var(--radius-sm); background:none; box-shadow:none; color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
+  .recap :global(.recap-ask .request-recap-action) { height:auto; padding:0; border-radius:var(--radius-sm); background:none; box-shadow:none; color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
   .recap :global(.recap-ask .request-recap-action:hover) { background:none; color:var(--tone-strong); }
   .doing { margin-top:2px; font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }

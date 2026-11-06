@@ -260,3 +260,35 @@ export function railTitleFade(root: HTMLElement) {
   void document.fonts?.ready.then(schedule);
   return { destroy() { resize.disconnect(); mutation.disconnect(); if (frame) cancelAnimationFrame(frame); } };
 }
+
+/** The rail's list shows whole rows only, as a page does above its composer: a row (a header,
+ * a goal, a Ticket) that would cross the list's top or bottom edge waits until it fits, and a
+ * group heading waits with its first row, so the list never ends on a heading without its
+ * rows. Waiting rows keep their place; the stylesheet hides them (data-rail-waiting). */
+const RAIL_UNITS = ".identity, .goal, .worker-row, .bucket-label";
+export function railWholeRows(list: HTMLElement) {
+  let frame = 0;
+  const run = () => {
+    frame = 0;
+    const box = list.getBoundingClientRect();
+    const top = box.top + list.clientTop - 0.5, bottom = box.top + list.clientTop + list.clientHeight + 0.5;
+    const whole = (node: Element) => { const rect = node.getBoundingClientRect(); return rect.height > 0 && rect.top >= top && rect.bottom <= bottom; };
+    for (const unit of list.querySelectorAll<HTMLElement>(RAIL_UNITS)) {
+      let shown = whole(unit);
+      if (shown && unit.matches(".bucket-label")) {
+        const first = unit.nextElementSibling;
+        shown = !first || whole(first);
+      }
+      unit.toggleAttribute("data-rail-waiting", !shown);
+    }
+  };
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(run); };
+  const resize = new ResizeObserver(schedule);
+  resize.observe(list);
+  const mutation = new MutationObserver(schedule);
+  mutation.observe(list, { subtree: true, childList: true });
+  list.addEventListener("scroll", schedule, { passive: true });
+  window.addEventListener("resize", schedule);
+  schedule();
+  return { destroy() { resize.disconnect(); mutation.disconnect(); list.removeEventListener("scroll", schedule); window.removeEventListener("resize", schedule); if (frame) cancelAnimationFrame(frame); } };
+}
