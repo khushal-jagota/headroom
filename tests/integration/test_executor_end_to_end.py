@@ -241,19 +241,14 @@ def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_re
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("request_ending", ["cancelled", "dispatch_failed"])
-def test_update_stop_settles_live_vps_before_cancel_or_dispatch_failure_resumes_work(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request_ending: str,
+def test_update_stop_settles_live_vps_before_a_failed_attempt_resumes_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Gap: stop evidence must settle the live core even without a VPS restart."""
     from dataclasses import replace
 
-    from tests.unit.test_mac_updates import MacProvider
+    from tests.unit.test_mac_updates import MacProvider, attempt, mac_service, write
 
-    from planner.environments.mac_updates import MacUpdateService
-    from planner.environments.update_contracts import OwnerUpdateRequest
-    from planner.environments.update_requests import FileUpdateRequestStore
-    from planner.environments.update_service import UpdateService
     from planner.executor.protocol import CliWrite, CommandOutcome, as_object
 
     async def run() -> None:
@@ -262,19 +257,11 @@ def test_update_stop_settles_live_vps_before_cancel_or_dispatch_failure_resumes_
         try:
             system = harness.system
             provider = MacProvider()
-            store = FileUpdateRequestStore(tmp_path / "owner-update.json")
-            mac_updates = MacUpdateService(
-                tmp_path / "mac-updates", store, provider, harness.mac.identity.application_revision
+            published = provider.publish()
+            mac_updates = mac_service(
+                tmp_path / "server", provider, harness.mac.identity.application_revision
             )
-            updates = UpdateService(
-                provider, store, lambda: system,
-                connection_factory=lambda: connect(harness.endpoint.db_path),
-                current_app_sha=harness.mac.identity.application_revision,
-                prepare_mac_update=mac_updates.prepare,
-                mac_ready_for_dispatch=lambda request: mac_updates.ready_for_dispatch(
-                    request, harness.endpoint.health()
-                ),
-            )
+            mac_updates.prepare(published)
             harness.transport_app.state.mac_updates = mac_updates
             child = next(iter(harness.mac.runner._children.values()))
             old_turn = harness.native.turn
@@ -289,14 +276,15 @@ def test_update_stop_settles_live_vps_before_cancel_or_dispatch_failure_resumes_
                         as_object(CliWrite(
                             "ticket.edit", {
                                 "ticket_id": child.ticket_id,
-                                "body": {"recap": "Saved before the canceled update"},
+                                "body": {"recap": "Saved before the failed update"},
                             }, child.reference, old_turn,
                         )),
                     ),
                     ticket_id=child.ticket_id,
                 )
                 assert saved.file_dependencies
-                request = updates.request(provider.offered, "now", confirm_activity=True)
+                preparing = attempt(published, "preparing")
+                write(mac_updates, preparing)
                 await eventually(
                     lambda: (status := mac_updates.status()) is not None
                     and status.phase == "ready_to_restart",
@@ -310,17 +298,11 @@ def test_update_stop_settles_live_vps_before_cancel_or_dispatch_failure_resumes_
                 assert stopped.sequence > saved.sequence
                 assert system._conversations["c_scripted"].running_turn is not None
                 assert harness.endpoint.runs.store.child_assignment(child.reference) is not None
-                if request_ending == "cancelled":
-                    updates.cancel(request.request_id)
-                else:
-                    def fail_dispatch(request: OwnerUpdateRequest) -> None:
-                        del request
-                        raise RuntimeError("fixture dispatch failure")
-
-                    monkeypatch.setattr(provider, "dispatch", fail_dispatch)
-                    assert not updates.dispatch_pending()
-                    recorded = store.read()
-                    assert recorded is not None and recorded.state == "failed"
+                # The VPS part fails before installation, so the old release stays.
+                mac_updates.attempts.change(
+                    preparing.attempt_id, frozenset({"preparing"}),
+                    lambda value: replace(value, state="failed", detail="fixture failure"),
+                )
             await eventually(
                 lambda: not harness.mac.outbox.pending(), "The saved FIFO did not drain",
             )
@@ -331,7 +313,7 @@ def test_update_stop_settles_live_vps_before_cancel_or_dispatch_failure_resumes_
             )
             await eventually(
                 lambda: not harness.mac.runner.admission_stopped,
-                "A canceled or failed request did not release Mac admission",
+                "A failed attempt did not release Mac admission",
             )
             assert harness.system is system
             state = system._conversations["c_scripted"]
@@ -349,11 +331,11 @@ def test_update_stop_settles_live_vps_before_cancel_or_dispatch_failure_resumes_
             with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
                 assert connection.execute(
                     "SELECT recap FROM tickets WHERE id=?", (child.ticket_id,),
-                ).fetchone()[0] == "Saved before the canceled update"
+                ).fetchone()[0] == "Saved before the failed update"
             uploaded = harness.endpoint.inbox.store.file_target(saved.file_dependencies[0])
             assert uploaded.read_bytes() == artifact.read_bytes()
             delivery = await asyncio.wait_for(system.send(
-                "c_scripted", text_message_content("Continue after the canceled update"),
+                "c_scripted", text_message_content("Continue after the failed update"),
                 sender_label="Test", sender=CHIEF_PRINCIPAL,
                 recipient=Principal(PrincipalKind.ticket, child.ticket_id),
             ), 3)

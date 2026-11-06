@@ -59,7 +59,6 @@
   import type { RunValues } from "../../lib/conversation/composer";
   import { catalogTokenAtMessageStart } from "../../lib/conversation/composerCatalog";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
-  import { COMPOSITION_STATE_EVENT } from "../../lib/releaseMonitor";
   import {
     createVoiceCapture,
     formatVoiceTime,
@@ -408,32 +407,6 @@
     const selection = runSelection;
     if (onPreviewRunSelection) untrack(() => onPreviewRunSelection?.(selection));
   });
-  /** A retained page must not reload while this composer owns work or a user decision. */
-  let compositionActive = $derived(
-    text !== ""
-    || pendingImages.length > 0
-    || pendingFiles.length > 0
-    || pendingVideos.length > 0
-    || localSends.length > 0
-    || voiceState.phase !== "idle"
-    || takenOver
-    || draggingAttachments
-    || attachmentIntakesInFlight > 0
-    || runSelection.pickedBackend !== null
-    || runSelection.pickedModel !== null
-    || runSelection.pickedReasoningEffort !== null
-    || runSelection.effortIsSet === true
-    || deliveryMode !== "steer"
-  );
-
-  function publishCompositionState(active: boolean): void {
-    document.dispatchEvent(new CustomEvent(COMPOSITION_STATE_EVENT, { detail: { active } }));
-  }
-
-  $effect(() => {
-    publishCompositionState(compositionActive);
-  });
-
   // --- the catalog token being written ----------------------------------------------------
   let catalogTokenUnderway = $derived(catalogTokenAtMessageStart(text, cursorAt));
   let typedCatalogText = $derived(catalogTokenUnderway?.typedSoFar ?? null);
@@ -1080,7 +1053,6 @@
       destroyed = true;
       transfers.dispose();
       sendQueue.dispose();
-      publishCompositionState(false);
       releasePendingImages(pendingImages);
       voice?.dispose();
       voice = null;
@@ -1100,7 +1072,6 @@
 <section
   class="c2-composer"
   data-conversation-composer
-  data-conversation-composition-active={compositionActive ? "true" : undefined}
 >
   <div class="chat-box-stack">
     {#each localSends as entry (entry.context.messageId)}

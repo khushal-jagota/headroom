@@ -32,7 +32,7 @@ Live and staging launches rebuild the process environment from a fixed allowlist
 
 ## Host automation
 
-The user units in `ops/panels-environments/` cover the live service, the deployment runner, and two daily timers:
+The user units in `ops/panels-environments/` cover the live service, the deployment runner (kept for one release, only for the [update bridge](deployment.md#the-one-release-bridge)), and two daily timers:
 
 - **Backup.** Takes a verified snapshot of live data with the installed app. See [Backups](backups.md).
 - **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized logs, removes expired backup temporaries, prunes old verified backups, and removes [Ticket scratch](#ticket-scratch) that the server pass left. It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
@@ -47,7 +47,7 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 
 ## Status
 
-`panels environment status` reads the local filesystem and process list without calling the server. The browser's smaller summary carries the installed commit, the last deployment outcome, CPU, memory, disk, and the age of the latest verified backup. A missing value is reported as unavailable. The graphs are a separate system, [VPS](vps.md).
+`panels environment status` reads the local filesystem and process list without calling the server. The graphs are a separate system, [VPS](vps.md).
 
 ## Decisions that shape it
 

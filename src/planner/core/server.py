@@ -10,6 +10,7 @@ import re
 import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic as _monotonic
 from typing import Any, cast
@@ -61,30 +62,25 @@ from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
 from planner.datasets.api import router as datasets_router
 from planner.environments import ticket_scratch
-from planner.environments.deployment_attention import DeploymentAttentionObserver
-from planner.environments.deployment_configuration import DEPLOYMENT_ATTENTION_POLL_SECONDS
-from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+from planner.environments.hermes_home import provision_planner_home_skills, resolve_planner_home
+from planner.environments.logic.update_experience import deployment_status
 from planner.environments.mac_updates import MacUpdateService
-from planner.environments.update_admission import (
-    UncommittedAppStore,
-    matching_commit,
-    startup_requires_commit,
-)
 from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
 from planner.environments.update_api import router as updates_router
+from planner.environments.update_attempts import (
+    FileUpdateAttemptStore,
+    attempt_path,
+    import_legacy_request,
+)
+from planner.environments.update_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
+from planner.environments.update_install import own_service_unit
 from planner.environments.update_provider import GitHubUpdateProvider
-from planner.environments.update_requests import FileUpdateRequestStore
 from planner.environments.update_service import UpdateService
 from planner.environments.vps_metrics.api import router as vps_metrics_router
 from planner.environments.vps_metrics.config import load_config as load_metrics_config
 from planner.environments.vps_metrics.config import store_path
 from planner.environments.vps_metrics.runtime import MetricsRuntime
-from planner.environments.vps_status import (
-    VpsStatusSnapshot,
-    VpsStatusSummary,
-    collect_vps_status,
-    collect_vps_status_summary,
-)
+from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
@@ -109,7 +105,7 @@ from planner.projects.api import router as projects_router
 from planner.resource_versions.api import router as resource_versions_router
 from planner.runtime.workspaces import register_workspace_root
 from planner.server_lifecycle.runtime import application_runtime
-from planner.skill_sources import provision_workspace_skills
+from planner.skill_sources import provision_native_backend_skills, provision_workspace_skills
 from planner.tickets.api import router as tickets_router
 from planner.tickets.workspace.api import router as ticket_workspace_router
 from planner.worker_settings.api import router as worker_settings_router
@@ -191,9 +187,6 @@ def create_app(
     backend_child_factories_for_test: Mapping[ConversationBackendKey, BackendChildFactory]
     | None = None,
     vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
-    vps_status_summary_collector: (
-        Callable[[Config, str | None, str | None], VpsStatusSummary] | None
-    ) = None,
 ) -> FastAPI:
     if slot_participants_for_test is not None and not config.test_mode:
         raise ValueError("slot_participants_for_test is accepted only in test mode")
@@ -208,15 +201,12 @@ def create_app(
         from planner.tickets import data as tickets_data
 
         recovery_task: asyncio.Task[None] | None = None
-        lifecycle_observer: asyncio.Task[None] | None = None
-        attention_observer: asyncio.Task[None] | None = None
+        attempt_observer: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
         ticket_scratch_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
         executor_endpoint = None
-
-        release_task: asyncio.Task[None] | None = None
 
         async def shutdown_dependents() -> None:
             app.state.conversation = None
@@ -237,10 +227,6 @@ def create_app(
                     pass
 
             await attempt(preview_runtime.close())
-            if attention_observer is not None:
-                await attempt(cancel_task(attention_observer))
-            if release_task is not None and not release_task.done():
-                await attempt(cancel_task(release_task))
             if video_cleanup_task is not None:
                 await attempt(cancel_task(video_cleanup_task))
             if ticket_scratch_task is not None:
@@ -256,8 +242,8 @@ def create_app(
                 await attempt(_stop_runtime_with_deadline(loops, deadline))
             if executor_endpoint is not None:
                 await attempt(executor_endpoint.close())
-            if lifecycle_observer is not None:
-                await attempt(cancel_task(lifecycle_observer))
+            if attempt_observer is not None:
+                await attempt(cancel_task(attempt_observer))
             if failures:
                 for later in failures[1:]:
                     failures[0].add_note(f"dependent shutdown also failed: {later!r}")
@@ -330,49 +316,21 @@ def create_app(
                     else conversation_system_for_test
                 )
 
-                attention = DeploymentAttentionObserver(
-                    lifecycle_store=deployment_lifecycle_store,
-                    attention_directory=deployment_lifecycle_path.parent / "deployment-attention",
-                    app_sha=config.app_sha,
-                    clock=clock,
-                    connect_database=conn_factory,
-                    conversation_system=lambda: app.state.conversation_system,
-                    startup_pending=lambda: app.state.update_startup_pending,
-                    admission_closed=lambda: app.state.update_admission_closed,
-                )
-
-                async def observe_deployment_attention() -> None:
-                    while True:
-                        try:
-                            await asyncio.to_thread(app.state.updates.reconcile)
-                            observed = await attention.poll()
-                            if observed != app.state.deployment_attention:
-                                app.state.deployment_attention = observed
-                                change_signal.emit()
-                        except Exception:
-                            logging.getLogger(__name__).exception(
-                                "Deployment attention could not be recorded or delivered"
-                            )
-                        await asyncio.sleep(DEPLOYMENT_ATTENTION_POLL_SECONDS)
-
-                attention_observer = asyncio.create_task(observe_deployment_attention())
-
                 async def release_normal_work() -> None:
                     nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
                     nonlocal loops, metrics
-                    # A matching runner commit is irreversible even if later setup fails.
-                    if config.app_sha is not None and matching_commit(
-                        deployment_lifecycle_store, config.app_sha
-                    ):
-                        uncommitted_apps.commit(config.app_sha)
-                    app.state.update_startup_pending = False
-                    app.state.update_admission_closed = False
-                    change_signal.emit()
                     conversation.live_tail.views.cleanup_stale_epochs()
+                    database_parent = Path(config.db_path).resolve().parent
                     if config.workspace_root is not None:
-                        provision_workspace_skills(
-                            config.workspace_root, Path(config.db_path).resolve().parent
+                        provision_workspace_skills(config.workspace_root, database_parent)
+                    if installed_app:
+                        # An installed release links its skills into the agent homes itself,
+                        # so an update needs no separate provisioning step.
+                        provision_planner_home_skills(
+                            resolve_planner_home(), configured_database_parent=database_parent
                         )
+                        provision_native_backend_skills(Path.home() / ".codex", database_parent)
+                        provision_native_backend_skills(Path.home() / ".claude", database_parent)
                     from planner.conversation.deploy_interruptions.coordinator import (
                         run_automatic_recovery,
                     )
@@ -420,7 +378,7 @@ def create_app(
                             clock,
                             conversation_system=app.state.conversation_system,
                             asyncio_loop=asyncio.get_running_loop(),
-                            before_readiness_poll=lambda: app.state.updates.dispatch_pending(),
+                            before_readiness_poll=app.state.updates.poll,
                         )
 
                     elif slot_participants_for_test is not None:
@@ -451,42 +409,14 @@ def create_app(
                     await conversation.system.start_idle_child_janitor()
                     if loops is not None:
                         loops.start(config.tick_seconds)
-                    app.state.update_startup_pending = False
+                    app.state.updates.start(asyncio.get_running_loop())
                     change_signal.emit()
 
-                def lifecycle_changed() -> None:
-                    nonlocal release_task
-                    change_signal.emit()
-                    if (
-                        app.state.update_startup_pending
-                        and release_task is None
-                        and matching_commit(deployment_lifecycle_store, config.app_sha)
-                    ):
-                        release_task = asyncio.create_task(release_normal_work())
-
-                        def report_setup_result(task: asyncio.Task[None]) -> None:
-                            if not task.cancelled() and task.exception() is not None:
-                                app.state.update_startup_detail = (
-                                    "The app is installed, but setup did not complete. "
-                                    "Chief review is required."
-                                )
-
-                                logging.getLogger(__name__).error(
-                                    "Deferred setup failed after app %s committed",
-                                    config.app_sha,
-                                    exc_info=task.exception(),
-                                )
-                                change_signal.emit()
-
-                        release_task.add_done_callback(report_setup_result)
-
-                if not app.state.update_startup_pending:
-                    await release_normal_work()
-                lifecycle_observer = asyncio.create_task(
-                    observe_path_changes(deployment_lifecycle_path, lifecycle_changed)
+                await release_normal_work()
+                # The installer writes the attempt record from outside this process.
+                attempt_observer = asyncio.create_task(
+                    observe_path_changes(update_attempts.path, change_signal.emit)
                 )
-                # Close the read/observer-install race without a second watcher.
-                lifecycle_changed()
                 await preview_runtime.start()
                 yield
 
@@ -550,66 +480,46 @@ def create_app(
     configured_vps_status_collector = vps_status_collector or (
         lambda status_config: collect_vps_status(status_config, application_root=_REPO_ROOT)
     )
-    configured_vps_status_summary_collector = vps_status_summary_collector or (
-        lambda status_config, outcome, detail: collect_vps_status_summary(
-            status_config,
-            deployment_outcome=outcome,
-            deployment_detail=detail,
-        )
-    )
-    deployment_lifecycle_path = (
-        Path(config.db_path).expanduser().resolve(strict=False).parent / "deployment-lifecycle.json"
-    )
-    deployment_lifecycle_store = DeploymentLifecycleStore(deployment_lifecycle_path)
-    app.state.deployment_lifecycle_store = deployment_lifecycle_store
-    update_request_store = FileUpdateRequestStore(
-        deployment_lifecycle_path.with_name("owner-update-request.json")
-    )
-    recorded_update = update_request_store.read()
-    applying_candidate = bool(
-        recorded_update is not None
-        and recorded_update.release.manifest.app_sha == config.app_sha
-    )
-    uncommitted_apps = UncommittedAppStore(
-        deployment_lifecycle_path.with_name("update-admission.json")
-    )
-    app.state.update_startup_pending = startup_requires_commit(
-        deployment_lifecycle_store, config.app_sha
-    ) or (
-        (applying_candidate or uncommitted_apps.contains(config.app_sha))
-        and not matching_commit(deployment_lifecycle_store, config.app_sha)
-    )
-    if app.state.update_startup_pending and config.app_sha is not None:
-        uncommitted_apps.retain(config.app_sha)
-    app.state.update_admission_closed = False
-    app.state.update_startup_detail = None
-    app.state.deployment_attention = None
-    update_provider = GitHubUpdateProvider.configured()
+    data_directory = Path(config.db_path).expanduser().resolve(strict=False).parent
+    current_root = data_directory.parent
+    # Only an installed release under <current_root>/app installs its own updates.
+    installed_app = bool(config.app_sha) and _REPO_ROOT == current_root / "app"
+    # The installer restarts the unit this server runs in, and nothing else.
+    service_unit = own_service_unit() if installed_app else None
+    update_attempts = FileUpdateAttemptStore(attempt_path(data_directory))
+    import_legacy_request(update_attempts, data_directory, config.app_sha)
+    update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
     app.state.mac_updates = MacUpdateService(
-        deployment_lifecycle_path.parent / "mac-updates",
-        update_request_store,
+        data_directory / "mac-updates",
+        update_attempts,
         update_provider,
         config.app_sha,
+        ready_release=lambda: app.state.updates.ready_release(),
     )
-
-    def mac_health_for_update() -> Mapping[str, object]:
-        endpoint = getattr(app.state, "executor_endpoint", None)
-        return {} if endpoint is None else cast(Mapping[str, object], endpoint.health())
-
     app.state.updates = UpdateService(
         update_provider,
-        update_request_store,
+        update_attempts,
         lambda: app.state.conversation_system,
         connection_factory=conn_factory,
+        current_root=current_root,
+        database=Path(config.db_path).expanduser().resolve(strict=False),
+        backup_directory=Path(config.backup_dir).expanduser(),
         current_app_sha=config.app_sha,
-        availability_path=deployment_lifecycle_path.with_name("owner-update-availability.json"),
+        health_url=f"http://{HOST}:{config.port}/api/health",
+        service_unit=service_unit or "",
         prepare_mac_update=app.state.mac_updates.prepare,
-        mac_ready_for_dispatch=lambda request: app.state.mac_updates.ready_for_dispatch(
-            request, mac_health_for_update()
-        ),
-        lifecycle_store=deployment_lifecycle_store,
-        recovery_admission=lambda: app.state.update_startup_pending,
+        mac_phase=app.state.mac_updates.phase,
+        mac_reported_at=app.state.mac_updates.reported_at,
+        mac_configured=lambda: getattr(app.state, "executor_endpoint", None) is not None,
     )
+
+    def current_deployment_status() -> dict[str, object]:
+        return deployment_status(
+            update_attempts.read(), config.app_sha,
+            success_seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS, now=datetime.now(UTC),
+        )
+
+    app.state.deployment_status = current_deployment_status
 
     app.add_middleware(IOSBuildGateMiddleware)
     app.add_middleware(UpdateAdmissionMiddleware, config=config)
@@ -706,56 +616,9 @@ def create_app(
         snapshot = await asyncio.to_thread(configured_vps_status_collector, config)
         return snapshot.as_dict()
 
-    def deployment_admission_open() -> bool:
-        system = app.state.conversation_system
-        return bool(
-            not app.state.update_startup_pending
-            and not app.state.update_admission_closed
-            and app.state.update_startup_detail is None
-            and system is not None
-            and not system.workspace_admission.closed
-        )
-
     @app.get("/api/deployment-status")
-    async def deployment_status() -> dict[str, object]:
-        projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project,
-            config.app_sha,
-            admission_open=deployment_admission_open(),
-        )
-        payload = projection.to_public_dict()
-        # Admission can close while the record read runs in the worker thread.
-        if not deployment_admission_open():
-            payload["installation_confirmed"] = False
-            payload["unknown_display_until"] = None
-            payload["work_paused"] = True
-            if projection.state == "unknown":
-                payload["detail"] = (
-                    "Installation is unconfirmed. Work remains paused. Chief review is required."
-                )
-        if app.state.update_startup_detail is not None:
-            payload["detail"] = app.state.update_startup_detail
-            payload["state"] = "problem"
-            payload["installation_confirmed"] = False
-            payload["unknown_display_until"] = None
-        attention = app.state.deployment_attention
-        payload["attention_status"] = attention.status if attention is not None else None
-        return payload
-
-    @app.get("/api/vps-status-summary")
-    async def vps_status_summary() -> dict[str, object]:
-        projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project,
-            config.app_sha,
-            admission_open=deployment_admission_open(),
-        )
-        summary = await asyncio.to_thread(
-            configured_vps_status_summary_collector,
-            config,
-            projection.outcome,
-            projection.detail,
-        )
-        return summary.as_dict()
+    async def deployment_status_route() -> dict[str, object]:
+        return await asyncio.to_thread(current_deployment_status)
 
     @app.get("/api/worker-types")
     async def worker_types(supported: bool = False) -> dict[str, Any]:

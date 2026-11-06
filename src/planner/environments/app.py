@@ -59,7 +59,9 @@ def validate_app_manifest(
     *,
     expected_sha: str | None = None,
     require_runtime: bool = False,
+    verify_artifact_digest: bool = True,
 ) -> AppManifest:
+    """Validate one app's manifest; skip the whole-tree digest only when a checksum covers it."""
     manifest_input = path.expanduser()
     if manifest_input.is_symlink():
         raise AppValidationError(f"app manifest must be a regular file: {manifest_input}")
@@ -89,7 +91,9 @@ def validate_app_manifest(
         HEX_DIGEST_PATTERN, artifact_digest
     ) is None:
         raise AppValidationError("app manifest has an invalid artifact digest")
-    artifact_matches = artifact_digest == digest_app_artifact(app_root)
+    artifact_matches = not verify_artifact_digest or artifact_digest == digest_app_artifact(
+        app_root
+    )
     if not artifact_matches:
         # Legacy v1 manifests included build-time caches. Ignore only caches
         # created after that manifest so existing deployments remain verifiable.

@@ -11,7 +11,7 @@ import pytest
 from tests.support.lifecycle_startup import assert_lifecycle_startup
 
 from planner.environments.app import build_exported_app
-from planner.environments.deployment_gate import smoke_candidate
+from planner.environments.candidate_smoke import smoke_candidate
 
 
 @pytest.mark.skipif(

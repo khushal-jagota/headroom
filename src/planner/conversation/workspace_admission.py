@@ -45,3 +45,8 @@ class WorkspaceAdmission:
             operation()
             self._closed = True
             return True
+
+    def reopen(self) -> None:
+        """Open work again after an update that paused it could not start its installer."""
+        with self._lock:
+            self._closed = False
