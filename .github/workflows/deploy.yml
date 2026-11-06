@@ -158,7 +158,7 @@ jobs:
     env:
       PANELS_SUITE: ${{ matrix.suite }}
       PANELS_REHEARSAL: 'true'
-      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '2c0e05cefc82de100bfc576c1a8f3eda7a931f2d' }}
+      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '53d64f0fdbda071a7887945a0d4ddc113694cf21' }}
     defaults:
       run:
         shell: python3 scripts/deployment_progress.py {0}
@@ -570,7 +570,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PANELS_REHEARSAL: 'true'
-      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '2c0e05cefc82de100bfc576c1a8f3eda7a931f2d' }}
+      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '53d64f0fdbda071a7887945a0d4ddc113694cf21' }}
     outputs:
       app_artifact_id: ${{ steps.app_artifact.outputs.artifact-id }}
       candidate_record_sha256: ${{ steps.candidate.outputs.candidate_record_sha256 }}
@@ -672,16 +672,23 @@ jobs:
       - name: Prepare pinned Debian runtime proof root
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" scripts/runtime_target_root.py "$PANELS_GATE_DIR/target-root"
-      - name: Execute sealed archive on Debian target
+      - name: Start sealed archive on Debian target beside the rehearsal
+        id: target_check_start
+        # Plain bash: the progress shell reaps its descendants when its step ends.
+        # The Debian sandbox shares no state with the rehearsal install below.
+        shell: bash
         run: |
-          "$PANELS_DEPLOY_VENV/bin/python" scripts/runtime_target_proof.py prove \
-            --archive "$PANELS_GATE_DIR/panels-app.tar.gz" \
-            --requested-sha "$PANELS_REQUESTED_SHA" \
-            --target-root "$PANELS_GATE_DIR/target-root" \
-            --evidence "$PANELS_GATE_DIR/target"
-      - name: Smoke exact retained archive
-        run: |
-          "$PANELS_DEPLOY_VENV/bin/python" scripts/update_publication.py smoke
+          set -euo pipefail
+          (
+            status=0
+            "$PANELS_DEPLOY_VENV/bin/python" scripts/runtime_target_proof.py prove \
+              --archive "$PANELS_GATE_DIR/panels-app.tar.gz" \
+              --requested-sha "$PANELS_REQUESTED_SHA" \
+              --target-root "$PANELS_GATE_DIR/target-root" \
+              --evidence "$PANELS_GATE_DIR/target" || status=$?
+            echo "$status" > "$PANELS_GATE_DIR/target-check.status.partial"
+            mv "$PANELS_GATE_DIR/target-check.status.partial" "$PANELS_GATE_DIR/target-check.status"
+          ) > "$PANELS_GATE_DIR/target-check.log" 2>&1 < /dev/null &
       - name: Extract exact archive for disposable replacement
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" scripts/update_publication.py rehearsal
@@ -745,6 +752,22 @@ jobs:
             --hermes-home "$PANELS_APP_HOME/.hermes" \
             --codex-home "$PANELS_APP_HOME/.codex" \
             --claude-home "$PANELS_APP_HOME/.claude"
+      - name: Wait for sealed archive on Debian target
+        # Always wait, so cleanup never removes the sandbox root while the check runs.
+        if: ${{ always() && steps.target_check_start.outcome == 'success' }}
+        run: |
+          # The check's own sandbox run is bounded at 900 seconds.
+          deadline=$((SECONDS + 1200))
+          until [ -f "$PANELS_GATE_DIR/target-check.status" ]; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              cat "$PANELS_GATE_DIR/target-check.log"
+              echo "The Debian target check did not finish." >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          cat "$PANELS_GATE_DIR/target-check.log"
+          exit "$(cat "$PANELS_GATE_DIR/target-check.status")"
       - name: Finalize deployment lifecycle
         shell: bash
         if: ${{ always() && steps.lifecycle_start.outcome != 'skipped' && steps.lifecycle_start.outcome != '' }}
