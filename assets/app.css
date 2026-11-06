@@ -183,32 +183,54 @@ textarea {
 /* --- Persistent rail and pane shell ------------------------------------- */
 .shell { position:relative; height:100dvh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .shell-content { flex:1; min-width:0; min-height:0; padding:0; }
-/* The destinations stand on the rail's text edge: the first icon's glyph lines up with the
-   names above it. */
-.rail-foot { position:relative; flex:none; padding:var(--space-3) var(--rail-edge) 0 calc(var(--rail-edge) + var(--rail-pad) - 7px); }
-/* The destinations: one row of quiet icons. A destination's name floats beside its icon as a
-   raised tooltip, over the row rather than in it, so nothing ever moves. */
+/* The destinations stand on the rail's text edge: the first icon's glyph (which starts 2px
+   inside its 18px box, 7px inside its 32px button) lines up with the names above it. */
+.rail-foot { position:relative; flex:none; padding:var(--space-3) var(--rail-edge) 0 calc(var(--rail-edge) + var(--rail-pad) - 9px); }
+/* The destinations: one row of quiet icons. A destination's name floats above its icon as a
+   raised tooltip, clear of the row, so it never covers a neighbouring icon and nothing moves. */
 .rail-utilities { display:flex; align-items:center; gap:2px; }
-.utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--text-faintest); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
-.utility:hover { background:var(--wash-hover); color:var(--text-strong); }
-.utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:transparent; background:var(--wash-selected); color:var(--text-strong); }
+.utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--tone-tertiary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.utility:hover { background:var(--wash-hover); color:var(--tone-strong); }
+.utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:transparent; background:var(--wash-selected); color:var(--tone-strong); }
 .utility:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:0; }
 .utility svg,.sheet-item svg { width:18px; height:18px; flex:none; }
 .count-badge { position:absolute; top:-2px; right:-2px; min-width:14px; height:14px; padding:0 3px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-1); font-size:10px; font-weight:660; line-height:14px; text-align:center; font-variant-numeric:tabular-nums; }
 /* On the rail the count sits beside its icon, never on top of it: the needs-you accent as
-   text on its own quiet slate, the same mark as every needs-you count on a page. */
+   text on its own quiet slate. It is the rail's one badge. */
 .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 6px 0 7px; }
 .rail-utilities .count-badge { position:static; min-width:20px; height:18px; padding:0 6px; border-radius:var(--radius-pill); background:var(--accent-badge); color:var(--accent-bright); box-shadow:none; font-size:11px; font-weight:640; line-height:18px; }
 .count-badge.hidden { display:none; }
-.utility-label { position:absolute; bottom:calc(100% + 6px); left:50%; z-index:6; padding:3px var(--space-2); border:var(--border-hairline) solid var(--border-color); border-radius:6px; background:var(--surface-raised); box-shadow:var(--shadow-float); color:var(--text-default); font-size:var(--type-xs); font-weight:500; line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
+.utility-label { position:absolute; bottom:calc(100% + 6px); left:50%; z-index:6; padding:3px var(--space-2); border:var(--border-hairline) solid var(--rail-float-ring); border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
 .utility:nth-child(1 of .utility) .utility-label { left:0; transform:none; }
 .utility:nth-last-child(1 of .utility) .utility-label { left:auto; right:0; transform:none; }
-/* In the rail's bottom row there is nothing clear above an icon, so the name sits to its right. */
-.rail-utilities .utility .utility-label,
-.rail-utilities .utility:nth-child(1 of .utility) .utility-label,
-.rail-utilities .utility:nth-last-child(1 of .utility) .utility-label { top:50%; bottom:auto; left:calc(100% + 6px); right:auto; transform:translateY(-50%); }
 .utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
 .utility:hover .utility-label { transition-delay:400ms; }
+/* The rail's list and its foot. BoardRoute draws them; their measures are the rail's.
+   The list's fills sit --rail-edge in from both sides of the column: its scrollbar is kept to
+   the column's own edge, drawn only while the pointer is over the list, so the right inset
+   matches the left with or without one. */
+.approved-rail-shell .approved-rail .active-work-scroll { padding:0 max(0px, calc(var(--rail-edge) - var(--rail-scrollbar, 0px))) var(--rail-foot-clear) var(--rail-edge); scroll-padding-block:var(--rail-edge-fade); scrollbar-width:auto; scrollbar-color:auto; }
+.approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
+.approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar-track { background:transparent; }
+.approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar-thumb { border-radius:var(--radius-pill); background:transparent; }
+.approved-rail-shell .approved-rail .active-work-scroll:is(:hover, :active)::-webkit-scrollbar-thumb { background:var(--border-hover); }
+@supports not selector(::-webkit-scrollbar) { .approved-rail-shell .approved-rail .active-work-scroll { scrollbar-width:thin; scrollbar-color:var(--border-color) transparent; } }
+/* Where rows continue past an edge of the list, they fade into the rail over 24px, so the
+   list never ends on a heading cut from its rows. A list that fits shows no fade. */
+.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail .rail-work .rail-work::before { content:none; }
+.approved-rail-shell .workspace-rail[data-rail-more-below] .active-work-scroll { -webkit-mask-image:linear-gradient(to bottom, #000 calc(100% - var(--rail-edge-fade)), transparent); mask-image:linear-gradient(to bottom, #000 calc(100% - var(--rail-edge-fade)), transparent); }
+.approved-rail-shell .workspace-rail[data-rail-more-above] .active-work-scroll { -webkit-mask-image:linear-gradient(to bottom, transparent, #000 var(--rail-edge-fade)); mask-image:linear-gradient(to bottom, transparent, #000 var(--rail-edge-fade)); }
+.approved-rail-shell .workspace-rail[data-rail-more-above][data-rail-more-below] .active-work-scroll { -webkit-mask-image:linear-gradient(to bottom, transparent, #000 var(--rail-edge-fade), #000 calc(100% - var(--rail-edge-fade)), transparent); mask-image:linear-gradient(to bottom, transparent, #000 var(--rail-edge-fade), #000 calc(100% - var(--rail-edge-fade)), transparent); }
+/* Settled: one row in the rail's row voice, its count a plain Small numeral after it. */
+.approved-rail-shell .approved-rail .settled-head { box-sizing:border-box; height:var(--rail-row-height); min-height:0; padding:0 var(--rail-pad); margin-inline:0; width:100%; border-radius:var(--radius-md); font-size:var(--type-row); font-weight:400; line-height:20px; color:var(--rail-tone-rest); }
+.approved-rail-shell .approved-rail .settled-head:hover { color:var(--tone-strong); }
+.approved-rail-shell .approved-rail .settled-head .count { margin-left:5px; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--rail-tone-label); }
+.approved-rail-shell .approved-rail .settled-chevron { color:var(--rail-tone-label); }
+.approved-rail-shell .approved-rail .settled-item + .settled-item { margin-top:var(--rail-row-gap); }
+.approved-rail-shell .approved-rail .settled-row { box-sizing:border-box; height:var(--rail-row-height); padding:0 var(--rail-pad); margin:0; font-size:var(--type-row); line-height:20px; }
+.approved-rail-shell .approved-rail .settled-title { color:var(--rail-tone-rest); }
+.approved-rail-shell .approved-rail .settled-title > span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; overflow-wrap:normal; }
+.approved-rail-shell .approved-rail .reopen { font-size:var(--type-small); color:var(--rail-tone-label); }
 @keyframes shell-panel-in { from { opacity:0; transform:translateY(var(--space-2)); } to { opacity:1; transform:none; } }
 .compact-bar { display:none; }
 .destination-pane { display:flex; flex-direction:column; flex:1; width:100%; height:100%; min-width:0; min-height:0; overflow:auto; }
@@ -4767,20 +4789,24 @@ details:not([open]) > summary > .manager-workspace-chevron {
   }
 }
 
-/* A Ticket group: one quiet heading tier for every group, set at the Tickets' indent, with
-   the air above and below it kept to the row pitch. A group that needs the person is
-   named in a brighter, heavier tone at the same size. */
-.workspace-ticket-bucket { margin-top:0; }
-.manager-card > :not(.workspace-ticket-bucket) + .workspace-ticket-bucket { margin-top:var(--space-1); }
-.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:500; color:var(--rail-tone-label); padding:8px 0 2px var(--rail-indent); margin-bottom:0; border-bottom:0; }
-.workspace-ticket-bucket[data-tone="attention"] .bucket-label { color:var(--text-muted); font-weight:600; }
-/* A Ticket row's fill spans the same box as every other rail row; only its words step in. */
-.workspace-ticket-bucket .worker-row { position:relative; width:calc(100% + (var(--rail-row-pad) * 2)); display:grid; grid-template-columns:minmax(0,1fr) 8px; align-items:center; gap:var(--space-3); padding:5px var(--rail-row-pad) 5px calc(var(--rail-row-pad) + var(--rail-indent)); margin:0 calc(var(--rail-row-pad) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-ui); font-weight:500; line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+/* A Ticket group: one quiet heading, in the Small voice, at the Tickets' indent, with the
+   count of the rows it heads after it in the same tone. It binds to its rows: more air above
+   it than below. A heading is never heavier or brighter than the rows it introduces. */
+.workspace-ticket-bucket { margin-top:0; display:flex; flex-direction:column; }
+.workspace-ticket-bucket .bucket-label { box-sizing:border-box; padding:var(--rail-heading-above) var(--rail-pad) var(--rail-heading-below) calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; font-size:var(--type-small); font-weight:var(--weight-small); line-height:var(--rail-heading-line); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.workspace-ticket-bucket .bucket-label[data-count]::after { content:attr(data-count); margin-left:5px; }
+/* A Ticket row: the same 30px fill as every rail row, its words one indent in, its title
+   ending in an ellipsis before the column kept for its unread dot. A row that needs the
+   person is bright and a step heavier; every other row rests dim. */
+.workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:center; column-gap:0; width:100%; height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:400; line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
+.workspace-ticket-bucket .worker-row + .worker-row { margin-top:var(--rail-row-gap); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
-.workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-.workspace-ticket-bucket .worker-row:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:1px; }
-.workspace-ticket-bucket .ticket-row-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.workspace-ticket-bucket .worker-row .conversation-signal-marks { justify-self:center; }
+.workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; }
+.workspace-ticket-bucket:is([data-bucket-key="awaiting_approval"], [data-bucket-key="awaiting_answer"], [data-bucket-key="errored"]) .worker-row,
+.workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--tone-strong); font-weight:var(--weight-needs-you); }
+.workspace-ticket-bucket .worker-row:is(:hover, [aria-current="page"]) { color:var(--tone-strong); }
+.workspace-ticket-bucket .worker-row:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 
 /* Approved skeleton system. */
 /* 1 — the region. Any element that can show a skeleton carries this. */
@@ -4913,16 +4939,18 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* One moving decoration per scroller keeps selection distinct from the rail content. */
 .approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) { position:relative; isolation:isolate; }
-/* One crisp fill marks the open item; the Manager you are inside is a far quieter tint
-   around its group, drawn while the Manager or one of its goals or Tickets is open. The item
-   sits --rail-row-inset inside the group, so its 8px radius is concentric with the group's. */
+/* One crisp fill marks the open item and a fill half as strong follows the pointer, both on
+   the row's own 30px box with the 8px radius. The Manager you are inside is a far quieter tint
+   around its block, reaching --rail-context-outset past the fills so its corners stay
+   concentric with theirs. */
 .rail-wash { position:absolute; pointer-events:none; z-index:0; border-radius:var(--radius-md); }
 .rail-wash[hidden] { display:none; }
-.rail-wash--group { background:var(--wash-context); border-radius:var(--rail-group-radius); z-index:-1; }
+.rail-wash--group { background:var(--wash-context); border-radius:var(--rail-context-radius); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
 
 .rail-wash--hover { background:var(--wash-hover); }
-.rail-wash--focus { z-index:4; box-shadow:0 0 0 var(--focus-width) var(--focus-ring); }
+/* The one focus ring: a fine accent line 2px clear of the control, its radius the control's plus 2. */
+.rail-wash--focus { z-index:4; outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 .approved-rail .rail-utilities .rail-wash { border-radius:var(--radius-md); }
 .approved-rail :is(.settled-item, .utility) { position:relative; z-index:1; }
 /* The pointed-at destination lifts above its neighbours, so its tooltip is never under the next icon. */
@@ -4930,9 +4958,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .approved-rail :is(.utility:hover, .utility[aria-current="page"], .utility[aria-expanded="true"]) { border-color:transparent; background:none; }
 .approved-rail :is(.item-head, .worker-row, .goal, .settled-title, .utility):focus-visible { outline:none; }
 .approved-rail .workspace-ticket-bucket .worker-row { background:none; }
-.approved-rail .workspace-ticket-bucket .worker-row:hover { color:var(--text-strong); }
 .approved-rail .bucket-label { border-bottom:0; }
-.approved-rail .settled-row:hover .settled-title, .approved-rail .settled-title[aria-current="page"] { color:var(--text-strong); }
+.approved-rail .settled-row:hover .settled-title, .approved-rail .settled-title[aria-current="page"] { color:var(--tone-strong); }
 
 /* === The main pane's page system ==========================================
  * One column, one top band, one type ladder and one end at the composer, on every page

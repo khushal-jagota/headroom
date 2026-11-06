@@ -35,7 +35,7 @@ export function workspaceRailWash(root: HTMLElement) {
     for (const node of root.querySelectorAll<HTMLElement>('.active-work-scroll, .settled-body, .rail-utilities')) {
       if (!hosts.has(node)) { hosts.set(node, {node, group: layer(node,'group'), item:layer(node,'item'), hover:layer(node,'hover'), focus:layer(node,'focus')}); resize.observe(node); }
     }
-    for (const node of root.querySelectorAll('.manager-card, .identity, [data-goal-status], .worker-row, .goal, .settled-row')) { if (!observed.has(node)) {observed.add(node);resize.observe(node);} }
+    for (const node of root.querySelectorAll('.manager-card, .identity, .worker-row, .goal, .settled-row')) { if (!observed.has(node)) {observed.add(node);resize.observe(node);} }
     for (const node of observed) if (!root.contains(node)) {resize.unobserve(node);observed.delete(node);}
     for (const [node,host] of hosts) if (!root.contains(node)) {
       resize.unobserve(node);
@@ -50,21 +50,15 @@ export function workspaceRailWash(root: HTMLElement) {
     const base = host.node.getBoundingClientRect();
     const local = (rect: DOMRect): Box => ({left:rect.left-base.left+host.node.scrollLeft,top:rect.top-base.top+host.node.scrollTop,width:rect.width,height:rect.height});
     const group = node.closest<HTMLElement>('.manager-card');
-    const groupBox = group ? local(group.getBoundingClientRect()) : null;
-    const itemBox = local((node.closest('.settled-row') ?? node).getBoundingClientRect());
-    const inset = parseFloat(css('--rail-row-inset'));
-    const headPad = parseFloat(css('--rail-head-pad'));
-    if (groupBox) {
-      itemBox.left = groupBox.left+inset;
-      itemBox.width = groupBox.width-2*inset;
-      if (node.matches('.item-head')) {
-        // A Manager's header is its project eyebrow and its name together: selected, hovered
-        // and focused as one block, inside the same context tint its goals and Tickets get.
-        const header = local(node.closest('.identity')!.getBoundingClientRect());
-        itemBox.top = header.top-headPad;
-        itemBox.height = header.height+2*headPad;
-      }
-    }
+    // The Manager's tint reaches past its block's fills by the outset, so its corners stay
+    // concentric with theirs.
+    const outset = parseFloat(css('--rail-context-outset')) || 0;
+    const block = group ? local(group.getBoundingClientRect()) : null;
+    const groupBox = block ? {left:block.left-outset,top:block.top-outset,width:block.width+2*outset,height:block.height+2*outset} : null;
+    // Every fill is its row's own box. A Manager's header is its project eyebrow and its name
+    // together: selected, hovered and focused as one block.
+    const fill = node.matches('.item-head') ? node.closest<HTMLElement>('.identity') ?? node : node.closest<HTMLElement>('.settled-row') ?? node;
+    const itemBox = local(fill.getBoundingClientRect());
     return {node,host,group,itemBox,groupBox};
   }
   const style = (box: Box) => Object.fromEntries(properties.map(key=>[key,`${box[key]}px`]));
@@ -173,8 +167,7 @@ export function workspaceRailWash(root: HTMLElement) {
     if (!(node instanceof Element)) return null;
     const control=node.closest<HTMLElement>(targets);
     if (control && root.contains(control)) return control;
-    const identity = node.closest('[data-goal-status]')?.closest('.manager-card') ?? node.closest('.identity');
-    return identity?.querySelector<HTMLElement>('.item-head') ?? null;
+    return node.closest('.identity')?.querySelector<HTMLElement>('.item-head') ?? null;
   }
   function pointer(event: PointerEvent) {
     if(event.pointerType==='touch'){hovered=null;hoverHeld=null;}else hovered=targetAt(event.target);

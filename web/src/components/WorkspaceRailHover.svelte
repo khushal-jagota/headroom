@@ -6,7 +6,7 @@
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
-  import { RAIL_HOVER_RECAP_MAX_LINES } from "../lib/workspaceRailInteraction";
+  import { RAIL_HOVER_RECAP_MAX_LINES, clampToWords } from "../lib/workspaceRailInteraction";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import RequestRecapAction from "./RequestRecapAction.svelte";
@@ -96,26 +96,21 @@
         clearOfRail = left >= railRight;
         return;
       }
-      // Past the end of the row's title when there is room, level with the row; otherwise
-      // below the row, or above it when the dock leaves no room underneath.
+      // A row in a page list spans the whole column, so a panel level with it would cover
+      // the row it describes. It opens under the row instead, starting where the row's
+      // title ends so the titles of the rows below stay readable, or above the row when the
+      // composer leaves no room underneath. It never covers its own row.
       const title = currentTarget.querySelector(".ticket-row-title");
       let titleEnd = rect.left;
-      if (title) { const words = document.createRange(); words.selectNodeContents(title); titleEnd = words.getBoundingClientRect().right; }
-      if (titleEnd + 24 + width <= window.innerWidth - 12) {
-        left = titleEnd + 24;
-        top = Math.max(12, Math.min(rect.top - 8, floor - height));
-        // Level with its row and past the words, the panel covers no other row, so the
-        // pointer can cross to it and press the ask inside.
-        clearOfRail = true;
-        return;
-      } else {
-        left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
-        const below = rect.bottom + 6;
-        const above = rect.top - 6 - height;
-        top = below + height <= floor ? below : above >= 12 ? above : Math.max(12, floor - height);
-      }
-      // Over the list it would sit on the rows the pointer travels to, so it stays a preview.
-      clearOfRail = false;
+      if (title) { const words = document.createRange(); words.selectNodeContents(title); titleEnd = Math.min(rect.right, words.getBoundingClientRect().right); }
+      left = Math.max(12, Math.min(titleEnd + 12, window.innerWidth - width - 12));
+      const below = rect.bottom + 6;
+      const above = rect.top - 6 - height;
+      top = below + height <= floor ? below : above >= 12 ? above : Math.max(12, floor - height);
+      // Past the end of its row's title, the pointer can cross to it and press the ask inside
+      // while the titles below stay free to point at. Clamped back over the titles, it lies on
+      // the rows the pointer travels to, so it stays a preview.
+      clearOfRail = left >= titleEnd;
     };
     // Manifest arrival can change the height after the panel is already visible.
     const observer = new ResizeObserver(place);
@@ -158,7 +153,7 @@
     <div bind:this={recapElement} class="recap" class:no-space={recapLines === 0 && !recapTarget}>
       {#key recapIdentity}
         <RecapSlot holdHeight={holdRecapHeight}>
-          {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
+          {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text use:clampToWords={{ text: recapText, lines: recapLines }}></div>{/if}{/snippet}
         </RecapSlot>
       {/key}
       {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
@@ -166,28 +161,29 @@
   {/if}
 </div>
 <style>
-  /* A compact raised card: where it belongs (kicker), what it is (title), then the recap as the
-     body you opened it for. The ask is a quiet line under it, not a second button. */
-  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(288px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-3); border:var(--border-hairline) solid var(--border-hover); border-radius:var(--radius-lg); background:var(--surface-raised); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
+  /* A compact raised card on the rail's float surface: where it belongs (the machine's mark
+     and the place, in the Small voice), what it is (the title in the row voice), then the
+     recap as the body you opened it for, three lines at most and ending at a word, and the
+     ask for a fresh one as a quiet line under it. */
+  .rail-hover-panel { box-sizing:border-box; position:fixed; z-index:40; width:min(var(--rail-preview-width),calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--rail-preview-pad); border:var(--border-hairline) solid var(--rail-float-ring); border-radius:var(--radius-lg); background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); font-size:var(--type-row); line-height:normal; pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
-  .kicker { display:flex; align-items:center; gap:6px; min-width:0; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faint); margin-bottom:2px; }
+  .kicker { display:flex; align-items:center; gap:6px; min-width:0; font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); margin-bottom:4px; }
   .kicker-place { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   .kicker-machine { flex:none; display:inline-flex; align-items:center; }
   .kicker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
-  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
-  .title { font-size:var(--type-ui); font-weight:600; line-height:20px; letter-spacing:-.006em; color:var(--text-strong); overflow-wrap:anywhere; }
+  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-row); font-weight:var(--weight-needs-you); line-height:20px; color:var(--tone-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
-  /* The name leads; the recap is the body the preview is opened for: bright, given its own
+  /* The recap is the body the preview is opened for: the page's body voice, given its own
      space, and the only paragraph in the panel. */
-  .recap { margin-top:var(--space-2); font-size:var(--type-sm); font-weight:500; line-height:20px; color:var(--text-default); }
-  .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
+  .recap { margin-top:var(--space-2); font-size:var(--type-body); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
+  .recap-text { overflow:hidden; overflow-wrap:break-word; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
-  .recap :global(.recap-ask) { display:flex; margin-top:var(--space-2); font-size:var(--type-xs); }
-  .recap :global(.recap-ask .request-recap-action) { height:auto; padding:0; border-radius:var(--radius-sm); background:none; box-shadow:none; color:var(--text-faint); font-size:var(--type-xs); font-weight:500; line-height:16px; }
-  .recap :global(.recap-ask .request-recap-action:hover) { background:none; color:var(--text-strong); }
-  .doing { margin-top:2px; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faint); }
+  .recap :global(.recap-ask) { display:flex; margin-top:10px; font-size:var(--type-small); }
+  .recap :global(.recap-ask .request-recap-action) { height:auto; padding:0; border-radius:var(--radius-sm); background:none; box-shadow:none; color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
+  .recap :global(.recap-ask .request-recap-action:hover) { background:none; color:var(--tone-strong); }
+  .doing { margin-top:2px; font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
 </style>

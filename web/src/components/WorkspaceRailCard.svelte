@@ -41,6 +41,9 @@
     }
   });
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
+  // A heading counts the rows under it. While the rail holds only part of this Manager's
+  // Tickets, that number would not be the group's, so the headings show none.
+  let countsComplete = $derived(!navigationWindow || (!navigationWindow.previous && !navigationWindow.next));
 </script>
 <div class="manager-card-slot">
 <section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
@@ -55,10 +58,10 @@
   </div>
   {#if beforeGroups}{@render beforeGroups()}{/if}
   {#each groups as group (group.key)}
-    <!-- Every group is named over its rows in one quiet heading; a group that needs the
-         person names itself in a brighter tone. -->
+    <!-- Every group is named over its rows in one quiet heading, with how many rows it heads.
+         A heading never outranks its rows: the rows that need the person are the bright ones. -->
     <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key} data-tone={["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key) ? "attention" : "quiet"}>
-      <div class="bucket-label" data-rail-motion={`heading:${id}:${group.key}`}>{group.label}</div>
+      <div class="bucket-label" data-rail-motion={`heading:${id}:${group.key}`} data-count={countsComplete ? group.cards.length : undefined}>{group.label}</div>
       {#each group.cards as ticket (ticket.id)}
         <WorkerRow machine={false} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} data-rail-motion={`row:${ticket.id}`} onclick={() => { if (input(ticket).click()) onTicket(ticket.id); }} onpointerenter={(event: PointerEvent) => {event.stopPropagation(); input(ticket).pointerEnter(event);}} onpointerleave={(event: PointerEvent) => input(ticket).leave(event)} onpointerdown={(event: PointerEvent) => input(ticket).down(event)} onpointermove={(event: PointerEvent) => input(ticket).move(event)} onpointerup={() => input(ticket).end()} onpointercancel={() => input(ticket).cancel()} onfocus={(event: FocusEvent) => input(ticket).focus(event)} onblur={(event: FocusEvent) => input(ticket).leave(event)} />
       {/each}
@@ -68,34 +71,24 @@
 </div>
 <style>
   .manager-card-slot { min-width:0; }
-  :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-2); }
-  /* Every Manager, the Chief included, is one block on the rail's one left edge: the
-     project as a small eyebrow, the name large and bold, its goals as part of the name,
-     then its Tickets in their groups. Nothing in the block is indented; size, weight and
-     the group labels carry the structure. */
-  /* The group's padding is the row inset plus the air a fill keeps around its words, so a
-     selected header or row sits concentric inside the context tint on every side. */
-  .manager-card { box-sizing:border-box; position:relative; border:0; border-radius:var(--rail-group-radius); padding:calc(var(--rail-row-inset) + var(--rail-head-pad)) var(--rail-pad) var(--rail-row-inset); isolation:isolate; z-index:1; }
-  .identity { display:flex; flex-direction:column; cursor:pointer; }
-  .identity > :global(.manager-eyebrow) { margin-bottom:2px; }
-  .item-head { display:flex; align-items:center; gap:var(--space-2); width:100%; min-height:22px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
-  /* A title is dimmed unless it needs the user: an unread message for them, or the pointer or
-     the open page on it, brings it to full brightness. The dim title keeps its full size and
-     weight, so it reads as at rest, not as off. */
-  .item-title { flex:1; min-width:0; font-size:var(--type-rail-title); font-weight:600; line-height:22px; letter-spacing:-0.014em; color:var(--rail-tone-title); overflow-wrap:anywhere; transition:color var(--motion-fast) var(--motion-ease); }
-  .item-head[data-unread="true"] .item-title { color:var(--text-strong); }
-  .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--text-strong); }
-  /* One row style: a title that runs out ends in an ellipsis, before a column kept for the
-     row's marks, so a mark never touches a word and every title stops at one edge. */
-  .bucket :global(.ticket-row-title) { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .bucket :global(.worker-row) { color:var(--rail-tone-rest); }
-  .bucket[data-bucket-key="awaiting_approval"] :global(.worker-row),
-  .bucket[data-bucket-key="awaiting_answer"] :global(.worker-row),
-  .bucket[data-bucket-key="errored"] :global(.worker-row),
-  .bucket :global(.worker-row[data-unread="true"]) { color:var(--text-strong); }
-  .bucket :global(.worker-row:is(:hover, .ticket-row--active)) { background:none; color:var(--text-strong); }
+  /* Blocks are separated by space alone. */
+  :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--rail-block-gap); }
+  /* Every Manager, the Chief included, is one block with the same parts in the same order:
+     its header (the project eyebrow over the name, as one fill), its goals one row each, then
+     its Tickets in headed groups. Every fill spans the block, which spans the column less
+     --rail-edge on each side; every text stands --rail-pad inside its fill. */
+  .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:0; border:0; isolation:isolate; z-index:1; }
+  .identity { box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; min-height:var(--rail-row-height); padding:var(--rail-head-pad) var(--rail-pad); border-radius:var(--radius-md); cursor:pointer; }
+  .item-head { display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:center; width:100%; min-height:22px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; }
+  /* A name is dimmed unless it needs the person (an unread message for them); the pointer or
+     the open page on it brings it to full brightness. It keeps one line and ends in an
+     ellipsis at the same edge as every row's title. */
+  .item-title { grid-column:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:var(--type-rail-title); font-weight:var(--weight-title); line-height:22px; letter-spacing:-0.012em; color:var(--rail-tone-title); transition:color var(--motion-fast) var(--motion-ease); }
+  .item-head[data-unread="true"] .item-title { color:var(--tone-strong); }
+  .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--tone-strong); }
   .item-head :global(.stage-mark--current-running),
-  .bucket[data-tone="quiet"] :global(.stage-mark--current-running) { border-color:var(--border-color); border-top-color:var(--text-faintest); border-right-color:var(--text-faintest); }
+  .bucket[data-tone="quiet"] :global(.stage-mark--current-running) { border-color:var(--border-color); border-top-color:var(--tone-tertiary); border-right-color:var(--tone-tertiary); }
   .bucket :global(.worker-row:focus-visible) { outline:none; }
   :global(.approved-rail .workspace-ticket-bucket .worker-row.rail-moving), :global(.approved-rail .bucket-label.rail-moving), :global(.approved-rail .manager-card.rail-moving) { position:relative; z-index:1; transition:none; background:none; outline:none; }
   :global(.approved-rail .manager-card.rail-moving:where(.selected)) { z-index:2; }
