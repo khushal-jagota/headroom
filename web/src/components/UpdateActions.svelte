@@ -86,7 +86,7 @@
   .facts dt { color: var(--text-faint); }
   .facts dd { margin: 0; color: var(--text-default); }
   footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); }
-  .pill { cursor: pointer; font: inherit; border: 0; border-radius: var(--radius-pill); padding: 6px 14px; font-weight: 500; transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .pill { cursor: pointer; font: inherit; border: 0; border-radius: var(--radius-pill); padding: 6px 14px; font-weight: 530; transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   .pill--primary { background: var(--accent-bright); color: var(--surface-ink); }
   .pill--ghost { background: transparent; color: var(--text-faint); }
   .pill:hover { background-image: var(--interaction-hover); }

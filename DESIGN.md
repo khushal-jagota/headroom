@@ -56,11 +56,12 @@ bubble-less assistant, recessed composer).
    hand off to smooth streaming, a working marker on a running ticket. Never leave a surface
    frozen and silent.
 
-8. **Use the shared scales.** Typography uses 12 (labels), 13 (secondary), 14 (rows
-   and controls), 15 (body and recaps), 16 (section and card titles), 26 (page
-   titles) and 30px (hero). Weights stop at 600; most emphasis is 500. Controls are
-   32px tall with the 8px radius; surfaces use the 12px radius. The radius and spacing
-   scales stay fixed; new sizes need an explicit design decision.
+8. **Use the shared scales.** Typography uses 12 (labels and meta), 13 (secondary text and
+   rail rows), 14 (controls), 15 (body and recaps), 16 (card titles and rail Manager
+   titles), 18 (page section headings), 26 (page titles) and 30px (hero). Body text is
+   weight 450 and labels 530; titles lead by weight, 650–700. Controls are 32px tall with
+   the 8px radius; surfaces use the 12px radius. The radius and spacing scales stay
+   fixed; new sizes need an explicit design decision.
 
 9. **One sans voice.** Content and controls use the same sans stack (`--font-ui`):
    the system face on a Mac, and the self-hosted Inter (`assets/fonts/`) everywhere

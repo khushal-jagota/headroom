@@ -292,7 +292,7 @@
   .page-back { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; margin-left:-6px; border-radius:var(--radius-md); }
   .page-back svg { width:16px; height:16px; }
   .page-eyebrow a:hover { color:var(--text-strong); background-image:var(--interaction-hover); }
-  .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 var(--space-2); margin-right:calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
+  .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 var(--space-2); margin-right:calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
   .page-settle svg { width:13px; height:13px; }
   :global(.manager-doc):hover .page-settle, .page-settle:focus-visible { opacity:1; }
   .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }

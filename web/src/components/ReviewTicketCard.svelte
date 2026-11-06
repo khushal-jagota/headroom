@@ -10,7 +10,7 @@
   import InlineEdit from './InlineEdit.svelte';
   import ClampedText from './ClampedText.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
-  let {item,onSkip,busy=false,children}:{item:NavigationReviewTicketItem;onSkip:()=>void;busy?:boolean;children:Snippet}=$props();
+  let {item,onSkip,busy=false,inlineDecision=false,children}:{item:NavigationReviewTicketItem;onSkip:()=>void;busy?:boolean;inlineDecision?:boolean;children:Snippet}=$props();
   const navigation=navigationApplication()!;
   let record=$derived(navigation.selectors.effective ? navigation.presentationFor(navigation.selectors.effective).rawTicketsById.get(item.ticket_id)?.value : undefined);
   const recapBody=selectedRecap(()=>record && 'recap_reference' in record ? record.recap_reference as import('../lib/navigation/contracts').ViewContentReference|null : null,()=>true);
@@ -20,10 +20,15 @@
   }
 </script>
 <div data-review-ticket-card data-review-item-type="ticket" data-ticket-id={item.ticket_id}>
+  {#if inlineDecision}
+    <!-- Skip and Open ticket sit in the decision card's own action row; this is the page's breadcrumb slot. -->
+    <div class="review-eyebrow">Review</div>
+  {:else}
   <div class="review-ticket-decision-line">
     <button data-skip disabled={busy} onclick={onSkip}>Skip &rsaquo;</button>
     <a data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket &rsaquo;</a>
   </div>
+  {/if}
   <div class="review-ticket-heading"><div class="review-ticket-heading-main">
     <div class="review-ticket-title"><InlineEdit value={item.title} placeholder="Untitled" onSave={saveTitle}/></div>
     {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}

@@ -6,7 +6,7 @@
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
-  let { proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, initialReturnOpen = false, initialEditedBody, onEditedBodyChange, contextRow }: {
+  let { proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, initialReturnOpen = false, initialEditedBody, onEditedBodyChange, contextRow, trailingActions }: {
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
     manager: { id: string; title: string } | null;
     onAccept: (body: Record<string, unknown>) => Promise<unknown>;
@@ -20,6 +20,8 @@
     onEditedBodyChange?: (text: string) => void;
     returnUnavailableReason?: string;
     contextRow?: Snippet;
+    /** Actions about the decision itself rather than the proposal, at the row's far end. */
+    trailingActions?: Snippet;
   } = $props();
   let scopePicker = $state<{openApproval: (anchor?: HTMLElement) => void; openReviewer: (anchor?: HTMLElement) => void; readonly expanded: boolean; readonly controls: string | undefined} | undefined>();
   let draft = $state("");
@@ -87,6 +89,7 @@
       <button type="button" class="ghost" data-send-back disabled={disabled || !canReturn || busy || resolved}
         onclick={() => { if (canReturn) returning = true; }}>Send it back</button>
     {/if}
+    {#if trailingActions}<div class="trailing">{@render trailingActions()}</div>{/if}
   </div>
   <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {manager} below pendingStage={stage}
     approvalCeiling={nextCeiling} bind:controller={scopePicker}
@@ -104,12 +107,12 @@
 </section>
 <style>
   .worker-proposal { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }
-  h2 { margin:0; letter-spacing:-.011em; font-size:var(--type-lg); font-weight:600; line-height:1.4; color:var(--text-strong); }
-  .who { font-size:var(--type-ui); font-weight:400; letter-spacing:0; color:var(--text-faint); }
-  .proposal-prose { line-height:1.6; margin-top:var(--space-3); }
+  h2 { margin:0; letter-spacing:-.01em; font-size:var(--type-lg); font-weight:650; line-height:1.4; color:var(--text-strong); }
+  .who { font-size:var(--type-sm); font-weight:450; letter-spacing:0; color:var(--text-faint); }
+  .proposal-prose { max-width:68ch; line-height:1.6; margin-top:var(--space-3); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
-  button { display:inline-flex; align-items:center; justify-content:center; height:32px; font:inherit; font-size:var(--type-sm); font-weight:500; line-height:20px; padding:0 14px; border:0; border-radius:var(--radius-md); cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  button { display:inline-flex; align-items:center; justify-content:center; height:32px; font:inherit; font-size:var(--type-sm); font-weight:530; line-height:20px; padding:0 14px; border:0; border-radius:var(--radius-md); cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   button:disabled { opacity:.5; cursor:default; }
   .reviewer { display:inline; height:auto; font:inherit; line-height:inherit; padding:0 4px; margin:0 -4px; background:transparent; color:inherit; border-radius:var(--radius-sm); }
   .reviewer:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
@@ -124,6 +127,7 @@
   textarea { display:block; margin-top:var(--space-2); width:100%; min-height:90px; padding:var(--space-3); background:var(--surface-recessed); color:var(--text-default); border:1px solid var(--border-color); border-radius:var(--radius-md); font:inherit; font-size:var(--type-sm); }
   textarea:focus { outline:none; border-color:var(--border-focus); }
   .context { margin-top:var(--space-4); }
+  .trailing { display:flex; align-items:center; gap:var(--space-1); margin-left:auto; }
   /* The picker's own trigger is hidden here, so its empty line must not add height. */
   .worker-proposal > :global(div:has(> [data-ceiling-picker])) { display:flex; }
 </style>

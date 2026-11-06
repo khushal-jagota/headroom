@@ -14,6 +14,7 @@ body {
   font-family: var(--font-ui);
   font-size: var(--type-md);
   line-height: 1.5;
+  font-weight: 450;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -189,7 +190,7 @@ textarea {
 .utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:var(--accent-bright); color:var(--text-strong); }
 .utility:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
 .utility svg,.sheet-item svg { width:18px; height:18px; flex:none; }
-.count-badge { position:absolute; top:-2px; right:-2px; min-width:14px; height:14px; padding:0 3px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-1); font-size:10px; font-weight:600; line-height:14px; text-align:center; font-variant-numeric:tabular-nums; }
+.count-badge { position:absolute; top:-2px; right:-2px; min-width:14px; height:14px; padding:0 3px; border-radius:var(--radius-pill); background:var(--badge-fill); color:var(--text-strong); box-shadow:0 0 0 2px var(--surface-1); font-size:10px; font-weight:600; line-height:14px; text-align:center; font-variant-numeric:tabular-nums; }
 /* On the rail the count sits beside its icon, never on top of it. */
 .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 var(--space-2) 0 7px; }
 .rail-utilities .count-badge { position:static; min-width:18px; height:16px; padding:0 5px; box-shadow:none; font-size:11px; line-height:16px; }
@@ -472,7 +473,7 @@ textarea {
 .worker-stage-name {
   display: block;
   color: var(--text-default);
-  font-weight: 500;
+  font-weight: 530;
 }
 
 .worker-stage-id {
@@ -1030,7 +1031,7 @@ a.pv-name:focus-visible { outline:0; }
   border-radius: var(--radius-md);
   padding: var(--space-1) var(--space-3);
   font-size: var(--type-sm);
-  font-weight: 500;
+  font-weight: 530;
 }
 
 .button--quiet:hover:not(:disabled) {
@@ -1045,7 +1046,7 @@ a.pv-name:focus-visible { outline:0; }
   border-radius: var(--radius-md);
   padding: var(--space-1) var(--space-3);
   font-size: var(--type-sm);
-  font-weight: 500;
+  font-weight: 530;
 }
 
 .button--primary:hover:not(:disabled) {
@@ -1075,7 +1076,7 @@ a.pv-name:focus-visible { outline:0; }
   align-items: center;
   gap: var(--space-1);
   font-size: var(--type-xs);
-  font-weight: 500;
+  font-weight: 530;
   padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
   border: var(--border-hairline) solid transparent;
@@ -1638,8 +1639,8 @@ button.list-row:hover .list-row-title {
   border-color: var(--border-hover);
 }
 .chat-box:focus-within {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--focus-halo);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring);
 }
 /* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
 .chat-box.drag {
@@ -2139,7 +2140,7 @@ select {
   gap: var(--space-2);
   color: var(--text-faint);
   font-size: var(--type-sm);
-  font-weight: 400;
+  font-weight: 450;
 }
 
 .scope-word {
@@ -2163,7 +2164,7 @@ select {
   color: var(--text-strong);
   cursor: pointer;
   font: inherit;
-  font-weight: 500;
+  font-weight: 530;
   outline: none;
   min-width: 0;
   max-width: 100%;
@@ -2204,6 +2205,24 @@ select {
   margin-right: calc(var(--space-2) * -1);
 }
 
+/* Inside the decision card the line joins the card's own action row. */
+.review-ticket-decision-line--inline {
+  padding: 0;
+  margin-right: calc(var(--space-2) * -1);
+}
+
+/* The review chamber's breadcrumb slot: the same height and voice as every page's. */
+.review-eyebrow {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  margin-top: var(--space-6);
+  margin-bottom: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+  line-height: 20px;
+}
+
 .review-ticket-decision-line button,
 .review-ticket-decision-line a {
   display: inline-flex;
@@ -2216,7 +2235,7 @@ select {
   color: var(--text-faint);
   font-family: var(--font-ui);
   font-size: var(--type-sm);
-  font-weight: 500;
+  font-weight: 530;
   text-decoration: none;
   cursor: pointer;
   transition: color var(--motion-base) var(--motion-ease);
@@ -2231,8 +2250,8 @@ select {
 /* The keyboard hint, centered and faint, at the foot of the chamber. */
 .review-keys {
   margin-top: auto;
-  padding-top: var(--space-7);
-  text-align: center;
+  padding-top: var(--space-5);
+  text-align: left;
   font-size: var(--type-xs);
   color: var(--text-faintest);
 }
@@ -2258,8 +2277,8 @@ select {
 .review-ticket-title {
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  letter-spacing: -0.022em;
   color: var(--text-strong);
   text-decoration: none;
   display: block;
@@ -2504,7 +2523,7 @@ select {
   color: inherit;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 500;
+  font-weight: 530;
   line-height: 1.2;
 }
 
@@ -2581,7 +2600,7 @@ select {
 
 .board-workspace-view[aria-selected="true"] {
   color: var(--text-strong);
-  font-weight: 500;
+  font-weight: 530;
 }
 
 .board-workspace-view[aria-selected="true"]::after {
@@ -2632,7 +2651,7 @@ select {
   min-width: 0;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 500;
+  font-weight: 530;
   letter-spacing: var(--tracking-title);
   line-height: 1.2;
 }
@@ -2764,7 +2783,7 @@ select {
   min-width: 0;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 500;
+  font-weight: 530;
   letter-spacing: var(--tracking-title);
   line-height: 1.2;
   color: var(--text-strong);
@@ -2773,7 +2792,7 @@ select {
 /* Rested: every Ticket on this Item is done and quiet. Same box, only the title dims. */
 .board-workspace-item-title--rested {
   color: var(--text-faint);
-  font-weight: 400;
+  font-weight: 450;
 }
 
 /* The Item title owns every group under it, not just the first, so it must not bind to
@@ -3079,6 +3098,12 @@ select {
 .stage-mark--current-awaiting-approval {
   background: var(--accent-bright);
   border-color: var(--accent-bright);
+}
+
+/* An unread message is a neutral mark: the filled accent belongs to the primary action. */
+[data-conversation-signal="message"].stage-mark--current-awaiting-approval {
+  background: var(--unread-mark);
+  border-color: var(--unread-mark);
 }
 
 .stage-mark--errored {
@@ -3419,8 +3444,24 @@ select {
   bottom: 0;
   left: 0;
   right: 0;
-  height: var(--space-6);
-  background: linear-gradient(transparent, var(--surface-1));
+  height: 0;
+  background: none;
+  pointer-events: none;
+}
+/* The dock is an opaque footer. Its edge is one hairline across the reading column,
+ * so the document ends cleanly above it instead of fading through it. */
+.conversation-layer > .conversation-column {
+  position: relative;
+}
+.conversation-layer > .conversation-column::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--border-hairline);
+  background: var(--border-color);
+  opacity: var(--conversation-dock-line, 1);
   pointer-events: none;
 }
 .conversation-layer [data-conversation-pane] {
@@ -3569,7 +3610,7 @@ select {
   max-width: 100%;
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 500;
+  font-weight: 530;
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
@@ -3708,7 +3749,7 @@ select {
 .artifact-chip small {
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 400;
+  font-weight: 450;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -4056,7 +4097,7 @@ a.artifact-chip:hover,
 }
 
 .manager-column {
-  padding-bottom: var(--space-6);
+  padding-bottom: var(--space-7);
 }
 
 .manager-workspace-head {
@@ -4082,7 +4123,7 @@ a.artifact-chip:hover,
   color: var(--text-strong);
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 500;
+  font-weight: 530;
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
 }
@@ -4175,7 +4216,7 @@ a.artifact-chip:hover,
   color: var(--text-faint);
   font-family: var(--font-ui);
   font-size: var(--type-md);
-  font-weight: 500;
+  font-weight: 530;
   letter-spacing: var(--tracking-title);
   line-height: 1.3;
   transition: color var(--motion-fast) var(--motion-ease);
@@ -4229,7 +4270,7 @@ a.artifact-chip:hover,
   margin-left: auto;
   color: var(--text-faint);
   font-size: var(--type-sm);
-  font-weight: 400;
+  font-weight: 450;
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -4240,7 +4281,7 @@ a.artifact-chip:hover,
 .manager-workspace-status > summary > .manager-workspace-count,
 .manager-workspace-section > summary > .manager-workspace-count {
   font-size: var(--type-sm);
-  font-weight: 400;
+  font-weight: 450;
   color: var(--text-faintest);
 }
 
@@ -4362,7 +4403,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] .screen-header-title {
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 500;
+  font-weight: 530;
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
@@ -4413,7 +4454,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] .capture .title-in {
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 500;
+  font-weight: 530;
   line-height: 1.4;
   color: var(--text-strong);
 }
@@ -4503,7 +4544,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] .list-row--idea .list-row-title {
   flex: 1;
   font-size: var(--type-md);
-  font-weight: 500;
+  font-weight: 530;
   color: var(--text-default);
   transition: color var(--motion-fast) var(--motion-ease);
 }
@@ -4616,7 +4657,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   margin: var(--space-2) 0 var(--space-7);
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 500;
+  font-weight: 530;
   color: var(--text-strong);
 }
 
@@ -4636,7 +4677,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   margin: 0;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 500;
+  font-weight: 530;
   color: var(--text-strong);
 }
 
@@ -4658,7 +4699,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .notification-option strong {
   font-family: var(--font-ui);
   font-size: var(--type-prose-lg);
-  font-weight: 500;
+  font-weight: 530;
   color: var(--text-strong);
 }
 
@@ -4706,9 +4747,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 
 /* Workspace ticket buckets share row geometry across buttons and message links. */
-.workspace-ticket-bucket { margin-top:var(--space-3); }
-.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:500; color:var(--text-faintest); padding:0 0 var(--space-1); margin-bottom:2px; border-bottom:var(--border-hairline) solid var(--border-color); }
-.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--space-2) * 2)); display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:6px var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-ui); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.workspace-ticket-bucket { margin-top:var(--space-2); }
+.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:530; color:var(--text-faintest); padding:var(--space-1) 0 2px; margin-bottom:0; border-bottom:var(--border-hairline) solid var(--border-color); }
+.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--space-2) * 2)); display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-2); padding:6px var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
 .workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:1px; }
@@ -4826,7 +4867,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   margin-inline:calc(-1 * var(--space-2));
   border-radius:var(--radius-md);
   font-size:var(--type-sm);
-  font-weight:500;
+  font-weight:530;
   color:var(--text-faint);
   cursor:pointer;
   list-style:none;
@@ -4834,7 +4875,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .disclosure-band > summary::-webkit-details-marker { display:none; }
 .disclosure-band > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .disclosure-band > summary:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
-.disclosure-band-trailing { margin-left:auto; font-weight:400; color:var(--text-faintest); }
+.disclosure-band-trailing { margin-left:auto; font-weight:450; color:var(--text-faintest); }
 .disclosure-band-body { padding-bottom:var(--space-4); }
 
 .chat-thread[data-more-below="true"] {
@@ -4849,6 +4890,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .rail-wash[hidden] { display:none; }
 .rail-wash--group { background:var(--wash-context); border-radius:var(--radius-lg); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
+/* The open row also carries a short leading bar, so it never reads as the context tint. */
+.active-work-scroll > .rail-wash--item::before { content:""; position:absolute; left:0; top:var(--space-2); bottom:var(--space-2); width:var(--border-strong); border-radius:var(--radius-pill); background:var(--text-strong); }
 .rail-wash--hover { background-image:var(--interaction-hover); }
 .rail-wash--focus { z-index:4; box-shadow:0 0 0 var(--border-strong) var(--focus-ring); }
 .approved-rail .rail-utilities .rail-wash { border-radius:var(--radius-sm); }

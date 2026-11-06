@@ -11,7 +11,7 @@
 
 .series { transition: opacity var(--duration-standard) var(--ease-standard); }
 .chart[data-loading] .series { opacity: .32; animation: breathe 1.4s var(--ease-in-out) infinite alternate; }
-.line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: stroke var(--duration-standard) var(--ease-standard); }
+.line { fill: none; stroke: var(--series); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: stroke var(--duration-standard) var(--ease-standard); }
 .line[data-dashed] { stroke-dasharray: 4 5; stroke-width: 1.75; }
 .area { fill: color-mix(in oklab, var(--foreground) 4%, transparent); stroke: none; }
 .dot { fill: var(--series); stroke: var(--surface); stroke-width: 2; opacity: 0; transition: opacity var(--duration-instant) var(--ease-standard); }
@@ -25,7 +25,7 @@
 .tipSwatch { width: 10px; height: 2.5px; flex: none; border-radius: 2px; background: var(--series); }
 .tipSwatch[data-dashed] { background: repeating-linear-gradient(to right, var(--series) 0 3px, transparent 3px 5px); }
 .tipName { min-width: 0; flex: 1; overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
-.tipValue { flex: none; margin-left: 8px; color: var(--foreground); font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tipValue { flex: none; margin-left: 8px; color: var(--foreground); font-weight: 530; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .message { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--text-faintest); font-size: var(--text-sm); pointer-events: none; }
 /* First load with nothing to keep on screen: a calm band that breathes where the lines will be. */

@@ -44,6 +44,7 @@
     onSkip,
     onResolved,
     footer,
+    decisionActions,
     embedded = false,
     initialRevisionDraft = "",
     onRevisionDraftChange,
@@ -70,6 +71,8 @@
     onResolved?: () => void;
     /** Rendered under the card, only once the ask itself is on screen. */
     footer?: Snippet;
+    /** The queue's own Skip / Open ticket, placed in the decision card's action row. */
+    decisionActions?: Snippet;
   } = $props();
 
   let revisionDraft = $state("");
@@ -295,7 +298,7 @@
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
               onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}
-              {revisionEditor} />
+              {revisionEditor} trailingActions={decisionActions} />
             {/key}
           {/if}
         {/if}

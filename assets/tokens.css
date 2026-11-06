@@ -30,6 +30,9 @@
   --surface-recessed: #141414;
   /* The workspace rail: one close step above the page, divided by a hairline. */
   --surface-rail: #1d1d1d;
+  /* Counts and unread marks: neutral, so the filled accent stays the primary action's. */
+  --badge-fill: rgb(255 255 255 / 14%);
+  --unread-mark: #d6d6d6;
   /* Inline code: a translucent lift that reads on every surface it lands on. */
   --surface-code: rgb(255 255 255 / 6%);
   /* Popovers, menus and hover previews: the one raised plane, with --shadow-float. */
@@ -69,13 +72,17 @@
   /* Approved chart-sheet surfaces and category palettes. These remain separate
    * from the shell so the production renderer preserves the approved examples. */
   --chart-surface: #1f1f1f;
+  /* Trend lines keep their status, in tones calmer than the status text. */
+  --chart-line-good: #8fae7a;
+  --chart-line-bad: #c8c8c8;
+  --chart-line-attention: #c8c8c8;
   --chart-surface-raised: #252525;
   --chart-surface-muted: #212121;
   --chart-card-border: #ffffff12;
   --chart-grid: #ffffff0c;
   --chart-border-strong: #ffffff24;
   --chart-secondary: #bfbfbf;
-  --chart-muted: #8e8e8e;
+  --chart-muted: #9c9c9c;
   --chart-legend: #a6a6a6;
   --chart-reference: #777777;
   --chart-range-surface: #171717;
@@ -160,13 +167,11 @@
   /* The edge of a contained card, and the brighter edge of a focused field. */
   --border-card: rgba(255, 255, 255, 0.07);
   --border-hover: rgba(255, 255, 255, 0.13);
-  --border-focus: rgb(255 255 255 / 34%);
-  /* The soft halo around a focused field. */
-  --focus-halo: rgb(255 255 255 / 6%);
-  /* The keyboard focus ring, drawn the same way on every focusable control. Neutral,
-   * so it never borrows the accent's "needs you" meaning. */
-  --focus-ring: rgb(255 255 255 / 62%);
-  --shadow-float: 0 0 0 1px rgb(0 0 0 / 30%), 0 var(--space-2) var(--space-6) rgb(0 0 0 / 45%);
+  --border-focus: var(--focus-ring);
+  /* The keyboard focus ring, drawn the same way on every focusable control: a 2px
+   * line in the accent's hue, softened so it never reads as a filled "needs you". */
+  --focus-ring: rgb(154 173 210 / 70%);
+  --shadow-float: 0 0 0 1px rgb(0 0 0 / 22%), 0 var(--space-1) var(--space-4) rgb(0 0 0 / 28%);
 
   /* Type — two font stacks and shared sans sizes. The prose/display/hero sizes
    * preserve the former serif hierarchy under the owner's size-preservation exception. */
@@ -177,6 +182,8 @@
   --type-ui: 14px;
   --type-md: 15px;
   --type-lg: 16px;
+  /* Section headings on a page: one step above card titles, one below the page title. */
+  --type-section: 18px;
   --type-prose-lg: 15px;
   --type-display: 26px;
   --type-hero: 30px;
@@ -219,7 +226,7 @@
 :root {
   /* The Manager you are inside: a tint quiet enough that only the open row reads as selected. */
   --wash-context: rgb(255 255 255 / 3%);
-  --wash-selected: #2d2d2d;
+  --wash-selected: #313131;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }

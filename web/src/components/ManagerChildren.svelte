@@ -21,12 +21,18 @@
 <style>
   /* Rows and headers keep their inset for the hover fill, so the list pulls out by that inset and its text stands on the column edge. */
   .manager-children { margin-inline:calc(var(--space-3) * -1); }
+  /* Empty Backlogged and Done groups share one quiet line: "Backlogged 0 · Done 0". */
+  .manager-children :global([data-worker-section][data-empty="true"]) { display:inline-flex; align-items:center; margin-top:var(--space-1); }
+  .manager-children :global([data-worker-section][data-empty="true"] .manager-workspace-status) { margin-top:0; }
+  .manager-children :global([data-worker-section][data-empty="true"] summary) { color:var(--text-faintest); font-weight:450; padding-inline:var(--space-3) var(--space-1); }
+  .manager-children :global([data-worker-section][data-empty="true"] + [data-worker-section][data-empty="true"])::before { content:"·"; color:var(--text-faintest); }
+  .manager-children :global([data-worker-section][data-empty="true"] + [data-worker-section][data-empty="true"] summary) { padding-left:var(--space-1); }
   .manager-children :global(.manager-workspace-status + .manager-workspace-status) { margin-top:var(--space-3); }
-  .manager-children :global(.manager-workspace-status > summary) { display:flex; align-items:center; gap:var(--space-2); padding:6px var(--space-3); margin:0; font-family:var(--font-ui); line-height:20px; letter-spacing:normal; border:0; border-radius:var(--radius-md); background:none; font-size:var(--type-sm); font-weight:500; color:var(--text-faint); list-style:none; }
+  .manager-children :global(.manager-workspace-status > summary) { display:flex; align-items:center; gap:var(--space-2); padding:6px var(--space-3); margin:0; font-family:var(--font-ui); line-height:20px; letter-spacing:normal; border:0; border-radius:var(--radius-md); background:none; font-size:var(--type-sm); font-weight:530; color:var(--text-faint); list-style:none; }
   .manager-children :global(.manager-workspace-status > summary:hover) { background-image:var(--interaction-hover); color:var(--text-default); }
   .manager-children :global(.manager-workspace-status-label) { flex:none; font-size:var(--type-sm); text-transform:none; letter-spacing:normal; color:inherit; }
   .manager-children :global(.manager-workspace-status[open] > summary > .manager-workspace-count) { display:block; }
-  .manager-children :global(.manager-workspace-count) { margin-left:0; min-width:0; font-size:var(--type-sm); font-weight:400; line-height:20px; color:var(--text-faintest); text-align:left; font-variant-numeric:tabular-nums; }
+  .manager-children :global(.manager-workspace-count) { margin-left:0; min-width:0; font-size:var(--type-sm); font-weight:450; line-height:20px; color:var(--text-faintest); text-align:left; font-variant-numeric:tabular-nums; }
   .manager-children :global(.manager-workspace-status-body) { padding:2px 0 0; }
   .manager-children :global(.stage-mark) { width:7px; height:7px; }
   .manager-children :global(a:focus-visible), .manager-children :global(button:focus-visible), .manager-children :global(summary:focus-visible) { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }

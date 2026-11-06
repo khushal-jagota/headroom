@@ -34,7 +34,7 @@
  .header{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);padding:var(--space-5)}
  .header.small{padding:var(--space-4)}
  .heading{display:grid;min-width:0;gap:1px}
- h3{margin:0;color:var(--text-strong);font-size:var(--type-md);font-weight:500;line-height:1.4}
+ h3{margin:0;color:var(--text-strong);font-size:var(--type-md);font-weight:530;line-height:1.4}
  .count{margin:0;color:var(--text-faint);font-size:var(--type-sm);line-height:1.4}
  .count-visual{display:inline-flex;align-items:baseline}
  .roll{position:relative;display:inline-grid;vertical-align:top}

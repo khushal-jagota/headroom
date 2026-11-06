@@ -123,17 +123,18 @@
  .error-actions button{border:0;background:none;padding:var(--space-1);color:var(--accent-bright);font:inherit;font-size:12px;cursor:pointer}
  .error-actions button:disabled{opacity:.65}
  .goal-heading{margin-bottom:var(--space-6)}
- .goal-context{display:flex;align-items:baseline;gap:var(--space-3);margin:0 calc(var(--space-1) * -1) var(--space-2);color:var(--text-faint);font-size:var(--type-sm);font-weight:400;line-height:20px;flex-wrap:wrap}
- .goal-context > .metadata + .metadata::before{content:"·";position:absolute;top:var(--space-1);left:calc(var(--space-2) * -1 + 1px);line-height:inherit;color:var(--text-faintest);pointer-events:none}
- .date-display{grid-area:1/1;padding:var(--space-1);white-space:pre;pointer-events:none}
+ .goal-context{min-height:24px}
+ .goal-context{display:flex;align-items:baseline;gap:var(--space-3);margin:0 calc(var(--space-1) * -1) var(--space-2);color:var(--text-faint);font-size:var(--type-sm);font-weight:450;line-height:20px;flex-wrap:wrap}
+ .goal-context > .metadata + .metadata::before{content:"·";position:absolute;top:2px;left:calc(var(--space-2) * -1 + 1px);line-height:inherit;color:var(--text-faintest);pointer-events:none}
+ .date-display{grid-area:1/1;padding:2px var(--space-1);white-space:pre;pointer-events:none}
  .deadline:not(:focus-within) .date-size{visibility:hidden;width:0;overflow:hidden}
  .deadline:not(:focus-within) .date-display + input{opacity:0}
  .deadline:focus-within .date-display{display:none}
  .metadata{position:relative;display:inline-grid;grid-template-columns:minmax(0,1fr);align-items:baseline;min-width:0;max-width:100%}
- .control-size,.deadline-empty{grid-area:1/1;padding:var(--space-1);white-space:pre}
+ .control-size,.deadline-empty{grid-area:1/1;padding:2px var(--space-1);white-space:pre}
  .control-size{visibility:hidden}
  .deadline-empty{color:var(--text-faint);pointer-events:none}
- input,select{position:absolute;inset:0;box-sizing:border-box;width:100%;height:100%;min-width:0;font:inherit;line-height:inherit;background:transparent;color:var(--text-faint);border:0;border-radius:var(--radius-sm);padding:var(--space-1);appearance:none;cursor:pointer}
+ input,select{position:absolute;inset:0;box-sizing:border-box;width:100%;height:100%;min-width:0;font:inherit;line-height:inherit;background:transparent;color:var(--text-faint);border:0;border-radius:var(--radius-sm);padding:2px var(--space-1);appearance:none;cursor:pointer}
  .metadata:hover{color:var(--text-strong)}.metadata:hover > select,.metadata:hover > input{color:var(--text-strong)}
  select{cursor:pointer;text-overflow:ellipsis}
  select option{background:var(--surface-1);color:var(--text-default)}
@@ -145,8 +146,8 @@
  .empty:not(:focus-within) .date-size,.empty:focus-within .deadline-empty{display:none}
  .empty:not(:focus-within) input{opacity:0}
  .signal{margin-left:auto}
- h1{font-size:var(--type-display);font-weight:600;line-height:1.25;letter-spacing:-.02em;margin:0;max-width:750px;color:var(--text-strong)}
- .why{font-size:var(--type-md);font-weight:400;line-height:1.6;color:var(--text-muted);margin-top:var(--space-2);max-width:650px}
+ h1{font-size:var(--type-display);font-weight:700;line-height:1.25;letter-spacing:-.022em;margin:0;max-width:750px;color:var(--text-strong)}
+ .why{font-size:var(--type-md);font-weight:450;line-height:1.6;color:var(--text-muted);margin-top:var(--space-2);max-width:650px}
  .why :global(.ed){min-height:1.6em;white-space:pre-wrap}
  h1,.why{overflow-wrap:anywhere}
  @container (max-width:640px){.goal-context{gap:var(--space-3)}h1{font-size:24px}}

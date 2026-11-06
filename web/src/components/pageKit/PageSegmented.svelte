@@ -98,7 +98,7 @@
     color: var(--text-faint);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: 530;
     line-height: 1;
     padding: 0 var(--space-3);
     cursor: pointer;
@@ -123,7 +123,7 @@
     border-radius: var(--radius-pill);
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: 530;
     line-height: 1.4;
   }
   .editable-segment[data-selected="true"] {

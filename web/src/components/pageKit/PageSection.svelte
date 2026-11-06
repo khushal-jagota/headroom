@@ -48,7 +48,7 @@
   .section-title {
     margin: 0;
     font-size: var(--type-lg);
-    font-weight: 500;
+    font-weight: 530;
     letter-spacing: var(--tracking-title);
     line-height: 1.3;
     color: var(--text-strong);

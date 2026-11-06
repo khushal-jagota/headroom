@@ -87,7 +87,7 @@
 
 </script>
 
-<div bind:this={root} data-worker-section={filter} use:navigationScrollWindow={{window:principal.kind==='chief'||scopedGroups||(filter!=='active'&&!sectionOpen)?undefined:scopedWindow,activate:()=>navigation?.owner.prioritizeWindow(scopedWindow?.request),selector:'[data-worker-ticket-id]',key:node=>node.dataset.workerTicketId ?? '',move:(next,nextDirection)=>{anchor=next;direction=nextDirection;}}}>
+<div bind:this={root} data-worker-section={filter} data-empty={filter !== "active" && count === 0 ? "true" : undefined} use:navigationScrollWindow={{window:principal.kind==='chief'||scopedGroups||(filter!=='active'&&!sectionOpen)?undefined:scopedWindow,activate:()=>navigation?.owner.prioritizeWindow(scopedWindow?.request),selector:'[data-worker-ticket-id]',key:node=>node.dataset.workerTicketId ?? '',move:(next,nextDirection)=>{anchor=next;direction=nextDirection;}}}>
   {#snippet ticketRows(items: readonly WorkItemTicketFacts[])}
     <div class="manager-workspace-status-body">
       {#each items as ticket (ticket.id)}

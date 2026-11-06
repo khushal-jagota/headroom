@@ -299,11 +299,17 @@
       {:else}
         {@const ticket = currentItem}
         {#key ticket.ticket_id}
-          <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy}>
+          <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal)}>
             {#if ticket.proposal}
               {@const proposal = ticket.proposal}
+              {#snippet decision()}
+                <div class="review-ticket-decision-line review-ticket-decision-line--inline">
+                  <button data-skip disabled={messageBusy} onclick={()=>skip(ticket)}>Skip &rsaquo;</button>
+                  <a data-open-ticket href={workspaceAddress({kind:'ticket',id:ticket.ticket_id})}>Open ticket &rsaquo;</a>
+                </div>
+              {/snippet}
               {#key reviewProposalIdentity(proposal)}
-                <ReviewProposalCard identity={proposal} embedded ticketId={proposal.ticket_id} field={proposal.field}
+                <ReviewProposalCard identity={proposal} embedded decisionActions={decision} ticketId={proposal.ticket_id} field={proposal.field}
                   title={proposal.title} onResolved={proposalResolved}
                   initialRevisionDraft={proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.text : ""}
                   initialEditedBody={proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.editedBody : undefined}

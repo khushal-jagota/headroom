@@ -455,7 +455,7 @@
     margin: 0 0 var(--space-4);
     color: var(--text-strong);
     font-size: var(--type-md);
-    font-weight: 500;
+    font-weight: 530;
     line-height: normal;
     letter-spacing: -.012em;
   }
@@ -505,7 +505,7 @@
     border-bottom: var(--border-hairline) solid var(--chart-grid);
     color: var(--chart-muted);
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: 530;
     white-space: nowrap;
   }
   th[data-sorted] { color: var(--text-strong); }
@@ -514,10 +514,10 @@
     padding: 0 var(--space-4);
     border-bottom: var(--border-hairline) solid var(--row-line);
     color: var(--text-strong);
-    font-weight: 400;
+    font-weight: 450;
     overflow-wrap: anywhere;
   }
-  td[data-primary] { color: var(--text-strong); font-weight: 400; }
+  td[data-primary] { color: var(--text-strong); font-weight: 450; }
   td[data-missing] { color: var(--chart-muted); }
   td[data-tone="good"] { color: var(--accent-done); }
   td[data-tone="attention"] { color: var(--accent-attention); }
@@ -677,7 +677,7 @@
   .empty {
     height: 120px;
     color: var(--chart-muted);
-    font-weight: 400;
+    font-weight: 450;
     text-align: center;
   }
   .footer {
@@ -691,7 +691,7 @@
     border-top: var(--border-hairline) solid var(--chart-grid);
     color: var(--chart-muted);
     font-size: var(--type-sm);
-    font-weight: 400;
+    font-weight: 450;
     line-height: 1.4;
   }
   .count { margin: 0; font-variant-numeric: tabular-nums; }
@@ -707,7 +707,7 @@
     color: var(--text-strong);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: 530;
     cursor: pointer;
   }
   .sr {
@@ -770,7 +770,7 @@
     table[data-selectable] tbody tr[data-selected] { --row-fill: color-mix(in srgb, var(--accent-bright) 8%, var(--chart-surface)); }
     tbody tr:last-child { border-bottom: 0; }
     td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--chart-secondary); font-size: 11px; text-align: left; }
-    td[data-primary] { order: 0; flex: 1 1 0; color: var(--text-strong); font-size: 13px; font-weight: 500; }
+    td[data-primary] { order: 0; flex: 1 1 0; color: var(--text-strong); font-size: 13px; font-weight: 530; }
     td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: 8px; color: var(--text-strong); font-size: 13px; }
     td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--chart-secondary); font-size: 11px; }
     td[data-sorted]:not([data-primary]):not([data-tone]) { color: var(--text-strong); }
