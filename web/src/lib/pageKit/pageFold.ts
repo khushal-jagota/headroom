@@ -20,7 +20,7 @@ export const PAGE_FOLD_ATOMIC = [
 ].join(", ");
 
 /** Units that introduce the unit after them. */
-export const PAGE_FOLD_HEADS = "h1, h2, h3, thead tr, .caption, .card-head, .metric-top, .proposal-line, .checklist-header, .page-tickets details[open] > summary";
+export const PAGE_FOLD_HEADS = "h1, h2, h3, .caption, .card-head, .metric-top, .proposal-line, .checklist-header, .page-tickets details[open] > summary";
 
 export type FoldUnit = { top: number; bottom: number; head: boolean };
 
