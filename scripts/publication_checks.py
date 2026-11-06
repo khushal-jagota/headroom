@@ -20,7 +20,10 @@ from typing import cast
 SUITES = ("unit", "integration", "e2e", "browser")
 REPORTS = {suite: f"reports/{suite}.{'json' if suite == 'browser' else 'xml'}"
            for suite in SUITES}
-IDENTITY_KEYS = ("requested_sha", "workflow_sha", "run_id", "run_attempt")
+# Every attempt of one run checks the same commits, so a rerun of only the failed jobs
+# may accept evidence an earlier attempt produced. Each record still names the attempt
+# that made it, and the browser evidence paths follow that attempt.
+IDENTITY_KEYS = ("requested_sha", "workflow_sha", "run_id")
 # The build job seals, proves, and rehearses the candidate while the suites run, and
 # uploads the archive itself. Publication accepts only these proofs, anchored by the
 # record digest the build job reports, and writes the receipt from them.
@@ -56,14 +59,27 @@ def full_selection(source: Path) -> dict[str, object]:
 def identity(environment: dict[str, str]) -> dict[str, str]:
     value = dict(zip(IDENTITY_KEYS, (environment["PANELS_REQUESTED_SHA"],
                                     environment["GITHUB_SHA"],
-                                    environment["GITHUB_RUN_ID"],
-                                    environment["GITHUB_RUN_ATTEMPT"]), strict=True))
+                                    environment["GITHUB_RUN_ID"]), strict=True))
     if (any(re.fullmatch(r"[0-9a-f]{40}", value[key]) is None
             for key in IDENTITY_KEYS[:2])
-            or any(re.fullmatch(r"[1-9][0-9]*", value[key]) is None
-                   for key in IDENTITY_KEYS[2:])):
+            or not run_number(value["run_id"])):
         raise ValueError("invalid publication identity")
     return value
+
+
+def run_number(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[1-9][0-9]*", value) is not None
+
+
+def current_attempt(environment: dict[str, str]) -> str:
+    attempt = environment["GITHUB_RUN_ATTEMPT"]
+    if not run_number(attempt):
+        raise ValueError("invalid run attempt")
+    return attempt
+
+
+def browser_invocation(expected: dict[str, str], attempt: str) -> str:
+    return f"{expected['run_id']}-{attempt}-browser"
 
 
 def read_object(path: Path) -> dict[str, object]:
@@ -85,13 +101,20 @@ def require_source(source: Path, expected: dict[str, str]) -> None:
         raise ValueError("requested source differs from prepared revision")
 
 
-def prepare(source: Path, output: Path, expected: dict[str, str]) -> None:
+def prepare(source: Path, output: Path, expected: dict[str, str], attempt: str) -> None:
     require_source(source, expected)
     selection = full_selection(source)
     write_object(output / "selection.json", selection)
     write_object(output / "selection-record.json", {
-        "schema": 1, "identity": expected, "selection": selection,
+        "schema": 1, "identity": expected, "run_attempt": attempt, "selection": selection,
     })
+
+
+def selection_record_matches(record: dict[str, object], selection: dict[str, object],
+                             expected: dict[str, str]) -> bool:
+    return (set(record) == {"schema", "identity", "run_attempt", "selection"}
+            and record["schema"] == 1 and record["identity"] == expected
+            and run_number(record["run_attempt"]) and record["selection"] == selection)
 
 
 def regular_files(root: Path) -> dict[str, Path]:
@@ -114,7 +137,7 @@ def prepared_selection(download: Path, expected: dict[str, str]) -> dict[str, ob
         raise ValueError("prepared selection inventory differs")
     selection = read_object(files["selection.json"])
     record = read_object(files["selection-record.json"])
-    if record != {"schema": 1, "identity": expected, "selection": selection}:
+    if not selection_record_matches(record, selection, expected):
         raise ValueError("prepared selection identity differs")
     for suite in SUITES:
         selected = selection.get(suite)
@@ -147,16 +170,15 @@ def plain_relative(relative: str) -> bool:
                 or any(part in {"", ".", ".."} for part in path.parts))
 
 
-def evidence_path(suite: str, relative: str, expected: dict[str, str]) -> bool:
+def evidence_path(suite: str, relative: str, expected: dict[str, str], attempt: str) -> bool:
     path = PurePosixPath(relative)
     if not plain_relative(relative):
         return False
     if relative in {REPORTS[suite], f"reports/{suite}.log"}:
         return True
-    browser_root = ("reports/browser-evidence-" + expected["run_id"] + "-"
-                    + expected["run_attempt"] + "-browser")
+    browser_root = "browser-evidence-" + browser_invocation(expected, attempt)
     return suite == "browser" and len(path.parts) > 2 and path.parts[:2] == (
-        "reports", browser_root.removeprefix("reports/"))
+        "reports", browser_root)
 
 
 def digest(path: Path) -> str:
@@ -167,20 +189,21 @@ def digest(path: Path) -> str:
     return value.hexdigest()
 
 
-def pack(suite: str, gate: Path, output: Path, expected: dict[str, str]) -> None:
+def pack(suite: str, gate: Path, output: Path, expected: dict[str, str],
+         attempt: str) -> None:
     selection = read_object(gate / "selection.json")
     output.mkdir(parents=True, exist_ok=False)
     files: dict[str, str] = {}
     for relative, path in regular_files(gate / "reports").items():
         relative = "reports/" + relative
-        if not evidence_path(suite, relative, expected):
+        if not evidence_path(suite, relative, expected, attempt):
             raise ValueError(f"unexpected suite evidence: {relative}")
         files[relative] = digest(path)
         destination = output / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, destination)
     write_object(output / "suite-record.json", {
-        "schema": 1, "identity": expected, "suite": suite,
+        "schema": 1, "identity": expected, "run_attempt": attempt, "suite": suite,
         "selected": selection[suite], "files": files,
     })
     if REPORTS[suite] not in files:
@@ -188,25 +211,28 @@ def pack(suite: str, gate: Path, output: Path, expected: dict[str, str]) -> None
 
 
 def checked_bundle(suite: str, download: Path, selection: dict[str, object],
-                   expected: dict[str, str]) -> dict[str, Path]:
+                   expected: dict[str, str]) -> tuple[dict[str, Path], str]:
+    """Check one suite's evidence and return it with the attempt that produced it."""
     files = regular_files(download)
     record_path = files.pop("suite-record.json", None)
     if record_path is None:
         raise ValueError(f"missing suite record: {suite}")
     record = read_object(record_path)
     hashes = record.get("files")
-    if (set(record) != {"schema", "identity", "suite", "selected", "files"}
+    attempt = record.get("run_attempt")
+    if (set(record) != {"schema", "identity", "run_attempt", "suite", "selected", "files"}
             or record["schema"] != 1 or record["identity"] != expected
+            or not isinstance(attempt, str) or not run_number(attempt)
             or record["suite"] != suite or record["selected"] != selection[suite]):
         raise ValueError(f"suite identity or selection differs: {suite}")
     if not isinstance(hashes, dict) or set(hashes) != set(files):
         raise ValueError(f"suite file inventory differs: {suite}")
     for relative, path in files.items():
-        if not evidence_path(suite, relative, expected):
+        if not evidence_path(suite, relative, expected, attempt):
             raise ValueError(f"unsafe or foreign evidence path: {relative}")
         if hashes[relative] != digest(path):
             raise ValueError(f"suite evidence hash differs: {relative}")
-    return files | {f"suite-records/{suite}.json": record_path}
+    return files | {f"suite-records/{suite}.json": record_path}, attempt
 
 
 def retain(files: dict[str, Path], gate: Path) -> None:
@@ -240,15 +266,15 @@ def collect(downloads: Path, gate: Path, expected: dict[str, str],
     if selection is not None:
         for suite in SUITES:
             try:
-                files = checked_bundle(suite, downloads / suite, selection, expected)
+                files, attempt = checked_bundle(suite, downloads / suite, selection, expected)
                 retain(files, gate)
                 # Completeness is a publication requirement, not a reason to discard
                 # safe, source-bound diagnostics from a suite that failed early.
                 if REPORTS[suite] not in files:
                     raise ValueError(f"missing required suite report: {REPORTS[suite]}")
                 if suite == "browser":
-                    evidence = (f"reports/browser-evidence-{expected['run_id']}-"
-                                f"{expected['run_attempt']}-browser/")
+                    evidence = ("reports/browser-evidence-"
+                                f"{browser_invocation(expected, attempt)}/")
                     if not any(name.startswith(evidence) for name in files):
                         raise ValueError("browser evidence directory is empty or absent")
             except (OSError, ValueError) as error:
@@ -267,7 +293,7 @@ def candidate_path(relative: str) -> bool:
         or (len(parts) > 1 and parts[0] == "target"))
 
 
-def pack_candidate(gate: Path, output: Path, expected: dict[str, str]) -> str:
+def pack_candidate(gate: Path, output: Path, expected: dict[str, str], attempt: str) -> str:
     """Copy the sealed archive's proofs, and return the record digest."""
     names = [*CANDIDATE_REQUIRED,
              *(name for name in CANDIDATE_REPORTS if (gate / name).is_file()),
@@ -282,7 +308,8 @@ def pack_candidate(gate: Path, output: Path, expected: dict[str, str]) -> str:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, destination)
         files[relative] = digest(destination)
-    write_object(output / CANDIDATE_RECORD, {"schema": 1, "identity": expected, "files": files})
+    write_object(output / CANDIDATE_RECORD, {"schema": 1, "identity": expected,
+                                             "run_attempt": attempt, "files": files})
     return digest(output / CANDIDATE_RECORD)
 
 
@@ -295,8 +322,8 @@ def accept_candidate(download: Path, gate: Path, expected: dict[str, str],
         raise ValueError("sealed candidate record differs from the build job's digest")
     record = read_object(record_path)
     hashes = record.get("files")
-    if (set(record) != {"schema", "identity", "files"} or record["schema"] != 1
-            or record["identity"] != expected):
+    if (set(record) != {"schema", "identity", "run_attempt", "files"} or record["schema"] != 1
+            or record["identity"] != expected or not run_number(record["run_attempt"])):
         raise ValueError("sealed candidate identity differs")
     if not isinstance(hashes, dict) or set(hashes) != set(files):
         raise ValueError("sealed candidate file inventory differs")
@@ -315,8 +342,10 @@ def validate(gate: Path, source: Path, expected: dict[str, str]) -> None:
     selection = read_object(gate / "selection.json")
     record = read_object(gate / "selection-record.json")
     if (selection != full_selection(source)
-            or record != {"schema": 1, "identity": expected, "selection": selection}):
+            or not selection_record_matches(record, selection, expected)):
         raise ValueError("complete requested-source selection differs")
+    # Collection already checked this record; its attempt names the browser invocation.
+    browser_attempt = cast(str, read_object(gate / "suite-records/browser.json")["run_attempt"])
     # The trusted checkout supplies the validators even for an older requested source.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.deployment_check_report import check_browser, check_pytest
@@ -326,7 +355,7 @@ def validate(gate: Path, source: Path, expected: dict[str, str]) -> None:
         if suite == "browser":
             check_browser(gate / REPORTS[suite], selected, source,
                           expected["requested_sha"],
-                          f"{expected['run_id']}-{expected['run_attempt']}-browser")
+                          browser_invocation(expected, browser_attempt))
         else:
             check_pytest(gate / REPORTS[suite], selected)
 
@@ -343,10 +372,11 @@ def main() -> None:
     parser.add_argument("--suite", choices=SUITES)
     args = parser.parse_args()
     expected = identity(dict(os.environ))
+    attempt = current_attempt(dict(os.environ))
     source = args.source or Path(os.environ.get("PANELS_CANDIDATE_SOURCE", "."))
     gate = args.gate or Path(os.environ.get("PANELS_GATE_DIR", "."))
     if args.operation == "prepare":
-        prepare(source, args.output or gate, expected)
+        prepare(source, args.output or gate, expected, attempt)
     elif args.operation == "accept-selection":
         if args.download is None:
             parser.error("--download is required")
@@ -354,7 +384,7 @@ def main() -> None:
     elif args.operation == "pack":
         if args.suite is None or args.output is None:
             parser.error("--suite and --output are required")
-        pack(args.suite, gate, args.output, expected)
+        pack(args.suite, gate, args.output, expected, attempt)
     elif args.operation == "collect":
         if args.download is None:
             parser.error("--download is required")
@@ -363,7 +393,7 @@ def main() -> None:
     elif args.operation == "pack-candidate":
         if args.output is None:
             parser.error("--output is required")
-        print(pack_candidate(gate, args.output, expected))
+        print(pack_candidate(gate, args.output, expected, attempt))
     elif args.operation == "accept-candidate":
         if args.download is None:
             parser.error("--download is required")

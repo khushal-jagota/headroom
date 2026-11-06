@@ -99,7 +99,8 @@ jobs:
       - name: Retain prepared selection
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: panels-publication-selection-${{ github.run_attempt }}
+          overwrite: true
+          name: panels-publication-selection
           path: ${{ runner.temp }}/publication-selection/
           if-no-files-found: error
           include-hidden-files: true
@@ -143,6 +144,7 @@ jobs:
         id: mac_artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
+          overwrite: true
           name: panels-mac-runtime
           path: ${{ runner.temp }}/mac-runtime-publication/
           if-no-files-found: error
@@ -204,7 +206,9 @@ jobs:
       - name: Download complete selection
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: panels-publication-selection-${{ github.run_attempt }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          name: panels-publication-selection
           path: ${{ runner.temp }}/publication-selection
       - name: Check prepared source and selection
         id: selection
@@ -446,7 +450,8 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: panels-publication-${{ matrix.suite }}-${{ github.run_attempt }}
+          overwrite: true
+          name: panels-publication-${{ matrix.suite }}
           path: ${{ runner.temp }}/publication-suite/
           if-no-files-found: error
           include-hidden-files: true
@@ -493,7 +498,9 @@ jobs:
       - name: Download complete selection
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: panels-publication-selection-${{ github.run_attempt }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          name: panels-publication-selection
           path: ${{ runner.temp }}/publication-selection
       - name: Check prepared source and selection
         run: python3 scripts/publication_checks.py accept-selection --download "$RUNNER_TEMP/publication-selection"
@@ -561,7 +568,8 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: panels-publication-checks-${{ github.run_attempt }}
+          overwrite: true
+          name: panels-publication-checks
           path: ${{ runner.temp }}/checks-gate/reports/
           if-no-files-found: ignore
           retention-days: 30
@@ -782,6 +790,7 @@ jobs:
         id: app_artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
+          overwrite: true
           name: panels-app
           path: ${{ env.PANELS_GATE_DIR }}/panels-app.tar.gz
           if-no-files-found: error
@@ -795,7 +804,8 @@ jobs:
       - name: Hand candidate proofs to publication
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: panels-candidate-proofs-${{ github.run_attempt }}
+          overwrite: true
+          name: panels-candidate-proofs
           path: ${{ runner.temp }}/publication-candidate/
           if-no-files-found: error
           include-hidden-files: true
@@ -805,7 +815,8 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: panels-publication-build-${{ github.run_attempt }}
+          overwrite: true
+          name: panels-publication-build
           include-hidden-files: true
           path: |-
             ${{ env.PANELS_GATE_DIR }}/
@@ -847,31 +858,41 @@ jobs:
         if: ${{ always() }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: panels-publication-selection-${{ github.run_attempt }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          name: panels-publication-selection
           path: ${{ runner.temp }}/publication-evidence/selection
       - name: Download unit publication evidence
         if: ${{ always() }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: panels-publication-unit-${{ github.run_attempt }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          name: panels-publication-unit
           path: ${{ runner.temp }}/publication-evidence/unit
       - name: Download integration publication evidence
         if: ${{ always() }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: panels-publication-integration-${{ github.run_attempt }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          name: panels-publication-integration
           path: ${{ runner.temp }}/publication-evidence/integration
       - name: Download e2e publication evidence
         if: ${{ always() }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: panels-publication-e2e-${{ github.run_attempt }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          name: panels-publication-e2e
           path: ${{ runner.temp }}/publication-evidence/e2e
       - name: Download browser publication evidence
         if: ${{ always() }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: panels-publication-browser-${{ github.run_attempt }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          name: panels-publication-browser
           path: ${{ runner.temp }}/publication-evidence/browser
       - name: Collect checked suite evidence and require successful prerequisites
         if: ${{ always() && steps.paths.outcome == 'success' }}
@@ -881,7 +902,9 @@ jobs:
       - name: Download candidate proofs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: panels-candidate-proofs-${{ github.run_attempt }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          name: panels-candidate-proofs
           path: ${{ runner.temp }}/publication-candidate
       - name: Accept candidate proofs from the build job
         env:
@@ -909,6 +932,8 @@ jobs:
       - name: Download checked native Mac publication
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
           artifact-ids: ${{ needs.mac-runtime.outputs.artifact_id }}
           path: ${{ env.PANELS_GATE_DIR }}/mac
           merge-multiple: true
@@ -931,6 +956,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
+          overwrite: true
           name: panels-publication-proof
           include-hidden-files: true
           path: |-

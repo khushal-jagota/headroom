@@ -211,6 +211,8 @@ def test_parallel_publication_binds_checked_build_and_native_mac_before_receipt(
     assert len({step["with"]["path"] for step in downloads}) == 7
     assert steps["Download checked native Mac publication"]["with"] == {
         "artifact-ids": "${{ needs.mac-runtime.outputs.artifact_id }}",
+        "run-id": "${{ github.run_id }}",
+        "github-token": "${{ github.token }}",
         "path": "${{ env.PANELS_GATE_DIR }}/mac",
         "merge-multiple": True,
     }
@@ -259,9 +261,8 @@ def test_parallel_suite_setup_and_evidence_keep_the_existing_native_and_mount_bo
     )
     upload = steps["Retain suite evidence and diagnostics"]
     assert upload["if"] == "${{ always() }}"
-    assert upload["with"]["name"] == (
-        "panels-publication-${{ matrix.suite }}-${{ github.run_attempt }}"
-    )
+    assert upload["with"]["name"] == "panels-publication-${{ matrix.suite }}"
+    assert upload["with"]["overwrite"] is True
     assert upload["with"]["if-no-files-found"] == "error"
     assert upload["with"]["include-hidden-files"] is True
 
@@ -445,3 +446,58 @@ def test_adoption_reporting_write_failure_is_observable_without_lifecycle_mutati
     assert result.returncode == 1
     assert json.loads(result.stdout)["status"] == "uncertain"
     assert not (data / "deployment-lifecycle.json").exists()
+
+
+def test_rerun_of_failed_suite_publishes_with_evidence_from_earlier_attempt(
+    tmp_path: Path,
+) -> None:
+    """Only the failed browser suite reruns in attempt 2; attempt-1 evidence still counts."""
+    from scripts import publication_checks as checks
+
+    source = tmp_path / "source"
+    for relative in ("tests/unit/test_a.py", "tests/integration/test_b.py",
+                     "tests/e2e/test_c.py"):
+        (source / relative).parent.mkdir(parents=True, exist_ok=True)
+        (source / relative).write_text("")
+    (source / "web/tests/browser").mkdir(parents=True)
+    (source / "web/tests/browser/catalog.json").write_text(
+        '{"schema": 1, "entries": [{"path": "web/tests/browser/case.mjs"}]}')
+    git = ["git", "-C", str(source), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run([*git, "add", "."], check=True)
+    subprocess.run([*git, "commit", "-qm", "source"], check=True)
+    sha = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip()
+    run = {"PANELS_REQUESTED_SHA": sha, "GITHUB_SHA": "c" * 40, "GITHUB_RUN_ID": "77"}
+    expected = checks.identity(run | {"GITHUB_RUN_ATTEMPT": "1"})
+    assert expected == checks.identity(run | {"GITHUB_RUN_ATTEMPT": "2"})
+
+    downloads = tmp_path / "downloads"
+    checks.prepare(source, downloads / "selection", expected, "1")
+    for suite, attempt in (("unit", "1"), ("integration", "1"), ("e2e", "1"),
+                           ("browser", "2")):
+        gate = tmp_path / f"gate-{suite}"
+        checks.accept_selection(downloads / "selection", gate, expected, source)
+        report = gate / checks.REPORTS[suite]
+        report.parent.mkdir(parents=True)
+        report.write_text("report")
+        if suite == "browser":
+            evidence = gate / f"reports/browser-evidence-77-{attempt}-browser/case.png"
+            evidence.parent.mkdir()
+            evidence.write_text("png")
+        checks.pack(suite, gate, downloads / suite, expected, attempt)
+
+    passed: dict[str, object] = {"prepare": "success", "suites": "success",
+                                 "checks": "success", "build": "success"}
+    checks.collect(downloads, tmp_path / "publish", expected, passed)
+    assert (tmp_path / "publish/reports/browser-evidence-77-2-browser/case.png").exists()
+
+    # Evidence from another run or another commit still never counts.
+    for index, foreign in enumerate((run | {"GITHUB_RUN_ID": "78"},
+                                     run | {"GITHUB_SHA": "d" * 40})):
+        with pytest.raises(ValueError, match="identity"):
+            checks.collect(downloads, tmp_path / f"foreign-{index}",
+                           checks.identity(foreign | {"GITHUB_RUN_ATTEMPT": "2"}), passed)
+    # A rerun that fails again still blocks publication.
+    with pytest.raises(ValueError, match="prerequisites did not succeed"):
+        checks.collect(downloads, tmp_path / "failed", expected,
+                       passed | {"suites": "failure"})
