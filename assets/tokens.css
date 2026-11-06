@@ -38,7 +38,7 @@
   --accent-fill: var(--button-primary-fill);
   --accent-fill-hover: var(--button-primary-fill-hover);
   /* Inline code: a translucent lift that reads on every surface it lands on. */
-  --surface-code: rgb(255 255 255 / 5%);
+  --surface-code: rgb(255 255 255 / 4%);
   /* Popovers, menus, tooltips and hover previews: the one raised plane. It carries a 1px
    * ring (--border-raised) and --shadow-float. */
   --surface-raised: #242424;
@@ -119,7 +119,7 @@
   --chart-composition-blue-muted: #646f87;
   --chart-composition-blue-dark: #474b55;
   --accent-done: #7fa564;  /* the green done marks */
-  --accent-error: #d97272; /* red marks for errored ticket stages */
+  --accent-error: #c97c77; /* red marks for errored ticket stages */
   /* The one pure white in the palette: the row dot for a worker waiting on a permission
    * ask. Nothing else is this bright, so "only you can answer this" reads at a glance. */
   --accent-needs-me: #fff;
@@ -377,7 +377,7 @@
   --page-control-height: 28px;
   /* One card: a 1px edge at 7%, a 2% lift, radius 12, padding 20. Nothing inside a card
    * draws a surface of its own. */
-  --page-card-fill: rgb(255 255 255 / 2%);
+  --page-card-fill: rgb(255 255 255 / 3.5%);
   --page-card-edge: rgb(255 255 255 / 7%);
   --page-card-radius: 12px;
   --page-card-pad: 20px;
