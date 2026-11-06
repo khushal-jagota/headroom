@@ -1069,7 +1069,7 @@ a.pv-name:focus-visible { outline:0; }
 .file-preview-track { display:block; width:100%; height:var(--space-1); background:var(--surface-2); border-radius:var(--radius-pill); overflow:hidden; }
 .file-preview-progress { display:block; height:100%; background:var(--accent-bright); border-radius:var(--radius-pill); }
 .file-preview-time { flex:none; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--tone-tertiary); font-variant-numeric:tabular-nums; }
-.file-preview-failed-name { color:var(--tone-strong); font-weight:var(--weight-needs-you); }
+.file-preview-failed-name { color:var(--tone-strong); font-weight:var(--weight-title); }
 .chat-u .file-preview-card, .chat-u .file-preview-transport { border:var(--border-hairline) solid var(--border-color); }
 .file-preview-slot:has(> .file-preview--embedded .managed-html-fetch-notice), .file-preview--embedded:has(.managed-html-fetch-notice), .file-preview-card:has(.managed-html-fetch-notice), .file-preview-content:has(.managed-html-fetch-notice), .managed-html-document:has(> .managed-html-fetch-notice) { display:inline; margin:0; padding:0; border:0; border-radius:0; background:none; overflow:visible; }
 .file-preview-card:has(.managed-html-fetch-notice) > .file-preview-band { display:contents; }
