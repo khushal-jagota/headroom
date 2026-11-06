@@ -72,15 +72,11 @@ def calendar_now(clock: Clock) -> datetime:
 
 def goal_json(conn: sqlite3.Connection, goal: Goal, now: datetime) -> GoalResponse:
     today, midnight = calendar_projection(now)
-    agent = conn.execute(
-        "SELECT conversation_id FROM agents WHERE agent_key=?", (f"goal_{goal.id}",)
-    ).fetchone()
     completed = goal_completed(goal)
     return {
         "id": goal.id,
         "holder_kind": goal.holder_kind,
         "holder_id": goal.holder_id,
-        "legacy_conversation_id": agent[0] if agent else None,
         "project_id": goal.project_id,
         "title": goal.title,
         "why": goal.why,

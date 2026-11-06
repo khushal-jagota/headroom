@@ -210,7 +210,6 @@ def _require_unassociated_send_conversation(
         "worker",
         "chief",
         "manager",
-        "goal",
     }:
         raise HTTPException(
             status_code=409,

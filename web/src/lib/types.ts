@@ -460,7 +460,7 @@ export type NotificationSettingsResponse = {
 export type WorkspaceMessageConversation = {
   locale?: import("./ticketMachines").TicketLocale;
   conversationSignal?: Partial<ConversationSignal>;
-  kind: "chief" | "manager" | "ticket" | "goal";
+  kind: "chief" | "manager" | "ticket";
   id: string;
   title: string;
   conversationId: string;

@@ -231,8 +231,6 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
     elif table == "agents":
         if identity == "chief_of_staff":
             roots.add(("chief", "chief"))
-        elif identity.startswith("goal_"):
-            roots.add(("goal", identity.removeprefix("goal_")))
         elif identity.startswith("manager_"):
             roots.add(
                 (
@@ -587,18 +585,6 @@ def _derive(
                     "parent_kind": None,
                     "parent_id": None,
                 }
-            elif key.startswith("goal_"):
-                owner = key.removeprefix("goal_")
-                deps.add(("goals", owner))
-                if conn.execute("SELECT 1 FROM goals WHERE id=?", (owner,)).fetchone():
-                    addresses[("goal", owner)] = {
-                        "owner_kind": "goal",
-                        "owner_id": owner,
-                        "conversation_id": identity,
-                        "current": True,
-                        "parent_kind": None,
-                        "parent_id": None,
-                    }
             elif key.startswith("manager_"):
                 owner = key.removeprefix("manager_")
                 deps.add(("managers", owner))
@@ -629,21 +615,6 @@ def _derive(
                     ("manager", owner),
                     {
                         "owner_kind": "manager",
-                        "owner_id": owner,
-                        "conversation_id": identity,
-                        "current": False,
-                        "parent_kind": None,
-                        "parent_id": None,
-                    },
-                )
-        if values.get("PLAN_ACTOR") == "goal" and values.get("PLAN_GOAL_ID"):
-            owner = values["PLAN_GOAL_ID"]
-            deps.add(("goals", owner))
-            if conn.execute("SELECT 1 FROM goals WHERE id=?", (owner,)).fetchone():
-                addresses.setdefault(
-                    ("goal", owner),
-                    {
-                        "owner_kind": "goal",
                         "owner_id": owner,
                         "conversation_id": identity,
                         "current": False,

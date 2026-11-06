@@ -226,7 +226,7 @@ def _members(
             # One canonical address per owner/conversation. Preserve current-first order.
             add("unread", None, rank=-int(value["current"]), title_key=b"")
             owner = (str(value["owner_kind"]), str(value["owner_id"]))
-            if owner[0] in ("ticket", "goal"):
+            if owner[0] == "ticket":
                 add("unread", owner, rank=-int(value["current"]), title_key=b"")
             owner_value = record(conn, owner) or {}
             if (
@@ -297,7 +297,7 @@ def update(
                     "SELECT kind,id FROM navigation_view_index WHERE conversation_id=?", (identity,)
                 )
             )
-        if kind in ("ticket", "manager", "chief", "goal"):
+        if kind in ("ticket", "manager", "chief"):
             affected.update(
                 (r[0], r[1])
                 for r in conn.execute(
