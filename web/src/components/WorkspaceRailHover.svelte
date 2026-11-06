@@ -78,9 +78,8 @@
     const currentTarget = target;
     const currentRail = rail;
     const currentPanel = element;
-    /* The panel never covers the row it describes or the conversation dock. Beside the
-     * rail it opens past the rail's edge, level with its row. A row in a page list opens
-     * below the row, or above it when the dock leaves no room underneath. */
+    /* Beside the rail the panel opens past the rail's edge, level with its row, clear of the
+     * composer. A row in a page list places it as staging did. */
     const place = () => {
       const rect = currentTarget.getBoundingClientRect();
       const width = currentPanel.offsetWidth;
@@ -97,37 +96,11 @@
         clearOfRail = left >= railRight;
         return;
       }
-      // A row in a page list hugs its words, so the panel opens to the right of the row's end,
-      // centred on the row and kept inside the window and above the composer. It never
-      // overlaps its own row; where the window leaves no room to the right it opens under the
-      // row, or over it when the composer leaves no room under it.
-      const row = currentTarget.querySelector<HTMLElement>(".ticket-row") ?? currentTarget;
-      const box = row.getBoundingClientRect();
-      // Beside its row the panel stays with its list (never more than 10px above the list's
-      // own heading) and clear of the composer by 8px.
-      const listTop = (currentTarget.closest(".page-tickets") ?? currentTarget.closest("section") ?? currentTarget).getBoundingClientRect().top;
-      const besideFloor = floor + 4;
-      const besideTop = Math.max(12, listTop - 10, Math.min(box.top + box.height / 2 - height / 2, besideFloor - height));
-      // Beside the row it also clears the rows and headings it lies level with, which hug
-      // their words too, so it covers only empty column.
-      const list = currentTarget.closest("[data-manager-children], .manager-children") ?? currentTarget.parentElement;
-      let clear = box.right;
-      for (const other of list?.querySelectorAll<HTMLElement>(".ticket-row, summary") ?? []) {
-        const near = other.getBoundingClientRect();
-        if (near.bottom > besideTop && near.top < besideTop + height) {
-          if (other.matches("summary")) { const words = document.createRange(); words.selectNodeContents(other); for (const line of words.getClientRects()) if (line.width) clear = Math.max(clear, line.right); }
-          else clear = Math.max(clear, near.right);
-        }
-      }
-      if (clear + 8 + width <= window.innerWidth - 12) {
-        left = clear + 8;
-        top = besideTop;
-      } else {
-        left = Math.max(12, Math.min(box.left, window.innerWidth - width - 12));
-        top = box.bottom + 6 + height <= floor ? box.bottom + 6 : Math.max(12, box.top - 6 - height);
-      }
-      // Beside its row the pointer can cross straight to it and press the ask inside.
-      clearOfRail = left >= box.right;
+      // A row in a page list, as on staging: the panel opens 14px past the row's own box (the
+      // list's full width), 8px above the row's top, kept inside the window.
+      left = Math.max(12, Math.min(rect.right + 14, window.innerWidth - width - 12));
+      top = Math.max(12, Math.min(rect.top - 8, window.innerHeight - height - 12));
+      clearOfRail = left >= rect.right;
     };
     // Manifest arrival can change the height after the panel is already visible.
     const observer = new ResizeObserver(place);
