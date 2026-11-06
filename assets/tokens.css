@@ -351,8 +351,6 @@
   --rail-tone-rest: #8b8b8b;
   --rail-tone-title-bright: var(--rail-tone-bright);
   --rail-tone-title: var(--rail-tone-rest);
-  /* A title too long for its row fades out over this width at the row's text edge. */
-  --rail-title-fade: 32px;
   /* A Manager's name: clearly above a row, but quieter than anything that needs you. */
   --type-rail-title: 18px;
   --rail-tone-label: #828282;

@@ -16,7 +16,7 @@
   .manager-eyebrow { display:flex; align-items:center; gap:var(--space-2); min-height:16px; font-size:var(--rail-label-size); font-weight:var(--rail-label-weight); line-height:16px; color:var(--rail-tone-label); font-variant-numeric:tabular-nums; }
   .settle { margin-left:auto; display:inline-flex; align-items:center; gap:4px; color:var(--rail-tone-label); white-space:nowrap; background:none; border:0; font:inherit; cursor:pointer; padding:0; transition:opacity var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   .rail { line-height:16px; }
-  .rail > span { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:clip; }
+  .rail > span { min-width:0; overflow-wrap:anywhere; }
   .rail .settle { flex-shrink:0; opacity:0; }
   :global(.manager-card .identity:hover) .settle, :global(.manager-card .identity:focus-within) .settle, .settle:focus-visible { opacity:1; }
   .settle:hover { color:var(--rail-tone-bright); }

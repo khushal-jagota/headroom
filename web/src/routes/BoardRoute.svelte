@@ -21,7 +21,7 @@
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
   import { buildWorkspaceRail, workspaceListRecap, type WorkspaceRailItem } from "../lib/workspaceRail";
-  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController, listenForUserScroll, railTitleFade } from "../lib/workspaceRailInteraction";
+  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController, listenForUserScroll } from "../lib/workspaceRailInteraction";
   import { correctedWorkspaceAddress, whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import { parseUtilityPath, type UtilityHref, type WorkspaceUtility } from "../lib/utilityAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
@@ -372,7 +372,7 @@
 <section class="board-screen" data-screen="workspace">
     <div class="board-workspace-wrap">
       <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked && !managerId} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
-        <section use:workspaceRailWash use:railTitleFade bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
+        <section use:workspaceRailWash bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
           <div class="rail-work">
           <ResourceState shape="block" layout="fill" loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
@@ -559,11 +559,11 @@
   .settled--open .settled-chevron { transform:rotate(90deg); }
   .count { flex:none; margin-left:5px; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; }
   .settled-item + .settled-item { margin-top:var(--rail-row-gap); }
-  .settled-row { display:flex; align-items:center; gap:var(--space-2); box-sizing:border-box; height:var(--rail-row-height); padding:0 var(--rail-pad); margin:0; border-radius:var(--radius-md); font-size:var(--type-row); line-height:20px; }
+  .settled-row { display:flex; align-items:center; gap:var(--space-2); box-sizing:border-box; min-height:var(--rail-row-height); padding:5px var(--rail-pad); margin:0; border-radius:var(--radius-md); font-size:var(--type-row); line-height:20px; }
   .settled-row:hover { color:var(--rail-tone-bright); }
   .settled-title,.reopen { border:0; background:none; font:inherit; cursor:pointer; color:var(--text-faintest); padding:0; }
   .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; color:var(--rail-tone-rest); }
-  .settled-title > span { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:clip; overflow-wrap:normal; }
+  .settled-title > span { flex:1; min-width:0; overflow-wrap:anywhere; }
   .reopen { opacity:0; margin-left:auto; color:var(--rail-tone-label); font-size:var(--type-small); }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
   button:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }

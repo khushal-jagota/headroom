@@ -204,25 +204,3 @@ export function railPreview(node: HTMLElement, options: RailPreviewOptions | nul
     destroy() { input.dispose(); for (const [name, listener] of Object.entries(guarded)) node.removeEventListener(name, listener, capture(name)); }
   };
 }
-
-/** A rail title too long for its row fades out at the row's text edge instead of ending in a
- * cut word and an ellipsis. This marks the titles that run out (data-title-overflow); the
- * stylesheet draws the fade. The text itself is never changed. */
-const RAIL_TITLES = ".item-title, .ticket-row-title, .row-title, .manager-eyebrow > span, .settled-title > span";
-export function railTitleFade(root: HTMLElement) {
-  let frame = 0;
-  const run = () => {
-    frame = 0;
-    for (const title of root.querySelectorAll<HTMLElement>(RAIL_TITLES))
-      title.toggleAttribute("data-title-overflow", title.scrollWidth > title.clientWidth + 0.5);
-  };
-  const schedule = () => { if (!frame) frame = requestAnimationFrame(run); };
-  // A title runs out when its row narrows or its words change.
-  const resize = new ResizeObserver(schedule);
-  const watch = () => { resize.disconnect(); resize.observe(root); for (const title of root.querySelectorAll<HTMLElement>(RAIL_TITLES)) resize.observe(title); schedule(); };
-  const mutation = new MutationObserver(watch);
-  mutation.observe(root, { subtree: true, childList: true, characterData: true });
-  watch();
-  void document.fonts?.ready.then(schedule);
-  return { destroy() { resize.disconnect(); mutation.disconnect(); if (frame) cancelAnimationFrame(frame); } };
-}

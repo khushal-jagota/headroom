@@ -76,13 +76,13 @@
      --rail-edge on each side; every text stands --rail-pad inside its fill. */
   .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:0; border:0; isolation:isolate; z-index:1; }
   .identity { box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; min-height:calc(var(--rail-row-height) + var(--rail-row-gap)); padding:var(--rail-head-pad) var(--rail-pad); border-radius:var(--radius-md); cursor:pointer; }
-  .item-head { display:grid; grid-template-columns:minmax(0,1fr); align-items:center; width:100%; min-height:var(--rail-title-line); padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .item-head { display:grid; grid-template-columns:minmax(0,1fr); align-items:start; width:100%; min-height:var(--rail-title-line); padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-head:has(> :global(.conversation-signal-marks)) { grid-template-columns:minmax(0,1fr) var(--rail-mark-column); }
-  .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; }
+  .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; align-self:start; height:var(--rail-title-line); }
   /* A name is dimmed unless it needs the person (an unread message for them); the pointer or
      the open page on it brings it to full brightness. It keeps one line and ends in an
      ellipsis at the same edge as every row's title. */
-  .item-title { grid-column:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:clip; font-size:var(--type-rail-title); font-weight:var(--weight-title); line-height:var(--rail-title-line); letter-spacing:-0.014em; color:var(--rail-tone-title); transition:color var(--motion-fast) var(--motion-ease); }
+  .item-title { grid-column:1; min-width:0; overflow-wrap:anywhere; font-size:var(--type-rail-title); font-weight:var(--weight-title); line-height:var(--rail-title-line); letter-spacing:-0.014em; color:var(--rail-tone-title); transition:color var(--motion-fast) var(--motion-ease); }
   .item-head[data-unread="true"] .item-title { color:var(--rail-tone-title-bright); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--rail-tone-title-bright); }
   /* The Manager you are inside: while its page or one of its goals or Tickets is open, its

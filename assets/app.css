@@ -4871,23 +4871,20 @@ details:not([open]) > summary > .manager-workspace-chevron {
    count. It takes a row's 30px slot on the 32px pitch, its words on a row's line, with only
    --rail-heading-extra more above it than a row, so the block keeps one grid. */
 .workspace-ticket-bucket { margin-top:0; display:flex; flex-direction:column; }
-.workspace-ticket-bucket .bucket-label { box-sizing:border-box; display:flex; align-items:center; height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:calc(var(--rail-row-gap) + var(--rail-heading-extra)) 0 0; border:0; font-size:var(--rail-label-size); font-weight:var(--rail-label-weight); line-height:20px; color:var(--rail-tone-label); white-space:nowrap; overflow:hidden; }
+.workspace-ticket-bucket .bucket-label { box-sizing:border-box; display:flex; align-items:center; min-height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:calc(var(--rail-row-gap) + var(--rail-heading-extra)) 0 0; border:0; font-size:var(--rail-label-size); font-weight:var(--rail-label-weight); line-height:20px; color:var(--rail-tone-label); overflow-wrap:anywhere; }
 .workspace-ticket-bucket .bucket-label + .worker-row { margin-top:var(--rail-row-gap); }
 /* The first heading after a Manager's header unit (eyebrow, name and goals) stands --rail-header-clear further off,
    so the header reads as one unit and the Tickets as the work beneath it. */
 .manager-card > :not(.workspace-ticket-bucket) + .workspace-ticket-bucket .bucket-label { margin-top:calc(var(--rail-row-gap) + var(--rail-heading-extra) + var(--rail-header-clear)); }
 /* A Ticket row: the same 30px fill on the 32px pitch as every rail row, on the rail's one text
    edge. A row that needs the person is bright; every other row rests dim (tone only). */
-.workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr); align-items:center; column-gap:0; width:100%; height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
+.workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr); align-items:start; column-gap:0; width:100%; min-height:var(--rail-row-height); padding:5px var(--rail-pad) 5px calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
 /* Only a row with an unread dot keeps a column for it; every other title runs to the row's padding. */
 .workspace-ticket-bucket .worker-row:has(.conversation-signal-marks) { grid-template-columns:minmax(0,1fr) var(--rail-mark-column); }
 .workspace-ticket-bucket .worker-row + .worker-row { margin-top:var(--rail-row-gap); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
-.workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:clip; }
-/* A title too long for its row fades out at one edge, the row's text edge, instead of ending in
-   a cut word and an ellipsis. Only a title that runs out carries the fade (railTitleFade). */
-.approved-rail [data-title-overflow] { text-overflow:clip; -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--rail-title-fade)), transparent); mask-image:linear-gradient(to right, #000 calc(100% - var(--rail-title-fade)), transparent); }
-.workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; }
+.workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:normal; overflow-wrap:anywhere; }
+.workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; align-self:start; height:20px; }
 .workspace-ticket-bucket:is([data-bucket-key="awaiting_approval"], [data-bucket-key="awaiting_answer"], [data-bucket-key="errored"]) .worker-row,
 .workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--rail-tone-bright); }
 .workspace-ticket-bucket .worker-row:is(:hover, [aria-current="page"]) { color:var(--rail-tone-bright); }
