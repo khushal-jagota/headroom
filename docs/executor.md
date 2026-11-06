@@ -31,7 +31,7 @@ The VPS configuration names one executor ID. Only that executor is admitted. Wit
 
 All three backends can run on the Mac, with the same abilities as on the VPS. A missing provider install or sign-in on the Mac refuses the start.
 
-A Mac Worker runs in its Project's folder, taken as a path on the Mac. A Ticket without one uses a Panels workspace inside the executor's data folder, which survives updates. [Conversations](conversations.md#the-workspace-for-an-agent) owns the workspace rules.
+A Mac Worker runs in a Panels workspace inside the executor's data folder, which survives updates. A Ticket under a Project runs in that Project's folder inside the workspace, `projects/<project id>`, made on first use. The VPS never sends its own Project path to the Mac. [Conversations](conversations.md#the-workspace-for-an-agent) owns the workspace rules.
 
 ## A run on the Mac
 

@@ -11,14 +11,7 @@ def localize_workspace(
 ) -> Path:
     """Resolve the exact existing directory without a cwd or checkout fallback."""
     if workspace_home_relative is not None:
-        relative = workspace_home_relative
-        if (
-            not isinstance(relative, str)
-            or "\\" in relative
-            or (relative and any(part in ("", ".", "..") for part in relative.split("/")))
-            or PurePosixPath(relative).is_absolute()
-        ):
-            raise ValueError("unsafe home-relative workspace")
+        relative = require_safe_relative_workspace(workspace_home_relative)
         home = workspace_home.resolve(strict=True)
         workspace = (home / relative).resolve(strict=True)
         workspace.relative_to(home)
@@ -29,3 +22,15 @@ def localize_workspace(
     if not workspace.is_dir():
         raise ValueError("mapped workspace is not a directory")
     return workspace
+
+
+def require_safe_relative_workspace(relative: object) -> str:
+    """Refuse a subfolder that could leave its base folder."""
+    if (
+        not isinstance(relative, str)
+        or "\\" in relative
+        or (relative and any(part in ("", ".", "..") for part in relative.split("/")))
+        or PurePosixPath(relative).is_absolute()
+    ):
+        raise ValueError("unsafe home-relative workspace")
+    return relative

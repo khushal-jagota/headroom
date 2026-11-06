@@ -454,31 +454,32 @@ def test_worker_resolve_preserves_disabled_history_but_rejects_new_disabled_over
     assert read_ticket(tmp_db, ticket.id) == ticket
 
 
-def test_mac_project_path_is_resolved_on_the_execution_host(
+def test_mac_project_ticket_starts_in_its_mac_workspace_project_folder(
     tmp_db: Connection, tmp_path: Path, ticket: Ticket
 ) -> None:
-    target = tmp_path / "vps-target"
-    target.mkdir()
-    alias = tmp_path / "checkout"
-    alias.symlink_to(target, target_is_directory=True)
-    project = create_project(tmp_db, name="Mac project", folder_path=alias, now=1)
+    from planner.tickets.api import _conversation_start_values_json
+
+    server_checkout = tmp_path / "vps-checkout"
+    server_checkout.mkdir()
+    project = create_project(tmp_db, name="Mac project", folder_path=server_checkout, now=1)
     tmp_db.execute(
         "UPDATE tickets SET project_id = ?, locale = 'macos' WHERE id = ?",
         (project.id, ticket.id),
     )
     ticket = read_ticket(tmp_db, ticket.id)
     values = worker_resolve(tmp_db, ticket)
-    assert values.workspace_folder == alias
-    assert values.workspace_path_policy is WorkspacePathPolicy.absolute
-    # The checkout may not exist on the VPS. Starting work must retain the Mac path.
-    update_project(tmp_db, project.id, folder_path=tmp_path / "mac-only", now=2)
-    values = worker_resolve(tmp_db, ticket)
+    # The server's Project path stays on the server. The Mac gets its own Project folder.
+    assert values.workspace_folder == Path("/projects") / project.id
+    assert values.workspace_path_policy is WorkspacePathPolicy.executor_default
+    assert _conversation_start_values_json(values)["workspace_folder"] is None
     system = InMemoryConversationSystem()
     conversation_id = asyncio.run(_started(system, tmp_db, ticket, values, now=3))
     row = tmp_db.execute(
-        "SELECT workspace_folder FROM conversations WHERE conversation_id = ?", (conversation_id,)
+        "SELECT workspace_folder, workspace_path_policy FROM conversations "
+        "WHERE conversation_id = ?",
+        (conversation_id,),
     ).fetchone()
-    assert row[0] == str(tmp_path / "mac-only")
+    assert tuple(row) == (f"/projects/{project.id}", "executor_default")
 
 
 @pytest.mark.parametrize("retain", [False, True])
@@ -541,20 +542,16 @@ def test_unconfigured_mac_uses_executor_workspace_without_replacing_explicit_cho
     assert _conversation_start_values_json(values)["workspace_folder"] is None
     assert _conversation_start_values_json(values)["workspace_path_policy"] == "executor_default"
     project = create_project(tmp_db, name="No checkout", now=2)
-    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id) == (
-        Path("/"),
-        WorkspacePathPolicy.executor_default,
-    )
+    project_folder = (Path("/projects") / project.id, WorkspacePathPolicy.executor_default)
+    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id) == project_folder
     missing = tmp_path / "explicit-missing"
     assert workspace_for_project(tmp_db, TicketLocale.macos, project.id, explicit=missing) == (
         missing,
         WorkspacePathPolicy.absolute,
     )
+    # A server folder on the Project changes nothing on the Mac.
     update_project(tmp_db, project.id, folder_path=missing, now=3)
-    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id) == (
-        missing,
-        WorkspacePathPolicy.absolute,
-    )
+    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id) == project_folder
     from planner.runtime.conversation_start import _default_workspace_folder
 
     assert workspace_for_project(tmp_db, TicketLocale.vps, None) == (
