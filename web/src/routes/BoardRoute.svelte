@@ -568,14 +568,14 @@
      half legible. Its bottom padding lets the last row scroll fully clear of the edge. */
   /* Settled: one row in the rail's row voice, its count a plain Small numeral after it. */
   .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); box-sizing:border-box; height:var(--rail-row-height); min-height:0; padding:0 var(--rail-pad); margin-inline:0; border:0; border-radius:var(--radius-md); background:none; width:100%; font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
-  .settled-head:hover { background:var(--wash-hover); color:var(--tone-strong); }
+  .settled-head:hover { background:var(--wash-hover); color:var(--rail-tone-bright); }
   .settled-count { position:relative; display:inline-block; }
   .settled-chevron { width:14px; height:14px; flex:none; color:var(--rail-tone-label); transition:transform var(--motion-base) var(--motion-ease); }
   .settled--open .settled-chevron { transform:rotate(90deg); }
   .count { flex:none; margin-left:5px; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; }
   .settled-item + .settled-item { margin-top:var(--rail-row-gap); }
   .settled-row { display:flex; align-items:center; gap:var(--space-2); box-sizing:border-box; height:var(--rail-row-height); padding:0 var(--rail-pad); margin:0; border-radius:var(--radius-md); font-size:var(--type-row); line-height:20px; }
-  .settled-row:hover { color:var(--text-strong); }
+  .settled-row:hover { color:var(--rail-tone-bright); }
   .settled-title,.reopen { border:0; background:none; font:inherit; cursor:pointer; color:var(--text-faintest); padding:0; }
   .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; color:var(--rail-tone-rest); }
   .settled-title > span { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:clip; overflow-wrap:normal; }

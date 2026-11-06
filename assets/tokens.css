@@ -289,13 +289,14 @@
    * fill: the Manager you are inside is framed by a hairline, a line around a block rather
    * than a fill on a row. */
   --wash-selected: rgb(255 255 255 / 12%);
-  --wash-hover: rgb(255 255 255 / 4%);
+  --wash-hover: rgb(255 255 255 / 5%);
   --wash-context-edge: rgb(255 255 255 / 10%);
   /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
    * (a Manager's header, a goal, a Ticket, Settled) sits --rail-edge in from the column on
    * both sides; every text stands --rail-pad inside its fill, so all of it shares one left
    * edge 18px in. Tickets are the one indent. */
-  --rail-edge: 8px;
+  /* Fills stand 12px in from the column: the 6px frame inset plus 6px inside the frame. */
+  --rail-edge: 12px;
   --rail-pad: 10px;
   /* The list's first fill stands 24px below the window's top, so the open Chief's fill is not
    * pressed against it. */
@@ -312,9 +313,6 @@
   --rail-row-height: 30px;
   --rail-row-gap: 2px;
   --rail-head-pad: 4px;
-  /* A Manager's goals sit in its header, one compact line each under the name. */
-  --rail-goal-height: 24px;
-  --rail-goal-radius: 6px;
   /* The unread dot's column, kept on every row whether or not a dot is in it, so every
    * title ends at one edge. */
   --rail-mark-column: 16px;
@@ -323,47 +321,50 @@
    * label, not as label, item, label, item. */
   /* The rail's label voice: the project eyebrow and every group heading, one style (Small,
    * tertiary, its count after it). */
-  --rail-label-size: var(--type-small);
-  --rail-heading-above: 8px;
+  --rail-label-size: 11.5px;
+  --rail-heading-above: 14px;
   --rail-heading-below: 2px;
   --rail-heading-line: 14px;
-  --rail-block-gap: 20px;
+  --rail-block-gap: 28px;
   /* The frame around the Manager you are inside reaches this far past its block's fills, so
    * its 12px corners are concentric with their 8px ones. */
-  --rail-context-outset: 4px;
-  --rail-context-radius: 12px;
+  --rail-context-outset: 6px;
+  --rail-context-radius: 14px;
+  /* Where the list's edge cuts the framed block, the frame's sides fade out over this much. */
+  --rail-context-fade: 24px;
   /* The list's edges: a short fade, only where rows continue past them, so a row's words
    * keep their true tone up to the edge; and clear air under the last block when the list
    * is scrolled to its end. */
   --rail-edge-fade: 8px;
   --rail-foot-clear: 12px;
   /* Between the Settled row and the icon bar: the band the icons' names open into. */
-  --rail-foot-gap: 32px;
+  --rail-foot-gap: 40px;
   /* The list's scrollbar lives in the column's own edge, never inside the rows. */
   --rail-scrollbar-width: 4px;
   /* Room the list keeps above its first fill for the focus ring (2px clear, 1.5px wide). */
-  --rail-ring-room: 4px;
-  /* Rail text, as white over the page: a row that needs the person 92%, a row at rest 56%
-   * (#999999), a label 40% (#747474). The step from rest to bright is the needs-you signal, so
-   * it is wide; rest and label stay clearly apart. */
-  --rail-tone-rest: #999999;
-  /* A Manager's name at rest: 66%, a step above a row at rest. */
-  --rail-tone-title: #b0b0b0;
+  --rail-ring-room: 6px;
+  /* Rail text, as white over the page. The rail recedes behind the page: a row that needs the
+   * person 86%, a row at rest 54%, a label 45% (and a step smaller); a Manager's name 88%
+   * bright and 64% at rest. The step from rest to bright is the needs-you signal. */
+  --rail-tone-bright: #dfdfdf;
+  --rail-tone-rest: #959595;
+  --rail-tone-title-bright: #e3e3e3;
+  --rail-tone-title: #acacac;
   /* A title too long for its row fades out over this width at the row's text edge. */
   --rail-title-fade: 16px;
   /* A Manager's name: clearly above a row, but quieter than anything that needs you. */
   --type-rail-title: 15px;
-  --rail-tone-label: #747474;
+  --rail-tone-label: var(--tone-tertiary);
   /* The rail's floating surfaces (hover previews and the icon bar's tooltips): the raised
    * plane's #2a2a2a, with a lighter ring and shadow than a menu's, so a preview supports the
    * row it describes rather than sitting over the page. */
   --rail-float-surface: var(--surface-raised);
   --rail-float-ring: rgb(255 255 255 / 8%);
   --rail-float-shadow: 0 2px 8px rgb(0 0 0 / 20%);
-  --rail-preview-width: 300px;
+  --rail-preview-width: 280px;
   --rail-preview-pad: 14px;
   --rail-preview-recap-size: 13px;
-  --rail-preview-recap-lines: 3;
+  --rail-preview-recap-lines: 2;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }

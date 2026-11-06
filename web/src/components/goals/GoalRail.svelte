@@ -57,16 +57,16 @@
 {/if}
 </div>
 <style>
-/* A goal is part of its Manager's header: one compact line under the name, on the name's
-   edge, never indented, in the Small voice. Its state sits at the right in the same size. Like
-   every rail row it rests dim and brightens under the pointer or when its page is open; its
-   hover and selected fills keep its own 6px radius. */
-.goals-rail{display:flex;flex-direction:column;margin-top:var(--rail-row-gap)}
+/* A goal belongs to its Manager: it stands directly under the name, on the rail's one text
+   edge, as a row like a Ticket (13.5/400, a 30px fill on the 32px pitch, radius 8), with its
+   state in the Small voice at the right. Like every rail row it rests dim and brightens under
+   the pointer or when its page is open. */
+.goals-rail{display:flex;flex-direction:column;gap:var(--rail-row-gap);margin-top:var(--rail-row-gap)}
 a{color:inherit;text-decoration:none}
-.goal{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);height:var(--rail-goal-height);padding:0 var(--rail-pad);border-radius:var(--rail-goal-radius);touch-action:pan-y;font-size:var(--type-small);font-weight:var(--weight-small);line-height:16px;color:var(--tone-secondary);font-variant-numeric:tabular-nums;transition:color var(--motion-fast) var(--motion-ease)}
+.goal{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);height:var(--rail-row-height);padding:0 var(--rail-pad);border-radius:var(--radius-md);touch-action:pan-y;font-size:var(--type-row);font-weight:var(--weight-body);line-height:20px;color:var(--rail-tone-rest);transition:color var(--motion-fast) var(--motion-ease)}
 .row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:clip}
-.goal:hover,.selected{color:var(--tone-strong)}
-.state{position:relative;display:flex;align-items:baseline;font-size:var(--type-small);font-weight:var(--weight-small);line-height:16px;color:var(--tone-secondary);font-variant-numeric:tabular-nums;white-space:nowrap}
+.goal:hover,.selected{color:var(--rail-tone-bright)}
+.state{position:relative;display:flex;align-items:baseline;font-size:var(--type-small);font-weight:var(--weight-small);line-height:16px;color:var(--rail-tone-label);font-variant-numeric:tabular-nums;white-space:nowrap}
 /* Every word stays for assistive technology; only the one that matters most is drawn. */
 .state > :global(*){position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .state:has(> :global([data-tone=bad])) > :global([data-tone=bad]),

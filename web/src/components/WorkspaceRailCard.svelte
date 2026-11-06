@@ -83,15 +83,15 @@
      the open page on it brings it to full brightness. It keeps one line and ends in an
      ellipsis at the same edge as every row's title. */
   .item-title { grid-column:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:clip; font-size:var(--type-rail-title); font-weight:var(--weight-title); line-height:22px; letter-spacing:-0.012em; color:var(--rail-tone-title); transition:color var(--motion-fast) var(--motion-ease); }
-  .item-head[data-unread="true"] .item-title { color:var(--tone-strong); }
-  .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--tone-strong); }
+  .item-head[data-unread="true"] .item-title { color:var(--rail-tone-title-bright); }
+  .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--rail-tone-title-bright); }
   /* The Manager you are inside: while its page or one of its goals or Tickets is open, its
      header (the eyebrow and the name together) goes to full brightness. A header takes a fill
      only as a row does: 14% when it is the open page, 5% under the pointer. A name that needs
      you is bright for one reason only, an unread message for you, and so always carries the
      accent dot; the header of the place you are in never does, and its eyebrow lifts with it. */
   .manager-card:has(:global([aria-current="page"])) .item-title,
-  .manager-card:has(:global([aria-current="page"])) .identity :global(.manager-eyebrow > span) { color:var(--tone-strong); }
+  .manager-card:has(:global([aria-current="page"])) .identity :global(.manager-eyebrow > span) { color:var(--rail-tone-title-bright); }
   .item-head :global(.stage-mark--current-running),
   .bucket[data-tone="quiet"] :global(.stage-mark--current-running) { border-color:var(--border-color); border-top-color:var(--tone-tertiary); border-right-color:var(--tone-tertiary); }
   .bucket :global(.worker-row:focus-visible) { outline:none; }

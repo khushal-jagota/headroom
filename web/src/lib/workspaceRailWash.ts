@@ -128,12 +128,25 @@ export function workspaceRailWash(root: HTMLElement) {
     }
     current=next;
   }
+  // Where the list's edge cuts the framed block, the frame's sides fade out before the edge,
+  // so the frame never runs into the list's foot or top.
+  function frameFade(host: Host, box: Box) {
+    const fade = parseFloat(css('--rail-context-fade')) || 0;
+    const start = host.node.scrollTop - box.top;
+    const end = host.node.scrollTop + host.node.clientHeight - box.top;
+    const cutTop = start > 0, cutBottom = end < box.height;
+    const mask = cutTop || cutBottom
+      ? `linear-gradient(to bottom, ${cutTop ? `transparent ${start}px, #000 ${start + fade}px` : '#000 0'}, ${cutBottom ? `#000 ${end - fade}px, transparent ${end}px` : '#000 100%'})`
+      : '';
+    host.group.node.style.maskImage = mask;
+    host.group.node.style.webkitMaskImage = mask;
+  }
   function decorate() {
     const selected=root.querySelector<HTMLElement>(targets.split(', ').map(s=>`${s}[aria-current="page"]`).join(', '));
     select(selected?geometry(selected):null);
     if (current) {
       draw(current.host.item,current.itemBox);current.host.item.node.hidden=false;
-      if (current.groupBox) draw(current.host.group,current.groupBox);
+      if (current.groupBox) {draw(current.host.group,current.groupBox);frameFade(current.host,current.groupBox);}
     }
     for (const [node,ghost] of ghosts) {
       const target=geometry(ghost.target);
