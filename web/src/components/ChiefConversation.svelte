@@ -112,11 +112,12 @@
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
-  {#if chiefHoldsGoals}<GoalsOverview goals={goals.data?.goals??[]}/>{/if}
-  {#if chiefPage.data?.page}<HolderDocument holder={{kind:"chief",id:"chief"}}/>{/if}
+  <!-- The Chief's page leads with the work waiting on the person; its goals follow. -->
   {#if !hasTickets(chiefPage.data?.page)}<section class="manager-workers" aria-label="Workers">
     <PageTickets principal={{ kind: "chief", id: "chief" }} />
   </section>{/if}
+  {#if chiefHoldsGoals}<GoalsOverview goals={goals.data?.goals??[]}/>{/if}
+  {#if chiefPage.data?.page}<HolderDocument holder={{kind:"chief",id:"chief"}}/>{/if}
   {#snippet conversation()}
   <LiveConversation
     ownerLoading={!chief}
@@ -139,5 +140,5 @@
 </div>
 <style>
   .chief-workspace-host { display:contents; }
-  .manager-workers { margin-top:48px; }
+  .manager-workers { margin-top:var(--space-6); }
 </style>

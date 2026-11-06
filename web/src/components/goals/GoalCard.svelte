@@ -23,7 +23,9 @@
   goalId:()=>goalId,goal:()=>goal,readings:()=>readings.data,narrow:()=>false,sessions:()=>sessions,
  },{updateBlock:editor.updateBlock}));
 </script>
-<article class="goal-card" data-goal-card={goal.id}>
+<!-- A yes-or-no goal has one fact to show, so its card is one compact row: the name and its
+     line on the left, done or not on the right. -->
+<article class="goal-card" class:compact={goal.kind==='binary' && !checklist} data-goal-card={goal.id}>
  <header class="card-head">
   <h2><a href={workspaceAddress({kind:'goal',id:goal.id})}>{goal.title}</a></h2>
   <div class="goal-meta"><span>{projectName}</span>{#if projectName}<span aria-hidden="true">·</span>{/if}<span data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{goal.deadline?`Due ${goalDateText(goal.deadline)}`:'No deadline'}</span></div>
@@ -36,5 +38,6 @@
 /* A chart card stretches to its neighbour's height with the period switch on its floor, so
    the shared height reads as the card's own composition rather than empty space. */
 .card-progress{display:flex;flex-direction:column}.card-progress > :global(.goal-chart-host){flex:1;display:flex;flex-direction:column}.card-progress :global(.goal-chart-host > .metric-card){flex:1;display:flex;flex-direction:column}.card-progress :global(.chart-range-footer){margin-top:auto;padding-top:var(--space-4)}
-.card-progress:has(:global([data-block="checklist"])){padding:var(--space-1) 0 var(--space-2)}.card-progress :global([data-block="checklist"]){background:transparent;border-radius:0}
+.card-progress:has(:global([data-block="checklist"])){padding:var(--space-1) 0 var(--space-2)}
+.compact{flex-direction:row;align-items:center}.compact .card-head{flex:1;min-width:0;padding:var(--space-4) var(--space-5)}.compact .card-progress{flex:none;min-width:120px;padding:0 var(--space-5) 0 0}.card-progress :global([data-block="checklist"]){background:transparent;border-radius:0}
 </style>

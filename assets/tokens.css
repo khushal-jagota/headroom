@@ -175,7 +175,7 @@
   /* The keyboard focus ring, drawn the same way on every focusable control: a crisp 2px
    * line in the accent's hue. It is a line, never a fill, so it cannot read as "needs you". */
   --focus-ring: rgb(154 173 210 / 82%);
-  --shadow-float: 0 0 0 1px rgb(0 0 0 / 22%), 0 var(--space-1) var(--space-4) rgb(0 0 0 / 28%);
+  --shadow-float: 0 0 0 1px rgb(0 0 0 / 20%), 0 var(--space-1) var(--space-3) rgb(0 0 0 / 22%);
 
   /* Type — two font stacks and shared sans sizes. The prose/display/hero sizes
    * preserve the former serif hierarchy under the owner's size-preservation exception. */
@@ -231,9 +231,9 @@
   /* The Manager you are inside: a tint quiet enough that only the open row reads as selected.
    * The open row is one crisp fill, a clear step above hover, so the two never read as
    * more and less of the same grey. */
-  --wash-context: rgb(255 255 255 / 3%);
+  --wash-context: rgb(255 255 255 / 4%);
   --wash-selected: rgb(255 255 255 / 12%);
-  --wash-hover: rgb(255 255 255 / 5%);
+  --wash-hover: rgb(255 255 255 / 6%);
   /* Rail geometry. Every rail text, from the Manager's name to a Ticket, the Settled row
    * and the first destination icon, stands on one left edge: the rail edge plus the
    * group pad. A row's fill sits --rail-row-inset inside its group, so the row's 8px
@@ -242,8 +242,14 @@
   --rail-pad: 10px;
   --rail-row-inset: 4px;
   --rail-row-pad: calc(var(--rail-pad) - var(--rail-row-inset));
+  /* Tickets are the rail's one indent: they belong under their Manager. The indent is also
+   * the slot for a Ticket's quiet state mark (12px and a 6px gap). */
+  --rail-indent: 18px;
   /* Rail text: the Manager's name leads, a row (goal or Ticket) reads, a label whispers. */
   --rail-tone-rest: #a3a3a3;
+  /* A Manager's name at rest: a step brighter than a row at rest, so a bold dim name reads
+   * as quiet type, not washed out. */
+  --rail-tone-title: #b0b0b0;
   --rail-tone-label: #858585;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);

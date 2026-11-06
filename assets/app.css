@@ -3415,14 +3415,14 @@ select {
   min-height: 0;
   max-width: 100%;
   max-height: var(--conversation-visible-height, 100%);
+  padding-top: var(--space-2);
   padding-bottom: var(--conversation-edge-gap);
   background: var(--surface-1);
 }
-/* The dock shares the page's plane. The document fades into it rather than meeting a
- * rule, so the line stays drawn only while the open and return motion needs an edge
+/* The composer zone shares the page's plane and starts at one hairline across the pane.
+ * The line fades out as the conversation opens and back in on return
  * (--conversation-dock-line). */
 .conversation-layer::before {
-  display: none;
   content: "";
   position: absolute;
   top: 0;
@@ -3469,14 +3469,9 @@ select {
   background: none;
   pointer-events: none;
 }
-/* The dock is the composer and its status strip on the page's own plane. The document
- * dissolves over 56px and is fully gone 24px above the strip, so whatever continues below
- * the fold reads as more to scroll rather than as something cut against the strip. */
-.manager-reading:not(:has(.ticket-artifact)) > .manager-doc,
-.ticket-reading:not(:has(.ticket-artifact)) > .ticket-doc {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-7) - var(--space-6)), transparent calc(100% - var(--space-5)));
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-7) - var(--space-6)), transparent calc(100% - var(--space-5)));
-}
+/* The page and the composer zone meet at one clean edge: the document's scroll area ends at
+ * the zone's top hairline and nothing fades, so no half-legible line is left against it.
+ * The document's own bottom padding lets its last line scroll fully clear. */
 .conversation-layer > .conversation-column {
   position: relative;
 }
@@ -4781,10 +4776,16 @@ details:not([open]) > summary > .manager-workspace-chevron {
    the goals above. The first group takes a little more air, which is what separates a
    Manager's own lines from the work under it. */
 .workspace-ticket-bucket { margin-top:var(--space-1); }
+.workspace-ticket-bucket[data-tone="quiet"] + .workspace-ticket-bucket[data-tone="quiet"] { margin-top:0; }
 .manager-card > :not(.workspace-ticket-bucket) + .workspace-ticket-bucket { margin-top:var(--space-2); }
-.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:500; color:var(--rail-tone-label); padding:6px 0 3px; margin-bottom:0; border-bottom:0; }
-.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--rail-row-pad) * 2)); display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-3); padding:5px var(--rail-row-pad); margin:0 calc(var(--rail-row-pad) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-ui); font-weight:500; line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:500; color:var(--rail-tone-label); padding:6px 0 3px var(--rail-indent); margin-bottom:0; border-bottom:0; }
+/* A group that is with an agent is named on its rows, so its heading is for assistive
+   technology only. */
+.workspace-ticket-bucket .bucket-label--quiet { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+/* A Ticket row's fill spans the same box as every other rail row; only its words step in. */
+.workspace-ticket-bucket .worker-row { position:relative; width:calc(100% + (var(--rail-row-pad) * 2)); display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-3); padding:5px var(--rail-row-pad) 5px calc(var(--rail-row-pad) + var(--rail-indent)); margin:0 calc(var(--rail-row-pad) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-ui); font-weight:500; line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
+.workspace-ticket-bucket .worker-row .ticket-row-lead { position:absolute; left:var(--rail-row-pad); top:50%; display:flex; transform:translateY(-50%); }
 .workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:1px; }
 .workspace-ticket-bucket .ticket-row-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

@@ -12,6 +12,7 @@
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import WorkerRow from "./WorkerRow.svelte";
+  import RailStateGlyph from "./RailStateGlyph.svelte";
   import ManagerEyebrow from "./ManagerEyebrow.svelte";
   let { beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
     beforeGroups?: Snippet;
@@ -55,10 +56,15 @@
   </div>
   {#if beforeGroups}{@render beforeGroups()}{/if}
   {#each groups as group (group.key)}
-    <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key} data-tone={["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key) ? "attention" : "quiet"}>
-      <div class="bucket-label" data-rail-motion={`heading:${id}:${group.key}`}>{group.label}</div>
+    {@const attention = ["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key)}
+    <!-- A group that needs the person is named over its rows. A group that is with an agent
+         names itself on each row instead, as a quiet mark in the indent; its heading stays
+         for assistive technology. -->
+    {#snippet stateGlyph()}<RailStateGlyph key={group.key} label={group.label} />{/snippet}
+    <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key} data-tone={attention ? "attention" : "quiet"}>
+      <div class="bucket-label" class:bucket-label--quiet={!attention} data-rail-motion={`heading:${id}:${group.key}`}>{group.label}</div>
       {#each group.cards as ticket (ticket.id)}
-        <WorkerRow machine={false} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} data-rail-motion={`row:${ticket.id}`} onclick={() => { if (input(ticket).click()) onTicket(ticket.id); }} onpointerenter={(event: PointerEvent) => {event.stopPropagation(); input(ticket).pointerEnter(event);}} onpointerleave={(event: PointerEvent) => input(ticket).leave(event)} onpointerdown={(event: PointerEvent) => input(ticket).down(event)} onpointermove={(event: PointerEvent) => input(ticket).move(event)} onpointerup={() => input(ticket).end()} onpointercancel={() => input(ticket).cancel()} onfocus={(event: FocusEvent) => input(ticket).focus(event)} onblur={(event: FocusEvent) => input(ticket).leave(event)} />
+        <WorkerRow machine={false} lead={attention ? undefined : stateGlyph} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} data-rail-motion={`row:${ticket.id}`} onclick={() => { if (input(ticket).click()) onTicket(ticket.id); }} onpointerenter={(event: PointerEvent) => {event.stopPropagation(); input(ticket).pointerEnter(event);}} onpointerleave={(event: PointerEvent) => input(ticket).leave(event)} onpointerdown={(event: PointerEvent) => input(ticket).down(event)} onpointermove={(event: PointerEvent) => input(ticket).move(event)} onpointerup={() => input(ticket).end()} onpointercancel={() => input(ticket).cancel()} onfocus={(event: FocusEvent) => input(ticket).focus(event)} onblur={(event: FocusEvent) => input(ticket).leave(event)} />
       {/each}
     </div>
   {/each}
@@ -78,7 +84,7 @@
   /* A title is dimmed unless it needs the user: an unread message for them, or the pointer or
      the open page on it, brings it to full brightness. The dim title keeps its full size and
      weight, so it reads as at rest, not as off. */
-  .item-title { flex:1; min-width:0; font-size:var(--type-section); font-weight:700; line-height:24px; letter-spacing:-0.018em; color:var(--rail-tone-rest); overflow-wrap:anywhere; transition:color var(--motion-fast) var(--motion-ease); }
+  .item-title { flex:1; min-width:0; font-size:var(--type-section); font-weight:700; line-height:24px; letter-spacing:-0.018em; color:var(--rail-tone-title); overflow-wrap:anywhere; transition:color var(--motion-fast) var(--motion-ease); }
   .item-head[data-unread="true"] .item-title { color:var(--text-strong); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--text-strong); }
   /* One row style: a title that runs out fades at its own edge, and the unread mark keeps a

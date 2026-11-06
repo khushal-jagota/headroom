@@ -528,9 +528,6 @@
   .board-workspace-right { position:relative; z-index:0; }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:var(--space-3) 0 var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
   .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
-  /* Rows scrolled out above dissolve under the rail's top edge instead of being sliced. */
-  .rail-work .rail-work::before { content:""; position:absolute; z-index:3; left:0; right:0; top:0; height:var(--space-6); background:linear-gradient(var(--surface-rail) var(--space-2), transparent); pointer-events:none; opacity:0; }
-  :global(.workspace-rail[data-rail-more-above]) .rail-work .rail-work::before { opacity:1; }
   /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
      included, without becoming a scroller that a hover could slide sideways. */
   .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
@@ -548,9 +545,8 @@
   .rail-status { flex:none; padding:var(--space-2) var(--rail-edge) 0; }
   /* The rail's foot is a fixed band with one hairline edge; the list above ends at it. */
   .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); margin-inline:var(--rail-edge); border-top:var(--border-hairline) solid var(--border-color); padding-top:var(--space-1); }
-  /* Whatever row the list stops on dissolves before the foot's edge; nothing is sliced. */
-  .settled::before { content:""; position:absolute; z-index:2; left:0; right:0; bottom:calc(100% + var(--border-hairline)); height:var(--space-7); background:linear-gradient(transparent, var(--surface-rail) 70%); pointer-events:none; opacity:0; }
-  :global(.workspace-rail[data-rail-more-below]) .settled::before { opacity:1; }
+  /* The list ends at the foot's hairline and is clipped there cleanly: no fade leaves a row
+     half legible. Its bottom padding lets the last row scroll fully clear of the edge. */
   .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); min-height:30px; padding:5px var(--rail-row-pad); margin-inline:var(--rail-row-inset); border:0; border-radius:var(--radius-md); background:none; width:calc(100% - 2 * var(--rail-row-inset)); font:inherit; font-size:var(--type-sm); font-weight:500; line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
   .settled-head:hover { background:var(--wash-hover); }
   .settled-head:hover { color:var(--text-strong); }

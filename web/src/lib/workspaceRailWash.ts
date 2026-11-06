@@ -57,13 +57,11 @@ export function workspaceRailWash(root: HTMLElement) {
       itemBox.left = groupBox.left+inset;
       itemBox.width = groupBox.width-2*inset;
       if (node.matches('.item-head')) {
-        const identity = local(node.closest('.identity')!.getBoundingClientRect());
-        const status = group?.querySelector<HTMLElement>('[data-goal-status]')?.getBoundingClientRect();
-        const bottom = status ? local(status).top + status.height : identity.top + identity.height;
-        itemBox.top = Math.max(groupBox.top,identity.top-inset);
-        itemBox.height = Math.min(bottom+inset,groupBox.top+groupBox.height)-itemBox.top;
-        // The open Manager is itself the selection, so its group carries no second tint.
-        return {node,host,group,itemBox,groupBox:null};
+        // A Manager's name is selected, hovered and focused like any other row: one fill
+        // around the name's line, inside the same context tint its goals and Tickets get.
+        const head = local(node.getBoundingClientRect());
+        itemBox.top = head.top-inset;
+        itemBox.height = head.height+2*inset;
       }
     }
     return {node,host,group,itemBox,groupBox};

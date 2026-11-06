@@ -13,6 +13,7 @@
     active = false,
     quiet = false,
     onclick = undefined,
+    lead = undefined,
     class: extraClass = "",
     ...rest
   }: {
@@ -25,6 +26,8 @@
     active?: boolean;
     quiet?: boolean;
     onclick?: ((event: MouseEvent) => void) | undefined;
+    /** A mark drawn before the title, in the row's own leading space. */
+    lead?: import("svelte").Snippet;
     class?: string;
     [key: string]: unknown;
   } = $props();
@@ -32,6 +35,7 @@
 
 {#snippet content()}
   {#if locale && machine}<MachineIdentity {locale} />{/if}
+  {#if lead}<span class="ticket-row-lead">{@render lead()}</span>{/if}
   <span class="ticket-row-title">{title}</span>
   <MachineActivityMark {locale} {signal} {conversationId} completed={quiet} />
 
