@@ -213,10 +213,10 @@ textarea {
    The list's fills sit --rail-edge in from both sides of the column: its scrollbar is kept to
    the column's own edge, drawn only while the pointer is over the list, so the right inset
    matches the left with or without one. */
-/* The list's first fill still starts 12px down the rail: the list keeps --rail-context-outset of
-   its own above it, so a tint or focus ring around the first block is never cut at the top. */
-.board-workspace-shell.approved-rail-shell .approved-rail { padding-top:calc(var(--space-3) - var(--rail-context-outset)); }
-.approved-rail-shell .approved-rail .active-work-scroll { padding:var(--rail-context-outset) max(0px, calc(var(--rail-edge) - var(--rail-scrollbar, 0px))) var(--rail-foot-clear) var(--rail-edge); scroll-padding-block:var(--rail-edge-fade); scrollbar-width:auto; scrollbar-color:auto; }
+/* The list's first fill still starts 12px down the rail: the list keeps --rail-ring-room of
+   its own above it, so a focus ring around the first header is never cut at the top. */
+.board-workspace-shell.approved-rail-shell .approved-rail { padding-top:calc(var(--space-3) - var(--rail-ring-room)); }
+.approved-rail-shell .approved-rail .active-work-scroll { padding:var(--rail-ring-room) max(0px, calc(var(--rail-edge) - var(--rail-scrollbar, 0px))) var(--rail-foot-clear) var(--rail-edge); scroll-padding-block:var(--rail-edge-fade); scrollbar-width:auto; scrollbar-color:auto; }
 .approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
 .approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar-track { background:transparent; }
 .approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar-thumb { border-radius:var(--radius-pill); background:transparent; }
@@ -4951,12 +4951,10 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* One moving decoration per scroller keeps selection distinct from the rail content. */
 .approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) { position:relative; isolation:isolate; }
 /* One crisp fill marks the open item and a fill half as strong follows the pointer, both on
-   the row's own 30px box with the 8px radius. The Manager you are inside is a far quieter tint
-   around its block, reaching --rail-context-outset past the fills so its corners stay
-   concentric with theirs. */
+   the row's own 30px box with the 8px radius. Nothing fills around a Manager's block: the
+   Manager you are inside is marked by its header (WorkspaceRailCard). */
 .rail-wash { position:absolute; pointer-events:none; z-index:0; border-radius:var(--radius-md); }
 .rail-wash[hidden] { display:none; }
-.rail-wash--group { background:var(--wash-context); border-radius:var(--rail-context-radius); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
 
 .rail-wash--hover { background:var(--wash-hover); }

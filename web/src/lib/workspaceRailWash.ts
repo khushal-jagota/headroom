@@ -49,12 +49,10 @@ export function workspaceRailWash(root: HTMLElement) {
     if (!host || !root.contains(node) || !node.getClientRects().length) return null;
     const base = host.node.getBoundingClientRect();
     const local = (rect: DOMRect): Box => ({left:rect.left-base.left+host.node.scrollLeft,top:rect.top-base.top+host.node.scrollTop,width:rect.width,height:rect.height});
+    // The block still groups an item with its Manager, so a selection moving inside one block
+    // travels; the Manager you are inside is marked by its header, not by a fill around it.
     const group = node.closest<HTMLElement>('.manager-card');
-    // The Manager's tint reaches past its block's fills by the outset, so its corners stay
-    // concentric with theirs.
-    const outset = parseFloat(css('--rail-context-outset')) || 0;
-    const block = group ? local(group.getBoundingClientRect()) : null;
-    const groupBox = block ? {left:block.left-outset,top:block.top-outset,width:block.width+2*outset,height:block.height+2*outset} : null;
+    const groupBox = null;
     // Every fill is its row's own box. A Manager's header is its project eyebrow and its name
     // together: selected, hovered and focused as one block.
     const fill = node.matches('.item-head') ? node.closest<HTMLElement>('.identity') ?? node : node.closest<HTMLElement>('.settled-row') ?? node;

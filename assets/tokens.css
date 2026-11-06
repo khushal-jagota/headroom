@@ -236,10 +236,8 @@
 
 /* Workspace selection tiers and travel. */
 :root {
-  /* The Manager you are inside: a tint quiet enough that only the open row reads as selected.
-   * The open row is one crisp fill, a clear step above hover, so the two never read as
-   * more and less of the same grey. */
-  --wash-context: rgb(255 255 255 / 4%);
+  /* The open row is one crisp fill and the pointer's is half of it (1:2), so hover never
+   * reads as selection. Nothing else in the rail is a grey fill. */
   --wash-selected: rgb(255 255 255 / 12%);
   --wash-hover: rgb(255 255 255 / 6%);
   /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
@@ -274,10 +272,8 @@
   --rail-foot-gap: 20px;
   /* The list's scrollbar lives in the column's own edge, never inside the rows. */
   --rail-scrollbar-width: 4px;
-  /* The Manager you are inside: a tint around its block, its corners concentric with the
-   * row fills inside it (12px = the rows' 8px + the 4px it reaches past them). */
-  --rail-context-outset: 4px;
-  --rail-context-radius: 12px;
+  /* Room the list keeps above its first fill for the focus ring (2px clear, 1.5px wide). */
+  --rail-ring-room: 4px;
   /* Rail text: the Manager's name leads, a row (goal or Ticket) reads, a label whispers. */
   --rail-tone-rest: var(--tone-secondary);
   --rail-tone-title: var(--tone-secondary);

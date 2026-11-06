@@ -87,6 +87,13 @@
   .item-title { grid-column:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:var(--type-rail-title); font-weight:var(--weight-title); line-height:22px; letter-spacing:-0.012em; color:var(--rail-tone-title); transition:color var(--motion-fast) var(--motion-ease); }
   .item-head[data-unread="true"] .item-title { color:var(--tone-strong); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--tone-strong); }
+  /* The Manager you are inside: while its page or one of its goals or Tickets is open, its
+     header (the eyebrow and the name together) steps up, with the open row's fill under it.
+     A name that needs you is bright for one reason only, an unread message for you, and so
+     always carries the accent dot; the header of the place you are in never does, and its
+     eyebrow lifts with it, which a needs-you name's never does. */
+  .manager-card:has(:global([aria-current="page"])) .item-title { color:var(--tone-strong); }
+  .manager-card:has(:global([aria-current="page"])) .identity :global(.manager-eyebrow) { color:var(--tone-secondary); }
   .item-head :global(.stage-mark--current-running),
   .bucket[data-tone="quiet"] :global(.stage-mark--current-running) { border-color:var(--border-color); border-top-color:var(--tone-tertiary); border-right-color:var(--tone-tertiary); }
   .bucket :global(.worker-row:focus-visible) { outline:none; }
