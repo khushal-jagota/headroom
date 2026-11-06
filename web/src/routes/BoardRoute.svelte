@@ -525,7 +525,7 @@
      whole stack above pane content without moving native controls out of DOM order. */
   .workspace-rail { position:relative; z-index:1; }
   .board-workspace-right { position:relative; z-index:0; }
-  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3) var(--space-2) var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:var(--space-3) var(--space-2) var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
   .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
   /* Rows scrolled out above dissolve under the rail's top edge instead of being sliced. */
   .rail-work .rail-work::before { content:""; position:absolute; z-index:3; left:0; right:0; top:0; height:var(--space-5); background:linear-gradient(var(--surface-rail), transparent); pointer-events:none; opacity:0; }
@@ -533,9 +533,9 @@
   /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
      included, without becoming a scroller that a hover could slide sideways. */
   .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
-  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); padding-bottom:var(--space-6); scroll-padding-block:var(--space-6); }
+  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:thin; padding-bottom:var(--space-6); scroll-padding-block:var(--space-6); }
 
-  .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
+  .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:thin; }
   .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
   .rail-grip::after { content:""; position:absolute; top:50%; left:50%; width:var(--space-1); height:var(--space-6); transform:translate(-50%,-50%) scaleY(var(--rail-grip-rest-scale)); border-radius:var(--radius-pill); background:var(--border-color); opacity:0; pointer-events:none; transition:opacity var(--motion-base) var(--motion-ease),background var(--motion-base) var(--motion-ease),transform var(--motion-enter) var(--motion-ease); }
   .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { opacity:1; transform:translate(-50%,-50%) scaleY(1); }
