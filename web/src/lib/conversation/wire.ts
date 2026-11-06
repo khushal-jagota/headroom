@@ -331,6 +331,9 @@ export type ConversationEvent =
   /** The backend summarised what came before and dropped it. No payload: that it
    *  happened, and where, is the whole of it. */
   | Row<"context_compacted", Record<string, never>>
+  /** The backend's own answer to a slash command, such as a refused or inspected goal.
+   *  Nothing streams it, so this row is the only place it is shown. */
+  | Row<"command_reply", { reply_text: string }>
   /** The agent's plan as it stands now. Each row is the whole plan, not a change to it,
    *  so the newest one is the plan and the ones before it are history. */
   | Row<"plan_updated", { entries: PlanEntry[] }>

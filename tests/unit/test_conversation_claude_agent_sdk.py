@@ -37,6 +37,8 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 from tests.support.conversation_claude_agent_sdk_bench import (
     ANOTHER_SESSION_ID,
     SESSION_ID,
+    TURN,
+    TURN_2,
     _assistant,
     _bench,
     _run,
@@ -341,6 +343,80 @@ def test_background_tasks_follow_claudes_live_set(tmp_path: Path) -> None:
             BackgroundTaskEnded(task_id="c", task_status="killed"),
             BackendStreamEnded(),
         ]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_claudes_own_command_reply_is_reported_only_when_nothing_else_says_it(
+    tmp_path: Path,
+) -> None:
+    """Claude answers a local command with a ``<synthetic>`` message and no streamed text.
+
+    That message is the only place a completed command's reply exists, so it is reported
+    before the ending. A failed turn already shows its error, which Claude also writes
+    this way, and automatic compaction records its own outcome, so neither repeats it.
+    Ordinary model text stays ordinary agent output.
+    """
+    from claude_agent_sdk import ResultMessage
+
+    refusal = "/goal can't run while hooks are restricted."
+
+    def result(*, is_error: bool = False, text: str | None = None) -> ResultMessage:
+        return ResultMessage(
+            subtype="error_during_execution" if is_error else "success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=is_error,
+            num_turns=0,
+            session_id=SESSION_ID,
+            result=text,
+        )
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=SESSION_ID)
+        await _write(child, "/goal finish the work", TURN)
+        clients[0].say(
+            _assistant(TextBlock(text=refusal), model="<synthetic>"),
+            _assistant(TextBlock(text="ordinary words")),
+            result(),
+        )
+        await clients[0].until_taken_in()
+        await _write(child, "hello", TURN_2)
+        overloaded = "API Error: 529 Overloaded"
+        clients[0].say(
+            _assistant(TextBlock(text=overloaded), model="<synthetic>"),
+            result(is_error=True, text=overloaded),
+        )
+        await clients[0].until_taken_in()
+        compaction_turn = TurnToken(conversation_id=TURN.conversation_id, turn_number=3)
+        compact = text_message_content("/compact")
+        await child.write_prompt(
+            compaction_turn,
+            compact,
+            sender_content=compact,
+            sender_label="Panels",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+            automatic_compaction=True,
+        )
+        clients[0].say(
+            _assistant(TextBlock(text="Error: No messages to compact"), model="<synthetic>"),
+            result(),
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.command_replies == [(TURN, refusal)]
+        assert sink.message_texts == [(TURN, "ordinary words")]
+        assert [ending["ending"] for ending in sink.endings] == [
+            ConversationTurnEnding.completed,
+            ConversationTurnEnding.failed,
+            ConversationTurnEnding.completed,
+        ]
+        assert sink.calls_in_order[:3] == ["token_usage", "command_reply", "turn_ended"]
         await child.stop()
 
     _run(exercise)

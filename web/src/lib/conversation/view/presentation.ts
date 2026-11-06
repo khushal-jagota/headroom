@@ -47,6 +47,7 @@ function uncachedRowForBody(item: Pick<ConversationViewRow, 'key' | 'source_sequ
         case 'model_changed': return { ...base, kind: body.kind, model: body.model, reasoningEffort: body.reasoning_effort };
         case 'token_usage': return { ...base, kind: body.kind, inputTokens: body.input_tokens, outputTokens: body.output_tokens, cachedInputTokens: body.cached_input_tokens, costUsd: body.cost_usd };
         case 'turn_ended': return { ...base, kind: body.kind, ending: body.ending, errorSummary: body.error_summary, automaticCompactionResult: body.automatic_compaction_result };
+        case 'command_reply': return { ...base, kind: body.kind, replyText: body.reply_text };
         case 'context_compacted':
         case 'turn_stopped': return { ...base, kind: body.kind };
     }

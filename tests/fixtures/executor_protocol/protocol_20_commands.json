@@ -2,7 +2,6 @@
   "command_schema": {
     "$defs": {
       "AnswerPermission": {
-        "additionalProperties": false,
         "properties": {
           "answer": {
             "anyOf": [
@@ -38,7 +37,6 @@
         "type": "object"
       },
       "AnswerUserInput": {
-        "additionalProperties": false,
         "properties": {
           "answer": {
             "anyOf": [
@@ -110,7 +108,6 @@
         "type": "object"
       },
       "CancelTurn": {
-        "additionalProperties": false,
         "properties": {
           "kind": {
             "const": "cancel_running_turn",
@@ -484,7 +481,7 @@
         "type": "string"
       },
       "ResolvedConversationStart": {
-        "description": "A start request with the floor defaults already applied.\n\nThis is what a conversation is actually started with, and what every backend adapter\nis handed. ``backend_key``, ``workspace_folder`` and ``access`` are always concrete\nhere because each has a floor default; ``model`` is always concrete because the\nrequest had to name one. ``reasoning_effort`` and ``role_materials`` stay optional\nbecause neither has a floor default \u2014 there is nothing to fall back to, so absent\nstays absent. For executor_default, native admission must replace the folder\nplaceholder and policy before a local backend adapter can use this request.",
+        "description": "A start request with the floor defaults already applied.\n\nThis is what a conversation is actually started with, and what every backend adapter\nis handed. ``backend_key``, ``workspace_folder`` and ``access`` are always concrete\nhere because each has a floor default; ``model`` is always concrete because the\nrequest had to name one. ``reasoning_effort`` and ``role_materials`` stay optional\nbecause neither has a floor default \u2014 there is nothing to fall back to, so absent\nstays absent. For executor_default, native admission must replace the folder\ninside the executor workspace and the policy before a local backend adapter can\nuse this request.",
         "properties": {
           "access": {
             "$ref": "#/$defs/ConversationAccess"
@@ -544,7 +541,6 @@
         "type": "object"
       },
       "StartRun": {
-        "additionalProperties": false,
         "properties": {
           "canonical_skill_snapshot": {
             "$ref": "#/$defs/CanonicalSkillSnapshot"
@@ -591,7 +587,6 @@
         "type": "object"
       },
       "Steer": {
-        "additionalProperties": false,
         "properties": {
           "content": {
             "$ref": "#/$defs/MessageContent"
@@ -626,7 +621,6 @@
         "type": "object"
       },
       "StopRun": {
-        "additionalProperties": false,
         "properties": {
           "kind": {
             "const": "stop",
@@ -680,7 +674,7 @@
         "type": "object"
       },
       "WorkspacePathPolicy": {
-        "description": "Select a mapped path, an absolute path, or the executor-owned workspace.\n\nFor executor_default, workspace_folder is an unused absolute placeholder.\nOnly native admission resolves and provisions that workspace.",
+        "description": "Select a mapped path, an absolute path, or the executor-owned workspace.\n\nFor executor_default, workspace_folder names a folder inside the executor's own\nworkspace, written with that workspace as ``/``. Only native admission resolves and\nprovisions it.",
         "enum": [
           "home_relative",
           "absolute",
@@ -690,7 +684,6 @@
         "type": "string"
       },
       "WritePrompt": {
-        "additionalProperties": false,
         "properties": {
           "automatic_compaction": {
             "default": false,
@@ -804,6 +797,6 @@
     "title": "ChildCommand",
     "type": "object"
   },
-  "protocol_version": 19,
-  "source_revision": "567e27bac8e2c65f6cb766335a1b3e999eeb1564"
+  "protocol_version": 20,
+  "source_revision": "83f924010b4815aa443c2c2e05647c734c80401c"
 }

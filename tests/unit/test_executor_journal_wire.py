@@ -71,7 +71,7 @@ def test_oversized_envelope_never_becomes_a_queued_poison_entry(tmp_path: Path) 
     spool.close()
 
 
-@pytest.mark.parametrize("version", [19, 20])
+@pytest.mark.parametrize("version", [20, 21])
 def test_current_and_previous_protocol_admit_native_work(version: int) -> None:
     from uuid import uuid4
 
@@ -81,7 +81,7 @@ def test_current_and_previous_protocol_admit_native_work(version: int) -> None:
     validate_identity(ExecutorIdentity(version, "retained", SPOOL_FORMAT_VERSION, str(uuid4()), 1))
 
 
-@pytest.mark.parametrize("version,spool", [(18, 5), (21, 5), (20, 4), (True, 5), (20, True)])
+@pytest.mark.parametrize("version,spool", [(19, 5), (22, 5), (21, 4), (True, 5), (21, True)])
 def test_unsupported_versions_refuse_before_work(version: int, spool: int) -> None:
     from uuid import uuid4
 

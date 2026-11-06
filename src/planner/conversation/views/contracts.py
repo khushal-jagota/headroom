@@ -40,6 +40,7 @@ type ViewRowKind = Literal[
     "model_changed",
     "token_usage",
     "context_compacted",
+    "command_reply",
     "turn_ended",
     "turn_stopped",
 ]
@@ -157,6 +158,11 @@ class MarkerRowBody(TypedDict):
     kind: Literal["context_compacted", "turn_stopped"]
 
 
+class CommandReplyRowBody(TypedDict):
+    kind: Literal["command_reply"]
+    reply_text: str
+
+
 type ViewRowBody = (
     CredentialRequestRowBody
     | PromptRowBody
@@ -170,6 +176,7 @@ type ViewRowBody = (
     | UsageRowBody
     | TurnEndingRowBody
     | MarkerRowBody
+    | CommandReplyRowBody
 )
 
 
