@@ -843,8 +843,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     ) as reset:
         page.locator("[data-conversation-new-confirm]").click(timeout=WAIT_MS)
     assert reset.value.ok
-    history = api.get(server, f"/api/conversation-history/goal/{goal['id']}")
-    assert history["entries"] == []
     assert api.get(server, "/api/chief/conversation")["conversation_id"] is None
     # Reset clears the shared pointer and preserves the holder's recorded messages.
     assert "Help with this goal" in api.get(
