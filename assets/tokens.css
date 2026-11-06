@@ -43,9 +43,10 @@
    * ring (--border-raised) and --shadow-float. */
   --surface-raised: #242424;
   --border-raised: rgb(255 255 255 / 10%);
-  /* The composer field: one clear step above the page, with a 1px edge one step lighter. */
+  /* The composer field: one clear step above the page, its fill alone (no edge: on the dark
+   * page the fill separates it; the focus ring stays). */
   --surface-input: #2a2a2a;
-  --border-input: #3a3a3a;
+  --border-input: transparent;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;
@@ -85,15 +86,16 @@
   --type-chart-completion: var(--type-page-title);
   /* Approved chart-sheet surfaces and category palettes. These remain separate
    * from the shell so the production renderer preserves the approved examples. */
-  --chart-surface: #1a1a1a;
-  /* A trend line is drawn in the calm brand blue; the stretches that meet their target
-   * turn the done green, and red stays with the status text. */
+  /* A standalone chart card's fill: the page card's (4.5% white over the page), opaque. */
+  --chart-surface: #1d1d1d;
+  /* A trend line says its status as staging did: green where it meets its target, red
+   * where it is below, amber where it is due. */
   --chart-line-good: var(--accent-done);
-  --chart-line-bad: #9aadd2;
-  --chart-line-attention: #9aadd2;
+  --chart-line-bad: var(--accent-error);
+  --chart-line-attention: var(--accent-attention);
   --chart-surface-raised: #252525;
   --chart-surface-muted: #1b1b1b;
-  --chart-card-border: #ffffff12;
+  --chart-card-border: transparent;
   --chart-grid: #ffffff14;
   --chart-border-strong: #ffffff24;
   /* Chart text: labels, captions, legends and axes are Small text in the tertiary tone. */
@@ -185,12 +187,12 @@
   --border-card: rgba(255, 255, 255, 0.07);
   --border-hover: rgba(255, 255, 255, 0.13);
   --border-focus: var(--focus-ring);
-  /* THE focus ring (Direction v2, Outcome 6), drawn the same way on every focusable control:
-   * a 1.5px line in the accent, 2px off the control. An outline follows the control's own
+  /* THE focus ring, drawn the same way on every focusable control: staging's 2px line in
+   * the accent, 2px off the control. An outline follows the control's own
    * radius, so at a 2px offset its radius is the control's radius + 2. It is a line, never a
    * fill, so it cannot read as "needs you". */
   --focus-ring: var(--accent-bright);
-  --focus-width: 1.5px;
+  --focus-width: 2px;
   --focus-offset: 2px;
   /* The floating plane's shadow: one soft drop, no dark ring (the ring is --border-raised). */
   --shadow-float: 0 4px 12px rgb(0 0 0 / 24%);
@@ -230,7 +232,10 @@
 /* The shared controls (Direction v2, Outcome 5): one button, one segmented control. Every
  * step is white over the control's own surface; a hover adds one step (6%). */
 :root {
-  --button-height: 28px;
+  /* Never shorter than staging's: a page's own actions were 27-29px there, its main
+   * actions (Mark done, Approve, Send it back) 37-39px. */
+  --button-height: 30px;
+  --button-main-height: 40px;
   --button-radius: var(--radius-md);
   --button-pad-x: 12px;
   --button-gap: 6px;
@@ -247,9 +252,10 @@
   --button-secondary-fill-hover: rgb(255 255 255 / 19%);
   /* Ghost: no fill until hovered. */
   --button-ghost-fill-hover: var(--state-step);
-  /* Outline: no fill, a 1px edge at 10% white, a primary-tone label; a hover adds a 4% fill. */
-  --button-outline-edge: rgb(255 255 255 / 10%);
-  --button-outline-fill-hover: rgb(255 255 255 / 4%);
+  /* No button wears an outline (owner). The outline variant is drawn as the secondary fill,
+   * and anything that still reads these gets no edge and the ghost's hover step. */
+  --button-outline-edge: transparent;
+  --button-outline-fill-hover: var(--state-step);
   /* Segmented control: no track; the selected segment carries the selected fill. */
   --segment-height: var(--button-height);
   --segment-radius: var(--button-radius);
@@ -321,7 +327,8 @@
    * label, not as label, item, label, item. */
   /* The rail's label voice: the project eyebrow and every group heading, one style (Small,
    * tertiary, its count after it). */
-  --rail-label-size: 11.5px;
+  /* No text in the app is smaller than Small (12.5px). */
+  --rail-label-size: var(--type-small);
   --rail-heading-above: 14px;
   --rail-heading-below: 2px;
   --rail-heading-line: 14px;
@@ -395,18 +402,25 @@
   --weight-page-section: 600;
   /* A card's lead paragraph: the section-head size, one step lighter than its title. */
   --weight-page-lead: 500;
+  /* A page list's group heading: the rail's label voice, 12px/500 at 56%. */
+  --type-page-list-label: var(--type-small);
+  --weight-page-list-label: 500;
+  --tone-page-list-label: rgb(255 255 255 / 56%);
   --type-small-print: var(--type-small);
   --tone-small-print: var(--tone-tertiary);
   /* Every button on a page: one height, one radius, one label size. */
   --page-control-height: 28px;
   /* A chart's reading: clearly under the page title, never level with it. */
   --page-reading: 22px;
-  /* One card: a 1px edge at 7%, a 2% lift, radius 12, padding 20. Nothing inside a card
-   * draws a surface of its own. */
-  --page-card-fill: rgb(255 255 255 / 3.5%);
-  --page-card-edge: rgb(255 255 255 / 7%);
+  /* One card: a fill alone, 4.5% white over the page (no edge: the fill separates it), radius
+   * 12, padding 20. Nothing inside a card draws a surface of its own. */
+  --page-card-fill: rgb(255 255 255 / 4.5%);
+  --page-card-edge: transparent;
   --page-card-radius: 12px;
   --page-card-pad: 20px;
+  /* A row-card (a yes-or-no goal): 64px tall, its two lines on an 11px inset. */
+  --page-row-card-pad-y: 11px;
+  --page-row-card-pad-x: 16px;
   /* A page list row: the rail's row at body size. Its fill reaches this far past the
    * column on both sides, so the words stay on the column's edge. */
   --page-row-height: 32px;
@@ -419,36 +433,39 @@
   --page-ring-size: 40px;
   --page-ring-fill: #f2f2f2;
   --page-ring-track: rgb(255 255 255 / 10%);
-  --page-check-size: 14px;
+  /* A checklist's check is staging's: a 22px circle on a 40px target (never smaller). */
+  --page-check-size: 22px;
+  --page-check-target: 40px;
   /* A disclosure's chevron, drawn the same at the right end of every fold. */
   --page-chevron: 14px;
   /* The page keeps this much room under its last block, so it can scroll fully clear of
    * the composer zone. */
   --page-end-room: var(--space-7);
-  /* Above the composer: a solid band of page, and above it the 32px over which a card's box
-   * fades below the row where the page is cut. Text never enters either: its lines stop at
-   * the fold above both. */
-  --composer-band: 24px;
-  --composer-fade: 32px;
-  --page-fold-clear: calc(var(--composer-zone) + var(--composer-band) + var(--composer-fade));
-  /* The composer: the reference composer's surface (10% white) with a 1px edge one step
-   * lighter, radius 12. The status line above it is small print on its inner edge. */
+  /* Above the composer the page fades out over 20px, as staging's document edge does: one
+   * fixed CSS gradient, never measured. The page keeps this much room under its last block
+   * (and above anything scrolled into view) to stand clear of the zone. */
+  --composer-fade: var(--space-5);
+  --composer-clear: calc(var(--composer-zone) + var(--composer-preview-room) + var(--composer-fade));
+  /* The page's last line scrolls this far clear of the composer zone. */
+  --page-end-clear: 24px;
+  /* The composer: the reference composer's surface, its fill alone, radius 12. */
   --composer-surface: var(--surface-input);
   --composer-edge: var(--border-input);
   --composer-radius: 12px;
   --composer-inset: 16px;
-  --composer-status-gap: 6px;
-  /* The compact zone: a single-line composer (the reference composer is 42-44px), its status
-   * line under it as its footer, the pair floating over the page's last lines. */
+  /* The compact zone: staging's status line over a single-line composer (the reference
+   * composer is 42-44px), the pair floating over the page's last lines. The status line is a
+   * 32px row on an 8px/12px inset; an unread message under it adds up to three Body lines. */
   --composer-height: 44px;
   --composer-control: 32px;
-  --composer-status-height: 24px;
+  --composer-status-height: 52px;
+  --composer-preview-room: 70px;
   /* The run chips (model, delivery) are small print: 12.5px, secondary tone; the provider mark
    * is drawn at the same size in the same tone. */
   --composer-mark: 12.5px;
-  /* The latest message on the status line is an excerpt, never wider than this. */
-  --composer-excerpt: 280px;
-  --composer-zone: calc(var(--composer-height) + var(--composer-status-gap) + var(--composer-status-height) + var(--space-4));
+  /* The run chip's quieter word (the effort) on the composer's #2a2a2a: 4.85:1. */
+  --composer-quiet-tone: #969696;
+  --composer-zone: calc(var(--composer-status-height) + var(--composer-height) + var(--space-4));
   /* Counts are plain small numerals after their label, in the label's own tone. */
   --count-tone: var(--tone-tertiary);
   --count-needs-you-fill: transparent;
@@ -463,7 +480,9 @@
   --tone-strong: #ececec;    /* 92%: titles, needs-you items, hovered/selected text */
   --tone-primary: #dadada;   /* 84%: body prose, recaps, card content, section heads */
   --tone-secondary: #a7a7a7; /* 62%: dimmed sidebar titles and rows at rest */
-  --tone-tertiary: #808080;  /* 45%: Small text: headings, eyebrows, meta, dates, axes */
+  /* Small text: headings, eyebrows, meta, dates, axes. At least 4.5:1 on every surface it
+   * sits on: 5.6 on the page, 5.1 on a card, 4.6 on the raised plane. */
+  --tone-tertiary: #8c8c8c;
   --tone-faint: #626262;     /* 32%: placeholders and disabled only */
   --type-body: 14px;         /* 400, line-height 1.55 */
   --type-row: 13.5px;        /* 400; 500 when the item needs the person */

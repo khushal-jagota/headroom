@@ -13,16 +13,19 @@
   import { fateSentence } from "../lib/conversation/composer";
   import type { PromptDeliveryFate } from "../lib/conversation/wire";
 
-  let { kind, id, class: extraClass = "", variant = "outline" }: {
+  let { kind, id, class: extraClass = "", variant = "ghost", note = $bindable(null), noteInline = true }: {
     kind: "ticket" | "manager" | "chief";
     id: string;
     class?: string;
-    /** A page's own action is an outline button; a quieter host may ask for the ghost. */
-    variant?: "outline" | "ghost";
+    /** A quiet text action, as staging (the ghost); a host may ask for the secondary fill. */
+    variant?: "secondary" | "ghost";
+    /** What became of a send nobody can vouch for. A host that places the button away from
+     *  the recap (a page's top band) binds it and shows it under the recap, as staging. */
+    note?: string | null;
+    noteInline?: boolean;
   } = $props();
 
   let sending = $state(false);
-  let note = $state<string | null>(null);
 
   async function ask(): Promise<void> {
     if (sending) return;
@@ -57,7 +60,7 @@
     data-request-recap-action
     onclick={() => void ask()}
   >Ask for a recap</Button>
-  {#if note}<span class="request-recap-note" data-request-recap-note>{note}</span>{/if}
+  {#if note && noteInline}<span class="request-recap-note" data-request-recap-note>{note}</span>{/if}
 </span>
 
 <style>

@@ -63,5 +63,8 @@
 </div>
 <style>
 .goal-content{container-type:inline-size}/* The approved card: the chart sits inside it without a second frame. */
-.measure-panel{margin-top:0;padding:var(--page-card-pad);border:var(--border-hairline) solid var(--page-card-edge);border-radius:var(--page-card-radius);background:var(--page-card-fill)}.measure-panel :global(.completion-card){min-height:124px}.panel-actions{display:flex;justify-content:flex-end;margin-top:var(--space-4)}.goal-page{margin-top:var(--page-block-gap)}.source-warning{font-size:var(--type-small);color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}
+.measure-panel{margin-top:0;padding:var(--page-card-pad);border:var(--border-hairline) solid var(--page-card-edge);border-radius:var(--page-card-radius);background:var(--page-card-fill)}.panel-actions{display:flex;justify-content:flex-end;margin-top:var(--space-4)}
+/* A yes-or-no goal's card hugs its reading: the state at the left, Mark done at the right on
+   the state's own line, the context line under the state. */
+.measure-panel:has(> .panel-actions){display:flex;align-items:flex-start;gap:var(--space-4)}.measure-panel:has(> .panel-actions) > :global(.goal-chart-host){flex:1;min-width:0}.measure-panel > .panel-actions{flex:none;align-items:center;min-height:var(--space-6);margin-top:calc((var(--space-6) - var(--button-main-height)) / 2)}.panel-actions :global(.completion-action.button){height:var(--button-main-height)}.goal-page{margin-top:var(--page-block-gap)}.source-warning{font-size:var(--type-small);color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}
 </style>

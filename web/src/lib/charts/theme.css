@@ -41,12 +41,10 @@
   .compact .comparison { font-size:var(--type-small); }
   .compact .missing-value { font-size:var(--type-page-title); }
   .compact .caption { font-size:var(--type-small); }
+  /* Under a card's plot the switch is staging's full-width row: three equal segments. */
   .chart-range-footer { margin-top:var(--space-4); }
-  /* The range is one full-width row under every plot, a Manager's card or the goal page. */
-  /* Under the chart the switch is one compact control at the bottom centre, each segment
-     sized to its label (the shared segmented control). */
-  .chart-range-footer { display:flex; justify-content:center; }
-  .chart-range-footer .ranges { display:inline-flex; width:auto; }
+  .chart-range-footer .ranges { display:flex; width:100%; }
+  .chart-range-footer .ranges button { flex:1; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
   .integrated-card { border:0; background:transparent; border-radius:0; padding:0; }
   .integrated-card.compact { padding:0; --text-3xl:var(--page-reading); }
@@ -57,13 +55,11 @@
   .integrated-card .chart-range-footer { margin-top:var(--space-4); }
   /* The page card already reserves the room a standalone completion card holds. */
   .integrated-card.completion-card { min-height:0; }
-  .integrated-card .completion-content { padding:var(--space-1) 0 0; }
-  /* On a card the binary reading is a status line, not a second heading. */
-  /* A goal's state is said in words, never drawn as a glyph (one status language). */
-  .integrated-card .completion-headline { margin:0; min-height:0; gap:var(--space-2); }
-  .integrated-card .completion-glyph { display:none; }
-  .integrated-card .completion-word { font-size:var(--type-small); font-weight:var(--weight-small); letter-spacing:0; line-height:18px; color:var(--tone-tertiary); }
-  .integrated-card .completion-context { margin-top:var(--space-2); font-size:var(--type-small); }
+  /* On a card the reading is staging's (the glyph, the word, the context line under them)
+     and the card hugs it: no reserved height above, between or under. */
+  .integrated-card .completion-content { padding:0; }
+  .integrated-card .completion-headline { margin:0; min-height:var(--space-6); }
+  .integrated-card .completion-context { margin-top:var(--space-2); }
   .bar-plot { position:relative; }
   .chart-empty-value { color:var(--chart-muted); text-align:center; padding:32px 0; }
   .partial-reading { color:var(--chart-muted); }
@@ -84,7 +80,7 @@
   .completion-content { padding:28px 0 4px; }
   .completion-headline { display:flex; align-items:center; gap:12px; margin:12px 0 16px; min-height:48px; }
   .completion-glyph { flex-shrink:0; width:32px; height:32px; }
-  .completion-word { position:relative; font-size:var(--type-page-title); font-weight:var(--weight-page-title); letter-spacing:var(--tracking-page-title); line-height:32px; }
+  .completion-word { position:relative; font-size:var(--type-chart-completion); font-weight:var(--weight-page-lead); letter-spacing:var(--tracking-page-title); line-height:32px; color:var(--tone-strong); }
   .completion-word>span { display:block; }
   .completion-context { display:flex; align-items:center; gap:8px; font-size:var(--type-body); line-height:20px; min-height:20px; }
   .status-dot { width:5px; height:5px; flex-shrink:0; border-radius:50%; }
@@ -111,6 +107,8 @@
     /* The page's own card already holds this inset. Two would stack. */
     .integrated-card:not(.compact) { padding:0; border-radius:0; }
     .metric-card:not(.compact):not(.gauge-card) .metric-top h2 { flex-basis:100%; }
+    .metric-card:not(.compact) .ranges { width:100%; }
+    .metric-card:not(.compact) .ranges button { flex:1; }
 
     .metric-card:not(.compact) .metric-value { height:28px; }
     .completion-word { font-size:var(--type-page-title); }

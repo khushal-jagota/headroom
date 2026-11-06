@@ -1,7 +1,6 @@
 <script lang="ts">
   import Button from '../Button.svelte';
  import GoalContent from './GoalContent.svelte';
- import PageFold from '../pageKit/PageFold.svelte';
  import {workspaceAddress} from '../../lib/workspaceAddress';
  import {createQuery} from '@tanstack/svelte-query';
  import {queries} from '../../lib/queryCatalogue';
@@ -50,10 +49,9 @@
 <ManagerFrame class="goal-workspace" bind:conversationState {openedFile} {onOpenFile}>
  <div class="goal-content" data-goal-page={id}>
  {#if goal}
- <GoalHeader {goal}>{#snippet mark()}{#if goal.holder_kind==='chief'}<Button variant="outline" class="make-manager" disabled={promoting} aria-busy={promoting} onclick={makeManager}>{promoting?'Making Manager…':'Make it a Manager'}</Button>{/if}{/snippet}</GoalHeader>
+ <GoalHeader {goal}>{#snippet mark()}{#if goal.holder_kind==='chief'}<Button variant="ghost" class="make-manager" disabled={promoting} aria-busy={promoting} onclick={makeManager}>{promoting?'Making Manager…':'Make it a Manager'}</Button>{/if}{/snippet}</GoalHeader>
  {#if error}<ErrorLine {error}/>{/if}
  <GoalContent {goal}/>
- <PageFold/>
  {:else if detail.error}<ErrorLine error={detail.error}/>{:else}<p>Loading goal…</p>{/if}
  </div>
  {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:${holder.kind}:${holder.id}`} label={holderLabel} composerPlaceholder={holder.kind==='manager'?'Message this manager…':'Message the Chief…'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={holder.kind==='manager'?holder:undefined} uploadOwner={holder}/>{/snippet}

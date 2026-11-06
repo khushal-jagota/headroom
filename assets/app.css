@@ -727,8 +727,7 @@ strong {
 }
 
 /* Inline code: Small mono on a 7% lift, radius 4, 1px 4px, on the text's own baseline and in
- * the text's own tone. A run such as `J`/`K` is joined into one lift by the renderer
- * (.markdown-code-run), so it never reads as loose chips with a slash between them. */
+ * the text's own tone. */
 .markdown code {
   font-family: var(--font-mono);
   font-size: var(--type-code);
@@ -741,22 +740,6 @@ strong {
   color: inherit;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
-}
-
-.markdown .markdown-code-run {
-  font-family: var(--font-mono);
-  font-size: var(--type-code);
-  line-height: 1;
-  background: var(--surface-code);
-  padding: var(--code-pad-y) var(--code-pad-x);
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-}
-
-.markdown .markdown-code-run code {
-  padding: 0;
-  background: none;
-  border-radius: 0;
 }
 
 .markdown pre {
@@ -854,12 +837,12 @@ strong {
   overflow-wrap: anywhere;
 }
 
-/* Table heads are Small text in the tertiary tone, like every other label. */
+/* Table heads, as staging: bold in the strong tone over a recessed band, at the table's
+ * own size. */
 .markdown th {
-  color: var(--tone-tertiary);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
-  vertical-align: bottom;
+  color: var(--tone-strong);
+  font-weight: var(--weight-title);
+  background: var(--surface-recessed);
 }
 
 .markdown img {
@@ -1087,7 +1070,7 @@ a.pv-name:focus-visible { outline:0; }
  *   primary   — inverse: an 88% white fill with dark ink.
  *   secondary — a 13% white fill, no border, a secondary-tone label.
  *   outline   — a page header's own actions: no fill, a 1px edge at 10% white, a
- *               primary-tone label; a hover adds a 4% fill.
+ *               secondary-tone label (so a card's decision leads); a hover adds a 4% fill.
  *   ghost     — no fill and a secondary-tone label until hovered (6% fill).
  * The older variant names map onto these: quiet = secondary, pill = ghost. */
 .button {
@@ -1129,26 +1112,18 @@ a.pv-name:focus-visible { outline:0; }
   background: var(--button-primary-fill-hover);
 }
 
+/* No button wears an outline (owner): the outline variant is the secondary fill. */
 .button--secondary,
-.button--quiet {
+.button--quiet,
+.button--outline {
   background: var(--button-secondary-fill);
   color: var(--tone-primary);
 }
 
 .button--secondary:hover:not(:disabled),
-.button--quiet:hover:not(:disabled) {
-  background: var(--button-secondary-fill-hover);
-  color: var(--tone-strong);
-}
-
-.button--outline {
-  background: transparent;
-  box-shadow: inset 0 0 0 var(--border-hairline) var(--button-outline-edge);
-  color: var(--tone-primary);
-}
-
+.button--quiet:hover:not(:disabled),
 .button--outline:hover:not(:disabled) {
-  background: var(--button-outline-fill-hover);
+  background: var(--button-secondary-fill-hover);
   color: var(--tone-strong);
 }
 
@@ -1180,7 +1155,9 @@ a.pv-name:focus-visible { outline:0; }
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  height: var(--segment-height);
+  /* A control that wraps its segments (the Ideas project picker) grows with its rows, so
+   * nothing under it can sit on its second row. */
+  min-height: var(--segment-height);
 }
 
 .segmented-option {
@@ -1630,7 +1607,7 @@ button.list-row:hover .list-row-title {
 }
 
 .chat-overflow-history select:focus-visible {
-  outline: var(--border-hairline) solid var(--focus-ring);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -2394,8 +2371,9 @@ select {
   font-size: var(--type-xs);
   line-height: 18px;
   color: var(--text-muted);
-  background: var(--surface-2);
-  border: var(--border-hairline) solid var(--border-color);
+  /* A key cap is a fill alone (no edge), one clear step over the page. */
+  background: var(--wash-selected);
+  border: var(--border-hairline) solid transparent;
   border-radius: var(--radius-sm);
   padding: 0 5px;
   margin-right: var(--space-1);
@@ -3037,7 +3015,7 @@ select {
 }
 
 .ed:focus {
-  outline: var(--border-hairline) solid var(--focus-ring);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: var(--space-1);
 }
 
@@ -3695,7 +3673,7 @@ select {
 .ticket-identity-fact:focus-within {
   color: var(--text-strong);
   border-bottom-color: var(--accent-bright);
-  outline: var(--border-hairline) solid var(--focus-ring);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -4063,7 +4041,7 @@ a.artifact-chip:hover,
 
 .stage-fold-summary:focus-visible,
 .stage-fold-close:focus-visible {
-  outline: var(--border-hairline) solid var(--focus-ring);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: calc(-1 * var(--border-hairline));
 }
 
@@ -4717,7 +4695,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 
 [data-screen="ideas"] .opt {
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-1) 10px;
   font-family: inherit;
   font-size: var(--type-xs);
   color: var(--text-faint);
@@ -4752,6 +4730,11 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
   filter: brightness(1.08);
 }
+
+/* As staging: Capture keeps its full height, and while there is nothing to capture it
+ * reads at half strength. */
+[data-screen="ideas"] [data-commit].button { height: auto; min-height: var(--button-height); line-height: 1.6; }
+[data-screen="ideas"] [data-commit].button:disabled { opacity: 0.5; color: var(--surface-ink); }
 
 /* Notifications — one quiet settings column; choices are content, not cards. */
 [data-screen="notifications"] {
@@ -4987,16 +4970,15 @@ details:not([open]) > summary > .manager-workspace-chevron {
   border-bottom:var(--border-hairline) solid var(--border-color);
 }
 .disclosure-bands > .disclosure-band + .disclosure-band { border-top:0; }
-.disclosure-bands > .disclosure-band:last-child { border-bottom:0; }
 .disclosure-band > summary {
   display:flex;
   align-items:center;
-  gap:var(--space-2);
-  padding:var(--space-2);
+  gap:var(--space-3);
+  padding:14px var(--space-2);
   margin-inline:calc(-1 * var(--space-2));
-  border-radius:var(--radius-md);
+  border-radius:var(--radius-sm);
   font-size:var(--type-sm);
-  font-weight: var(--weight-small);
+  font-weight:var(--weight-title);
   color:var(--text-faint);
   cursor:pointer;
   list-style:none;
@@ -5004,7 +4986,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .disclosure-band > summary::-webkit-details-marker { display:none; }
 .disclosure-band > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .disclosure-band > summary:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
-.disclosure-band-trailing { margin-left:0; font-weight:var(--weight-small); color:var(--text-faintest); }
+.disclosure-band-trailing { margin-left:auto; font-weight:var(--weight-small); color:var(--text-faintest); }
 .disclosure-band-body { padding-bottom:var(--space-4); }
 
 .chat-thread[data-more-below="true"] {
@@ -5055,12 +5037,15 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * The same height on every page, so every title starts on the same line. */
 .page-band {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
+  gap: 0 var(--space-3);
   min-height: var(--page-band-height);
 }
+/* Where the line and the actions do not fit side by side, the actions wrap under the line,
+ * at the right, and wrap among themselves: no button ever leaves the window. */
 .page-band-place {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -5096,14 +5081,22 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 .page-band .page-band-actions,
 .page-band .ticket-lifecycle .actions {
-  flex: none;
+  flex: 0 1 auto;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--space-2);
+  max-width: 100%;
+  margin-left: auto;
 }
+/* The band's actions are quiet text buttons (ghosts): the last one's label ends on the
+ * column's edge, its hover fill reaching past it. */
+.manager-page .page-band .page-band-actions { margin-right: calc(var(--button-pad-x) * -1); }
 .page-band .ticket-lifecycle {
-  flex: none;
-  margin: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
+  margin: 0 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -5129,9 +5122,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
   line-height: 32px;
   overflow-wrap: anywhere;
 }
-/* A page title never carries a mark after its words. The Manager's conversation signal is
- * shown in the rail and on the composer's status line. */
-.manager-page .manager-column .manager-workspace-head .manager-workspace-title .conversation-signal-marks { display: none; }
+/* As staging, a Manager's title carries its conversation marks (working, unread) after its words. */
+.manager-page .manager-column .manager-workspace-head .manager-workspace-title { display: flex; align-items: center; gap: var(--space-3); }
 
 /* THE RECAP — body text in the primary tone, never wider than the prose measure. */
 .ticket-recap {
@@ -5174,183 +5166,13 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 .manager-page .manager-column .goals-overview > header { margin: 0; min-height: 0; }
 
-/* THE PAGE LIST — the rail's group heading and row, at body size. Words stand on the
- * column's edge; a row's fill reaches --page-row-outset past it on both sides. Counts are
- * plain small numerals in the heading's own tone. A heading keeps the rail's rhythm, 8px
- * above it and 2px below, so it binds to its rows; the list starts 8px up so the first
- * heading sits on the section head's 14px. (.page-tickets is doubled to outrank the list's
- * own scoped rules.) */
-.manager-column .page-tickets.page-tickets .manager-children {
-  --list-inset: 0px;
-  margin: calc(var(--page-heading-above) * -1) 0 0;
-}
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section],
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] {
-  display: block;
-  margin: 0;
-}
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] + [data-worker-section][data-empty="true"]::before { content: none; }
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status,
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status + .manager-workspace-status,
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section] + [data-worker-section],
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section] + [data-worker-section]:not([data-empty="true"]) { margin-top: 0; }
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 0;
-  height: calc(var(--page-heading-above) + 20px + var(--page-heading-below));
-  margin: 0 calc(var(--page-row-outset) * -1);
-  padding: var(--page-heading-above) var(--page-row-outset) var(--page-heading-below);
-  border-radius: var(--radius-md);
-  background: none;
-  color: var(--tone-tertiary);
-  font-family: var(--font-ui);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
-  line-height: 20px;
-  letter-spacing: 0;
-}
-/* Backlogged and Done are two heading rows like every other group (never one shared line). */
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] .manager-workspace-status > summary,
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] + [data-worker-section][data-empty="true"] .manager-workspace-status > summary {
-  padding: var(--page-heading-above) var(--page-row-outset) var(--page-heading-below);
-}
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary:hover {
-  background: none;
-  color: var(--tone-secondary);
-}
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status-label {
-  font-size: var(--type-small);
-  color: inherit;
-}
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary > .manager-workspace-count,
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group] .manager-workspace-count {
-  display: inline;
-  min-width: 0;
-  height: auto;
-  margin: 0;
-  padding: 0;
-  border-radius: 0;
-  background: none;
-  color: var(--count-tone);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
-  line-height: 20px;
-  text-align: left;
-  font-variant-numeric: tabular-nums;
-}
-/* Every group is a fold, so every group heading shows the fold's chevron, right after its
- * count, where the eye already is. */
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary::after,
-.page-fold > summary::after {
-  content: "";
-  flex: none;
-  width: var(--page-chevron);
-  height: var(--page-chevron);
-  margin-left: 0;
-  background: var(--tone-tertiary);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-  transition: transform var(--motion-fast) var(--motion-ease);
-}
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status[open] > summary::after,
-.page-fold[open] > summary::after { transform: rotate(90deg); }
-.manager-column .page-tickets.page-tickets .manager-children .ticket-row {
-  min-height: var(--page-row-height);
-  width: calc(100% + var(--page-row-outset) * 2);
-  max-width: none;
-  margin: 0 calc(var(--page-row-outset) * -1);
-  padding: 6px var(--page-row-outset);
-  gap: var(--space-3);
-  border-radius: var(--radius-md);
-  color: var(--tone-secondary);
-  font-size: var(--type-body);
-  font-weight: var(--weight-body);
-  line-height: 20px;
-}
-.manager-column .page-tickets.page-tickets .manager-children .ticket-row .machine-identity { display: none; }
-.manager-column .page-tickets.page-tickets .manager-children .ticket-row:hover,
-.manager-column .page-tickets.page-tickets .manager-children .ticket-row:focus-visible {
-  background: var(--wash-hover);
-  color: var(--tone-strong);
-}
-/* A row that needs the person is the rail's bright row: strong, one weight up. */
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_approval"] .ticket-row,
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_answer"] .ticket-row {
-  color: var(--tone-strong);
-  font-weight: var(--weight-needs-you);
-}
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_approval"] > summary,
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_answer"] > summary { color: var(--tone-tertiary); }
-/* The unread dot keeps the rail's reserved right column, under the chevrons. */
-.manager-column .page-tickets.page-tickets .manager-children .ticket-row .conversation-signal-marks {
-  flex: none;
-  justify-content: center;
-  width: var(--page-chevron);
-}
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-empty {
-  padding: 6px 0;
-  color: var(--tone-tertiary);
-  font-size: var(--type-small);
-}
-
-/* THE CARD — one edge, one lift, one radius, one inset. */
+/* THE CARD — one fill, one radius, one inset (no edge). */
 .page-card {
   border: var(--border-hairline) solid var(--page-card-edge);
   border-radius: var(--page-card-radius);
   background: var(--page-card-fill);
   padding: var(--page-card-pad);
 }
-
-/* THE FOLD ROW — Steps, Artifacts and every band like them: the page list's own group
- * heading. Borderless small print: its label in the secondary tone, its count after it in the
- * tertiary tone, and the fold's chevron right after the count. */
-.disclosure-band,
-.disclosure-bands > .disclosure-band + .disclosure-band,
-.ticket-screen .worker-bands .worker-steps { border: 0; }
-.disclosure-band > summary,
-.ticket-screen .worker-bands .worker-steps > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 0;
-  height: calc(var(--page-heading-above) + 20px + var(--page-heading-below));
-  padding: var(--page-heading-above) var(--page-row-outset) var(--page-heading-below);
-  margin-inline: calc(var(--page-row-outset) * -1);
-  border-radius: var(--radius-md);
-  background: none;
-  color: var(--tone-secondary);
-  font-family: var(--font-ui);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
-  line-height: 20px;
-}
-.disclosure-band > summary:hover,
-.ticket-screen .worker-bands .worker-steps > summary:hover { background: none; color: var(--tone-strong); }
-.disclosure-band-trailing,
-.ticket-screen .worker-bands .band-count {
-  margin-left: 0;
-  color: var(--count-tone);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
-  font-variant-numeric: tabular-nums;
-}
-.disclosure-band > summary::after,
-.ticket-screen .worker-bands .worker-steps > summary::after {
-  content: "";
-  flex: none;
-  width: var(--page-chevron);
-  height: var(--page-chevron);
-  margin-left: 0;
-  background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-  transition: transform var(--motion-fast) var(--motion-ease);
-}
-.disclosure-band[open] > summary::after,
-.ticket-screen .worker-bands .worker-steps[open] > summary::after { transform: rotate(90deg); }
 
 /* The review chamber's line above the title is the same band. */
 .review-eyebrow {
@@ -5380,9 +5202,10 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* THE COMPOSER ZONE — one compact floating zone: a single-line composer with its status line
  * under it as its footer, like the reference composers. It floats over the page's last lines:
- * the page runs the full height and scrolls under the composer along one fixed edge. Below the composer's middle the zone
- * stands on the page's own plane, so nothing shows through under the composer or behind its
- * status line. No fade, no hairline. */
+ * the page runs the full height and scrolls normally under it. Above the composer the page
+ * fades out over --composer-fade (20px, staging's document edge), a fixed CSS gradient; from
+ * there down the zone stands on the page's own plane. Nothing is measured, and no content is
+ * hidden or shown by whether it fits. */
 .conversation-layer::before { display: none; }
 .ticket-reading:not(:has(.ticket-artifact))::after,
 .manager-reading:not(:has(.ticket-artifact))::after { height: 0; background: none; }
@@ -5391,31 +5214,19 @@ details:not([open]) > summary > .manager-workspace-chevron {
   left: var(--conversation-visible-left, 0px);
   right: var(--conversation-visible-right, 0px);
   bottom: var(--conversation-visible-bottom, 0px);
-  padding-top: 0;
-  background: linear-gradient(to bottom, transparent calc(var(--composer-height) / 2), var(--surface-1) calc(var(--composer-height) / 2));
+  padding-top: var(--composer-fade);
+  background: linear-gradient(to bottom, transparent, var(--surface-1) var(--composer-fade));
   pointer-events: none;
 }
 :is(.manager-page, .ticket-page) > .conversation-layer > .conversation-column { pointer-events: auto; }
-/* The page passes under the zone along one fixed edge. Every line of text stops at the fold
- * (PageFold.svelte): a list row, table row, checklist item, paragraph or heading that would
- * cross it waits below, whole or not shown. The page is cut at the row boundary where its
- * lines stop (--page-fold-cut, measured from the reading area's bottom): above it everything
- * is drawn whole, below it nothing is; a card's sides and fill fade out over --composer-fade
- * (32px) under that row, into the solid band of page above the composer, so the card reads as
- * scrolling under rather than cut; no line is ever faded. */
+/* Anything scrolled into view (a focused row, a found word) stops clear of the zone, and the
+ * page keeps room under its last block to scroll fully clear of it: the zone's own height (the
+ * dock publishes it as --conversation-layer-height, with a draft or an excerpt in it) and 24px. */
 :is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) :is(.manager-doc, .ticket-doc) {
-  /* Anything scrolled into view (a focused row, a found word) stops above the fold. */
-  scroll-padding-bottom: var(--page-fold-clear);
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--page-fold-cut, var(--page-fold-clear))), transparent calc(100% - var(--page-fold-cut, var(--page-fold-clear)) + var(--composer-fade)));
-          mask-image: linear-gradient(to bottom, #000 calc(100% - var(--page-fold-cut, var(--page-fold-clear))), transparent calc(100% - var(--page-fold-cut, var(--page-fold-clear)) + var(--composer-fade)));
+  scroll-padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear));
 }
-[data-page-folded] {
-  opacity: 0;
-  pointer-events: none;
-}
-/* The page keeps room under its last block to scroll fully clear of the fold. */
-.manager-column { padding-bottom: calc(var(--page-fold-clear) + var(--space-5)); }
-.ticket-col { padding-bottom: calc(var(--page-fold-clear) + var(--space-5) - var(--space-7)); }
+.manager-column { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear)); }
+.ticket-col { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear) - var(--space-7)); }
 
 /* The floating composer: one line, 44px; its + at the left, its model, delivery and voice
  * controls at the right, all on the composer's own row. It grows with what is typed, and
@@ -5441,21 +5252,17 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; }
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; }
 
-/* The status line is the composer's footer: small print under it, starting on the composer's
- * own left edge, its excerpt capped at --composer-excerpt with the chevron right after it. */
-.conversation-layer [data-conversation-rest-bar],
-.conversation-layer [data-conversation-dock-feedback] { order: 1; }
-.conversation-layer .conversation-column [data-conversation-rest-bar] { padding: var(--composer-status-gap) 0 0; }
-.conversation-layer .conversation-column [data-conversation-dock-feedback] { padding-inline: 0; }
+/* The status line stands over the composer, where staging placed it (ConversationRestBar). */
 
 /* The run chips are small print: the model's name and its provider mark (drawn in the chip's
  * own tone, ComposerRunControls) at 12.5px in the secondary tone, the reasoning effort a step
- * quieter, the delivery chip the same. The placeholder stays tertiary, focused or not. */
+ * quieter, the delivery chip the same. The placeholder is tertiary at rest and secondary once
+ * the composer has focus. */
 [data-conversation-composer] .chat-foot .listbox-picker-trigger { font-size: var(--type-small); font-weight: var(--weight-small); color: var(--tone-secondary); }
 [data-conversation-composer] .chat-foot .listbox-picker-trigger:hover { color: var(--tone-strong); }
 [data-conversation-composer] .chat-foot .model-picker-face { color: inherit; }
-[data-conversation-composer] .chat-foot .model-picker-effort { color: var(--tone-tertiary); }
-[data-conversation-composer] .chat-ta:focus::placeholder { color: var(--tone-tertiary); }
+[data-conversation-composer] .chat-foot .model-picker-effort { color: var(--composer-quiet-tone); }
+[data-conversation-composer] .chat-ta:focus::placeholder { color: var(--tone-secondary); }
 /* The composer's icons (add, voice, send at rest) stand in the secondary tone, one step above
  * the placeholder, and lift to the strong tone on hover. */
 [data-conversation-composer] .chat-image:not(.on),

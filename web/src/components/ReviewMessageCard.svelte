@@ -153,7 +153,7 @@
     {@render decisionActions?.()}
   {/snippet}
   {#if !embedded}
-  <div class="review-eyebrow">Review</div>
+  <div class="review-eyebrow" aria-hidden="true"></div>
   <h1 class="review-ticket-title">{item.title}</h1>
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
   <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>
@@ -178,13 +178,18 @@
 {@render footer?.()}
 
 <style>
-  /* The most important action stands furthest right; the actions about the queue lead the row. */
-  .review-card-utilities{display:flex;align-items:center;gap:var(--space-2)}
-  .review-read-row :global(.review-card-main){margin-left:auto}
+  /* Every button row sits at the right, the most important action furthest right: the actions
+     about the queue, 16px, then Mark read (or Retry). */
+  .review-card-utilities{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:var(--space-2);min-width:0}
+  .review-card-utilities :global(.review-ticket-decision-line){flex-wrap:wrap;justify-content:flex-end}
+  .review-read-row:has(:global(.review-card-main)) .review-card-utilities{margin-right:calc(var(--space-4) - var(--space-2))}
   .review-message-card{margin-top:var(--space-5);padding:var(--space-5);background:var(--surface-2);border-radius:var(--radius-lg)}
   .review-message-run{font-family:var(--font-ui);font-size:var(--type-md);line-height:1.68}
   .review-message-said+.review-message-said{position:relative;margin-top:var(--space-5);padding-top:var(--space-4)}
   .review-message-said+.review-message-said::before{content:"";position:absolute;inset-block-start:0;inset-inline-start:0;inline-size:var(--space-6);border-block-start:var(--border-hairline) solid var(--text-faintest);opacity:.55}
-  .review-recap-request{margin-top:var(--space-2);font-size:var(--type-sm)}
-  .review-read-row{display:flex;align-items:center;gap:var(--space-2);margin-top:var(--space-3);margin-left:calc(var(--space-3) * -1)}
+  .review-recap-request{display:flex;justify-content:flex-end;margin-top:var(--space-2);font-size:var(--type-sm)}
+  /* Where the row does not fit, its buttons wrap at the right; none is ever cut off. Mark
+     read keeps staging's 37px height. */
+  .review-read-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:var(--space-2);margin-top:var(--space-3)}
+  .review-read-row :global(.review-card-main.button){height:auto;min-height:37px;line-height:1.6}
 </style>

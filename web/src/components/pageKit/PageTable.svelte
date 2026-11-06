@@ -527,18 +527,18 @@
   }
   td[data-primary] { color: var(--tone-primary); font-weight: var(--weight-body); }
   td[data-missing] { color: var(--tone-tertiary); }
-  /* A cell's status is its small dot alone; its value keeps the table's one text tone. In a
-     column with any status every cell keeps the dot's slot (empty where there is none), and
-     every numeric cell lays out the same way, so the values share one right edge and one line. */
-  td[data-tone] { color: var(--tone-primary); }
+  /* As staging, a cell with a status says it in its colour: the value and its dot in the
+     status colour. In a column with any status every cell keeps the dot's slot (empty where
+     there is none), so the values share one right edge and one line. */
+  td[data-tone="good"] { color: var(--accent-done); }
+  td[data-tone="attention"] { color: var(--accent-attention); }
+  td[data-tone="bad"] { color: var(--accent-error); }
+  td[data-tone="neutral"] { color: var(--chart-legend); }
+  td[data-tone="info"] { color: var(--accent-bright); }
   td[data-dot-slot] .cell-copy, td[data-numeric] .cell-copy { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
   td[data-numeric] .cell-copy { justify-content: flex-end; }
   .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: transparent; }
-  td[data-tone] .cell-status-dot { background: var(--tone-tertiary); }
-  td[data-tone="good"] .cell-status-dot { background: var(--accent-done); }
-  td[data-tone="attention"] .cell-status-dot { background: var(--accent-attention); }
-  td[data-tone="bad"] .cell-status-dot { background: var(--accent-error); }
-  td[data-tone="info"] .cell-status-dot { background: var(--accent-bright); }
+  td[data-tone] .cell-status-dot { background: currentColor; }
   tbody tr:last-child td { border-bottom: 0; }
   /* The outer columns stand on the card's inset, so the rules between rows span exactly the
      card's content width. */

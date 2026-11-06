@@ -139,12 +139,13 @@
 {/if}
 
 <style>
-  .deadline { display: grid; flex: 0 0 auto; justify-items: end; align-self: start; max-width: 100%; color: var(--deadline-color); font-size: var(--type-small); font-weight: var(--weight-small); font-variant-numeric: tabular-nums; }
+  .deadline { display: grid; flex: 0 0 auto; justify-items: start; align-self: start; max-width: 100%; color: var(--deadline-color); font-size: var(--type-small); font-weight: var(--weight-small); font-variant-numeric: tabular-nums; }
   .field { position: relative; display: flex; align-items: center; min-height: 44px; }
-  .date-face { display: flex; align-items: center; justify-content: center; min-width: 44px; padding-inline: var(--space-1); white-space: nowrap; pointer-events: none; }
+  .date-face { display: flex; align-items: center; justify-content: flex-start; min-width: 44px; padding-inline: 0; white-space: nowrap; pointer-events: none; }
   svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
-  /* An undated step's way to set a date: a quiet 14px mark in the secondary tone. */
-  .date-face svg { width: 14px; height: 14px; color: var(--tone-secondary); }
+  /* An undated step's way to set a date: a 14px mark in the tertiary tone drawn at the checks'
+     1.5px, 8px after the step's name; its target runs on past the mark. */
+  .date-face svg { width: 14px; height: 14px; color: var(--tone-tertiary); stroke-width: calc(1.5 * 20 / 14); }
   input { position: absolute; inset: 0; width: 100%; min-width: 0; margin: 0; padding: var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; opacity: 0; cursor: pointer; }
   input:focus { position: relative; width: 112px; opacity: 1; cursor: text; outline: var(--focus-width) solid var(--focus-ring); outline-offset: -2px; }
   .field:has(input:focus) .date-face { display: none; }
@@ -152,11 +153,10 @@
   input:disabled { cursor: wait; }
   .clear { position: relative; z-index: 1; display: grid; width: 44px; min-height: 44px; place-items: center; margin: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; }
   .clear:focus-visible, .error button:focus-visible { outline: var(--focus-width) solid var(--focus-ring); outline-offset: -2px; }
-  time { padding-inline: var(--space-1); white-space: nowrap; }
+  time { padding-inline: 0 var(--space-1); white-space: nowrap; }
   .error { width: min(24ch, 100%); padding-bottom: var(--space-2); color: var(--accent-error); font-size: var(--type-xs); overflow-wrap: anywhere; }
   .error-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .error button { min-height: 44px; margin: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text-muted); font: inherit; cursor: pointer; }
   .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0; }
-  /* A mouse needs no 44px target; the row keeps the checklist's 36px pitch. */
-  @media (pointer: fine) { .field, .clear { min-height: 32px; } .clear { width: 32px; } }
+
 </style>

@@ -180,9 +180,8 @@
   .metric {
     min-width: 0;
     padding: var(--space-5);
-    border-radius: var(--radius-lg);
-    background: var(--surface-2);
-    border: var(--border-hairline) solid var(--border-card);
+    border-radius: var(--page-card-radius);
+    background: var(--page-card-fill);
   }
   .metric-top {
     display: flex;
@@ -298,10 +297,11 @@
   .grid[data-joined="true"][data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .grid[data-joined="true"][data-columns="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .grid-cell { min-width: 0; }
+  /* A joined grid is one card: its fill, no outer edge; hairlines only between its cells. */
   .grid[data-joined="true"] {
     gap: 0;
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-lg);
+    background: var(--page-card-fill);
+    border-radius: var(--page-card-radius);
     overflow: hidden;
   }
   .grid[data-joined="true"] .grid-cell {

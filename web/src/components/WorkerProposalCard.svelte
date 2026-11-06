@@ -21,7 +21,8 @@
     onEditedBodyChange?: (text: string) => void;
     returnUnavailableReason?: string;
     contextRow?: Snippet;
-    /** Actions about the queue rather than the proposal (Skip, Open ticket): they lead the row. */
+    /** Actions about the queue rather than the proposal (Skip, Open ticket): they come before
+     *  the decision group in the row's right-hand run. */
     utilityActions?: Snippet;
   } = $props();
   let scopePicker = $state<{openApproval: (anchor?: HTMLElement) => void; openReviewer: (anchor?: HTMLElement) => void; readonly expanded: boolean; readonly controls: string | undefined} | undefined>();
@@ -88,8 +89,9 @@
     <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; onEditedBodyChange?.(raw); }} onCancel={() => proposal.body} />
   </div>
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
-  <!-- The most important action stands furthest right, as in a macOS dialog: the decision
-       group ends the row with Approve last; the actions about the queue lead it. -->
+  <!-- Every button row sits at the right, the most important action furthest right, as in a
+       macOS dialog: the actions about the queue (Skip, Open ticket), 16px, then the decision
+       group, Send it back and Approve last. -->
   <div class="actions">
     {#if utilityActions}<div class="utilities">{@render utilityActions()}</div>{/if}
     <div class="decision">
@@ -117,9 +119,9 @@
   {#if error}<ErrorLine {error} />{/if}
 </section>
 <style>
-  /* THE CARD (page system). Its actions are the one Button. The most important stands
-     furthest right: the decision group (secondary, then primary) ends the row; the ghost
-     actions about the queue start it, their labels on the card's text edge. */
+  /* THE CARD (page system). Its actions are the one Button, in one row at the card's right:
+     the ghost actions about the queue, 16px, then the decision group (secondary, then primary),
+     the most important furthest right; 8px between buttons. */
   .worker-proposal { padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
   .proposal-line { display:flex; align-items:center; flex-wrap:wrap; min-height:20px; color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
   h2 { margin:0; font:inherit; letter-spacing:0; color:inherit; }
@@ -130,7 +132,9 @@
   .proposal-prose { max-width:var(--page-prose-measure); margin-top:var(--space-2); color:var(--tone-primary); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-body); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
   .proposal-prose :global(.ed > p:first-child), .proposal-prose :global(.ed > .markdown > p:first-child), .proposal-prose :global(.ed > .markdown:first-child > :first-child:is(p)) { margin-bottom:var(--space-3); font-size:var(--type-page-section); font-weight:var(--weight-page-lead); line-height:22px; color:var(--tone-strong); }
-  .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
+  .actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
+  /* The decision is the card's main action: staging's height or more. */
+  .decision :global(.button) { height:var(--button-main-height); }
   .reviewer { display:inline; height:auto; font:inherit; line-height:inherit; padding:0 4px; margin:0 -4px; border:0; background:transparent; color:inherit; border-radius:var(--radius-sm); cursor:pointer; }
   .reviewer:hover { background-image:var(--interaction-hover); color:var(--tone-strong); }
   .reviewer:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
@@ -140,9 +144,8 @@
   textarea { display:block; margin-top:var(--space-2); width:100%; min-height:90px; padding:var(--space-3); background:var(--composer-surface); color:var(--tone-primary); border:var(--border-hairline) solid var(--composer-edge); border-radius:var(--radius-md); font:inherit; font-size:var(--type-body); }
   textarea:focus { outline:var(--focus-width) solid var(--focus-ring); outline-offset:calc(var(--border-hairline) * -1); border-color:transparent; }
   .context { margin-top:var(--space-4); }
-  .utilities { display:flex; align-items:center; gap:var(--space-2); margin-left:calc(var(--button-pad-x) * -1); }
-  .decision { display:flex; align-items:center; gap:var(--space-2); margin-left:auto; }
-  .return-actions { justify-content:flex-end; }
+  .utilities { display:flex; align-items:center; gap:var(--space-2); margin-right:calc(var(--space-4) - var(--space-2)); }
+  .decision { display:flex; align-items:center; gap:var(--space-2); }
   /* The picker's own trigger is hidden here, so its empty line must not add height. */
   .worker-proposal > :global(div:has(> [data-ceiling-picker])) { display:flex; }
 </style>

@@ -362,20 +362,21 @@
   }
   .small .body-inner { padding: var(--space-1); }
   .small .step-inner { column-gap: var(--space-2); padding-inline: var(--space-2); }
-  .small .group-toggle { padding-left: calc(var(--page-check-size) + var(--space-2) * 2); }
+  .small .group-toggle { padding-left: calc(var(--page-check-target) + var(--space-2) * 2); }
   .chevron { width: var(--page-chevron); height: var(--page-chevron); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-ease); }
   .chevron.turned { transform: rotate(180deg); }
   .body { overflow: hidden; }
   .body-inner { padding: 0 var(--space-2) var(--space-2); }
   .list { margin: 0; padding: 0; list-style: none; }
   .step { overflow: hidden; }
-  /* A step: a 14px check in its own column on the checklist's edge, the name after it. */
+  /* A step: staging's check, a 22px circle on a 40px target in its own column, the name after
+     it on a 40px line. */
   .step-inner {
     display: grid;
-    grid-template-columns: var(--page-check-size) minmax(0, 1fr);
+    grid-template-columns: var(--page-check-target) minmax(0, 1fr);
     column-gap: var(--space-3);
     align-items: start;
-    padding: 0 var(--space-3);
+    padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-md);
   }
   /* The open step is marked by its own note under its name; a fill inside the card would only
@@ -383,8 +384,8 @@
   .step.current .step-inner { background: transparent; }
   .check {
     display: grid;
-    width: var(--page-check-size);
-    height: 32px;
+    width: var(--page-check-target);
+    height: var(--page-check-target);
     place-items: center;
     margin: 0;
     padding: 0;
@@ -398,7 +399,7 @@
     display: block;
     width: var(--page-check-size);
     height: var(--page-check-size);
-    border: 1.5px solid var(--tone-tertiary);
+    border: 1.5px solid var(--tone-secondary);
     border-radius: var(--radius-pill);
     background: transparent;
     transition: transform 110ms var(--motion-ease), border-color var(--motion-fast) var(--motion-ease);
@@ -430,6 +431,10 @@
   .check[aria-checked="true"] .check-mark path { stroke-dashoffset: 0; opacity: 1; }
   .step-main { display: grid; min-width: 0; }
   .step-heading { display: flex; min-width: 0; align-items: start; gap: var(--space-2); }
+  /* A step's date (or the mark that sets one) follows its name, 8px after it, rather than
+     standing alone at the row's far end. */
+  .step-heading:has(:global([data-item-deadline])) > .step-title,
+  .step-heading:has(:global([data-item-deadline])) > .completed-title { flex: 0 1 auto; width: auto; }
   .step-inner:has(:global([data-item-deadline])) > .check { margin-top: 2px; }
   .step-heading:has(:global([data-item-deadline])) > .step-title,
   .step-heading:has(:global([data-item-deadline])) > .completed-title { min-height: 44px; }
@@ -438,7 +443,7 @@
     flex: 1 1 auto;
     min-width: 0;
     width: 100%;
-    min-height: 32px;
+    min-height: var(--page-check-target);
     align-items: center;
     margin: 0;
     padding: 0;
@@ -490,14 +495,14 @@
   .group-toggle {
     display: grid;
     width: 100%;
-    min-height: 32px;
+    min-height: 44px;
     /* The fold's chevron right after its count, as on every fold on the page. */
     grid-template-columns: auto auto;
     justify-content: start;
     align-items: center;
     column-gap: 6px;
     margin-top: 2px;
-    padding: 0 var(--space-3) 0 calc(var(--page-check-size) + var(--space-3) * 2);
+    padding: 0 var(--space-3) 0 calc(var(--page-check-target) + var(--space-3) * 2);
     border: 0;
     border-radius: var(--radius-md);
     background: transparent;
@@ -520,15 +525,6 @@
     border: 0;
   }
   /* A mouse needs no 44px target: rows keep one 36px pitch, like every list on the page. */
-  @media (pointer: fine) {
-    .step-inner { padding-block: 0; }
-    .check { height: 32px; }
-    .step-inner:has(:global([data-item-deadline])) > .check { margin-top: 0; }
-    .step-title, .completed-title,
-    .step-heading:has(:global([data-item-deadline])) > .step-title,
-    .step-heading:has(:global([data-item-deadline])) > .completed-title { min-height: 32px; }
-    .group-toggle { min-height: 32px; font-weight: var(--weight-small); }
-  }
   @container (max-width: 380px) {
     .hide-label { display: none; }
   }

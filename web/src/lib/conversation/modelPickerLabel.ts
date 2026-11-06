@@ -13,9 +13,9 @@ export function readableResolvedModel(identifier: string): string {
     }
   }
   if (/^gpt-\d+(?:\.\d+)*(?:-[a-z0-9]+)*$/.test(identifier)) {
-    // Codex names its models "GPT-6.1 Sol": the version joins the family, words follow.
-    const [version, ...words] = identifier.slice(4).split("-");
-    return [`GPT-${version}`, ...words.map((part) => part[0].toUpperCase() + part.slice(1))].join(" ");
+    return `GPT ${identifier.slice(4).split("-").map((part) =>
+      part[0].toUpperCase() + part.slice(1)
+    ).join(" ")}`;
   }
   return /^(opus|sonnet|haiku)(\[1m\])?$/i.test(identifier)
     ? `${identifier.split("[")[0][0].toUpperCase()}${identifier.split("[")[0].slice(1)}${largeContext ? " (1M)" : ""}`
@@ -28,9 +28,6 @@ export function resolvedModelPickerLabel(
   value: string
 ): string {
   const selected = models.find((model) => model.model_id === value);
-  // A value the catalogue does not list still reads as its model when its id is a
-  // recognised form; anything else is shown as itself.
-  if (!selected) return readableResolvedModel(value);
   const resolved = selected?.resolved_model_id;
   if (!resolved) return selected?.display_name ?? value;
   const alias = selected?.selected_variant;
@@ -44,14 +41,4 @@ export function resolvedModelPickerLabel(
     return label;
   }
   return readableResolvedModel(resolved);
-}
-
-const EFFORT_LABELS: Readonly<Record<string, string>> = {
-  minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max"
-};
-
-/** A reasoning effort as a word a person reads: "medium" shows as "Medium". */
-export function readableReasoningEffort(effort: string): string {
-  if (effort === "") return "";
-  return EFFORT_LABELS[effort] ?? effort[0].toUpperCase() + effort.slice(1);
 }

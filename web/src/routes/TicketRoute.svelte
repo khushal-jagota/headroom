@@ -2,7 +2,6 @@
   import { isBrokenTicket } from "../lib/ticketIntegrity";
   import MacStatus from "../components/machines/MacStatus.svelte";
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
-  import PageFold from "../components/pageKit/PageFold.svelte";
   import MachineIdentity from "../components/machines/MachineIdentity.svelte";
   import { machineName } from "../lib/ticketMachines";
   import { onDestroy, tick, untrack } from "svelte";
@@ -178,6 +177,9 @@
   // cannot live in the stage. It lives here, where it outlives the move.
   let readerStageFolds = new SvelteMap<string, boolean>();
   let stepsOpen = $state(false);
+  let recapNote = $state<string | null>(null);
+  // A note belongs to the Ticket it was asked of.
+  $effect(() => { void stableId; recapNote = null; });
   const fieldDrafts = new Map<string, InlineEditDraft>();
   function fieldDraft(name: string): InlineEditDraft {
     let draft = fieldDrafts.get(name);
@@ -339,15 +341,15 @@
             <span class="page-eyebrow-sep" aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
           </div>
-          <!-- The Ticket's utilities sit at the band's right end, quiet and always shown, so
-               the decision below is the page's one call to action. -->
-          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal}>
-            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
+          <!-- The Ticket's utilities sit at the band's right end as ghosts, quiet and always
+               shown, so the decision below is the page's one call to action. -->
+          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} variant="ghost">
+            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" bind:note={recapNote} noteInline={false} />{/snippet}
           </TicketLifecycleControls>{/if}
           </div>
           <div class="ticket-title-row">
-            <!-- The title owns the column less one fixed right column, where the working mark
-                 stands; the unread mark is on the composer's status line. -->
+            <!-- The title, then its marks beside its words as staging drew them: working, and
+                 the unread dot. -->
             <div class="ticket-title">
               <h1 class="page-title ticket-title-text"><InlineEdit
                 value={masthead.title}
@@ -376,6 +378,8 @@
             </ClampedText>
             {/snippet}
             </RecapSlot>
+            <!-- What became of an ask for a recap reads under the recap, as staging. -->
+            {#if recapNote}<p class="ticket-recap-note" role="status" data-request-recap-note>{recapNote}</p>{/if}
           </div>
           {#if masthead.locale === "macos"}<MacStatus health={machineHealth.isError ? undefined : machineHealth.data} showDisconnected />{/if}
           {#if detail.blocker_summary?.blocked_by.length}
@@ -473,7 +477,6 @@
           {/if}
         </div>
         {/if}
-        <PageFold />
       </main>
       {#if artifact.shown}
         <ArtifactPreview
@@ -514,20 +517,21 @@
 </section>
 
 <style>
+  /* The ticket's ghost page actions end with their label on the column's edge. */
+  .ticket-head .page-band > :global(.ticket-lifecycle) { margin-right:calc(var(--button-pad-x) * -1); }
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
   .ticket-head { padding-top:var(--page-top); }
   .ticket-title-row { display:block; margin-top:var(--space-1); }
+  .ticket-recap-note { margin:var(--space-2) 0 0; color:var(--tone-tertiary); font-size:var(--type-small); line-height:18px; }
   .worker-machine { display:inline-flex; align-items:center; margin-right:6px; color:var(--tone-tertiary); }
   .worker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
   /* The title and a fixed 16px mark column, centred on the title's first line. */
-  .ticket-title { display:grid; grid-template-columns:minmax(0,1fr) 16px; column-gap:var(--space-3); align-items:start; }
-  .ticket-title-text { margin:0; }
+  /* As staging: the title, then its marks right after its words. */
+  .ticket-title { display:flex; align-items:flex-start; gap:var(--space-3); }
+  .ticket-title-text { min-width:0; margin:0; }
   .ticket-title :global(.ed) { font:inherit; color:var(--tone-strong); }
-  .ticket-title-mark { display:flex; align-items:center; justify-content:center; height:32px; }
-  /* The unread mark lives on the composer's status line (ConversationRestBar); the title's
-     column keeps only the working mark. */
-  .ticket-title-mark :global([data-conversation-signal="message"]) { display:none; }
+  .ticket-title-mark { flex:none; display:flex; align-items:center; justify-content:center; height:32px; }
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is
      written, and a gap that went with them would move the page. */
   .ticket-head :global([data-recap-slot]) { margin-top:var(--space-2); }
@@ -539,10 +543,14 @@
   .worker-ceiling-line { margin-top:var(--space-3); }
   .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:var(--type-body); line-height:20px; color:var(--tone-secondary); padding:var(--space-2) var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:none; text-align:left; }
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
-  /* Steps and Artifacts are two fold rows (app.css, THE FOLD ROW) between hairlines. */
-  .worker-bands { line-height:var(--leading-body); margin-top:var(--space-6); padding-bottom:var(--space-7); }
-  .worker-steps > summary { cursor:pointer; list-style:none; }
+  /* Steps and Artifacts are staging's two bands between hairlines: the label at the left in
+     Small print, its count at the right. */
+  .worker-bands { line-height:1.6; margin-top:var(--space-6); padding-bottom:var(--space-7); }
+  .worker-steps { border-top:var(--border-hairline) solid var(--border-color); }
+  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:var(--type-small); font-weight:var(--weight-title); color:var(--tone-secondary); cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }
+  .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--tone-strong); }
+  .band-count { margin-left:auto; font-weight:var(--weight-small); color:var(--tone-tertiary); }
   .worker-step-rows { padding-bottom:var(--space-4); }
   .worker-step-rows :global(.disclosure--stage) { margin:0; border:0; }
   .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-body); color:var(--tone-secondary); }

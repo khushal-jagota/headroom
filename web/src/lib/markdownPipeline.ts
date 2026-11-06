@@ -163,44 +163,8 @@ export function renderParsedMarkdown(document: ParsedMarkdown, mapText?: Markdow
   const root = globalThis.document.createElement("div");
   root.className = "markdown";
   document.children.forEach((child, index) => appendHastNode(root, child, mapText, blockOffset + index, []));
-  joinInlineCodeRuns(root);
   referenceDefinitionsByRoot.set(root, document.definitions);
   return root;
-}
-
-/** Text that joins two inline code spans into one key sequence: `J`/`K`, `Cmd` + `K`. */
-const CODE_RUN_JOINER = /^ ?[/+] ?$/;
-
-/**
- * Presentation only: a run of inline code spans joined by a slash or a plus (`J`/`K`,
- * `Cmd`+`Enter`) is wrapped in one `.markdown-code-run`, so it reads as one code lift
- * instead of loose chips with a joiner squeezed between them. The code elements and text
- * nodes are moved, not copied, so text-location leaves stay valid, and a span serialises
- * back to its children, so the source round-trips unchanged.
- */
-function joinInlineCodeRuns(root: HTMLElement): void {
-  // A minimal document (tests, non-DOM renderers) has no selector support; there is nothing to join.
-  if (typeof root.querySelectorAll !== "function") return;
-  for (const code of Array.from(root.querySelectorAll("code"))) {
-    if (code.closest("pre") || code.parentElement?.classList.contains("markdown-code-run")) continue;
-    const run: Node[] = [code];
-    let joiner = code.nextSibling;
-    while (
-      joiner?.nodeType === Node.TEXT_NODE &&
-      CODE_RUN_JOINER.test(joiner.nodeValue || "") &&
-      joiner.nextSibling instanceof HTMLElement &&
-      joiner.nextSibling.tagName === "CODE"
-    ) {
-      const next = joiner.nextSibling;
-      run.push(joiner, next);
-      joiner = next.nextSibling;
-    }
-    if (run.length < 3) continue;
-    const wrapper = code.ownerDocument.createElement("span");
-    wrapper.className = "markdown-code-run";
-    code.before(wrapper);
-    for (const node of run) wrapper.appendChild(node);
-  }
 }
 
 export function renderMarkdownToElement(source: string, mapText?: MarkdownTextMapper): HTMLElement {

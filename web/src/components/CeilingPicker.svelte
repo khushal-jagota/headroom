@@ -236,10 +236,10 @@
   .document :global(.listbox-picker-panel.rail) { width:404px; max-width:calc(100vw - 48px); grid-template-columns:168px minmax(0,1fr); border:0; border-radius:var(--radius-md); box-shadow:var(--shadow-float); background:var(--surface-2); }
   .document :global(.picker-rail) { grid-column:1; grid-row:1 / span 3; background:var(--surface-recessed); border:0; padding:var(--space-2); }
   .document :global(.picker-rail-row) { font-family:var(--font-ui); padding:8px var(--space-2); border-radius:var(--radius-sm); white-space:normal; }
-  .document :global(.picker-rail-row-label) { font-size:11px; color:var(--text-faintest); }
+  .document :global(.picker-rail-row-label) { font-size:var(--type-small); color:var(--text-faintest); }
   .document :global(.picker-rail-row-detail) { max-width:none; font-size:13px; color:var(--text-default); white-space:normal; overflow:visible; }
   .document :global(.picker-rail-row.on) { background:var(--surface-2); }
-  .document-list-label { grid-column:2; grid-row:1; padding:14px 16px 4px; font-family:var(--font-ui); font-size:11px; font-weight:660; line-height:1.6; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faintest); }
+  .document-list-label { grid-column:2; grid-row:1; padding:14px 16px 4px; font-family:var(--font-ui); font-size:var(--type-small); font-weight:660; line-height:1.6; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faintest); }
   .document :global(.listbox-picker-list) { grid-column:2; grid-row:2; padding:0 var(--space-2); }
   .document :global(.listbox-picker-option) { font-family:var(--font-ui); font-size:13px; line-height:1.6; padding:7px var(--space-2); gap:var(--space-2); border-radius:var(--radius-sm); color:var(--text-faint); }
   .document :global(.listbox-picker-option.on) { font-weight:660; color:var(--text-strong); }
