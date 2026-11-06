@@ -368,7 +368,7 @@
    * page's own utilities on the right. One height on every page. */
   --page-band-height: 48px;
   /* The space before a section head, and from a head to its content. */
-  --page-section-gap: 40px;
+  --page-section-gap: 32px;
   --page-head-gap: 14px;
   /* Page type: the page-title role and the section-head role. */
   --type-page-title: 26px;
@@ -380,6 +380,8 @@
   --tone-small-print: var(--tone-tertiary);
   /* Every button on a page: one height, one radius, one label size. */
   --page-control-height: 28px;
+  /* A chart's reading: clearly under the page title, never level with it. */
+  --page-reading: 22px;
   /* One card: a 1px edge at 7%, a 2% lift, radius 12, padding 20. Nothing inside a card
    * draws a surface of its own. */
   --page-card-fill: rgb(255 255 255 / 3.5%);
@@ -404,9 +406,11 @@
   /* The page keeps this much room under its last block, so it can scroll fully clear of
    * the composer zone. */
   --page-end-room: var(--space-7);
-  --composer-fade: 48px;
-  /* The fade ends this far above the composer's top edge; below it the page is solid. */
-  --composer-fade-gap: 8px;
+  /* Above the composer: a solid band of page, and above it the fade a card's box takes as it
+   * goes under. Text never enters either: its lines stop at the fold above both. */
+  --composer-band: 24px;
+  --composer-fade: 24px;
+  --page-fold-clear: calc(var(--composer-zone) + var(--composer-band) + var(--composer-fade));
   /* The composer: the reference composer's surface (10% white) with a 1px edge one step
    * lighter, radius 12. The status line above it is small print on its inner edge. */
   --composer-surface: var(--surface-input);
@@ -418,7 +422,9 @@
    * line under it as its footer, the pair floating over the page's last lines. */
   --composer-height: 44px;
   --composer-control: 32px;
-  --composer-status-height: 20px;
+  --composer-status-height: 24px;
+  /* The latest message on the status line is an excerpt, never wider than this. */
+  --composer-excerpt: 360px;
   --composer-zone: calc(var(--composer-height) + var(--composer-status-gap) + var(--composer-status-height) + var(--space-4));
   /* Counts are plain small numerals after their label, in the label's own tone. */
   --count-tone: var(--tone-tertiary);

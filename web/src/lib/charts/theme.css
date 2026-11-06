@@ -8,7 +8,7 @@
   --border:var(--chart-grid); --border-strong:var(--chart-border-strong);
   --accent:var(--accent-bright); --accent-strong:var(--accent-text); --success:var(--accent-done); --danger:var(--accent-error); --warning:var(--accent-attention);
   --font-body:var(--font-ui); --font-display:var(--font-ui); --tracking-body:0; --tracking-display:-.02em;
-  --text-xs:var(--type-small); --text-sm:var(--type-row); --text-3xl:var(--type-page-title); --shadow-floating:var(--shadow-float); --leading-body:1.5;
+  --text-xs:var(--type-small); --text-sm:var(--type-row); --text-3xl:var(--page-reading); --shadow-floating:var(--shadow-float); --leading-body:1.5;
   --duration-instant:calc(var(--motion-slow) / 2); --duration-fast:calc(var(--motion-slow) * 2 / 3); --duration-standard:var(--motion-slow);
   --ease-standard:cubic-bezier(.22,1,.36,1); --ease-in-out:cubic-bezier(.65,0,.35,1); --ease-spring:var(--motion-ease);
 }
@@ -26,29 +26,30 @@
   .ranges { display:flex; }
   .headline { margin:24px 0 28px; }
   /* The reading stands on the page-title role (26/600): the one number a goal is about. */
-  .metric-value { height:32px; font-size:var(--type-page-title); font-weight:var(--weight-page-title); letter-spacing:var(--tracking-page-title); font-variant-numeric:tabular-nums; line-height:32px; color:var(--tone-strong); }
+  /* The reading: 22/600, the one number a goal is about, a clear step under the page title. */
+  .metric-value { height:28px; font-size:var(--page-reading); font-weight:var(--weight-title); letter-spacing:var(--tracking-page-title); font-variant-numeric:tabular-nums; line-height:28px; color:var(--tone-strong); }
   .missing-value { font-size:var(--type-page-title); }
   .comparison { font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; min-height:18px; margin-top:2px; font-variant-numeric:tabular-nums; }
   .composition-summary { color:var(--chart-legend); }
   .support-reading .missing-value { font-size:inherit; }
   .caption { color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; margin:0 0 12px; font-variant-numeric:tabular-nums; min-height:18px; }
-  .compact { padding:var(--page-card-pad); --text-3xl:var(--type-page-title); }
+  .compact { padding:var(--page-card-pad); --text-3xl:var(--page-reading); }
   .compact .metric-top { min-height:0; }
   .compact .metric-top h2 { font-size:var(--type-page-section); flex-basis:100%; }
   .compact .headline { margin:20px 0 24px; }
-  .compact .metric-value { height:32px; }
+  .compact .metric-value { height:28px; }
   .compact .comparison { font-size:var(--type-small); }
   .compact .missing-value { font-size:var(--type-page-title); }
   .compact .caption { font-size:var(--type-small); }
   .chart-range-footer { margin-top:var(--space-4); }
   /* The range is one full-width row under every plot, a Manager's card or the goal page. */
-  /* Under the chart the switch spans the card in equal columns; each option is the shared
-     segment, a pill hugging its label, centred in its column. */
-  .chart-range-footer .ranges { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); width:100%; height:auto; }
-  .chart-range-footer .segmented-option { justify-self:center; }
+  /* Under the chart the switch is one compact control at the bottom centre, each segment
+     sized to its label (the shared segmented control). */
+  .chart-range-footer { display:flex; justify-content:center; }
+  .chart-range-footer .ranges { display:inline-flex; width:auto; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
   .integrated-card { border:0; background:transparent; border-radius:0; padding:0; }
-  .integrated-card.compact { padding:0; --text-3xl:var(--type-page-title); }
+  .integrated-card.compact { padding:0; --text-3xl:var(--page-reading); }
   /* The measure's name is small print over its reading. */
   .integrated-card .metric-top { min-height:18px; }
   .integrated-card .metric-top h2 { font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; letter-spacing:0; color:var(--tone-tertiary); }
@@ -96,7 +97,7 @@
   .ring-layout { display:flex; gap:16px; align-items:center; padding:28px 0 0; min-height:218px; }
   .ring-chart { width:190px; max-width:56%; aspect-ratio:1; position:relative; flex-shrink:0; }
   .ring-chart svg { display:block; width:100%; height:100%; overflow:visible; }
-  .ring-center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; pointer-events:none; --text-3xl:var(--type-page-title); }
+  .ring-center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; pointer-events:none; --text-3xl:var(--page-reading); }
   .ring-center>span:last-child { color:var(--tone-tertiary); font-size:var(--type-small); }
   .allocation-legend { display:flex; flex-direction:column; gap:12px; flex:1; min-width:0; }
   .allocation-legend button { border:0; background:none; color:var(--tone-tertiary); font:inherit; font-size:var(--type-small); font-weight:var(--weight-small); display:flex; align-items:center; gap:8px; padding:8px 0; border-radius:4px; cursor:pointer; text-align:left; }
@@ -106,25 +107,25 @@
   .allocation-legend button[data-selected=true] i { filter:brightness(1.25); }
   .ring-chart [data-segment] { cursor:default; }
   @container goal-chart (max-width:420px) {
-    .metric-card:not(.compact),.hero-card { padding:var(--page-card-pad); border-radius:var(--page-card-radius); --text-3xl:var(--type-page-title); }
+    .metric-card:not(.compact),.hero-card { padding:var(--page-card-pad); border-radius:var(--page-card-radius); --text-3xl:var(--page-reading); }
     /* The page's own card already holds this inset. Two would stack. */
     .integrated-card:not(.compact) { padding:0; border-radius:0; }
     .metric-card:not(.compact):not(.gauge-card) .metric-top h2 { flex-basis:100%; }
 
-    .metric-card:not(.compact) .metric-value { height:32px; }
+    .metric-card:not(.compact) .metric-value { height:28px; }
     .completion-word { font-size:var(--type-page-title); }
     .completion-card,.progress-card { min-height:260px; }
     .time-budget-card,.allocation-card { min-height:286px; }
     .ring-layout { min-height:208px; padding-top:24px; gap:12px; }
     .ring-chart { width:170px; max-width:55%; }
-    .ring-center { --text-3xl:var(--type-page-title); }
+    .ring-center { --text-3xl:var(--page-reading); }
     .allocation-legend button { font-size:var(--type-small); }
     .gauge-card { min-height:280px; }
   }
   @media (min-width:1450px) { .hero-card { padding:var(--page-card-pad); } }
   @media (max-width:650px) {
-    .compact { --text-3xl:var(--type-page-title); }
-    .compact .metric-value { height:32px; }
+    .compact { --text-3xl:var(--page-reading); }
+    .compact .metric-value { height:28px; }
     .compact .missing-value { font-size:var(--type-page-title); }
   }
 }

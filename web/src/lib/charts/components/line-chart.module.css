@@ -13,6 +13,7 @@
 .chart[data-loading] .series { opacity: .32; animation: breathe 1.4s var(--ease-in-out) infinite alternate; }
 .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: stroke var(--duration-standard) var(--ease-standard); }
 .line[data-dashed] { stroke-dasharray: 4 5; stroke-width: 1.75; }
+/* The area under a line is a light wash that thins to nothing at the baseline, never a slab. */
 .area { fill: color-mix(in oklab, var(--series) 9%, transparent); stroke: none; }
 .dot { fill: var(--series); stroke: var(--surface); stroke-width: 2; opacity: 0; transition: opacity var(--duration-instant) var(--ease-standard); }
 .chart[data-scrubbing] .dot:not([data-hidden]) { opacity: 1; }
@@ -37,8 +38,8 @@
 /* Sizes the column to the widest tick, so the labels end where the card's padding does. */
 .gutterWidth { display: block; width: max-content; height: 0; overflow: hidden; visibility: hidden; }
 .gutterWidth b { display: block; font-size: var(--text-xs); line-height: 1; font-weight: inherit; font-variant-numeric: tabular-nums; }
-.tick { position: absolute; top: 0; left: 18px; display: block; height: 0; white-space: nowrap; pointer-events: none; }
-.tickText { display: block; transform: translateY(-50%); color: var(--tone-tertiary); font-size: var(--text-xs); font-weight: var(--weight-small); line-height: 1; font-variant-numeric: tabular-nums; }
+.tick { position: absolute; top: 0; left: 18px; right: 4px; display: block; height: 0; white-space: nowrap; pointer-events: none; }
+.tickText { display: block; text-align: right; transform: translateY(-50%); color: var(--tone-tertiary); font-size: var(--text-xs); font-weight: var(--weight-small); line-height: 1; font-variant-numeric: tabular-nums; }
 
 .axis { position: relative; grid-area: 2 / 1; min-width: 0; }
 .axisLabel { position: absolute; top: 8px; color: var(--tone-tertiary); font-size: var(--text-xs); font-weight: var(--weight-small); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }

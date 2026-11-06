@@ -3,7 +3,7 @@
  import type {GoalResponse,GoalWriteFields} from '../../lib/goals/contracts';
  import type {InlineEditDraft} from '../../lib/inlineEditDraft';
  import {createGoalEditor} from '../../lib/goals/editing';
- import {deadlineTone,deadlineColor} from '../../lib/goals/presentation';
+ import {deadlineTone,deadlineColor,goalDateText} from '../../lib/goals/presentation';
  import {queries} from '../../lib/queryCatalogue';
  import InlineEdit from '../InlineEdit.svelte';
  import ErrorLine from '../ErrorLine.svelte';
@@ -20,11 +20,8 @@
  function dateText(value:string){
   return new Intl.DateTimeFormat(navigator.language,{year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(`${value||'2000-01-01'}T12:00:00`));
  }
- // At rest the deadline reads as words, in the same voice as every other date on the page.
- // The native date control stays underneath as the editor and takes over while focused.
- function readableDate(value:string){
-  return new Intl.DateTimeFormat(navigator.language,{year:'numeric',month:'short',day:'numeric'}).format(new Date(`${value}T12:00:00`));
- }
+ // At rest the deadline reads as words (goalDateText), in the same voice as every other
+ // date on the page. The native date control stays underneath as the editor.
  function openDatePicker(event:MouseEvent){
   const node=event.currentTarget as HTMLInputElement;
   // Native date segments remain the keyboard editor. Pointer and touch retain
@@ -103,9 +100,11 @@
    </select>
   </span>
   <span class="page-eyebrow-sep" aria-hidden="true">·</span>
+  <span class="kind">Goal</span>
+  <span class="page-eyebrow-sep" aria-hidden="true">·</span>
   <span class="metadata deadline" class:empty={!deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)}>
    <span class="control-size date-size" aria-hidden="true">{dateText(deadline)}</span>
-   {#if deadline}<span class="date-display" aria-hidden="true" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>Due {readableDate(deadline)}</span>{/if}
+   {#if deadline}<span class="date-display" aria-hidden="true" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>Due {goalDateText(deadline)}</span>{/if}
    {#if !deadline}<span class="deadline-empty" aria-hidden="true">No deadline</span>{/if}
    <input type="date" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))} aria-label="By date" value={deadline} disabled={editFields.deadline.saving} onfocus={()=>start(editFields.deadline,true)} onclick={openDatePicker} oninput={e=>input(editFields.deadline,e.currentTarget)} onblur={e=>void commit(editFields.deadline,'deadline',e.currentTarget)} onkeydown={e=>keydown(e,editFields.deadline,'deadline')}/>
   </span>
@@ -131,6 +130,7 @@
     its own quiet control; its 4px edit inset is taken back so the words start on the column. */
  .goal-context{min-height:var(--page-band-height);margin:0 calc(var(--space-1) * -1) 0}
  .goal-context .page-eyebrow-sep{padding-inline:2px}
+ .goal-context .kind{padding:2px var(--space-1)}
  .date-display{grid-area:1/1;padding:2px var(--space-1);white-space:pre;pointer-events:none}
  .deadline:not(:focus-within) .date-size{visibility:hidden;width:0;overflow:hidden}
  .deadline:not(:focus-within) .date-display + input{opacity:0}

@@ -22,8 +22,10 @@
       {#if activity}<span data-conversation-rest-line>{activity}</span>{/if}
     </span>
     {#if preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
+    <!-- The way to open the conversation: a ghost chevron right after the status words. The
+         whole line is the control, so this is its mark, sharing the line's tooltip. -->
     <span class="c2-rest-control" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+      <svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4" /></svg>
     </span>
   </span>
 </button>
@@ -37,21 +39,20 @@
     width:100%; min-width:0;
     border:0; border-radius:var(--radius-md); padding:0 var(--composer-inset) var(--composer-status-gap); background:transparent; color:var(--tone-tertiary);
     text-align:left; cursor:pointer; font-family:var(--font-ui); font-size:var(--type-small); line-height:18px; font-weight:var(--weight-small); font-variant-numeric:tabular-nums; }
-  .c2-rest-status { display:flex; align-items:center; gap:var(--space-2); min-width:0; min-height:20px; }
+  .c2-rest-status { display:flex; align-items:center; gap:var(--space-2); min-width:0; min-height:24px; }
   .c2-rest-activity { flex:none; display:flex; align-items:center; gap:var(--space-2); min-width:0; }
   [data-conversation-rest-line] { white-space:nowrap; }
   /* The latest message follows the status on the same line, in the same tone, and ends in an
      ellipsis where the line does. */
-  .c2-rest-preview { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--tone-tertiary); margin-right:calc(var(--space-5) - var(--space-2)); }
+  .c2-rest-preview { flex:0 1 auto; min-width:0; max-width:var(--composer-excerpt); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--tone-tertiary); }
   .c2-rest-unread { flex:none; width:6px; height:6px; border-radius:var(--radius-pill); background:var(--accent-bright); }
   .c2-rest-preview::before { content:"·"; margin-right:var(--space-2); color:var(--tone-tertiary); }
-  /* The arrow alone answers dock hover and rest-bar focus. Its glyph ends on the composer's
-     inner edge, the same edge the status words start from on the left. */
-  .c2-rest-control { display:grid; place-items:center; width:20px; height:20px; margin-left:auto; margin-right:-4px;
-    flex:none; border:0; border-radius:var(--radius-sm); color:var(--tone-tertiary); background-color:transparent;
+  /* A 24px ghost icon button right after the words: no fill at rest, one step on hover. */
+  .c2-rest-control { display:grid; place-items:center; width:24px; height:24px; margin-left:calc(var(--space-1) - var(--space-2));
+    flex:none; border:0; border-radius:var(--radius-md); color:var(--tone-secondary); background-color:transparent;
     transition:color var(--motion-base) var(--motion-ease), background-color var(--motion-base) var(--motion-ease); }
-  :global([data-conversation-dock-hover]) .c2-rest-control, .c2-rest:focus-visible .c2-rest-control {
-    color:var(--tone-strong); background-color:var(--wash-selected); }
+  .c2-rest:hover .c2-rest-control, :global([data-conversation-dock-hover]) .c2-rest-control, .c2-rest:focus-visible .c2-rest-control {
+    color:var(--tone-strong); background-color:var(--wash-hover); }
   .c2-rest-control svg { width:14px; height:14px;
     fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .c2-rest:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }

@@ -135,8 +135,8 @@
   textarea { display:block; margin-top:var(--space-2); width:100%; min-height:90px; padding:var(--space-3); background:var(--composer-surface); color:var(--tone-primary); border:var(--border-hairline) solid var(--composer-edge); border-radius:var(--radius-md); font:inherit; font-size:var(--type-body); }
   textarea:focus { outline:var(--focus-width) solid var(--focus-ring); outline-offset:calc(var(--border-hairline) * -1); border-color:transparent; }
   .context { margin-top:var(--space-4); }
-  /* Actions about the decision rather than the proposal close the row at its far end. */
-  .trailing { display:flex; align-items:center; gap:var(--space-1); margin-left:auto; margin-right:calc(var(--space-3) * -1); }
+  /* Actions about the decision rather than the proposal follow it, 16px on, as ghosts. */
+  .trailing { display:flex; align-items:center; gap:var(--space-1); margin-left:calc(var(--space-4) - var(--space-2)); }
   /* The picker's own trigger is hidden here, so its empty line must not add height. */
   .worker-proposal > :global(div:has(> [data-ceiling-picker])) { display:flex; }
 </style>

@@ -5079,7 +5079,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 .page-band .ticket-lifecycle {
   flex: none;
@@ -5093,10 +5093,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
   font-size: var(--type-small);
   color: var(--tone-tertiary);
 }
-/* The band's right end holds ghost buttons, so its last label ends on the column edge
- * less the button's own padding: the fill reaches the edge on hover, the words never do. */
-.page-band .page-band-actions,
-.page-band .ticket-lifecycle { margin-right: calc(var(--space-3) * -1); }
+/* The band's right end holds the page's own actions as secondary buttons, their fills ending
+ * on the column's edge. */
 
 /* THE PAGE TITLE — 26/600, the strong tone, one line height on every page. */
 .manager-page .manager-column .manager-workspace-head .manager-workspace-title,
@@ -5378,18 +5376,23 @@ details:not([open]) > summary > .manager-workspace-chevron {
   pointer-events: none;
 }
 :is(.manager-page, .ticket-page) > .conversation-layer > .conversation-column { pointer-events: auto; }
-/* The page passes under the zone along one fixed edge: its content fades out over a 48px
- * gradient that ends 8px above the composer's top edge, and below that the page is solid, so
- * a card or row going under the composer dissolves into a clean band instead of meeting it. */
+/* The page passes under the zone along one fixed edge. Every line of text stops at the fold
+ * (PageFold.svelte): a list row, table row, checklist item, paragraph or heading that would
+ * cross it waits below, whole or not shown. Only a card's box goes on under the zone: it fades
+ * out over --composer-fade, and a solid band of page sits between it and the composer. */
 :is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) :is(.manager-doc, .ticket-doc) {
-  /* Anything scrolled into view (a focused row, a found word) stops above the fade. */
-  scroll-padding-bottom: calc(var(--composer-zone) + var(--composer-fade-gap) + var(--composer-fade));
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-zone) - var(--composer-fade-gap) - var(--composer-fade)), transparent calc(100% - var(--composer-zone) - var(--composer-fade-gap)));
-          mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-zone) - var(--composer-fade-gap) - var(--composer-fade)), transparent calc(100% - var(--composer-zone) - var(--composer-fade-gap)));
+  /* Anything scrolled into view (a focused row, a found word) stops above the fold. */
+  scroll-padding-bottom: var(--page-fold-clear);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--page-fold-clear)), transparent calc(100% - var(--composer-zone) - var(--composer-band)));
+          mask-image: linear-gradient(to bottom, #000 calc(100% - var(--page-fold-clear)), transparent calc(100% - var(--composer-zone) - var(--composer-band)));
 }
-/* The page keeps room under its last block to scroll fully clear of the fade. */
-.manager-column { padding-bottom: calc(var(--composer-zone) + var(--composer-fade-gap) + var(--composer-fade) + var(--space-5)); }
-.ticket-col { padding-bottom: calc(var(--composer-zone) + var(--composer-fade-gap) + var(--composer-fade) + var(--space-5) - var(--space-7)); }
+[data-page-folded] {
+  opacity: 0;
+  pointer-events: none;
+}
+/* The page keeps room under its last block to scroll fully clear of the fold. */
+.manager-column { padding-bottom: calc(var(--page-fold-clear) + var(--space-5)); }
+.ticket-col { padding-bottom: calc(var(--page-fold-clear) + var(--space-5) - var(--space-7)); }
 
 /* The floating composer: one line, 44px; its + at the left, its model, delivery and voice
  * controls at the right, all on the composer's own row. It grows with what is typed, and

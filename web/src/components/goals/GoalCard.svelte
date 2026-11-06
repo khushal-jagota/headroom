@@ -58,6 +58,8 @@ p{margin:0;color:var(--tone-tertiary);font-size:var(--type-small)}
 .card-progress :global([data-block="checklist"] .body-inner){padding:0}
 .card-progress :global([data-block="checklist"] .step-inner){padding:0}
 .card-progress :global([data-block="checklist"] .group-toggle){padding:0 0 0 calc(var(--page-check-size) + var(--space-3));margin-inline:0}
-.compact{flex-direction:row;align-items:center}.compact .card-head{flex:1;min-width:0;padding:var(--space-4) var(--page-card-pad)}.compact .card-progress{flex:none;min-width:120px;padding:0 var(--page-card-pad) 0 0}.card-progress :global([data-block="checklist"]){background:transparent;border-radius:0}
+/* A yes-or-no goal's card is the same card head as any goal's (title, its line, the inset)
+   with its state at the right on the title's line, and nothing under it. */
+.compact{flex-direction:row;align-items:baseline}.compact .card-head{flex:1;min-width:0;padding:var(--page-card-pad)}.compact .card-progress{flex:none;min-width:120px;padding:var(--page-card-pad) var(--page-card-pad) 0 0}.card-progress :global([data-block="checklist"]){background:transparent;border-radius:0}
 .compact .card-progress :global(.completion-headline){justify-content:flex-end}
 </style>

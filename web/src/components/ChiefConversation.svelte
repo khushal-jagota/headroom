@@ -26,6 +26,7 @@
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {hasTickets} from '../lib/pageKit/holderDocument';
   import PageTickets from "./pageKit/PageTickets.svelte";
+  import PageFold from "./pageKit/PageFold.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
@@ -112,12 +113,13 @@
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
-  <!-- The Chief's page leads with the work waiting on the person; its goals follow. -->
+  <!-- Goals lead, then the tickets, as on every Manager's page. -->
+  {#if chiefHoldsGoals}<GoalsOverview goals={goals.data?.goals??[]}/>{/if}
   {#if !hasTickets(chiefPage.data?.page)}<section class="manager-workers" aria-label="Workers">
     <PageTickets principal={{ kind: "chief", id: "chief" }} />
   </section>{/if}
-  {#if chiefHoldsGoals}<GoalsOverview goals={goals.data?.goals??[]}/>{/if}
   {#if chiefPage.data?.page}<HolderDocument holder={{kind:"chief",id:"chief"}}/>{/if}
+  <PageFold />
   {#snippet conversation()}
   <LiveConversation
     ownerLoading={!chief}

@@ -7,6 +7,7 @@
   import { queries } from "../lib/queryCatalogue";
   import {hasTickets} from '../lib/pageKit/holderDocument';
   import PageTickets from "./pageKit/PageTickets.svelte";
+  import PageFold from "./pageKit/PageFold.svelte";
   import HolderDocument from "./pageKit/HolderDocument.svelte";
   import GoalHeader from "./goals/GoalHeader.svelte";
   import GoalContent from "./goals/GoalContent.svelte";
@@ -215,7 +216,7 @@
           <div bind:this={headerElement}>
           {#snippet managerTitle()}<InlineEdit value={item.title} placeholder="(untitled Manager)" ariaLabel="Manager name" onSave={(value)=>saveItem("title",value)}/>{/snippet}
           {#snippet settleButton()}
-            <Button variant="ghost" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>{item.settled?'Reopen':'Settle'}</Button>
+            <Button variant="secondary" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>{item.settled?'Reopen':'Settle'}</Button>
           {/snippet}
           {#snippet goalHeading()}
             {#if soleGoal}<GoalHeader goal={soleGoal}>
@@ -225,7 +226,7 @@
           {/snippet}
           <ManagerHeader heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
             recap={item.recap} onSaveRecap={(value)=>saveItem("recap",value)} recapTarget={{kind:"manager",id:item.id}}>
-            {#snippet eyebrow()}<div class="page-eyebrow">{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`}>{workspaceName}</a><span class="page-eyebrow-sep page-back-sep" aria-hidden="true">·</span>{/if}<span>{item.project}</span></div>{/snippet}
+            {#snippet eyebrow()}<div class="page-eyebrow">{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`}>{workspaceName}</a><span class="page-eyebrow-sep page-back-sep" aria-hidden="true">·</span>{/if}<span>{item.project}</span><span class="page-eyebrow-sep" aria-hidden="true">·</span><span>Manager</span></div>{/snippet}
             {#snippet actions()}{@render settleButton()}{/snippet}
             {#snippet title()}{@render managerTitle()}{/snippet}
           </ManagerHeader>
@@ -248,6 +249,7 @@
             {#if holderPage.data?.page}<HolderDocument holder={{kind:"manager",id:itemId}}/>{/if}
           {/if}
           {@render tickets()}
+          <PageFold />
           <div class="manager-bands disclosure-bands">
             <details class="disclosure-band goal-band" data-goal-band>
               <summary>Goal</summary>
