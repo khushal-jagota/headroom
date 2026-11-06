@@ -137,7 +137,9 @@
  input::-webkit-date-and-time-value{text-align:left}
  .empty:not(:focus-within) .date-size,.empty:focus-within .deadline-empty{display:none}
  .empty:not(:focus-within) input{opacity:0}
- .signal{margin-left:auto}
+ /* The page's own actions are ghosts: the last label ends on the column's edge (the line
+    already reaches 4px past it). */
+ .signal{margin-left:auto;margin-right:calc(var(--space-1) - var(--button-pad-x))}
  h1{font-size:var(--type-page-title);font-weight:var(--weight-page-title);line-height:32px;letter-spacing:var(--tracking-page-title);margin:var(--space-1) 0 0;max-width:var(--page-measure);color:var(--tone-strong)}
  .why{font-size:var(--type-body);font-weight:var(--weight-body);line-height:var(--leading-body);color:var(--tone-primary);margin-top:var(--space-2);max-width:var(--page-prose-measure)}
  .why :global(.ed){min-height:1.6em;white-space:pre-wrap}

@@ -13,12 +13,12 @@
   import { fateSentence } from "../lib/conversation/composer";
   import type { PromptDeliveryFate } from "../lib/conversation/wire";
 
-  let { kind, id, class: extraClass = "", variant = "outline" }: {
+  let { kind, id, class: extraClass = "", variant = "ghost" }: {
     kind: "ticket" | "manager" | "chief";
     id: string;
     class?: string;
-    /** A page's own action is an outline button; a quieter host may ask for the ghost. */
-    variant?: "outline" | "ghost";
+    /** A quiet text action, as staging (the ghost); a host may ask for the secondary fill. */
+    variant?: "secondary" | "ghost";
   } = $props();
 
   let sending = $state(false);

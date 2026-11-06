@@ -43,9 +43,10 @@
    * ring (--border-raised) and --shadow-float. */
   --surface-raised: #242424;
   --border-raised: rgb(255 255 255 / 10%);
-  /* The composer field: one clear step above the page, with a 1px edge one step lighter. */
+  /* The composer field: one clear step above the page, its fill alone (no edge: on the dark
+   * page the fill separates it; the focus ring stays). */
   --surface-input: #2a2a2a;
-  --border-input: #3a3a3a;
+  --border-input: transparent;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;
@@ -85,7 +86,8 @@
   --type-chart-completion: var(--type-page-title);
   /* Approved chart-sheet surfaces and category palettes. These remain separate
    * from the shell so the production renderer preserves the approved examples. */
-  --chart-surface: #1a1a1a;
+  /* A standalone chart card's fill: the page card's (4.5% white over the page), opaque. */
+  --chart-surface: #1d1d1d;
   /* A trend line is drawn in the calm brand blue; the stretches that meet their target
    * turn the done green, and red stays with the status text. */
   --chart-line-good: var(--accent-done);
@@ -93,7 +95,7 @@
   --chart-line-attention: #9aadd2;
   --chart-surface-raised: #252525;
   --chart-surface-muted: #1b1b1b;
-  --chart-card-border: #ffffff12;
+  --chart-card-border: transparent;
   --chart-grid: #ffffff14;
   --chart-border-strong: #ffffff24;
   /* Chart text: labels, captions, legends and axes are Small text in the tertiary tone. */
@@ -247,9 +249,10 @@
   --button-secondary-fill-hover: rgb(255 255 255 / 19%);
   /* Ghost: no fill until hovered. */
   --button-ghost-fill-hover: var(--state-step);
-  /* Outline: no fill, a 1px edge at 10% white, a secondary-tone label; a hover adds a 4% fill. */
-  --button-outline-edge: rgb(255 255 255 / 10%);
-  --button-outline-fill-hover: rgb(255 255 255 / 4%);
+  /* No button wears an outline (owner). The outline variant is drawn as the secondary fill,
+   * and anything that still reads these gets no edge and the ghost's hover step. */
+  --button-outline-edge: transparent;
+  --button-outline-fill-hover: var(--state-step);
   /* Segmented control: no track; the selected segment carries the selected fill. */
   --segment-height: var(--button-height);
   --segment-radius: var(--button-radius);
@@ -405,10 +408,10 @@
   --page-control-height: 28px;
   /* A chart's reading: clearly under the page title, never level with it. */
   --page-reading: 22px;
-  /* One card: a 1px edge at 7%, a 2% lift, radius 12, padding 20. Nothing inside a card
-   * draws a surface of its own. */
-  --page-card-fill: rgb(255 255 255 / 3.5%);
-  --page-card-edge: rgb(255 255 255 / 7%);
+  /* One card: a fill alone, 4.5% white over the page (no edge: the fill separates it), radius
+   * 12, padding 20. Nothing inside a card draws a surface of its own. */
+  --page-card-fill: rgb(255 255 255 / 4.5%);
+  --page-card-edge: transparent;
   --page-card-radius: 12px;
   --page-card-pad: 20px;
   /* A row-card (a yes-or-no goal): 64px tall, its two lines on an 11px inset. */
@@ -441,8 +444,7 @@
   --composer-clear: calc(var(--composer-zone) + var(--composer-preview-room) + var(--composer-fade));
   /* The page's last line scrolls this far clear of the composer zone. */
   --page-end-clear: 24px;
-  /* The composer: the reference composer's surface (10% white) with a 1px edge one step
-   * lighter, radius 12. */
+  /* The composer: the reference composer's surface, its fill alone, radius 12. */
   --composer-surface: var(--surface-input);
   --composer-edge: var(--border-input);
   --composer-radius: 12px;

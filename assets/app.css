@@ -1112,26 +1112,18 @@ a.pv-name:focus-visible { outline:0; }
   background: var(--button-primary-fill-hover);
 }
 
+/* No button wears an outline (owner): the outline variant is the secondary fill. */
 .button--secondary,
-.button--quiet {
+.button--quiet,
+.button--outline {
   background: var(--button-secondary-fill);
   color: var(--tone-primary);
 }
 
 .button--secondary:hover:not(:disabled),
-.button--quiet:hover:not(:disabled) {
-  background: var(--button-secondary-fill-hover);
-  color: var(--tone-strong);
-}
-
-.button--outline {
-  background: transparent;
-  box-shadow: inset 0 0 0 var(--border-hairline) var(--button-outline-edge);
-  color: var(--tone-secondary);
-}
-
+.button--quiet:hover:not(:disabled),
 .button--outline:hover:not(:disabled) {
-  background: var(--button-outline-fill-hover);
+  background: var(--button-secondary-fill-hover);
   color: var(--tone-strong);
 }
 
@@ -2377,8 +2369,9 @@ select {
   font-size: var(--type-xs);
   line-height: 18px;
   color: var(--text-muted);
-  background: var(--surface-2);
-  border: var(--border-hairline) solid var(--border-color);
+  /* A key cap is a fill alone (no edge), one clear step over the page. */
+  background: var(--wash-selected);
+  border: var(--border-hairline) solid transparent;
   border-radius: var(--radius-sm);
   padding: 0 5px;
   margin-right: var(--space-1);
@@ -5083,6 +5076,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
   align-items: center;
   gap: var(--space-2);
 }
+/* The band's actions are quiet text buttons (ghosts): the last one's label ends on the
+ * column's edge, its hover fill reaching past it. */
+.manager-page .page-band .page-band-actions { margin-right: calc(var(--button-pad-x) * -1); }
 .page-band .ticket-lifecycle {
   flex: none;
   margin: 0;
@@ -5155,7 +5151,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 .manager-page .manager-column .goals-overview > header { margin: 0; min-height: 0; }
 
-/* THE CARD — one edge, one lift, one radius, one inset. */
+/* THE CARD — one fill, one radius, one inset (no edge). */
 .page-card {
   border: var(--border-hairline) solid var(--page-card-edge);
   border-radius: var(--page-card-radius);

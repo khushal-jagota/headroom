@@ -7,7 +7,7 @@
 
   /* The ticket's own page actions. They are ghosts on the ticket page, where the decision card
    * below carries the page's call to action. */
-  let { ticket, terminal, leading, variant = "outline" }: { ticket: TicketDetail; terminal: boolean; leading?: Snippet; variant?: "outline" | "ghost" } = $props();
+  let { ticket, terminal, leading, variant = "ghost" }: { ticket: TicketDetail; terminal: boolean; leading?: Snippet; variant?: "secondary" | "ghost" } = $props();
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -37,7 +37,7 @@
       {#if leading}<span class="separator" aria-hidden="true">·</span>{/if}
       {#if ticket.is_backlogged}<span class="state" data-ticket-backlogged>Backlogged</span>{/if}
       {#if ticket.is_backlogged}
-        <Button {variant} disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>
+        <Button variant="secondary" disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>
       {:else}
         <Button {variant} class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</Button>
       {/if}
