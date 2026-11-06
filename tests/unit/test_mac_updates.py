@@ -60,7 +60,7 @@ def release(app_sha: str = TARGET_SHA) -> PublishedUpdate:
     )
 
 
-def runtime_archive(application_revision: str) -> bytes:
+def runtime_archive(application_revision: str, executable: bytes = b"fixture executable") -> bytes:
     archive = BytesIO()
     with tarfile.open(fileobj=archive, mode="w:gz") as tar:
         for name, content in (
@@ -68,7 +68,7 @@ def runtime_archive(application_revision: str) -> bytes:
                 "schema_version": 1, "application_revision": application_revision,
                 "platform": "darwin", "architecture": "arm64",
             }).encode()),
-            ("python/bin/python3", b"fixture executable"),
+            ("python/bin/python3", executable),
         ):
             member = tarfile.TarInfo(name)
             member.size = len(content)
@@ -85,9 +85,10 @@ class MacProvider:
         self.downloads: list[int] = []
 
     def publish(
-        self, app_sha: str = TARGET_SHA, *, manifest_revision: str | None = None
+        self, app_sha: str = TARGET_SHA, *, manifest_revision: str | None = None,
+        executable: bytes = b"fixture executable",
     ) -> PublishedUpdate:
-        archive = runtime_archive(manifest_revision or app_sha)
+        archive = runtime_archive(manifest_revision or app_sha, executable)
         artifact_id = len(self.archives) + 4
         self.archives[artifact_id] = archive
         mac = PublishedMacUpdate(artifact_id, hashlib.sha256(archive).hexdigest(), len(archive))
@@ -307,6 +308,84 @@ def test_executor_routes_work_without_work_handshake_but_reject_untrusted_caller
             "confirmed": True
         }
         assert service.phase("mac_one") == "current"
+
+
+def test_field_mac_session_receives_the_published_archive_bytes_from_the_real_server(
+    tmp_path: Path,
+) -> None:
+    """Risk: the server's gzip wraps the archive and a field Mac rejects the bytes it saved.
+
+    The Mac session does not decode transport encoding but still offers gzip, as the
+    53d64f0 runtime does, so this asks the way that runtime asks and checks what arrives.
+    """
+    import asyncio
+    import random
+    import socket
+
+    import uvicorn
+
+    from planner.core.clock import build_clock
+    from planner.core.config import load_config
+    from planner.core.db import connect, create_schema
+    from planner.core.server import create_app
+    from planner.executor.link import create_client_session
+
+    # Random bytes keep the archive above the compression threshold after gzip.
+    filler = random.Random(0).randbytes(8192)
+    provider = MacProvider()
+    published = provider.publish(executable=filler)
+    ready = provider.publish(NEXT_SHA, executable=filler[::-1])
+    service = mac_service(tmp_path, provider, TARGET_SHA, ready)
+    service.prepare(published)
+    service.prepare(ready)
+    write(service, attempt(published, "done"))
+    db_path = tmp_path / "planning.db"
+    boot = connect(str(db_path))
+    create_schema(boot)
+    boot.close()
+    config = load_config(path=None, env={
+        "PLAN_TEST_MODE": "1",
+        "PLAN_DB_PATH": str(db_path),
+        "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+        "PLAN_HERMES_HOME": str(tmp_path / "hermes"),
+        "PLAN_DISPATCH_ENABLED": "0",
+        "PLAN_EXECUTOR_ID": "configured-mac",
+        "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+        "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "owner@example.test",
+        "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "https://panels.example.test",
+    })
+    app = create_app(config, build_clock(config), lambda: connect(str(db_path)))
+    app.state.mac_updates = service
+
+    async def exercise() -> None:
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off"))
+        serving = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            async with asyncio.timeout(5):
+                while not server.started:
+                    await asyncio.sleep(0.01)
+            origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
+            async with create_client_session() as session:
+                async with session.get(origin + "/api/executor/update", headers=HEADERS) as check:
+                    assert check.headers.get("Content-Encoding") is None
+                    body = json.loads(await check.read())
+                for offered in (body["target"], body["prefetch"]):
+                    assert offered["archive_size"] > 1024
+                    archive_url = origin + offered["archive_path"]
+                    async with session.get(archive_url, headers=HEADERS) as got:
+                        assert got.status == 200
+                        assert got.headers.get("Content-Encoding") is None
+                        received = await got.read()
+                    assert hashlib.sha256(received).hexdigest() == offered["archive_sha256"]
+        finally:
+            server.should_exit = True
+            await asyncio.wait_for(serving, 5)
+            listener.close()
+
+    asyncio.run(exercise())
 
 
 # The check response shape the Mac runtimes of 5622d2a81 validate, copied from that commit.

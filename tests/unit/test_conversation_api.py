@@ -111,8 +111,8 @@ from planner.core.config import load_config
 from planner.core.contracts import PlannerError, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.response_compression import (
-    CompressExceptEventStreams,
-    event_stream_route_patterns,
+    CompressExceptMarkedRoutes,
+    uncompressed_route_patterns,
 )
 from planner.files.logic.paths import conversation_files_root
 from planner.tickets import data as tickets_data
@@ -1357,15 +1357,15 @@ def test_the_picture_reaches_the_backend_and_not_just_the_record(
     _run(exercise)
 
 
-def _compression_as_the_server_composes_it(app: FastAPI) -> CompressExceptEventStreams:
+def _compression_as_the_server_composes_it(app: FastAPI) -> CompressExceptMarkedRoutes:
     """The compression the server puts in front of this router, composed the same way.
 
     The server reads which routes are streams from the routers it includes, so the test
     reads them from the same router under the same prefix.
     """
-    return CompressExceptEventStreams(
+    return CompressExceptMarkedRoutes(
         app,
-        event_stream_patterns=event_stream_route_patterns(router.routes, CONVERSATION_PREFIX),
+        uncompressed_patterns=uncompressed_route_patterns(router.routes, CONVERSATION_PREFIX),
         minimum_size=1024,
         compresslevel=4,
     )
