@@ -129,7 +129,7 @@ from planner.core.authctx import RequestContext, request_context, require_owner
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.response_compression import answers_with_an_event_stream
+from planner.core.response_compression import answers_uncompressed
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.runtime import conversation_start
@@ -558,7 +558,7 @@ async def read_conversation_event_detail(
 
 
 @router.get("/conversations/{conversation_id}/tail")
-@answers_with_an_event_stream
+@answers_uncompressed
 async def tail_conversation(
     conversation_id: str, runtime: Runtime, after: int = 0
 ) -> StreamingResponse:
