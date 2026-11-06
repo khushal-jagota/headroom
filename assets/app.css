@@ -4987,16 +4987,15 @@ details:not([open]) > summary > .manager-workspace-chevron {
   border-bottom:var(--border-hairline) solid var(--border-color);
 }
 .disclosure-bands > .disclosure-band + .disclosure-band { border-top:0; }
-.disclosure-bands > .disclosure-band:last-child { border-bottom:0; }
 .disclosure-band > summary {
   display:flex;
   align-items:center;
-  gap:var(--space-2);
-  padding:var(--space-2);
+  gap:var(--space-3);
+  padding:14px var(--space-2);
   margin-inline:calc(-1 * var(--space-2));
-  border-radius:var(--radius-md);
+  border-radius:var(--radius-sm);
   font-size:var(--type-sm);
-  font-weight: var(--weight-small);
+  font-weight:var(--weight-title);
   color:var(--text-faint);
   cursor:pointer;
   list-style:none;
@@ -5004,7 +5003,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .disclosure-band > summary::-webkit-details-marker { display:none; }
 .disclosure-band > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .disclosure-band > summary:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
-.disclosure-band-trailing { margin-left:0; font-weight:var(--weight-small); color:var(--text-faintest); }
+.disclosure-band-trailing { margin-left:auto; font-weight:var(--weight-small); color:var(--text-faintest); }
 .disclosure-band-body { padding-bottom:var(--space-4); }
 
 .chat-thread[data-more-below="true"] {
@@ -5174,129 +5173,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 .manager-page .manager-column .goals-overview > header { margin: 0; min-height: 0; }
 
-/* THE PAGE LIST — the rail's group heading and row, at body size. Words stand on the
- * column's edge; a row's fill reaches --page-row-outset past it on both sides. Counts are
- * plain small numerals in the heading's own tone. A heading keeps the rail's rhythm, 8px
- * above it and 2px below, so it binds to its rows; the list starts 8px up so the first
- * heading sits on the section head's 14px. (.page-tickets is doubled to outrank the list's
- * own scoped rules.) */
-.manager-column .page-tickets.page-tickets .manager-children {
-  --list-inset: 0px;
-  margin: calc(var(--page-heading-above) * -1) 0 0;
-}
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section],
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] {
-  display: block;
-  margin: 0;
-}
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] + [data-worker-section][data-empty="true"]::before { content: none; }
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status,
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status + .manager-workspace-status,
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section] + [data-worker-section],
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section] + [data-worker-section]:not([data-empty="true"]) { margin-top: 0; }
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 0;
-  height: calc(var(--page-heading-above) + 20px + var(--page-heading-below));
-  margin: 0 calc(var(--page-row-outset) * -1);
-  padding: var(--page-heading-above) var(--page-row-outset) var(--page-heading-below);
-  border-radius: var(--radius-md);
-  background: none;
-  color: var(--tone-page-list-label);
-  font-family: var(--font-ui);
-  font-size: var(--type-page-list-label);
-  font-weight: var(--weight-page-list-label);
-  line-height: 20px;
-  letter-spacing: 0;
-}
-/* Backlogged and Done are two heading rows like every other group (never one shared line). */
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] .manager-workspace-status > summary,
-.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] + [data-worker-section][data-empty="true"] .manager-workspace-status > summary {
-  padding: var(--page-heading-above) var(--page-row-outset) var(--page-heading-below);
-}
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary:hover {
-  background: none;
-  color: var(--tone-strong);
-}
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status-label {
-  font-size: inherit;
-  font-weight: inherit;
-  color: inherit;
-}
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary > .manager-workspace-count,
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group] .manager-workspace-count {
-  display: inline;
-  min-width: 0;
-  height: auto;
-  margin: 0;
-  padding: 0;
-  border-radius: 0;
-  background: none;
-  color: var(--count-tone);
-  font-size: var(--type-page-list-label);
-  font-weight: var(--weight-page-list-label);
-  line-height: 20px;
-  text-align: left;
-  font-variant-numeric: tabular-nums;
-}
-/* Every group is a fold, so every group heading shows the fold's chevron, right after its
- * count, where the eye already is. */
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary::after,
-.page-fold > summary::after {
-  content: "";
-  flex: none;
-  width: var(--page-chevron);
-  height: var(--page-chevron);
-  margin-left: 0;
-  background: var(--tone-tertiary);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-  transition: transform var(--motion-fast) var(--motion-ease);
-}
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status[open] > summary::after,
-.page-fold[open] > summary::after { transform: rotate(90deg); }
-.manager-column .page-tickets.page-tickets .manager-children .ticket-row {
-  min-height: var(--page-row-height);
-  width: calc(100% + var(--page-row-outset) * 2);
-  max-width: none;
-  margin: 0 calc(var(--page-row-outset) * -1);
-  padding: 6px var(--page-row-outset);
-  gap: var(--space-3);
-  border-radius: var(--radius-md);
-  color: var(--tone-secondary);
-  font-size: var(--type-body);
-  font-weight: var(--weight-body);
-  line-height: 20px;
-}
-.manager-column .page-tickets.page-tickets .manager-children .ticket-row .machine-identity { display: none; }
-.manager-column .page-tickets.page-tickets .manager-children .ticket-row:hover,
-.manager-column .page-tickets.page-tickets .manager-children .ticket-row:focus-visible {
-  background: var(--wash-hover);
-  color: var(--tone-strong);
-}
-/* A row that needs the person is the rail's bright row: strong, one weight up. */
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_approval"] .ticket-row,
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_answer"] .ticket-row {
-  color: var(--tone-strong);
-  font-weight: var(--weight-needs-you);
-}
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_approval"] > summary,
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_answer"] > summary { color: var(--tone-page-list-label); }
-/* The unread dot keeps the rail's reserved right column, under the chevrons. */
-.manager-column .page-tickets.page-tickets .manager-children .ticket-row .conversation-signal-marks {
-  flex: none;
-  justify-content: center;
-  width: var(--page-chevron);
-}
-.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-empty {
-  padding: 6px 0;
-  color: var(--tone-tertiary);
-  font-size: var(--type-small);
-}
-
 /* THE CARD — one edge, one lift, one radius, one inset. */
 .page-card {
   border: var(--border-hairline) solid var(--page-card-edge);
@@ -5304,54 +5180,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
   background: var(--page-card-fill);
   padding: var(--page-card-pad);
 }
-
-/* THE FOLD ROW — Steps, Artifacts and every band like them: the page list's own group
- * heading. Borderless small print: its label in the secondary tone, its count after it in the
- * tertiary tone, and the fold's chevron right after the count. */
-.disclosure-band,
-.disclosure-bands > .disclosure-band + .disclosure-band,
-.ticket-screen .worker-bands .worker-steps { border: 0; }
-.disclosure-band > summary,
-.ticket-screen .worker-bands .worker-steps > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 0;
-  height: calc(var(--page-heading-above) + 20px + var(--page-heading-below));
-  padding: var(--page-heading-above) var(--page-row-outset) var(--page-heading-below);
-  margin-inline: calc(var(--page-row-outset) * -1);
-  border-radius: var(--radius-md);
-  background: none;
-  color: var(--tone-secondary);
-  font-family: var(--font-ui);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
-  line-height: 20px;
-}
-.disclosure-band > summary:hover,
-.ticket-screen .worker-bands .worker-steps > summary:hover { background: none; color: var(--tone-strong); }
-.disclosure-band-trailing,
-.ticket-screen .worker-bands .band-count {
-  margin-left: 0;
-  color: var(--count-tone);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
-  font-variant-numeric: tabular-nums;
-}
-.disclosure-band > summary::after,
-.ticket-screen .worker-bands .worker-steps > summary::after {
-  content: "";
-  flex: none;
-  width: var(--page-chevron);
-  height: var(--page-chevron);
-  margin-left: 0;
-  background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
-  transition: transform var(--motion-fast) var(--motion-ease);
-}
-.disclosure-band[open] > summary::after,
-.ticket-screen .worker-bands .worker-steps[open] > summary::after { transform: rotate(90deg); }
 
 /* The review chamber's line above the title is the same band. */
 .review-eyebrow {

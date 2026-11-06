@@ -250,7 +250,7 @@
           {@render tickets()}
           <div class="manager-bands disclosure-bands">
             <details class="disclosure-band goal-band" data-goal-band>
-              <summary>Goal</summary>
+              <summary>Goal<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
               <div class="disclosure-band-body">
                 <div class="manager-goal">
                   <InlineEdit
@@ -297,5 +297,8 @@
   .manager-workers { margin-top:var(--page-section-gap); }
   .manager-bands { margin-top:var(--page-section-gap); }
   .manager-goal { font-size:var(--type-body); line-height:var(--leading-body); color:var(--tone-primary); max-width:var(--page-prose-measure); }
+  .goal-chevron { font-size:var(--type-body); line-height:1; }
+  .goal-chevron::before { content:"\203A"; }
+  .goal-band[open] > summary .goal-chevron::before { content:"\2304"; }
   a:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 </style>

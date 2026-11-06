@@ -539,10 +539,14 @@
   .worker-ceiling-line { margin-top:var(--space-3); }
   .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:var(--type-body); line-height:20px; color:var(--tone-secondary); padding:var(--space-2) var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:none; text-align:left; }
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
-  /* Steps and Artifacts are two fold rows (app.css, THE FOLD ROW) between hairlines. */
-  .worker-bands { line-height:var(--leading-body); margin-top:var(--space-6); padding-bottom:var(--space-7); }
-  .worker-steps > summary { cursor:pointer; list-style:none; }
+  /* Steps and Artifacts are staging's two bands between hairlines: the label at the left in
+     Small print, its count at the right. */
+  .worker-bands { line-height:1.6; margin-top:var(--space-6); padding-bottom:var(--space-7); }
+  .worker-steps { border-top:var(--border-hairline) solid var(--border-color); }
+  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:var(--type-small); font-weight:var(--weight-title); color:var(--tone-secondary); cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }
+  .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--tone-strong); }
+  .band-count { margin-left:auto; font-weight:var(--weight-small); color:var(--tone-tertiary); }
   .worker-step-rows { padding-bottom:var(--space-4); }
   .worker-step-rows :global(.disclosure--stage) { margin:0; border:0; }
   .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-body); color:var(--tone-secondary); }
