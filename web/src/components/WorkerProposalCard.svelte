@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "./Button.svelte";
   import type { Snippet } from "svelte";
   import CeilingPicker from "./CeilingPicker.svelte";
   import InlineEdit from "./InlineEdit.svelte";
@@ -75,20 +76,25 @@
 </script>
 
 <section inert={disabled || busy || resolved} class="worker-proposal" data-approval-block data-mode="pending" data-field={proposal.field}>
-  <h2>{fieldLabelFor(lifecycle, proposal.field)}</h2>
-  <p class="who">For
-    <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}</button> to approve</p>
+  <!-- The stage and who decides are small print over the card. The proposal's own first line
+       is the card's title: the thing being decided, not the stage's generic name. -->
+  <div class="proposal-line">
+    <h2>{fieldLabelFor(lifecycle, proposal.field)}</h2>
+    <span class="proposal-line-sep" aria-hidden="true">·</span>
+    <p class="who">For
+      <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}</button> to approve</p>
+  </div>
   <div class="proposal-prose">
     <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; onEditedBodyChange?.(raw); }} onCancel={() => proposal.body} />
   </div>
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="actions">
-    <button type="button" class="primary" data-accept aria-haspopup={finalApproval ? undefined : "listbox"} aria-expanded={finalApproval ? undefined : scopePicker?.expanded ?? false} aria-controls={finalApproval ? undefined : scopePicker?.controls}
-      onkeydown={(event) => { if (!finalApproval && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); scopePicker?.openApproval(event.currentTarget); } }} disabled={disabled || busy || resolved || !nextCeiling}
-      onclick={(event) => finalApproval ? void completeScope({ approval:true, ceiling:"none", holder }) : scopePicker?.openApproval(event.currentTarget)}>Approve</button>
+    <Button variant="primary" data-accept aria-haspopup={finalApproval ? undefined : "listbox"} aria-expanded={finalApproval ? undefined : scopePicker?.expanded ?? false} aria-controls={finalApproval ? undefined : scopePicker?.controls}
+      onkeydown={(event: KeyboardEvent) => { if (!finalApproval && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); scopePicker?.openApproval(event.currentTarget as HTMLElement); } }} disabled={disabled || busy || resolved || !nextCeiling}
+      onclick={(event) => finalApproval ? void completeScope({ approval:true, ceiling:"none", holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
     {#if proposal.field !== "brief"}
-      <button type="button" class="ghost" data-send-back disabled={disabled || !canReturn || busy || resolved}
-        onclick={() => { if (canReturn) returning = true; }}>Send it back</button>
+      <Button variant="quiet" data-send-back disabled={disabled || !canReturn || busy || resolved}
+        onclick={() => { if (canReturn) returning = true; }}>Send it back</Button>
     {/if}
     {#if trailingActions}<div class="trailing">{@render trailingActions()}</div>{/if}
   </div>
@@ -100,35 +106,37 @@
     {#if revisionEditor}{@render revisionEditor()}{:else}
     <div class="return-note">
       <label>What needs changing<textarea data-revision-note bind:value={note} placeholder="What to do differently" disabled={busy || resolved}></textarea></label>
-      <div class="actions"><button type="button" class="primary" data-revision-send disabled={busy || resolved || !note.trim()} onclick={() => void sendBack()}>Send it back</button><button type="button" class="ghost" onclick={() => returning = false}>Cancel</button></div>
+      <div class="actions"><Button variant="primary" data-revision-send disabled={busy || resolved || !note.trim()} onclick={() => void sendBack()}>Send it back</Button><Button variant="pill" onclick={() => returning = false}>Cancel</Button></div>
     </div>
     {/if}
   {/if}
   {#if error}<ErrorLine {error} />{/if}
 </section>
 <style>
-  .worker-proposal { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }
-  h2 { margin:0; letter-spacing:-.008em; font-size:var(--type-md); font-weight:600; line-height:1.4; color:var(--text-strong); }
-  .who { margin:2px 0 0; font-size:var(--type-sm); font-weight:500; letter-spacing:0; color:var(--text-faint); }
-  .proposal-prose { max-width:68ch; line-height:1.6; margin-top:var(--space-3); }
-  .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; }
+  /* THE CARD (page system). Its actions are the one Button: primary, then secondary, then
+     the decision's own ghost actions at the far end. */
+  .worker-proposal { padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
+  .proposal-line { display:flex; align-items:center; flex-wrap:wrap; min-height:20px; color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
+  h2 { margin:0; font:inherit; letter-spacing:0; color:inherit; }
+  .proposal-line-sep { padding-inline:6px; }
+  .who { margin:0; font:inherit; letter-spacing:0; color:inherit; }
+  /* The proposal's first paragraph leads as the card's title (the section-head role); the rest
+     is body text, all in the primary tone and never wider than the prose measure. */
+  .proposal-prose { max-width:var(--page-prose-measure); margin-top:var(--space-2); color:var(--tone-primary); }
+  .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-body); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
+  .proposal-prose :global(.ed > p:first-child), .proposal-prose :global(.ed > .markdown > p:first-child), .proposal-prose :global(.ed > .markdown:first-child > :first-child:is(p)) { margin-bottom:var(--space-3); font-size:var(--type-page-section); font-weight:var(--weight-page-section); line-height:22px; color:var(--tone-strong); }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
-  button { display:inline-flex; align-items:center; justify-content:center; height:32px; font:inherit; font-size:var(--type-sm); font-weight:550; line-height:20px; padding:0 14px; border:0; border-radius:var(--radius-md); cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
-  button:disabled { opacity:.5; cursor:default; }
-  .reviewer { display:inline; height:auto; font:inherit; line-height:inherit; padding:0 4px; margin:0 -4px; background:transparent; color:inherit; border-radius:var(--radius-sm); }
-  .reviewer:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .primary { background:var(--accent-fill); color:var(--surface-ink); font-weight:640; }
-  .primary:hover:not(:disabled) { background:var(--accent-fill-hover); }
-  .ghost { background:var(--fill-secondary); color:var(--text-default); padding:0 14px; }
-  .ghost:hover { background-color:rgb(255 255 255 / 12%); color:var(--text-strong); }
-  button:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
-  .return-unavailable { color:var(--text-faintest); font-size:var(--type-sm); margin:var(--space-2) 0 0; }
+  .reviewer { display:inline; height:auto; font:inherit; line-height:inherit; padding:0 4px; margin:0 -4px; border:0; background:transparent; color:inherit; border-radius:var(--radius-sm); cursor:pointer; }
+  .reviewer:hover { background-image:var(--interaction-hover); color:var(--tone-strong); }
+  .reviewer:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
+  .return-unavailable { color:var(--tone-tertiary); font-size:var(--type-small); margin:var(--space-2) 0 0; }
   .return-note { margin-top:var(--space-4); }
-  label { display:block; font-size:var(--type-xs); color:var(--text-faint); }
-  textarea { display:block; margin-top:var(--space-2); width:100%; min-height:90px; padding:var(--space-3); background:var(--surface-recessed); color:var(--text-default); border:1px solid var(--border-color); border-radius:var(--radius-md); font:inherit; font-size:var(--type-sm); }
-  textarea:focus { outline:none; border-color:var(--border-focus); }
+  label { display:block; font-size:var(--type-small); color:var(--tone-tertiary); }
+  textarea { display:block; margin-top:var(--space-2); width:100%; min-height:90px; padding:var(--space-3); background:var(--composer-surface); color:var(--tone-primary); border:var(--border-hairline) solid var(--composer-edge); border-radius:var(--radius-md); font:inherit; font-size:var(--type-body); }
+  textarea:focus { outline:var(--focus-width) solid var(--focus-ring); outline-offset:calc(var(--border-hairline) * -1); border-color:transparent; }
   .context { margin-top:var(--space-4); }
-  .trailing { display:flex; align-items:center; gap:var(--space-1); margin-left:auto; }
+  /* Actions about the decision rather than the proposal close the row at its far end. */
+  .trailing { display:flex; align-items:center; gap:var(--space-1); margin-left:auto; margin-right:calc(var(--space-3) * -1); }
   /* The picker's own trigger is hidden here, so its empty line must not add height. */
   .worker-proposal > :global(div:has(> [data-ceiling-picker])) { display:flex; }
 </style>

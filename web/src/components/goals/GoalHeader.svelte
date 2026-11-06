@@ -94,7 +94,7 @@
  {/snippet}
  <!-- One line above the title: where the goal lives, then its own facts. Under the title
       there is only why it matters. -->
- <div class="goal-context">
+ <div class="goal-context page-eyebrow">
   <span class="metadata">
    <span class="control-size" aria-hidden="true">{projectName}</span>
    <select aria-label="Project" value={editFields.project_id.value??goal.project_id} disabled={editFields.project_id.saving} onfocus={()=>start(editFields.project_id,true)} onchange={e=>{input(editFields.project_id,e.currentTarget);void commit(editFields.project_id,'project_id',e.currentTarget);}} onkeydown={e=>keydown(e,editFields.project_id,'project_id')}>
@@ -102,12 +102,14 @@
     {#each projects.data?.projects??[] as project}<option value={project.id}>{project.name}</option>{/each}
    </select>
   </span>
+  <span class="page-eyebrow-sep" aria-hidden="true">·</span>
   <span class="metadata deadline" class:empty={!deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)}>
    <span class="control-size date-size" aria-hidden="true">{dateText(deadline)}</span>
    {#if deadline}<span class="date-display" aria-hidden="true" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>Due {readableDate(deadline)}</span>{/if}
    {#if !deadline}<span class="deadline-empty" aria-hidden="true">No deadline</span>{/if}
    <input type="date" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))} aria-label="By date" value={deadline} disabled={editFields.deadline.saving} onfocus={()=>start(editFields.deadline,true)} onclick={openDatePicker} oninput={e=>input(editFields.deadline,e.currentTarget)} onblur={e=>void commit(editFields.deadline,'deadline',e.currentTarget)} onkeydown={e=>keydown(e,editFields.deadline,'deadline')}/>
   </span>
+  <span class="page-eyebrow-sep" aria-hidden="true">·</span>
   <span class="metadata">
    <span class="control-size" aria-hidden="true">{(editFields.active.value??String(goal.active))==='true'?'Active':'Inactive'}</span>
    <select aria-label="State" value={editFields.active.value??String(goal.active)} disabled={editFields.active.saving} onfocus={()=>start(editFields.active,true)} onchange={e=>{input(editFields.active,e.currentTarget);void commit(editFields.active,'active',e.currentTarget);}} onkeydown={e=>keydown(e,editFields.active,'active')}><option value="true">Active</option><option value="false">Inactive</option></select>
@@ -122,12 +124,13 @@
 
 <style>
  .error-actions{display:flex;gap:var(--space-3);margin-top:var(--space-2);margin-bottom:var(--space-3)}
- .error-actions button{border:0;background:none;padding:var(--space-1);color:var(--accent-bright);font:inherit;font-size:12px;cursor:pointer}
+ .error-actions button{border:0;background:none;padding:var(--space-1);color:var(--accent-bright);font:inherit;font-size:var(--type-small);cursor:pointer}
  .error-actions button:disabled{opacity:.65}
- .goal-heading{margin-bottom:var(--space-6)}
- .goal-context{min-height:24px}
- .goal-context{display:flex;align-items:center;gap:var(--space-3);min-height:var(--page-band-height);margin:0 calc(var(--space-1) * -1) var(--space-1);color:var(--text-faint);font-size:var(--type-sm);font-weight:500;line-height:20px;flex-wrap:wrap}
- .goal-context > .metadata + .metadata::before{content:"·";position:absolute;top:2px;left:calc(var(--space-2) * -1 + 1px);line-height:inherit;color:var(--text-faintest);pointer-events:none}
+ .goal-heading{margin-bottom:var(--page-section-gap)}
+ /* The one eyebrow pattern (app.css .page-eyebrow) on the page band's height. Each fact is
+    its own quiet control; its 4px edit inset is taken back so the words start on the column. */
+ .goal-context{min-height:var(--page-band-height);margin:0 calc(var(--space-1) * -1) 0}
+ .goal-context .page-eyebrow-sep{padding-inline:2px}
  .date-display{grid-area:1/1;padding:2px var(--space-1);white-space:pre;pointer-events:none}
  .deadline:not(:focus-within) .date-size{visibility:hidden;width:0;overflow:hidden}
  .deadline:not(:focus-within) .date-display + input{opacity:0}
@@ -135,9 +138,9 @@
  .metadata{position:relative;display:inline-grid;grid-template-columns:minmax(0,1fr);align-items:baseline;min-width:0;max-width:100%}
  .control-size,.deadline-empty{grid-area:1/1;padding:2px var(--space-1);white-space:pre}
  .control-size{visibility:hidden}
- .deadline-empty{color:var(--text-faint);pointer-events:none}
- input,select{position:absolute;inset:0;box-sizing:border-box;width:100%;height:100%;min-width:0;font:inherit;line-height:inherit;background:transparent;color:var(--text-faint);border:0;border-radius:var(--radius-sm);padding:2px var(--space-1);appearance:none;cursor:pointer}
- .metadata:hover{color:var(--text-strong)}.metadata:hover > select,.metadata:hover > input{color:var(--text-strong)}
+ .deadline-empty{color:var(--tone-tertiary);pointer-events:none}
+ input,select{position:absolute;inset:0;box-sizing:border-box;width:100%;height:100%;min-width:0;font:inherit;line-height:inherit;background:transparent;color:var(--tone-tertiary);border:0;border-radius:var(--radius-sm);padding:2px var(--space-1);appearance:none;cursor:pointer}
+ .metadata:hover{color:var(--tone-strong)}.metadata:hover > select,.metadata:hover > input{color:var(--tone-strong)}
  select{cursor:pointer;text-overflow:ellipsis}
  select option{background:var(--surface-1);color:var(--text-default)}
  input:focus-visible,select:focus-visible{outline:var(--focus-width) solid var(--focus-ring);outline-offset:0}
@@ -148,9 +151,9 @@
  .empty:not(:focus-within) .date-size,.empty:focus-within .deadline-empty{display:none}
  .empty:not(:focus-within) input{opacity:0}
  .signal{margin-left:auto}
- h1{font-size:var(--type-page-title);font-weight:var(--weight-page-title);line-height:1.25;letter-spacing:-.02em;margin:0;max-width:var(--page-measure);color:var(--text-strong)}
- .why{font-size:var(--type-md);font-weight:500;line-height:24px;color:var(--text-muted);margin-top:var(--space-2);max-width:var(--page-prose-measure)}
+ h1{font-size:var(--type-page-title);font-weight:var(--weight-page-title);line-height:32px;letter-spacing:var(--tracking-page-title);margin:var(--space-1) 0 0;max-width:var(--page-measure);color:var(--tone-strong)}
+ .why{font-size:var(--type-body);font-weight:var(--weight-body);line-height:var(--leading-body);color:var(--tone-primary);margin-top:var(--space-2);max-width:var(--page-prose-measure)}
  .why :global(.ed){min-height:1.6em;white-space:pre-wrap}
  h1,.why{overflow-wrap:anywhere}
- @container (max-width:640px){.goal-context{gap:var(--space-3)}h1{font-size:24px}}
+ @container (max-width:640px){.goal-context{gap:var(--space-3)}h1{font-size:var(--type-page-title)}}
 </style>

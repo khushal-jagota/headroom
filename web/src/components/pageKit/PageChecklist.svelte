@@ -338,20 +338,23 @@
 </section>
 
 <style>
+  /* THE CARD (page system). Inside a goal card the host card is the surface, and this
+     draws none of its own. */
   .card {
     container-type: inline-size;
     width: 100%;
     min-width: 0;
-    border-radius: var(--radius-lg);
-    background: var(--surface-recessed);
-    color: var(--text-default);
+    border: var(--border-hairline) solid var(--page-card-edge);
+    border-radius: var(--page-card-radius);
+    background: var(--page-card-fill);
+    color: var(--tone-primary);
   }
   .roll { position: relative; display: inline-grid; vertical-align: top; }
   .roll > span { grid-area: 1 / 1; }
-  .save-feedback { margin: 0; padding: 0 var(--space-5) var(--space-3); color: var(--text-faint); font-size: var(--type-sm); }
-  .checklist-header { position: relative; border-radius: inherit; transition: background var(--motion-fast) var(--motion-ease); }
+  .save-feedback { margin: 0; padding: 0 var(--space-5) var(--space-3); color: var(--tone-tertiary); font-size: var(--type-small); }
+  .checklist-header { position: relative; border-radius: var(--radius-md); transition: background var(--motion-fast) var(--motion-ease); }
   .checklist-header:hover { background-image: var(--interaction-hover); }
-  .header-action { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-faint); font-size: var(--type-sm); font-weight: 590; }
+  .header-action { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--tone-tertiary); font-size: var(--type-small); font-weight: var(--weight-small); }
   .header-toggle { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .header-toggle:focus-visible, .check:focus-visible, .step-title:focus-visible, .action:focus-visible, .group-toggle:focus-visible {
     outline: var(--focus-width) solid var(--focus-ring);
@@ -360,18 +363,20 @@
   .small .body-inner { padding: var(--space-1); }
   .small .step-inner { column-gap: var(--space-2); padding-inline: var(--space-2); }
   .small .group-toggle { padding-left: calc(40px + var(--space-2) * 2); }
-  .chevron { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-ease); }
+  .chevron { width: var(--page-chevron); height: var(--page-chevron); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-ease); }
   .chevron.turned { transform: rotate(180deg); }
   .body { overflow: hidden; }
-  .body-inner { padding: var(--space-2); border-top: var(--border-hairline) solid var(--border-color); }
+  .body-inner { padding: 0 var(--space-2) var(--space-2); }
   .list { margin: 0; padding: 0; list-style: none; }
   .step { overflow: hidden; }
+  /* A step: a 16px check in the ring's 28px column, so every check sits under the ring and
+     every name under the checklist's own name. */
   .step-inner {
     display: grid;
-    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-columns: var(--page-ring-size) minmax(0, 1fr);
     column-gap: var(--space-3);
     align-items: start;
-    padding: var(--space-1) var(--space-3);
+    padding: 0 var(--space-3);
     border-radius: var(--radius-md);
   }
   /* The open step is marked by its own note under its name; a fill inside the card would only
@@ -379,8 +384,8 @@
   .step.current .step-inner { background: transparent; }
   .check {
     display: grid;
-    width: 40px;
-    height: 40px;
+    width: var(--page-ring-size);
+    height: 32px;
     place-items: center;
     margin: 0;
     padding: 0;
@@ -392,11 +397,11 @@
   .check-visual {
     position: relative;
     display: block;
-    width: 18px;
-    height: 18px;
-    border: 1.5px solid var(--text-faint);
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--tone-tertiary);
     border-radius: var(--radius-pill);
-    background: var(--surface-recessed);
+    background: transparent;
     transition: transform 110ms var(--motion-ease), border-color var(--motion-fast) var(--motion-ease);
   }
   .check:active .check-visual { transform: scale(0.92); }
@@ -411,10 +416,10 @@
     transition: transform var(--motion-slow) var(--motion-ease), opacity var(--motion-fast) linear;
   }
   .check[aria-checked="true"] .check-fill { opacity: 1; transform: scale(1); }
-  .check-mark { position: absolute; inset: -1.5px; width: 18px; height: 18px; }
+  .check-mark { position: absolute; inset: -1.5px; width: 16px; height: 16px; }
   .check-mark path {
     fill: none;
-    stroke: var(--surface-recessed);
+    stroke: var(--surface-1);
     stroke-width: 1.75;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -434,17 +439,17 @@
     flex: 1 1 auto;
     min-width: 0;
     width: 100%;
-    min-height: 36px;
+    min-height: 32px;
     align-items: center;
     margin: 0;
     padding: 0;
     border: 0;
     background: transparent;
-    color: var(--text-default);
+    color: var(--tone-primary);
     font: inherit;
-    font-size: var(--type-sm);
-    font-weight: 500;
-    line-height: 1.4;
+    font-size: var(--type-body);
+    font-weight: var(--weight-body);
+    line-height: 20px;
     text-align: left;
   }
   .step-title { cursor: pointer; border-radius: var(--radius-md); }
@@ -458,12 +463,12 @@
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
   }
-  .step.struck .title-text { color: var(--text-faint); }
+  .step.struck .title-text { color: var(--tone-tertiary); }
   .step.struck .strike-mark { background-size: 100% 1px; }
   /* Named for this disclosure, so the application-wide .panel card cannot style it. */
   .step-panel { overflow: hidden; }
   .step-panel-inner { padding: 0 0 var(--space-2); }
-  .detail { white-space: pre-wrap; max-width: 46ch; margin: 0; color: var(--text-faint); font-size: var(--type-sm); font-weight: 500; line-height: 1.45; }
+  .detail { white-space: pre-wrap; max-width: 46ch; margin: 0; color: var(--tone-secondary); font-size: var(--type-small); font-weight: var(--weight-small); line-height: 18px; }
   .blocked { margin: var(--space-2) 0 0; color: var(--accent-error); font-size: var(--type-sm); }
   .action {
     display: inline-flex;
@@ -478,7 +483,7 @@
     color: var(--surface-recessed);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 590;
+    font-weight: var(--weight-small);
     cursor: pointer;
   }
   .action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -486,23 +491,23 @@
   .group-toggle {
     display: grid;
     width: 100%;
-    min-height: 44px;
+    min-height: 32px;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     column-gap: var(--space-3);
     margin-top: 2px;
-    padding: 0 var(--space-3) 0 64px;
+    padding: 0 var(--space-3) 0 calc(var(--page-ring-size) + var(--space-3) * 2);
     border: 0;
     border-radius: var(--radius-md);
     background: transparent;
-    color: var(--text-faint);
+    color: var(--tone-tertiary);
     font: inherit;
-    font-size: var(--type-sm);
-    font-weight: 590;
+    font-size: var(--type-small);
+    font-weight: var(--weight-small);
     text-align: left;
     cursor: pointer;
   }
-  .group-toggle:hover { background-image: var(--interaction-hover); color: var(--text-strong); }
+  .group-toggle:hover { background-image: var(--interaction-hover); color: var(--tone-strong); }
   .sr {
     position: absolute;
     width: 1px;
@@ -515,13 +520,13 @@
   }
   /* A mouse needs no 44px target: rows keep one 36px pitch, like every list on the page. */
   @media (pointer: fine) {
-    .step-inner { padding-block: 2px; }
+    .step-inner { padding-block: 0; }
     .check { height: 32px; }
     .step-inner:has(:global([data-item-deadline])) > .check { margin-top: 0; }
     .step-title, .completed-title,
     .step-heading:has(:global([data-item-deadline])) > .step-title,
     .step-heading:has(:global([data-item-deadline])) > .completed-title { min-height: 32px; }
-    .group-toggle { min-height: 36px; font-weight: 500; }
+    .group-toggle { min-height: 32px; font-weight: var(--weight-small); }
   }
   @container (max-width: 380px) {
     .hide-label { display: none; }

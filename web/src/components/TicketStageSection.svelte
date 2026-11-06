@@ -112,7 +112,7 @@
   .ticket-field-approval {
     font-family: var(--font-ui);
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     color: var(--text-faintest);
     margin-left: auto;
     text-align: right;

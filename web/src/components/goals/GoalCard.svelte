@@ -33,11 +33,34 @@
  <div class="card-progress">{#if checklist}{#key checklist.id}<PageChecklist block={checklist} presentation="normal"/>{/key}{:else if chart}<PageChart block={chart} projection={readings.data?.charts?.[chart.id]} values={readings.data?.values??[]} goalId={goal.id} completed={goal.completed} status={goal.status} compact integrated/>{:else}<p>No readings yet</p>{/if}</div>
 </article>
 <style>
-.goal-card{display:flex;flex-direction:column;min-width:0;border:var(--border-hairline) solid var(--border-card);border-radius:var(--radius-lg);overflow:hidden;background:var(--surface-2)}.card-head{padding:var(--space-5) var(--space-5) 0}.goal-meta{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:var(--type-xs);font-weight:500;line-height:16px;color:var(--text-faint)}.goal-meta span:first-child{color:var(--text-faint)}h2{margin:0;font-size:var(--type-md);font-weight:600;line-height:22px;letter-spacing:-.008em}a{color:var(--text-strong);text-decoration:none;text-underline-offset:3px;text-decoration-thickness:1px}a:hover{text-decoration-line:underline;text-decoration-color:var(--text-faintest)}.card-progress{flex:1;padding:var(--space-4) var(--space-5) var(--space-5)}p{margin:0;color:var(--text-faint);font-size:var(--type-sm)}
-/* The card is the checklist's surface; a second box inside it would only nest. */
+/* THE CARD (page system): a 1px edge at 7%, a 2% lift, radius 12, padding 20. The card's
+   title is the section-head role; the line under it is small print: where the goal lives and
+   when it is due. Its state is said in words inside the card, never drawn as a glyph. */
+.goal-card{display:flex;flex-direction:column;min-width:0;border:var(--border-hairline) solid var(--page-card-edge);border-radius:var(--page-card-radius);overflow:hidden;background:var(--page-card-fill)}
+.card-head{padding:var(--page-card-pad) var(--page-card-pad) 0}
+.goal-meta{display:flex;align-items:center;flex-wrap:wrap;margin-top:2px;font-size:var(--type-small);font-weight:var(--weight-small);line-height:18px;color:var(--tone-tertiary);font-variant-numeric:tabular-nums}
+.goal-meta [aria-hidden]{padding-inline:6px}
+h2{margin:0;font-size:var(--type-page-section);font-weight:var(--weight-page-section);line-height:20px;letter-spacing:0}
+a{color:var(--tone-primary);text-decoration:none;text-underline-offset:3px;text-decoration-thickness:1px}
+a:hover{color:var(--tone-strong);text-decoration-line:underline;text-decoration-color:var(--tone-tertiary)}
+.card-progress{flex:1;padding:var(--space-4) var(--page-card-pad) var(--page-card-pad)}
+p{margin:0;color:var(--tone-tertiary);font-size:var(--type-small)}
 /* A chart card stretches to its neighbour's height with the period switch on its floor, so
    the shared height reads as the card's own composition rather than empty space. */
 .card-progress{display:flex;flex-direction:column}.card-progress > :global(.goal-chart-host){flex:1;display:flex;flex-direction:column}.card-progress :global(.goal-chart-host > .metric-card){flex:1;display:flex;flex-direction:column}.card-progress :global(.chart-range-footer){margin-top:auto;padding-top:var(--space-4)}
-.card-progress:has(:global([data-block="checklist"])){padding:var(--space-1) 0 var(--space-2)}
-.compact{flex-direction:row;align-items:center}.compact .card-head{flex:1;min-width:0;padding:var(--space-4) var(--space-5)}.compact .card-progress{flex:none;min-width:120px;padding:0 var(--space-5) 0 0}.card-progress :global([data-block="checklist"]){background:transparent;border-radius:0}
+/* The card is the checklist's surface: the checklist draws no surface or inset of its own. */
+.card-progress:has(:global([data-block="checklist"])){padding:var(--space-4) var(--page-card-pad) var(--space-3)}
+/* Inside the card the checklist stands on the card's own inset: its ring and its checks share
+   one column on the card's edge, its fills reach 8px past the words on hover, and no row
+   repeats an empty date mark (a step's date shows when it has one; the field is still there
+   to set one). */
+.card-progress :global([data-block="checklist"]){border:0}
+.card-progress :global([data-block="checklist"] .checklist-header){margin:-6px calc(var(--page-row-outset) * -1) var(--space-1)}
+.card-progress :global([data-block="checklist"] .checklist-header .header){padding:6px var(--page-row-outset)}
+.card-progress :global([data-block="checklist"] .body-inner){padding:0}
+.card-progress :global([data-block="checklist"] .step-inner){padding:0}
+.card-progress :global([data-block="checklist"] .group-toggle){padding:0 0 0 calc(var(--page-ring-size) + var(--space-3));margin-inline:0}
+.card-progress :global([data-item-deadline].undated .date-face svg){visibility:hidden}
+.compact{flex-direction:row;align-items:center}.compact .card-head{flex:1;min-width:0;padding:var(--space-4) var(--page-card-pad)}.compact .card-progress{flex:none;min-width:120px;padding:0 var(--page-card-pad) 0 0}.card-progress :global([data-block="checklist"]){background:transparent;border-radius:0}
+.compact .card-progress :global(.completion-headline){justify-content:flex-end}
 </style>

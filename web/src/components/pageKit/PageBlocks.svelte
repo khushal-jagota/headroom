@@ -111,22 +111,21 @@
 </div>
 
 <style>
+  /* Blocks of one page keep the section rhythm: 40px between them. */
   .blocks {
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
+    gap: var(--page-section-gap);
     min-width: 0;
-  }
-  .blocks > :global(.section) ~ :global(.section) {
-    margin-top: calc(var(--space-7) - var(--space-6));
   }
 
   .text {
     margin: 0;
-    color: var(--text-default);
-    font-size: var(--type-prose-lg);
-    font-weight: 500;
-    line-height: 1.6;
+    max-width: var(--page-prose-measure);
+    color: var(--tone-primary);
+    font-size: var(--type-body);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-body);
   }
   .text :global(p) {
     white-space: pre-wrap;
@@ -152,7 +151,7 @@
     margin: 0 0 var(--space-2);
     color: var(--text-strong);
     font-size: var(--type-md);
-    font-weight: 590;
+    font-weight: var(--weight-title);
     line-height: 1.4;
   }
   .callout[data-tone="attention"] .callout-title { color: var(--accent-bright); }
@@ -162,7 +161,7 @@
     margin: 0;
     color: var(--text-default);
     font-size: var(--type-md);
-    font-weight: 500;
+    font-weight: var(--weight-body);
     line-height: 1.5;
     white-space: pre-wrap;
   }
@@ -195,7 +194,7 @@
     margin: 0;
     color: var(--text-muted);
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .metric-change {
@@ -206,7 +205,7 @@
     background: var(--surface-2);
     color: var(--text-muted);
     font-size: var(--type-xs);
-    font-weight: 590;
+    font-weight: var(--weight-small);
     font-variant-numeric: tabular-nums;
     line-height: 1.4;
   }
@@ -226,7 +225,7 @@
     margin: var(--space-4) 0 0;
     color: var(--text-strong);
     font-size: var(--type-hero);
-    font-weight: 590;
+    font-weight: var(--weight-title);
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--tracking-title);
     line-height: 1;
@@ -235,7 +234,7 @@
     margin: var(--space-2) 0 0;
     color: var(--text-faint);
     font-size: var(--type-xs);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
 
@@ -250,14 +249,14 @@
     margin: 0;
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .fact dd {
     margin: var(--space-1) 0 0;
     color: var(--text-strong);
     font-size: var(--type-md);
-    font-weight: 590;
+    font-weight: var(--weight-body);
     line-height: 1.4;
     white-space: pre-wrap;
   }
@@ -267,7 +266,7 @@
     min-height: var(--space-6);
     color: var(--text-default);
     font-size: var(--type-md);
-    font-weight: 590;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .status[data-tone="attention"] { color: var(--accent-bright); }
@@ -331,14 +330,14 @@
     margin: 0;
     color: var(--text-strong);
     font-size: var(--type-md);
-    font-weight: 590;
+    font-weight: var(--weight-body);
     line-height: 1.4;
   }
   .row-detail {
     margin: 6px 0 0;
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .row-aside {
@@ -351,7 +350,7 @@
     margin: 0;
     color: var(--text-default);
     font-size: var(--type-sm);
-    font-weight: 590;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .row-aside[data-tone="attention"] .row-status { color: var(--accent-bright); }
@@ -361,7 +360,7 @@
     margin: 4px 0 0;
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
 

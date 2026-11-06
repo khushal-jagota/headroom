@@ -330,12 +330,12 @@
           <!-- Every page has one line above its title: where it lives, then its own facts.
                Under the title there is only the recap. -->
           <div class="page-band">
-          <div class="worker-eyebrow page-band-place" data-ticket-identity>
+          <div class="worker-eyebrow page-eyebrow page-band-place" data-ticket-identity>
             <!-- Where the Ticket runs leads the line, as its icon alone; the machine's name is
                  the mark's accessible name and tooltip. -->
             <span class="worker-machine" title={`Runs on ${machineName(masthead.locale)}`}><MachineIdentity locale={masthead.locale} /></span>
             <span data-project-fact>{masthead.project || "No project"}</span>
-            <span aria-hidden="true">·</span>
+            <span class="page-eyebrow-sep" aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
           </div>
           <!-- The Ticket's utilities sit at the band's right end, quiet and always shown, so
@@ -345,13 +345,15 @@
           </TicketLifecycleControls>{/if}
           </div>
           <div class="ticket-title-row">
+            <!-- The title owns the column less one fixed right column, where the activity and
+                 unread mark always stand: the rail's dot column, never a dot after the words. -->
             <div class="ticket-title">
-              <InlineEdit
+              <h1 class="page-title ticket-title-text"><InlineEdit
                 value={masthead.title}
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
-              />
-              <MachineActivityMark locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} />
+              /></h1>
+              <span class="ticket-title-mark"><MachineActivityMark locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} /></span>
             </div>
             <RecapSlot>
             {#snippet children()}
@@ -513,33 +515,34 @@
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
   .ticket-head { padding-top:0; }
-  .worker-eyebrow { line-height:20px; min-height:24px; display:flex; align-items:center; gap:6px; font-size:var(--type-sm); color:var(--text-faint); }
   .ticket-title-row { display:block; margin-top:var(--space-1); }
-  .worker-machine { display:inline-flex; align-items:center; gap:5px; }
-  .worker-machine :global(.machine-identity) { width:15px; height:15px; color:inherit; }
-  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:var(--type-page-title); font-weight:var(--weight-page-title); line-height:1.25; letter-spacing:-.02em; }
-  .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
+  .worker-machine { display:inline-flex; align-items:center; margin-right:6px; color:var(--tone-tertiary); }
+  .worker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
+  /* The title and a fixed 16px mark column, centred on the title's first line. */
+  .ticket-title { display:grid; grid-template-columns:minmax(0,1fr) 16px; column-gap:var(--space-3); align-items:start; }
+  .ticket-title-text { margin:0; }
+  .ticket-title :global(.ed) { font:inherit; color:var(--tone-strong); }
+  .ticket-title-mark { display:flex; align-items:center; justify-content:center; height:32px; }
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is
      written, and a gap that went with them would move the page. */
   .ticket-head :global([data-recap-slot]) { margin-top:var(--space-2); }
-  .ticket-head :global([data-recap]) { max-width:var(--page-prose-measure); font-family:var(--font-ui); font-size:var(--type-md); font-weight:500; line-height:24px; color:var(--text-muted); }
+  .ticket-head :global([data-recap]) { max-width:var(--page-prose-measure); font-family:var(--font-ui); font-size:var(--type-body); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }
-  .worker-current { margin-top:var(--space-5); }
-  .worker-live-card { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }
-  .worker-live-card h2 { margin:0; letter-spacing:-.008em; font-size:var(--type-md); font-weight:700; line-height:1.4; color:var(--text-strong); }
+  .worker-current { margin-top:var(--space-6); }
+  .worker-live-card { padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
+  .worker-live-card h2 { margin:0; letter-spacing:0; font-size:var(--type-page-section); font-weight:var(--weight-page-section); line-height:20px; color:var(--tone-primary); }
   .worker-ceiling-line { margin-top:var(--space-3); }
-  .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:var(--type-ui); line-height:1.4; color:var(--text-muted); padding:var(--space-2) var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:none; text-align:left; }
+  .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:var(--type-body); line-height:20px; color:var(--tone-secondary); padding:var(--space-2) var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:none; text-align:left; }
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
-  .worker-bands { line-height:1.6; margin-top:var(--space-4); padding-bottom:var(--space-7); }
+  /* Steps and Artifacts are two fold rows (app.css, THE FOLD ROW) between hairlines. */
+  .worker-bands { line-height:var(--leading-body); margin-top:var(--space-6); padding-bottom:var(--space-7); }
   .worker-steps { border-top:1px solid var(--border-color); }
-  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-sm); font-weight:550; color:var(--text-faint); cursor:pointer; list-style:none; }
+  .worker-steps > summary { cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }
-  .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .band-count { margin-left:0; font-weight:500; color:var(--text-faintest); }
   .worker-step-rows { padding-bottom:var(--space-4); }
   .worker-step-rows :global(.disclosure--stage) { margin:0; border:0; }
-  .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-ui); color:var(--text-muted); }
-  .worker-step-rows :global(.disclosure--stage > .disclosure-summary:hover) { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .worker-step-rows :global(.disclosure--stage > .disclosure-body) { padding:var(--space-2) var(--space-2) var(--space-5); font-family:var(--font-ui); font-size:15px; color:var(--text-faint); }
-  .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:var(--type-ui); letter-spacing:normal; }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-body); color:var(--tone-secondary); }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-summary:hover) { background-image:var(--interaction-hover); color:var(--tone-strong); }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-body) { padding:var(--space-2) var(--space-2) var(--space-5); font-family:var(--font-ui); font-size:var(--type-body); color:var(--tone-primary); }
+  .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:var(--type-body); letter-spacing:normal; }
 </style>

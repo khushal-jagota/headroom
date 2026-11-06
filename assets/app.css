@@ -287,7 +287,7 @@ textarea {
   margin: 0;
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -333,7 +333,7 @@ textarea {
 .agents-destination-name {
   color: var(--text-default);
   font-size: var(--type-md);
-  font-weight: 660;
+  font-weight: var(--weight-title);
 }
 
 .agents-destination-description {
@@ -415,7 +415,7 @@ textarea {
 .worker-launch-defaults-controls label > span {
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -475,7 +475,7 @@ textarea {
 .worker-stage-table th {
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -483,7 +483,7 @@ textarea {
 .worker-stage-name {
   display: block;
   color: var(--text-default);
-  font-weight: 590;
+  font-weight: var(--weight-title);
 }
 
 .worker-stage-id {
@@ -550,7 +550,7 @@ textarea {
 .worker-skill-field > span {
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -1573,7 +1573,7 @@ button.list-row:hover .list-row-title {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: var(--type-xs);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   line-height: 1;
   padding: var(--space-2) var(--space-3);
   cursor: pointer;
@@ -1642,22 +1642,24 @@ button.list-row:hover .list-row-title {
   overflow-wrap: anywhere;
 }
 
-/* The same rounded input stays distinct from the conversation in both states. */
+/* The same rounded input stays distinct from the conversation in both states: the
+ * reference composer's 10% surface, a 1px edge one step lighter, radius 12. */
 .chat-box {
   position: relative;   /* anchors the "/" command popover above it */
   flex: none;
-  background: var(--surface-input);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: calc(var(--radius-lg) + var(--space-1));
-  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+  background: var(--composer-surface);
+  border: var(--border-hairline) solid var(--composer-edge);
+  border-radius: var(--composer-radius);
+  padding: var(--space-3) var(--space-3) var(--space-2) calc(var(--composer-inset) - var(--border-hairline));
   transition: border-color var(--motion-fast) var(--motion-ease);
 }
-.chat-box:hover {
-  border-color: var(--border-hover);
-}
+/* Focus is the one ring every control wears, drawn where the edge was (offset 0 from the
+ * box's outer line), so the composer never shows an edge and a ring at once. */
 .chat-box:focus-within {
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 3px rgb(154 173 210 / 12%);
+  border-color: transparent;
+  box-shadow: none;
+  outline: var(--focus-width) solid var(--focus-ring);
+  outline-offset: calc(var(--border-hairline) * -1);
 }
 /* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
 .chat-box.drag {
@@ -1762,7 +1764,7 @@ button.list-row:hover .list-row-title {
 }
 .chat-att-words { min-width: 0; display: grid; gap: 1px; }
 .chat-att-name {
-  color: var(--text-strong); font-size: var(--type-xs); font-weight: 660;
+  color: var(--text-strong); font-size: var(--type-xs); font-weight: var(--weight-title);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .chat-att-meta {
@@ -1788,7 +1790,7 @@ button.list-row:hover .list-row-title {
   border-radius: var(--radius-md);
   background: var(--scrim);
   color: var(--text-strong);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   pointer-events: none;
   z-index: 15;
 }
@@ -1809,7 +1811,7 @@ button.list-row:hover .list-row-title {
   overflow-y: hidden;
   display: block;
 }
-.chat-ta::placeholder { color: var(--text-faint); }
+.chat-ta::placeholder { color: var(--tone-faint); }
 /* The input actions use one row and one treatment at every width. */
 .chat-foot {
   display: flex;
@@ -2157,7 +2159,7 @@ select {
   gap: var(--space-2);
   color: var(--text-faint);
   font-size: var(--type-sm);
-  font-weight: 500;
+  font-weight: var(--weight-small);
 }
 
 .scope-word {
@@ -2181,7 +2183,7 @@ select {
   color: var(--text-strong);
   cursor: pointer;
   font: inherit;
-  font-weight: 590;
+  font-weight: var(--weight-title);
   outline: none;
   min-width: 0;
   max-width: 100%;
@@ -2219,7 +2221,7 @@ select {
   justify-content: flex-end;
   gap: var(--space-1);
   padding: var(--space-5) 0 var(--space-4);
-  margin-right: calc(var(--space-2) * -1);
+  margin-right: calc(var(--space-3) * -1);
 }
 
 /* Inside the decision card the line joins the card's own action row. */
@@ -2229,48 +2231,11 @@ select {
   gap: var(--space-2);
 }
 
-.review-ticket-decision-line.review-ticket-decision-line--inline button,
-.review-ticket-decision-line.review-ticket-decision-line--inline a {
-  height: 32px;
-  padding: 0 var(--space-3);
-  background: none;
-  color: var(--text-faint);
-}
-
-/* The review chamber's breadcrumb slot: the same height and voice as every page's. */
+/* The review chamber's breadcrumb slot: the page band's height, the eyebrow's voice. */
 .review-eyebrow {
   display: flex;
   align-items: center;
-  min-height: 24px;
-  margin-top: var(--space-4);
-  margin-bottom: var(--space-2);
-  color: var(--text-faint);
-  font-size: var(--type-sm);
-  line-height: 20px;
-}
-
-.review-ticket-decision-line button,
-.review-ticket-decision-line a {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-md);
-  padding: 0 var(--space-2);
-  color: var(--text-faint);
-  font-family: var(--font-ui);
-  font-size: var(--type-sm);
-  font-weight: 550;
-  text-decoration: none;
-  cursor: pointer;
-  transition: color var(--motion-base) var(--motion-ease), background-color var(--motion-base) var(--motion-ease);
-}
-
-.review-ticket-decision-line button:hover,
-.review-ticket-decision-line a:hover {
-  background: var(--wash-hover);
-  color: var(--text-strong);
+  min-height: var(--page-band-height);
 }
 
 /* The keyboard hint, centered and faint, at the foot of the chamber. */
@@ -2303,7 +2268,7 @@ select {
 .review-ticket-title {
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 700;
+  font-weight: var(--weight-title);
   letter-spacing: -0.02em;
   color: var(--text-strong);
   text-decoration: none;
@@ -2340,7 +2305,7 @@ select {
   color: var(--text-muted);
   font-family: var(--font-ui);
   font-size: var(--type-ui);
-  font-weight: 500;
+  font-weight: var(--weight-small);
   line-height: 22px;
 }
 
@@ -2353,7 +2318,7 @@ select {
 [data-screen="review"] .disclosure--support > .disclosure-summary {
   font-family: var(--font-mono);
   font-size: var(--type-xs);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faint);
@@ -2550,7 +2515,7 @@ select {
   color: inherit;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   line-height: 1.2;
 }
 
@@ -2627,7 +2592,7 @@ select {
 
 .board-workspace-view[aria-selected="true"] {
   color: var(--text-strong);
-  font-weight: 590;
+  font-weight: var(--weight-title);
 }
 
 .board-workspace-view[aria-selected="true"]::after {
@@ -2678,7 +2643,7 @@ select {
   min-width: 0;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.2;
 }
@@ -2810,7 +2775,7 @@ select {
   min-width: 0;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.2;
   color: var(--text-strong);
@@ -2819,7 +2784,7 @@ select {
 /* Rested: every Ticket on this Item is done and quiet. Same box, only the title dims. */
 .board-workspace-item-title--rested {
   color: var(--text-faint);
-  font-weight: 500;
+  font-weight: var(--weight-small);
 }
 
 /* The Item title owns every group under it, not just the first, so it must not bind to
@@ -3003,7 +2968,7 @@ select {
 .disclosure--support > .disclosure-summary {
   color: var(--text-muted);
   font-size: var(--type-md);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   line-height: 1.3;
   transition: color var(--motion-fast) var(--motion-ease);
 }
@@ -3174,7 +3139,7 @@ select {
 .disclosure--stage[data-stage-state="errored"] > .disclosure-summary .disclosure-stage-name,
 .disclosure--stage[data-stage-state="needs-me"] > .disclosure-summary .disclosure-stage-name {
   color: var(--text-strong);
-  font-weight: 660;
+  font-weight: var(--weight-title);
 }
 
 .disclosure--stage[data-stage-state="completed"] > .disclosure-summary .disclosure-stage-name {
@@ -3378,7 +3343,7 @@ select {
   padding: 0;
   color: var(--accent-bright);
   font-size: var(--type-sm);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   cursor: pointer;
 }
 
@@ -3474,16 +3439,9 @@ select {
 .conversation-layer > .conversation-column {
   position: relative;
 }
+/* No hairline above the composer zone: the zone is the composer and its status line. */
 .conversation-layer > .conversation-column::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: var(--border-hairline);
-  background: var(--border-color);
-  opacity: var(--conversation-dock-line, 0);
-  pointer-events: none;
+  content: none;
 }
 .conversation-layer [data-conversation-pane] {
   padding-inline: 0;
@@ -3631,7 +3589,7 @@ select {
   max-width: 100%;
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
@@ -3750,7 +3708,7 @@ select {
   flex: none;
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -3770,7 +3728,7 @@ select {
 .artifact-chip small {
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 500;
+  font-weight: var(--weight-small);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -4144,7 +4102,7 @@ a.artifact-chip:hover,
   color: var(--text-strong);
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
 }
@@ -4205,7 +4163,7 @@ a.artifact-chip:hover,
   flex: 1;
   font-family: var(--font-ui);
   font-size: var(--type-xs);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   line-height: 1.3;
   text-transform: uppercase;
@@ -4237,7 +4195,7 @@ a.artifact-chip:hover,
   color: var(--text-faint);
   font-family: var(--font-ui);
   font-size: var(--type-md);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.3;
   transition: color var(--motion-fast) var(--motion-ease);
@@ -4291,7 +4249,7 @@ a.artifact-chip:hover,
   margin-left: auto;
   color: var(--text-faint);
   font-size: var(--type-sm);
-  font-weight: 500;
+  font-weight: var(--weight-small);
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -4302,7 +4260,7 @@ a.artifact-chip:hover,
 .manager-workspace-status > summary > .manager-workspace-count,
 .manager-workspace-section > summary > .manager-workspace-count {
   font-size: var(--type-sm);
-  font-weight: 500;
+  font-weight: var(--weight-small);
   color: var(--text-faintest);
 }
 
@@ -4424,7 +4382,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] .screen-header-title {
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
@@ -4475,7 +4433,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] .capture .title-in {
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   line-height: 1.4;
   color: var(--text-strong);
 }
@@ -4522,7 +4480,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] .list > .section-heading {
   padding: var(--space-1) 0 var(--space-2);
   font-size: var(--type-xs);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
@@ -4565,7 +4523,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] .list-row--idea .list-row-title {
   flex: 1;
   font-size: var(--type-md);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   color: var(--text-default);
   transition: color var(--motion-fast) var(--motion-ease);
 }
@@ -4648,7 +4606,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   background: var(--accent-bright);
   color: var(--surface-ink);
   border-color: var(--accent-bright);
-  font-weight: 660;
+  font-weight: var(--weight-title);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
   transition: background var(--motion-base) var(--motion-ease);
@@ -4678,7 +4636,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   margin: var(--space-2) 0 var(--space-7);
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   color: var(--text-strong);
 }
 
@@ -4698,7 +4656,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   margin: 0;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   color: var(--text-strong);
 }
 
@@ -4720,7 +4678,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .notification-option strong {
   font-family: var(--font-ui);
   font-size: var(--type-prose-lg);
-  font-weight: 590;
+  font-weight: var(--weight-title);
   color: var(--text-strong);
 }
 
@@ -4753,7 +4711,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .notification-action--primary {
   color: var(--surface-ink);
   background: var(--accent-bright);
-  font-weight: 660;
+  font-weight: var(--weight-title);
 }
 
 .notification-action:disabled {
@@ -4894,7 +4852,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   margin-inline:calc(-1 * var(--space-2));
   border-radius:var(--radius-md);
   font-size:var(--type-sm);
-  font-weight:550;
+  font-weight: var(--weight-small);
   color:var(--text-faint);
   cursor:pointer;
   list-style:none;
@@ -4902,7 +4860,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .disclosure-band > summary::-webkit-details-marker { display:none; }
 .disclosure-band > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .disclosure-band > summary:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
-.disclosure-band-trailing { margin-left:0; font-weight:500; color:var(--text-faintest); }
+.disclosure-band-trailing { margin-left:0; font-weight:var(--weight-small); color:var(--text-faintest); }
 .disclosure-band-body { padding-bottom:var(--space-4); }
 
 .chat-thread[data-more-below="true"] {
@@ -4936,7 +4894,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* === The main pane's page system ==========================================
  * One column, one top band, one type ladder and one end at the composer, on every page
- * (Chief, Manager, Ticket, goal, review). Values live in tokens.css. */
+ * (Chief, Manager, Ticket, goal, review). Values live in tokens.css. Component styles load
+ * after this file, so the rules that restyle another component's markup are written one
+ * step more specific than that component's own. */
 
 /* The top band: where the page lives on the left, the page's own utilities on the right.
  * The same height on every page, so every title starts on the same line. */
@@ -4951,12 +4911,36 @@ details:not([open]) > summary > .manager-workspace-chevron {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: var(--type-sm);
-  line-height: 20px;
-  color: var(--text-faint);
 }
 .page-band-place > * { min-width: 0; }
+
+/* THE EYEBROW — one pattern on every page that has one: Small words in the tertiary tone,
+ * joined by " · ". No icon except the machine marker, which leads the line. */
+.page-eyebrow,
+.manager-page .page-band-place .page-eyebrow,
+.ticket-screen .ticket-head .worker-eyebrow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+  min-width: 0;
+  min-height: 20px;
+  color: var(--tone-tertiary);
+  font-family: var(--font-ui);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  line-height: 18px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.page-eyebrow-sep {
+  flex: none;
+  padding-inline: 6px;
+  color: var(--tone-tertiary);
+}
+.page-eyebrow a { color: inherit; text-decoration: none; }
+.page-eyebrow a:hover { color: var(--tone-strong); }
+
 .page-band .page-band-actions,
 .page-band .ticket-lifecycle .actions {
   flex: none;
@@ -4973,73 +4957,315 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 .page-band .ticket-lifecycle .hint {
   margin: 0;
-  font-size: var(--type-xs);
-  color: var(--text-faint);
+  font-size: var(--type-small);
+  color: var(--tone-tertiary);
 }
+/* The band's right end holds ghost buttons, so its last label ends on the column edge
+ * less the button's own padding: the fill reaches the edge on hover, the words never do. */
+.page-band .page-band-actions,
+.page-band .ticket-lifecycle { margin-right: calc(var(--space-3) * -1); }
 
-/* A page utility: always shown, in the quiet voice, the same height as every page button.
- * It fills only on hover, inside its own box, so the band's right edge stays on the column. */
-.page-band .page-band-actions .request-recap-action,
-.page-band .ticket-lifecycle .text-action,
-.page-band .ticket-lifecycle .button,
-.page-band .ticket-lifecycle .request-recap-action,
-.page-band .page-utility,
-.goal-heading .page-utility {
-  display: inline-flex;
+/* THE PAGE TITLE — 26/600, the strong tone, one line height on every page. */
+.manager-page .manager-column .manager-workspace-head .manager-workspace-title,
+.page-title {
+  display: block;
+  margin: var(--space-1) 0 0;
+  color: var(--tone-strong);
+  font-family: var(--font-ui);
+  font-size: var(--type-page-title);
+  font-weight: var(--weight-page-title);
+  letter-spacing: var(--tracking-page-title);
+  line-height: 32px;
+  overflow-wrap: anywhere;
+}
+/* A page title never carries a mark after its words. The Manager's conversation signal is
+ * shown in the rail and on the composer's status line. */
+.manager-page .manager-column .manager-workspace-head .manager-workspace-title .conversation-signal-marks { display: none; }
+
+/* THE RECAP — body text in the primary tone, never wider than the prose measure. */
+.ticket-recap {
+  max-width: var(--page-prose-measure);
+  color: var(--tone-primary);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
+  line-height: var(--leading-body);
+}
+.ticket-recap:hover,
+.ticket-recap:focus-within { color: var(--tone-primary); }
+.ticket-recap--clamped {
+  max-height: calc(var(--type-body) * var(--leading-body) * var(--clamp-lines, 3));
+}
+.manager-page .manager-column .manager-workspace-head [data-recap-slot] { margin-top: var(--space-2); }
+.manager-page .manager-column .manager-workspace-head .manager-workspace-recap {
+  max-width: var(--page-prose-measure);
+  color: var(--tone-primary);
+  font-family: var(--font-ui);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
+  line-height: var(--leading-body);
+}
+.manager-page .manager-column .manager-workspace-head .manager-workspace-recap .ed { font: inherit; }
+
+/* THE SECTION — 40px before its head, the head in the section-head role, 14px to its
+ * content. Tickets and Goals are drawn the same way on every page. */
+.manager-page .manager-column .manager-workers,
+.manager-page .manager-column .goals-overview { margin-top: var(--page-section-gap); }
+.manager-page .manager-column .page-tickets > h2,
+.manager-page .manager-column .goals-overview > header > h2,
+.page-section-head {
+  margin: 0 0 var(--page-head-gap);
+  color: var(--tone-primary);
+  font-family: var(--font-ui);
+  font-size: var(--type-page-section);
+  font-weight: var(--weight-page-section);
+  letter-spacing: 0;
+  line-height: 20px;
+}
+.manager-page .manager-column .goals-overview > header { margin: 0; min-height: 0; }
+
+/* THE PAGE LIST — the rail's group heading and row, at body size. Words stand on the
+ * column's edge; a row's fill reaches --page-row-outset past it on both sides. Counts are
+ * plain small numerals in the heading's own tone. A heading keeps 12px above it and 4px
+ * below, so it binds to its rows; the list starts 12px up so the first heading sits on the
+ * section head's 14px. (.page-tickets is doubled to outrank the list's own scoped rules.) */
+.manager-column .page-tickets.page-tickets .manager-children {
+  --list-inset: 0px;
+  margin: -12px 0 0;
+}
+.manager-column .page-tickets.page-tickets .manager-children [data-worker-section],
+.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] {
+  display: block;
+  margin: 0;
+}
+.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] + [data-worker-section][data-empty="true"]::before { content: none; }
+.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status,
+.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status + .manager-workspace-status,
+.manager-column .page-tickets.page-tickets .manager-children [data-worker-section] + [data-worker-section],
+.manager-column .page-tickets.page-tickets .manager-children [data-worker-section] + [data-worker-section]:not([data-empty="true"]) { margin-top: 0; }
+.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary {
+  position: relative;
+  display: flex;
   align-items: center;
   gap: 6px;
+  min-height: 0;
+  height: 36px;
+  margin: 0 calc(var(--page-row-outset) * -1);
+  padding: 12px var(--page-row-outset) 4px;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--tone-tertiary);
+  font-family: var(--font-ui);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  line-height: 20px;
+  letter-spacing: 0;
+}
+/* Backlogged and Done are two heading rows like every other group (never one shared line). */
+.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] .manager-workspace-status > summary,
+.manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] + [data-worker-section][data-empty="true"] .manager-workspace-status > summary {
+  padding: 12px var(--page-row-outset) 4px;
+}
+.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary:hover {
+  background: none;
+  color: var(--tone-secondary);
+}
+.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status-label {
+  font-size: var(--type-small);
+  color: inherit;
+}
+.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary > .manager-workspace-count,
+.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group] .manager-workspace-count {
+  display: inline;
+  min-width: 0;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--count-tone);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  line-height: 20px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+/* Every group is a fold, so every group heading shows the fold's chevron at the right. */
+.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary::after,
+.page-fold > summary::after {
+  content: "";
+  flex: none;
+  width: var(--page-chevron);
+  height: var(--page-chevron);
+  margin-left: auto;
+  background: var(--tone-tertiary);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status[open] > summary::after,
+.page-fold[open] > summary::after { transform: rotate(90deg); }
+.manager-column .page-tickets.page-tickets .manager-children .ticket-row {
+  min-height: var(--page-row-height);
+  width: calc(100% + var(--page-row-outset) * 2);
+  max-width: none;
+  margin: 0 calc(var(--page-row-outset) * -1);
+  padding: 6px var(--page-row-outset);
+  gap: var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--tone-secondary);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
+  line-height: 20px;
+}
+.manager-column .page-tickets.page-tickets .manager-children .ticket-row .machine-identity { display: none; }
+.manager-column .page-tickets.page-tickets .manager-children .ticket-row:hover,
+.manager-column .page-tickets.page-tickets .manager-children .ticket-row:focus-visible {
+  background: var(--wash-hover);
+  color: var(--tone-strong);
+}
+/* A row that needs the person is the rail's bright row: strong, one weight up. */
+.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_approval"] .ticket-row,
+.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_answer"] .ticket-row {
+  color: var(--tone-strong);
+  font-weight: var(--weight-needs-you);
+}
+.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_approval"] > summary,
+.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_answer"] > summary { color: var(--tone-tertiary); }
+/* The unread dot keeps the rail's reserved right column, under the chevrons. */
+.manager-column .page-tickets.page-tickets .manager-children .ticket-row .conversation-signal-marks {
+  flex: none;
+  justify-content: center;
+  width: var(--page-chevron);
+}
+.manager-column .page-tickets.page-tickets .manager-children .manager-workspace-empty {
+  padding: 6px 0;
+  color: var(--tone-tertiary);
+  font-size: var(--type-small);
+}
+
+/* THE BUTTON ON A PAGE — interim. The one Button component ranks a page's actions: primary
+ * (inverse), secondary ("quiet", which the shared Button maps to secondary: a 13% fill) and
+ * ghost ("pill", mapped to ghost: no fill until hovered); 28px, radius 8, padding 0 12, label
+ * 13.5/450, a hover adds one step. This block only carries the shared Buttons section's look
+ * onto the pages while that section is not in this branch; once it is, this block can go. */
+:is(.manager-page, .ticket-screen, .review-screen) .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: none;
   height: var(--page-control-height);
-  padding: 0 10px;
+  margin: 0;
+  padding: 0 12px;
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
-  box-shadow: none;
-  color: var(--text-faint);
-  font: inherit;
+  color: var(--tone-secondary);
   font-family: var(--font-ui);
-  font-size: var(--type-sm);
-  font-weight: 550;
-  line-height: 20px;
+  font-size: var(--type-row);
+  font-weight: var(--weight-small);
+  line-height: 1;
   white-space: nowrap;
+  text-decoration: none;
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
 }
-.page-band .page-band-actions .request-recap-action:hover,
-.page-band .ticket-lifecycle .text-action:hover,
-.page-band .ticket-lifecycle .button:hover,
-.page-band .ticket-lifecycle .request-recap-action:hover,
-.page-band .page-utility:hover,
-.goal-heading .page-utility:hover {
-  background-color: var(--wash-hover);
-  color: var(--text-strong);
+:is(.manager-page, .ticket-screen, .review-screen) .button svg { width: 14px; height: 14px; flex: none; }
+:is(.manager-page, .ticket-screen, .review-screen) .button:disabled { color: var(--tone-faint); opacity: 1; cursor: default; }
+:is(.manager-page, .ticket-screen, .review-screen) .button[aria-disabled="true"] { color: var(--tone-faint); cursor: default; }
+:is(.manager-page, .ticket-screen, .review-screen) .button--primary {
+  background: var(--page-button-primary-fill);
+  color: var(--page-button-primary-ink);
 }
-.page-band .page-utility:focus-visible,
-.goal-heading .page-utility:focus-visible,
-.page-band .request-recap-action:focus-visible,
-.page-band .ticket-lifecycle .text-action:focus-visible {
-  outline: var(--focus-width) solid var(--focus-ring);
-  outline-offset: 0;
+:is(.manager-page, .ticket-screen, .review-screen) .button--primary:hover:not(:disabled) { background: var(--page-button-primary-fill-hover); }
+:is(.manager-page, .ticket-screen, .review-screen) .button--primary:disabled { background: var(--page-button-secondary-fill); }
+:is(.manager-page, .ticket-screen, .review-screen) :is(.button--secondary, .button--quiet) {
+  background: var(--page-button-secondary-fill);
+  color: var(--tone-secondary);
 }
-.page-band .page-utility:disabled,
-.goal-heading .page-utility:disabled { cursor: default; opacity: .5; }
+:is(.manager-page, .ticket-screen, .review-screen) :is(.button--secondary, .button--quiet):hover:not(:disabled) {
+  background: var(--page-button-secondary-fill-hover);
+  color: var(--tone-strong);
+}
+:is(.manager-page, .ticket-screen, .review-screen) :is(.button--ghost, .button--pill):hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--page-button-ghost-fill-hover);
+  color: var(--tone-strong);
+}
+
+/* THE CARD — one edge, one lift, one radius, one inset. */
+.page-card {
+  border: var(--border-hairline) solid var(--page-card-edge);
+  border-radius: var(--page-card-radius);
+  background: var(--page-card-fill);
+  padding: var(--page-card-pad);
+}
+
+/* THE FOLD ROW — Steps, Artifacts and every band like them: a label, its count in small
+ * print, and the chevron at the right end. */
+.disclosure-band > summary,
+.ticket-screen .worker-bands .worker-steps > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 var(--page-row-outset);
+  margin-inline: calc(var(--page-row-outset) * -1);
+  border-radius: var(--radius-md);
+  color: var(--tone-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
+  line-height: 20px;
+}
+.disclosure-band > summary:hover,
+.ticket-screen .worker-bands .worker-steps > summary:hover { background-image: var(--interaction-hover); color: var(--tone-strong); }
+.disclosure-band-trailing,
+.ticket-screen .worker-bands .band-count {
+  margin-left: 0;
+  color: var(--tone-tertiary);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  font-variant-numeric: tabular-nums;
+}
+.disclosure-band > summary::after,
+.ticket-screen .worker-bands .worker-steps > summary::after {
+  content: "";
+  flex: none;
+  width: var(--page-chevron);
+  height: var(--page-chevron);
+  margin-left: auto;
+  background: var(--tone-tertiary);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+.disclosure-band[open] > summary::after,
+.ticket-screen .worker-bands .worker-steps[open] > summary::after { transform: rotate(90deg); }
+.disclosure-band > summary:hover::after,
+.ticket-screen .worker-bands .worker-steps > summary:hover::after { background: var(--tone-secondary); }
 
 /* The review chamber's line above the title is the same band. */
 .review-eyebrow {
   min-height: var(--page-band-height);
   margin-top: 0;
-  margin-bottom: var(--space-1);
+  margin-bottom: 0;
 }
 .review-screen { padding-top: 0; }
-.review-ticket-title {
+.review-screen .review-ticket-title {
+  margin: var(--space-1) 0 0;
+  color: var(--tone-strong);
   font-size: var(--type-page-title);
   font-weight: var(--weight-page-title);
-  letter-spacing: -0.02em;
-  line-height: 1.25;
+  letter-spacing: var(--tracking-page-title);
+  line-height: 32px;
 }
-.review-recap {
+.review-screen .review-recap {
   max-width: var(--page-prose-measure);
-  font-size: var(--type-md);
-  line-height: 24px;
+  margin-top: var(--space-2);
+  color: var(--tone-primary);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
+  line-height: var(--leading-body);
 }
 
 /* The page ends at the composer zone without a line: the zone's top fades over the page's

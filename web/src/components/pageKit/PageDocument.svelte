@@ -28,7 +28,7 @@
   h1 {
     margin: 0;
     font-size: var(--type-display);
-    font-weight: 590;
+    font-weight: var(--weight-title);
     letter-spacing: var(--tracking-title);
     line-height: 1.15;
     color: var(--text-strong);

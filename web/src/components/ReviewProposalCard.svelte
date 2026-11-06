@@ -234,9 +234,9 @@
     {#if decisionActions}{@render decisionActions()}{:else}
     <div class="review-card-actions">
       {#if onSkip}
-        <Button variant="quiet" data-skip="" onclick={onSkip}>Skip</Button>
+        <Button variant="pill" data-skip="" onclick={onSkip}>Skip</Button>
       {/if}
-      <a data-open-ticket href={ticketHref}>Open ticket</a>
+      <Button variant="pill" data-open-ticket href={ticketHref}>Open ticket</Button>
     </div>
     {/if}
   </div>
@@ -249,9 +249,9 @@
     {#if decisionActions}{@render decisionActions()}{:else}
     <div class="review-card-actions">
       {#if onSkip}
-        <Button variant="quiet" data-skip="" onclick={onSkip}>Skip</Button>
+        <Button variant="pill" data-skip="" onclick={onSkip}>Skip</Button>
       {/if}
-      <a data-open-ticket href={ticketHref}>Open ticket</a>
+      <Button variant="pill" data-open-ticket href={ticketHref}>Open ticket</Button>
     </div>
     {/if}
   </div>
@@ -269,9 +269,9 @@
       {#if !embedded}
       <div class="review-ticket-decision-line review-arrive review-arrive--1">
         {#if onSkip}
-          <button data-skip="" onclick={onSkip}>Skip</button>
+          <Button variant="pill" data-skip="" onclick={onSkip}>Skip</Button>
         {/if}
-        <a data-open-ticket href={ticketHref}>Open ticket</a>
+        <Button variant="pill" data-open-ticket href={ticketHref}>Open ticket</Button>
       </div>
 
       <div class="review-ticket-heading review-arrive review-arrive--2">

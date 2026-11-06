@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "./Button.svelte";
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount, onDestroy } from "svelte";
@@ -214,9 +215,9 @@
           <div bind:this={headerElement}>
           {#snippet managerTitle()}<InlineEdit value={item.title} placeholder="(untitled Manager)" ariaLabel="Manager name" onSave={(value)=>saveItem("title",value)}/>{/snippet}
           {#snippet settleButton()}
-            <button type="button" class="page-settle page-utility" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>
+            <Button variant="pill" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>
               <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{item.settled?'Reopen':'Settle'}
-            </button>
+            </Button>
           {/snippet}
           {#snippet goalHeading()}
             {#if soleGoal}<GoalHeader goal={soleGoal}>
@@ -226,28 +227,33 @@
           {/snippet}
           <ManagerHeader heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
             recap={item.recap} onSaveRecap={(value)=>saveItem("recap",value)} recapTarget={{kind:"manager",id:item.id}}>
-            {#snippet eyebrow()}<div class="page-eyebrow">{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`}>{workspaceName}</a>{/if}<span>{item.project}</span></div>{/snippet}
+            {#snippet eyebrow()}<div class="page-eyebrow">{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`}>{workspaceName}</a><span class="page-eyebrow-sep page-back-sep" aria-hidden="true">·</span>{/if}<span>{item.project}</span></div>{/snippet}
             {#snippet actions()}{@render settleButton()}{/snippet}
             {#snippet title()}{@render managerTitle()}{/snippet}
           </ManagerHeader>
           {#if settleError}<p role="alert">{settleError}</p>{/if}
           </div>
 
-          {#if soleGoal}<GoalContent goal={soleGoal}/>
+          {#snippet tickets()}
+            {#if !hasTickets(soleGoal?soleGoal.page:holderPage.data?.page)}<section class="manager-workers" aria-label="Workers">
+              <PageTickets principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication}
+                onHover={(element, id, immediate) => {
+                  const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
+                  if (ticket) hoverRow(element, ticket, immediate);
+                }} onLeave={() => hover.leave()} />
+            </section>{/if}
+          {/snippet}
+          <!-- A Manager's page leads with the work waiting on the person, as the Chief's does;
+               its goals follow. A Manager whose one goal is the page keeps that goal first. -->
+          {#if soleGoal}<GoalContent goal={soleGoal}/>{@render tickets()}
           {:else}
+            {@render tickets()}
             {#if held.held.length>1}<GoalsOverview goals={item.goals} holderKind="manager" holderId={itemId}/>{/if}
             {#if holderPage.data?.page}<HolderDocument holder={{kind:"manager",id:itemId}}/>{/if}
           {/if}
-          {#if !hasTickets(soleGoal?soleGoal.page:holderPage.data?.page)}<section class="manager-workers" aria-label="Workers">
-            <PageTickets principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication}
-              onHover={(element, id, immediate) => {
-                const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
-                if (ticket) hoverRow(element, ticket, immediate);
-              }} onLeave={() => hover.leave()} />
-          </section>{/if}
           <div class="manager-bands disclosure-bands">
             <details class="disclosure-band goal-band" data-goal-band>
-              <summary>Goal<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
+              <summary>Goal</summary>
               <div class="disclosure-band-body">
                 <div class="manager-goal">
                   <InlineEdit
@@ -286,22 +292,13 @@
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Manager"} worker={hoverWorker} cards={[]} rail={hoverTarget} recapTarget={hoverWorker ? { kind: "ticket", id: hoverWorker.id } : null} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
 <style>
-  /* The same breadcrumb voice as every page: muted words with dot separators. */
-  .page-eyebrow { display:flex; align-items:center; gap:6px; min-height:24px; font-size:var(--type-sm); line-height:20px; color:var(--text-faint); }
-  .page-eyebrow a { color:inherit; text-decoration:none; text-underline-offset:3px; }
-  .page-back + span::before { content:"·"; margin-right:6px; color:var(--text-faintest); }
-  /* Beside the rail the line above the title is the project alone, the same word the rail
-     shows above this Manager's name; the rail is the way back. A phone has no rail, so
-     there the line keeps its way back to the Workspace. */
-  @media (min-width:721px) { .page-back, .page-back + span::before { display:none; } }
-  .page-eyebrow a:hover { color:var(--text-strong); text-decoration-line:underline; }
-  /* Settle is one of the page's utilities in the top band: always shown, in the quiet voice. */
-  .page-settle svg { width:14px; height:14px; flex:none; }
+  /* The eyebrow is the page system's one pattern (app.css, .page-eyebrow). Beside the rail
+     the line above the title is the project alone, the same word the rail shows above this
+     Manager's name; the rail is the way back. A phone has no rail, so there the line keeps
+     its way back to the Workspace. */
+  @media (min-width:721px) { .page-back, .page-back-sep { display:none; } }
   .manager-workers { margin-top:var(--page-section-gap); }
-  .manager-bands { margin-top:var(--space-6); }
-  .manager-goal { font-size:var(--type-md); line-height:1.6; color:var(--text-muted); max-width:66ch; }
-  .goal-chevron { font-size:var(--type-md); line-height:1; }
-  .goal-chevron::before { content:"\203A"; }
-  .goal-band[open] > summary .goal-chevron::before { content:"\2304"; }
-  a:focus-visible, button:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
+  .manager-bands { margin-top:var(--page-section-gap); }
+  .manager-goal { font-size:var(--type-body); line-height:var(--leading-body); color:var(--tone-primary); max-width:var(--page-prose-measure); }
+  a:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 </style>

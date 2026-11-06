@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "./Button.svelte";
   import { onMount, untrack, type Snippet } from 'svelte';
   import { createQuery } from '@tanstack/svelte-query';
   import type { ReviewMessageItem } from '../lib/types';
@@ -146,8 +147,8 @@
 <div bind:this={card} data-review-card data-review-item-type="message" data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
   {#snippet ownActions()}
     <div class="review-ticket-decision-line review-ticket-decision-line--inline">
-      {#if !embedded}<button data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</button>{/if}
-      <a data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={event=>{if(busy)event.preventDefault();}}>Open conversation</a>
+      {#if !embedded}<Button variant="pill" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>{/if}
+      <Button variant="pill" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
     </div>
     {@render decisionActions?.()}
   {/snippet}
@@ -166,7 +167,7 @@
         <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
           {disabled} sendDisabled={busy || !ready} sending={busy}
           sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>
-        <div class="review-read-row"><button data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</button><div class="review-card-trailing">{@render ownActions()}</div></div>
+        <div class="review-read-row"><Button variant="pill" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button><div class="review-card-trailing">{@render ownActions()}</div></div>
         {#if error}<ErrorLine {error}/>{/if}
       </div>
     {:else if error}<ErrorLine {error}/><div class="review-read-row"><button class="button button--quiet" onclick={()=>void load()}>Retry</button><div class="review-card-trailing">{@render ownActions()}</div></div>{/if}

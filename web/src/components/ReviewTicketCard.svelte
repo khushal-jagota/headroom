@@ -7,6 +7,7 @@
   import { workspaceAddress } from '../lib/workspaceAddress';
   import { selectedRecap } from '../lib/navigation/views/recap.svelte';
   import RequestRecapAction from './RequestRecapAction.svelte';
+  import Button from './Button.svelte';
   import InlineEdit from './InlineEdit.svelte';
   import ClampedText from './ClampedText.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
@@ -22,11 +23,11 @@
 <div data-review-ticket-card data-review-item-type="ticket" data-ticket-id={item.ticket_id}>
   {#if inlineDecision}
     <!-- Skip and Open ticket sit in the decision card's own action row; this is the page's breadcrumb slot. -->
-    <div class="review-eyebrow">Review</div>
+    <div class="review-eyebrow page-eyebrow">Review</div>
   {:else}
   <div class="review-ticket-decision-line">
-    <button data-skip disabled={busy} onclick={onSkip}>Skip</button>
-    <a data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket</a>
+    <Button variant="pill" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
+    <Button variant="pill" data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket</Button>
   </div>
   {/if}
   <div class="review-ticket-heading"><div class="review-ticket-heading-main">

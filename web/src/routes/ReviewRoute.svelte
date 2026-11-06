@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "../components/Button.svelte";
   import { tick, onDestroy } from "svelte";
   import { previewHashHref } from "../lib/filePreview";
   import { rememberReviewVisit, takeReviewVisit, reviewVisitItemKey } from "../lib/review/visit";
@@ -301,8 +302,8 @@
         {#key ticket.ticket_id}
           {#snippet decision()}
             <div class="review-ticket-decision-line review-ticket-decision-line--inline">
-              <button data-skip disabled={messageBusy} onclick={()=>skip(ticket)}>Skip</button>
-              <a data-open-ticket href={workspaceAddress({kind:'ticket',id:ticket.ticket_id})}>Open ticket</a>
+              <Button variant="pill" data-skip disabled={messageBusy} onclick={()=>skip(ticket)}>Skip</Button>
+              <Button variant="pill" data-open-ticket href={workspaceAddress({kind:'ticket',id:ticket.ticket_id})}>Open ticket</Button>
             </div>
           {/snippet}
           <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal) || ticket.messages.length > 0}>

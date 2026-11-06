@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '../Button.svelte';
  import GoalContent from './GoalContent.svelte';
  import {workspaceAddress} from '../../lib/workspaceAddress';
  import {createQuery} from '@tanstack/svelte-query';
@@ -48,7 +49,7 @@
 <ManagerFrame class="goal-workspace" bind:conversationState {openedFile} {onOpenFile}>
  <div class="goal-content" data-goal-page={id}>
  {#if goal}
- <GoalHeader {goal}>{#snippet mark()}{#if goal.holder_kind==='chief'}<button class="make-manager page-utility" disabled={promoting} aria-busy={promoting} onclick={makeManager}>{promoting?'Making Manager…':'Make it a Manager'}</button>{/if}{/snippet}</GoalHeader>
+ <GoalHeader {goal}>{#snippet mark()}{#if goal.holder_kind==='chief'}<Button variant="pill" class="make-manager" disabled={promoting} aria-busy={promoting} onclick={makeManager}>{promoting?'Making Manager…':'Make it a Manager'}</Button>{/if}{/snippet}</GoalHeader>
  {#if error}<ErrorLine {error}/>{/if}
  <GoalContent {goal}/>
  {:else if detail.error}<ErrorLine error={detail.error}/>{:else}<p>Loading goal…</p>{/if}

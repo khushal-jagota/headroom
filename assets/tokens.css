@@ -279,30 +279,66 @@
 :root {
   /* The page column. Every page and its composer share this width, centred in the pane. */
   --page-measure: 760px;
-  --page-prose-measure: 680px;
+  /* Prose (recaps, proposal text, page text) never runs wider than this inside the column:
+   * about 85 characters of body text, the reference apps' reading measure. */
+  --page-prose-measure: 580px;
   /* The page's top band: the one line above the title (where it lives) on the left and the
    * page's own utilities on the right. One height on every page. */
   --page-band-height: 48px;
-  /* The space between a page's sections, and between its header and the first one. */
+  /* The space before a section head, and from a head to its content. */
   --page-section-gap: 40px;
-  /* Page type: a bold title, quiet section heads, body, and a small-print tier for chart
-   * axes, table headers and dates. */
+  --page-head-gap: 14px;
+  /* Page type: the page-title role and the section-head role. */
   --type-page-title: 26px;
   --weight-page-title: 600;
+  --tracking-page-title: -0.01em;
   --type-page-section: 15px;
   --weight-page-section: 600;
   --type-small-print: var(--type-small);
   --tone-small-print: var(--tone-tertiary);
   /* Every button on a page: one height, one radius, one label size. */
   --page-control-height: 28px;
-  /* The composer zone fades in over the page's last lines instead of cutting them with a line,
-   * and the page keeps enough room under its last block to scroll fully clear of it. */
-  --composer-fade: 40px;
+  /* One card: a 1px edge at 7%, a 2% lift, radius 12, padding 20. Nothing inside a card
+   * draws a surface of its own. */
+  --page-card-fill: rgb(255 255 255 / 2%);
+  --page-card-edge: rgb(255 255 255 / 7%);
+  --page-card-radius: 12px;
+  --page-card-pad: 20px;
+  /* A page list row: the rail's row at body size. Its fill reaches this far past the
+   * column on both sides, so the words stay on the column's edge. */
+  --page-row-height: 32px;
+  --page-row-outset: 8px;
+  /* A progress ring inside a card is data: 2px, the done green at full strength on this
+   * track, at least 28px. */
+  --page-ring-size: 28px;
+  --page-ring-track: rgb(255 255 255 / 10%);
+  /* A disclosure's chevron, drawn the same at the right end of every fold. */
+  --page-chevron: 14px;
+  /* The page keeps this much room under its last block, so it can scroll fully clear of
+   * the composer zone. */
   --page-end-room: var(--space-7);
-  /* A page list's needs-you count: the accent fill with dark ink, the same mark on every page
-   * list. The rail's review badge is --accent-badge. */
-  --count-needs-you-fill: var(--accent-fill);
-  --count-needs-you-ink: var(--surface-ink);
+  --composer-fade: 40px;
+  /* The composer: the reference composer's surface (10% white) with a 1px edge one step
+   * lighter, radius 12. The status line above it is small print on its inner edge. */
+  --composer-surface: #303030;
+  --composer-edge: #404040;
+  --composer-radius: 12px;
+  --composer-inset: 16px;
+  --composer-status-gap: 6px;
+  /* A page's button ranks and its chart range switch read the shared control tokens
+   * (Button, SegmentedControl) and carry the same numbers until those tokens are present. */
+  --page-button-primary-fill: var(--button-primary-fill, rgb(255 255 255 / 88%));
+  --page-button-primary-fill-hover: var(--button-primary-fill-hover, rgb(255 255 255 / 94%));
+  --page-button-primary-ink: var(--button-primary-ink, #181818);
+  --page-button-secondary-fill: var(--button-secondary-fill, rgb(255 255 255 / 13%));
+  --page-button-secondary-fill-hover: var(--button-secondary-fill-hover, rgb(255 255 255 / 19%));
+  --page-button-ghost-fill-hover: var(--button-ghost-fill-hover, rgb(255 255 255 / 6%));
+  --page-segment-selected-fill: var(--segment-selected-fill, rgb(255 255 255 / 12%));
+  --page-segment-hover-fill: var(--segment-hover-fill, rgb(255 255 255 / 6%));
+  /* Counts are plain small numerals after their label, in the label's own tone. */
+  --count-tone: var(--tone-tertiary);
+  --count-needs-you-fill: transparent;
+  --count-needs-you-ink: var(--tone-tertiary);
 }
 
 /* === Direction v2 roles (Manager-owned; notes/design-direction.md) ==========

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "./Button.svelte";
   /* The owner's ask for a fresh recap, in the quiet action voice.
    *
    * The same words in every place it appears, because it does the same thing in every
@@ -47,22 +48,18 @@
        renames itself when pressed moves the page under the hand that pressed it.
        Marked rather than disabled: a disabled control loses focus the instant it is
        pressed, and inside a hover panel losing focus is how the panel decides you left. -->
-  <button
-    type="button"
+  <Button
+    variant="pill"
     class="request-recap-action"
     aria-disabled={sending}
     data-request-recap-action
     onclick={() => void ask()}
-  >Ask for a recap</button>
+  >Ask for a recap</Button>
   {#if note}<span class="request-recap-note" data-request-recap-note>{note}</span>{/if}
 </span>
 
 <style>
   .request-recap { display:inline-flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
-  /* A page's own quiet actions are outlined, not filled: the filled tier is the decision. */
-  .request-recap-action { display:inline-flex; align-items:center; height:32px; padding:0 var(--space-3); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:inset 0 0 0 var(--border-hairline) var(--border-hover); color:var(--text-muted); font:inherit; font-size:var(--type-sm); font-weight:500; cursor:pointer; text-decoration:none; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
-  .request-recap-action:hover { background-color:var(--wash-hover); color:var(--text-strong); }
-  .request-recap-action[aria-disabled="true"] { cursor:default; color:var(--text-faintest); }
-  .request-recap-action[aria-disabled="true"]:hover { color:var(--text-faintest); }
-  .request-recap-note { color:var(--text-faintest); font-size:var(--type-xs); }
+  /* A page's own utility: the ghost rank of the one Button. */
+  .request-recap-note { color:var(--tone-tertiary); font-size:var(--type-small); }
 </style>

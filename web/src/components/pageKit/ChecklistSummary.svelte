@@ -31,22 +31,26 @@
 </div>
 
 <style>
- .header{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);padding:var(--space-5)}
+ /* The checklist's line: a 28px progress ring (2px, the done green at full strength on a 10%
+    track), the checklist's name in body text and its count in small print, and the fold's
+    chevron at the right. */
+ .header{display:grid;grid-template-columns:var(--page-ring-size) minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);padding:var(--page-card-pad)}
  .header.small{padding:var(--space-4)}
- .heading{display:grid;min-width:0;gap:1px}
- h3{margin:0;color:var(--text-strong);font-size:var(--type-md);font-weight:590;line-height:1.4}
- .count{margin:0;color:var(--text-faint);font-size:var(--type-sm);line-height:1.4}
+ .heading{display:grid;min-width:0;gap:0}
+ h3{margin:0;color:var(--tone-primary);font-size:var(--type-body);font-weight:var(--weight-body);line-height:20px}
+ .count{margin:0;color:var(--tone-tertiary);font-size:var(--type-small);font-weight:var(--weight-small);line-height:18px;font-variant-numeric:tabular-nums}
  .count-visual{display:inline-flex;align-items:baseline}
  .roll{position:relative;display:inline-grid;vertical-align:top}
  .roll>span{grid-area:1/1}
  .swap{position:relative;display:inline-grid;max-width:100%;vertical-align:top}
  .swap-sizer{grid-area:1/1;visibility:hidden}
  .swap-text{grid-area:1/1}
- .ring{position:relative;display:grid;width:40px;height:40px;color:var(--text-strong)}
- .ring-arc,.ring-tick{grid-area:1/1;width:40px;height:40px}
- .ring-track{fill:none;stroke:var(--border-hover);stroke-width:2.5}
- .ring-fill{fill:none;stroke:var(--accent-done);stroke-width:2.5;stroke-linecap:round;transition:stroke-dashoffset var(--motion-slow) var(--motion-ease)}
- .ring-tick path{fill:none;stroke:currentColor;stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:0;animation:draw 240ms var(--motion-ease) both}
+ .ring{position:relative;display:grid;width:var(--page-ring-size);height:var(--page-ring-size);color:var(--accent-done)}
+ .ring-arc,.ring-tick{grid-area:1/1;width:var(--page-ring-size);height:var(--page-ring-size)}
+ /* Drawn in a 40-unit box at 28px, so a 2.857-unit stroke is 2px on screen. */
+ .ring-track{fill:none;stroke:var(--page-ring-track);stroke-width:2.857}
+ .ring-fill{fill:none;stroke:var(--accent-done);stroke-width:2.857;stroke-linecap:round;transition:stroke-dashoffset var(--motion-slow) var(--motion-ease)}
+ .ring-tick path{fill:none;stroke:currentColor;stroke-width:2.857;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:0;animation:draw 240ms var(--motion-ease) both}
  .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);border:0}
  @keyframes draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
  .reduced .ring-fill,.reduced .ring-tick path{transition:none;animation:none}

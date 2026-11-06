@@ -1,4 +1,4 @@
-.figure { display: grid; justify-items: center; min-width: 0; gap: 10px; margin: 0; text-align: center; }.figure figcaption { display: grid; gap: 3px; min-width: 0; }.figure strong { font-size: var(--text-sm); font-weight: 590; }.detail { color: var(--text-faintest); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.figure { display: grid; justify-items: center; min-width: 0; gap: 10px; margin: 0; text-align: center; }.figure figcaption { display: grid; gap: 3px; min-width: 0; }.figure strong { font-size: var(--text-sm); font-weight: var(--weight-small); }.detail { color: var(--text-faintest); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .neutral { --gauge-color: var(--chart-muted); --gauge-text: var(--text-muted); }.accent { --gauge-color: var(--accent); --gauge-text: var(--accent-strong); }.success { --gauge-color: var(--success); --gauge-text: var(--success); }.warning { --gauge-color: var(--warning); --gauge-text: var(--warning); }.danger { --gauge-color: var(--danger); --gauge-text: var(--danger); }
 
 /* An activity style ring: a thick stroke with round caps over a faint tint of its own color. The stroke scales with the ring. */
@@ -9,11 +9,11 @@
 
 /* The readout sits on the ring's true centre, which is the middle of a square as wide as the ring. */
 .readout { display: grid; place-content: center; justify-items: center; gap: 4px; }
-.number { position: relative; display: inline-flex; align-items: baseline; color: var(--foreground); font-family: var(--font-display); font-size: var(--text-3xl); font-weight: 590; letter-spacing: var(--tracking-display); line-height: 1; font-variant-numeric: tabular-nums; }
+.number { position: relative; display: inline-flex; align-items: baseline; color: var(--foreground); font-family: var(--font-display); font-size: var(--text-3xl); font-weight: var(--weight-title); letter-spacing: var(--tracking-display); line-height: 1; font-variant-numeric: tabular-nums; }
 .digits { display: inline-flex; justify-content: flex-end; white-space: nowrap; }
 .unit { white-space: pre; margin-left: 1px; color: var(--text-secondary); font-family: var(--font-body); font-size: .5em; letter-spacing: 0; }
 .sizer { position: absolute; top: 0; left: 0; visibility: hidden; white-space: nowrap; pointer-events: none; }
-.status { min-width: 100px; min-height: 1.4em; color: var(--gauge-text); font-size: var(--text-xs); font-weight: 590; line-height: 1.4; transition: color var(--duration-standard) var(--ease-standard); }
+.status { min-width: 100px; min-height: 1.4em; color: var(--gauge-text); font-size: var(--text-xs); font-weight: var(--weight-small); line-height: 1.4; transition: color var(--duration-standard) var(--ease-standard); }
 
 /* Label, status and detail copy swap in place: the outgoing line is popped out of flow while the new one rises in. */
 .swap { position: relative; display: block; }

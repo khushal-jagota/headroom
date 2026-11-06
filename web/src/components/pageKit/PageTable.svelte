@@ -443,32 +443,35 @@
 </div>
 
 <style>
+  /* THE CARD (page system). The table sits on the card itself: no second box inside it,
+     only the hairlines between its rows. Its first and last columns stand on the card's
+     inset, the same edge as the caption above them. */
   .table-block {
     min-width: 0;
-    padding: var(--space-5);
-    border: 1px solid var(--chart-card-border);
-    border-radius: var(--radius-lg);
-    background: var(--chart-surface);
-    color: var(--text-strong);
+    padding: var(--page-card-pad);
+    border: var(--border-hairline) solid var(--page-card-edge);
+    border-radius: var(--page-card-radius);
+    background: var(--page-card-fill);
+    color: var(--tone-primary);
   }
   .caption {
-    margin: 0 0 var(--space-4);
-    color: var(--text-strong);
-    font-size: var(--type-md);
-    font-weight: 590;
-    line-height: normal;
-    letter-spacing: -.012em;
+    margin: 0 0 var(--page-head-gap);
+    color: var(--tone-primary);
+    font-size: var(--type-page-section);
+    font-weight: var(--weight-page-section);
+    line-height: 20px;
+    letter-spacing: 0;
   }
   .card {
-    --column-wash: var(--chart-surface-muted);
-    --row-line: color-mix(in srgb, var(--chart-grid) 92%, transparent);
+    --column-wash: var(--wash-context);
+    --row-line: var(--border-color);
     position: relative;
     min-width: 0;
     overflow: hidden;
-    border: var(--border-hairline) solid var(--chart-grid);
-    border-radius: 8px;
-    background: var(--chart-surface);
-    color: var(--text-strong);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--tone-primary);
   }
   .scroller { position: relative; overflow-x: auto; overscroll-behavior-x: contain; }
   .band {
@@ -486,13 +489,13 @@
     min-width: 560px;
     border-collapse: separate;
     border-spacing: 0;
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: var(--type-body);
+    line-height: 20px;
     text-align: left;
   }
   table[data-fixed] { table-layout: fixed; }
   th, td {
-    --cell-base: var(--chart-surface);
+    --cell-base: transparent;
     --cell-fill: var(--cell-base);
     position: relative;
     background-color: var(--cell-fill);
@@ -500,33 +503,38 @@
   }
   th[data-sorted], td[data-sorted] { --cell-base: var(--column-wash); }
   th {
-    height: 44px;
+    height: 32px;
     padding: 0;
-    border-bottom: var(--border-hairline) solid var(--chart-grid);
-    color: var(--chart-muted);
-    font-size: var(--type-xs);
-    font-weight: 500;
+    border-bottom: var(--border-hairline) solid var(--row-line);
+    color: var(--tone-tertiary);
+    font-size: var(--type-small);
+    font-weight: var(--weight-small);
     white-space: nowrap;
   }
-  th[data-sorted] { color: var(--text-strong); }
+  th[data-sorted] { color: var(--tone-secondary); }
   td {
-    height: 52px;
+    height: 40px;
     padding: 0 var(--space-4);
     border-bottom: var(--border-hairline) solid var(--row-line);
-    color: var(--text-strong);
-    font-weight: 500;
+    color: var(--tone-primary);
+    font-weight: var(--weight-body);
+    font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
   }
-  td[data-primary] { color: var(--text-strong); font-weight: 500; }
-  td[data-missing] { color: var(--chart-muted); }
+  td[data-primary] { color: var(--tone-primary); font-weight: var(--weight-body); }
+  td[data-missing] { color: var(--tone-tertiary); }
   td[data-tone="good"] { color: var(--accent-done); }
   td[data-tone="attention"] { color: var(--accent-attention); }
   td[data-tone="bad"] { color: var(--accent-error); }
   td[data-tone="neutral"] { color: var(--chart-legend); }
   td[data-tone="info"] { color: var(--accent-bright); }
-  td[data-tone] .cell-copy { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
+  td[data-tone] .cell-copy { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--type-body); }
   .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
   tbody tr:last-child td { border-bottom: 0; }
+  /* The outer columns stand on the card's inset, so the rules between rows span exactly the
+     card's content width. */
+  td:first-child, th:first-child .sort, th:first-child .editable-sort { padding-left: 0; }
+  td:last-child, th:last-child .sort { padding-right: 0; }
   table[data-selectable] tbody tr { cursor: pointer; }
   tbody tr[data-selected] td {
     --cell-fill: color-mix(in srgb, var(--accent-bright) 8%, var(--cell-base));
@@ -541,7 +549,7 @@
     align-items: center;
     cursor: pointer;
   }
-  td.select-cell .hit { height: 52px; }
+  td.select-cell .hit { height: 40px; }
   .hit-input {
     position: absolute;
     inset: 0;
@@ -606,7 +614,7 @@
   .sort {
     display: flex;
     width: 100%;
-    height: 44px;
+    height: 32px;
     align-items: center;
     justify-content: flex-start;
     margin: 0;
@@ -677,7 +685,7 @@
   .empty {
     height: 120px;
     color: var(--chart-muted);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     text-align: center;
   }
   .footer {
@@ -691,7 +699,7 @@
     border-top: var(--border-hairline) solid var(--chart-grid);
     color: var(--chart-muted);
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .count { margin: 0; font-variant-numeric: tabular-nums; }
@@ -707,7 +715,7 @@
     color: var(--text-strong);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 590;
+    font-weight: var(--weight-small);
     cursor: pointer;
   }
   .sr {
@@ -769,12 +777,12 @@
     table[data-selectable] tbody tr { padding-left: 44px; }
     table[data-selectable] tbody tr[data-selected] { --row-fill: color-mix(in srgb, var(--accent-bright) 8%, var(--chart-surface)); }
     tbody tr:last-child { border-bottom: 0; }
-    td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--chart-secondary); font-size: 11px; text-align: left; }
-    td[data-primary] { order: 0; flex: 1 1 0; color: var(--text-strong); font-size: 13px; font-weight: 590; }
-    td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: 8px; color: var(--text-strong); font-size: 13px; }
-    td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--chart-secondary); font-size: 11px; }
+    td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--chart-secondary); font-size: var(--type-small); text-align: left; }
+    td[data-primary] { order: 0; flex: 1 1 0; color: var(--text-strong); font-size: var(--type-body); font-weight: var(--weight-body); }
+    td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: 8px; color: var(--text-strong); font-size: var(--type-body); }
+    td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--chart-secondary); font-size: var(--type-small); }
     td[data-sorted]:not([data-primary]):not([data-tone]) { color: var(--text-strong); }
-    td[data-tone] .cell-copy { font-size: 11px; }
+    td[data-tone] .cell-copy { font-size: var(--type-small); }
     td.select-cell { position: absolute; top: 0; bottom: 0; left: 4px; display: flex; width: 36px; align-items: center; padding: 0; }
     td.select-cell .hit { justify-content: center; }
     .empty { flex: 1 0 100%; height: auto; padding: 24px 0; text-align: center; }

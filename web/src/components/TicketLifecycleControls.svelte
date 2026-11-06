@@ -1,8 +1,8 @@
 <script lang="ts">
+  import Button from "./Button.svelte";
   import type { Snippet } from "svelte";
   import type { TicketDetail } from "../lib/types";
   import { mutateJson } from "../lib/mutate";
-  import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
 
   let { ticket, terminal, leading }: { ticket: TicketDetail; terminal: boolean; leading?: Snippet } = $props();
@@ -35,9 +35,9 @@
       {#if leading}<span class="separator" aria-hidden="true">·</span>{/if}
       {#if ticket.is_backlogged}<span class="state" data-ticket-backlogged>Backlogged</span>{/if}
       {#if ticket.is_backlogged}
-        <Button disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>
+        <Button variant="quiet" disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>
       {:else}
-        <button type="button" class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</button>
+        <Button variant="pill" class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</Button>
       {/if}
       {/if}
     </div>
@@ -47,12 +47,9 @@
 </div>
 
 <style>
-  .ticket-lifecycle { margin-top:var(--space-4); font-size:13px; color:var(--text-muted); }
-  .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); }
-  .text-action { display:inline-flex; align-items:center; height:32px; padding:0 var(--space-3); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:inset 0 0 0 var(--border-hairline) var(--border-hover); color:var(--text-muted); font:inherit; font-size:var(--type-sm); font-weight:500; cursor:pointer; text-decoration:none; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
-  .text-action:hover { background-color:var(--wash-hover); color:var(--text-strong); }
-  .text-action:disabled { cursor:default; opacity:.5; }
+  .ticket-lifecycle { font-size:var(--type-small); color:var(--tone-tertiary); }
+  .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-1); }
   .separator { display:none; }
-  .state { color:var(--text-strong); font-weight:660; }
-  .hint { margin:var(--space-2) 0; line-height:1.6; }
+  .state { color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); margin-right:var(--space-1); }
+  .hint { margin:var(--space-2) 0; line-height:18px; }
 </style>

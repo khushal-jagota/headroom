@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '../Button.svelte';
  import {setContext} from 'svelte';
  import {createQuery} from '@tanstack/svelte-query';
  import {goalQueries} from '../../lib/goals/queries';
@@ -52,7 +53,7 @@
  {#if error}<ErrorLine {error}/>{/if}
  {#if checklist}<section class="checklist-panel" aria-label="Completion checklist">{#key `${goal.id}:${checklist.id}`}<PageChecklist block={checklist} presentation="normal"/>{/key}</section>{/if}
  {#if primary}<section class="measure-panel" aria-label="Current reading"><PageChart block={primary} integrated/>
-  {#if goal.kind==='binary'}<div class="panel-actions"><button class="completion-action" onclick={()=>change({completed:!goal.completed})}>{goal.completed?'Mark not done':'Mark done'}</button></div>{/if}
+  {#if goal.kind==='binary'}<div class="panel-actions"><Button variant="quiet" class="completion-action" onclick={()=>change({completed:!goal.completed})}>{goal.completed?'Mark not done':'Mark done'}</Button></div>{/if}
  </section>{/if}
  {#if readings.error}<ErrorLine error={readings.error}/>{/if}
  {#each readings.data?.sources.filter(s=>s.health!=='healthy')??[] as source(source.source_id)}<p class="source-warning">{source.source_name}: {source.health}</p>{/each}
@@ -62,5 +63,5 @@
 </div>
 <style>
 .goal-content{container-type:inline-size}/* The approved card: the chart sits inside it without a second frame. */
-.measure-panel{margin-top:0;padding:var(--space-5);border:1px solid var(--chart-card-border);border-radius:var(--radius-lg);background:var(--chart-surface)}.measure-panel :global(.completion-card){min-height:124px}.panel-actions{display:flex;justify-content:flex-end;margin-top:var(--space-4)}.completion-action{height:32px;border:1px solid var(--border-color);border-radius:var(--radius-md);background:none;padding:0 var(--space-3);color:var(--text-default);font:inherit;font-size:var(--type-sm);font-weight:590;cursor:pointer}.completion-action:hover{background-image:var(--interaction-hover);color:var(--text-strong)}.goal-page{margin-top:var(--space-6)}.source-warning{font-size:12px;color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}
+.measure-panel{margin-top:0;padding:var(--page-card-pad);border:var(--border-hairline) solid var(--page-card-edge);border-radius:var(--page-card-radius);background:var(--page-card-fill)}.measure-panel :global(.completion-card){min-height:124px}.panel-actions{display:flex;justify-content:flex-end;margin-top:var(--space-4)}.goal-page{margin-top:var(--page-section-gap)}.source-warning{font-size:var(--type-small);color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}
 </style>
