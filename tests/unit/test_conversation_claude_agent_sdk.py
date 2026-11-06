@@ -16,7 +16,6 @@ lives in ``tests/support/conversation_claude_agent_sdk_bench.py``.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -80,8 +79,7 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
         child, sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=SESSION_ID)
         options = clients[0].options
-        assert options.settings is not None
-        assert json.loads(options.settings) == {"disableAllHooks": True}
+        assert options.settings is None
         assert options.setting_sources is None
         assert options.cwd == str(tmp_path)
         assert options.cli_path == Path("/usr/bin/claude")
@@ -122,8 +120,7 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
         child, _sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=None)
         options = clients[0].options
-        assert options.settings is not None
-        assert json.loads(options.settings) == {"disableAllHooks": True}
+        assert options.settings is None
         assert options.setting_sources is None
         assert options.cwd == str(tmp_path)
         assert options.cli_path == Path("/usr/bin/claude")
