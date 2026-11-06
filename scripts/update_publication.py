@@ -173,7 +173,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument(
         "operation",
-        choices=("selection", "seal", "smoke", "rehearsal", "unchanged", "receipt"),
+        choices=("selection", "seal", "rehearsal", "unchanged", "receipt"),
     )
     args = parser.parse_args()
     gate = Path(os.environ["PANELS_GATE_DIR"])
@@ -187,40 +187,24 @@ def main() -> None:
         digest = create_app_archive(candidate, archive)
         (gate / "archive-sha256.txt").write_text(digest + "\n")
         (gate / "manifest.json").write_bytes((candidate / "manifest.json").read_bytes())
-    elif args.operation in {"smoke", "rehearsal"}:
+    elif args.operation == "rehearsal":
         digest = (gate / "archive-sha256.txt").read_text().strip()
         candidate = Path(os.environ["PANELS_CANDIDATE_APP"])
-        destination = candidate.with_name(args.operation + "-candidate")
+        destination = candidate.with_name("rehearsal-candidate")
         manifest = extract_app_archive(archive, destination, digest, requested)
-        if args.operation == "smoke":
-            from planner.environments.deployment_gate import smoke_candidate
-
-            smoke_candidate(destination, requested)
-            (gate / "smoke.json").write_text(
-                json.dumps(
-                    {
-                        "requested_sha": requested,
-                        "artifact_digest": manifest.artifact_digest,
-                        "archive_sha256": digest,
-                        "passed": True,
-                    }
-                )
-                + "\n"
+        (gate / "evidence.json").write_text(
+            json.dumps(
+                {
+                    "requested_sha": requested,
+                    "artifact_digest": manifest.artifact_digest,
+                    "publication_run_id": int(os.environ["GITHUB_RUN_ID"]),
+                    "archive_sha256": digest,
+                }
             )
-        else:
-            (gate / "evidence.json").write_text(
-                json.dumps(
-                    {
-                        "requested_sha": requested,
-                        "artifact_digest": manifest.artifact_digest,
-                        "publication_run_id": int(os.environ["GITHUB_RUN_ID"]),
-                        "archive_sha256": digest,
-                    }
-                )
-                + "\n"
-            )
-            with Path(os.environ["GITHUB_ENV"]).open("a") as stream:
-                stream.write(f"PANELS_CANDIDATE_APP={destination}\n")
+            + "\n"
+        )
+        with Path(os.environ["GITHUB_ENV"]).open("a") as stream:
+            stream.write(f"PANELS_CANDIDATE_APP={destination}\n")
     elif args.operation == "unchanged":
         # The build job runs this after every proof, just before it uploads the archive.
         if hash_archive(archive) != (gate / "archive-sha256.txt").read_text().strip():
@@ -234,18 +218,11 @@ def main() -> None:
             value["artifact_digest"],
             parse_optional_runtime_contract(value.get("runtime_contract")),
         )
-        for name in ("smoke.json", "replacement-proof.json"):
-            if not (gate / name).is_file():
-                raise ValueError(f"publication proof is missing: {name}")
+        if not (gate / "replacement-proof.json").is_file():
+            raise ValueError("publication proof is missing: replacement-proof.json")
         digest = (gate / "archive-sha256.txt").read_text().strip()
-        smoke = json.loads((gate / "smoke.json").read_text())
-        if smoke != {
-            "requested_sha": requested,
-            "artifact_digest": manifest.artifact_digest,
-            "archive_sha256": digest,
-            "passed": True,
-        }:
-            raise ValueError("smoke proof differs from publication identity")
+        # The Debian target proof runs the same health, assets, and API smoke on
+        # these exact archive bytes, before and after relocation.
         target = validate_target_proof(gate, manifest, requested, digest)
         mac = validate_mac_publication(
             gate / "mac",
