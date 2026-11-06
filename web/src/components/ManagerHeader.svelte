@@ -9,7 +9,7 @@
 
   // ``recapTarget`` is the agent that can be asked for a fresh recap. Every agent with a
   // recap passes one; a header shown without a live agent behind it passes nothing.
-  let { title, heading, eyebrow, actions, recap, onSaveRecap, signal, conversationId = null, recapTarget = null }: {
+  let { title, heading, eyebrow, actions, recap, onSaveRecap, signal, conversationId = null, recapTarget = null, recapNote = $bindable(null) }: {
     title: Snippet;
     heading?: Snippet;
     eyebrow?: Snippet;
@@ -20,6 +20,9 @@
     signal?: Partial<ConversationSignal>;
     conversationId?: string | null;
     recapTarget?: { kind: "manager" | "chief"; id: string } | null;
+    /** What became of the last ask for a recap: shown under the recap, as staging. A heading
+     *  that carries its own ask binds it here. */
+    recapNote?: string | null;
   } = $props();
 </script>
 
@@ -32,7 +35,7 @@
     <div class="page-band-place">{#if eyebrow}{@render eyebrow()}{/if}</div>
     {#if recapTarget !== null || actions}<div class="page-band-actions">
       {@render actions?.()}
-      {#if recapTarget !== null}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} />{/if}
+      {#if recapTarget !== null}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} bind:note={recapNote} noteInline={false} />{/if}
     </div>{/if}
   </div>
   <h1 class="manager-workspace-title">
@@ -61,10 +64,12 @@
     {/snippet}
     </RecapSlot>
   {/if}
+  {#if recapNote}<p class="manager-workspace-recap-note" role="status" data-request-recap-note>{recapNote}</p>{/if}
 </header>
 
 <style>
   .manager-workspace-head { padding-top:0; }
+  .manager-workspace-recap-note { margin:var(--space-2) 0 0; color:var(--tone-tertiary); font-size:var(--type-small); line-height:18px; }
   /* A sole goal's header (its recap last) keeps the block gap before the goal's card. */
   .manager-workspace-head:has(:global(.goal-heading)) { margin-bottom:var(--page-block-gap); }
   .manager-workspace-title { font-family:var(--font-ui); font-size:var(--type-page-title); font-weight:var(--weight-page-title); line-height:1.25; letter-spacing:-0.02em; margin-top:var(--space-1); overflow-wrap:anywhere; }

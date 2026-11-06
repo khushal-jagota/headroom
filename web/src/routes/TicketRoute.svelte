@@ -177,6 +177,9 @@
   // cannot live in the stage. It lives here, where it outlives the move.
   let readerStageFolds = new SvelteMap<string, boolean>();
   let stepsOpen = $state(false);
+  let recapNote = $state<string | null>(null);
+  // A note belongs to the Ticket it was asked of.
+  $effect(() => { void stableId; recapNote = null; });
   const fieldDrafts = new Map<string, InlineEditDraft>();
   function fieldDraft(name: string): InlineEditDraft {
     let draft = fieldDrafts.get(name);
@@ -341,7 +344,7 @@
           <!-- The Ticket's utilities sit at the band's right end as ghosts, quiet and always
                shown, so the decision below is the page's one call to action. -->
           {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} variant="ghost">
-            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" />{/snippet}
+            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" bind:note={recapNote} noteInline={false} />{/snippet}
           </TicketLifecycleControls>{/if}
           </div>
           <div class="ticket-title-row">
@@ -375,6 +378,8 @@
             </ClampedText>
             {/snippet}
             </RecapSlot>
+            <!-- What became of an ask for a recap reads under the recap, as staging. -->
+            {#if recapNote}<p class="ticket-recap-note" role="status" data-request-recap-note>{recapNote}</p>{/if}
           </div>
           {#if masthead.locale === "macos"}<MacStatus health={machineHealth.isError ? undefined : machineHealth.data} showDisconnected />{/if}
           {#if detail.blocker_summary?.blocked_by.length}
@@ -518,6 +523,7 @@
   .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
   .ticket-head { padding-top:var(--page-top); }
   .ticket-title-row { display:block; margin-top:var(--space-1); }
+  .ticket-recap-note { margin:var(--space-2) 0 0; color:var(--tone-tertiary); font-size:var(--type-small); line-height:18px; }
   .worker-machine { display:inline-flex; align-items:center; margin-right:6px; color:var(--tone-tertiary); }
   .worker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
   /* The title and a fixed 16px mark column, centred on the title's first line. */
