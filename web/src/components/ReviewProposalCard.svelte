@@ -394,7 +394,7 @@
                 class="review-revision-input"
                 data-review-revision-input
                 rows="1"
-                placeholder="Or tell the worker what to change..."
+                placeholder="Add a note for the worker…"
                 bind:value={revisionDraft}
                 onkeydown={(event) => {
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.repeat) {
