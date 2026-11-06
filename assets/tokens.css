@@ -25,11 +25,11 @@
 :root {
   /* Surfaces — two general neutral planes and one deliberately recessed plane.
    * Ink remains for knockout marks and the retired Day card. */
-  --surface-1: #181818;
-  --surface-2: #202020;
-  --surface-recessed: #141414;
+  --surface-1: #121212;
+  --surface-2: #1a1a1a;
+  --surface-recessed: #0e0e0e;
   /* The workspace rail: one close step above the page, divided by a hairline. */
-  --surface-rail: #212121;
+  --surface-rail: #1b1b1b;
   /* The secondary action's fill (Direction v2: 13% white, no border). Older callers that
    * paint a secondary action with it land on the shared button's secondary fill. */
   --fill-secondary: var(--button-secondary-fill);
@@ -41,11 +41,11 @@
   --surface-code: rgb(255 255 255 / 5%);
   /* Popovers, menus, tooltips and hover previews: the one raised plane. It carries a 1px
    * ring (--border-raised) and --shadow-float. */
-  --surface-raised: #2a2a2a;
+  --surface-raised: #242424;
   --border-raised: rgb(255 255 255 / 10%);
   /* The composer field: one clear step above the page, with a 1px edge one step lighter. */
-  --surface-input: #303030;
-  --border-input: #404040;
+  --surface-input: #2a2a2a;
+  --border-input: #3a3a3a;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;
@@ -85,14 +85,14 @@
   --type-chart-completion: var(--type-page-title);
   /* Approved chart-sheet surfaces and category palettes. These remain separate
    * from the shell so the production renderer preserves the approved examples. */
-  --chart-surface: #202020;
+  --chart-surface: #1a1a1a;
   /* A trend line is drawn in the calm brand blue; the stretches that meet their target
    * turn the done green, and red stays with the status text. */
   --chart-line-good: var(--accent-done);
   --chart-line-bad: #9aadd2;
   --chart-line-attention: #9aadd2;
   --chart-surface-raised: #252525;
-  --chart-surface-muted: #212121;
+  --chart-surface-muted: #1b1b1b;
   --chart-card-border: #ffffff12;
   --chart-grid: #ffffff14;
   --chart-border-strong: #ffffff24;
@@ -106,7 +106,7 @@
   --chart-range-border: #ffffff0d;
   --chart-range-selected: #2c2c2c;
   --chart-range-shadow: 0 1px 3px #0003;
-  --chart-meter-track: #2a2a2a;
+  --chart-meter-track: #242424;
   --chart-budget-track: #424242;
   --chart-budget-remaining: #676767;
   --chart-allocation-blue: #9aadd2;
@@ -241,7 +241,7 @@
   /* Primary: inverse. */
   --button-primary-fill: rgb(255 255 255 / 88%);
   --button-primary-fill-hover: rgb(255 255 255 / 94%);
-  --button-primary-ink: #181818;
+  --button-primary-ink: #121212;
   /* Secondary: a 13% fill, no border, a secondary-tone label. */
   --button-secondary-fill: rgb(255 255 255 / 13%);
   --button-secondary-fill-hover: rgb(255 255 255 / 19%);
@@ -386,8 +386,8 @@
   --composer-fade: 40px;
   /* The composer: the reference composer's surface (10% white) with a 1px edge one step
    * lighter, radius 12. The status line above it is small print on its inner edge. */
-  --composer-surface: #303030;
-  --composer-edge: #404040;
+  --composer-surface: var(--surface-input);
+  --composer-edge: var(--border-input);
   --composer-radius: 12px;
   --composer-inset: 16px;
   --composer-status-gap: 6px;
@@ -406,7 +406,7 @@
 /* === Direction v2 roles (Manager-owned; notes/design-direction.md) ==========
    Six type roles and five text tones for the whole app. Hierarchy comes from tone,
    not from many sizes and weights. Tones are solid greys computed as white at the
-   stated alpha over the page surface #181818. Change these only through the Manager. */
+   stated alpha over a #181818 page; the page is now #121212 (owner: darker, all backgrounds evenly), so text reads a step crisper. Change these only through the Manager. */
 :root {
   --tone-strong: #ececec;    /* 92%: titles, needs-you items, hovered/selected text */
   --tone-primary: #dadada;   /* 84%: body prose, recaps, card content, section heads */
