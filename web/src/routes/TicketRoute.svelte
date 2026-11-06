@@ -3,7 +3,6 @@
   import MacStatus from "../components/machines/MacStatus.svelte";
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
   import MachineIdentity from "../components/machines/MachineIdentity.svelte";
-  import { machineName } from "../lib/ticketMachines";
   import { onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
@@ -329,12 +328,19 @@
         <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <!-- Every page has one line above its title: where it lives, then its own facts.
                Under the title there is only the recap. -->
-          <div class="worker-eyebrow" data-ticket-identity>
+          <div class="page-band">
+          <div class="worker-eyebrow page-band-place" data-ticket-identity>
+            <!-- Where the Ticket runs leads the line, as its icon alone. -->
+            <span class="worker-machine"><MachineIdentity locale={masthead.locale} /></span>
             <span data-project-fact>{masthead.project || "No project"}</span>
             <span aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
-            <span aria-hidden="true">·</span>
-            <span class="worker-machine"><MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span></span>
+          </div>
+          <!-- The Ticket's utilities sit at the band's right end, quiet and always shown, so
+               the decision below is the page's one call to action. -->
+          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal}>
+            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
+          </TicketLifecycleControls>{/if}
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title">
@@ -367,9 +373,6 @@
             </RecapSlot>
           </div>
           {#if masthead.locale === "macos"}<MacStatus health={machineHealth.isError ? undefined : machineHealth.data} showDisconnected />{/if}
-          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal}>
-            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
-          </TicketLifecycleControls>{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
               <span class="ticket-blocker-heading">Blocked by</span>
@@ -507,17 +510,17 @@
 <style>
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
-  .ticket-head { padding-top:var(--space-4); }
+  .ticket-head { padding-top:0; }
   .worker-eyebrow { line-height:20px; min-height:24px; display:flex; align-items:center; gap:6px; font-size:var(--type-sm); color:var(--text-faint); }
-  .ticket-title-row { display:block; margin-top:var(--space-2); }
+  .ticket-title-row { display:block; margin-top:var(--space-1); }
   .worker-machine { display:inline-flex; align-items:center; gap:5px; }
   .worker-machine :global(.machine-identity) { width:15px; height:15px; color:inherit; }
-  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:var(--type-display); font-weight:740; line-height:1.25; letter-spacing:-.022em; }
+  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:var(--type-page-title); font-weight:var(--weight-page-title); line-height:1.25; letter-spacing:-.02em; }
   .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is
      written, and a gap that went with them would move the page. */
   .ticket-head :global([data-recap-slot]) { margin-top:var(--space-2); }
-  .ticket-head :global([data-recap]) { max-width:none; font-family:var(--font-ui); font-size:var(--type-ui); font-weight:500; line-height:22px; color:var(--text-muted); }
+  .ticket-head :global([data-recap]) { max-width:var(--page-prose-measure); font-family:var(--font-ui); font-size:var(--type-md); font-weight:500; line-height:24px; color:var(--text-muted); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }
   .worker-current { margin-top:var(--space-5); }
   .worker-live-card { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }

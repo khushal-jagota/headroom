@@ -47,6 +47,8 @@
   .compact .ranges button { flex:1; padding:0 8px; }
   .compact .caption { font-size:12px; }
   .chart-range-footer { margin-top:20px; }
+  .chart-range-footer .ranges { width:100%; justify-content:space-between; }
+  .chart-range-footer .ranges button { flex:1; padding:0 8px; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
   .integrated-card { border:0; background:transparent; border-radius:0; padding:0; }
   .integrated-card.compact { padding:0; --text-3xl:var(--type-chart-compact); }

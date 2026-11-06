@@ -254,3 +254,33 @@
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }
+
+/* The main pane's page system: one column, one type ladder, one end at the composer.
+ * Every page (Chief, Manager, Ticket, goal, review) draws from these. */
+:root {
+  /* The page column. Every page and its composer share this width, centred in the pane. */
+  --page-measure: 840px;
+  --page-prose-measure: 720px;
+  /* The page's top band: the one line above the title (where it lives) on the left and the
+   * page's own utilities on the right. One height on every page. */
+  --page-band-height: 48px;
+  /* The space between a page's sections, and between its header and the first one. */
+  --page-section-gap: 40px;
+  /* Page type: a bold title, quiet section heads, body, and a small-print tier for chart
+   * axes, table headers and dates. */
+  --type-page-title: 24px;
+  --weight-page-title: 700;
+  --type-page-section: 16px;
+  --weight-page-section: 650;
+  --type-small-print: 12px;
+  --tone-small-print: #9d9d9d;
+  /* Every button on a page: one height, one radius, one label size. */
+  --page-control-height: 32px;
+  /* The composer zone fades in over the page's last lines instead of cutting them with a line,
+   * and the page keeps enough room under its last block to scroll fully clear of it. */
+  --composer-fade: 40px;
+  --page-end-room: var(--space-7);
+  /* The needs-you count: the accent fill with dark ink, the same mark everywhere it counts. */
+  --count-needs-you-fill: var(--accent-fill);
+  --count-needs-you-ink: var(--surface-ink);
+}
