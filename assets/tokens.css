@@ -26,7 +26,7 @@
   /* Surfaces — two general neutral planes and one deliberately recessed plane.
    * Ink remains for knockout marks and the retired Day card. */
   --surface-1: #191919;
-  --surface-2: #1f1f1f;
+  --surface-2: #202020;
   --surface-recessed: #141414;
   /* The workspace rail: one close step above the page, divided by a hairline. */
   --surface-rail: #1d1d1d;
@@ -70,7 +70,7 @@
   --type-chart-completion: 36px;
   /* Approved chart-sheet surfaces and category palettes. These remain separate
    * from the shell so the production renderer preserves the approved examples. */
-  --chart-surface: #1f1f1f;
+  --chart-surface: #202020;
   /* Trend lines keep their status, in tones calmer than the status text. */
   --chart-line-good: #8fae7a;
   --chart-line-bad: #c8c8c8;
@@ -78,10 +78,10 @@
   --chart-surface-raised: #252525;
   --chart-surface-muted: #212121;
   --chart-card-border: #ffffff12;
-  --chart-grid: #ffffff0c;
+  --chart-grid: #ffffff14;
   --chart-border-strong: #ffffff24;
   --chart-secondary: #bfbfbf;
-  --chart-muted: #9c9c9c;
+  --chart-muted: #a8a8a8;
   --chart-legend: #a6a6a6;
   --chart-reference: #777777;
   --chart-range-surface: #171717;
@@ -224,8 +224,8 @@
 /* Workspace selection tiers and travel. */
 :root {
   /* The Manager you are inside: a tint quiet enough that only the open row reads as selected. */
-  --wash-context: rgb(255 255 255 / 3%);
-  --wash-selected: #313131;
+  --wash-context: rgb(255 255 255 / 2.5%);
+  --wash-selected: #333333;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }

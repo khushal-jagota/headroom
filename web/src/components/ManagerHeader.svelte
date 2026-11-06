@@ -24,7 +24,7 @@
 <header class="manager-workspace-head">
   {#if heading}{@render heading()}{:else}
   <!-- The breadcrumb slot is the same height on every page, so titles share one line. -->
-  {#if eyebrow}{@render eyebrow()}{:else}<div class="manager-workspace-eyebrow-slot" aria-hidden="true"></div>{/if}
+  {#if eyebrow}{@render eyebrow()}{:else}<div class="manager-workspace-eyebrow-slot">Workspace</div>{/if}
   <h1 class="manager-workspace-title">
     {@render title()}
     <ConversationSignalMark {signal} {conversationId} class="manager-workspace-title-mark" />
@@ -60,7 +60,7 @@
 
 <style>
   .manager-workspace-head { padding-top:var(--space-6); }
-  .manager-workspace-eyebrow-slot { height:24px; }
+  .manager-workspace-eyebrow-slot { display:flex; align-items:center; min-height:24px; font-size:var(--type-sm); line-height:20px; color:var(--text-faint); }
   .manager-workspace-title { font-family:var(--font-ui); font-size:var(--type-display); font-weight:700; line-height:1.25; letter-spacing:-0.022em; margin-top:var(--space-2); overflow-wrap:anywhere; }
   /* No padding on the clamped block itself: ClampedText measures its scrollHeight
      against a line count, so padding there reports an empty recap as overflowing. */

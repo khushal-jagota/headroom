@@ -49,8 +49,8 @@
 <style>
   .ticket-lifecycle { margin-top:var(--space-4); font-size:13px; color:var(--text-muted); }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); }
-  .text-action { border:0; background:none; padding:var(--space-1) 0; color:var(--text-faint); font:inherit; cursor:pointer; }
-  .text-action:hover { color:var(--text-strong); }
+  .text-action { border:0; background:none; padding:var(--space-1) 0; color:var(--text-muted); font:inherit; font-weight:530; cursor:pointer; text-underline-offset:3px; text-decoration-thickness:1px; }
+  .text-action:hover { color:var(--text-strong); text-decoration-line:underline; text-decoration-color:var(--text-faintest); }
   .text-action:disabled { cursor:default; opacity:.5; }
   .separator { color:var(--text-faintest); }
   .state { color:var(--text-strong); font-weight:600; }

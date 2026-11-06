@@ -85,7 +85,9 @@
       const rect = currentTarget.getBoundingClientRect();
       const width = currentPanel.offsetWidth;
       const height = currentPanel.offsetHeight;
-      const dock = document.querySelector(".conversation-layer")?.getBoundingClientRect();
+      // The floor is the composer's own field: the panel may pass over the dock's quiet
+      // status line, so it can stay near a low row, but never over where you type.
+      const dock = (document.querySelector(".conversation-layer .chat-box") ?? document.querySelector(".conversation-layer"))?.getBoundingClientRect();
       const floor = Math.min(window.innerHeight, dock && dock.height > 0 ? dock.top : window.innerHeight) - 12;
       if (currentRail !== currentTarget) {
         const railRight = currentRail.getBoundingClientRect().right;
@@ -156,22 +158,22 @@
   {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
-  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(320px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-4); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-raised); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
+  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(296px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-3) var(--space-4) var(--space-4); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-raised); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
   .kicker { display:flex; align-items:center; gap:6px; font-size:var(--type-xs); line-height:16px; color:var(--text-faint); margin-bottom:var(--space-1); }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
-  .title { font-size:var(--type-ui); font-weight:650; line-height:1.4; letter-spacing:-.006em; color:var(--text-default); overflow-wrap:anywhere; }
+  .title { font-size:var(--type-sm); font-weight:600; line-height:1.4; letter-spacing:0; color:var(--text-muted); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
   /* The recap is why the preview is opened, so it leads: the brightest, largest text in
-     the panel, set off by a quiet rule rather than a second box. */
-  .recap { margin-top:var(--space-3); padding-left:var(--space-3); border-left:var(--border-strong) solid var(--border-hover); font-size:var(--type-ui); line-height:1.55; color:var(--text-strong); }
+     the panel, with the name above it a quieter label. */
+  .recap { margin-top:var(--space-2); font-size:var(--type-ui); line-height:1.5; color:var(--text-strong); }
   .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
   /* The ask lives inside the recessed block, under the line it replaces. */
   .recap :global(.recap-ask) { display:flex; margin-top:var(--space-2); font-size:var(--type-xs); }
-  .doing { margin-top:var(--space-3); padding-top:var(--space-3); border-top:var(--border-hairline) solid var(--border-color); font-size:var(--type-xs); line-height:16px; color:var(--text-faint); }
+  .doing { margin-top:var(--space-2); font-size:var(--type-xs); line-height:16px; color:var(--text-faint); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
 </style>

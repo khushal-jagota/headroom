@@ -521,7 +521,7 @@
   .worker-ceiling-line { margin-top:var(--space-3); }
   .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:var(--type-ui); line-height:1.4; color:var(--text-muted); padding:var(--space-2) var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:none; text-align:left; }
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
-  .worker-bands { line-height:1.6; margin-top:var(--space-7); padding-bottom:var(--space-7); }
+  .worker-bands { line-height:1.6; margin-top:var(--space-6); padding-bottom:var(--space-7); }
   .worker-steps { border-top:1px solid var(--border-color); }
   .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:var(--space-3) var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-sm); font-weight:530; color:var(--text-faint); cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }

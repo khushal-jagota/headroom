@@ -374,7 +374,7 @@
     padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-md);
   }
-  .step.current .step-inner { background: var(--interaction-hover); }
+  .step.current .step-inner { background: var(--wash-context); }
   .check {
     display: grid;
     width: 40px;
