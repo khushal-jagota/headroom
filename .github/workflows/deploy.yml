@@ -158,7 +158,7 @@ jobs:
     env:
       PANELS_SUITE: ${{ matrix.suite }}
       PANELS_REHEARSAL: 'true'
-      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '2c0e05cefc82de100bfc576c1a8f3eda7a931f2d' }}
+      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '53d64f0fdbda071a7887945a0d4ddc113694cf21' }}
     defaults:
       run:
         shell: python3 scripts/deployment_progress.py {0}
@@ -570,7 +570,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PANELS_REHEARSAL: 'true'
-      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '2c0e05cefc82de100bfc576c1a8f3eda7a931f2d' }}
+      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha || '53d64f0fdbda071a7887945a0d4ddc113694cf21' }}
     outputs:
       app_artifact_id: ${{ steps.app_artifact.outputs.artifact-id }}
       candidate_record_sha256: ${{ steps.candidate.outputs.candidate_record_sha256 }}
