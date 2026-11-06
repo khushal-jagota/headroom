@@ -221,7 +221,7 @@ strong {
    raised tooltip, clear of the row, so it never covers a neighbouring icon and nothing moves. */
 /* The row reserves the band its tooltips open into above the icons, without taking layout
    space or the pointer from the Settled row under that band. */
-.rail-utilities { --rail-tooltip-band:32px; display:flex; align-items:center; gap:6px; padding-top:var(--rail-tooltip-band); margin-top:calc(var(--rail-tooltip-band) * -1); pointer-events:none; }
+.rail-utilities { --rail-tooltip-band:36px; display:flex; align-items:center; gap:6px; padding-top:var(--rail-tooltip-band); margin-top:calc(var(--rail-tooltip-band) * -1); pointer-events:none; }
 .rail-utilities > .utility { pointer-events:auto; }
 /* A destination's hit and hover shape hugs its icon (and the review count): 28px tall, 5px
    around the glyph, so the focus ring 2px outside it stays close. */
@@ -236,7 +236,7 @@ strong {
 .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 5px; }
 .rail-utilities .count-badge { position:static; min-width:20px; height:18px; padding:0 6px; border-radius:var(--radius-pill); background:var(--accent-badge); color:var(--accent-bright); box-shadow:none; font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
 .count-badge.hidden { display:none; }
-.utility-label { position:absolute; bottom:calc(100% + 8px); left:50%; z-index:6; padding:2px var(--space-2); border:var(--border-hairline) solid var(--rail-float-ring); border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
+.utility-label { position:absolute; bottom:calc(100% + var(--focus-offset) + var(--focus-width) + 8px); left:50%; z-index:6; padding:2px var(--space-2); border:var(--border-hairline) solid var(--rail-float-ring); border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
 .utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
 .utility:hover .utility-label { transition-delay:400ms; }
 @keyframes shell-panel-in { from { opacity:0; transform:translateY(var(--space-2)); } to { opacity:1; transform:none; } }
@@ -4873,6 +4873,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .workspace-ticket-bucket { margin-top:0; display:flex; flex-direction:column; }
 .workspace-ticket-bucket .bucket-label { box-sizing:border-box; display:flex; align-items:center; height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:calc(var(--rail-row-gap) + var(--rail-heading-extra)) 0 0; border:0; font-size:var(--rail-label-size); font-weight:var(--rail-label-weight); line-height:20px; color:var(--rail-tone-label); white-space:nowrap; overflow:hidden; }
 .workspace-ticket-bucket .bucket-label + .worker-row { margin-top:var(--rail-row-gap); }
+/* The first heading after a Manager's header unit (eyebrow, name and goals) stands --rail-header-clear further off,
+   so the header reads as one unit and the Tickets as the work beneath it. */
+.manager-card > :not(.workspace-ticket-bucket) + .workspace-ticket-bucket .bucket-label { margin-top:calc(var(--rail-row-gap) + var(--rail-heading-extra) + var(--rail-header-clear)); }
 /* A Ticket row: the same 30px fill on the 32px pitch as every rail row, on the rail's one text
    edge. A row that needs the person is bright; every other row rests dim (tone only). */
 .workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr); align-items:center; column-gap:0; width:100%; height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }

@@ -93,8 +93,9 @@
       const floor = Math.min(window.innerHeight, dock && dock.height > 0 ? dock.top : window.innerHeight) - 12;
       if (currentRail !== currentTarget) {
         const railRight = currentRail.getBoundingClientRect().right;
-        left = Math.max(12, Math.min(railRight + 12, window.innerWidth - width - 12));
-        top = Math.max(12, Math.min(rect.top - 8, floor - height));
+        // Next to its row: 8px past the rail's edge, its top level with the row's top.
+        left = Math.max(12, Math.min(railRight + 8, window.innerWidth - width - 12));
+        top = Math.max(12, Math.min(rect.top, floor - height));
         clearOfRail = left >= railRight;
         return;
       }
@@ -120,8 +121,8 @@
           else clear = Math.max(clear, near.right);
         }
       }
-      if (clear + 12 + width <= window.innerWidth - 12) {
-        left = clear + 12;
+      if (clear + 8 + width <= window.innerWidth - 12) {
+        left = clear + 8;
         top = besideTop;
       } else {
         left = Math.max(12, Math.min(box.left, window.innerWidth - width - 12));
@@ -195,7 +196,7 @@
   .title-text { flex:1; min-width:0; }
   /* The recap is the body the preview is opened for: the page's body voice, given its own
      space, and the only paragraph in the panel. */
-  .recap { margin-top:6px; font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-secondary); }
+  .recap { margin-top:var(--space-2); font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-secondary); }
   .recap-text { overflow:hidden; overflow-wrap:break-word; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
@@ -203,6 +204,6 @@
   .recap :global(.recap-ask) { display:flex; margin-top:var(--space-3); }
   .recap :global(.recap-ask .request-recap-action) { height:24px; padding:0 var(--space-2); border-radius:6px; background:transparent; box-shadow:inset 0 0 0 var(--border-hairline) var(--button-outline-edge); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
   .recap :global(.recap-ask .request-recap-action:hover) { background:var(--button-outline-fill-hover); color:var(--tone-strong); }
-  .doing { margin-top:2px; font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); }
+  .doing { margin-top:var(--space-1); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
 </style>

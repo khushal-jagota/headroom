@@ -298,9 +298,8 @@
   /* Fills stand 12px in from the column: the 6px frame inset plus 6px inside the frame. */
   --rail-edge: 12px;
   --rail-pad: 10px;
-  /* The list's first fill stands 40px below the window's top, so the first block has room of
-   * its own above it. */
-  --rail-top: 40px;
+  /* 16px of room above the list's first block. */
+  --rail-top: 16px;
   /* A row fills its whole block, so nothing sits between a block's edge and a row's fill.
    * The shell's Settled rows still read these two names. */
   --rail-row-inset: 0px;
@@ -314,6 +313,11 @@
   --rail-row-gap: 2px;
   --rail-head-pad: 4px;
   --rail-title-line: 24px;
+  /* A Manager's goals are part of its header: they sit tight under its name on a 30px pitch
+   * (a 28px fill), and the header unit ends with 14px more clear before the first Ticket
+   * heading than a heading has elsewhere. */
+  --rail-goal-height: 28px;
+  --rail-header-clear: 14px;
   /* The unread dot's column, kept on every row whether or not a dot is in it, so every
    * title ends at one edge. */
   --rail-mark-column: 16px;
@@ -336,7 +340,7 @@
   --rail-edge-fade: 8px;
   --rail-foot-clear: 12px;
   /* Between the Settled row and the icon bar: the band the icons' names open into. */
-  --rail-foot-gap: 24px;
+  --rail-foot-gap: 28px;
   /* The list's scrollbar lives in the column's own edge, never inside the rows. */
   --rail-scrollbar-width: 4px;
   /* Room the list keeps above its first fill for the focus ring (2px clear, 1.5px wide). */
@@ -344,7 +348,8 @@
   /* Rail text, as white over the page. Brightness has exactly two levels, shared by Manager
    * names and rows alike: 92% for anything that needs the person, 50% for anything that does
    * not. Size and weight alone make a Manager lead its block (18/600 against a row's
-   * 13.5/400). Labels are structure, not a level: 56%, smaller and firmer than a row. */
+   * 13.5/400). Labels are structure, not a level: 46%, at most as bright as a resting row,
+   * and a different class by size and weight (12/500). */
   --rail-tone-bright: #ececec;
   --rail-tone-rest: #8b8b8b;
   --rail-tone-title-bright: var(--rail-tone-bright);
@@ -353,7 +358,7 @@
   --rail-title-fade: 32px;
   /* A Manager's name: clearly above a row, but quieter than anything that needs you. */
   --type-rail-title: 18px;
-  --rail-tone-label: #999999;
+  --rail-tone-label: #828282;
   /* The rail's floating surfaces (hover previews and the icon bar's tooltips): the raised
    * plane's #2a2a2a, with a lighter ring and shadow than a menu's, so a preview supports the
    * row it describes rather than sitting over the page. */

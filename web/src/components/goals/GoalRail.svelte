@@ -57,13 +57,13 @@
 {/if}
 </div>
 <style>
-/* A goal belongs to its Manager: it stands directly under the name, on the rail's one text
-   edge, as a row like a Ticket (13.5/400, a 30px fill on the 32px pitch, radius 8), with its
-   state in the Small voice at the right. Like every rail row it rests dim and brightens under
+/* A goal is part of its Manager's header: it sits tight under the name, on the rail's one
+   text edge, in the row voice (13.5/400) on a 30px pitch, with its state in the Small voice
+   at the right. Like every rail row it rests dim and brightens under
    the pointer or when its page is open. */
-.goals-rail{display:flex;flex-direction:column;gap:var(--rail-row-gap);margin-top:var(--rail-row-gap)}
+.goals-rail{display:flex;flex-direction:column;gap:var(--rail-row-gap);margin-top:0}
 a{color:inherit;text-decoration:none}
-.goal{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);height:var(--rail-row-height);padding:0 var(--rail-pad);border-radius:var(--radius-md);touch-action:pan-y;font-size:var(--type-row);font-weight:var(--weight-body);line-height:20px;color:var(--rail-tone-rest);transition:color var(--motion-fast) var(--motion-ease)}
+.goal{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);height:var(--rail-goal-height);padding:0 var(--rail-pad);border-radius:var(--radius-md);touch-action:pan-y;font-size:var(--type-row);font-weight:var(--weight-body);line-height:20px;color:var(--rail-tone-rest);transition:color var(--motion-fast) var(--motion-ease)}
 .row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:clip}
 .goal:hover,.selected{color:var(--rail-tone-bright)}
 .state{position:relative;display:flex;align-items:baseline;font-size:var(--type-small);font-weight:var(--weight-small);line-height:16px;color:var(--rail-tone-label);font-variant-numeric:tabular-nums;white-space:nowrap}
