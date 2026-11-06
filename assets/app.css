@@ -4867,24 +4867,19 @@ details:not([open]) > summary > .manager-workspace-chevron {
   }
 }
 
-/* A Ticket group: one heading in the rail's label voice, on the rail's one text edge, with no
-   count. It takes a row's 30px slot on the 32px pitch, its words on a row's line, with only
-   --rail-heading-extra more above it than a row, so the block keeps one grid. */
-.workspace-ticket-bucket { margin-top:0; display:flex; flex-direction:column; }
-.workspace-ticket-bucket .bucket-label { box-sizing:border-box; display:flex; align-items:center; min-height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:calc(var(--rail-row-gap) + var(--rail-heading-extra)) 0 0; border:0; font-size:var(--rail-label-size); font-weight:var(--rail-label-weight); line-height:20px; color:var(--rail-tone-label); overflow-wrap:anywhere; }
-.workspace-ticket-bucket .bucket-label + .worker-row { margin-top:var(--rail-row-gap); }
-/* The first heading after a Manager's header unit (eyebrow, name and goals) stands --rail-header-clear further off,
-   so the header reads as one unit and the Tickets as the work beneath it. */
-.manager-card > :not(.workspace-ticket-bucket) + .workspace-ticket-bucket .bucket-label { margin-top:calc(var(--rail-row-gap) + var(--rail-heading-extra) + var(--rail-header-clear)); }
-/* A Ticket row: the same 30px fill on the 32px pitch as every rail row, on the rail's one text
-   edge. A row that needs the person is bright; every other row rests dim (tone only). */
-.workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr); align-items:start; column-gap:0; width:100%; min-height:var(--rail-row-height); padding:5px var(--rail-pad) 5px calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
-/* Only a row with an unread dot keeps a column for it; every other title runs to the row's padding. */
-.workspace-ticket-bucket .worker-row:has(.conversation-signal-marks) { grid-template-columns:minmax(0,1fr) var(--rail-mark-column); }
-.workspace-ticket-bucket .worker-row + .worker-row { margin-top:var(--rail-row-gap); }
+/* A Ticket group: a readable heading (12/600 at 64%, no count) 4px over its rows, the rows
+   tight under it with no gap, so the group reads as one list. The header unit (eyebrow, name
+   and goals) and every group stand 12px apart; all of it on the rail's 4px grid. */
+.workspace-ticket-bucket { display:flex; flex-direction:column; margin-top:var(--rail-group-gap); }
+.manager-card > :not(.workspace-ticket-bucket) + .workspace-ticket-bucket { margin-top:var(--rail-header-clear); }
+.workspace-ticket-bucket .bucket-label { box-sizing:border-box; display:block; min-height:var(--rail-row-line); padding:0 var(--rail-pad); margin:0 0 var(--rail-heading-gap); position:relative; top:var(--rail-heading-nudge); border:0; font-size:var(--rail-heading-size); font-weight:var(--rail-heading-weight); letter-spacing:var(--rail-heading-tracking); line-height:var(--rail-row-line); color:var(--rail-tone-heading); overflow-wrap:anywhere; }
+/* A Ticket row: 13.5/400 on a 20px line inside its 28px fill (padding 5/3, so its baseline is on the grid), on the rail's one text edge,
+   the unread dot in a fixed column at the right. A row that needs the person is bright; every
+   other row rests dim (tone only). */
+.workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:start; column-gap:0; width:100%; min-height:var(--rail-row-height); padding:var(--rail-row-pad-top) var(--rail-pad) var(--rail-row-pad-bottom); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:var(--rail-row-line); cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
 .workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:normal; overflow-wrap:anywhere; }
-.workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; align-self:start; height:20px; }
+.workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; align-self:start; height:var(--rail-row-line); }
 .workspace-ticket-bucket:is([data-bucket-key="awaiting_approval"], [data-bucket-key="awaiting_answer"], [data-bucket-key="errored"]) .worker-row,
 .workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--rail-tone-bright); }
 .workspace-ticket-bucket .worker-row:is(:hover, [aria-current="page"]) { color:var(--rail-tone-bright); }

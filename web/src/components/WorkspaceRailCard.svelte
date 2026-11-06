@@ -68,20 +68,19 @@
 </div>
 <style>
   .manager-card-slot { min-width:0; }
-  /* Blocks are separated by space alone. */
+  /* Blocks are separated by space alone: 32px, more than anything inside a block. */
   :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--rail-block-gap); }
   /* Every Manager, the Chief included, is one block with the same parts in the same order:
-     its header (the project eyebrow over the name, as one fill), its goals one row each, then
-     its Tickets in headed groups. Every fill spans the block, which spans the column less
+     its header (the project eyebrow directly over the name, as one fill), its goals, then its
+     Tickets in headed groups. Every fill spans the block, which spans the column less
      --rail-edge on each side; every text stands --rail-pad inside its fill. */
   .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:0; border:0; isolation:isolate; z-index:1; }
-  .identity { box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; min-height:calc(var(--rail-row-height) + var(--rail-row-gap)); padding:var(--rail-head-pad) var(--rail-pad); border-radius:var(--radius-md); cursor:pointer; }
-  .item-head { display:grid; grid-template-columns:minmax(0,1fr); align-items:start; width:100%; min-height:var(--rail-title-line); padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
-  .item-head:has(> :global(.conversation-signal-marks)) { grid-template-columns:minmax(0,1fr) var(--rail-mark-column); }
+  .identity { box-sizing:border-box; display:flex; flex-direction:column; padding:var(--rail-head-pad) var(--rail-pad); border-radius:var(--radius-md); cursor:pointer; }
+  .item-head { position:relative; top:var(--rail-title-nudge); display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:start; width:100%; min-height:var(--rail-title-line); padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; align-self:start; height:var(--rail-title-line); }
-  /* A name is dimmed unless it needs the person (an unread message for them); the pointer or
-     the open page on it brings it to full brightness. It keeps one line and ends in an
-     ellipsis at the same edge as every row's title. */
+  /* The name leads the block by size and weight (18/600 on a 24px line) and wraps in full.
+     It rests dim unless it needs the person (an unread message for them); the pointer on its
+     header or its own page open brings it to full brightness. */
   .item-title { grid-column:1; min-width:0; overflow-wrap:anywhere; font-size:var(--type-rail-title); font-weight:var(--weight-title); line-height:var(--rail-title-line); letter-spacing:-0.014em; color:var(--rail-tone-title); transition:color var(--motion-fast) var(--motion-ease); }
   .item-head[data-unread="true"] .item-title { color:var(--rail-tone-title-bright); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--rail-tone-title-bright); }

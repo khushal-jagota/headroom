@@ -307,27 +307,52 @@
   /* Tickets and their headings stand on the Manager name's own text edge (owner decision):
    * the header and the Ticket list are told apart by type and spacing, not by indent. */
   --rail-indent: 0px;
-  /* One pitch: every row and every heading is a 30px slot on a 32px pitch. A Manager's
-   * header is 48px (eyebrow and name), 32px for the Chief (name alone). */
-  --rail-row-height: 30px;
-  --rail-row-gap: 2px;
+  /* The rail stands on a 4px grid: every block, fill and line box below is a multiple of 4,
+   * so every top lands on it. Size, weight and space make the hierarchy, in this order:
+   *   a Manager's header: the project eyebrow (12/500, line 16) directly over the name
+   *     (18/600, line 24), 4px inside its fill: 48px, 32px for the Chief (name alone);
+   *   its goals, part of the header, stacked with no gap: the goal's name (14/400, line 20)
+   *     over its state and date (12/400, line 16), 6px inside its fill: 48px, a larger target
+   *     than staging's (291x48 against 263x52 at 1440, 247x48 against 218x52 at 768);
+   *   12px clear, then its Tickets in headed groups: a heading (12/600, line 20) 4px over its
+   *     first row; rows tight, no gap, each 13.5/400 on a 20px line 4px inside its fill (28px,
+   *     staging's row is 27.5px; a wrapped title adds 20px); 12px between groups;
+   *   32px between Manager blocks. */
+  --rail-row-height: 28px;
+  --rail-row-pad-y: 4px;
+  --rail-row-line: 20px;
+  /* Baselines land on the grid too. A face sets its baseline a fixed way down its line box
+   * (Inter and SF alike: 15px down a 20px line at 13.5-14px, 18px down a 24px line at 18px,
+   * 12px down a 16px line and 14px down a 20px line at 12px), so each text is let down or up
+   * by the pixel or two that puts its baseline on a multiple of 4. A row's 4px padding is
+   * split 5/3 for the same reason, its dot moving with its words. */
+  --rail-row-pad-top: 5px;
+  --rail-row-pad-bottom: 3px;
+  --rail-title-nudge: 2px;
+  --rail-goal-title-nudge: -1px;
+  --rail-goal-state-nudge: 2px;
+  --rail-heading-nudge: 2px;
   --rail-head-pad: 4px;
   --rail-title-line: 24px;
-  /* A Manager's goals are part of its header: they sit tight under its name on a 30px pitch
-   * (a 28px fill), and the header unit ends with 14px more clear before the first Ticket
-   * heading than a heading has elsewhere. */
-  --rail-goal-height: 28px;
-  --rail-header-clear: 14px;
+  --rail-goal-pad-y: 6px;
+  --rail-goal-size: 14px;
+  --rail-header-clear: 12px;
+  --rail-group-gap: 12px;
+  --rail-heading-gap: 4px;
+  --rail-block-gap: 32px;
+  /* The page list's rows (ManagerChildren) still stand 2px apart. */
+  --rail-row-gap: 2px;
   /* The unread dot's column, kept on every row whether or not a dot is in it, so every
-   * title ends at one edge. */
+   * title ends at one edge and every dot stands in one column. */
   --rail-mark-column: 16px;
-  /* The rail's label voice: the project eyebrow and every group heading, one style, 12/500 at
-   * 56%: plainly structure, a step smaller and firmer than a resting row. A heading takes a
-   * row's 30px slot, its words on a row's line, with only 4px more above it than a row. */
+  /* The rail's label voice for the project eyebrow (and Settled's count): 12/500, quiet. */
   --rail-label-size: 12px;
   --rail-label-weight: 500;
-  --rail-heading-extra: 4px;
-  --rail-block-gap: 28px;
+  /* A group heading is a label to read, not a whisper: 12/600 at 64% white, a little open. */
+  --rail-heading-size: 12px;
+  --rail-heading-weight: 600;
+  --rail-heading-tracking: 0.01em;
+  --rail-tone-heading: #a3a3a3;
   /* The frame around the Manager you are inside reaches this far past its block's fills, so
    * its 12px corners are concentric with their 8px ones. */
   --rail-context-outset: 6px;
@@ -344,14 +369,14 @@
   --rail-ring-room: 6px;
   /* Rail text, as white over the page. Brightness has exactly two levels, shared by Manager
    * names and rows alike: 92% for anything that needs the person, 50% for anything that does
-   * not. Size and weight alone make a Manager lead its block (18/600 against a row's
-   * 13.5/400). Labels are structure, not a level: 46%, at most as bright as a resting row,
-   * and a different class by size and weight (12/500). */
+   * not (white at 92% and 50% over the rail). Size and weight make a Manager lead its block
+   * (18/600 against a row's 13.5/400). Group headings are labels to read (12/600, 64%, above);
+   * the project eyebrow and small counts stay quiet (12/500 at 51%). */
   --rail-tone-bright: #ececec;
   --rail-tone-rest: #8b8b8b;
   --rail-tone-title-bright: var(--rail-tone-bright);
   --rail-tone-title: var(--rail-tone-rest);
-  /* A Manager's name: clearly above a row, but quieter than anything that needs you. */
+  /* A Manager's name: the largest words in the rail. */
   --type-rail-title: 18px;
   --rail-tone-label: #828282;
   /* The rail's floating surfaces (hover previews and the icon bar's tooltips): the raised

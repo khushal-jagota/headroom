@@ -42,16 +42,16 @@
 {/if}
 </div>
 <style>
-/* A goal is part of its Manager's header: it sits tight under the name, on the rail's one
-   text edge, in the row voice (13.5/400) on a 30px pitch, with its state in the Small voice
-   at the right. Like every rail row it rests dim and brightens under
-   the pointer or when its page is open. */
-.goals-rail{display:flex;flex-direction:column;gap:var(--rail-row-gap);margin-top:0}
+/* A goal is part of its Manager's header: stacked tight under the name with no gap, on the
+   rail's one text edge. Its name (14/400 on a 20px line) over staging's state and date line
+   (12/400 on 16, tertiary), 6px inside its 48px fill. Like every rail row it rests dim and
+   brightens under the pointer or when its page is open. */
+.goals-rail{display:flex;flex-direction:column;gap:0;margin-top:0}
 a{color:inherit;text-decoration:none}
-.goal{box-sizing:border-box;display:block;min-height:var(--rail-goal-height);padding:4px var(--rail-pad);border-radius:var(--radius-md);touch-action:pan-y;font-size:var(--type-row);font-weight:var(--weight-body);line-height:20px;color:var(--rail-tone-rest);transition:color var(--motion-fast) var(--motion-ease)}
-.row-title{display:block;min-width:0;overflow-wrap:anywhere}
+.goal{box-sizing:border-box;display:block;padding:var(--rail-goal-pad-y) var(--rail-pad);border-radius:var(--radius-md);touch-action:pan-y;font-size:var(--rail-goal-size);font-weight:var(--weight-body);line-height:var(--rail-row-line);color:var(--rail-tone-rest);transition:color var(--motion-fast) var(--motion-ease)}
+.row-title{position:relative;top:var(--rail-goal-title-nudge);display:block;min-width:0;overflow-wrap:anywhere}
 .goal:hover,.selected{color:var(--rail-tone-bright)}
-.state{display:flex;justify-content:space-between;flex-wrap:wrap;gap:0 var(--space-2);font-size:var(--type-small);font-weight:var(--weight-small);line-height:16px;color:var(--rail-tone-label);font-variant-numeric:tabular-nums}
+.state{position:relative;top:var(--rail-goal-state-nudge);display:flex;justify-content:space-between;flex-wrap:wrap;gap:0 var(--space-2);font-size:var(--rail-label-size);font-weight:var(--weight-body);line-height:16px;color:var(--tone-tertiary);font-variant-numeric:tabular-nums}
 .state :global([data-tone]){color:inherit}
 .state :global([data-tone=bad]){color:var(--accent-error)}
 time,.no-deadline{white-space:nowrap}
