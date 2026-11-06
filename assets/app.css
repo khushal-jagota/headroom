@@ -5118,6 +5118,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 .manager-column .page-tickets.page-tickets .manager-children .ticket-row .machine-identity { display: none; }
 .manager-column .page-tickets.page-tickets .manager-children .ticket-row:hover,
+.manager-column .page-tickets.page-tickets .manager-children [data-previewed] > .ticket-row,
 .manager-column .page-tickets.page-tickets .manager-children .ticket-row:focus-visible {
   background: var(--wash-hover);
   color: var(--tone-strong);

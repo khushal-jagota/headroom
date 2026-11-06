@@ -137,6 +137,13 @@
     });
     return () => { window.removeEventListener("pointerdown", outside); stopUserScroll(); };
   });
+  // The row whose preview is open keeps its hover fill while the preview stands over it, as
+  // a rail row does, so a preview opened beside a full-width row never leaves it unmarked.
+  $effect(() => {
+    const target = hoverVisible ? hoverTarget : null;
+    target?.setAttribute("data-previewed", "");
+    return () => target?.removeAttribute("data-previewed");
+  });
   function hoverRow(target: HTMLElement, ticket: WorkItemTicketFacts, immediate = false): void {
     hover.enter({target, ticket}, immediate);
   }
