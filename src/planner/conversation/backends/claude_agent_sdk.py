@@ -1354,7 +1354,6 @@ class ClaudeAgentSdkBackendChild:
             cwd=str(resolved_start.workspace_folder),
             cli_path=self._launch.claude_executable,
             system_prompt=CLAUDE_CODE_SYSTEM_PROMPT,
-            settings='{"disableAllHooks":true}',
             model=resolved_start.model,
             effort=self._effort(resolved_start.reasoning_effort),
             permission_mode=_permission_mode(resolved_start.access),
