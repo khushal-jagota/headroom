@@ -345,8 +345,8 @@
           </TicketLifecycleControls>{/if}
           </div>
           <div class="ticket-title-row">
-            <!-- The title owns the column less one fixed right column, where the working mark
-                 stands; the unread mark is on the composer's status line. -->
+            <!-- The title, then its marks beside its words as staging drew them: working, and
+                 the unread dot. -->
             <div class="ticket-title">
               <h1 class="page-title ticket-title-text"><InlineEdit
                 value={masthead.title}
@@ -521,13 +521,11 @@
   .worker-machine { display:inline-flex; align-items:center; margin-right:6px; color:var(--tone-tertiary); }
   .worker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
   /* The title and a fixed 16px mark column, centred on the title's first line. */
-  .ticket-title { display:grid; grid-template-columns:minmax(0,1fr) 16px; column-gap:var(--space-3); align-items:start; }
-  .ticket-title-text { margin:0; }
+  /* As staging: the title, then its marks right after its words. */
+  .ticket-title { display:flex; align-items:flex-start; gap:var(--space-3); }
+  .ticket-title-text { min-width:0; margin:0; }
   .ticket-title :global(.ed) { font:inherit; color:var(--tone-strong); }
-  .ticket-title-mark { display:flex; align-items:center; justify-content:center; height:32px; }
-  /* The unread mark lives on the composer's status line (ConversationRestBar); the title's
-     column keeps only the working mark. */
-  .ticket-title-mark :global([data-conversation-signal="message"]) { display:none; }
+  .ticket-title-mark { flex:none; display:flex; align-items:center; justify-content:center; height:32px; }
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is
      written, and a gap that went with them would move the page. */
   .ticket-head :global([data-recap-slot]) { margin-top:var(--space-2); }

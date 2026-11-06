@@ -727,8 +727,7 @@ strong {
 }
 
 /* Inline code: Small mono on a 7% lift, radius 4, 1px 4px, on the text's own baseline and in
- * the text's own tone. A run such as `J`/`K` is joined into one lift by the renderer
- * (.markdown-code-run), so it never reads as loose chips with a slash between them. */
+ * the text's own tone. */
 .markdown code {
   font-family: var(--font-mono);
   font-size: var(--type-code);
@@ -741,22 +740,6 @@ strong {
   color: inherit;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
-}
-
-.markdown .markdown-code-run {
-  font-family: var(--font-mono);
-  font-size: var(--type-code);
-  line-height: 1;
-  background: var(--surface-code);
-  padding: var(--code-pad-y) var(--code-pad-x);
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-}
-
-.markdown .markdown-code-run code {
-  padding: 0;
-  background: none;
-  border-radius: 0;
 }
 
 .markdown pre {
@@ -5128,9 +5111,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
   line-height: 32px;
   overflow-wrap: anywhere;
 }
-/* A page title never carries a mark after its words. The Manager's conversation signal is
- * shown in the rail and on the composer's status line. */
-.manager-page .manager-column .manager-workspace-head .manager-workspace-title .conversation-signal-marks { display: none; }
+/* As staging, a Manager's title carries its conversation marks (working, unread) after its words. */
+.manager-page .manager-column .manager-workspace-head .manager-workspace-title { display: flex; align-items: center; gap: var(--space-3); }
 
 /* THE RECAP — body text in the primary tone, never wider than the prose measure. */
 .ticket-recap {

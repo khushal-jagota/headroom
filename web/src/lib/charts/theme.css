@@ -41,12 +41,10 @@
   .compact .comparison { font-size:var(--type-small); }
   .compact .missing-value { font-size:var(--type-page-title); }
   .compact .caption { font-size:var(--type-small); }
+  /* Under a card's plot the switch is staging's full-width row: three equal segments. */
   .chart-range-footer { margin-top:var(--space-4); }
-  /* The range is one full-width row under every plot, a Manager's card or the goal page. */
-  /* Under the chart the switch is one compact control at the bottom centre, each segment
-     sized to its label (the shared segmented control). */
-  .chart-range-footer { display:flex; justify-content:center; }
-  .chart-range-footer .ranges { display:inline-flex; width:auto; }
+  .chart-range-footer .ranges { display:flex; width:100%; }
+  .chart-range-footer .ranges button { flex:1; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
   .integrated-card { border:0; background:transparent; border-radius:0; padding:0; }
   .integrated-card.compact { padding:0; --text-3xl:var(--page-reading); }
@@ -109,6 +107,8 @@
     /* The page's own card already holds this inset. Two would stack. */
     .integrated-card:not(.compact) { padding:0; border-radius:0; }
     .metric-card:not(.compact):not(.gauge-card) .metric-top h2 { flex-basis:100%; }
+    .metric-card:not(.compact) .ranges { width:100%; }
+    .metric-card:not(.compact) .ranges button { flex:1; }
 
     .metric-card:not(.compact) .metric-value { height:28px; }
     .completion-word { font-size:var(--type-page-title); }

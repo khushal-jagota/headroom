@@ -13,7 +13,7 @@
     title: Snippet;
     heading?: Snippet;
     eyebrow?: Snippet;
-    /** The page's own utilities, after the recap ask at the right end of the top band. */
+    /** The page's own utilities, before the recap ask at the right end of the top band. */
     actions?: Snippet;
     recap?: string;
     onSaveRecap?: (value: string) => Promise<unknown>;
@@ -31,8 +31,8 @@
   <div class="page-band">
     <div class="page-band-place">{#if eyebrow}{@render eyebrow()}{/if}</div>
     {#if recapTarget !== null || actions}<div class="page-band-actions">
-      {#if recapTarget !== null}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} />{/if}
       {@render actions?.()}
+      {#if recapTarget !== null}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} />{/if}
     </div>{/if}
   </div>
   <h1 class="manager-workspace-title">
@@ -61,15 +61,12 @@
     {/snippet}
     </RecapSlot>
   {/if}
-  {#if recapTarget !== null && heading}
-    <div class="manager-workspace-recap-ask">
-      <RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} />
-    </div>
-  {/if}
 </header>
 
 <style>
   .manager-workspace-head { padding-top:0; }
+  /* A sole goal's header (its recap last) keeps the block gap before the goal's card. */
+  .manager-workspace-head:has(:global(.goal-heading)) { margin-bottom:var(--page-block-gap); }
   .manager-workspace-title { font-family:var(--font-ui); font-size:var(--type-page-title); font-weight:var(--weight-page-title); line-height:1.25; letter-spacing:-0.02em; margin-top:var(--space-1); overflow-wrap:anywhere; }
   /* No padding on the clamped block itself: ClampedText measures its scrollHeight
      against a line count, so padding there reports an empty recap as overflowing. */
@@ -77,5 +74,4 @@
      would stay behind the height the slot is measuring. */
   .manager-workspace-head :global([data-recap-slot]) { margin-top:var(--space-2); }
   .manager-workspace-head :global(.manager-workspace-recap) { font-family:var(--font-ui); font-size:var(--type-md); font-weight:500; line-height:24px; max-width:var(--page-prose-measure); color:var(--text-muted); }
-  .manager-workspace-recap-ask { margin-top:var(--space-4); font-size:var(--type-sm); color:var(--text-muted); }
 </style>

@@ -112,12 +112,11 @@
     recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
   </ManagerHeader>
-  <!-- Goals lead, then the tickets, as on every Manager's page. -->
   {#if chiefHoldsGoals}<GoalsOverview goals={goals.data?.goals??[]}/>{/if}
+  {#if chiefPage.data?.page}<HolderDocument holder={{kind:"chief",id:"chief"}}/>{/if}
   {#if !hasTickets(chiefPage.data?.page)}<section class="manager-workers" aria-label="Workers">
     <PageTickets principal={{ kind: "chief", id: "chief" }} />
   </section>{/if}
-  {#if chiefPage.data?.page}<HolderDocument holder={{kind:"chief",id:"chief"}}/>{/if}
   {#snippet conversation()}
   <LiveConversation
     ownerLoading={!chief}

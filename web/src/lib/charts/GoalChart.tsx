@@ -108,9 +108,9 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
   else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} />;
   else if (block.kind === 'number') chart = null;
   else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? PLOT_HEIGHT.compact : wide ? PLOT_HEIGHT.wide : PLOT_HEIGHT.regular)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
-  // One period switch everywhere: a compact control at the bottom centre of the chart, each
-  // segment sized to its label (the shared segmented control).
-  const rangeOnTop = false;
+  // The period switch stands where staging put it: at the top right of a full chart, and as
+  // one full-width row under the plot of a compact (card) chart.
+  const rangeOnTop = !compact;
   const plot = <>{chart}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 
   if (block.kind === 'binary') return <article className={`metric-card indicator-card completion-card ${integrated ? 'integrated-card' : ''}`}>{block.title && <div className="metric-top"><h2>{block.title}</h2></div>}<CompletionReading done={completed} tone={colors[status]} context={completed ? 'Completed' : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : 'Not done'} /></article>;

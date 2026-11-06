@@ -153,7 +153,7 @@
     {@render decisionActions?.()}
   {/snippet}
   {#if !embedded}
-  <div class="review-eyebrow">Review</div>
+  <div class="review-eyebrow" aria-hidden="true"></div>
   <h1 class="review-ticket-title">{item.title}</h1>
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
   <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>

@@ -3,7 +3,7 @@
  import type {GoalResponse,GoalWriteFields} from '../../lib/goals/contracts';
  import type {InlineEditDraft} from '../../lib/inlineEditDraft';
  import {createGoalEditor} from '../../lib/goals/editing';
- import {deadlineTone,deadlineColor,goalDateText} from '../../lib/goals/presentation';
+ import {deadlineTone,deadlineColor} from '../../lib/goals/presentation';
  import {queries} from '../../lib/queryCatalogue';
  import InlineEdit from '../InlineEdit.svelte';
  import ErrorLine from '../ErrorLine.svelte';
@@ -20,8 +20,6 @@
  function dateText(value:string){
   return new Intl.DateTimeFormat(navigator.language,{year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(`${value||'2000-01-01'}T12:00:00`));
  }
- // At rest the deadline reads as words (goalDateText), in the same voice as every other
- // date on the page. The native date control stays underneath as the editor.
  function openDatePicker(event:MouseEvent){
   const node=event.currentTarget as HTMLInputElement;
   // Native date segments remain the keyboard editor. Pointer and touch retain
@@ -89,8 +87,8 @@
    </div>
   {/if}
  {/snippet}
- <!-- One line above the title: where the goal lives, then its own facts. Under the title
-      there is only why it matters. -->
+ <!-- One line above the title, as staging: the project, the deadline (the date control's
+      own date) and the state, each its own quiet control, then the page's own action. -->
  <div class="goal-context page-eyebrow">
   <span class="metadata">
    <span class="control-size" aria-hidden="true">{projectName}</span>
@@ -99,16 +97,11 @@
     {#each projects.data?.projects??[] as project}<option value={project.id}>{project.name}</option>{/each}
    </select>
   </span>
-  <span class="page-eyebrow-sep" aria-hidden="true">·</span>
-  <span class="kind">Goal</span>
-  <span class="page-eyebrow-sep" aria-hidden="true">·</span>
   <span class="metadata deadline" class:empty={!deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)}>
    <span class="control-size date-size" aria-hidden="true">{dateText(deadline)}</span>
-   {#if deadline}<span class="date-display" aria-hidden="true" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>Due {goalDateText(deadline)}</span>{/if}
    {#if !deadline}<span class="deadline-empty" aria-hidden="true">No deadline</span>{/if}
    <input type="date" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))} aria-label="By date" value={deadline} disabled={editFields.deadline.saving} onfocus={()=>start(editFields.deadline,true)} onclick={openDatePicker} oninput={e=>input(editFields.deadline,e.currentTarget)} onblur={e=>void commit(editFields.deadline,'deadline',e.currentTarget)} onkeydown={e=>keydown(e,editFields.deadline,'deadline')}/>
   </span>
-  <span class="page-eyebrow-sep" aria-hidden="true">·</span>
   <span class="metadata">
    <span class="control-size" aria-hidden="true">{(editFields.active.value??String(goal.active))==='true'?'Active':'Inactive'}</span>
    <select aria-label="State" value={editFields.active.value??String(goal.active)} disabled={editFields.active.saving} onfocus={()=>start(editFields.active,true)} onchange={e=>{input(editFields.active,e.currentTarget);void commit(editFields.active,'active',e.currentTarget);}} onkeydown={e=>keydown(e,editFields.active,'active')}><option value="true">Active</option><option value="false">Inactive</option></select>
@@ -128,13 +121,7 @@
  .goal-heading{margin-bottom:var(--page-block-gap)}
  /* The one eyebrow pattern (app.css .page-eyebrow) on the page band's height. Each fact is
     its own quiet control; its 4px edit inset is taken back so the words start on the column. */
- .goal-context{min-height:var(--page-band-height);margin:0 calc(var(--space-1) * -1) 0}
- .goal-context .page-eyebrow-sep{padding-inline:2px}
- .goal-context .kind{padding:2px var(--space-1)}
- .date-display{grid-area:1/1;padding:2px var(--space-1);white-space:pre;pointer-events:none}
- .deadline:not(:focus-within) .date-size{visibility:hidden;width:0;overflow:hidden}
- .deadline:not(:focus-within) .date-display + input{opacity:0}
- .deadline:focus-within .date-display{display:none}
+ .goal-context{min-height:var(--page-band-height);margin:0 calc(var(--space-1) * -1) 0;column-gap:var(--space-3)}
  .metadata{position:relative;display:inline-grid;grid-template-columns:minmax(0,1fr);align-items:baseline;min-width:0;max-width:100%}
  .control-size,.deadline-empty{grid-area:1/1;padding:2px var(--space-1);white-space:pre}
  .control-size{visibility:hidden}
@@ -155,5 +142,5 @@
  .why{font-size:var(--type-body);font-weight:var(--weight-body);line-height:var(--leading-body);color:var(--tone-primary);margin-top:var(--space-2);max-width:var(--page-prose-measure)}
  .why :global(.ed){min-height:1.6em;white-space:pre-wrap}
  h1,.why{overflow-wrap:anywhere}
- @container (max-width:640px){.goal-context{gap:var(--space-3)}h1{font-size:var(--type-page-title)}}
+ @container (max-width:640px){.goal-context{column-gap:var(--space-2)}}
 </style>
