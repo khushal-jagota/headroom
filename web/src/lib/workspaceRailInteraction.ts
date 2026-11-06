@@ -7,7 +7,7 @@ export const RAIL_SETTLED_MAX_HEIGHT_SHARE = 0.5;
 export const RAIL_WIDTH_STORAGE_KEY = "panels.workspace.rail-width";
 export const RAIL_HOVER_ENTER_MS = 200;
 export const RAIL_HOVER_EXIT_MS = 90;
-export const RAIL_HOVER_RECAP_MAX_LINES = 2;
+export const RAIL_HOVER_RECAP_MAX_LINES = 5;
 export const RAIL_KEYBOARD_STEP = 8;
 export const RAIL_KEYBOARD_LARGE_STEP = 24;
 
@@ -202,40 +202,6 @@ export function railPreview(node: HTMLElement, options: RailPreviewOptions | nul
   return {
     update(next: typeof options) { current = next; if (!next) input.dispose(); },
     destroy() { input.dispose(); for (const [name, listener] of Object.entries(guarded)) node.removeEventListener(name, listener, capture(name)); }
-  };
-}
-
-/** The longest run of whole words, then an ellipsis, that fits in ``lines`` lines of ``node``.
- * A recap that runs out ends at a word, never part of one. */
-type WordClampOptions = { text: string; lines: number };
-export function clampToWords(node: HTMLElement, options: WordClampOptions) {
-  let current = options;
-  let frame = 0;
-  const fits = () => node.scrollHeight <= Math.ceil(current.lines * (Number.parseFloat(getComputedStyle(node).lineHeight) || 20)) + 1;
-  const apply = () => {
-    frame = 0;
-    const text = current.text.trim();
-    node.textContent = text;
-    if (current.lines <= 0 || !node.isConnected || fits()) return;
-    const words = text.split(/\s+/);
-    let low = 0, high = words.length - 1;
-    while (low < high) {
-      const middle = Math.ceil((low + high) / 2);
-      node.textContent = `${words.slice(0, middle).join(" ").replace(/[\s,;:.\-–—]+$/, "")}…`;
-      if (fits()) low = middle; else high = middle - 1;
-    }
-    node.textContent = `${words.slice(0, Math.max(1, low)).join(" ").replace(/[\s,;:.\-–—]+$/, "")}…`;
-  };
-  const schedule = () => { if (!frame) frame = requestAnimationFrame(apply); };
-  // Only a change of width can change where the lines break.
-  let width = node.clientWidth;
-  const observer = new ResizeObserver(() => { if (node.clientWidth !== width) { width = node.clientWidth; schedule(); } });
-  observer.observe(node);
-  apply();
-  void document.fonts?.ready.then(schedule);
-  return {
-    update(next: WordClampOptions) { current = next; apply(); },
-    destroy() { observer.disconnect(); if (frame) cancelAnimationFrame(frame); }
   };
 }
 

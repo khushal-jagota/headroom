@@ -362,10 +362,9 @@
   --rail-float-surface: var(--surface-raised);
   --rail-float-ring: rgb(255 255 255 / 8%);
   --rail-float-shadow: 0 2px 8px rgb(0 0 0 / 20%);
-  --rail-preview-width: 280px;
-  --rail-preview-pad: 14px;
+  --rail-preview-width: 340px;
+  --rail-preview-pad: 16px;
   --rail-preview-recap-size: 13px;
-  --rail-preview-recap-lines: 2;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }
