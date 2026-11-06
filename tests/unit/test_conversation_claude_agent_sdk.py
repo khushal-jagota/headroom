@@ -25,6 +25,7 @@ from uuid import UUID
 import pytest
 from anyio.abc import Process
 from claude_agent_sdk import (
+    AssistantMessage,
     ClaudeAgentOptions,
     CLINotFoundError,
     SystemMessage,
@@ -353,13 +354,15 @@ def test_claudes_own_command_reply_is_reported_only_when_nothing_else_says_it(
 ) -> None:
     """Claude answers a local command with a ``<synthetic>`` message and no streamed text.
 
-    That message is the only place a completed command's reply exists, so it is reported
-    before the ending. A failed turn already shows its error, which Claude also writes
-    this way, and automatic compaction records its own outcome, so neither repeats it.
-    Ordinary model text stays ordinary agent output.
+    That message is the only place a command's reply exists. It is held, and reported as
+    soon as the model works on (``/goal set`` starts the goal in the same turn) or just
+    before a completed ending. A failed turn already shows its error, which Claude also
+    writes this way, and automatic compaction records its own outcome, so neither
+    repeats it. Ordinary model text stays ordinary agent output.
     """
-    from claude_agent_sdk import ResultMessage
+    from claude_agent_sdk import ResultMessage, ToolUseBlock
 
+    goal_set = "Goal set: the file done.txt exists"
     refusal = "/goal can't run while hooks are restricted."
 
     def result(*, is_error: bool = False, text: str | None = None) -> ResultMessage:
@@ -373,25 +376,34 @@ def test_claudes_own_command_reply_is_reported_only_when_nothing_else_says_it(
             result=text,
         )
 
+    def synthetic(text: str) -> AssistantMessage:
+        return _assistant(TextBlock(text=text), model="<synthetic>")
+
     async def exercise() -> None:
         start = _start_request(workspace_folder=tmp_path)
         child, sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=SESSION_ID)
-        await _write(child, "/goal finish the work", TURN)
+        # The order Claude 2.1.259 uses for /goal set: its reply, then the goal's work.
+        await _write(child, "/goal the file done.txt exists", TURN)
         clients[0].say(
-            _assistant(TextBlock(text=refusal), model="<synthetic>"),
-            _assistant(TextBlock(text="ordinary words")),
+            synthetic(goal_set),
+            _assistant(ToolUseBlock(id="write-1", name="Write", input={"file_path": "done.txt"})),
+            _assistant(TextBlock(text="Done.")),
             result(),
         )
         await clients[0].until_taken_in()
-        await _write(child, "hello", TURN_2)
-        overloaded = "API Error: 529 Overloaded"
-        clients[0].say(
-            _assistant(TextBlock(text=overloaded), model="<synthetic>"),
-            result(is_error=True, text=overloaded),
-        )
+        assert sink.calls_in_order == [
+            "command_reply", "tool_call_started", "token_usage", "turn_ended",
+        ]
+        await _write(child, "/goal finish the work", TURN_2)
+        clients[0].say(synthetic(refusal), result())
         await clients[0].until_taken_in()
-        compaction_turn = TurnToken(conversation_id=TURN.conversation_id, turn_number=3)
+        failing_turn = TurnToken(conversation_id=TURN.conversation_id, turn_number=3)
+        await _write(child, "hello", failing_turn)
+        overloaded = "API Error: 529 Overloaded"
+        clients[0].say(synthetic(overloaded), result(is_error=True, text=overloaded))
+        await clients[0].until_taken_in()
+        compaction_turn = TurnToken(conversation_id=TURN.conversation_id, turn_number=4)
         compact = text_message_content("/compact")
         await child.write_prompt(
             compaction_turn,
@@ -403,20 +415,17 @@ def test_claudes_own_command_reply_is_reported_only_when_nothing_else_says_it(
             reasoning_effort_change=None,
             automatic_compaction=True,
         )
-        clients[0].say(
-            _assistant(TextBlock(text="Error: No messages to compact"), model="<synthetic>"),
-            result(),
-        )
+        clients[0].say(synthetic("Error: No messages to compact"), result())
         await clients[0].until_taken_in()
 
-        assert sink.command_replies == [(TURN, refusal)]
-        assert sink.message_texts == [(TURN, "ordinary words")]
+        assert sink.command_replies == [(TURN, goal_set), (TURN_2, refusal)]
+        assert sink.message_texts == [(TURN, "Done.")]
         assert [ending["ending"] for ending in sink.endings] == [
+            ConversationTurnEnding.completed,
             ConversationTurnEnding.completed,
             ConversationTurnEnding.failed,
             ConversationTurnEnding.completed,
         ]
-        assert sink.calls_in_order[:3] == ["token_usage", "command_reply", "turn_ended"]
         await child.stop()
 
     _run(exercise)

@@ -283,6 +283,7 @@ class _RecordingSink:
             assert turn is not None
             self.message_contents.append((turn, event.content))
         elif isinstance(event, ToolCallStarted):
+            self.calls_in_order.append("tool_call_started")
             self.tools_started.append(
                 {
                     "turn": turn,

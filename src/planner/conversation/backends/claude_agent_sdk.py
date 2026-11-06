@@ -842,7 +842,7 @@ class _TurnInFlight:
     token: TurnToken
     automatic_compaction: bool = False
     cancel_requested: bool = False
-    # Claude's own words this turn, kept until the turn is known to have completed.
+    # Claude's own words, kept until the model works on or the turn completes.
     command_replies: list[str] = field(default_factory=list)
     owned_steer_uuids: set[str] = field(default_factory=set)
     held_result: ResultMessage | None = None
@@ -1721,6 +1721,8 @@ class ClaudeAgentSdkBackendChild:
         if message.model == CLAUDE_SYNTHETIC_MESSAGE_MODEL:
             self._keep_the_command_reply(turn, message)
             return
+        # The model is working, so what Claude wrote before it was a reply, not an error.
+        await self._report_the_held_command_replies(turn)
         said: list[str] = []
         for block in message.content:
             match block:
@@ -1753,17 +1755,25 @@ class ClaudeAgentSdkBackendChild:
         await self._complete_agent_message(turn, said)
 
     def _keep_the_command_reply(self, turn: _TurnInFlight, message: AssistantMessage) -> None:
-        """Hold Claude's own words until the result says whether they are the only news.
+        """Hold Claude's own words until the turn says whether they are a command's reply.
 
-        A failed turn already shows its error, which is the same text when Claude writes
-        an API error this way. Automatic compaction already records whether it compacted.
-        So only an ordinary turn that completes reports what was held, just before it ends.
+        They are once the model goes on to work, as after ``/goal set``, or once the turn
+        completes. A failed turn already shows its error, which is the same text when
+        Claude writes an API error this way. An interrupted turn's ending is the news, and
+        one the core ended itself takes no later fact. Automatic compaction already records
+        whether it compacted. In those cases what was held is dropped.
         """
         if turn.automatic_compaction:
             return
         text = "".join(block.text for block in message.content if isinstance(block, TextBlock))
         if text:
             turn.command_replies.append(text)
+
+    async def _report_the_held_command_replies(self, turn: _TurnInFlight) -> None:
+        # Taken, not read: a second result racing a held one must not report them again.
+        replies, turn.command_replies = turn.command_replies, []
+        for reply_text in replies:
+            await self._sink.report(turn.token, CommandReplyReported(reply_text=reply_text))
 
     async def _on_assistant_message_after_turn(
         self, turn: _TurnInFlight, message: AssistantMessage
@@ -1913,10 +1923,7 @@ class ClaudeAgentSdkBackendChild:
                 turn, ConversationTurnEnding.failed, _result_error_summary(message)
             )
             return
-        # Taken, not read: a second result racing a held one must not report them again.
-        replies, turn.command_replies = turn.command_replies, []
-        for reply_text in replies:
-            await self._sink.report(turn.token, CommandReplyReported(reply_text=reply_text))
+        await self._report_the_held_command_replies(turn)
         await self._end_turn(turn, ConversationTurnEnding.completed, None)
 
     async def _report_what_has_been_spent(
