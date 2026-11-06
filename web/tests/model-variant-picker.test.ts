@@ -18,12 +18,14 @@ function picker(models: BackendModel[], model = "gpt-6.1-sol") {
 describe("current model variants in the shared picker", () => {
   it("shows the readable resolved model on the face and in one list label", () => {
     const view = picker([{
-      model_id: "gpt-6.1-sol", display_name: "GPT 6.1 Sol", enabled: true,
+      model_id: "gpt-6.1-sol", display_name: "GPT-6.1 Sol", enabled: true,
       selected_variant: "sol", resolved_model_id: "gpt-6.1-sol"
     }]);
-    expect(view.face).toBe("GPT 6.1 Sol medium");
+    expect(view.face).toBe("GPT-6.1 Sol Medium");
+    expect(view.modelFace).toBe("GPT-6.1 Sol");
+    expect(view.effortFace).toBe("Medium");
     expect(view.modelValue).toBe("gpt-6.1-sol");
-    expect(view.models).toEqual([{ value: "gpt-6.1-sol", name: "GPT 6.1 Sol" }]);
+    expect(view.models).toEqual([{ value: "gpt-6.1-sol", name: "GPT-6.1 Sol" }]);
   });
 
 
@@ -36,25 +38,36 @@ describe("current model variants in the shared picker", () => {
       selected_variant: "opus", resolved_model_id: "claude-opus-5-5"
     }], "opus");
     expect(view.modelValue).toBe("opus");
-    expect(view.face).toBe("Opus 5.5 medium");
+    expect(view.face).toBe("Opus 5.5 Medium");
     expect(view.models).toEqual([{ value: "opus", name: "Opus 5.5" }]);
+  });
+
+  it.each([
+    { model: "claude-opus-5-5", face: "Opus 5.5" },
+    { model: "claude-sonnet-5-5", face: "Sonnet 5.5" },
+    { model: "gpt-6.1-sol", face: "GPT-6.1 Sol" },
+    { model: "provider:unlisted", face: "provider:unlisted" }
+  ])("names a model the catalogue does not list by its id's readable form: $face", ({ model, face }) => {
+    const view = picker([], model);
+    expect(view.modelFace).toBe(face);
+    expect(view.face).toBe(`${face} Medium`);
   });
 
   it("preserves catalogue labels when the backend supplies no variant metadata", () => {
     const view = picker([{
       model_id: "provider:custom", display_name: "Custom model", enabled: true
     }], "provider:custom");
-    expect(view.face).toBe("Custom model medium");
+    expect(view.face).toBe("Custom model Medium");
     expect(view.models[0].name).toBe("Custom model");
   });
 
   it.each([
-    { resolved: null, expected: "Opus medium" },
-    { resolved: "opus", expected: "Opus medium" },
-    { resolved: "unrecognized-model-vNext", expected: "unrecognized-model-vNext medium" },
-    { resolved: "claude-opus-5-5[1m]", expected: "Opus 5.5 (1M) medium" },
-    { resolved: "claude-haiku-4-5-20251001", expected: "Haiku 4.5 medium", efforts: [] },
-    { resolved: "gpt-6.1-sol", expected: "GPT 6.1 Sol medium", model: "gpt-6.1-sol", alias: "sol" }
+    { resolved: null, expected: "Opus Medium" },
+    { resolved: "opus", expected: "Opus Medium" },
+    { resolved: "unrecognized-model-vNext", expected: "unrecognized-model-vNext Medium" },
+    { resolved: "claude-opus-5-5[1m]", expected: "Opus 5.5 (1M) Medium" },
+    { resolved: "claude-haiku-4-5-20251001", expected: "Haiku 4.5 Medium", efforts: [] },
+    { resolved: "gpt-6.1-sol", expected: "GPT-6.1 Sol Medium", model: "gpt-6.1-sol", alias: "sol" }
   ])("uses resolved evidence without invented versions or unsupported effort: $expected", ({
     resolved, expected, efforts, model = "opus", alias = "opus"
   }) => {
@@ -65,7 +78,7 @@ describe("current model variants in the shared picker", () => {
     }], model);
     expect(view.face).toBe(expected);
     expect(view.modelValue).toBe(model);
-    expect(view.models).toEqual([{ value: model, name: expected.replace(/ medium$/, "") }]);
+    expect(view.models).toEqual([{ value: model, name: expected.replace(/ Medium$/, "") }]);
   });
 
   it("prefers the catalogue name for the concrete resolution over an alias label", () => {
@@ -76,7 +89,7 @@ describe("current model variants in the shared picker", () => {
       },
       { model_id: "provider:custom", display_name: "Custom model", enabled: true }
     ], "opus");
-    expect(view.face).toBe("Custom model medium");
+    expect(view.face).toBe("Custom model Medium");
     expect(view.modelValue).toBe("opus");
     expect(view.models[0]).toEqual({ value: "opus", name: "Custom model" });
   });

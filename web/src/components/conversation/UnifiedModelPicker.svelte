@@ -216,7 +216,7 @@
 >
   {#snippet triggerContent(open)}
     {#if activeBackendKey}<BackendMark backend={activeBackendKey} />{/if}
-    {#if triggerFace}<span class="model-picker-face">{triggerFace}</span>{/if}
+    {#if triggerFace}<span class="model-picker-face">{view.modelFace}{#if view.effortFace}<span class="model-picker-effort">{view.effortFace}</span>{/if}</span>{/if}
   {/snippet}
   {#snippet beforeList()}
     <PickerRail label="Backend and reasoning" attributes={{ "data-conversation-backend-rail": "" }}>
@@ -307,7 +307,8 @@
 </ListboxPicker>
 
 <style>
-  .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-default); }
+  .model-picker-effort { margin-left: 0.3em; color: var(--text-faint); }
   .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-tools svg { width: 13px; height: 13px; }
   .model-picker-choice-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1,5 +1,5 @@
 import { effortOptionsFor, modelDisplayName } from "./composer";
-import { resolvedModelPickerLabel } from "./modelPickerLabel";
+import { readableReasoningEffort, resolvedModelPickerLabel } from "./modelPickerLabel";
 import {
   type BackendModel,
   type BackendSnapshot,
@@ -31,7 +31,10 @@ export type ModelPickerView = Readonly<{
   modelValue: string;
   modelName: string;
   reasoningEffort: string;
+  /** The closed control's words: the model, then the effort as a separate quieter word. */
   face: string;
+  modelFace: string;
+  effortFace: string;
   backends: readonly ModelPickerBackend[];
   models: readonly ModelPickerChoice[];
   olderModels: readonly ModelPickerChoice[];
@@ -114,7 +117,9 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
     modelValue,
     modelName,
     reasoningEffort,
-    face: [modelFace, reasoningEffort].filter(Boolean).join(" "),
+    face: [modelFace, readableReasoningEffort(reasoningEffort)].filter(Boolean).join(" "),
+    modelFace,
+    effortFace: readableReasoningEffort(reasoningEffort),
     backends: MODEL_PICKER_BACKEND_KEYS.map((key) => {
       const candidate = input.backends.find((item) => item.backend_key === key);
       const lockedReason = input.backendLocked && key !== input.backendKey
@@ -131,7 +136,7 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
     olderModels: models.filter(model => older.has(model)).map(choice),
     emptyReason: models.length ? null : snapshot?.diagnoses[0]
       ?? (snapshot ? `${name} offers no models on this machine.` : `${name} model list is unavailable.`),
-    efforts: efforts.map((effort) => ({ value: effort, name: effort })),
+    efforts: efforts.map((effort) => ({ value: effort, name: readableReasoningEffort(effort) })),
     defaultModel,
     defaultReasoningEffort,
 
