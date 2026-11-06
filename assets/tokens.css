@@ -4,22 +4,46 @@
  * brand accent meaning "needs the human", a shared sans type scale. No new
  * categories without evidence of need (PRINCIPLES.md, SPEC §10). */
 
+/* Inter, self-hosted (OFL; see THIRD_PARTY_NOTICES.md). Macs keep the system face
+ * through the stack's first entries; every other platform renders Inter. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/assets/fonts/InterVariable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/assets/fonts/InterVariable-Italic.woff2") format("woff2");
+}
+
 :root {
   /* Surfaces — two general neutral planes and one deliberately recessed plane.
    * Ink remains for knockout marks and the retired Day card. */
-  --surface-1: #151515;
-  --surface-2: #1c1c1c;
-  --surface-recessed: #0d0d0d;
-  /* The approved rounded input remains distinct from the recessed dock. */
-  --surface-input: #111111;
+  --surface-1: #191919;
+  --surface-2: #1f1f1f;
+  --surface-recessed: #141414;
+  /* The workspace rail: one close step above the page, divided by a hairline. */
+  --surface-rail: #1d1d1d;
+  /* Inline code: a translucent lift that reads on every surface it lands on. */
+  --surface-code: rgb(255 255 255 / 6%);
+  /* Popovers, menus and hover previews: the one raised plane, with --shadow-float. */
+  --surface-raised: #252525;
+  /* The rounded composer field floats one clear step above the page. */
+  --surface-input: #242424;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;
    * scrim dims everything behind an open layer. They are intentionally not a
    * symmetric light/dark pair. */
   --interaction-hover: linear-gradient(
-    rgb(255 255 255 / 5%),
-    rgb(255 255 255 / 5%)
+    rgb(255 255 255 / 4.5%),
+    rgb(255 255 255 / 4.5%)
   );
   --scrim: rgb(10 9 8 / 55%);
 
@@ -44,20 +68,20 @@
   --type-chart-completion: 36px;
   /* Approved chart-sheet surfaces and category palettes. These remain separate
    * from the shell so the production renderer preserves the approved examples. */
-  --chart-surface: #1a1a1a;
+  --chart-surface: #1f1f1f;
   --chart-surface-raised: #252525;
   --chart-surface-muted: #212121;
-  --chart-card-border: #ffffff0e;
+  --chart-card-border: #ffffff12;
   --chart-grid: #ffffff0c;
   --chart-border-strong: #ffffff24;
   --chart-secondary: #bfbfbf;
   --chart-muted: #8e8e8e;
   --chart-legend: #a6a6a6;
   --chart-reference: #777777;
-  --chart-range-surface: #232323;
+  --chart-range-surface: #171717;
   --chart-sample-control: #222222;
-  --chart-range-border: #ffffff06;
-  --chart-range-selected: #191919;
+  --chart-range-border: #ffffff0d;
+  --chart-range-selected: #2c2c2c;
   --chart-range-shadow: 0 1px 3px #0003;
   --chart-meter-track: #2a2a2a;
   --chart-budget-track: #424242;
@@ -72,7 +96,7 @@
   --chart-composition-blue-muted: #646f87;
   --chart-composition-blue-dark: #474b55;
   --accent-done: #7fa564;  /* the green done marks */
-  --accent-error: #d85d5d; /* red marks for errored ticket stages */
+  --accent-error: #d97272; /* red marks for errored ticket stages */
   /* The one pure white in the palette: the row dot for a worker waiting on a permission
    * ask. Nothing else is this bright, so "only you can answer this" reads at a glance. */
   --accent-needs-me: #fff;
@@ -122,7 +146,7 @@
   --measure-index: 760px;
   --space-page-tail: 128px;
   /* Shared title/text channel; conversation cards start and end on these same edges. */
-  --document-channel-measure: 720px;
+  --document-channel-measure: 760px;
   --file-preview-markdown-max-height: 24rem;
   /* The shell's nav bar. A screen that has to be exactly as tall as the space it was
      given works it out from the viewport, so its height has to be a value and not a
@@ -132,19 +156,29 @@
   /* Borders — widths plus the hairline seam colour */
   --border-hairline: 1px;
   --border-strong: 2px;
-  --border-color: rgba(255, 255, 255, 0.10);
-  --shadow-float: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
+  --border-color: rgba(255, 255, 255, 0.08);
+  /* The edge of a contained card, and the brighter edge of a focused field. */
+  --border-card: rgba(255, 255, 255, 0.07);
+  --border-hover: rgba(255, 255, 255, 0.13);
+  --border-focus: rgb(255 255 255 / 34%);
+  /* The soft halo around a focused field. */
+  --focus-halo: rgb(255 255 255 / 6%);
+  /* The keyboard focus ring, drawn the same way on every focusable control. Neutral,
+   * so it never borrows the accent's "needs you" meaning. */
+  --focus-ring: rgb(255 255 255 / 62%);
+  --shadow-float: 0 0 0 1px rgb(0 0 0 / 30%), 0 var(--space-2) var(--space-6) rgb(0 0 0 / 45%);
 
   /* Type — two font stacks and shared sans sizes. The prose/display/hero sizes
    * preserve the former serif hierarchy under the owner's size-preservation exception. */
-  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
-  --type-xs: 11px;
+  --type-xs: 12px;
   --type-sm: 13px;
+  --type-ui: 14px;
   --type-md: 15px;
-  --type-lg: 20px;
-  --type-prose-lg: 18px;
-  --type-display: 28px;
+  --type-lg: 16px;
+  --type-prose-lg: 15px;
+  --type-display: 26px;
   --type-hero: 30px;
 
   /* Focusable chat controls (the composer's textarea and pickers). Separate from
@@ -154,7 +188,7 @@
   --type-input-compact: var(--type-xs);
 
   /* Letter-spacing — tight on titles, open on uppercase labels, a hair on mono. */
-  --tracking-title: -0.008em;
+  --tracking-title: -0.012em;
   --tracking-label: 0.12em;
   --tracking-mono: 0.03em;
 }
@@ -183,8 +217,9 @@
 
 /* Workspace selection tiers and travel. */
 :root {
-  --wash-context: var(--surface-1);
-  --wash-selected: #2c2c2c;
+  /* The Manager you are inside: a tint quiet enough that only the open row reads as selected. */
+  --wash-context: rgb(255 255 255 / 3%);
+  --wash-selected: #2d2d2d;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }

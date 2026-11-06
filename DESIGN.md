@@ -12,7 +12,11 @@ bubble-less assistant, recessed composer).
 ## Surface roles
 
 - `--surface-1` is the main neutral plane; `--surface-2` is the contained neutral
-  plane for cards, menus, controls, and the human message bubble.
+  plane for cards, controls, and the human message bubble. A card carries one faint
+  `--border-card` edge. `--surface-rail` is the workspace rail, one close step from the
+  page with a hairline between them. `--surface-raised` is the one floating plane, for
+  popovers, menus and hover previews, with `--shadow-float`; nothing nests a darker
+  well inside it.
 - `--surface-recessed` is for wells, editors, code, and persistent selections.
 - `--surface-ink` is the cool near-black conversation band and human-input panel;
   it also supplies dark foreground ink on bright fills.
@@ -52,16 +56,15 @@ bubble-less assistant, recessed composer).
    hand off to smooth streaming, a working marker on a running ticket. Never leave a surface
    frozen and silent.
 
-8. **Use the shared scales.** Typography uses 11, 13, 15, 18, 20, 28, and 30px.
-   The owner asked to preserve sizes while removing serif, so the 18px prose,
-   28px display, and 30px hero sizes are an explicit exception to the five-size
-   limit. Existing sans size exceptions remain unchanged. The radius and spacing
+8. **Use the shared scales.** Typography uses 12 (labels), 13 (secondary), 14 (rows
+   and controls), 15 (body and recaps), 16 (section and card titles), 26 (page
+   titles) and 30px (hero). Weights stop at 600; most emphasis is 500. Controls are
+   32px tall with the 8px radius; surfaces use the 12px radius. The radius and spacing
    scales stay fixed; new sizes need an explicit design decision.
 
-9. **One sans voice.** Content and controls use the same system sans stack
-   (`--font-ui`). Hierarchy comes from size, weight, spacing, and emphasis. Former
-   serif text keeps its larger 18px prose, 28px display, and 30px hero sizes.
-   Smaller body text uses 15px and section titles use 20px. Code, diffs, tool output,
+9. **One sans voice.** Content and controls use the same sans stack (`--font-ui`):
+   the system face on a Mac, and the self-hosted Inter (`assets/fonts/`) everywhere
+   else. Hierarchy comes from size, weight, spacing, and emphasis. Code, diffs, tool output,
    and `code`, `pre`, `kbd`, and `samp` retain monospace because alignment carries meaning. Italics are for
    input placeholders and the quiet line on a Manager page.
 

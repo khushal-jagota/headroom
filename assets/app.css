@@ -14,6 +14,9 @@ body {
   font-family: var(--font-ui);
   font-size: var(--type-md);
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -22,8 +25,8 @@ textarea {
 }
 
 :focus-visible {
-  outline: var(--border-strong) solid var(--accent-bright);
-  outline-offset: var(--border-hairline);
+  outline: var(--border-strong) solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .markdown pre,
@@ -180,13 +183,16 @@ textarea {
 .shell { position:relative; height:100dvh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .shell-content { flex:1; min-width:0; min-height:0; padding:0; }
 .rail-foot { position:relative; flex:none; padding-top:var(--space-2); }
-.rail-utilities { display:flex; align-items:center; gap:var(--space-1); }
-.utility { position:relative; display:flex; flex:0 1 32px; align-items:center; justify-content:center; min-width:28px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-sm); background:transparent; color:var(--text-faintest); cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.rail-utilities { display:flex; align-items:center; gap:2px; }
+.utility { position:relative; display:flex; flex:0 1 32px; align-items:center; justify-content:center; gap:6px; min-width:28px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--text-faint); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .utility:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:var(--accent-bright); color:var(--text-strong); }
-.utility:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+.utility:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
 .utility svg,.sheet-item svg { width:18px; height:18px; flex:none; }
 .count-badge { position:absolute; top:-2px; right:-2px; min-width:14px; height:14px; padding:0 3px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-1); font-size:10px; font-weight:600; line-height:14px; text-align:center; font-variant-numeric:tabular-nums; }
+/* On the rail the count sits beside its icon, never on top of it. */
+.rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 var(--space-2) 0 7px; }
+.rail-utilities .count-badge { position:static; min-width:18px; height:16px; padding:0 5px; box-shadow:none; font-size:11px; line-height:16px; }
 .count-badge.hidden { display:none; }
 .utility-label { position:absolute; bottom:calc(100% + var(--space-2)); left:50%; z-index:6; padding:var(--space-1) var(--space-3); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-sm); background:var(--surface-2); color:var(--text-default); font-size:var(--type-sm); white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
 .utility:nth-child(1 of .utility) .utility-label { left:0; transform:none; }
@@ -206,7 +212,7 @@ textarea {
   .compact-bar-row { display:flex; align-items:stretch; }
   .bar-item { position:relative; flex:1; display:flex; align-items:center; justify-content:center; gap:var(--space-2); min-height:var(--shell-nav-height); padding:var(--space-3) var(--space-2); border:0; background:transparent; color:var(--text-faintest); font:inherit; font-size:var(--type-sm); cursor:pointer; text-decoration:none; }
   .bar-item[aria-current="page"] { color:var(--text-strong); font-weight:600; }
-  .bar-item:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:-2px; }
+  .bar-item:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:-2px; }
   .bar-item .count-badge { position:static; box-shadow:none; }
   .bar-caret { color:var(--text-faintest); font-size:10px; }
   .destination-sheet { animation:shell-panel-in var(--motion-base) var(--motion-ease); position:absolute; z-index:14; inset:auto 0 100%; max-height:calc(100dvh - var(--shell-nav-height)); overflow:auto; padding:var(--space-2) var(--space-3) var(--space-5); border-top:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg) var(--radius-lg) 0 0; background:var(--surface-2); box-shadow:var(--shadow-float); }
@@ -342,7 +348,7 @@ textarea {
 }
 
 .agents-destination:focus-visible {
-  outline: 2px solid var(--accent-bright);
+  outline: 2px solid var(--focus-ring);
   outline-offset: var(--space-1);
 }
 
@@ -694,10 +700,11 @@ textarea {
 
 .markdown code {
   font-family: var(--font-mono);
-  font-size: var(--type-sm);
-  background: var(--surface-recessed);
-  padding: 0 var(--space-1);
+  font-size: 0.86em;
+  background: var(--surface-code);
+  padding: 0.1em 0.3em;
   border-radius: var(--radius-sm);
+  color: var(--text-default);
 }
 
 .markdown pre {
@@ -722,6 +729,14 @@ textarea {
 .markdown ol {
   margin: 0 0 var(--space-3);
   padding-left: var(--space-5);
+}
+
+.markdown li + li {
+  margin-top: var(--space-1);
+}
+
+.markdown li::marker {
+  color: var(--text-faintest);
 }
 
 .markdown li > ul,
@@ -950,7 +965,7 @@ textarea {
 .file-preview--embedded .conversation-text-preview { margin:0; color:var(--text-default); font-family:var(--font-mono); font-size:var(--type-xs); white-space:pre-wrap; overflow-wrap:anywhere; }
 .file-preview-band { display:flex; align-items:center; gap:var(--space-4); padding:var(--space-5); background:var(--surface-2); }
 .file-preview-card:hover .file-preview-content, .file-preview-card:hover .file-preview-band { background-image:var(--interaction-hover); }
-.file-preview-card:focus-within { outline:var(--border-strong) solid var(--accent-bright); outline-offset:calc(var(--space-1) / 2); }
+.file-preview-card:focus-within { outline:var(--border-strong) solid var(--focus-ring); outline-offset:calc(var(--space-1) / 2); }
 .file-preview-card:has(.pv-act:focus-visible) { outline:0; }
 .file-preview-tile { display:grid; place-items:center; flex:none; width:var(--space-7); height:var(--space-7); border-radius:var(--radius-lg); background:var(--surface-recessed); color:var(--text-faint); }
 .file-preview-tile svg { width:calc(var(--space-5) - var(--border-strong)); height:calc(var(--space-5) - var(--border-strong)); }
@@ -962,7 +977,7 @@ a.pv-name:focus-visible { outline:0; }
 .file-preview-kind { display:block; color:var(--text-faintest); font-size:var(--type-sm); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pv-act { position:relative; z-index:1; flex:none; color:var(--accent-bright); font-size:var(--type-sm); font-weight:600; white-space:nowrap; text-decoration:none; padding:var(--space-1) var(--space-2); border-radius:var(--radius-sm); }
 .pv-act:hover { background-image:var(--interaction-hover); }
-.pv-act:focus-visible, .file-preview-play:focus-visible, .file-preview-seek:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:calc(var(--space-1) / 2); }
+.pv-act:focus-visible, .file-preview-play:focus-visible, .file-preview-seek:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:calc(var(--space-1) / 2); }
 .file-preview--embedded .file-preview-frame { background:var(--surface-recessed); border-radius:0; }
 .file-preview--embedded .file-preview-name-link { display:block; margin-block-end:var(--space-1); }
 .file-preview-media-download { display:inline-block; margin-block-end:var(--space-1); }
@@ -1009,21 +1024,32 @@ a.pv-name:focus-visible { outline:0; }
 }
 
 .button--quiet {
-  background: var(--surface-2);
-  color: var(--text-strong);
-  border: var(--border-hairline) solid var(--text-faint);
-  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-default);
+  border: var(--border-hairline) solid var(--border-hover);
+  border-radius: var(--radius-md);
   padding: var(--space-1) var(--space-3);
   font-size: var(--type-sm);
+  font-weight: 500;
+}
+
+.button--quiet:hover:not(:disabled) {
+  background-image: var(--interaction-hover);
+  color: var(--text-strong);
 }
 
 .button--primary {
-  background: var(--accent-surface);
-  color: var(--accent-text);
+  background: var(--accent-bright);
+  color: var(--surface-ink);
   border: var(--border-hairline) solid var(--accent-bright);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   padding: var(--space-1) var(--space-3);
   font-size: var(--type-sm);
+  font-weight: 500;
+}
+
+.button--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-bright) 82%, var(--text-strong));
 }
 
 .button--pill {
@@ -1451,7 +1477,7 @@ button.list-row:hover .list-row-title {
 }
 
 .chat-overflow-history select:focus-visible {
-  outline: var(--border-hairline) solid var(--accent-bright);
+  outline: var(--border-hairline) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -1604,11 +1630,16 @@ button.list-row:hover .list-row-title {
   flex: none;
   background: var(--surface-input);
   border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: var(--space-3) var(--space-4);
+  border-radius: calc(var(--radius-lg) + var(--space-1));
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+  transition: border-color var(--motion-fast) var(--motion-ease);
+}
+.chat-box:hover {
+  border-color: var(--border-hover);
 }
 .chat-box:focus-within {
-  border-color: color-mix(in srgb, var(--accent-bright) 40%, var(--border-color));
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--focus-halo);
 }
 /* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
 .chat-box.drag {
@@ -1760,7 +1791,7 @@ button.list-row:hover .list-row-title {
   overflow-y: hidden;
   display: block;
 }
-.chat-ta::placeholder { color: var(--text-faintest); }
+.chat-ta::placeholder { color: var(--text-faint); }
 /* The input actions use one row and one treatment at every width. */
 .chat-foot {
   display: flex;
@@ -2157,7 +2188,7 @@ select {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: calc(var(--space-7) * 13);
+  max-width: var(--document-channel-measure);
   margin: 0 auto;
   padding: 0 0 var(--space-7);
 }
@@ -2166,20 +2197,26 @@ select {
  * outside-actions row moved up here, no queue position. */
 .review-ticket-decision-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: flex-end;
-  gap: var(--space-5);
-  padding: var(--space-6) 0 var(--space-2);
+  gap: var(--space-1);
+  padding: var(--space-5) 0 var(--space-4);
+  margin-right: calc(var(--space-2) * -1);
 }
 
 .review-ticket-decision-line button,
 .review-ticket-decision-line a {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
   background: none;
   border: 0;
-  padding: 0;
-  color: var(--text-faintest);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-2);
+  color: var(--text-faint);
   font-family: var(--font-ui);
   font-size: var(--type-sm);
+  font-weight: 500;
   text-decoration: none;
   cursor: pointer;
   transition: color var(--motion-base) var(--motion-ease);
@@ -2187,7 +2224,8 @@ select {
 
 .review-ticket-decision-line button:hover,
 .review-ticket-decision-line a:hover {
-  color: var(--text-default);
+  background-image: var(--interaction-hover);
+  color: var(--text-strong);
 }
 
 /* The keyboard hint, centered and faint, at the foot of the chamber. */
@@ -2202,21 +2240,26 @@ select {
 /* The chamber fills the viewport so the key hints anchor to the bottom edge
  * (mockup: .keys { margin-top: auto }). */
 .review-keys kbd {
-  font-family: var(--font-mono);
+  display: inline-block;
+  min-width: 20px;
+  font-family: var(--font-ui);
   font-size: var(--type-xs);
-  color: var(--text-faint);
+  line-height: 18px;
+  color: var(--text-muted);
   background: var(--surface-2);
+  border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
+  padding: 0 5px;
   margin-right: var(--space-1);
+  text-align: center;
 }
 
 /* Display title, brand-accent hover, still the ticket link. */
 .review-ticket-title {
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
+  font-weight: 600;
+  letter-spacing: -0.02em;
   color: var(--text-strong);
   text-decoration: none;
   display: block;
@@ -2226,7 +2269,7 @@ select {
 }
 
 .review-ticket-title:hover {
-  color: var(--accent-bright);
+  color: var(--text-default);
 }
 
 .review-ticket-heading {
@@ -2248,10 +2291,11 @@ select {
 .review-recap {
   max-width: 60ch;
   margin-top: var(--space-2);
-  color: var(--text-faint);
+  margin-bottom: var(--space-5);
+  color: var(--text-muted);
   font-family: var(--font-ui);
   font-size: var(--type-md);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .review-recap .markdown > :last-child {
@@ -2405,7 +2449,7 @@ select {
  * same --board-workspace-rail-pad-x inner inset, so all rail text shares one left
  * edge. Vertical rhythm follows the mockup's roster: rows touch, groups separate. */
 .board-workspace-left {
-  background: var(--surface-recessed);
+  background: var(--surface-rail);
   min-width: 0;
   overflow: auto;
   padding: var(--space-4) var(--page-gutter) var(--space-7);
@@ -2439,7 +2483,7 @@ select {
 }
 
 .board-workspace-chief-row:focus-visible {
-  outline: 2px solid var(--accent-bright);
+  outline: 2px solid var(--focus-ring);
   outline-offset: var(--space-1);
 }
 
@@ -2710,7 +2754,7 @@ select {
 }
 
 .board-workspace-item-head:focus-visible {
-  outline: var(--border-strong) solid var(--accent-bright);
+  outline: var(--border-strong) solid var(--focus-ring);
   outline-offset: var(--space-1);
   border-radius: var(--radius-sm);
 }
@@ -2844,7 +2888,7 @@ select {
 }
 
 .ed:focus {
-  outline: var(--border-hairline) solid var(--accent-bright);
+  outline: var(--border-hairline) solid var(--focus-ring);
   outline-offset: var(--space-1);
 }
 
@@ -2975,7 +3019,7 @@ select {
 }
 
 .employee-configuration-setup .pill:focus-within {
-  outline: var(--border-strong) solid var(--accent-bright);
+  outline: var(--border-strong) solid var(--focus-ring);
   outline-offset: var(--border-hairline);
 }
 
@@ -3006,8 +3050,8 @@ select {
 
 .stage-mark {
   flex: none;
-  width: 0.7rem;
-  height: 0.7rem;
+  width: var(--space-2);
+  height: var(--space-2);
   border: var(--border-strong) solid var(--text-faintest);
   border-radius: var(--radius-pill);
   box-sizing: border-box;
@@ -3019,6 +3063,9 @@ select {
 }
 
 .stage-mark--current-running {
+  width: calc(var(--space-2) + var(--border-strong));
+  height: calc(var(--space-2) + var(--border-strong));
+  border-width: 1.5px;
   border-color: var(--accent-surface);
   border-right-color: var(--accent-bright);
   border-top-color: var(--accent-bright);
@@ -3325,9 +3372,11 @@ select {
   padding-bottom: var(--conversation-edge-gap);
   background: var(--surface-1);
 }
-/* The dock shares the page's plane. A hairline is its only edge; the open and
- * return motion fades it through --conversation-dock-line. */
+/* The dock shares the page's plane. The document fades into it rather than meeting a
+ * rule, so the line stays drawn only while the open and return motion needs an edge
+ * (--conversation-dock-line). */
 .conversation-layer::before {
+  display: none;
   content: "";
   position: absolute;
   top: 0;
@@ -3370,7 +3419,7 @@ select {
   bottom: 0;
   left: 0;
   right: 0;
-  height: var(--space-5);
+  height: var(--space-6);
   background: linear-gradient(transparent, var(--surface-1));
   pointer-events: none;
 }
@@ -3489,7 +3538,7 @@ select {
 .ticket-identity-fact:focus-within {
   color: var(--text-strong);
   border-bottom-color: var(--accent-bright);
-  outline: var(--border-hairline) solid var(--accent-bright);
+  outline: var(--border-hairline) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -3539,16 +3588,16 @@ select {
   display: block;
   max-width: 62ch;
   margin-top: var(--space-2);
-  color: var(--text-faint);
+  color: var(--text-muted);
   font-family: var(--font-ui);
   font-size: var(--type-prose-lg);
-  line-height: 1.5;
+  line-height: 1.6;
   cursor: text;
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
 .ticket-recap:hover {
-  color: var(--text-muted);
+  color: var(--text-default);
 }
 
 .ticket-recap:focus-within {
@@ -3557,10 +3606,10 @@ select {
 
 /* Three lines by default, and whatever `--clamp-lines` says when a screen wants a taller
  * reading window — the Sprint's bet asks for four and a half. The line is the type's own
- * (font-size × the 1.5 line-height above), so the number here is the number of lines the
+ * (font-size × the 1.6 line-height above), so the number here is the number of lines the
  * component measures against. */
 .ticket-recap--clamped {
-  max-height: calc(var(--type-prose-lg) * 1.5 * var(--clamp-lines, 3));
+  max-height: calc(var(--type-prose-lg) * 1.6 * var(--clamp-lines, 3));
   overflow: hidden;
 }
 
@@ -3857,7 +3906,7 @@ a.artifact-chip:hover,
 
 .stage-fold-summary:focus-visible,
 .stage-fold-close:focus-visible {
-  outline: var(--border-hairline) solid var(--accent-bright);
+  outline: var(--border-hairline) solid var(--focus-ring);
   outline-offset: calc(-1 * var(--border-hairline));
 }
 
@@ -4657,12 +4706,12 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 
 /* Workspace ticket buckets share row geometry across buttons and message links. */
-.workspace-ticket-bucket { margin-top:var(--space-4); }
-.workspace-ticket-bucket .bucket-label { font-size:10.5px; line-height:normal; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint); padding-bottom:6px; margin-bottom:var(--space-1); border-bottom:var(--border-hairline) solid var(--border-color); }
-.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--space-2) * 2)); display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-sm); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:1.5; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.workspace-ticket-bucket { margin-top:var(--space-3); }
+.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:500; color:var(--text-faintest); padding:0 0 var(--space-1); margin-bottom:2px; border-bottom:var(--border-hairline) solid var(--border-color); }
+.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--space-2) * 2)); display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:6px var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-ui); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
 .workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-.workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
+.workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:1px; }
 .workspace-ticket-bucket .ticket-row-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .workspace-ticket-bucket .worker-row .conversation-signal-marks { justify-self:end; }
 
@@ -4773,18 +4822,18 @@ details:not([open]) > summary > .manager-workspace-chevron {
   display:flex;
   align-items:center;
   gap:var(--space-3);
-  padding:14px var(--space-2);
+  padding:var(--space-3) var(--space-2);
   margin-inline:calc(-1 * var(--space-2));
-  border-radius:var(--radius-sm);
+  border-radius:var(--radius-md);
   font-size:var(--type-sm);
-  font-weight:600;
+  font-weight:500;
   color:var(--text-faint);
   cursor:pointer;
   list-style:none;
 }
 .disclosure-band > summary::-webkit-details-marker { display:none; }
 .disclosure-band > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-.disclosure-band > summary:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+.disclosure-band > summary:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
 .disclosure-band-trailing { margin-left:auto; font-weight:400; color:var(--text-faintest); }
 .disclosure-band-body { padding-bottom:var(--space-4); }
 
@@ -4801,7 +4850,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .rail-wash--group { background:var(--wash-context); border-radius:var(--radius-lg); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
 .rail-wash--hover { background-image:var(--interaction-hover); }
-.rail-wash--focus { z-index:4; box-shadow:0 0 0 var(--border-strong) var(--accent-bright); }
+.rail-wash--focus { z-index:4; box-shadow:0 0 0 var(--border-strong) var(--focus-ring); }
 .approved-rail .rail-utilities .rail-wash { border-radius:var(--radius-sm); }
 .approved-rail :is(.settled-item, .utility) { position:relative; z-index:1; }
 .approved-rail :is(.utility:hover, .utility[aria-current="page"], .utility[aria-expanded="true"]) { border-color:transparent; background:none; }
