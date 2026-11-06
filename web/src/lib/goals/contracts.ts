@@ -394,7 +394,6 @@ export interface GoalEditBody {
 export interface GoalResponse {
   holder_kind: "chief" | "manager";
   holder_id: string | null;
-  legacy_conversation_id: string | null;
   id: string;
   project_id: string;
   title: string;

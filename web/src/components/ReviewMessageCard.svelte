@@ -103,7 +103,6 @@
     await resolve(bound);
   }
   async function send():Promise<void> {
-    if(item.owner_kind==='goal')return;
     if(busy || intakeBusy || !ready || !loaded || !hasReply || voiceActive)return;
     busy=true;error=null;
     try {
@@ -150,7 +149,7 @@
   </div>
   <h1 class="review-ticket-title">{item.title}</h1>
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
-  {#if item.owner_kind !== "goal"}<div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>{/if}
+  <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>
   {/if}
   {#if embedded}<div class="review-ticket-decision-line"><a data-open-conversation href={reviewMessageHref(item)}>Open conversation &rsaquo;</a></div>{/if}
   <SkeletonRegion shape="block" loading={!loaded && !error} loadingText="Loading messages...">
@@ -159,9 +158,9 @@
         <div class="review-message-run">
           {#each events as event (event.sequence)}<div class="review-message-said" data-review-message-sequence={event.sequence}><MessagePieces content={messageContentOf(event.payload)} {conversationId}/></div>{/each}
         </div>
-        {#if item.owner_kind !== 'goal'}<ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
+        <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
           {disabled} sendDisabled={busy || !ready} sending={busy}
-          sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>{/if}
+          sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>
         <div class="review-read-row"><button data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</button></div>
         {#if error}<ErrorLine {error}/>{/if}
       </div>

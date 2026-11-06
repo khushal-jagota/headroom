@@ -164,7 +164,7 @@ export interface ConversationValue {
 }
 
 export interface AddressValue {
-  owner_kind: "ticket" | "manager" | "chief" | "goal";
+  owner_kind: "ticket" | "manager" | "chief";
   owner_id: string;
   conversation_id: string;
   current: boolean;
@@ -594,7 +594,7 @@ export interface ReviewMessageItem {
   review_item_type: "message";
   conversation_id: string;
   address_id: string;
-  owner_kind: "ticket" | "manager" | "chief" | "goal";
+  owner_kind: "ticket" | "manager" | "chief";
   owner_id: string;
   title: string;
   waiting_since: number;

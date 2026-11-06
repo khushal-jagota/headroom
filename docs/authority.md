@@ -2,11 +2,11 @@
 
 One sentence decides almost every guarded write in Headroom: you may act on anything strictly below you.
 
-Khushal, Chief, Managers, Workers, and goal agents all call the same routes. There is no separate interface for agents. Who the caller is, and where the target sits, decides whether the call is admitted.
+Khushal, Chief, Managers, and Workers all call the same routes. There is no separate interface for agents. Who the caller is, and where the target sits, decides whether the call is admitted.
 
 ## Who can call
 
-The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). Goals have no agent; old goal transcripts stay readable history. The browser and an ordinary `panels` call are the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
+The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). Goals have no agent. Old goal transcripts remain stored without a goal conversation interface. The browser and an ordinary `panels` call are the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
 
 Manager requests use the `manager` actor and `X-Plan-Manager-ID`. Old Sprint Item actors and identity headers do not establish authority.
 

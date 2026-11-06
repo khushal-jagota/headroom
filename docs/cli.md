@@ -1,17 +1,17 @@
 # The command line
 
-`panels` is Headroom's record, reached over HTTP. The browser is Khushal's main surface. The command is how a Worker acts, how the Chief, a Manager, or a goal agent acts from its own process, and how an operator runs the host. Every command calls the same routes the browser uses, and `--json` returns the route's own body.
+`panels` is Headroom's record, reached over HTTP. The browser is Khushal's main surface. The command is how a Worker acts, how the Chief or a Manager acts from its own process, and how an operator runs the host. Every command calls the same routes the browser uses, and `--json` returns the route's own body.
 
 ## Who is calling
 
-The command name grants nothing. The process environment says who is calling: Headroom sets the actor, the Ticket, Manager, or goal id, and the conversation id when it starts an agent. The server admits or refuses that caller with the same rule as the browser. See [Who may act](authority.md).
+The command name grants nothing. The process environment says who is calling: Headroom sets the actor, the Ticket or Manager id, and the conversation id when it starts an agent. The server admits or refuses that caller with the same rule as the browser. See [Who may act](authority.md).
 
 Manager commands accept `panels manager` and `--manager`. The old Sprint Item and Orchestrator spellings are removed.
 
 ## What it is made of
 
 - **Ordinary roots**, shown in help, for people and supervising agents:
-  - `send-message` addresses Khushal, the Chief, a goal, a Ticket's Worker, or a Manager through the [conversation](conversations.md) door.
+  - `send-message` addresses Khushal, the Chief, a Ticket's Worker, or a Manager through the [conversation](conversations.md) door.
   - `project`, `ticket`, and `manager` read and edit the catalog, Tickets, and Managers, including backlog and resume, assignment, accepting or revising a parked proposal, restarting a stalled Worker, and settling a Manager.
   - `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md).
   - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).

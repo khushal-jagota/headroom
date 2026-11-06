@@ -2315,7 +2315,7 @@ def verify_selection_washes(page, url, fixture, evidence):
 
     # Goals use the same selected-row geometry inside Chief, before its Workers.
     goal = {"id": "wash_goal", "title": "Ship the rail", "active": True, "completed": False,
-            "kind": "binary", "holder_kind": "chief", "holder_id": None, "legacy_conversation_id": None, "created_at": 1, "updated_at": 1,
+            "kind": "binary", "holder_kind": "chief", "holder_id": None, "created_at": 1, "updated_at": 1,
             "project_id": None, "why": "", "deadline": None, "primary_chart": None,
             "primary_checklist_block_id": None, "revision": 0, "status": "neutral",
             "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400,

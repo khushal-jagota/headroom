@@ -56,8 +56,6 @@ def _read(
             (
                 owner_id
                 if kind == "ticket"
-                else "goal_" + owner_id
-                if kind == "goal"
                 else manager_agent_key(owner_id, conn),
             ),
         ).fetchone()
@@ -163,8 +161,6 @@ async def history_page(
     canonical: HistoryOwnerKind
     if kind == "ticket":
         canonical = "ticket"
-    elif kind == "goal":
-        canonical = "goal"
     elif kind == "manager":
         canonical = "manager"
     else:

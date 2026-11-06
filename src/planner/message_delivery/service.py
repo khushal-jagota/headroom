@@ -40,8 +40,6 @@ def sender_label(ctx: RequestContext) -> str:
         return "owner"
     if ctx.principal.kind is PrincipalKind.chief:
         return "Chief"
-    if ctx.principal.kind is PrincipalKind.goal:
-        return f"Goal {ctx.principal.id}"
     if ctx.principal.kind is PrincipalKind.ticket:
         return f"Ticket {ctx.principal.id}"
     return f"Manager {ctx.principal.id}"
@@ -58,11 +56,6 @@ def _prompt_mode(mode: MessageDeliveryMode | PromptDeliveryMode) -> PromptDelive
 
 
 def _sender_conversation_id(conn: sqlite3.Connection, sender: Principal) -> str | None:
-    if sender.kind is PrincipalKind.goal:
-        from planner.goals.data import read_goal
-
-        read_goal(conn, sender.id)
-        return conversation_start.read_agent_conversation(conn, "goal_" + sender.id)
     if sender.kind is PrincipalKind.ticket:
         return tickets_data.read_ticket(conn, sender.id).conversation_id
     if sender.kind is PrincipalKind.chief:
@@ -74,8 +67,6 @@ def _sender_conversation_id(conn: sqlite3.Connection, sender: Principal) -> str 
 
 
 def _sender_conversation_link_key(conn: sqlite3.Connection, sender: Principal) -> str:
-    if sender.kind is PrincipalKind.goal:
-        return f"agent:goal_{sender.id}"
     if sender.kind is PrincipalKind.ticket:
         return f"ticket:{sender.id}"
     if sender.kind is PrincipalKind.chief:
@@ -112,6 +103,11 @@ async def send_message(
     authority or launch choices. Only trusted internal callers select it.
     """
     caller = ctx.principal
+    message_kinds = {
+        PrincipalKind.owner, PrincipalKind.chief, PrincipalKind.manager, PrincipalKind.ticket
+    }
+    if caller.kind not in message_kinds or recipient.kind not in message_kinds:
+        raise PlannerError(ErrorCode.validation, "unsupported message principal kind", {})
     if owner_read_through_sequence is not None and (
         caller.kind is not PrincipalKind.owner or system_message
     ):
