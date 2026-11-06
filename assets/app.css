@@ -5381,9 +5381,10 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* THE COMPOSER ZONE — one compact floating zone: a single-line composer with its status line
  * under it as its footer, like the reference composers. It floats over the page's last lines:
- * the page runs the full height and scrolls under the composer along one fixed edge. Below the composer's middle the zone
- * stands on the page's own plane, so nothing shows through under the composer or behind its
- * status line. No fade, no hairline. */
+ * the page runs the full height and scrolls normally under it. Above the composer the page
+ * fades out over --composer-fade (20px, staging's document edge), a fixed CSS gradient; from
+ * there down the zone stands on the page's own plane. Nothing is measured, and no content is
+ * hidden or shown by whether it fits. */
 .conversation-layer::before { display: none; }
 .ticket-reading:not(:has(.ticket-artifact))::after,
 .manager-reading:not(:has(.ticket-artifact))::after { height: 0; background: none; }
@@ -5392,31 +5393,18 @@ details:not([open]) > summary > .manager-workspace-chevron {
   left: var(--conversation-visible-left, 0px);
   right: var(--conversation-visible-right, 0px);
   bottom: var(--conversation-visible-bottom, 0px);
-  padding-top: 0;
-  background: linear-gradient(to bottom, transparent calc(var(--composer-height) / 2), var(--surface-1) calc(var(--composer-height) / 2));
+  padding-top: var(--composer-fade);
+  background: linear-gradient(to bottom, transparent, var(--surface-1) var(--composer-fade));
   pointer-events: none;
 }
 :is(.manager-page, .ticket-page) > .conversation-layer > .conversation-column { pointer-events: auto; }
-/* The page passes under the zone along one fixed edge. Every line of text stops at the fold
- * (PageFold.svelte): a list row, table row, checklist item, paragraph or heading that would
- * cross it waits below, whole or not shown. The page is cut at the row boundary where its
- * lines stop (--page-fold-cut, measured from the reading area's bottom): above it everything
- * is drawn whole, below it nothing is; a card's sides and fill fade out over --composer-fade
- * (32px) under that row, into the solid band of page above the composer, so the card reads as
- * scrolling under rather than cut; no line is ever faded. */
+/* Anything scrolled into view (a focused row, a found word) stops clear of the zone, and the
+ * page keeps room under its last block to scroll fully clear of it. */
 :is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) :is(.manager-doc, .ticket-doc) {
-  /* Anything scrolled into view (a focused row, a found word) stops above the fold. */
-  scroll-padding-bottom: var(--page-fold-clear);
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--page-fold-cut, var(--page-fold-clear))), transparent calc(100% - var(--page-fold-cut, var(--page-fold-clear)) + var(--composer-fade)));
-          mask-image: linear-gradient(to bottom, #000 calc(100% - var(--page-fold-cut, var(--page-fold-clear))), transparent calc(100% - var(--page-fold-cut, var(--page-fold-clear)) + var(--composer-fade)));
+  scroll-padding-bottom: var(--composer-clear);
 }
-[data-page-folded] {
-  opacity: 0;
-  pointer-events: none;
-}
-/* The page keeps room under its last block to scroll fully clear of the fold. */
-.manager-column { padding-bottom: calc(var(--page-fold-clear) + var(--space-5)); }
-.ticket-col { padding-bottom: calc(var(--page-fold-clear) + var(--space-5) - var(--space-7)); }
+.manager-column { padding-bottom: calc(var(--composer-clear) + var(--space-5)); }
+.ticket-col { padding-bottom: calc(var(--composer-clear) + var(--space-5) - var(--space-7)); }
 
 /* The floating composer: one line, 44px; its + at the left, its model, delivery and voice
  * controls at the right, all on the composer's own row. It grows with what is typed, and

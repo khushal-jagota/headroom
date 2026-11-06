@@ -7,7 +7,6 @@
   import { queries } from "../lib/queryCatalogue";
   import {hasTickets} from '../lib/pageKit/holderDocument';
   import PageTickets from "./pageKit/PageTickets.svelte";
-  import PageFold from "./pageKit/PageFold.svelte";
   import HolderDocument from "./pageKit/HolderDocument.svelte";
   import GoalHeader from "./goals/GoalHeader.svelte";
   import GoalContent from "./goals/GoalContent.svelte";
@@ -249,7 +248,6 @@
             {#if holderPage.data?.page}<HolderDocument holder={{kind:"manager",id:itemId}}/>{/if}
           {/if}
           {@render tickets()}
-          <PageFold />
           <div class="manager-bands disclosure-bands">
             <details class="disclosure-band goal-band" data-goal-band>
               <summary>Goal</summary>

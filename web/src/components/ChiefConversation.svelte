@@ -26,7 +26,6 @@
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {hasTickets} from '../lib/pageKit/holderDocument';
   import PageTickets from "./pageKit/PageTickets.svelte";
-  import PageFold from "./pageKit/PageFold.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
@@ -119,7 +118,6 @@
     <PageTickets principal={{ kind: "chief", id: "chief" }} />
   </section>{/if}
   {#if chiefPage.data?.page}<HolderDocument holder={{kind:"chief",id:"chief"}}/>{/if}
-  <PageFold />
   {#snippet conversation()}
   <LiveConversation
     ownerLoading={!chief}
