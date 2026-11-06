@@ -9,7 +9,7 @@ import { Gauge } from './components/gauge';
 import { ProgressCard, TimeBudgetCard, AllocationCard, seriesColor } from './components/goal-indicators';
 import { Bars } from './components/bar-chart';
 import { motionTokens } from './lib/motion-tokens';
-import { chartData, chartHeadline, chartTone, comparisonText, readingSuffix, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, observationDetails, seriesKey, allocationData } from './presentation';
+import { chartData, chartHeadline, chartTone, comparisonText, readingSuffix, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, hasDateAxis, observationDetails, seriesKey, allocationData } from './presentation';
 import './theme.css';
 
 const colors = { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--text-muted)' };
@@ -102,7 +102,7 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
       { from: Math.min(0, value), tone: block.direction === 'atmost' ? 'success' : 'danger', label: block.direction === 'atmost' ? 'Within limit' : 'Below target' },
       { from: displayBlock.target! + (block.direction === 'atmost' ? .00001 : 0), tone: block.direction === 'atmost' ? 'danger' : 'success', label: block.direction === 'atmost' ? 'Above limit' : 'On target' },
     ]} />;
-  else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} />;
+  else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} dateAxis={hasDateAxis(block, data, projection, preferences.range)} />;
   else if (block.kind === 'number') chart = null;
   else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 176 : 216)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
   const plot = <>{chart}{compact && hasRange && <div className="chart-range-footer">{range}</div>}</>;
