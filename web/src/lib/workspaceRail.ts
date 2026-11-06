@@ -139,14 +139,15 @@ export function workspaceAttentionGroups(
 }
 
 /** A Manager's or the Chief's state in one sentence, in the voice of a Ticket's stage
- * sentence: how many of its open Tickets wait on the person, else whether it is working. */
+ * sentence: how many of its open Tickets need the person (the rows the rail shows bright),
+ * else whether it is working, else how many are open. */
 export function workspaceHolderStateSentence(groups: readonly WorkspaceTicketGroup[], working: boolean | undefined): string {
   const open = groups.reduce((total, group) => total + group.cards.length, 0);
-  const waiting = groups.filter((group) => ["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key))
-    .reduce((total, group) => total + group.cards.length, 0);
-  if (waiting) return `${waiting} ${waiting === 1 ? "Ticket waits" : "Tickets wait"} on you.`;
+  const needsYou = groups.reduce((total, group) => total + group.cards.filter((card) =>
+    ["awaiting_approval", "awaiting_answer", "errored"].includes(group.key) || card.conversation_signal?.message_for_owner === true).length, 0);
+  if (needsYou) return `${needsYou} ${needsYou === 1 ? "Ticket needs" : "Tickets need"} you.`;
   if (working) return "Currently working.";
-  return open ? `${open} open ${open === 1 ? "Ticket" : "Tickets"}, none waiting on you.` : "No open Tickets.";
+  return open ? `${open} open ${open === 1 ? "Ticket" : "Tickets"}.` : "No open Tickets.";
 }
 
 /** A popover recap operates like any other recap: the real text, or nothing. */
