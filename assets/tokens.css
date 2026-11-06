@@ -439,6 +439,8 @@
    * (and above anything scrolled into view) to stand clear of the zone. */
   --composer-fade: var(--space-5);
   --composer-clear: calc(var(--composer-zone) + var(--composer-preview-room) + var(--composer-fade));
+  /* The page's last line scrolls this far clear of the composer zone. */
+  --page-end-clear: 24px;
   /* The composer: the reference composer's surface (10% white) with a 1px edge one step
    * lighter, radius 12. */
   --composer-surface: var(--surface-input);

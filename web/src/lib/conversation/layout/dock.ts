@@ -131,6 +131,9 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
         }
       }
       lastHeight = layer.getBoundingClientRect().height;
+      // The page under a floating dock keeps this much room at its end, so its last line can
+      // always scroll clear of the dock however tall a draft or an unread excerpt makes it.
+      if (state !== 'opened' && !host.hasAttribute('data-conversation-dock-transition')) set('--conversation-layer-height', lastHeight);
       if (reader && state !== 'opened' && !host.hasAttribute('data-conversation-dock-transition')) readerHeight = reader.getBoundingClientRect().height;
     }
     if (composer) {

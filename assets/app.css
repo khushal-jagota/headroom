@@ -5399,12 +5399,13 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 :is(.manager-page, .ticket-page) > .conversation-layer > .conversation-column { pointer-events: auto; }
 /* Anything scrolled into view (a focused row, a found word) stops clear of the zone, and the
- * page keeps room under its last block to scroll fully clear of it. */
+ * page keeps room under its last block to scroll fully clear of it: the zone's own height (the
+ * dock publishes it as --conversation-layer-height, with a draft or an excerpt in it) and 24px. */
 :is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) :is(.manager-doc, .ticket-doc) {
-  scroll-padding-bottom: var(--composer-clear);
+  scroll-padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear));
 }
-.manager-column { padding-bottom: calc(var(--composer-clear) + var(--space-5)); }
-.ticket-col { padding-bottom: calc(var(--composer-clear) + var(--space-5) - var(--space-7)); }
+.manager-column { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear)); }
+.ticket-col { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear) - var(--space-7)); }
 
 /* The floating composer: one line, 44px; its + at the left, its model, delivery and voice
  * controls at the right, all on the composer's own row. It grows with what is typed, and
