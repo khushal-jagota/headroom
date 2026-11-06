@@ -49,7 +49,7 @@
 .goals-rail{display:flex;flex-direction:column;gap:0;margin-top:0}
 a{color:inherit;text-decoration:none}
 .goal{box-sizing:border-box;display:block;padding:var(--rail-goal-pad-y) var(--rail-pad);border-radius:var(--radius-md);touch-action:pan-y;font-size:var(--rail-goal-size);font-weight:var(--weight-body);line-height:var(--rail-row-line);color:var(--rail-tone-rest);transition:color var(--motion-fast) var(--motion-ease)}
-.row-title{position:relative;top:var(--rail-goal-title-nudge);display:block;min-width:0;overflow-wrap:anywhere}
+.row-title{position:relative;top:var(--rail-goal-title-nudge);display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-width:0;overflow-wrap:anywhere}
 .goal:hover,.selected{color:var(--rail-tone-bright)}
 .state{position:relative;top:var(--rail-goal-state-nudge);display:flex;justify-content:space-between;flex-wrap:wrap;gap:0 var(--space-2);font-size:var(--rail-label-size);font-weight:var(--weight-body);line-height:16px;color:var(--rail-tone-label);font-variant-numeric:tabular-nums}
 .state :global([data-tone]){color:inherit}

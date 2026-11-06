@@ -4862,7 +4862,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
    other row rests dim (tone only). */
 .workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:start; column-gap:0; width:100%; min-height:var(--rail-row-height); padding:var(--rail-row-pad-top) var(--rail-pad) var(--rail-row-pad-bottom); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:var(--rail-row-line); cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
-.workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:normal; overflow-wrap:anywhere; }
+/* As staging: a Ticket's title stays on one line and ends in an ellipsis (CSS only); the full
+   title is in its hover preview and on its page. */
+.workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; align-self:start; height:var(--rail-row-line); }
 .workspace-ticket-bucket:is([data-bucket-key="awaiting_approval"], [data-bucket-key="awaiting_answer"], [data-bucket-key="errored"]) .worker-row,
 .workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--rail-tone-bright); }
