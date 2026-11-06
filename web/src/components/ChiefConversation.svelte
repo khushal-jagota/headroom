@@ -140,5 +140,5 @@
 </div>
 <style>
   .chief-workspace-host { display:contents; }
-  .manager-workers { margin-top:var(--space-6); }
+  .manager-workers { margin-top:var(--page-section-gap); }
 </style>

@@ -9,10 +9,12 @@
 
   // ``recapTarget`` is the agent that can be asked for a fresh recap. Every agent with a
   // recap passes one; a header shown without a live agent behind it passes nothing.
-  let { title, heading, eyebrow, recap, onSaveRecap, signal, conversationId = null, recapTarget = null }: {
+  let { title, heading, eyebrow, actions, recap, onSaveRecap, signal, conversationId = null, recapTarget = null }: {
     title: Snippet;
     heading?: Snippet;
     eyebrow?: Snippet;
+    /** The page's own utilities, after the recap ask at the right end of the top band. */
+    actions?: Snippet;
     recap?: string;
     onSaveRecap?: (value: string) => Promise<unknown>;
     signal?: Partial<ConversationSignal>;
@@ -23,9 +25,16 @@
 
 <header class="manager-workspace-head">
   {#if heading}{@render heading()}{:else}
-  <!-- The line above the title is the same height on every page, so titles share one line.
-       The Chief belongs to no project, so its line stays empty. -->
-  {#if eyebrow}{@render eyebrow()}{:else}<div class="manager-workspace-eyebrow-slot" aria-hidden="true"></div>{/if}
+  <!-- The top band is the same height on every page, so titles share one line: where the
+       page lives on the left (nothing is invented where there is no such place), and the
+       page's own utilities on the right, quiet and always visible. -->
+  <div class="page-band">
+    <div class="page-band-place">{#if eyebrow}{@render eyebrow()}{/if}</div>
+    {#if recapTarget !== null || actions}<div class="page-band-actions">
+      {#if recapTarget !== null}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} />{/if}
+      {@render actions?.()}
+    </div>{/if}
+  </div>
   <h1 class="manager-workspace-title">
     {@render title()}
     <ConversationSignalMark {signal} {conversationId} class="manager-workspace-title-mark" />
@@ -52,7 +61,7 @@
     {/snippet}
     </RecapSlot>
   {/if}
-  {#if recapTarget !== null}
+  {#if recapTarget !== null && heading}
     <div class="manager-workspace-recap-ask">
       <RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} />
     </div>
@@ -60,14 +69,13 @@
 </header>
 
 <style>
-  .manager-workspace-head { padding-top:var(--space-4); }
-  .manager-workspace-eyebrow-slot { display:flex; align-items:center; min-height:24px; font-size:var(--type-sm); line-height:20px; color:var(--text-faint); }
-  .manager-workspace-title { font-family:var(--font-ui); font-size:var(--type-display); font-weight:700; line-height:1.25; letter-spacing:-0.02em; margin-top:var(--space-2); overflow-wrap:anywhere; }
+  .manager-workspace-head { padding-top:0; }
+  .manager-workspace-title { font-family:var(--font-ui); font-size:var(--type-page-title); font-weight:var(--weight-page-title); line-height:1.25; letter-spacing:-0.02em; margin-top:var(--space-1); overflow-wrap:anywhere; }
   /* No padding on the clamped block itself: ClampedText measures its scrollHeight
      against a line count, so padding there reports an empty recap as overflowing. */
   /* The gap sits on the animating slot, not inside it: a margin on the clamped block
      would stay behind the height the slot is measuring. */
   .manager-workspace-head :global([data-recap-slot]) { margin-top:var(--space-2); }
-  .manager-workspace-head :global(.manager-workspace-recap) { font-family:var(--font-ui); font-size:var(--type-ui); font-weight:500; line-height:22px; max-width:none; color:var(--text-muted); }
+  .manager-workspace-head :global(.manager-workspace-recap) { font-family:var(--font-ui); font-size:var(--type-md); font-weight:500; line-height:24px; max-width:var(--page-prose-measure); color:var(--text-muted); }
   .manager-workspace-recap-ask { margin-top:var(--space-4); font-size:var(--type-sm); color:var(--text-muted); }
 </style>

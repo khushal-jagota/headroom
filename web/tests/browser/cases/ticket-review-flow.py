@@ -929,7 +929,7 @@ def run(browser, urls):
         absent=False,
     )
     expect(page.locator("[data-project-fact]")).to_have_text("One")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding · VPS")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Review ticket")
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.locator("[data-ticket-backlog-action]").click()
@@ -971,7 +971,7 @@ def run(browser, urls):
     runtime_working = True
     drive("window.__batch()")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("Current Project · Personal · VPS")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("Current Project · Personal")
     expect(page.locator(".ticket-title [data-conversation-id]")).to_have_attribute(
         "data-conversation-id", "masthead-current"
     )
@@ -1080,7 +1080,7 @@ def run(browser, urls):
         "data-section-stage", "needs_success_condition"
     )
     expect(page.locator("[data-approval-block] [contenteditable]")).to_have_text("A result")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding · VPS")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
     expect(page.locator("[data-parent-link]")).to_have_count(0)
     assert (
         page.locator(

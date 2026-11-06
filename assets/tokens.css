@@ -64,8 +64,9 @@
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;
   --accent-surface: #222a38;
-  /* A needs-you count: the accent itself at low alpha behind the accent's text, so the badge
-   * is the accent in every surface it lands on, not a separate navy. */
+  /* The rail's needs-you count (the icon bar's review badge): the accent itself at low alpha
+   * behind the accent's text, so the badge is the accent on the rail, not a separate navy.
+   * A page list's needs-you count is --count-needs-you-fill below. */
   --accent-badge: rgb(154 173 210 / 16%);
   --error-surface: #382226;
   /* The fill of small marked things — a chip, a pill, the primary button. Dark enough
@@ -159,8 +160,9 @@
   --measure-read: 680px;
   --measure-index: 760px;
   --space-page-tail: 128px;
-  /* Shared title/text channel; conversation cards start and end on these same edges. */
-  --document-channel-measure: 800px;
+  /* Shared title/text channel; conversation cards start and end on these same edges. It is
+   * the page column, --page-measure, under its older name. */
+  --document-channel-measure: var(--page-measure);
   --file-preview-markdown-max-height: 24rem;
   /* The shell's nav bar. A screen that has to be exactly as tall as the space it was
      given works it out from the viewport, so its height has to be a value and not a
@@ -175,7 +177,7 @@
   --border-card: rgba(255, 255, 255, 0.07);
   --border-hover: rgba(255, 255, 255, 0.13);
   --border-focus: var(--focus-ring);
-  /* The keyboard focus ring, drawn the same way on every focusable control: a crisp 2px
+  /* The keyboard focus ring, drawn the same way on every focusable control: a crisp, fine
    * line in the accent's hue. It is a line, never a fill, so it cannot read as "needs you". */
   --focus-ring: rgb(154 173 210 / 82%);
   /* The focus ring's line: fine, and drawn on the control's own edge so it follows its radius. */
@@ -191,10 +193,11 @@
   --type-ui: 14px;
   --type-md: 15px;
   --type-lg: 16px;
-  /* Section headings on a page: a step above card titles (15), well below the page title. */
-  --type-section: 17px;
+  /* Section headings on a page: the page system's section head, --type-page-section. */
+  --type-section: var(--type-page-section);
   --type-prose-lg: 15px;
-  --type-display: 24px;
+  /* The page title: the page system's title size, --type-page-title. */
+  --type-display: var(--type-page-title);
   --type-hero: 30px;
 
   /* Focusable chat controls (the composer's textarea and pickers). Separate from
@@ -269,4 +272,35 @@
   /* The fill around a Manager's header reaches this far past the header's text above and
    * below, the same air a row keeps inside its own fill. */
   --rail-head-pad: 4px;
+}
+
+/* The main pane's page system: one column, one type ladder, one end at the composer.
+ * Every page (Chief, Manager, Ticket, goal, review) draws from these. */
+:root {
+  /* The page column. Every page and its composer share this width, centred in the pane. */
+  --page-measure: 840px;
+  --page-prose-measure: 720px;
+  /* The page's top band: the one line above the title (where it lives) on the left and the
+   * page's own utilities on the right. One height on every page. */
+  --page-band-height: 48px;
+  /* The space between a page's sections, and between its header and the first one. */
+  --page-section-gap: 40px;
+  /* Page type: a bold title, quiet section heads, body, and a small-print tier for chart
+   * axes, table headers and dates. */
+  --type-page-title: 24px;
+  --weight-page-title: 700;
+  --type-page-section: 16px;
+  --weight-page-section: 650;
+  --type-small-print: 12px;
+  --tone-small-print: #9d9d9d;
+  /* Every button on a page: one height, one radius, one label size. */
+  --page-control-height: 32px;
+  /* The composer zone fades in over the page's last lines instead of cutting them with a line,
+   * and the page keeps enough room under its last block to scroll fully clear of it. */
+  --composer-fade: 40px;
+  --page-end-room: var(--space-7);
+  /* A page list's needs-you count: the accent fill with dark ink, the same mark on every page
+   * list. The rail's review badge is --accent-badge. */
+  --count-needs-you-fill: var(--accent-fill);
+  --count-needs-you-ink: var(--surface-ink);
 }

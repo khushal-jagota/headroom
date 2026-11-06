@@ -107,8 +107,8 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
   else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} />;
   else if (block.kind === 'number') chart = null;
   else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 120 : 184)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
-  // Every chart keeps its range as one full-width row under the plot, the same control in
-  // the same place on a Manager's card and on the goal's own page.
+  // One period switch everywhere: a full-width row under the chart, on a goal card and on the
+  // goal's own page alike, so it is the same control at the same height wherever it appears.
   const rangeOnTop = false;
   const plot = <>{chart}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 

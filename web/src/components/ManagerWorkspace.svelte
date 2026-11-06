@@ -214,7 +214,7 @@
           <div bind:this={headerElement}>
           {#snippet managerTitle()}<InlineEdit value={item.title} placeholder="(untitled Manager)" ariaLabel="Manager name" onSave={(value)=>saveItem("title",value)}/>{/snippet}
           {#snippet settleButton()}
-            <button type="button" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>
+            <button type="button" class="page-settle page-utility" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>
               <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{item.settled?'Reopen':'Settle'}
             </button>
           {/snippet}
@@ -226,9 +226,8 @@
           {/snippet}
           <ManagerHeader heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
             recap={item.recap} onSaveRecap={(value)=>saveItem("recap",value)} recapTarget={{kind:"manager",id:item.id}}>
-            {#snippet eyebrow()}<div class="page-eyebrow">{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`}>{workspaceName}</a>{/if}<span>{item.project}</span>
-              {@render settleButton()}
-            </div>{/snippet}
+            {#snippet eyebrow()}<div class="page-eyebrow">{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`}>{workspaceName}</a>{/if}<span>{item.project}</span></div>{/snippet}
+            {#snippet actions()}{@render settleButton()}{/snippet}
             {#snippet title()}{@render managerTitle()}{/snippet}
           </ManagerHeader>
           {#if settleError}<p role="alert">{settleError}</p>{/if}
@@ -296,12 +295,10 @@
      there the line keeps its way back to the Workspace. */
   @media (min-width:721px) { .page-back, .page-back + span::before { display:none; } }
   .page-eyebrow a:hover { color:var(--text-strong); text-decoration-line:underline; }
-  .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 var(--space-2); margin-right:calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
-  .page-settle svg { width:13px; height:13px; }
-  :global(.manager-doc):hover .page-settle, .page-settle:focus-visible { opacity:1; }
-  .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .manager-workers { margin-top:var(--space-5); }
-  .manager-bands { margin-top:var(--space-5); }
+  /* Settle is one of the page's utilities in the top band: always shown, in the quiet voice. */
+  .page-settle svg { width:14px; height:14px; flex:none; }
+  .manager-workers { margin-top:var(--page-section-gap); }
+  .manager-bands { margin-top:var(--space-6); }
   .manager-goal { font-size:var(--type-md); line-height:1.6; color:var(--text-muted); max-width:66ch; }
   .goal-chevron { font-size:var(--type-md); line-height:1; }
   .goal-chevron::before { content:"\203A"; }

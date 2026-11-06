@@ -2206,7 +2206,7 @@ select {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: var(--document-channel-measure);
+  max-width: var(--page-measure);
   margin: 0 auto;
   padding: 0 0 var(--space-7);
 }
@@ -3840,7 +3840,7 @@ a.artifact-chip:hover,
 .ticket-col,
 .conversation-column,
 .manager-column {
-  width: min(var(--document-channel-measure), calc(100% - 2 * var(--space-5)));
+  width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
   margin-inline: auto;
   padding-inline: 0;
 }
@@ -4933,3 +4933,122 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .approved-rail .workspace-ticket-bucket .worker-row:hover { color:var(--text-strong); }
 .approved-rail .bucket-label { border-bottom:0; }
 .approved-rail .settled-row:hover .settled-title, .approved-rail .settled-title[aria-current="page"] { color:var(--text-strong); }
+
+/* === The main pane's page system ==========================================
+ * One column, one top band, one type ladder and one end at the composer, on every page
+ * (Chief, Manager, Ticket, goal, review). Values live in tokens.css. */
+
+/* The top band: where the page lives on the left, the page's own utilities on the right.
+ * The same height on every page, so every title starts on the same line. */
+.page-band {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--page-band-height);
+}
+.page-band-place {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-sm);
+  line-height: 20px;
+  color: var(--text-faint);
+}
+.page-band-place > * { min-width: 0; }
+.page-band .page-band-actions,
+.page-band .ticket-lifecycle .actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.page-band .ticket-lifecycle {
+  flex: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.page-band .ticket-lifecycle .hint {
+  margin: 0;
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+}
+
+/* A page utility: always shown, in the quiet voice, the same height as every page button.
+ * It fills only on hover, inside its own box, so the band's right edge stays on the column. */
+.page-band .page-band-actions .request-recap-action,
+.page-band .ticket-lifecycle .text-action,
+.page-band .ticket-lifecycle .button,
+.page-band .ticket-lifecycle .request-recap-action,
+.page-band .page-utility,
+.goal-heading .page-utility {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--page-control-height);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-family: var(--font-ui);
+  font-size: var(--type-sm);
+  font-weight: 550;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+.page-band .page-band-actions .request-recap-action:hover,
+.page-band .ticket-lifecycle .text-action:hover,
+.page-band .ticket-lifecycle .button:hover,
+.page-band .ticket-lifecycle .request-recap-action:hover,
+.page-band .page-utility:hover,
+.goal-heading .page-utility:hover {
+  background-color: var(--wash-hover);
+  color: var(--text-strong);
+}
+.page-band .page-utility:focus-visible,
+.goal-heading .page-utility:focus-visible,
+.page-band .request-recap-action:focus-visible,
+.page-band .ticket-lifecycle .text-action:focus-visible {
+  outline: var(--focus-width) solid var(--focus-ring);
+  outline-offset: 0;
+}
+.page-band .page-utility:disabled,
+.goal-heading .page-utility:disabled { cursor: default; opacity: .5; }
+
+/* The review chamber's line above the title is the same band. */
+.review-eyebrow {
+  min-height: var(--page-band-height);
+  margin-top: 0;
+  margin-bottom: var(--space-1);
+}
+.review-screen { padding-top: 0; }
+.review-ticket-title {
+  font-size: var(--type-page-title);
+  font-weight: var(--weight-page-title);
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+.review-recap {
+  max-width: var(--page-prose-measure);
+  font-size: var(--type-md);
+  line-height: 24px;
+}
+
+/* The page ends at the composer zone without a line: the zone's top fades over the page's
+ * last lines, and the column keeps room under its last block, so it can scroll fully clear. */
+.conversation-layer::before { display: none; }
+.ticket-reading:not(:has(.ticket-artifact))::after,
+.manager-reading:not(:has(.ticket-artifact))::after {
+  height: var(--composer-fade);
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--surface-1) 0%, transparent), var(--surface-1) 85%);
+}
+.manager-column { padding-bottom: calc(var(--composer-fade) + var(--page-end-room)); }
+.ticket-col { padding-bottom: var(--composer-fade); }

@@ -20,7 +20,7 @@
     container-name: page;
     container-type: inline-size;
     width: 100%;
-    max-width: var(--document-channel-measure);
+    max-width: var(--page-measure);
     color: var(--text-default);
     font-family: var(--font-ui);
   }

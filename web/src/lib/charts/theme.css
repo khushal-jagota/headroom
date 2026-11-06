@@ -43,11 +43,11 @@
   .compact .metric-value { height:36px; }
   .compact .comparison { font-size:13px; }
   .compact .missing-value { font-size:var(--type-chart-compact); }
+  .compact .caption { font-size:12px; }
+  .chart-range-footer { margin-top:20px; }
   /* The range is one full-width row under every plot, a Manager's card or the goal page. */
   .chart-range-footer .ranges { width:100%; justify-content:space-between; }
   .chart-range-footer .ranges button { flex:1; padding:0 8px; }
-  .compact .caption { font-size:12px; }
-  .chart-range-footer { margin-top:20px; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
   .integrated-card { border:0; background:transparent; border-radius:0; padding:0; }
   .integrated-card.compact { padding:0; --text-3xl:var(--type-chart-compact); }
