@@ -89,6 +89,7 @@ from planner.conversation.backends.contracts import (
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
+    CommandReplyReported,
     ComposerCatalogReported,
     ContextCompacted,
     ModelThinkingHappened,
@@ -1057,9 +1058,7 @@ class CodexAppServerBackendChild:
         except (CodexAppServerError, ValidationError) as failed:
             raise PromptWriteFailed(str(failed)) from failed
 
-        await self._sink.report(
-            turn.token, AgentMessageCompleted(content=text_message_content(message))
-        )
+        await self._sink.report(turn.token, CommandReplyReported(reply_text=message))
         if self._turn is turn:
             self._turn = None
         await self._sink.report(

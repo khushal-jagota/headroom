@@ -121,6 +121,7 @@ from planner.conversation.backends.contracts import (
     BackendUserInputRequest,
     BackgroundTaskEnded,
     BackgroundTaskStarted,
+    CommandReplyReported,
     ComposerCatalogReported,
     ContextCompacted,
     ModelThinkingHappened,
@@ -198,6 +199,10 @@ TODO_WRITE_TOOL_NAME: Final = "TodoWrite"
 TRANSIENT_SESSION_ID_SYSTEM_SUBTYPES: Final[frozenset[str]] = frozenset(
     {"hook_started", "hook_progress", "hook_response"}
 )
+
+# The model name Claude Code puts on a message it wrote itself rather than asked the model
+# for. A command it answers locally, such as a refused ``/goal``, arrives this way.
+CLAUDE_SYNTHETIC_MESSAGE_MODEL: Final = "<synthetic>"
 
 # What the CLI calls a turn that somebody stopped. Anything else it reports is a turn that
 # ran and stopped on its own account.
@@ -835,7 +840,10 @@ class _TurnInFlight:
     """The turn this child is running, and what it has half-said so far."""
 
     token: TurnToken
+    automatic_compaction: bool = False
     cancel_requested: bool = False
+    # Claude's own words, kept until the model works on or the turn completes.
+    command_replies: list[str] = field(default_factory=list)
     owned_steer_uuids: set[str] = field(default_factory=set)
     held_result: ResultMessage | None = None
     steer_settlement_watch: asyncio.Task[None] | None = None
@@ -990,7 +998,7 @@ class ClaudeAgentSdkBackendChild:
         if automatic_compaction or native_command:
             # Native controls retain their exact route and acknowledgment contract.
             asked = await self._query_argument(delivered_content)
-            self._turn = _TurnInFlight(token=turn_token)
+            self._turn = _TurnInFlight(token=turn_token, automatic_compaction=automatic_compaction)
             try:
                 await client.query(asked)
             except Exception as failed:
@@ -1354,7 +1362,6 @@ class ClaudeAgentSdkBackendChild:
             cwd=str(resolved_start.workspace_folder),
             cli_path=self._launch.claude_executable,
             system_prompt=CLAUDE_CODE_SYSTEM_PROMPT,
-            settings='{"disableAllHooks":true}',
             model=resolved_start.model,
             effort=self._effort(resolved_start.reasoning_effort),
             permission_mode=_permission_mode(resolved_start.access),
@@ -1710,6 +1717,11 @@ class ClaudeAgentSdkBackendChild:
             # A subagent talking inside a tool call. The tool call is the thing that
             # happened; its inner conversation is not the agent's message to anyone.
             return
+        if message.model == CLAUDE_SYNTHETIC_MESSAGE_MODEL:
+            self._keep_the_command_reply(turn, message)
+            return
+        # The model is working, so what Claude wrote before it was a reply, not an error.
+        await self._report_the_held_command_replies(turn)
         said: list[str] = []
         for block in message.content:
             match block:
@@ -1740,6 +1752,27 @@ class ClaudeAgentSdkBackendChild:
                 case _:
                     continue
         await self._complete_agent_message(turn, said)
+
+    def _keep_the_command_reply(self, turn: _TurnInFlight, message: AssistantMessage) -> None:
+        """Hold Claude's own words until the turn says whether they are a command's reply.
+
+        They are once the model goes on to work, as after ``/goal set``, or once the turn
+        completes. A failed turn already shows its error, which is the same text when
+        Claude writes an API error this way. An interrupted turn's ending is the news, and
+        one the core ended itself takes no later fact. Automatic compaction already records
+        whether it compacted. In those cases what was held is dropped.
+        """
+        if turn.automatic_compaction:
+            return
+        text = "".join(block.text for block in message.content if isinstance(block, TextBlock))
+        if text:
+            turn.command_replies.append(text)
+
+    async def _report_the_held_command_replies(self, turn: _TurnInFlight) -> None:
+        # Taken, not read: a second result racing a held one must not report them again.
+        replies, turn.command_replies = turn.command_replies, []
+        for reply_text in replies:
+            await self._sink.report(turn.token, CommandReplyReported(reply_text=reply_text))
 
     async def _on_assistant_message_after_turn(
         self, turn: _TurnInFlight, message: AssistantMessage
@@ -1889,6 +1922,7 @@ class ClaudeAgentSdkBackendChild:
                 turn, ConversationTurnEnding.failed, _result_error_summary(message)
             )
             return
+        await self._report_the_held_command_replies(turn)
         await self._end_turn(turn, ConversationTurnEnding.completed, None)
 
     async def _report_what_has_been_spent(

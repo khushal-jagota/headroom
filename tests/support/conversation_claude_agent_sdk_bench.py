@@ -40,6 +40,7 @@ from planner.conversation.backends.contracts import (
     BackendUserInputRequest,
     BackgroundTaskEnded,
     BackgroundTaskStarted,
+    CommandReplyReported,
     ComposerCatalogReported,
     ContextCompacted,
     ModelThinkingHappened,
@@ -253,6 +254,7 @@ class _RecordingSink:
         self.composer_catalog: list[tuple[ComposerCatalogEntry, ...]] = []
         self.token_usage: list[dict[str, Any]] = []
         self.compactions: list[TurnToken] = []
+        self.command_replies: list[tuple[TurnToken, str]] = []
         self.session_news: list[
             BackgroundTaskStarted | BackgroundTaskEnded | BackendStreamEnded
         ] = []
@@ -281,6 +283,7 @@ class _RecordingSink:
             assert turn is not None
             self.message_contents.append((turn, event.content))
         elif isinstance(event, ToolCallStarted):
+            self.calls_in_order.append("tool_call_started")
             self.tools_started.append(
                 {
                     "turn": turn,
@@ -312,6 +315,10 @@ class _RecordingSink:
                     "cost_usd": event.cost_usd,
                 }
             )
+        elif isinstance(event, CommandReplyReported):
+            self.calls_in_order.append("command_reply")
+            assert turn is not None
+            self.command_replies.append((turn, event.reply_text))
         elif isinstance(event, ContextCompacted):
             self.calls_in_order.append("context_compacted")
             assert turn is not None
@@ -416,11 +423,14 @@ async def _write(
 
 
 def _assistant(
-    *blocks: Any, session_id: str = SESSION_ID, parent: str | None = None
+    *blocks: Any,
+    session_id: str = SESSION_ID,
+    parent: str | None = None,
+    model: str = "claude",
 ) -> AssistantMessage:
     return AssistantMessage(
         content=list(blocks),
-        model="claude",
+        model=model,
         session_id=session_id,
         parent_tool_use_id=parent,
     )

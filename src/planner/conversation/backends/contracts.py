@@ -469,6 +469,18 @@ class AgentMessageCompleted:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class CommandReplyReported:
+    """The backend's own answer to a slash command, written without the model.
+
+    Claude answers some commands locally, and Codex answers its goal commands through
+    its own call. Either way no agent message streams, so this is the only place the
+    reply exists. It is plain words: a command reply carries no files.
+    """
+
+    reply_text: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ToolCallStarted:
     tool_call_id: str
     title: str
@@ -652,6 +664,7 @@ type BackendEventValue = (
     AgentMessageDelta
     | ModelThinkingHappened
     | AgentMessageCompleted
+    | CommandReplyReported
     | ToolCallStarted
     | ToolCallProgress
     | ToolCallFinished

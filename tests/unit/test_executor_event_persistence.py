@@ -148,6 +148,7 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
         BackendEventValue,
         BackendPermissionAsk,
         BackendUserInputRequest,
+        CommandReplyReported,
         ContextCompacted,
         PermissionAskRaised,
         PlanUpdated,
@@ -159,6 +160,7 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
         UserInputRequested,
     )
     from planner.conversation.events import (
+        CommandReplyEventPayload,
         ConversationTurnEnding,
         PermissionAskOption,
         ToolCallStatus,
@@ -228,6 +230,10 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
                     ),
                     (BackendEventMethod.context_compacted, ContextCompacted()),
                     (
+                        BackendEventMethod.command_reply_reported,
+                        CommandReplyReported(reply_text="Goal cleared."),
+                    ),
+                    (
                         BackendEventMethod.turn_ended,
                         TurnEnded(ending=ConversationTurnEnding.completed),
                     ),
@@ -250,6 +256,10 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
                 transcripts.append([(row.sequence, row.kind, row.payload) for row in rows])
                 assert state.running_turn is None
         assert transcripts[0] == transcripts[1]
+        # Read back from the database, so the row also round-trips its stored form.
+        assert CommandReplyEventPayload(reply_text="Goal cleared.") in [
+            payload for _, _, payload in transcripts[0]
+        ]
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
 
