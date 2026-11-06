@@ -49,6 +49,8 @@
   .integrated-card.compact { padding:0; --text-3xl:var(--type-page-title); }
   /* The measure's name is small print over its reading. */
   .integrated-card .metric-top { min-height:18px; }
+  /* At the top right (the goal's own page) the switch is compact: each segment its label. */
+  .metric-top .ranges { flex:none; width:auto; }
   .integrated-card .metric-top h2 { font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; letter-spacing:0; color:var(--tone-tertiary); }
   .integrated-card .headline { margin:var(--space-1) 0 var(--space-4); min-height:0; }
   .integrated-card .chart-range-footer { margin-top:var(--space-4); }
