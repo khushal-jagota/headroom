@@ -1132,7 +1132,7 @@ a.pv-name:focus-visible { outline:0; }
 .button--secondary,
 .button--quiet {
   background: var(--button-secondary-fill);
-  color: var(--tone-secondary);
+  color: var(--tone-primary);
 }
 
 .button--secondary:hover:not(:disabled),

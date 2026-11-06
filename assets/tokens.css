@@ -38,7 +38,7 @@
   --accent-fill: var(--button-primary-fill);
   --accent-fill-hover: var(--button-primary-fill-hover);
   /* Inline code: a translucent lift that reads on every surface it lands on. */
-  --surface-code: rgb(255 255 255 / 7%);
+  --surface-code: rgb(255 255 255 / 5%);
   /* Popovers, menus, tooltips and hover previews: the one raised plane. It carries a 1px
    * ring (--border-raised) and --shadow-float. */
   --surface-raised: #2a2a2a;
@@ -283,8 +283,8 @@
 :root {
   /* The open row is one crisp fill and the pointer's is half of it (1:2), so hover never
    * reads as selection. Nothing else in the rail is a grey fill. */
-  --wash-selected: rgb(255 255 255 / 12%);
-  --wash-hover: rgb(255 255 255 / 6%);
+  --wash-selected: rgb(255 255 255 / 14%);
+  --wash-hover: rgb(255 255 255 / 5%);
   /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
    * (a Manager's header, a goal, a Ticket, Settled) sits --rail-edge in from the column on
    * both sides; every text stands --rail-pad inside its fill, so all of it shares one left
