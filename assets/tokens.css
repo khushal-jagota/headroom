@@ -369,14 +369,15 @@
    * names and rows alike: 92% for anything that needs the person, 50% for anything that does
    * not (white at 92% and 50% over the rail). Size and weight make a Manager lead its block
    * (18/600 against a row's 13.5/400). Group headings are labels to read (12/600, 64%, above);
-   * the project eyebrow and small counts stay quiet (12/500 at 51%). */
+   * the project eyebrow, a goal's state line and small counts stay quiet (12px at 54%). */
   --rail-tone-bright: #ececec;
   --rail-tone-rest: #8b8b8b;
   --rail-tone-title-bright: var(--rail-tone-bright);
   --rail-tone-title: var(--rail-tone-rest);
   /* A Manager's name: the largest words in the rail. */
   --type-rail-title: 18px;
-  --rail-tone-label: #828282;
+  /* 4.9:1 on the rail, 4.5:1 on the context fill: no rail text reads under 4.5:1 at rest. */
+  --rail-tone-label: #898989;
   /* The rail's floating surfaces (hover previews and the icon bar's tooltips): a #2a2a2a fill
    * and a soft shadow, no ring. The fill's step over the rail and the page is its edge. */
   --rail-float-surface: #2a2a2a;

@@ -213,13 +213,13 @@ strong {
 /* The foot as on staging: the icon row 8px under Settled and 12px off the rail's bottom (with
    the rail's own 8px). Each destination is staging's 32px square; the first glyph (2px inside
    its 18px box, 7px inside its button) stands on the names' text edge. */
-.rail-foot { position:relative; flex:none; padding:var(--space-2) var(--rail-edge) var(--space-1) calc(var(--rail-edge) + var(--rail-pad) - 9px); }
+.rail-foot { position:relative; flex:none; container:rail-foot / inline-size; padding:var(--space-2) var(--rail-edge) var(--space-1) calc(var(--rail-edge) + var(--rail-pad) - 9px); }
 /* The destinations: one row of quiet icons. A destination's name floats 8px above its icon as a
    tooltip the moment the pointer is on it, as on staging: centred, the first one's name starting
    at its icon and the last one's ending at it, so no name runs out of the rail. */
 .rail-utilities { display:flex; align-items:center; gap:var(--space-1); }
 /* A destination's hit and hover shape: staging's 32px square around its 18px icon. */
-.utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:0; border-radius:var(--radius-md); background:transparent; color:var(--tone-secondary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.utility { position:relative; display:flex; flex:0 1 32px; align-items:center; justify-content:center; gap:6px; min-width:28px; height:32px; padding:0; border:0; border-radius:var(--radius-md); background:transparent; color:var(--tone-secondary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .utility:hover { background:var(--wash-hover); color:var(--tone-strong); }
 .utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:transparent; background:var(--wash-selected); color:var(--tone-strong); }
 .utility:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:0; }
@@ -230,6 +230,14 @@ strong {
 .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 7px; }
 .rail-utilities .count-badge { position:static; min-width:20px; height:18px; padding:0 6px; border-radius:var(--radius-pill); background:var(--accent-badge); color:var(--accent-bright); box-shadow:none; font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
 .count-badge.hidden { display:none; }
+/* A narrow rail (the resizer allows 232px) has no room for the count beside its icon: the row
+   is staging's then (below 263px), six 32px squares that give a little (to 28px) where they must, the count
+   on the review icon's corner as on staging, so every icon fits whole at every rail width. */
+@container rail-foot (max-width: 237px) {
+  .rail-foot .rail-utilities { margin-left:-1px; }
+  .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:0 1 32px; padding:0; }
+  .rail-utilities .count-badge { position:absolute; top:-3px; right:-3px; min-width:18px; height:18px; padding:0 5px; background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-rail); font-weight:var(--weight-needs-you); }
+}
 .utility-label { position:absolute; bottom:calc(100% + var(--space-2)); left:50%; z-index:6; padding:2px var(--space-2); border:0; border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
 .utility:nth-child(1 of .utility) .utility-label { left:0; transform:none; }
 .utility:nth-last-child(1 of .utility) .utility-label { left:auto; right:0; transform:none; }
