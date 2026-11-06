@@ -14,8 +14,10 @@
   import WorkerRow from "./WorkerRow.svelte";
   import ManagerEyebrow from "./ManagerEyebrow.svelte";
   import chiefProfile from "../assets/chief-of-staff-profile.webp";
-  let { beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+  let { beforeGroups, identityDetail, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
     beforeGroups?: Snippet;
+    /** Lines that belong to the header row, such as a sole goal's status. */
+    identityDetail?: Snippet;
     suppressBackgroundPreview?: boolean;
     scrollCoordinator?:ScrollWindowCoordinator;scrollPublicationId?:number|null;
     navigationWindow?:ViewWindow;onWindow?:(anchor:string,direction:'before'|'after')=>void;onVisibility?:(id:string,visible:boolean)=>void;
@@ -53,6 +55,7 @@
       <span class="item-title">{title}</span>
       <ConversationSignalMark {signal} {conversationId} />
     </button>
+    {#if identityDetail}{@render identityDetail()}{/if}
   </div>
   {#if beforeGroups}{@render beforeGroups()}{/if}
   {#each groups as group (group.key)}
@@ -68,9 +71,13 @@
 <style>
   .manager-card-slot { min-width:0; }
   :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-3); }
-  .manager-card { box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:var(--space-3) calc(var(--space-3) + var(--border-hairline)) var(--space-3); isolation:isolate; z-index:1; }
+  /* Each row's element reaches to the card's inset, so the element is the whole washed
+   * area: the wash draws its box, and its hover, click and preview cover the same box.
+   * The bleed is the card padding minus that inset. */
+  .manager-card { --rail-row-bleed-x:calc(var(--space-3) + var(--border-hairline) - var(--space-1)); --rail-row-bleed-y:calc(var(--space-3) - var(--space-1)); box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:var(--space-3) calc(var(--space-3) + var(--border-hairline)) var(--space-3); isolation:isolate; z-index:1; }
   .manager-card.has-tickets { padding-bottom:var(--space-2); }
-  .identity { cursor:pointer; }
+  /* The negative bottom margin keeps the rows below where they were. */
+  .identity { cursor:pointer; margin:calc(var(--rail-row-bleed-y) * -1) calc(var(--rail-row-bleed-x) * -1); padding:var(--rail-row-bleed-y) var(--rail-row-bleed-x); }
   .item-head { display:flex; align-items:flex-start; gap:var(--space-2); margin-top:var(--space-1); width:100%; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-title { flex:1; min-width:0; font-size:16px; font-weight:600; line-height:1.35; letter-spacing:-0.002em; color:var(--text-faintest); overflow-wrap:anywhere; }
   .item-head[data-unread="true"] .item-title { color:var(--text-strong); }
@@ -78,7 +85,7 @@
   .chief .item-head { align-items:center; margin-top:0; gap:10px; }
   .chief .item-title { font-size:18px; }
   .chief-icon { flex:none; width:26px; height:26px; border-radius:var(--radius-sm); object-fit:cover; }
-  .bucket :global(.worker-row) { color:var(--text-faintest); }
+  .bucket :global(.worker-row) { color:var(--text-faintest); width:calc(100% + var(--rail-row-bleed-x) * 2); margin-inline:calc(var(--rail-row-bleed-x) * -1); padding-inline:var(--rail-row-bleed-x); }
   .bucket[data-bucket-key="awaiting_approval"] :global(.worker-row),
   .bucket[data-bucket-key="awaiting_answer"] :global(.worker-row),
   .bucket[data-bucket-key="errored"] :global(.worker-row),

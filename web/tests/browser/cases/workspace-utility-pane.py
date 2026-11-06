@@ -2319,6 +2319,63 @@ def verify_selection_washes(page, url, fixture, evidence):
     aligned(frame)
     assert frame['effects'] == 0, frame
     page.screenshot(path=str(evidence / 'selection-wash-reduced.png'))
+
+    # The hover wash is the box of the row that responds. A header's padding, a sole
+    # goal's line and a settled row's padding are all inside it, and the card's own
+    # inset is outside it. Reduced motion lets the hover wash land in one frame.
+    fixture["goals"] = [{**goal, "id": "wash_sole", "title": "Ship the second group", "holder_kind": "manager", "holder_id": "wash_b"}]
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('[data-manager="wash_b"] .identity [data-goal-status="wash_sole"]')).to_be_visible()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+
+    def hover_at(row_selector, host_selector, where):
+        page.mouse.move(*where(page.locator(row_selector).bounding_box()))
+        return page.evaluate("""async ([row, host]) => {
+          await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+          const node=document.querySelector(row), wash=document.querySelector(host+' > .rail-wash--hover:not(.rail-wash--leaving)');
+          const box=n=>{const r=n.getBoundingClientRect();return [r.x,r.y,r.width,r.height];};
+          return {hover:node.matches(':hover'), hidden:wash.hidden, row:box(node), wash:box(wash)};
+        }""", [row_selector, host_selector])
+
+    def responds(state):
+        assert state["hover"] and not state["hidden"], state
+        assert all(abs(a - b) < 1.6 for a, b in zip(state["row"], state["wash"], strict=True)), state
+
+    # The header reaches the card's 4px inset, and 8px past its last line. Without this
+    # the header could shrink back to its content and the wash would shrink with it.
+    for manager, last_line in [("wash_a", ".item-head"), ("wash_b", "[data-goal-status]")]:
+        header, card, line = page.evaluate("""([manager, last]) => {
+          const card=document.querySelector(`[data-manager="${manager}"]`);
+          const box=n=>{const r=n.getBoundingClientRect();return [r.x,r.y,r.width,r.bottom];};
+          return [box(card.querySelector('.identity')), box(card), box(card.querySelector(last))];
+        }""", [manager, last_line])
+        expected = [card[0] + 4, card[1] + 4, card[2] - 8, line[3] + 8]
+        assert all(abs(a - b) < 1.6 for a, b in zip(header, expected, strict=True)), (manager, header, expected)
+
+    def bottom_edge(box):
+        return box["x"] + box["width"] / 2, box["y"] + box["height"] - 2
+
+    def left_edge(box):
+        return box["x"] + 2, box["y"] + box["height"] / 2
+
+    responds(hover_at('[data-manager="wash_a"] .identity', '.active-work-scroll', bottom_edge))
+    responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', left_edge))
+    responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', bottom_edge))
+    sole = page.locator('[data-goal-status="wash_sole"]').bounding_box()
+    responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', lambda box: (sole["x"] + sole["width"] / 2, sole["y"] + sole["height"] / 2)))
+    outside = hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', lambda box: (box["x"] + box["width"] / 2, box["y"] - 2))
+    assert not outside["hover"] and outside["hidden"], outside
+    page.mouse.click(sole["x"] + sole["width"] / 2, sole["y"] + sole["height"] / 2)
+    expect(page.locator('[data-manager="wash_b"] .item-head')).to_have_attribute("aria-current", "page")
+    if page.locator('.settled-head').get_attribute("aria-expanded") == "false":
+        page.locator('.settled-head').click()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    settled_row = '[data-settled-item="wash_settled"] .settled-row'
+    responds(hover_at(settled_row, '.settled-body', left_edge))
+    page.mouse.click(*left_edge(page.locator(settled_row).bounding_box()))
+    expect(page.locator('[data-settled-item="wash_settled"] .settled-title')).to_have_attribute("aria-current", "page")
+    page.screenshot(path=str(evidence / 'hover-wash-rows.png'))
+    fixture["goals"] = []
     page.emulate_media(reduced_motion='no-preference')
     (evidence / 'selection-wash-proof.json').write_text(json.dumps({
         'seconds': round(time.perf_counter() - started, 3), 'newHosts': 0,
