@@ -239,37 +239,21 @@ export function clampToWords(node: HTMLElement, options: WordClampOptions) {
   };
 }
 
-/** Rail titles end in one ellipsis edge, and never in a space before it. CSS cuts a title at
- * the last character that fits before the ellipsis; where that character is a space, the
- * title's box is narrowed to the end of the word before it, so the ellipsis follows the word.
- * The text itself is never changed. */
-const RAIL_TITLES = ".ticket-row-title, .row-title, .item-title";
-export function railEllipsis(root: HTMLElement) {
+/** A rail title too long for its row fades out at the row's text edge instead of ending in a
+ * cut word and an ellipsis. This marks the titles that run out (data-title-overflow); the
+ * stylesheet draws the fade. The text itself is never changed. */
+const RAIL_TITLES = ".item-title, .ticket-row-title, .row-title, .manager-eyebrow > span, .settled-title > span";
+export function railTitleFade(root: HTMLElement) {
   let frame = 0;
-  const canvas = document.createElement("canvas").getContext("2d");
-  const fit = (title: HTMLElement) => {
-    title.style.maxWidth = "";
-    const text = title.firstChild;
-    if (!(text instanceof Text) || title.childNodes.length !== 1 || title.scrollWidth <= title.clientWidth + 0.5) return;
-    const style = getComputedStyle(title);
-    if (!canvas) return;
-    canvas.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-    const box = title.getBoundingClientRect();
-    const limit = box.left + box.width - canvas.measureText("…").width;
-    const range = document.createRange();
-    const right = (end: number) => { range.setStart(text, 0); range.setEnd(text, end); return range.getBoundingClientRect().right; };
-    const value = text.data;
-    let low = 0, high = value.length;
-    while (low < high) { const middle = Math.ceil((low + high) / 2); if (right(middle) <= limit) low = middle; else high = middle - 1; }
-    const kept = value.slice(0, low).trimEnd().length;
-    if (kept === low || kept === 0) return;
-    title.style.maxWidth = `${right(kept) - box.left + canvas.measureText("…").width + 0.5}px`;
+  const run = () => {
+    frame = 0;
+    for (const title of root.querySelectorAll<HTMLElement>(RAIL_TITLES))
+      title.toggleAttribute("data-title-overflow", title.scrollWidth > title.clientWidth + 0.5);
   };
-  const run = () => { frame = 0; for (const title of root.querySelectorAll<HTMLElement>(RAIL_TITLES)) fit(title); };
   const schedule = () => { if (!frame) frame = requestAnimationFrame(run); };
-  // Only the rows' widths and the words can move a cut; a narrowed title never resizes its row.
+  // A title runs out when its row narrows or its words change.
   const resize = new ResizeObserver(schedule);
-  const watch = () => { resize.disconnect(); resize.observe(root); for (const title of root.querySelectorAll<HTMLElement>(RAIL_TITLES)) if (title.parentElement) resize.observe(title.parentElement); schedule(); };
+  const watch = () => { resize.disconnect(); resize.observe(root); for (const title of root.querySelectorAll<HTMLElement>(RAIL_TITLES)) resize.observe(title); schedule(); };
   const mutation = new MutationObserver(watch);
   mutation.observe(root, { subtree: true, childList: true, characterData: true });
   watch();

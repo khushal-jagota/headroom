@@ -6,7 +6,7 @@
   import type { ScrollWindowCoordinator } from "../lib/navigation/views/scrollWindowRestoration";
   import type { Snippet } from "svelte";
   import { onDestroy } from "svelte";
-  import { createRailPreviewInput, railEllipsis } from "../lib/workspaceRailInteraction";
+  import { createRailPreviewInput } from "../lib/workspaceRailInteraction";
   import type { WorkspaceTicketGroup } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
@@ -46,7 +46,7 @@
   let countsComplete = $derived(!navigationWindow || (!navigationWindow.previous && !navigationWindow.next));
 </script>
 <div class="manager-card-slot">
-<section use:visibility use:railEllipsis use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
+<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
   <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
   <div class="identity" onclick={(event) => { if (!(event.target as HTMLElement).closest('button, a')) { const head = event.currentTarget.querySelector<HTMLButtonElement>('.item-head'); head?.click(); } }} onpointerenter={(event) => { if (!suppressBackgroundPreview) input().pointerEnter(event); }} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => { if (!(event.target as HTMLElement).closest('button')) input().down(event); }} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()}>
     <!-- The Chief belongs to no project, so its header is its name alone. -->
@@ -84,18 +84,16 @@
   /* A name is dimmed unless it needs the person (an unread message for them); the pointer or
      the open page on it brings it to full brightness. It keeps one line and ends in an
      ellipsis at the same edge as every row's title. */
-  .item-title { grid-column:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:var(--type-rail-title); font-weight:var(--weight-title); line-height:22px; letter-spacing:-0.012em; color:var(--rail-tone-title); transition:color var(--motion-fast) var(--motion-ease); }
+  .item-title { grid-column:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:clip; font-size:var(--type-rail-title); font-weight:var(--weight-title); line-height:22px; letter-spacing:-0.012em; color:var(--rail-tone-title); transition:color var(--motion-fast) var(--motion-ease); }
   .item-head[data-unread="true"] .item-title { color:var(--tone-strong); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--tone-strong); }
   /* The Manager you are inside: while its page or one of its goals or Tickets is open, its
-     header (the eyebrow and the name together) goes to full brightness, and while one of its
-     goals or Tickets is open the header also takes a quiet fill of its own (the hover level)
-     above that item's selected fill. A name that needs you is bright for one reason only, an
-     unread message for you, and so always carries the accent dot; the header of the place you
-     are in never does, its eyebrow lifts with it and it stands in a fill. */
+     header (the eyebrow and the name together) goes to full brightness. A header takes a fill
+     only as a row does: 14% when it is the open page, 5% under the pointer. A name that needs
+     you is bright for one reason only, an unread message for you, and so always carries the
+     accent dot; the header of the place you are in never does, and its eyebrow lifts with it. */
   .manager-card:has(:global([aria-current="page"])) .item-title,
   .manager-card:has(:global([aria-current="page"])) .identity :global(.manager-eyebrow > span) { color:var(--tone-strong); }
-  .manager-card:has(:global(:is(.worker-row, .goal)[aria-current="page"])) .identity { background:var(--wash-hover); }
   .item-head :global(.stage-mark--current-running),
   .bucket[data-tone="quiet"] :global(.stage-mark--current-running) { border-color:var(--border-color); border-top-color:var(--tone-tertiary); border-right-color:var(--tone-tertiary); }
   .bucket :global(.worker-row:focus-visible) { outline:none; }

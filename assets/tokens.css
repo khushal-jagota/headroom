@@ -310,8 +310,9 @@
   /* A group heading binds to its rows: more air above it than below it. It is a step smaller
    * and two tones quieter than the rows it heads, so a group reads as its rows with a quiet
    * label, not as label, item, label, item. */
-  /* The rail's label voice (group headings and the project eyebrow), a step below Small. */
-  --rail-label-size: 11.5px;
+  /* The rail's label voice: the project eyebrow and every group heading, one style (Small,
+   * tertiary, its count after it). */
+  --rail-label-size: var(--type-small);
   --rail-heading-above: 8px;
   --rail-heading-below: 2px;
   --rail-heading-line: 14px;
@@ -322,7 +323,7 @@
   --rail-edge-fade: 8px;
   --rail-foot-clear: 12px;
   /* Between the Settled row and the icon bar: the band the icons' names open into. */
-  --rail-foot-gap: 28px;
+  --rail-foot-gap: 32px;
   /* The list's scrollbar lives in the column's own edge, never inside the rows. */
   --rail-scrollbar-width: 4px;
   /* Room the list keeps above its first fill for the focus ring (2px clear, 1.5px wide). */
@@ -331,9 +332,13 @@
    * row at rest is 66% white on the page (#b0b0b0): clearly apart from the 45% labels above it
    * and still clearly below the 92% of a row that needs the person. */
   --rail-tone-rest: #b0b0b0;
-  --rail-tone-title: var(--tone-secondary);
+  /* A Manager's name at rest: 70% white, a step above a row at rest, so a dim semibold name
+   * reads as quiet type rather than washed out. */
+  --rail-tone-title: #bababa;
+  /* A title too long for its row fades out over this width at the row's text edge. */
+  --rail-title-fade: 24px;
   /* A Manager's name: clearly above a row, but quieter than anything that needs you. */
-  --type-rail-title: 16px;
+  --type-rail-title: 15px;
   --rail-tone-label: var(--tone-tertiary);
   /* The rail's floating surfaces (hover previews and the icon bar's tooltips): the raised
    * plane's #2a2a2a, with a lighter ring and shadow than a menu's, so a preview supports the
