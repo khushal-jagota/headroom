@@ -517,9 +517,10 @@
      whole stack above pane content without moving native controls out of DOM order. */
   .workspace-rail { position:relative; z-index:1; }
   .board-workspace-right { position:relative; z-index:0; }
-  /* The list's first fill starts --rail-top down the rail: the list keeps --rail-ring-room of
+  /* No line divides the rail from the workspace: the rail's own surface (#1b1b1b against the
+     page's #121212) is the whole division. The list's first fill starts --rail-top down the rail: the list keeps --rail-ring-room of
      that inside itself, so a focus ring around the first header is never cut at the top. */
-  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:calc(var(--rail-top) - var(--rail-ring-room)) 0 var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:calc(var(--rail-top) - var(--rail-ring-room)) 0 var(--space-2); border-right:0; }
   .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
   /* The list's two edges always fade into the rail over 8px: a plain layer over the list's
      box, the same whatever is scrolled where, never a mask on the list (so a preview that

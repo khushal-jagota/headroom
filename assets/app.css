@@ -2607,7 +2607,6 @@ select {
   min-width: 0;
   overflow: auto;
   padding: var(--space-4) var(--page-gutter) var(--space-7);
-  border-right: var(--border-hairline) solid var(--border-color);
   --board-workspace-rail-pad-x: var(--space-3);
 }
 

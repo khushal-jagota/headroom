@@ -28,7 +28,7 @@
   --surface-1: #121212;
   --surface-2: #1a1a1a;
   --surface-recessed: #0e0e0e;
-  /* The workspace rail: one close step above the page, divided by a hairline. */
+  /* The workspace rail: one close step above the page; the step alone divides them. */
   --surface-rail: #1b1b1b;
   /* The secondary action's fill (Direction v2: 13% white, no border). Older callers that
    * paint a secondary action with it land on the shared button's secondary fill. */
