@@ -269,7 +269,7 @@
     const target = event.target;
     if (!(target instanceof HTMLElement) || !target.dataset.nav) return;
     const nav = target.dataset.nav;
-    const list = (name: string) => [...node.querySelectorAll<HTMLElement>(`[data-nav="${name}"]`)];
+    const list = (name: string) => [...node.querySelectorAll<HTMLElement>(`[data-nav="${name}"]`)].filter((item) => item.getClientRects().length > 0);
     const items = list(nav);
     const index = items.indexOf(target);
     if (index < 0) return;
@@ -321,6 +321,17 @@
     };
   }
 </script>
+
+<!-- A number column shows its sort button before the label on wide pages and after it
+     on phones. Each layout shows one, so Tab order follows what the reader sees. -->
+{#snippet headSort(index: number, placement: "before" | "after")}
+  <button type="button" class="sort icon-only" data-placement={placement} data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
+    <span class="sort-icon" aria-hidden="true">
+      <svg class="sort-hint" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+      <svg class="sort-arrow" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+    </span>
+  </button>
+{/snippet}
 
 {#snippet box(checked: boolean, mixed: boolean, label: string, nav: "head" | "row", role: string, onToggle: (extend: boolean) => void)}
   <label class="hit">
@@ -382,13 +393,9 @@
               >
                 {#if context?.authorText}
                   <div class="editable-sort">
+                    {#if numeric[index]}{@render headSort(index, "before")}{/if}
                     <PageText blockId={block.id} field={`columns.${index}`} value={column} label={`Table column ${index + 1}`} update={(old, raw) => columnText(index, raw, old)} />
-                    <button type="button" class="sort icon-only" data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
-                      <span class="sort-icon" aria-hidden="true">
-                        <svg class="sort-hint" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
-                        <svg class="sort-arrow" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
-                      </span>
-                    </button>
+                    {@render headSort(index, "after")}
                   </div>
                 {:else}
                   <button type="button" class="sort" data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
@@ -634,6 +641,7 @@
   th[data-numeric] .sort { justify-content: flex-end; }
   .editable-sort { display: flex; min-height: 44px; align-items: center; padding-left: var(--space-4); }
   .sort.icon-only { width: 40px; flex: none; justify-content: center; padding: 0; }
+  .sort[data-placement="before"] { display: none; }
   th[data-numeric] .editable-sort { justify-content: flex-end; }
   .sort-inner { display: inline-flex; align-items: center; gap: 6px; }
   th[data-numeric] .sort-inner { flex-direction: row-reverse; }
@@ -762,12 +770,14 @@
        the gap left of the label and takes no width of its own. */
     th[data-numeric] .sort:not(.icon-only),
     th[data-numeric] .editable-sort,
-    td[data-numeric]:not([data-primary]) { padding: 0 var(--space-2) 0 var(--space-1); }
+    td[data-numeric]:not([data-primary]) { padding: 0 var(--space-2) 0 6px; }
+    /* The 14px gap between two number labels holds a 12px arrow with 4px clear on each side. */
+    th[data-numeric] :is(.sort-hint, .sort-arrow) { inset: 2px; width: 12px; height: 12px; }
     th[data-numeric] .sort-inner { gap: 0; }
-    th[data-numeric] .sort-inner .sort-icon { margin: 0 -2px 0 -14px; }
-    th[data-numeric] .editable-sort { flex-direction: row-reverse; justify-content: flex-start; }
-    th[data-numeric] .sort.icon-only { width: 12px; margin-left: -12px; }
-    th[data-numeric] .sort.icon-only .sort-icon { margin: 0 -2px; }
+    th[data-numeric] .sort-inner .sort-icon { margin: 0 -1px 0 -15px; }
+    th[data-numeric] .sort[data-placement="before"] { display: flex; width: 14px; margin-left: -14px; }
+    th[data-numeric] .sort[data-placement="after"] { display: none; }
+    th[data-numeric] .sort.icon-only .sort-icon { margin: 0 -1px; }
     /* A table too wide to fit scrolls, and its label column stays in view. */
     table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) { position: sticky; left: 0; }
     .scroller[data-scrolled] table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) {

@@ -2581,10 +2581,11 @@ def score_table_geometry(table):
         const heads = [...table.querySelectorAll('thead th[data-key]')];
         const firstRow = table.querySelector('tbody tr');
         const label = head => head.querySelector('[contenteditable]');
-        // The visible arrow is the middle of the 16px sort icon.
+        const shown = element => element.getClientRects().length > 0;
+        // The drawn arrow, with its stroke, spans the middle half of its icon.
         const glyph = head => {
-            const icon = box(head.querySelector('.sort-icon'));
-            return {left: icon.left + 4.75, right: icon.right - 4.75};
+            const icon = box([...head.querySelectorAll('svg.sort-arrow')].find(shown));
+            return {left: icon.left + icon.width / 4, right: icon.right - icon.width / 4};
         };
         return {
             widths: heads.map(head => box(head).width),
@@ -2604,6 +2605,9 @@ def score_table_geometry(table):
                 return {text: text.textContent.trim(),
                     lines: Math.round(box(text).height / lineHeight)};
             }),
+            // Header controls in Tab order, by their left edge.
+            tabOrder: [...table.querySelectorAll('thead button, thead [contenteditable="true"]')]
+                .filter(shown).map(element => box(element).left),
             // The label column stays at the scroller's left edge.
             labelOffset: box(heads[0]).left - box(scroller).left,
             scrolls: scroller.scrollWidth > scroller.clientWidth,
@@ -2615,7 +2619,8 @@ def assert_readable_score_table(geometry):
     assert geometry["widths"][0] >= 180, geometry
     assert min(geometry["widths"]) > 60, geometry
     assert max(geometry["spill"]) <= 0.5, geometry
-    assert min(geometry["arrowClearance"]) >= 2, geometry
+    assert min(geometry["arrowClearance"]) >= 3.5, geometry
+    assert geometry["tabOrder"] == sorted(geometry["tabOrder"]), geometry
     # Number headers end where their values end.
     for header, value in zip(
         geometry["headerRight"][1:], geometry["valueRight"][1:], strict=True
@@ -2673,6 +2678,11 @@ def score_table_layout(browser, url):
         screenshot("eight-columns.png")
         assert_readable_score_table(eight)
         assert not eight["scrolls"], eight
+
+        # Arrow keys move between the sort buttons that are shown.
+        table.get_by_role("button", name="Sort by Round 1", exact=True).focus()
+        page.keyboard.press("ArrowRight")
+        expect(table.get_by_role("button", name="Sort by Round 2", exact=True)).to_be_focused()
 
         # Sorting keeps every column at its width.
         table.get_by_role("button", name="Sort by Round 7", exact=True).click()
