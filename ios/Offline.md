@@ -3,9 +3,11 @@
 The phone keeps recently read Workspace, Review, ticket, orchestrator, Chief and
 conversation responses in one SwiftData database in Application Support. A screen
 restores its saved response before starting a fresh read. New responses apply
-immediately, including changes that move rows. A failed refresh keeps the last
-successful response. A screen with no saved response shows still, rough blocks
-only after 300 milliseconds. The blocks never replace existing content.
+immediately, including changes that move rows. If the server cannot be reached,
+the app replaces the current screen with a Tailscale reminder and Try again,
+keeping saved responses and drafts on the phone. Retry or returning to the app
+reads again. Other failed refreshes keep the last successful response visible.
+A screen with no saved response shows still, rough blocks only after 300 milliseconds. The blocks never replace existing content.
 
 Successful cached reads are saved by a serial background writer before the read
 finishes. An identical response still refreshes its saved date, so it keeps its

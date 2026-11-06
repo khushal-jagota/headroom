@@ -13,7 +13,8 @@ import Observation
     var deployment: DeploymentStatus?
     var managerPage: PageFacts?
     var ticketPage: PageFacts?
-    var errors: [String: String] = [:]
+    var errors: [String: ServerReadFailure] = [:]
+    var serverUnreachable: Bool { errors.values.contains { $0.isServerUnreachable } }
     var isLoading = false
     var connection = "Connecting"
     var revision = 0
@@ -140,7 +141,7 @@ import Observation
             apply(value); errors[key] = nil
         } catch {
             guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            errors[key] = error.localizedDescription
+            errors[key] = ServerReadFailure(error)
         }
     }
 

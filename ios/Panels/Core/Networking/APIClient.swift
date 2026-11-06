@@ -10,6 +10,21 @@ struct APIError: LocalizedError, Sendable {
     var errorDescription: String? { isChangedProposal ? "This changed, review again" : message }
 }
 
+/// A failed request is not proof that the server itself cannot be reached.
+struct ServerReadFailure: Sendable {
+    let isServerUnreachable: Bool
+    let message: String
+
+    init(_ error: any Error) {
+        if let error = error as? URLError {
+            isServerUnreachable = [.cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .notConnectedToInternet].contains(error.code)
+        } else {
+            isServerUnreachable = false
+        }
+        message = error.localizedDescription
+    }
+}
+
 /// Shared reads and Ticket machine catalogue transport.
 struct APIClient: Sendable {
     static let defaultBaseURL = URL(string: "https://panels-vps.tail687c57.ts.net")!
