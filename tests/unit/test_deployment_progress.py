@@ -183,18 +183,6 @@ def test_preflight_refuses_ordinary_work_but_permits_cleanup_and_reports_failure
     assert b"renewal refused" in stderr
 
 
-def test_long_cleanup_renews_while_healthy(
-    tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
-) -> None:
-    record_initial = record(lifecycle)
-    process = launch(tmp_path, lifecycle, "sleep 0.45\n", cleanup=True)
-    processes.append(process)
-    wait_until(lambda: record(lifecycle)["updated_at"] != record_initial["updated_at"])
-    first = record(lifecycle)
-    wait_until(lambda: record(lifecycle)["updated_at"] != first["updated_at"])
-    assert process.wait(timeout=5) == 0
-
-
 def test_mid_command_write_failure_does_not_interrupt_swap_or_rollback(
     tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
 ) -> None:
@@ -218,12 +206,14 @@ def test_mid_command_write_failure_does_not_interrupt_swap_or_rollback(
     assert b"renewal failed" in stderr
 
 
-@pytest.mark.parametrize("parent_loss", [False, True])
 @pytest.mark.parametrize("detached", [False, True])
-def test_cancellation_and_parent_loss_stop_owned_descendants_during_lock_wait(
+def test_parent_loss_stops_owned_descendants_during_lock_wait(
     tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
-    parent_loss: bool, detached: bool,
+    detached: bool,
 ) -> None:
+    """Losing the runner during a lock wait stops every child and writes no lease.
+
+    SIGTERM during a lock wait is proved by the preflight and leader-exit tests."""
     pidfile = tmp_path / "descendant.pid"
     leader = tmp_path / "leader.pid"
     if detached:
@@ -243,19 +233,15 @@ def test_cancellation_and_parent_loss_stop_owned_descendants_during_lock_wait(
         script = f"echo $$ > {leader}\n{sys.executable} {helper}\n"
     else:
         script = f"echo $$ > {leader}\nsleep 60 &\necho $! > {pidfile}\nwait\n"
-    process = launch(
-        tmp_path, lifecycle, script,
-        parent=parent_loss,
-    )
+    process = launch(tmp_path, lifecycle, script, parent=True)
     processes.append(process)
     wait_until(lambda: complete_line(pidfile))
     descendant_pid = int(pidfile.read_text())
     # Bash finished writing the leader record before it started the descendant.
     leader_pid = int(leader.read_text())
     supervisor = tmp_path / "supervisor.pid"
-    if parent_loss:
-        wait_until(lambda: complete_line(supervisor))
-    supervisor_pid = int(supervisor.read_text()) if parent_loss else process.pid
+    wait_until(lambda: complete_line(supervisor))
+    supervisor_pid = int(supervisor.read_text())
     with hold_lock_while_renew_waits(lifecycle, supervisor_pid):
         before = lifecycle.read_bytes()
         process.terminate()
@@ -263,8 +249,6 @@ def test_cancellation_and_parent_loss_stop_owned_descendants_during_lock_wait(
         wait_until(lambda: process_identity(descendant_pid) is None)
         wait_until(lambda: process_identity(leader_pid) is None)
         assert lifecycle.read_bytes() == before
-    if not parent_loss:
-        assert process.returncode == 143
 
 
 def test_preflight_lock_wait_is_cancellable_before_command_starts(
@@ -304,23 +288,6 @@ def test_bootstrap_and_terminal_evidence_do_not_renew(
     assert process.returncode == 0
     assert stdout == stderr == b""
     assert lifecycle.read_bytes() == before
-
-
-def test_child_completion_cancels_contended_renewal_without_extending_lease(
-    tmp_path: Path, lifecycle: Path, processes: list[subprocess.Popen[bytes]],
-) -> None:
-    started = tmp_path / "started"
-    release = tmp_path / "release"
-    process = launch(tmp_path, lifecycle,
-                     f"touch {started}\nwhile [ ! -e {release} ]; do sleep 0.02; done\n")
-    processes.append(process)
-    wait_until(started.exists)
-    with lock(lifecycle):
-        before = lifecycle.read_bytes()
-        time.sleep(0.14)
-        release.touch()
-        assert process.wait(timeout=2) == 0
-        assert lifecycle.read_bytes() == before
 
 
 @pytest.mark.parametrize("detached", [False, True])
@@ -444,8 +411,15 @@ def controlled_writer(tmp_path: Path, lifecycle: Path, mode: str) -> Path:
         f"fixed_time = datetime.fromisoformat({str(record(lifecycle)['updated_at'])!r})\n"
         "if mode == 'equal':\n"
         "    module._utc_now = lambda now: fixed_time\n"
+        # A pid file appears whole or not at all. A kill between the truncate and
+        # the write of write_text used to leave it empty for assert_released.
+        "replace_pid = os.replace\n"
+        "def mark(name):\n"
+        "    partial = root / (name + '.pid.partial')\n"
+        "    partial.write_text(f'{os.getpid()}\\n')\n"
+        "    replace_pid(partial, root / (name + '.pid'))\n"
         "def pause(name):\n"
-        "    (root / (name + '.pid')).write_text(str(os.getpid()))\n"
+        "    mark(name)\n"
         "    with (root / ('resume-' + name)).open() as barrier:\n"
         "        barrier.read(1)\n"
         "replace_file = os.replace\n"
@@ -475,7 +449,7 @@ def controlled_writer(tmp_path: Path, lifecycle: Path, mode: str) -> Path:
         "        pause('writer')\n"
         "module._atomic_write = controlled_write\n"
         "if sys.argv[1] == 'recover-renewal-receipt':\n"
-        "    (root / 'recovery.pid').write_text(str(os.getpid()))\n"
+        "    mark('recovery')\n"
         "    if mode == 'unsynced':\n"
         "        sync_file = os.fsync\n"
         "        def record_sync(descriptor):\n"

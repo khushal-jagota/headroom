@@ -181,42 +181,19 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     observations: list[JsonObject] = []
     selected = rows if layout == "desktop" else {"proof-worker": worker}
     for conversation, row in selected.items():
-        popup_signal: Locator | None = None
-        if layout == "desktop":
-            # Keep the same popup mounted before the actual second turn starts.
-            row.hover()
-            popup = page.locator('[data-rail-hover-panel][aria-hidden="false"]')
-            expect(popup).to_be_visible(timeout=WAIT_MS)
-            popup_signal = popup.locator(f'[data-conversation-id="{conversation}"]')
-            _marks(popup_signal, False, False)
+        # Rail popups are proved in Vitest. This connected host proves the row marks.
         before = page.evaluate("window.signalProofEvents.length")
         _post(server, f"/api/test/signals/{conversation}/start")
-        if popup_signal is not None:
+        if layout == "desktop":
             _marks(row, True, False)
-            _marks(popup_signal, True, False)
         page.wait_for_function(
             "before => window.signalProofEvents.length > before", arg=before, timeout=WAIT_MS
         )
         _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
         _marks(row, True, True)
-        if popup_signal is not None:
-            _marks(popup_signal, True, True)
         if conversation == "proof-worker":
             _marks(supervisor, False, False)
             _marks(chief, False, False)
-        if conversation == "proof-worker" and popup_signal is not None:
-            # Worker popup resolves the current board card, not captured props.
-            view = api.get(server, f"/api/conversation/conversations/{conversation}")
-            _post(
-                server,
-                f"/api/conversation/conversations/{conversation}/owner-read",
-                {
-                    "through_sequence": view["latest_sequence"],
-                },
-            )
-            _marks(popup_signal, True, False)
-            _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
-            _marks(popup_signal, True, True)
         pending_reads: list[Route] = []
 
         def defer_read(route: Route, *, reads: list[Route] = pending_reads) -> None:
