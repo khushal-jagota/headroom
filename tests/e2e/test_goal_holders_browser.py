@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
+from urllib.parse import unquote
 
-from playwright.sync_api import BrowserContext, Page, expect
+from playwright.sync_api import BrowserContext, Page, Request, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle, capture_success
 from tests.support.connected_rows import _bind, _conversation
 from tests.support.server_fixtures import signal_server as signal_server
@@ -99,3 +100,91 @@ def test_goal_promotion_and_stable_url_share_manager_name(
         assert conn.execute(
             "SELECT 1 FROM conversations WHERE conversation_id=?", (legacy_conversation,)
         ).fetchone() == (1,)
+
+
+def test_leaving_a_goal_manager_with_text_blocks_opens_each_next_page(
+    signal_server: ServerHandle,
+    api: ApiHelper,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
+    """Unmounting the goal's inline text editors must not abort the next page's update."""
+    expect.set_options(timeout=WAIT_MS)
+    server = signal_server
+    goal = api.direct_post(
+        server,
+        "/api/goals",
+        {
+            "title": "Write the handbook",
+            "project_id": "project_other",
+            "kind": "binary",
+            "primary_checklist_block_id": None,
+            "page": {
+                "kind": "headroom.page",
+                "version": 1,
+                "title": "Approach",
+                "summary": "",
+                "blocks": [{"type": "text", "id": "plan", "text": "Draft every chapter."}],
+            },
+        },
+    )
+    goal_manager_id = api.direct_post(server, f"/api/goals/{goal['id']}/make-manager", {})[
+        "manager_id"
+    ]
+    other = api.direct_post(
+        server, "/api/managers", {"title": "Other manager", "project_id": "project_other"}
+    )
+    ticket = api.direct_post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Handbook index",
+            "worker_type": "coding",
+            "brief": "Agreed brief.",
+            "manager": {"kind": "manager", "id": other["id"]},
+        },
+    )
+    goal_manager_route = f"#/workspace/manager/{goal_manager_id}"
+    goal_manager = f'[data-manager-view="{goal_manager_id}"]'
+    page = open_page(context_factory(), server, goal_manager_route, goal_manager)
+    page_errors: list[str] = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    # The goal's text block is mounted as an inline editor: the teardown under test.
+    text_editor = page.locator(goal_manager).get_by_role("textbox", name="Text", exact=True)
+
+    def navigate(route: str) -> None:
+        # In-app hash navigation: the old page is torn down by the client, not a reload.
+        page.evaluate("route => { window.location.hash = route }", route)
+
+    destinations = [
+        (
+            "#/workspace/chief-of-staff",
+            "/api/chief/page",
+            page.locator(".chief-workspace-host h1"),
+            "Chief of Staff",
+        ),
+        (
+            f"#/workspace/manager/{other['id']}",
+            f"/api/managers/{other['id']}/",
+            page.locator(f'[data-manager-view="{other["id"]}"] h1'),
+            other["title"],
+        ),
+        (
+            f"#/workspace/{ticket['id']}",
+            f"/api/tickets/{ticket['id']}/",
+            page.locator(f'[data-ticket-id="{ticket["id"]}"]').get_by_text(ticket["title"]).first,
+            ticket["title"],
+        ),
+    ]
+    for route, request_path, content, title in destinations:
+        navigate(goal_manager_route)
+        expect(text_editor).to_contain_text("Draft every chapter.")
+
+        # Some reads travel as resource-body?key=<path>, so match the decoded URL.
+        def own_read(request: Request, path: str = request_path) -> bool:
+            return path in unquote(request.url)
+
+        with page.expect_request(own_read, timeout=WAIT_MS):
+            navigate(route)
+        expect(content).to_contain_text(title)
+    assert page_errors == []
