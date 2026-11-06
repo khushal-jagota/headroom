@@ -54,7 +54,7 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
     adoption = workflow["jobs"]["adopt"]
     assert publication["runs-on"] == "ubuntu-24.04"
     assert publication["env"]["PANELS_REHEARSAL"] == "true"
-    assert "2c0e05cefc82de100bfc576c1a8f3eda7a931f2d" in (
+    assert "53d64f0fdbda071a7887945a0d4ddc113694cf21" in (
         publication["env"]["PANELS_BASELINE_SHA"]
     )
     assert "workflow_dispatch" in adoption["if"]
