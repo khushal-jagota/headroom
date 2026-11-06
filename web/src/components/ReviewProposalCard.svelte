@@ -231,12 +231,14 @@
   <div>
     <ErrorLine error={detail.error} />
     {#if title !== null}<div class="quiet-line">{title}</div>{/if}
+    {#if decisionActions}{@render decisionActions()}{:else}
     <div class="review-card-actions">
       {#if onSkip}
         <Button variant="quiet" data-skip="" onclick={onSkip}>Skip</Button>
       {/if}
-      <a data-open-ticket href={ticketHref}>open ticket</a>
+      <a data-open-ticket href={ticketHref}>Open ticket</a>
     </div>
+    {/if}
   </div>
 {:else if healthyDetail && manifestMissingWorkerType}
   {@const ticketDetail = healthyDetail}
@@ -244,12 +246,14 @@
     <ErrorLine
       error={{ code: "invalid_workflow", message: "The Ticket workflow is unavailable." }}
     />
+    {#if decisionActions}{@render decisionActions()}{:else}
     <div class="review-card-actions">
       {#if onSkip}
         <Button variant="quiet" data-skip="" onclick={onSkip}>Skip</Button>
       {/if}
-      <a data-open-ticket href={ticketHref}>open ticket</a>
+      <a data-open-ticket href={ticketHref}>Open ticket</a>
     </div>
+    {/if}
   </div>
 {:else if healthyDetail}
   {@const ticketDetail = healthyDetail}
@@ -265,9 +269,9 @@
       {#if !embedded}
       <div class="review-ticket-decision-line review-arrive review-arrive--1">
         {#if onSkip}
-          <button data-skip="" onclick={onSkip}>Skip &rsaquo;</button>
+          <button data-skip="" onclick={onSkip}>Skip</button>
         {/if}
-        <a data-open-ticket href={ticketHref}>Open ticket &rsaquo;</a>
+        <a data-open-ticket href={ticketHref}>Open ticket</a>
       </div>
 
       <div class="review-ticket-heading review-arrive review-arrive--2">
@@ -300,7 +304,9 @@
               onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}
               {revisionEditor} trailingActions={decisionActions} />
             {/key}
+          {:else if decisionActions}{@render decisionActions()}
           {/if}
+        {:else if decisionActions}{@render decisionActions()}
         {/if}
       </div>
 

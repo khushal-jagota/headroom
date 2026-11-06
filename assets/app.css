@@ -183,7 +183,9 @@ textarea {
 /* --- Persistent rail and pane shell ------------------------------------- */
 .shell { position:relative; height:100dvh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .shell-content { flex:1; min-width:0; min-height:0; padding:0; }
-.rail-foot { position:relative; flex:none; padding-top:var(--space-3); }
+/* The destinations stand on the rail's text edge: the first icon's glyph lines up with the
+   names above it. */
+.rail-foot { position:relative; flex:none; padding:var(--space-3) var(--rail-edge) 0 calc(var(--rail-edge) + var(--rail-pad) - 7px); }
 /* The destinations: one row of quiet icons. A destination's name floats beside its icon as a
    raised tooltip, over the row rather than in it, so nothing ever moves. */
 .rail-utilities { display:flex; align-items:center; gap:2px; }
@@ -1168,11 +1170,16 @@ button.list-row:hover .list-row-title {
 
 /* --- Error line ---------------------------------------------------------- */
 
+/* An error stands in its own quiet tint, the fill that replaced the old left bar: the code
+ * chip and the sentence read as one marked line without a rule beside them. */
 .error-line {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
   font-size: var(--type-sm);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--error-surface);
 }
 
 .error-code {
@@ -3462,13 +3469,13 @@ select {
   background: none;
   pointer-events: none;
 }
-/* The dock is an opaque footer on the page's own plane: no rule, no card. The document
- * dissolves over its last 48px into that plane, so whatever continues below the fold
- * reads as more to scroll rather than as something cut. */
+/* The dock is the composer and its status strip on the page's own plane. The document
+ * dissolves over 56px and is fully gone 24px above the strip, so whatever continues below
+ * the fold reads as more to scroll rather than as something cut against the strip. */
 .manager-reading:not(:has(.ticket-artifact)) > .manager-doc,
 .ticket-reading:not(:has(.ticket-artifact)) > .ticket-doc {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-7)), transparent);
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-7)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-7) - var(--space-6)), transparent calc(100% - var(--space-5)));
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-7) - var(--space-6)), transparent calc(100% - var(--space-5)));
 }
 .conversation-layer > .conversation-column {
   position: relative;
@@ -4770,9 +4777,13 @@ details:not([open]) > summary > .manager-workspace-chevron {
    label is the rail's meta style: small, faint, and only as tall as its line. Rows keep one
    even pitch (28px), and the unread mark sits in its own column a clear step after the
    title's fade. */
+/* A Ticket group: a label-sized name on the rail's one edge, then rows of the same voice as
+   the goals above. The first group takes a little more air, which is what separates a
+   Manager's own lines from the work under it. */
 .workspace-ticket-bucket { margin-top:var(--space-1); }
-.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:500; color:var(--text-faintest); padding:2px 0; margin-bottom:0; border-bottom:var(--border-hairline) solid var(--border-color); }
-.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--space-2) * 2)); display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-3); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); font-weight:500; line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.manager-card > :not(.workspace-ticket-bucket) + .workspace-ticket-bucket { margin-top:var(--space-2); }
+.workspace-ticket-bucket .bucket-label { font-size:var(--type-xs); line-height:16px; font-weight:500; color:var(--rail-tone-label); padding:6px 0 3px; margin-bottom:0; border-bottom:0; }
+.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--rail-row-pad) * 2)); display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--space-3); padding:5px var(--rail-row-pad); margin:0 calc(var(--rail-row-pad) * -1); border:0; border-radius:var(--radius-md); background:transparent; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-ui); font-weight:500; line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
 .workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:1px; }

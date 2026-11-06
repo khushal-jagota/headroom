@@ -104,6 +104,10 @@
       if (titleEnd + 24 + width <= window.innerWidth - 12) {
         left = titleEnd + 24;
         top = Math.max(12, Math.min(rect.top - 8, floor - height));
+        // Level with its row and past the words, the panel covers no other row, so the
+        // pointer can cross to it and press the ask inside.
+        clearOfRail = true;
+        return;
       } else {
         left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
         const below = rect.bottom + 6;
@@ -160,7 +164,7 @@
 <style>
   /* A compact raised card: where it belongs (kicker), what it is (title), then the recap as the
      body you opened it for. The ask is a quiet line under it, not a second button. */
-  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(288px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-3) 14px 14px; border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-raised); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
+  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(304px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-3) 14px 14px; border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-raised); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }

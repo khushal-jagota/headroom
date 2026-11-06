@@ -319,6 +319,7 @@
   function railOverflow(node: HTMLElement) {
     const rail = node.closest<HTMLElement>('.workspace-rail');
     const update = () => {
+      rail?.style.setProperty('--rail-scrollbar', `${node.offsetWidth - node.clientWidth}px`);
       const pad = Number.parseFloat(getComputedStyle(node).paddingBottom) || 0;
       rail?.toggleAttribute('data-rail-more-below', node.scrollHeight - pad - node.scrollTop - node.clientHeight > 1);
       rail?.toggleAttribute('data-rail-more-above', node.scrollTop > 1);
@@ -525,37 +526,40 @@
      whole stack above pane content without moving native controls out of DOM order. */
   .workspace-rail { position:relative; z-index:1; }
   .board-workspace-right { position:relative; z-index:0; }
-  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:var(--space-3) var(--space-2) var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:var(--space-3) 0 var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
   .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
   /* Rows scrolled out above dissolve under the rail's top edge instead of being sliced. */
-  .rail-work .rail-work::before { content:""; position:absolute; z-index:3; left:0; right:0; top:0; height:var(--space-5); background:linear-gradient(var(--surface-rail), transparent); pointer-events:none; opacity:0; }
+  .rail-work .rail-work::before { content:""; position:absolute; z-index:3; left:0; right:0; top:0; height:var(--space-6); background:linear-gradient(var(--surface-rail) var(--space-2), transparent); pointer-events:none; opacity:0; }
   :global(.workspace-rail[data-rail-more-above]) .rail-work .rail-work::before { opacity:1; }
   /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
      included, without becoming a scroller that a hover could slide sideways. */
   .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
-  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:thin; padding-bottom:var(--space-6); scroll-padding-block:var(--space-6); }
+  /* The list reaches the rail's edges so its scrollbar, where the platform draws one, sits in
+     the right inset rather than adding to it: the right pad gives back what the gutter takes,
+     and the two sides measure the same with or without a scrollbar. */
+  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; padding:0 max(0px, calc(var(--rail-edge) - var(--rail-scrollbar, 0px))) var(--space-6) var(--rail-edge); scroll-padding-block:var(--space-6); }
 
-  .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:thin; }
+  .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-width:thin; }
   .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
   .rail-grip::after { content:""; position:absolute; top:50%; left:50%; width:var(--space-1); height:var(--space-6); transform:translate(-50%,-50%) scaleY(var(--rail-grip-rest-scale)); border-radius:var(--radius-pill); background:var(--border-color); opacity:0; pointer-events:none; transition:opacity var(--motion-base) var(--motion-ease),background var(--motion-base) var(--motion-ease),transform var(--motion-enter) var(--motion-ease); }
   .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { opacity:1; transform:translate(-50%,-50%) scaleY(1); }
   .resizing .rail-grip::after { background:var(--text-strong); }
   .resizing { user-select:none; cursor:col-resize; }
-  .rail-status { flex:none; padding-top:var(--space-2); }
+  .rail-status { flex:none; padding:var(--space-2) var(--rail-edge) 0; }
   /* The rail's foot is a fixed band with one hairline edge; the list above ends at it. */
-  .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); border-top:var(--border-hairline) solid var(--border-color); padding-top:2px; }
+  .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); margin-inline:var(--rail-edge); border-top:var(--border-hairline) solid var(--border-color); padding-top:var(--space-1); }
   /* Whatever row the list stops on dissolves before the foot's edge; nothing is sliced. */
   .settled::before { content:""; position:absolute; z-index:2; left:0; right:0; bottom:calc(100% + var(--border-hairline)); height:var(--space-7); background:linear-gradient(transparent, var(--surface-rail) 70%); pointer-events:none; opacity:0; }
   :global(.workspace-rail[data-rail-more-below]) .settled::before { opacity:1; }
-  .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); min-height:28px; padding:var(--space-1) var(--space-3); border:0; border-radius:var(--radius-md); background:none; width:100%; font:inherit; font-size:var(--type-sm); font-weight:500; line-height:20px; color:var(--text-faint); cursor:pointer; }
+  .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); min-height:30px; padding:5px var(--rail-row-pad); margin-inline:var(--rail-row-inset); border:0; border-radius:var(--radius-md); background:none; width:calc(100% - 2 * var(--rail-row-inset)); font:inherit; font-size:var(--type-sm); font-weight:500; line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
   .settled-head:hover { background:var(--wash-hover); }
   .settled-head:hover { color:var(--text-strong); }
   .settled-count { position:relative; display:inline-block; }
-  .settled-chevron { width:14px; height:14px; flex:none; color:var(--text-faintest); transition:transform var(--motion-base) var(--motion-ease); }
+  .settled-chevron { width:14px; height:14px; flex:none; color:var(--rail-tone-label); transition:transform var(--motion-base) var(--motion-ease); }
   .settled--open .settled-chevron { transform:rotate(90deg); }
-  .count { flex:none; margin-left:2px; font-size:var(--type-xs); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
+  .count { flex:none; margin-left:2px; font-size:var(--type-sm); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; }
   .settled-item + .settled-item { margin-top:var(--space-3); }
-  .settled-row { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-1) calc(var(--space-2) + var(--border-hairline)); margin:0 var(--space-1); border-radius:var(--radius-md); }
+  .settled-row { display:flex; align-items:center; gap:var(--space-2); padding:5px var(--rail-row-pad); margin:0 var(--rail-row-inset); border-radius:var(--radius-md); font-size:var(--type-ui); line-height:20px; }
   .settled-row:hover { color:var(--text-strong); }
   .settled-title,.reopen { border:0; background:none; font:inherit; cursor:pointer; color:var(--text-faintest); padding:0; }
   .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; }

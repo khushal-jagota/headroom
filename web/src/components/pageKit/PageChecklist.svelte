@@ -374,7 +374,8 @@
     padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-md);
   }
-  .step.current .step-inner { background: transparent; }
+  /* The open step keeps its mark as a quiet fill, never a rule beside it. */
+  .step.current .step-inner { background: var(--wash-hover); }
   .check {
     display: grid;
     width: 40px;

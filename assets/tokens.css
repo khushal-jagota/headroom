@@ -41,7 +41,7 @@
   /* Popovers, menus and hover previews: the one raised plane, with --shadow-float. */
   --surface-raised: #252525;
   /* The rounded composer field floats one clear step above the page. */
-  --surface-input: #262626;
+  --surface-input: #2a2a2a;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;
@@ -231,9 +231,20 @@
   /* The Manager you are inside: a tint quiet enough that only the open row reads as selected.
    * The open row is one crisp fill, a clear step above hover, so the two never read as
    * more and less of the same grey. */
-  --wash-context: rgb(255 255 255 / 2.5%);
-  --wash-selected: rgb(255 255 255 / 11%);
+  --wash-context: rgb(255 255 255 / 3%);
+  --wash-selected: rgb(255 255 255 / 12%);
   --wash-hover: rgb(255 255 255 / 5%);
+  /* Rail geometry. Every rail text, from the Manager's name to a Ticket, the Settled row
+   * and the first destination icon, stands on one left edge: the rail edge plus the
+   * group pad. A row's fill sits --rail-row-inset inside its group, so the row's 8px
+   * radius is concentric with the group's 12px. */
+  --rail-edge: 10px;
+  --rail-pad: 10px;
+  --rail-row-inset: 4px;
+  --rail-row-pad: calc(var(--rail-pad) - var(--rail-row-inset));
+  /* Rail text: the Manager's name leads, a row (goal or Ticket) reads, a label whispers. */
+  --rail-tone-rest: #a3a3a3;
+  --rail-tone-label: #858585;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }

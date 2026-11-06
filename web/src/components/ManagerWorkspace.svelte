@@ -291,6 +291,10 @@
   .page-eyebrow { display:flex; align-items:center; gap:6px; min-height:24px; font-size:var(--type-sm); line-height:20px; color:var(--text-faint); }
   .page-eyebrow a { color:inherit; text-decoration:none; text-underline-offset:3px; }
   .page-back + span::before { content:"·"; margin-right:6px; color:var(--text-faintest); }
+  /* Beside the rail the line above the title is the project alone, the same word the rail
+     shows above this Manager's name; the rail is the way back. A phone has no rail, so
+     there the line keeps its way back to the Workspace. */
+  @media (min-width:721px) { .page-back, .page-back + span::before { display:none; } }
   .page-eyebrow a:hover { color:var(--text-strong); text-decoration-line:underline; }
   .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 var(--space-2); margin-right:calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
   .page-settle svg { width:13px; height:13px; }

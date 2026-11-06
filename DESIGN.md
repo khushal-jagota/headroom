@@ -56,12 +56,14 @@ bubble-less assistant, recessed composer).
    hand off to smooth streaming, a working marker on a running ticket. Never leave a surface
    frozen and silent.
 
-8. **Use the shared scales.** Typography uses 12 (labels and meta), 13 (secondary text and
-   rail rows), 14 (controls), 15 (body and recaps), 16 (card titles and rail Manager
-   titles), 18 (page section headings), 26 (page titles) and 30px (hero). Body text is weight 500 and labels 590;
+8. **Use the shared scales.** Typography uses 12 (labels and meta), 13 (secondary text),
+   14 (controls and rail rows), 15 (body and recaps), 16 (card titles), 18 (page section
+   headings and rail Manager names), 26 (page titles) and 30px (hero). Body text is weight 500 and labels 590;
    titles lead by weight, 700–740. Full-bright text is kept for titles, needs-you items and
    primary content; supporting text takes the muted and faint tones. Nothing marks a
-   selected or current state with a left-edge line: selection is a fill. Controls are 32px tall with
+   selected or current state with a left-edge line: selection is a fill. Every page has one
+   line above its title (where it lives, then its own facts) and only its recap below; the
+   rail keeps one left edge, with the Manager's name, not an indent, carrying its structure. Controls are 32px tall with
    the 8px radius; surfaces use the 12px radius. The radius and spacing scales stay
    fixed; new sizes need an explicit design decision.
 

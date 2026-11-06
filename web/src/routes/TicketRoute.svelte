@@ -327,11 +327,14 @@
       <div class="ticket-reading">
       <main class="ticket-doc">
         <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
-          <!-- Every page's line above its title is its place; the Ticket's own facts sit under the title. -->
+          <!-- Every page has one line above its title: where it lives, then its own facts.
+               Under the title there is only the recap. -->
           <div class="worker-eyebrow" data-ticket-identity>
-            <span>Workspace</span>
-            <span aria-hidden="true">·</span>
             <span data-project-fact>{masthead.project || "No project"}</span>
+            <span aria-hidden="true">·</span>
+            <span data-ticket-type>{mastheadTypeLabel}</span>
+            <span aria-hidden="true">·</span>
+            <span class="worker-machine"><MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span></span>
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title">
@@ -341,11 +344,6 @@
                 onSave={(raw) => patch({ title: raw })}
               />
               <MachineActivityMark locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} />
-            </div>
-            <div class="worker-facts">
-              <span data-ticket-type>{mastheadTypeLabel}</span>
-              <span aria-hidden="true">·</span>
-              <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
             </div>
             <RecapSlot>
             {#snippet children()}
@@ -512,7 +510,8 @@
   .ticket-head { padding-top:var(--space-4); }
   .worker-eyebrow { line-height:20px; min-height:24px; display:flex; align-items:center; gap:6px; font-size:var(--type-sm); color:var(--text-faint); }
   .ticket-title-row { display:block; margin-top:var(--space-2); }
-  .worker-facts { display:flex; align-items:center; gap:6px; margin-top:var(--space-1); font-size:var(--type-sm); line-height:20px; color:var(--text-faint); }
+  .worker-machine { display:inline-flex; align-items:center; gap:5px; }
+  .worker-machine :global(.machine-identity) { width:15px; height:15px; color:inherit; }
   .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:var(--type-display); font-weight:740; line-height:1.25; letter-spacing:-.022em; }
   .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is

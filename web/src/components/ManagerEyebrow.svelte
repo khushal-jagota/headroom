@@ -1,19 +1,19 @@
 <script lang="ts">
-  let { project, title, settled = false, rail = false, busy = false, onSettle }: {
+  let { project, title, settled = false, rail = false, busy = false, settleable = true, onSettle }: {
     project: string | null; title: string; settled?: boolean; rail?: boolean; busy?: boolean;
-    onSettle: () => void;
+    settleable?: boolean; onSettle: () => void;
   } = $props();
 </script>
 <div class="manager-eyebrow" class:rail>
   <span>{project ?? ""}</span>
-  <button type="button" class="settle" disabled={busy} aria-label={`${settled ? "Reopen" : "Settle"} ${title}`} onclick={(event) => { event.stopPropagation(); onSettle(); }}>
+  {#if settleable}<button type="button" class="settle" disabled={busy} aria-label={`${settled ? "Reopen" : "Settle"} ${title}`} onclick={(event) => { event.stopPropagation(); onSettle(); }}>
     <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
     {settled ? "Reopen" : "Settle"}
-  </button>
+  </button>{/if}
 </div>
 <style>
-  .manager-eyebrow { display:flex; align-items:center; gap:var(--space-2); min-height:16px; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faintest); }
-  .settle { margin-left:auto; display:inline-flex; align-items:center; gap:5px; color:var(--text-faint); white-space:nowrap; background:none; border:0; font:inherit; cursor:pointer; padding:0; transition:opacity var(--motion-fast) var(--motion-ease); }
+  .manager-eyebrow { display:flex; align-items:center; gap:var(--space-2); min-height:16px; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--rail-tone-label); }
+  .settle { margin-left:auto; display:inline-flex; align-items:center; gap:5px; color:var(--rail-tone-rest); white-space:nowrap; background:none; border:0; font:inherit; cursor:pointer; padding:0; transition:opacity var(--motion-fast) var(--motion-ease); }
   .settle svg { width:12px; height:12px; flex:none; }
   .rail { line-height:16px; }
   .rail > span { min-width:0; overflow-wrap:anywhere; }

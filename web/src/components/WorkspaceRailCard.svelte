@@ -46,7 +46,8 @@
 <section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
   <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
   <div class="identity" onclick={(event) => { if (!(event.target as HTMLElement).closest('button, a')) { const head = event.currentTarget.querySelector<HTMLButtonElement>('.item-head'); head?.click(); } }} onpointerenter={(event) => { if (!suppressBackgroundPreview) input().pointerEnter(event); }} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => { if (!(event.target as HTMLElement).closest('button')) input().down(event); }} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()}>
-    {#if !chief}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
+    <!-- The Chief's place is the Workspace itself, the word its page carries above its name. -->
+    {#if chief}<ManagerEyebrow project="Workspace" {title} rail settleable={false} {onSettle} />{:else}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
     <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={(event) => input().leave(event)}>
       <span class="item-title">{title}</span>
       <ConversationSignalMark {signal} {conversationId} />
@@ -65,27 +66,25 @@
 </div>
 <style>
   .manager-card-slot { min-width:0; }
-  :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-1); }
-  /* Every Manager, the Chief included, is one text-only header: the project as a small
-     eyebrow, then the name. Its goals stand on the name's left edge as part of it; Tickets
-     are the one indent under it. The rail has exactly three text styles: the name, a row
-     (goal or Ticket) and a meta line (eyebrow, goal status, group label). */
-  .manager-card { --rail-child-indent:0px; box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:6px var(--space-3) var(--space-1); isolation:isolate; z-index:1; }
+  :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-2); }
+  /* Every Manager, the Chief included, is one block on the rail's one left edge: the
+     project as a small eyebrow, the name large and bold, its goals as part of the name,
+     then its Tickets in their groups. Nothing in the block is indented; size, weight and
+     the group labels carry the structure. */
+  .manager-card { box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:var(--space-2) var(--rail-pad) var(--space-2); isolation:isolate; z-index:1; }
   .identity { display:flex; flex-direction:column; cursor:pointer; }
-  .identity > :global(.manager-eyebrow) { margin-bottom:0; }
-  .item-head { display:flex; align-items:center; gap:var(--space-2); width:100%; min-height:22px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .identity > :global(.manager-eyebrow) { margin-bottom:2px; }
+  .item-head { display:flex; align-items:center; gap:var(--space-2); width:100%; min-height:24px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   /* A title is dimmed unless it needs the user: an unread message for them, or the pointer or
-     the open page on it, brings it to full brightness. Dim is the rail's one resting tone,
-     shared by every title that does not need you, so it reads as calm rather than off. */
-  .item-title { flex:1; min-width:0; font-size:var(--type-md); font-weight:640; line-height:22px; letter-spacing:-0.012em; color:var(--text-faint); overflow-wrap:anywhere; transition:color var(--motion-fast) var(--motion-ease); }
+     the open page on it, brings it to full brightness. The dim title keeps its full size and
+     weight, so it reads as at rest, not as off. */
+  .item-title { flex:1; min-width:0; font-size:var(--type-section); font-weight:700; line-height:24px; letter-spacing:-0.018em; color:var(--rail-tone-rest); overflow-wrap:anywhere; transition:color var(--motion-fast) var(--motion-ease); }
   .item-head[data-unread="true"] .item-title { color:var(--text-strong); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--text-strong); }
-  .manager-card :global(.goals-rail), .manager-card :global(.sole-status) { padding-left:var(--rail-child-indent); }
-  .manager-card > .bucket { padding-left:calc(var(--rail-child-indent) + var(--space-3)); }
   /* One row style: a title that runs out fades at its own edge, and the unread mark keeps a
      clear gap after the fade so it never reads as part of the word. */
   .bucket :global(.ticket-row-title) { white-space:nowrap; overflow:hidden; text-overflow:clip; mask-image:linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent); -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent); }
-  .bucket :global(.worker-row) { color:var(--text-faint); }
+  .bucket :global(.worker-row) { color:var(--rail-tone-rest); }
   .bucket[data-bucket-key="awaiting_approval"] :global(.worker-row),
   .bucket[data-bucket-key="awaiting_answer"] :global(.worker-row),
   .bucket[data-bucket-key="errored"] :global(.worker-row),
