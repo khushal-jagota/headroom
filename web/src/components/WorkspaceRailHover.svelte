@@ -98,9 +98,11 @@
         clearOfRail = left >= railRight;
         return;
       }
-      // A row in a page list hugs its words, so the panel opens to the right of the row's end,
-      // centred on the row and kept inside the window and above the composer. It never
-      // overlaps its own row; where the window leaves no room to the right it opens under the
+      // A row in a page list runs the column's full width with its words at the left, so the
+      // panel opens beside the row's words, centred on the row and kept inside the window and
+      // above the composer. It never covers its own row's words, the words of the rows and
+      // headings it lies level with, or the counts and unread dots at the rows' right end;
+      // where the column leaves no such room it opens right of the column, else under the
       // row, or over it when the composer leaves no room under it.
       const row = currentTarget.querySelector<HTMLElement>(".ticket-row") ?? currentTarget;
       const box = row.getBoundingClientRect();
@@ -109,26 +111,34 @@
       const listTop = (currentTarget.closest(".page-tickets") ?? currentTarget.closest("section") ?? currentTarget).getBoundingClientRect().top;
       const besideFloor = floor + 4;
       const besideTop = Math.max(12, listTop - 10, Math.min(box.top + box.height / 2 - height / 2, besideFloor - height));
-      // Beside the row it also clears the rows and headings it lies level with, which hug
-      // their words too, so it covers only empty column.
       const list = currentTarget.closest("[data-manager-children], .manager-children") ?? currentTarget.parentElement;
-      let clear = box.right;
+      const wordsRight = (element: Element | null) => {
+        let right = 0;
+        if (!element) return right;
+        const words = document.createRange(); words.selectNodeContents(element);
+        for (const line of words.getClientRects()) if (line.width) right = Math.max(right, line.right);
+        return right;
+      };
+      let clear = Math.max(box.left, wordsRight(row.querySelector(".ticket-row-title")));
       for (const other of list?.querySelectorAll<HTMLElement>(".ticket-row, summary") ?? []) {
         const near = other.getBoundingClientRect();
-        if (near.bottom > besideTop && near.top < besideTop + height) {
-          if (other.matches("summary")) { const words = document.createRange(); words.selectNodeContents(other); for (const line of words.getClientRects()) if (line.width) clear = Math.max(clear, line.right); }
-          else clear = Math.max(clear, near.right);
-        }
+        if (near.bottom > besideTop && near.top < besideTop + height)
+          clear = Math.max(clear, wordsRight(other.querySelector(".ticket-row-title, .manager-workspace-status-label")));
       }
-      if (clear + 12 + width <= window.innerWidth - 12) {
+      // The rows' right end keeps its counts and unread dots in view.
+      const columnEnd = (list ?? row).getBoundingClientRect().right - 48;
+      if (clear + 12 + width <= columnEnd) {
         left = clear + 12;
+        top = besideTop;
+      } else if (box.right + 12 + width <= window.innerWidth - 12) {
+        left = box.right + 12;
         top = besideTop;
       } else {
         left = Math.max(12, Math.min(box.left, window.innerWidth - width - 12));
         top = box.bottom + 6 + height <= floor ? box.bottom + 6 : Math.max(12, box.top - 6 - height);
       }
       // Beside its row the pointer can cross straight to it and press the ask inside.
-      clearOfRail = left >= box.right;
+      clearOfRail = top === besideTop;
     };
     // Manifest arrival can change the height after the panel is already visible.
     const observer = new ResizeObserver(place);
