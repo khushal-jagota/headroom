@@ -14,6 +14,9 @@
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
     <span class="c2-rest-activity">
+      <!-- An unread message from the agent: the accent dot leads its status, where the
+           message itself is previewed, never floating beside a page title. -->
+      {#if preview}<span class="c2-rest-unread" role="img" aria-label="Unread message" data-conversation-unread-dot></span>{/if}
       {#if running || backgroundWork}<span class="c2-mark--running" aria-label="working"></span>{/if}
       {#if connectionTrouble}<span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>{/if}
       {#if activity}<span data-conversation-rest-line>{activity}</span>{/if}
@@ -39,7 +42,8 @@
   [data-conversation-rest-line] { white-space:nowrap; }
   /* The latest message follows the status on the same line, in the same tone, and ends in an
      ellipsis where the line does. */
-  .c2-rest-preview { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--tone-tertiary); }
+  .c2-rest-preview { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--tone-tertiary); margin-right:calc(var(--space-5) - var(--space-2)); }
+  .c2-rest-unread { flex:none; width:6px; height:6px; border-radius:var(--radius-pill); background:var(--accent-bright); }
   .c2-rest-preview::before { content:"·"; margin-right:var(--space-2); color:var(--tone-tertiary); }
   /* The arrow alone answers dock hover and rest-bar focus. Its glyph ends on the composer's
      inner edge, the same edge the status words start from on the left. */

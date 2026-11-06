@@ -523,13 +523,14 @@
   }
   td[data-primary] { color: var(--tone-primary); font-weight: var(--weight-body); }
   td[data-missing] { color: var(--tone-tertiary); }
-  td[data-tone="good"] { color: var(--accent-done); }
-  td[data-tone="attention"] { color: var(--accent-attention); }
-  td[data-tone="bad"] { color: var(--accent-error); }
-  td[data-tone="neutral"] { color: var(--chart-legend); }
-  td[data-tone="info"] { color: var(--accent-bright); }
+  /* A cell's status is its small dot alone; its value keeps the table's one text tone. */
+  td[data-tone] { color: var(--tone-primary); }
   td[data-tone] .cell-copy { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: var(--type-body); }
-  .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--tone-tertiary); }
+  td[data-tone="good"] .cell-status-dot { background: var(--accent-done); }
+  td[data-tone="attention"] .cell-status-dot { background: var(--accent-attention); }
+  td[data-tone="bad"] .cell-status-dot { background: var(--accent-error); }
+  td[data-tone="info"] .cell-status-dot { background: var(--accent-bright); }
   tbody tr:last-child td { border-bottom: 0; }
   /* The outer columns stand on the card's inset, so the rules between rows span exactly the
      card's content width. */
@@ -629,7 +630,10 @@
   th[data-numeric] .sort { justify-content: flex-end; }
   .editable-sort { display: flex; min-height: 44px; align-items: center; padding-left: var(--space-4); }
   .sort.icon-only { width: 40px; flex: none; justify-content: center; padding: 0; }
-  th[data-numeric] .editable-sort { justify-content: flex-end; }
+  /* A numeric column's head ends where its values end: its sort mark goes before the words. */
+  th[data-numeric] .editable-sort { justify-content: flex-end; padding-right: var(--space-4); }
+  th[data-numeric] .editable-sort > .sort.icon-only { order: -1; }
+  th:last-child .editable-sort { padding-right: 0; }
   .sort-inner { display: inline-flex; align-items: center; gap: 6px; }
   th[data-numeric] .sort-inner { flex-direction: row-reverse; }
   .sort-icon {
