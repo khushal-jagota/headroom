@@ -160,6 +160,7 @@ export type TranscriptRow =
   /** Where the backend cut the thread. Drawn as the seam it is, so a reader knows why
    *  what came before has gone rather than thinking the agent forgot. */
   | { key: string; kind: "context_compacted"; sequence: number; createdAt: number }
+  | { key: string; kind: "command_reply"; sequence: number; createdAt: number; replyText: string }
   | {
       key: string;
       kind: "turn_ended";
@@ -541,6 +542,15 @@ export function transcriptRows(
           kind: "context_compacted",
           sequence,
           createdAt
+        });
+        break;
+      case "command_reply":
+        rows.push({
+          key: `e${sequence}`,
+          kind: "command_reply",
+          sequence,
+          createdAt,
+          replyText: event.payload.reply_text
         });
         break;
       case "turn_ended":

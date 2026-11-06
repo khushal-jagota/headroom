@@ -105,7 +105,7 @@ class SignalDeletion:
 class SignalAssociationEffect:
     """Both sides of an address change in its source transaction."""
 
-    owner_kind: Literal["ticket", "manager", "chief", "goal"]
+    owner_kind: Literal["ticket", "manager", "chief"]
     owner_id: str
     relation: Literal["current", "historical"]
     before_conversation_id: str | None
@@ -335,8 +335,9 @@ class ConversationRoleMaterials:
 class WorkspacePathPolicy(StrEnum):
     """Select a mapped path, an absolute path, or the executor-owned workspace.
 
-    For executor_default, workspace_folder is an unused absolute placeholder.
-    Only native admission resolves and provisions that workspace.
+    For executor_default, workspace_folder names a folder inside the executor's own
+    workspace, written with that workspace as ``/``. Only native admission resolves and
+    provisions it.
     """
 
     home_relative = "home_relative"
@@ -361,7 +362,8 @@ class ConversationStartRequest:
     reasoning effort that is a real answer — some models take none.
 
     ``workspace_folder`` is the folder the agent runs in, except for executor_default.
-    That policy carries an unused placeholder until native admission resolves it.
+    That policy carries a folder inside the executor workspace, written with that
+    workspace as ``/``, until native admission resolves it.
     """
 
     conversation_id: str
@@ -384,7 +386,8 @@ class ResolvedConversationStart:
     request had to name one. ``reasoning_effort`` and ``role_materials`` stay optional
     because neither has a floor default — there is nothing to fall back to, so absent
     stays absent. For executor_default, native admission must replace the folder
-    placeholder and policy before a local backend adapter can use this request.
+    inside the executor workspace and the policy before a local backend adapter can
+    use this request.
     """
 
     conversation_id: str

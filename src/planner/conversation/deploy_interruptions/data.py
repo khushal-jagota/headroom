@@ -158,7 +158,8 @@ def reconcile(conn: sqlite3.Connection, manifests: tuple[CaptureManifest, ...], 
                         expected_claim=WorkerStepClaim.out,
                         expected_claim_revision=turn.claim_revision,
                         now=now,
-                        notify_manager=False,
+                        error_reason="interrupted by a deploy",
+                        notify_supervisor=False,
                     )
             conn.execute(
                 "INSERT INTO deploy_interruptions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -192,7 +193,12 @@ def reconcile(conn: sqlite3.Connection, manifests: tuple[CaptureManifest, ...], 
         "WHERE status='intent'"
     ).fetchall():
         fail_recovery_claims(
-            conn, str(delivery[0]), int(delivery[1]), now=now, notify_manager=False
+            conn,
+            str(delivery[0]),
+            int(delivery[1]),
+            now=now,
+            error_reason="recovery after a deploy has an unknown outcome",
+            notify_supervisor=False,
         )
     conn.execute(
         "UPDATE deploy_interruptions SET "
@@ -332,7 +338,8 @@ def settle_delivery(
                 conversation_id,
                 fact.turn_number,
                 now=now,
-                notify_manager=fact.status is not LifecycleStatus.suppressed,
+                error_reason=f"recovery after a deploy was {fact.status.value}",
+                notify_supervisor=fact.status is not LifecycleStatus.suppressed,
             )
         if fact.status is LifecycleStatus.suppressed:
             # Admission proves that no prompt reached the wire. Release only this
@@ -369,7 +376,13 @@ def settle_delivery(
                     now=now,
                 )
         if state != "resumed":
-            fail_recovery_claims(conn, conversation_id, fact.turn_number, now=now)
+            fail_recovery_claims(
+                conn,
+                conversation_id,
+                fact.turn_number,
+                now=now,
+                error_reason=f"recovery after a deploy could not resume ({status})",
+            )
         conn.execute(
             "UPDATE deploy_interruptions SET recovery_state=?,detail=detail || ? WHERE "
             "interruption_id IN (SELECT interruption_id FROM "
@@ -409,7 +422,7 @@ def _owner_blocker(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
         ).fetchone()
         if ticket is None or ticket[0] != conversation_id:
             return "the Ticket conversation link changed"
-    elif kind in ("chief", "manager", "goal"):
+    elif kind in ("chief", "manager"):
         from planner.core.errors import PlannerError
         from planner.managers.data import manager_agent_key
 
@@ -417,8 +430,6 @@ def _owner_blocker(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
             key = (
                 "chief_of_staff"
                 if kind == "chief"
-                else "goal_" + str(owner_id)
-                if kind == "goal"
                 else manager_agent_key(str(owner_id), conn)
             )
         except PlannerError:
@@ -600,7 +611,8 @@ def fail_recovery_claims(
     turn_number: int,
     *,
     now: int,
-    notify_manager: bool = True,
+    error_reason: str,
+    notify_supervisor: bool = True,
 ) -> None:
     for row in conn.execute(
         "SELECT d.owner_id,d.claim_revision,x.restored_claim_revision FROM "
@@ -609,7 +621,7 @@ def fail_recovery_claims(
         "x.status='intent' AND d.owner_kind='ticket' AND d.claim_revision IS NOT NULL",
         (conversation_id, turn_number),
     ).fetchall():
-        if row[2] is None and not notify_manager:
+        if row[2] is None and not notify_supervisor:
             # Suppression and reconciliation do not manufacture a new failed claim.
             continue
         tickets_data.mark_worker_step_claim_errored(
@@ -618,5 +630,6 @@ def fail_recovery_claims(
             expected_claim=(WorkerStepClaim.out if row[2] is not None else WorkerStepClaim.errored),
             expected_claim_revision=(int(row[2]) if row[2] is not None else int(row[1]) + 1),
             now=now,
-            notify_manager=notify_manager,
+            error_reason=error_reason,
+            notify_supervisor=notify_supervisor,
         )

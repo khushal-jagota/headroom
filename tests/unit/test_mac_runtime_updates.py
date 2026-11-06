@@ -54,8 +54,10 @@ from planner.executor.update_contracts import (
     MacRuntimeManifest,
     MacRuntimeSelection,
     MacUpdateCheck,
+    MacUpdatePrefetch,
     MacUpdateReport,
     MacUpdateTarget,
+    mac_prefetch_archive_path,
 )
 
 
@@ -495,11 +497,87 @@ def test_active_target_creates_durable_handoff_or_retains_failed_attempt(
     asyncio.run(exercise())
 
 
+def test_prefetch_runs_beside_work_and_activation_reuses_its_verified_runtime(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk: prefetch stops work, blocks the poll, loops on bad bytes, or activation refetches."""
+
+    async def exercise() -> None:
+        runner, _, _, _ = native_registry
+        exits: list[bool] = []
+        controller = MacUpdateController(
+            paths=runner.paths, runner=runner, connection=runner.connection,
+            server_url="https://fixture.example", executor_id="mac",
+            session_factory=aiohttp.ClientSession, request_exit=lambda: exits.append(True),
+        )
+        archive, sha, size = runtime_archive(tmp_path)
+        damaged = MacUpdatePrefetch("b" * 40, "d" * 64, size, mac_prefetch_archive_path("d" * 64))
+        prefetch = damaged
+        target: MacUpdateTarget | None = None
+        phases: list[object] = []
+        fetched: list[str] = []
+        arrived = asyncio.Event()
+
+        async def response(
+            session: aiohttp.ClientSession, method: str, path: str,
+            payload: dict[str, object] | None = None,
+        ) -> object:
+            if method == "GET":
+                return asdict(MacUpdateCheck(1, target, prefetch))
+            assert payload is not None
+            phases.append(payload["phase"])
+            return {"confirmed": False}
+
+        async def fetch(
+            session: aiohttp.ClientSession, archive_path: str, *, revision: str,
+            archive_sha256: str, archive_size: int, download_name: str,
+        ) -> Path:
+            fetched.append(archive_path)
+            if archive_sha256 == damaged.archive_sha256:
+                raise ValueError("fixture digest failure")
+            await arrived.wait()
+            return extract_runtime(
+                archive, controller.root / "releases", expected_sha256=archive_sha256,
+                expected_size=archive_size, expected_revision=revision,
+            )
+
+        monkeypatch.setenv(MAC_RUNTIME_CHILD_ENV, "1")
+        monkeypatch.setattr(controller, "_json", response)
+        monkeypatch.setattr(controller, "_fetch", fetch)
+        for _ in range(2):
+            await asyncio.wait_for(controller.check(), 1)
+            await asyncio.sleep(0)
+        assert fetched == [damaged.archive_path]
+        prefetch = MacUpdatePrefetch("b" * 40, sha, size, mac_prefetch_archive_path(sha))
+        fetched.clear()
+        await asyncio.wait_for(controller.check(), 1)
+        await asyncio.sleep(0)
+        assert fetched == [prefetch.archive_path]
+        assert phases == [] and not runner.admission_stopped
+        target = MacUpdateTarget(
+            "request_one", "b" * 40, "now", True, sha, size,
+            "/api/executor/update/request_one/archive",
+        )
+        activation = asyncio.create_task(controller.check())
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not activation.done()
+        arrived.set()
+        await asyncio.wait_for(activation, 1)
+        assert fetched == [mac_prefetch_archive_path(sha)]
+        assert exits == [True]
+        pending = read_record(controller.root / "pending.json") or {}
+        assert pending["runtime_path"] == str(controller.root / "releases" / f"{'b' * 40}-{sha}")
+
+    asyncio.run(exercise())
+
+
 def test_refused_work_protocol_recovers_through_actual_server_update_contract(
     native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tests.unit.test_mac_updates import MacProvider, services
+    from tests.unit.test_mac_updates import MacProvider, attempt, mac_service, write
 
     async def exercise() -> None:
         runner, _, _, _ = native_registry
@@ -509,10 +587,10 @@ def test_refused_work_protocol_recovers_through_actual_server_update_contract(
         )
         runner.connection.refusal = {"reason": "Mac needs update"}
         provider = MacProvider()
-        updates, server = services(tmp_path / "server", provider)
-        request = updates.request(provider.offered, "now", confirm_activity=True)
-        updates.store.transition(request.request_id, frozenset({"pending"}), "applied")
-        server.current_app_sha = provider.offered.manifest.app_sha
+        published = provider.publish()
+        server = mac_service(tmp_path / "server", provider, published.manifest.app_sha)
+        server.prepare(published)
+        write(server, attempt(published, "done"))
         exits: list[bool] = []
         phases: list[str] = []
         controller = MacUpdateController(
@@ -546,7 +624,7 @@ def test_refused_work_protocol_recovers_through_actual_server_update_contract(
         assert exits == [True]
         assert phases == ["downloading"]
         pending = read_record(runner.paths.root / "updates/pending.json") or {}
-        assert pending["application_revision"] == provider.offered.manifest.app_sha
+        assert pending["application_revision"] == published.manifest.app_sha
         assert runner.connection.ready_link() is None
 
     asyncio.run(exercise())

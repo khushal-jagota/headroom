@@ -72,6 +72,7 @@ class ConversationEventKind(StrEnum):
     model_changed = "model_changed"
     token_usage = "token_usage"
     context_compacted = "context_compacted"
+    command_reply = "command_reply"
     turn_ended = "turn_ended"
 
 
@@ -83,6 +84,7 @@ CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION: Final = frozenset(
         ConversationEventKind.plan_updated,
         ConversationEventKind.token_usage,
         ConversationEventKind.context_compacted,
+        ConversationEventKind.command_reply,
     }
 )
 """The kinds nothing outside an open conversation draws.
@@ -507,6 +509,19 @@ class ContextCompactedEventPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class CommandReplyEventPayload:
+    """The backend's own answer to a slash command, such as a refused or inspected goal.
+
+    It is stored, unlike agent prose, because nothing streams it: without this row the
+    reply is shown nowhere. It is plain words, and it is not model context.
+    """
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.command_reply
+
+    reply_text: str
+
+
+@dataclass(frozen=True, slots=True)
 class TurnEndedEventPayload:
     """A turn that has stopped running, and why.
 
@@ -550,6 +565,7 @@ type ConversationEventPayload = (
     | ModelChangedEventPayload
     | TokenUsageEventPayload
     | ContextCompactedEventPayload
+    | CommandReplyEventPayload
     | TurnEndedEventPayload
 )
 
@@ -829,6 +845,8 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case ContextCompactedEventPayload():
             return {}
+        case CommandReplyEventPayload():
+            return {"reply_text": payload.reply_text}
         case TurnEndedEventPayload():
             return {
                 "ending": str(payload.ending),
@@ -1046,6 +1064,8 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.context_compacted:
             return ContextCompactedEventPayload()
+        case ConversationEventKind.command_reply:
+            return CommandReplyEventPayload(reply_text=_text(stored, "reply_text"))
         case ConversationEventKind.turn_ended:
             return TurnEndedEventPayload(
                 ending=ConversationTurnEnding(_text(stored, "ending")),

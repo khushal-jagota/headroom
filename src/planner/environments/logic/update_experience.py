@@ -1,20 +1,22 @@
-"""Update outcomes and display decisions from one coherent server snapshot."""
+"""What the owner sees of an update, from one attempt record and one moment."""
+
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 
-from planner.environments.deployment_lifecycle import DeploymentLifecycle
-from planner.environments.update_configuration import UPDATE_ATTEMPT_TIMEOUT_SECONDS
 from planner.environments.update_contracts import (
-    OwnerUpdateRequest,
     PublishedUpdate,
     UpdateAction,
+    UpdateAttempt,
     UpdateExperienceState,
-    UpdateRequestState,
 )
 
-ACTIVE_STATES = frozenset({"pending", "dispatched", "applying"})
-
+UNFINISHED_DETAIL = (
+    "The update did not finish in time, so Panels stayed on the previous version."
+)
+MAC_FAILED_DETAIL = "Panels updated, but the Mac did not. It went back to its previous version."
+MAC_UNREACHABLE_DETAIL = "The Mac did not check in during the update. It can be asleep or offline."
 
 def instant(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -23,94 +25,95 @@ def instant(value: str) -> datetime:
     return parsed
 
 
-def request_deadline(request: OwnerUpdateRequest) -> datetime | None:
-    if request.deadline_at is not None:
-        return instant(request.deadline_at)
-    if request.state in {"dispatched", "applying"}:
-        # Older receipts did not record dispatch. Their creation time is the only
-        # durable lower bound; never grant a fresh budget after each restart.
-        return instant(request.dispatched_at or request.created_at) + timedelta(
-            seconds=UPDATE_ATTEMPT_TIMEOUT_SECONDS
-        )
-    return None
+def settle(attempt: UpdateAttempt, app_sha: str | None, now: datetime) -> UpdateAttempt | None:
+    """The end of an installing attempt whose deadline passed; None while it may still run.
 
-
-def matching_lifecycle(
-    request: OwnerUpdateRequest, lifecycle: DeploymentLifecycle | None,
-) -> bool:
-    return bool(
-        lifecycle is not None
-        and lifecycle.deployment_id == (request.deployment_id or request.request_id)
-        and lifecycle.requested_sha == request.release.manifest.app_sha
-    )
-
-
-def settlement(
-    request: OwnerUpdateRequest, lifecycle: DeploymentLifecycle | None,
-    app_sha: str | None, now: datetime,
-) -> tuple[UpdateRequestState, str] | None:
-    if request.state not in ACTIVE_STATES:
+    The running SHA is the evidence: Panels either answers as the new version or not.
+    """
+    if (
+        attempt.state != "installing"
+        or attempt.deadline_at is None
+        or now <= instant(attempt.deadline_at)
+    ):
         return None
-    matches = matching_lifecycle(request, lifecycle)
-    if matches and lifecycle is not None:
-        target = request.release.manifest.app_sha
-        if (app_sha == target and lifecycle.serving_sha == target
-                and lifecycle.phase in {"app_healthy", "succeeded", "failed", "unknown"}):
-            return "applied", "The requested version is installed."
-        if lifecycle.phase in {"failed", "rolled_back", "cancelled"}:
-            return "failed", lifecycle.detail or "The update did not install."
-    if request.state == "pending" and instant(request.release.expires_at) <= now:
-        return "failed", "The update expired before installation."
-    deadline = request_deadline(request)
-    if deadline is not None and deadline <= now:
-        return "failed", "The update did not complete before its deadline. Try again."
-    return None
+    if attempt.to_sha == app_sha:
+        return replace(attempt, state="done", detail=None)
+    return replace(attempt, state="failed", detail=UNFINISHED_DETAIL)
 
 
-def effective_request(
-    request: OwnerUpdateRequest | None, lifecycle: DeploymentLifecycle | None,
-) -> OwnerUpdateRequest | None:
-    # A later ordinary deployment supersedes old owner receipts. An active owner
-    # request still owns its own attempt and cannot inherit an unrelated lifecycle.
-    if (request is not None and request.state not in ACTIVE_STATES
-            and lifecycle is not None and not matching_lifecycle(request, lifecycle)
-            and lifecycle.updated_at >= instant(request.created_at)):
-        request = None
-    return request
-
-
-def experience(
-    request: OwnerUpdateRequest | None, lifecycle: DeploymentLifecycle | None,
-    available: PublishedUpdate | None, configured: bool, app_sha: str | None,
+def resolve(
+    attempt: UpdateAttempt | None,
+    available: PublishedUpdate | None,
+    app_sha: str | None,
+    *,
+    mac_applies: bool,
+    mac_phase: str | None,
+    mac_reported_at: datetime | None,
+    mac_report_seconds: float,
     now: datetime,
-) -> tuple[UpdateExperienceState, tuple[UpdateAction, ...]]:
-    usable = available is not None and instant(available.expires_at) > now and configured
-    request = effective_request(request, lifecycle)
-    relevant = lifecycle is not None and (
-        request is None or matching_lifecycle(request, lifecycle)
-    ) and (request is None or request.state != "cancelled")
-    if request is not None and request.state == "failed":
-        return "failed", ("retry",) if usable else ()
-    if request is not None and request.state == "pending":
-        if request.mode == "idle":
-            return "waiting", ("cancel", "update_now")
-        return "updating", ()
-    if request is not None and request.state in {"dispatched", "applying"}:
-        if relevant and lifecycle is not None and lifecycle.phase in {
-            "restarting", "verifying", "app_healthy",
-        }:
-            return "restarting", ()
-        return "updating", ()
-    if relevant and lifecycle is not None:
-        healthy = lifecycle.serving_sha == app_sha and app_sha == lifecycle.requested_sha
-        if healthy and lifecycle.phase in {"app_healthy", "succeeded", "failed", "unknown"}:
-            # The browser owns completion visibility: only a different boot SHA
-            # means that this page still needs Refresh.
-            return ("available", ("update",)) if usable else ("up_to_date", ())
-        if lifecycle.phase in {"failed", "rolled_back", "unknown"}:
-            return "failed", ("retry",) if usable else ()
-        if lifecycle.phase in {"preparing", "restarting", "verifying"}:
-            if lifecycle.expires_at <= now:
-                return "failed", ("retry",) if usable else ()
-            return ("updating" if lifecycle.phase == "preparing" else "restarting"), ()
-    return ("available", ("update",)) if usable else ("up_to_date", ())
+) -> tuple[UpdateExperienceState, tuple[UpdateAction, ...], str | None, str | None]:
+    """State, allowed actions, failure detail and connection deadline for the update card.
+
+    `mac_applies` is false when the release has no Mac part or no executor is configured.
+    `mac_phase` and `mac_reported_at` are the Mac's last report for `mac_attempt_id`.
+    Every `updating` answer carries the time until which it still counts as updating.
+    """
+    idle: tuple[UpdateExperienceState, tuple[UpdateAction, ...], str | None, str | None] = (
+        ("available", ("update",), None, None) if available is not None
+        else ("up_to_date", (), None, None)
+    )
+    if attempt is None:
+        return idle
+    if attempt.state == "waiting":
+        if attempt.mode == "idle":
+            return "waiting", ("cancel", "update_now"), None, None
+        return "updating", (), None, attempt.deadline_at
+    if attempt.state in {"preparing", "installing"}:
+        return "updating", (), None, attempt.deadline_at
+    if attempt.state == "failed":
+        if available is None:
+            return "failed", (), attempt.detail, None
+        if available.manifest.app_sha != attempt.to_sha:
+            return idle
+        return "failed", ("retry",), attempt.detail, None
+    # Done. The VPS part is finished; only the Mac can still be on its way.
+    if attempt.to_sha != app_sha or not mac_applies or mac_phase == "current":
+        return idle
+    if mac_phase in {"failed", "reverted"}:
+        return "mac_failed", ("retry_mac",), MAC_FAILED_DETAIL, None
+    # A Mac that keeps reporting is on its way; silence past the bound is unreachable.
+    heard = instant(attempt.updated_at)
+    if mac_reported_at is not None and mac_reported_at > heard:
+        heard = mac_reported_at
+    silent_after = heard + timedelta(seconds=mac_report_seconds)
+    if now > silent_after:
+        return "mac_unreachable", ("retry_mac",), MAC_UNREACHABLE_DETAIL, None
+    return "updating", (), None, silent_after.isoformat()
+
+
+def deployment_status(
+    attempt: UpdateAttempt | None, app_sha: str | None, *, success_seconds: float, now: datetime
+) -> dict[str, object]:
+    """The small `/api/deployment-status` body that iOS builds in the field still read."""
+    body: dict[str, object] = {
+        "state": "idle", "deployed_sha": app_sha, "target_sha": None, "outcome": None,
+        "detail": None, "valid_until": None, "success_display_until": None,
+    }
+    if attempt is None or attempt.state == "waiting":
+        return body
+    body["target_sha"] = attempt.to_sha
+    if attempt.state == "preparing":
+        body["state"] = "preparing"
+    elif attempt.state == "installing":
+        body.update(state="restarting", valid_until=attempt.deadline_at)
+    elif attempt.state == "failed":
+        # The update card keeps the failure and its Try again; iOS shows it for a while.
+        if now < instant(attempt.updated_at) + timedelta(seconds=success_seconds):
+            body.update(state="problem", outcome="failed", detail=attempt.detail)
+    elif attempt.to_sha == app_sha:
+        until = instant(attempt.updated_at) + timedelta(seconds=success_seconds)
+        body["outcome"] = "succeeded"
+        if now < until:
+            body.update(state="back_up", valid_until=until.isoformat(),
+                        success_display_until=until.isoformat())
+    return body

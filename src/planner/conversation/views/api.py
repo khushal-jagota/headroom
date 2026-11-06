@@ -46,7 +46,7 @@ from planner.conversation.views.storage import (
     read_turn,
     scope_contains_item,
 )
-from planner.core.response_compression import answers_with_an_event_stream
+from planner.core.response_compression import answers_uncompressed
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 
 router = APIRouter()
@@ -349,7 +349,7 @@ def _frame(kind: str, value: object) -> str:
 
 
 @router.get("/conversations/{conversation_id}/view/tail")
-@answers_with_an_event_stream
+@answers_uncompressed
 async def conversation_view_tail(
     conversation_id: str,
     runtime: Runtime,

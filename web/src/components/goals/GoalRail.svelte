@@ -14,14 +14,13 @@
  }=$props();
  const sessions=createGoalRequestSessions();
  let goalWindow=$derived(structure?.window);
+ // A sole goal is drawn inside its holder's header by GoalSoleStatus.
  let sole=$derived(structure?.sole??null);
  let visible=$derived(structure?.rows??[]);
  let hasPager=$derived(Boolean(goalWindow&&(goalWindow.previous||goalWindow.next)));
 </script>
 <div>
-{#if sole}
-<div class="sole-status" data-rail-motion={`row:${sole.id}`} data-goal-status={sole.id}><GoalReading goal={sole}/>{#if sole.deadline}<time datetime={sole.deadline} style:color={deadlineColor(deadlineTone(sole.deadline,sole.completed,sole.status_date))}>Due {goalDateText(sole.deadline)}</time>{:else}<span>No deadline</span>{/if}</div>
-{:else if visible.length||hasPager}
+{#if !sole&&(visible.length||hasPager)}
 <section class="goals-rail" aria-label="Goals">
  {#each visible as goal (goal.id)}
   <div data-rail-motion={`row:${goal.id}`}><a class:selected={selectedId===goal.id} class="goal" href={workspaceAddress({kind:'goal',id:goal.id})} data-goal-id={goal.id} aria-current={selectedId===goal.id?'page':undefined} aria-describedby={previewId===goal.id?`goal-preview-${goal.id}`:undefined} use:previewInput.row={{show:(target,immediate)=>onHover(target,goal.id,immediate),leave:onLeave}} onclick={onDismiss}><div class="row-heading"><span class="row-title">{goal.title}</span></div><small><GoalReading {goal}/>{#if goal.deadline}<time datetime={goal.deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>Due {goalDateText(goal.deadline)}</time>{:else}<span class="no-deadline" data-deadline-tone="neutral" style:color={deadlineColor('neutral')}>No deadline</span>{/if}</small></a>
@@ -32,6 +31,5 @@
 {/if}
 </div>
 <style>
-.sole-status{display:flex;justify-content:space-between;gap:var(--space-2);font-size:var(--type-xs);margin-top:var(--space-1);color:var(--text-faintest)}
-.goals-rail{margin-top:var(--space-2);font-size:var(--type-sm)}a{color:inherit;text-decoration:none}.goal{display:block;padding:var(--space-2);margin:0 calc(var(--space-2)*-1);border-radius:var(--radius-sm);touch-action:pan-y}.row-heading{display:flex;align-items:flex-start;gap:var(--space-2)}.row-title{flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;overflow-wrap:anywhere}.goal:hover,.selected{color:var(--text-strong)}.goal small{display:flex;justify-content:space-between;flex-wrap:wrap;gap:var(--space-1) var(--space-2);margin-top:var(--space-1);font-size:var(--type-xs);color:var(--text-muted)}time,.no-deadline{color:var(--text-faintest);white-space:nowrap}.goal:focus-visible{outline:none}
+.goals-rail{margin-top:var(--space-2);font-size:var(--type-sm)}a{color:inherit;text-decoration:none}.goal{display:block;padding:var(--space-2) var(--rail-row-bleed-x);margin:0 calc(var(--rail-row-bleed-x)*-1);border-radius:var(--radius-sm);touch-action:pan-y}.row-heading{display:flex;align-items:flex-start;gap:var(--space-2)}.row-title{flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;overflow-wrap:anywhere}.goal:hover,.selected{color:var(--text-strong)}.goal small{display:flex;justify-content:space-between;flex-wrap:wrap;gap:var(--space-1) var(--space-2);margin-top:var(--space-1);font-size:var(--type-xs);color:var(--text-muted)}time,.no-deadline{color:var(--text-faintest);white-space:nowrap}.goal:focus-visible{outline:none}
 </style>

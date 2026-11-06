@@ -45,7 +45,6 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.mac_agent_gateway import AgentGateway
 from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.mac_runner import MacRunner
@@ -222,7 +221,7 @@ def acknowledge_pending(spool: MacOutbox) -> None:
         "detail",
     ],
 )
-def test_bad_ticket_entry_does_not_lose_event_write_or_stop(
+def test_bad_ticket_entry_does_not_lose_event_or_stop(
     native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -304,56 +303,7 @@ def test_bad_ticket_entry_does_not_lose_event_write_or_stop(
         if trigger != "detail":
             assert "Skipping" in caplog.text and bad.name in caplog.text
 
-        async def settle_catalogs() -> None:
-            pass
-
-        gateway = AgentGateway(
-            runner=registry,
-            outbox=spool,
-            connection=registry.connection,
-            request_exit=asyncio.Event().set,
-            settle_catalogs=settle_catalogs,
-        )
-        child = registry._children[start.child.child_id]
-        response = await gateway.handle(
-            IpcRequest(
-                "write",
-                IpcOperation.write,
-                child.reference.child_id,
-                child.capability,
-                {
-                    "operation": "ticket.edit",
-                    "arguments": {"ticket_id": "t_one", "body": {"recap": "ok"}},
-                },
-                time.monotonic() + 0.1,
-            )
-        )
-        # No VPS confirms the write, so the answer is unconfirmed. The short deadline only
-        # ends that wait. Under load the spool write can outlast it, which the gateway
-        # correctly reports as "preparing", so wait for the write itself, then ask again.
-        assert response.unconfirmed is not None
-        assert response.unconfirmed.publication in ("preparing", "queued")
-        publishing = gateway._publishing.get("write")
-        if publishing is not None:
-            await asyncio.wait((publishing[1],))
-        retried = await gateway.handle(
-            IpcRequest(
-                "write-retry",
-                IpcOperation.retry,
-                child.reference.child_id,
-                child.capability,
-                {"submission_id": "write"},
-                time.monotonic(),
-            )
-        )
-        assert retried.unconfirmed is not None and retried.unconfirmed.publication == "queued"
-        published = spool.lookup("write")
-        assert published is not None
-        if trigger == "changing":
-            assert [file.relative_path for file in published.envelope.file_dependencies] == [
-                "bad",
-                "good.txt",
-            ]
+        # The gateway write and retry path is proved in test_executor_ipc_publication.
         stopped = await registry.run(
             ChildCommand("stop", start.child, ChildOperation.stop, None, StopRun())
         )
@@ -880,9 +830,10 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         }[backend]
         paths = ExecutorPaths(mac_home / "executor-data")
         if policy is WorkspacePathPolicy.executor_default:
-            configured_workspace = Path("/")
-            workspace = paths.workspace
-            assert not workspace.exists()
+            # A Project start names its folder inside the Mac workspace, never a VPS path.
+            configured_workspace = Path("/projects/project_panels")
+            workspace = paths.workspace / "projects" / "project_panels"
+            assert not paths.workspace.exists()
         spool = MacOutbox(paths.spool)
         received: list[ResolvedConversationStart] = []
         constructed: list[ResolvedConversationStart] = []
@@ -975,18 +926,22 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         assert received[0].workspace_path_policy is WorkspacePathPolicy.absolute
         if policy is WorkspacePathPolicy.executor_default:
             assert workspace.is_dir()
-            assert not (mac_home / "projects" / "owned-default").exists()
+            assert not (mac_home / "projects" / "project_panels").exists()
             marker = workspace / "retained.txt"
             marker.write_text("keep")
-            localized = registry._localize_start(
-                resolved,
-                reference,
-                "capability",
-                None,
-                {"PLAN_TICKET_ID": "t_own"},
-                paths.skills,
-            )
-            assert localized.workspace_folder == workspace
+            for subfolder, expected in (
+                ("projects/project_panels", workspace),
+                (None, paths.workspace),
+            ):
+                localized = registry._localize_start(
+                    replace(resolved, workspace_folder=Path("/")),
+                    reference,
+                    "capability",
+                    subfolder,
+                    {"PLAN_TICKET_ID": "t_own"},
+                    paths.skills,
+                )
+                assert localized.workspace_folder == expected.resolve()
             assert marker.read_text() == "keep"
         assert received[0].role_materials is not None
         identity = dict(received[0].role_materials.identity_environment_variables)
@@ -1008,6 +963,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
     [
         (WorkspacePathPolicy.home_relative, "projects/missing"),
         (WorkspacePathPolicy.home_relative, "../escape"),
+        (WorkspacePathPolicy.executor_default, "../escape"),
         (WorkspacePathPolicy.absolute, None),
     ],
 )
@@ -1041,6 +997,7 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
         assert outcome.result["error_type"] == "BackendSpawnFailed"
         assert native.starts == 0
         assert registry.children() == ()
+        assert not (registry.paths.workspace.parent / "escape").exists()
 
     asyncio.run(run())
 

@@ -1,4 +1,8 @@
-"""Independent recovery polling and durable preparation for a runtime handoff."""
+"""Independent recovery polling and durable preparation for a runtime handoff.
+
+The ready release's runtime is downloaded and extracted in the background before any
+update starts, so activation finds it verified on disk and skips the download.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +20,7 @@ from uuid import UUID
 import aiohttp
 from pydantic import TypeAdapter
 
-from planner.environments.mac_runtime import extract_runtime
+from planner.environments.mac_runtime import extract_runtime, read_runtime_revision
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import EXECUTOR_ID_HEADER, ExecutorPaths
 from planner.executor.mac_connection import MacConnection
@@ -28,14 +32,17 @@ from planner.executor.update_configuration import (
     MAC_UPDATE_POLL_SECONDS,
     MAC_UPDATE_SCHEMA_VERSION,
     MAX_MAC_RUNTIME_ARCHIVE_BYTES,
+    MAX_MAC_UPDATE_DETAIL_CHARACTERS,
     MAX_MAC_UPDATE_RESPONSE_BYTES,
 )
 from planner.executor.update_contracts import (
     MacRuntimeSelection,
     MacUpdateCheck,
     MacUpdatePhase,
+    MacUpdatePrefetch,
     MacUpdateReport,
     MacUpdateTarget,
+    mac_prefetch_archive_path,
 )
 
 
@@ -90,6 +97,8 @@ class MacUpdateController:
             runner.planned_update_replay or os.environ.get(MAC_RUNTIME_READY_ENV) is not None
         )
         self._lock = asyncio.Lock()
+        # One background download at a time, and one try per archive sha256 in a process.
+        self._prefetch: tuple[str, asyncio.Task[None]] | None = None
 
     async def _json(
         self, session: aiohttp.ClientSession, method: str, path: str,
@@ -121,40 +130,106 @@ class MacUpdateController:
         response = await self._json(session, "POST", "/api/executor/update", asdict(report))
         return isinstance(response, dict) and response.get("confirmed") is True
 
-    async def _download(self, session: aiohttp.ClientSession, target: MacUpdateTarget) -> Path:
-        if (
-            re.fullmatch(r"[0-9a-f]{40}", target.application_revision) is None
-            or re.fullmatch(r"[0-9a-f]{64}", target.archive_sha256) is None
-            or re.fullmatch(r"[A-Za-z0-9_-]+", target.request_id) is None
-            or target.archive_path != f"/api/executor/update/{target.request_id}/archive"
-            or not 0 < target.archive_size <= MAX_MAC_RUNTIME_ARCHIVE_BYTES
-        ):
-            raise ValueError("invalid approved Mac runtime target")
+    @staticmethod
+    def _valid_runtime_reference(
+        revision: str, archive_sha256: str, archive_size: int, archive_path: str, expected_path: str
+    ) -> bool:
+        return (
+            re.fullmatch(r"[0-9a-f]{40}", revision) is not None
+            and re.fullmatch(r"[0-9a-f]{64}", archive_sha256) is not None
+            and archive_path == expected_path
+            and 0 < archive_size <= MAX_MAC_RUNTIME_ARCHIVE_BYTES
+        )
+
+    def _release_path(self, revision: str, archive_sha256: str) -> Path:
+        # extract_runtime renames a release into this name only after verifying its bytes.
+        return self.root / "releases" / f"{revision}-{archive_sha256}"
+
+    async def _fetch(
+        self, session: aiohttp.ClientSession, archive_path: str, *, revision: str,
+        archive_sha256: str, archive_size: int, download_name: str,
+    ) -> Path:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        archive = self.root / "download.tar.gz"
+        archive = self.root / download_name
         try:
             async with session.get(
-                self.server_url + target.archive_path,
-                headers={EXECUTOR_ID_HEADER: self.executor_id}, allow_redirects=False,
+                self.server_url + archive_path,
+                headers={EXECUTOR_ID_HEADER: self.executor_id, "Accept-Encoding": "identity"},
+                allow_redirects=False,
             ) as response:
                 if response.status != 200:
-                    raise ConnectionError("approved Mac archive is unavailable")
+                    raise ConnectionError("Mac runtime archive is unavailable")
+                if response.headers.get("Content-Encoding"):
+                    # The session does not decode transport encoding, so encoded bytes
+                    # would only fail the size and hash checks later, as ValueError.
+                    raise ConnectionError("Mac runtime archive arrived with a transport encoding")
                 size = 0
                 with archive.open("wb") as stream:
                     async for block in response.content.iter_chunked(1024 * 1024):
                         size += len(block)
-                        if size > target.archive_size:
-                            raise ValueError("Mac archive exceeds its approved size")
+                        if size > archive_size:
+                            raise ValueError("Mac archive exceeds its published size")
                         stream.write(block)
                     stream.flush()
                     os.fsync(stream.fileno())
             return await asyncio.to_thread(
                 extract_runtime, archive, self.root / "releases",
-                expected_sha256=target.archive_sha256, expected_size=target.archive_size,
-                expected_revision=target.application_revision,
+                expected_sha256=archive_sha256, expected_size=archive_size,
+                expected_revision=revision,
             )
         finally:
             archive.unlink(missing_ok=True)
+
+    async def _download(self, session: aiohttp.ClientSession, target: MacUpdateTarget) -> Path:
+        if re.fullmatch(r"[A-Za-z0-9_-]+", target.request_id) is None or not (
+            self._valid_runtime_reference(
+                target.application_revision, target.archive_sha256, target.archive_size,
+                target.archive_path, f"/api/executor/update/{target.request_id}/archive",
+            )
+        ):
+            raise ValueError("invalid Mac runtime target")
+        if self._prefetch is not None and self._prefetch[0] == target.archive_sha256:
+            # The same bytes are already on their way; a second download would race them.
+            await asyncio.wait({self._prefetch[1]})
+        release = self._release_path(target.application_revision, target.archive_sha256)
+        if release.is_dir():
+            read_runtime_revision(release, target.application_revision)
+            return release
+        return await self._fetch(
+            session, target.archive_path, revision=target.application_revision,
+            archive_sha256=target.archive_sha256, archive_size=target.archive_size,
+            download_name="download.tar.gz",
+        )
+
+    def _start_prefetch(self, prefetch: MacUpdatePrefetch | None) -> None:
+        """Download the ready runtime without stopping work or holding up the poll."""
+        if (
+            prefetch is None
+            or prefetch.application_revision == self.connection.identity.application_revision
+            or (
+                self._prefetch is not None
+                and (not self._prefetch[1].done() or self._prefetch[0] == prefetch.archive_sha256)
+            )
+            or not self._valid_runtime_reference(
+                prefetch.application_revision, prefetch.archive_sha256, prefetch.archive_size,
+                prefetch.archive_path, mac_prefetch_archive_path(prefetch.archive_sha256),
+            )
+            or self._release_path(prefetch.application_revision, prefetch.archive_sha256).exists()
+        ):
+            return
+
+        async def download() -> None:
+            # A failed prefetch only means activation downloads. Retrying the same bytes
+            # every poll would load a working Mac with repeated full downloads.
+            with contextlib.suppress(OSError, ValueError, ConnectionError, aiohttp.ClientError):
+                async with self.session_factory() as session:
+                    await self._fetch(
+                        session, prefetch.archive_path, revision=prefetch.application_revision,
+                        archive_sha256=prefetch.archive_sha256,
+                        archive_size=prefetch.archive_size, download_name="prefetch.tar.gz",
+                    )
+
+        self._prefetch = (prefetch.archive_sha256, asyncio.create_task(download()))
 
     async def check(self) -> None:
         async with self._lock, self.session_factory() as session:
@@ -165,6 +240,7 @@ class MacUpdateController:
             )
             if check.schema_version != MAC_UPDATE_SCHEMA_VERSION:
                 raise ValueError("unsupported Mac update channel schema")
+            self._start_prefetch(check.prefetch)
             target = check.target
             if target is None:
                 if self.prepared_request is not None:
@@ -233,7 +309,9 @@ class MacUpdateController:
             try:
                 runtime = await self._download(session, target)
             except (OSError, ValueError, ConnectionError, aiohttp.ClientError) as error:
-                detail = f"Mac runtime installation failed: {type(error).__name__}."
+                detail = f"Mac runtime installation failed: {type(error).__name__}: {error}"[
+                    :MAX_MAC_UPDATE_DETAIL_CHARACTERS
+                ]
                 atomic_record(self.root / "failure.json", {
                     "request_id": target.request_id, "phase": "failed", "detail": detail,
                 })
@@ -304,12 +382,16 @@ class MacUpdateController:
             self.release_runtime_admission()
 
     async def poll(self, stop: asyncio.Event) -> None:
-        while not stop.is_set():
-            try:
-                await self.check()
-            except (OSError, ValueError, ConnectionError, aiohttp.ClientError):
-                # The same recovery channel remains available after a work
-                # handshake refusal. A failed check never authorizes activation.
-                pass
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), MAC_UPDATE_POLL_SECONDS)
+        try:
+            while not stop.is_set():
+                try:
+                    await self.check()
+                except (OSError, ValueError, ConnectionError, aiohttp.ClientError):
+                    # The same recovery channel remains available after a work
+                    # handshake refusal. A failed check never authorizes activation.
+                    pass
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), MAC_UPDATE_POLL_SECONDS)
+        finally:
+            if self._prefetch is not None:
+                self._prefetch[1].cancel()

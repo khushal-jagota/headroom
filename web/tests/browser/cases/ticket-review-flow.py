@@ -473,14 +473,11 @@ def run(browser, urls):
             path = path.removesuffix("/workspace")
         if path.startswith("tickets?"):
             path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
-        if path == "deployment-status":
-            result = {"state": "idle"}
-        elif path == "updates":
+        if path == "updates":
             result = {
-                "configured": False, "available": None, "request": None,
-                "activity": "unknown", "detail": None, "state": "up_to_date",
-                "allowed_actions": [], "phase": None, "app_sha": None,
-                "deadline_at": None, "restart_deadline_at": None, "mac_status": None,
+                "state": "up_to_date", "allowed_actions": [], "activity": "unknown",
+                "available": None, "attempt": None, "app_sha": "fixture", "detail": None,
+                "deadline_at": None, "mac_details": None,
             }
         elif path == "chief/conversation":
             result = {"conversation_id": chief_pointer}
@@ -1298,6 +1295,25 @@ def run(browser, urls):
     assert writes == [{"value": {"brief": "Edited saved kickoff"}}]
     # Closing a lazy stage must preserve failed and pending edits across remounts.
     expect(saved).to_have_attribute("contenteditable", "true")
+    # An edit that was never committed survives its editor's teardown, unsaved.
+    # Chromium blurs a removed editor, which commits; WebKit and Gecko do not,
+    # so swallow the blur to reach the teardown path those browsers take.
+    saved.click()
+    saved.fill("Unsaved edit survives a closed stage")
+    writes_before_close = len(writes)
+    page.evaluate("""() => {
+        window.__swallowBlur = event => event.stopImmediatePropagation();
+        for (const type of ["blur", "focusout"]) window.addEventListener(type, window.__swallowBlur, true);
+    }""")
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = false; }")
+    expect(saved).to_have_count(0)
+    page.evaluate("""() => {
+        for (const type of ["blur", "focusout"]) window.removeEventListener(type, window.__swallowBlur, true);
+    }""")
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="brief"]').evaluate("node => { node.open = true; }")
+    expect(saved).to_have_text("Unsaved edit survives a closed stage")
+    assert len(writes) == writes_before_close
     fail_field_save = True
     saved.click()
     saved.fill("Draft survives a closed stage")

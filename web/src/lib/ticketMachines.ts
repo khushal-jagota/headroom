@@ -15,7 +15,7 @@ export type ExecutorRefusal = {
   refused_at_ms: number;
 };
 export type MacStatus = {
-  identity?: { executor_incarnation: string; connection_generation: number } | null;
+  identity?: ExecutorIdentity | null;
   connection_state: "ready" | "reconciling" | "disconnected";
   last_contact_at_ms: number | null;
   refusal?: ExecutorRefusal | null;

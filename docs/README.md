@@ -47,6 +47,6 @@ The word list lives in [`CONTEXT.md`](../CONTEXT.md), the engineering rules in [
 - [Deployment](deployment.md) — how a push to `main` becomes a sealed release, and how the owner installs it.
 - [Backups](backups.md) — verified snapshots and the stopped restore.
 - [Previews](previews.md) — one tailnet link to a Ticket's own dev server.
-- [VPS](vps.md) — machine measurements and the status summary.
+- [VPS](vps.md) — machine measurements.
 
 _Last verified: 2026-11-04._

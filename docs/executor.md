@@ -25,13 +25,13 @@ The executor lets a Ticket's Worker use the Mac's files, apps, provider sign-ins
 
 ## Which work goes to the Mac
 
-Each Ticket has a locale, `vps` or `macos` (see [Tickets](tickets.md)). A `macos` Worker step gets an agent process on the Mac. VPS Tickets, the Chief, Managers, and goal agents stay on the VPS. Mac work waits until the Mac connects and completes its reconnect check.
+Each Ticket has a locale, `vps` or `macos` (see [Tickets](tickets.md)). A `macos` Worker step gets an agent process on the Mac. VPS Tickets, the Chief, and Managers stay on the VPS. Mac work waits until the Mac connects and completes its reconnect check.
 
 The VPS configuration names one executor ID. Only that executor is admitted. Without this configuration, the VPS runs everything locally.
 
 All three backends can run on the Mac, with the same abilities as on the VPS. A missing provider install or sign-in on the Mac refuses the start.
 
-A Mac Worker runs in its Project's folder, taken as a path on the Mac. A Ticket without one uses a Panels workspace inside the executor's data folder, which survives updates. [Conversations](conversations.md#the-workspace-for-an-agent) owns the workspace rules.
+A Mac Worker runs in a Panels workspace inside the executor's data folder, which survives updates. A Ticket under a Project runs in that Project's folder inside the workspace, `projects/<project id>`, made on first use. The VPS never sends its own Project path to the Mac. [Conversations](conversations.md#the-workspace-for-an-agent) owns the workspace rules.
 
 ## A run on the Mac
 
@@ -67,7 +67,7 @@ Each machine reads its own model lists. The VPS retains the Mac's last answer fo
 
 Health shows connection readiness and last contact. A version refusal shows “Mac needs update” with both versions. Mac Tickets use the same refusal reason. Last contact and refusal survive restart. A compatible reconnect clears the refusal. Until then, it describes historical contact, not current presence.
 
-The update status includes the Mac's target, progress, and failure beside the VPS result. An update completes when the VPS is done. A Mac that still waits for its target does not imply that it is offline.
+The update card's information button shows the Mac's target and progress beside the VPS result. A Mac that has not yet picked up its target is not shown as offline.
 
 ## What runs on the Mac
 
@@ -81,13 +81,13 @@ One installation lives in the owner's normal account:
 
 **Permissions.** macOS asks for protected-folder consent on behalf of a responsible app. Panels uses a signed app so that macOS can associate consent with Panels. Its Apple Development signature is for this Mac only, without distribution or notarization.
 
-**Updates.** One owner approval names the release and timing for both machines. “Update now” stops connected Mac agents before VPS installation. “When work finishes” waits for idle work. The Mac checks while connected and after reconnect or wake. Its authenticated update channel works even when its work protocol is too old.
+**Updates.** One press of Update covers both machines with the same timing: “Update now” stops connected Mac agents, and “When work finishes” waits for idle work. The VPS keeps the release's Mac archive from the moment the release is ready, and a current Mac downloads and unpacks it ahead of time without stopping work. The Mac checks while connected and after reconnect or wake, through an authenticated channel that works even when its work protocol is too old.
 
-The VPS retains the approved Mac archive and target outside database rollback and publication expiry. After VPS success, the Mac installs those bytes beside its previous runtime. If the candidate fails to report readiness, the supervisor reverts. The launcher and data folder stay in place.
+The Mac sees its target once the VPS pauses work and installs it once the VPS install is done; the VPS never waits for it. The new runtime goes beside the previous one, and if it does not report readiness, the supervisor reverts. The launcher and data folder stay in place. A failure or a missing report shows on the update card, where **Try again for the Mac** sends a fresh target ([Deployment](deployment.md#the-card-and-the-mac)).
 
 Saved results and their files remain in the outbox through the swap. A planned handoff retains their original authority until the VPS receives them. It does not repeat provider calls or restore stopped agents. Ordinary maintenance still waits for an empty outbox before exit.
 
-The VPS accepts the current work protocol or one older. The current window is protocols 19 and 20, both with outbox format 5. Messages ignore unknown fields but still check their known fields and identities. The protocol check detects schema changes without a version change. Unsupported outbox formats fail without conversion or deletion.
+The VPS accepts the current work protocol or one older. The current window is protocols 20 and 21, both with outbox format 5. Messages ignore unknown fields but still check their known fields and identities. The protocol check detects schema changes without a version change. Unsupported outbox formats fail without conversion or deletion.
 
 Existing installations need one operator-controlled bootstrap installation. Its Python environment and supervisor then remain fixed. Local fixtures do not prove permission retention, certificate renewal behavior, or Gatekeeper acceptance.
 

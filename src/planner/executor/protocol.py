@@ -27,6 +27,7 @@ from planner.conversation.backends.contracts import (
     BackendStreamEnded,
     BackgroundTaskEnded,
     BackgroundTaskStarted,
+    CommandReplyReported,
     ComposerCatalogReported,
     ContextCompacted,
     ModelThinkingHappened,
@@ -278,6 +279,7 @@ class BackendEventMethod(StrEnum):
     agent_message_delta = "agent_message_delta"
     model_thinking_happened = "model_thinking_happened"
     agent_message_completed = "agent_message_completed"
+    command_reply_reported = "command_reply_reported"
     tool_call_started = "tool_call_started"
     tool_call_progress = "tool_call_progress"
     tool_call_finished = "tool_call_finished"
@@ -451,9 +453,9 @@ class ChildCommand:
 
 
 def encode_command_for_peer(command: ChildCommand, protocol_version: int) -> JsonObject:
-    """Protocols 19 and 20 have identical commands, including nested start values.
+    """Protocols 20 and 21 have identical commands, including nested start values.
 
-    Protocol 20 adds only Mac-to-VPS events. Future command changes must supply an
+    Protocol 21 adds only a Mac-to-VPS event. Future command changes must supply an
     explicit older-peer adaptation here, verified against its frozen schema.
     """
     from planner.execution_configuration import SPOOL_FORMAT_VERSION
@@ -661,6 +663,7 @@ _BACKEND_EVENT_TYPES: dict[BackendEventMethod, type[BackendEventValue]] = {
     BackendEventMethod.agent_message_delta: AgentMessageDelta,
     BackendEventMethod.model_thinking_happened: ModelThinkingHappened,
     BackendEventMethod.agent_message_completed: AgentMessageCompleted,
+    BackendEventMethod.command_reply_reported: CommandReplyReported,
     BackendEventMethod.tool_call_started: ToolCallStarted,
     BackendEventMethod.tool_call_progress: ToolCallProgress,
     BackendEventMethod.tool_call_finished: ToolCallFinished,

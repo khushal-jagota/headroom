@@ -98,7 +98,7 @@ from planner.executor.protocol import (
 )
 from planner.executor.skills import install_native_skill_snapshot, native_skill_home
 from planner.files.logic.paths import conversation_files_root
-from planner.workspace_localization import localize_workspace
+from planner.workspace_localization import localize_workspace, require_safe_relative_workspace
 
 
 class MacOutboxWriter(Protocol):
@@ -362,9 +362,17 @@ class MacRunner:
     ) -> ResolvedConversationStart:
         try:
             if resolved.workspace_path_policy == WorkspacePathPolicy.executor_default:
-                self.paths.workspace.mkdir(parents=True, exist_ok=True)
+                # A Project start names its folder inside the workspace. Make it here.
+                subfolder = (
+                    None
+                    if workspace_home_relative is None
+                    else require_safe_relative_workspace(workspace_home_relative)
+                )
+                (self.paths.workspace / (subfolder or "")).mkdir(parents=True, exist_ok=True)
                 workspace = localize_workspace(
-                    self.paths.workspace, workspace_home=self.workspace_home
+                    self.paths.workspace,
+                    workspace_home=self.paths.workspace,
+                    workspace_home_relative=subfolder,
                 )
                 workspace.relative_to(self.paths.root.resolve(strict=True))
             else:

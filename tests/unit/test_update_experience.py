@@ -1,256 +1,135 @@
-"""Deadline authority, recovery admission, and the single update answer.
+"""The update card's state comes only from the attempt record, the ready release and time."""
 
-Existing owner-update tests prove admission, not runner disappearance or a deadline
-that competes with cutover. These tests reuse its release/provider fixtures and
-prove those new risks without another host or browser.
-"""
 from __future__ import annotations
 
-import asyncio
-import json
-from dataclasses import asdict, replace
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
-from tests.unit.test_deployment import SHA_A, SHA_B
-from tests.unit.test_owner_updates import Provider, release
+from tests.support.update_apps import SHA_A, SHA_B, release
 
-from planner.core.db import connect, create_schema
-from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
-from planner.environments.logic.update_experience import experience, settlement
-from planner.environments.update_contracts import OwnerUpdateRequest
-from planner.environments.update_requests import FileUpdateRequestStore, UpdateConflict
-from planner.environments.update_service import UpdateService
+from planner.environments.logic.update_experience import (
+    MAC_FAILED_DETAIL,
+    MAC_UNREACHABLE_DETAIL,
+    UNFINISHED_DETAIL,
+    deployment_status,
+    resolve,
+    settle,
+)
+from planner.environments.update_contracts import PublishedMacUpdate, UpdateAttempt
+
+NOW = datetime(2026, 11, 5, 12, tzinfo=UTC)
+READY = release()
+NEWER = replace(READY, manifest=replace(READY.manifest, app_sha="c" * 40))
 
 
-def request(*, state: str = "applying", elapsed: bool = False) -> OwnerUpdateRequest:
-    from typing import cast
-
-    from planner.environments.update_contracts import UpdateRequestState
-
-    now = datetime.now(UTC)
-    return OwnerUpdateRequest(
-        "request", release(), "now", cast(UpdateRequestState, state), now.isoformat(),
-        dispatched_at=(now - timedelta(minutes=16)).isoformat(),
-        deadline_at=(now + timedelta(minutes=-1 if elapsed else 15)).isoformat(),
-        deployment_id="deployment",
+def attempt(state: str, **changes: object) -> UpdateAttempt:
+    value = UpdateAttempt(
+        attempt_id="a1", from_sha=SHA_A, to_sha=SHA_B, mode="now", confirm_activity=True,
+        state=state,  # type: ignore[arg-type]
+        created_at=NOW.isoformat(), updated_at=NOW.isoformat(),
+        release=replace(READY, mac=PublishedMacUpdate(9, "f" * 64, 10)),
+        mac_attempt_id="m1",
     )
+    return replace(value, **changes)  # type: ignore[arg-type]
 
 
-def service(tmp_path: Path, receipt: OwnerUpdateRequest, *, sha: str = SHA_A) -> UpdateService:
-    store = FileUpdateRequestStore(tmp_path / "request.json")
-    store.create(receipt)
-    return UpdateService(
-        Provider(), store, lambda: None,
-        connection_factory=lambda: connect(str(tmp_path / "state.db")),
-        current_app_sha=sha,
-        lifecycle_store=DeploymentLifecycleStore(tmp_path / "lifecycle.json"),
-    )
-
-
-@pytest.mark.parametrize("missing_report", [False, True])
-def test_settlement_uses_matching_health_and_current_sha(
-    tmp_path: Path, missing_report: bool,
+@pytest.mark.parametrize(
+    ("record", "available", "running", "mac_applies", "mac_phase", "seconds", "expected"),
+    [
+        (None, None, SHA_A, True, None, 0, ("up_to_date", ())),
+        (None, READY, SHA_A, True, None, 0, ("available", ("update",))),
+        (attempt("waiting", mode="idle"), READY, SHA_A, True, None, 0,
+         ("waiting", ("cancel", "update_now"))),
+        (attempt("waiting", deadline_at="2026-11-05T12:15:00+00:00"), READY, SHA_A, True,
+         None, 0, ("updating", ())),
+        (attempt("preparing", deadline_at="2026-11-05T12:15:00+00:00"), READY, SHA_A, True,
+         None, 0, ("updating", ())),
+        (attempt("installing", deadline_at=(NOW + timedelta(minutes=15)).isoformat()), READY,
+         SHA_A, True, None, 0, ("updating", ())),
+        (attempt("failed", detail="no"), READY, SHA_A, True, None, 0, ("failed", ("retry",))),
+        (attempt("failed", detail="no"), None, SHA_A, True, None, 0, ("failed", ())),
+        # A newer ready release replaces the old failure with a fresh offer.
+        (attempt("failed", detail="no"), NEWER, SHA_A, True, None, 0, ("available", ("update",))),
+        (attempt("done"), None, SHA_B, False, None, 0, ("up_to_date", ())),
+        (attempt("done"), NEWER, SHA_B, True, "current", 0, ("available", ("update",))),
+        (attempt("done"), None, SHA_B, True, "ready_to_restart", 89, ("updating", ())),
+        (attempt("done"), None, SHA_B, True, None, 91, ("mac_unreachable", ("retry_mac",))),
+        (attempt("done"), None, SHA_B, True, "downloading", 91,
+         ("mac_unreachable", ("retry_mac",))),
+        # A Mac that keeps reporting while it waits or downloads is still on its way.
+        (attempt("done"), None, SHA_B, True, "ready_to_restart", -1, ("updating", ())),
+        (attempt("done"), None, SHA_B, True, "failed", 0, ("mac_failed", ("retry_mac",))),
+        (attempt("done"), None, SHA_B, True, "reverted", 500, ("mac_failed", ("retry_mac",))),
+        # A Mac that reports current later moves the card on by itself.
+        (attempt("done"), None, SHA_B, True, "current", 500, ("up_to_date", ())),
+        # A done record this server does not run is history, not a Mac wait.
+        (attempt("done"), None, SHA_A, True, None, 500, ("up_to_date", ())),
+    ],
+)
+def test_every_card_state(
+    record: UpdateAttempt | None,
+    available: object,
+    running: str,
+    mac_applies: bool,
+    mac_phase: str | None,
+    seconds: float,
+    expected: tuple[str, tuple[str, ...]],
 ) -> None:
-    updates = service(tmp_path, request(elapsed=True), sha=SHA_B)
-    progress = updates.lifecycle_store
-    assert progress is not None
-    progress.start("deployment", SHA_B, prior_sha=SHA_A)
-    progress.transition("deployment", "verifying")
-    progress.transition("deployment", "app_healthy", serving_sha=SHA_B)
-    if missing_report:
-        progress.transition("deployment", "failed", serving_sha=SHA_B, detail="Report failed.")
-    status = updates.status()
-    assert status.request is not None and status.request.state == "applied"
-    assert status.app_sha == SHA_B
-    # An old runner cannot reopen a server-settled outcome.
-    with pytest.raises(UpdateConflict):
-        updates.store.transition("request", frozenset({"applied"}), "applying")
+    """Each card state and its actions follow from exactly the inputs the contract names.
 
-
-def test_killed_runner_deadline_settles_once_and_does_not_block_retry(tmp_path: Path) -> None:
-    updates = service(tmp_path, request(elapsed=True))
-    status = updates.status()
-    assert status.state == "failed" and status.allowed_actions == ("retry",)
-    assert status.request is not None and status.request.state == "failed"
-    new = updates.request(release(), "now", confirm_activity=True)
-    assert new.request_id != "request"
-    with pytest.raises(UpdateConflict, match="authority"):
-        with updates.store.installation_guard("request"):
-            pytest.fail("stale runner entered cutover")
-
-
-def test_failed_recovery_settles_without_reopening_applying(tmp_path: Path) -> None:
-    updates = service(tmp_path, request())
-    progress = updates.lifecycle_store
-    assert progress is not None
-    progress.start("deployment", SHA_B, prior_sha=SHA_A)
-    progress.transition("deployment", "failed", serving_sha=SHA_A, detail="Prior app recovered.")
-    assert updates.status().request.state == "failed"  # type: ignore[union-attr]
-    assert not updates.dispatch_pending()
-
-
-def test_expired_wait_ends_while_activity_is_unknown_and_promote_preserves_identity(
-    tmp_path: Path,
-) -> None:
-    receipt = replace(request(state="pending"), mode="idle", dispatched_at=None, deadline_at=None)
-    updates = service(tmp_path, receipt)
-    promoted = updates.promote(receipt.request_id, confirm_activity=True)
-    assert promoted.request_id == receipt.request_id
-    assert promoted.mode == "now" and promoted.confirm_activity
-    updates.cancel(receipt.request_id)
-    expired = replace(
-        receipt, request_id="expired",
-        release=replace(release(), expires_at="2020-01-01T00:00:00Z"),
+    A negative `seconds` means the Mac reported 100 s after the VPS finished, and the
+    card is read 150 s after the VPS finished.
+    """
+    reported = NOW + timedelta(seconds=100) if seconds < 0 else None
+    now = NOW + timedelta(seconds=150 if seconds < 0 else seconds)
+    state, actions, detail, deadline = resolve(
+        record, available, running,  # type: ignore[arg-type]
+        mac_applies=mac_applies, mac_phase=mac_phase, mac_reported_at=reported,
+        mac_report_seconds=90, now=now,
     )
-    updates.store.create(expired)
-    assert not updates.dispatch_pending()
-    assert updates.store.read().state == "failed"  # type: ignore[union-attr]
-    assert updates.status().allowed_actions == ("retry",)  # Latest publication remains usable.
+    assert (state, actions) == expected
+    assert detail == {
+        "failed": record.detail if record else None,
+        "mac_failed": MAC_FAILED_DETAIL,
+        "mac_unreachable": MAC_UNREACHABLE_DETAIL,
+    }.get(state)
+    if state != "updating":
+        assert deadline is None
+    elif record is not None and record.state == "done":
+        # Until when the Mac may stay silent: its last report, or the VPS finish, plus 90 s.
+        assert deadline == ((reported or NOW) + timedelta(seconds=90)).isoformat()
+    else:
+        assert deadline == record.deadline_at  # type: ignore[union-attr]
 
 
-def test_guard_refuses_expired_authority_even_without_a_server_poll(tmp_path: Path) -> None:
-    updates = service(tmp_path, request(elapsed=True))
-    with pytest.raises(UpdateConflict, match="expired"):
-        with updates.store.installation_guard("request"):
-            pytest.fail("expired authority entered cutover")
+def test_installing_settles_from_the_running_sha_only_after_its_deadline() -> None:
+    """Every attempt ends: a lost installer cannot leave the card updating forever."""
+    record = attempt("installing", deadline_at=(NOW + timedelta(seconds=900)).isoformat())
+    assert settle(record, SHA_B, NOW + timedelta(seconds=900)) is None
+    late = NOW + timedelta(seconds=901)
+    done = settle(record, SHA_B, late)
+    failed = settle(record, SHA_A, late)
+    assert done is not None and (done.state, done.detail) == ("done", None)
+    assert failed is not None and (failed.state, failed.detail) == ("failed", UNFINISHED_DETAIL)
+    for other in ("waiting", "preparing", "done", "failed"):
+        assert settle(replace(record, state=other), SHA_B, late) is None
 
 
-def test_same_sha_recovery_uses_integrity_audit_without_opening_normal_work(tmp_path: Path) -> None:
-    database = tmp_path / "state.db"
-    connection = connect(str(database))
-    create_schema(connection)
-    connection.close()
-    store = FileUpdateRequestStore(tmp_path / "request.json")
-    updates = UpdateService(
-        Provider(), store, lambda: None, current_app_sha=SHA_B,
-        connection_factory=lambda: connect(str(database)),
-        recovery_admission=lambda: True,
-    )
-    assert updates.status().available is not None
-    receipt = updates.request(release(), "now", confirm_activity=True)
-    assert updates.dispatch_pending()
-    claimed = asyncio.run(updates.claim(receipt.request_id, deployment_id="recovery"))
-    assert claimed.state == "applying" and claimed.deployment_id == "recovery"
-    assert claimed.deadline_at is not None
-    payload = json.loads((tmp_path / "request.json").read_text())
-    assert payload["deadline_at"] == claimed.deadline_at
+def test_deployment_status_keeps_the_ios_shape() -> None:
+    """iOS builds in the field decode `/api/deployment-status`; it moved to the attempt."""
+    def body(record: UpdateAttempt | None, seconds: float = 0) -> dict[str, object]:
+        return deployment_status(
+            record, SHA_B, success_seconds=300, now=NOW + timedelta(seconds=seconds)
+        )
 
-
-def test_legacy_deadline_never_restarts_its_budget_and_other_deployments_expire(
-    tmp_path: Path,
-) -> None:
-    old = replace(
-        request(), created_at="2020-01-01T00:00:00Z", dispatched_at=None, deadline_at=None,
-    )
-    assert settlement(old, None, SHA_A, datetime.now(UTC))[0] == "failed"  # type: ignore[index]
-    lifecycle = DeploymentLifecycleStore(tmp_path / "lifecycle.json")
-    started = lifecycle.start("ordinary", SHA_B, prior_sha=SHA_A)
-    expired = replace(started, expires_at=datetime.now(UTC) - timedelta(seconds=1))
-    assert experience(None, expired, release(), True, SHA_A, datetime.now(UTC)) == (
-        "failed", ("retry",),
-    )
-    assert asdict(old)["deadline_at"] is None
-
-
-def test_later_ordinary_deployment_supersedes_a_terminal_owner_receipt(tmp_path: Path) -> None:
-    old = replace(request(state="failed"), detail="An old request failed.")
-    lifecycle = DeploymentLifecycleStore(tmp_path / "lifecycle.json")
-    preparing = lifecycle.start("ordinary", SHA_B, prior_sha=SHA_A)
-    assert experience(old, preparing, release(), True, SHA_A, datetime.now(UTC)) == (
-        "updating", (),
-    )
-    restarting = lifecycle.transition("ordinary", "restarting")
-    old = replace(old, deadline_at="2020-01-01T00:00:00Z")
-    updates = service(tmp_path, old)
-    updates.lifecycle_store = lifecycle
-    status = updates.status()
-    assert status.deadline_at is None
-    assert status.restart_deadline_at == restarting.expires_at.isoformat()
-    assert status.detail != old.detail
-    failed = lifecycle.transition("ordinary", "failed", detail="The later deployment failed.")
-    assert updates.status().detail == failed.detail
-    assert experience(old, restarting, release(), True, SHA_A, datetime.now(UTC)) == (
-        "restarting", (),
-    )
-    # A newly active request cannot inherit that unrelated restart.
-    active = replace(old, state="dispatched", created_at=datetime.now(UTC).isoformat())
-    assert experience(active, restarting, release(), True, SHA_A, datetime.now(UTC)) == (
-        "updating", (),
-    )
-
-
-def test_settlement_reads_health_after_the_authority_guard_releases(tmp_path: Path) -> None:
-    import threading
-
-    updates = service(tmp_path, request(), sha=SHA_B)
-    progress = updates.lifecycle_store
-    assert progress is not None
-    progress.start("deployment", SHA_B, prior_sha=SHA_A)
-    progress.transition("deployment", "verifying")
-    attempted = threading.Event()
-    finished = threading.Event()
-    results: list[str] = []
-
-    def poll() -> None:
-        attempted.set()
-        receipt = updates.reconcile()
-        assert receipt is not None
-        results.append(receipt.state)
-        finished.set()
-
-    with updates.store.installation_guard("request"):
-        thread = threading.Thread(target=poll)
-        thread.start()
-        assert attempted.wait(1)
-        assert not finished.is_set()
-        progress.transition("deployment", "app_healthy", serving_sha=SHA_B)
-    thread.join(timeout=2)
-    assert finished.is_set() and results == ["applied"]
-
-
-def test_replacement_does_not_erase_uncommitted_candidate_admission(tmp_path: Path) -> None:
-    from planner.core.clock import build_clock
-    from planner.core.config import load_config
-    from planner.core.server import create_app
-    from planner.environments.update_admission import UncommittedAppStore
-
-    database = tmp_path / "state.db"
-    connection = connect(str(database))
-    create_schema(connection)
-    connection.close()
-
-    def candidate(sha: str) -> FastAPI:
-        config = load_config(path=None, env={
-            "PLAN_TEST_MODE": "1", "PLAN_APP_SHA": sha, "PLAN_DB_PATH": str(database),
-            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
-            "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "dispatcher.lock"),
-        })
-        return create_app(config, build_clock(config), lambda: connect(str(database)))
-
-    store = FileUpdateRequestStore(tmp_path / "owner-update-request.json")
-    store.create(request())
-    # B starts without a matching health commit. This writes an independent hold.
-    assert candidate(SHA_B).state.update_startup_pending
-    store.transition("request", frozenset({"applying"}), "failed")
-    target_c = "c" * 40
-    replacement = replace(
-        request(state="pending"), request_id="replacement",
-        release=replace(release(), manifest=replace(release().manifest, app_sha=target_c)),
-    )
-    store.create(replacement)
-    lifecycle = DeploymentLifecycleStore(tmp_path / "deployment-lifecycle.json")
-    lifecycle.start("replacement", target_c, prior_sha=SHA_B)
-    # A reboot before cutover cannot infer B health from C's request/lifecycle.
-    assert candidate(SHA_B).state.update_startup_pending
-    lifecycle.transition("replacement", "restarting")
-    assert candidate(target_c).state.update_startup_pending
-    lifecycle.transition("replacement", "rolled_back", serving_sha=SHA_B)
-    # C failure and rollback cannot erase B's original admission requirement.
-    assert candidate(SHA_B).state.update_startup_pending
-    holds = UncommittedAppStore(tmp_path / "update-admission.json")
-    assert holds.contains(SHA_B) and holds.contains(target_c)
-    holds.commit(SHA_B)
-    assert not holds.contains(SHA_B) and holds.contains(target_c)
+    assert body(None)["state"] == "idle"
+    assert body(attempt("installing", deadline_at="x"))["state"] == "restarting"
+    assert body(attempt("failed", detail="no"))["outcome"] == "failed"
+    assert body(attempt("failed", detail="no"), 301)["state"] == "idle"
+    assert body(attempt("done"))["state"] == "back_up"
+    assert body(attempt("done"), 301)["state"] == "idle"
+    assert set(body(None)) == {
+        "state", "deployed_sha", "target_sha", "outcome", "detail", "valid_until",
+        "success_display_until",
+    }

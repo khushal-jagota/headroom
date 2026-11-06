@@ -206,6 +206,11 @@ class MacRemoteChild:
                 pass
             else:
                 relative_path = "" if relative == Path(".") else relative.as_posix()
+        elif resolved_start.workspace_path_policy == WorkspacePathPolicy.executor_default:
+            # The placeholder names a folder inside the Mac workspace, written with that
+            # workspace as "/". The workspace itself sends no subfolder.
+            subfolder = resolved_start.workspace_folder.relative_to("/")
+            relative_path = None if subfolder == Path(".") else subfolder.as_posix()
         await self._call(
             StartRun(
                 canonical_skill_snapshot=snapshot,

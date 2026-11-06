@@ -4,7 +4,7 @@ A conversation is one agent, working in one folder, with a permanent record of w
 
 ## What a conversation is made of
 
-- **The notebook.** The append-only record of finished facts: a delivered prompt, a completed agent message, a tool call, a permission ask and its answer, a model change, a turn ending, a message to the owner, a refusal, a discard. A row is written once. Private reasoning is dropped.
+- **The notebook.** The append-only record of finished facts: a delivered prompt, a tool call, a permission ask and its answer, a model change, a turn ending, a message to the owner, a refusal, a discard, and a backend's own reply to a slash command such as `/goal`. A row is written once. Private reasoning is dropped.
 - **The live tail.** The text of a running turn, streamed straight to an open pane and not stored as notebook prose.
 - **The conversation system.** One core that holds messages while the agent is busy, starts and stops the child process, writes the notebook, and decides each send's fate.
 - **Three backend adapters.** Hermes over ACP, Codex through its app server, and Claude through the Claude Agent SDK. The backends are a closed set, and one door turns an untrusted name into a member of it or refuses it.
@@ -77,7 +77,7 @@ Permission asks are always shown and always wait for an answer. Headroom does no
 
 ## The workspace for an agent
 
-Each conversation starts in one folder and keeps it through resume and restart. The folder is an explicit workspace when one is given, otherwise the Ticket's Project folder, otherwise the server's default workspace. A Mac Worker without either uses the executor's own Panels workspace on the Mac. The Chief and each Manager instead start in a home folder of their own, made on their first start: `data/files/chief/` for the Chief, and the Manager's files folder for a Manager, beside the `artifacts/` the owner sees. They keep their own notes, scratch files and rules there, and their role text names the server's default workspace, where the repositories are. A new configuration applies to new conversations. [Environments](environments.md) covers the server default.
+Each conversation starts in one folder and keeps it through resume and restart. The folder is an explicit workspace when one is given, otherwise the Ticket's Project folder, otherwise the server's default workspace. A Mac Worker without an explicit workspace starts in the executor's own Panels workspace on the Mac, in its Project's folder there when it has a Project. The Chief and each Manager instead start in a home folder of their own, made on their first start: `data/files/chief/` for the Chief, and the Manager's files folder for a Manager, beside the `artifacts/` the owner sees. They keep their own notes, scratch files and rules there, and their role text names the server's default workspace, where the repositories are. A new configuration applies to new conversations. [Environments](environments.md) covers the server default.
 
 ## What comes back out
 
@@ -92,7 +92,6 @@ After each application save, Headroom updates changed conversation statuses and 
 - One input path, so whatever an agent knows from Headroom can be read in its notebook.
 - The fate reports delivery honestly, and nothing that may have reached the agent is retried automatically.
 - Each real agent identity has one home and one login. Headroom launches children against those homes and keeps no copy of a credential.
-- Claude sessions start with the user's ordinary hooks turned off, so local hooks do not inject context or side effects into Headroom's agents.
 
 ## Code
 

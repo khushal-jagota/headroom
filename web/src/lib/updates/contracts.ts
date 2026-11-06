@@ -1,57 +1,40 @@
-/** The JSON projection of environments/update_contracts.py. */
+/** The JSON projection of `GET /api/updates` (self-update contract, section 10). */
+import type { MacStatus } from "../ticketMachines";
+
 export type UpdateMode = "now" | "idle";
 export type UpdateActivity = "idle" | "busy" | "unknown";
-export type UpdateExperienceState = "up_to_date" | "available" | "waiting" | "updating" | "restarting" | "failed" | "complete";
-export type UpdateAction = "update" | "cancel" | "update_now" | "retry";
-export type UpdateRequestState =
-  | "pending" | "dispatched" | "applying" | "applied" | "cancelled" | "failed";
+export type UpdateState = "up_to_date" | "available" | "waiting" | "updating" | "failed" | "mac_failed" | "mac_unreachable";
+export type UpdateAction = "update" | "cancel" | "update_now" | "retry" | "retry_mac";
+export type UpdateAttemptState = "waiting" | "preparing" | "installing" | "done" | "failed";
 
-export type PublishedUpdate = {
-  publication_run_id: number;
-  artifact_id: number;
-  proof_artifact_id: number;
-  manifest: { app_sha: string; source_digest: string; artifact_digest: string };
-  archive_sha256: string;
-  schema_floor: string;
-  expires_at: string;
-  mac?: { artifact_id: number; archive_sha256: string; archive_size: number } | null;
-};
+/** The ready release. The page reads only the SHA it installs. */
+export type AvailableUpdate = { app_sha: string };
 
-export type OwnerUpdateRequest = {
-  request_id: string;
-  release: PublishedUpdate;
+export type UpdateAttempt = {
+  attempt_id: string;
+  from_sha: string;
+  to_sha: string;
   mode: UpdateMode;
-  state: UpdateRequestState;
-  created_at: string;
+  state: UpdateAttemptState;
   detail: string | null;
-  confirm_activity?: boolean;
-  dispatched_at?: string | null;
-  deadline_at?: string | null;
-  deployment_id?: string | null;
+  deadline_at: string | null;
 };
 
 export type UpdateStatus = {
-  mac_status?: import("../ticketMachines").MacStatus;
-  configured: boolean;
-  available: PublishedUpdate | null;
-  request: OwnerUpdateRequest | null;
-  activity: UpdateActivity;
-  detail: string | null;
-  state: UpdateExperienceState;
+  state: UpdateState;
   allowed_actions: UpdateAction[];
-  phase: string | null;
-  app_sha: string | null;
+  activity: UpdateActivity;
+  available: AvailableUpdate | null;
+  attempt: UpdateAttempt | null;
+  /** The running SHA. */
+  app_sha: string;
+  /** A plain sentence for the failed states. */
+  detail: string | null;
+  /** Until when a lost connection still counts as updating. */
   deadline_at: string | null;
-  restart_deadline_at: string | null;
+  /** Executor health with the Mac update status, for the info dialog only. */
+  mac_details: MacStatus | null;
 };
 
-export type CreateUpdateRequest = {
-  publication_run_id: number;
-  artifact_id: number;
-  proof_artifact_id: number;
-  app_sha: string;
-  artifact_digest: string;
-  archive_sha256: string;
-  mode: UpdateMode;
-  confirm_activity: boolean;
-};
+export type InstallUpdateBody = { app_sha: string; mode: UpdateMode; confirm_activity: boolean };
+export type UpdateNowBody = { confirm_activity: boolean };

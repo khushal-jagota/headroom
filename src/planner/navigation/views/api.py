@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import Response, StreamingResponse
 
 from planner.core.authctx import RequestContext, request_context
-from planner.core.response_compression import answers_with_an_event_stream
+from planner.core.response_compression import answers_uncompressed
 from planner.navigation.api import DeadlineStreamingResponse, FencedJSONResponse
 from planner.navigation.delivery_authority import DeliveryUnavailable
 from planner.navigation.views.contracts import ViewRequest
@@ -55,7 +55,7 @@ def router(runtime: ScopedDeliveryRuntime) -> APIRouter:
         return response
 
     @result.get("/api/navigation/view/events")
-    @answers_with_an_event_stream
+    @answers_uncompressed
     async def events(
         view: str, ctx: Annotated[RequestContext, Depends(request_context)]
     ) -> Response:

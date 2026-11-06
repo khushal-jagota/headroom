@@ -383,3 +383,19 @@ def test_a_recap_request_empties_an_manager_recap_through_its_own_writer(
         assert sent == ["sent"]
 
     asyncio.run(exercise())
+
+
+def test_removed_goal_conversation_boundaries_reject_before_resolution() -> None:
+    """Domain goal responsibility grants no conversation identity or address."""
+    from fastapi import Request
+
+    from planner.conversation.history.api import history_page
+    from planner.core.authctx import _classify
+    from planner.message_delivery.api import _principal
+
+    with pytest.raises(PlannerError, match="unknown message recipient"):
+        _principal({"kind": "goal", "id": "goal_old"})
+    with pytest.raises(PlannerError, match="does not name a Panels principal"):
+        _classify("goal")
+    with pytest.raises(PlannerError, match="unknown conversation history owner"):
+        asyncio.run(history_page(Request({"type": "http"}), "goal", "goal_old"))
