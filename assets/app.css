@@ -220,7 +220,7 @@ strong {
    space or the pointer from the Settled row under that band. */
 .rail-utilities { --rail-tooltip-band:34px; display:flex; align-items:center; gap:2px; padding-top:var(--rail-tooltip-band); margin-top:calc(var(--rail-tooltip-band) * -1); pointer-events:none; }
 .rail-utilities > .utility { pointer-events:auto; }
-.utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--tone-tertiary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.utility { position:relative; display:flex; flex:0 0 32px; align-items:center; justify-content:center; gap:6px; min-width:32px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-md); background:transparent; color:var(--tone-secondary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .utility:hover { background:var(--wash-hover); color:var(--tone-strong); }
 .utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:transparent; background:var(--wash-selected); color:var(--tone-strong); }
 .utility:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:0; }
@@ -4858,7 +4858,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* A Ticket row: the same 30px fill as every rail row, its words one indent in, its title
    ending in an ellipsis before the column kept for its unread dot. A row that needs the
    person is bright and a step heavier; every other row rests dim. */
-.workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:center; column-gap:0; width:100%; height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
+.workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr); align-items:center; column-gap:0; width:100%; height:var(--rail-row-height); padding:0 var(--rail-pad) 0 calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
+/* Only a row with an unread dot keeps a column for it; every other title runs to the row's padding. */
+.workspace-ticket-bucket .worker-row:has(.conversation-signal-marks) { grid-template-columns:minmax(0,1fr) var(--rail-mark-column); }
 .workspace-ticket-bucket .worker-row + .worker-row { margin-top:var(--rail-row-gap); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
 .workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:clip; }
@@ -5002,11 +5004,13 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* One moving decoration per scroller keeps selection distinct from the rail content. */
 .approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) { position:relative; isolation:isolate; }
-/* One crisp fill marks the open item and a fill half as strong follows the pointer, both on
-   the row's own 30px box with the 8px radius. Nothing fills around a Manager's block: the
-   Manager you are inside is marked by its header (WorkspaceRailCard). */
+/* One quiet fill marks the open item and a fainter one follows the pointer, each on the row's
+   own box with the row's own radius. The Manager you are inside is framed: a 1px hairline
+   around its whole block, no fill, reaching --rail-context-outset past the fills so its 12px
+   corners stay concentric with theirs. */
 .rail-wash { position:absolute; pointer-events:none; z-index:0; border-radius:var(--radius-md); }
 .rail-wash[hidden] { display:none; }
+.rail-wash--group { background:none; box-shadow:inset 0 0 0 var(--border-hairline) var(--wash-context-edge); border-radius:var(--rail-context-radius); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
 
 .rail-wash--hover { background:var(--wash-hover); }

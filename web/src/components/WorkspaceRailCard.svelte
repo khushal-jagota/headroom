@@ -79,7 +79,8 @@
      --rail-edge on each side; every text stands --rail-pad inside its fill. */
   .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:0; border:0; isolation:isolate; z-index:1; }
   .identity { box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; min-height:var(--rail-row-height); padding:var(--rail-head-pad) var(--rail-pad); border-radius:var(--radius-md); cursor:pointer; }
-  .item-head { display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:center; width:100%; min-height:22px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .item-head { display:grid; grid-template-columns:minmax(0,1fr); align-items:center; width:100%; min-height:22px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .item-head:has(> :global(.conversation-signal-marks)) { grid-template-columns:minmax(0,1fr) var(--rail-mark-column); }
   .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; }
   /* A name is dimmed unless it needs the person (an unread message for them); the pointer or
      the open page on it brings it to full brightness. It keeps one line and ends in an

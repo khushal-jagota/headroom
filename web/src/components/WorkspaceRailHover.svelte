@@ -40,8 +40,11 @@
   let recapLines = $state(1);
   // Measure the fixed content, never the clamped recap. This keeps the budget
   // independent of the height that the budget itself produces.
+  // Under a page row the panel has only the room down to the window's foot; the recap gives
+  // up lines to fit it, so the panel is never cut off.
+  let roomBelow = $state<number | null>(null);
   $effect(() => {
-    recapText; stageSentence; title; kicker;
+    recapText; stageSentence; title; kicker; roomBelow;
     if (!visible || !element || !recapElement) return;
     const panel = element;
     const recapBox = recapElement;
@@ -92,6 +95,7 @@
       const dock = (document.querySelector(".conversation-layer .chat-box") ?? document.querySelector(".conversation-layer"))?.getBoundingClientRect();
       const floor = Math.min(window.innerHeight, dock && dock.height > 0 ? dock.top : window.innerHeight) - 12;
       if (currentRail !== currentTarget) {
+        roomBelow = null;
         const railRight = currentRail.getBoundingClientRect().right;
         left = Math.max(12, Math.min(railRight + 12, window.innerWidth - width - 12));
         top = Math.max(12, Math.min(rect.top - 8, floor - height));
@@ -101,7 +105,7 @@
       // A row in a page list spans the whole column, so a panel level with it would cover
       // the row it describes. It opens under the row, at the row's right end but short of the
       // column kept for the rows' unread dots, so the row stays whole and the titles and dots
-      // of the rows below stay visible; above the row when the composer leaves no room under it.
+      // of the rows below stay visible.
       const title = currentTarget.querySelector(".ticket-row-title");
       let titleEnd = rect.left;
       if (title) { const words = document.createRange(); words.selectNodeContents(title); titleEnd = Math.min(rect.right, words.getBoundingClientRect().right); }
@@ -113,9 +117,9 @@
       const endPad = Number.parseFloat(styles.paddingRight) || 0;
       const rightmost = row.getBoundingClientRect().right - endPad - markColumn - 24 - width;
       left = Math.max(12, Math.min(Math.max(rightmost, titleEnd + 12), window.innerWidth - width - 12));
-      const below = rect.bottom + 6;
-      const above = rect.top - 6 - height;
-      top = below + height <= floor ? below : above >= 12 ? above : Math.max(12, floor - height);
+      // Always under its row: never over the row, the heading above it or past the window.
+      top = rect.bottom + 6;
+      roomBelow = Math.max(0, window.innerHeight - 12 - top);
       // Past the end of its row's title, the pointer can cross to it and press the ask inside
       // while the titles below stay free to point at. Clamped back over the titles, it lies on
       // the rows the pointer travels to, so it stays a preview.
@@ -130,7 +134,7 @@
     return () => { observer.disconnect(); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
   });
 </script>
-<div bind:this={element} class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}
+<div bind:this={element} class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} style:max-height={roomBelow === null ? undefined : `${roomBelow}px`} data-rail-hover-panel aria-hidden={!visible}
   onpointerenter={(event) => {
     if (visible && event.pointerType !== "touch" && window.matchMedia("(hover: hover) and (pointer: fine)").matches)
       pointerVisit = { target, recapIdentity };
@@ -182,16 +186,16 @@
   .kicker-place { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   .kicker-machine { flex:none; display:inline-flex; align-items:center; }
   .kicker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
-  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-body); font-weight:var(--weight-title); line-height:20px; color:var(--tone-strong); overflow-wrap:anywhere; }
+  .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-row); font-weight:var(--weight-needs-you); line-height:20px; color:var(--tone-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
   /* The recap is the body the preview is opened for: the page's body voice, given its own
      space, and the only paragraph in the panel. */
-  .recap { margin-top:6px; font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
+  .recap { margin-top:6px; font-size:var(--rail-preview-recap-size); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-secondary); }
   .recap-text { overflow:hidden; overflow-wrap:break-word; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
   .recap :global(.recap-ask) { display:flex; margin-top:10px; font-size:var(--type-small); }
-  .recap :global(.recap-ask .request-recap-action) { height:auto; padding:0; border-radius:var(--radius-sm); background:none; box-shadow:none; color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
+  .recap :global(.recap-ask .request-recap-action) { height:auto; padding:0; border-radius:var(--radius-sm); background:none; box-shadow:none; color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
   .recap :global(.recap-ask .request-recap-action:hover) { background:none; color:var(--tone-strong); }
   .doing { margin-top:2px; font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
