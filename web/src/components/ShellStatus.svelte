@@ -13,7 +13,10 @@
     connectionState: ConnectionStatus; navigationHealth?: NavigationHealth;
     status: UpdateStatus | undefined; presentation: UpdateCardState | null; now: number;
   } = $props();
-  const statusKey = $derived(presentation ?? (navigationHealth ? "navigation" : null));
+  // An update restarts Panels, which drops navigation for a moment. That is part of the
+  // one "Updating…" wait, not a second thing to report.
+  const shownHealth = $derived(presentation === "updating" ? null : navigationHealth);
+  const statusKey = $derived(presentation ?? (shownHealth ? "navigation" : null));
   let displayedWord = $state<UpdateCardState | "navigation" | null>(null);
   let displayedHealth = $state.raw<NavigationHealth>(null);
   let textOut = $state(false);
@@ -99,7 +102,7 @@
 
   $effect(() => {
     const word = statusKey;
-    const health = navigationHealth;
+    const health = shownHealth;
     let obsolete = false;
     let frame: number | undefined;
     let timer: number | undefined;
