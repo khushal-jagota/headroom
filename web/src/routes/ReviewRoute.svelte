@@ -299,15 +299,15 @@
       {:else}
         {@const ticket = currentItem}
         {#key ticket.ticket_id}
-          <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal)}>
+          {#snippet decision()}
+            <div class="review-ticket-decision-line review-ticket-decision-line--inline">
+              <button data-skip disabled={messageBusy} onclick={()=>skip(ticket)}>Skip &rsaquo;</button>
+              <a data-open-ticket href={workspaceAddress({kind:'ticket',id:ticket.ticket_id})}>Open ticket &rsaquo;</a>
+            </div>
+          {/snippet}
+          <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal) || ticket.messages.length > 0}>
             {#if ticket.proposal}
               {@const proposal = ticket.proposal}
-              {#snippet decision()}
-                <div class="review-ticket-decision-line review-ticket-decision-line--inline">
-                  <button data-skip disabled={messageBusy} onclick={()=>skip(ticket)}>Skip &rsaquo;</button>
-                  <a data-open-ticket href={workspaceAddress({kind:'ticket',id:ticket.ticket_id})}>Open ticket &rsaquo;</a>
-                </div>
-              {/snippet}
               {#key reviewProposalIdentity(proposal)}
                 <ReviewProposalCard identity={proposal} embedded decisionActions={decision} ticketId={proposal.ticket_id} field={proposal.field}
                   title={proposal.title} onResolved={proposalResolved}
@@ -317,9 +317,9 @@
                   onRevisionDraftChange={text=>{proposalDraft={identity:reviewProposalIdentity(proposal),text,editedBody:proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.editedBody : undefined};}}/>
               {/key}
             {/if}
-            {#each ticket.messages as message (message.conversation_id)}
+            {#each ticket.messages as message, index (message.conversation_id)}
               {#key messageGenerations[message.conversation_id] ?? 0}
-                <ReviewMessageCard item={message} embedded onSkip={()=>skip(ticket)}
+                <ReviewMessageCard item={message} embedded decisionActions={!ticket.proposal && index === 0 ? decision : undefined} onSkip={()=>skip(ticket)}
                   onResolved={()=>messageResolved(message.conversation_id)} onBusy={value=>messageBusyChanged(message.conversation_id,value)}
                  />
               {/key}

@@ -30,9 +30,8 @@
   --surface-recessed: #141414;
   /* The workspace rail: one close step above the page, divided by a hairline. */
   --surface-rail: #1d1d1d;
-  /* Counts and unread marks: neutral, so the filled accent stays the primary action's. */
+  /* The quiet fill of a Manager's monogram in the rail. */
   --badge-fill: rgb(255 255 255 / 14%);
-  --unread-mark: #d6d6d6;
   /* Inline code: a translucent lift that reads on every surface it lands on. */
   --surface-code: rgb(255 255 255 / 6%);
   /* Popovers, menus and hover previews: the one raised plane, with --shadow-float. */

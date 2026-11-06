@@ -24,7 +24,9 @@
   import SkeletonRegion from './SkeletonRegion.svelte';
   import ErrorLine from './ErrorLine.svelte';
 
-  let { item, onSkip, onResolved, onBusy, footer, embedded=false }: {
+  let { item, onSkip, onResolved, onBusy, footer, decisionActions, embedded=false }: {
+    /** The queue's Skip / Open ticket for the Ticket this message belongs to, in the card's action row. */
+    decisionActions?:Snippet;
     embedded?:boolean; item:ReviewMessageItem; onSkip:()=>void; onResolved:(through:number)=>void;
     onBusy?:(busy:boolean)=>void; footer?:Snippet;
   } = $props();
@@ -142,16 +144,19 @@
 </script>
 
 <div bind:this={card} data-review-card data-review-item-type="message" data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
+  {#snippet ownActions()}
+    <div class="review-ticket-decision-line review-ticket-decision-line--inline">
+      {#if !embedded}<button data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip &rsaquo;</button>{/if}
+      <a data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={event=>{if(busy)event.preventDefault();}}>Open conversation &rsaquo;</a>
+    </div>
+    {@render decisionActions?.()}
+  {/snippet}
   {#if !embedded}
-  <div class="review-ticket-decision-line">
-    <button data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip &rsaquo;</button>
-    <a data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={event=>{if(busy)event.preventDefault();}}>Open conversation &rsaquo;</a>
-  </div>
+  <div class="review-eyebrow">Review</div>
   <h1 class="review-ticket-title">{item.title}</h1>
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
   <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>
   {/if}
-  {#if embedded}<div class="review-ticket-decision-line"><a data-open-conversation href={reviewMessageHref(item)}>Open conversation &rsaquo;</a></div>{/if}
   <SkeletonRegion shape="block" loading={!loaded && !error} loadingText="Loading messages...">
     {#if loaded}
       <div class="review-message-card">
@@ -161,22 +166,25 @@
         <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
           {disabled} sendDisabled={busy || !ready} sending={busy}
           sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>
-        <div class="review-read-row"><button data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</button></div>
+        <div class="review-read-row"><button data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</button><div class="review-card-trailing">{@render ownActions()}</div></div>
         {#if error}<ErrorLine {error}/>{/if}
       </div>
-    {:else if error}<ErrorLine {error}/><button class="button button--quiet" onclick={()=>void load()}>Retry</button>{/if}
+    {:else if error}<ErrorLine {error}/><div class="review-read-row"><button class="button button--quiet" onclick={()=>void load()}>Retry</button><div class="review-card-trailing">{@render ownActions()}</div></div>{/if}
   </SkeletonRegion>
+  <!-- Until the card has drawn, the actions wait below it rather than vanish. -->
+  {#if !loaded && !error}<div class="review-read-row"><div class="review-card-trailing">{@render ownActions()}</div></div>{/if}
 </div>
 {@render footer?.()}
 
 <style>
+  .review-card-trailing{display:flex;align-items:center;gap:var(--space-1);margin-left:auto}
   .review-message-card{margin-top:var(--space-5);padding:var(--space-5);background:var(--surface-2);border-radius:var(--radius-lg)}
   .review-message-run{font-family:var(--font-ui);font-size:var(--type-md);line-height:1.68}
   .review-message-said+.review-message-said{position:relative;margin-top:var(--space-5);padding-top:var(--space-4)}
   .review-message-said+.review-message-said::before{content:"";position:absolute;inset-block-start:0;inset-inline-start:0;inline-size:var(--space-6);border-block-start:var(--border-hairline) solid var(--text-faintest);opacity:.55}
   .review-recap-request{margin-top:var(--space-2);font-size:var(--type-sm)}
   button:disabled{opacity:.5;cursor:default}
-  .review-read-row button:hover:not(:disabled){background-image:var(--interaction-hover);color:var(--text-strong)}
-  .review-read-row{margin-top:var(--space-3);margin-left:calc(var(--space-3) * -1)}
-  .review-read-row button{font:inherit;font-size:var(--type-sm);line-height:1.6;padding:8px 12px;border:0;border-radius:var(--radius-pill);background:none;color:var(--text-faint);cursor:pointer}
+  .review-read-row > button:hover:not(:disabled){background-image:var(--interaction-hover);color:var(--text-strong)}
+  .review-read-row{display:flex;align-items:center;gap:var(--space-2);margin-top:var(--space-3);margin-left:calc(var(--space-3) * -1)}
+  .review-read-row > button{font:inherit;font-size:var(--type-sm);line-height:1.6;padding:8px 12px;border:0;border-radius:var(--radius-pill);background:none;color:var(--text-faint);cursor:pointer}
 </style>

@@ -190,7 +190,7 @@ textarea {
 .utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:var(--accent-bright); color:var(--text-strong); }
 .utility:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
 .utility svg,.sheet-item svg { width:18px; height:18px; flex:none; }
-.count-badge { position:absolute; top:-2px; right:-2px; min-width:14px; height:14px; padding:0 3px; border-radius:var(--radius-pill); background:var(--badge-fill); color:var(--text-strong); box-shadow:0 0 0 2px var(--surface-1); font-size:10px; font-weight:600; line-height:14px; text-align:center; font-variant-numeric:tabular-nums; }
+.count-badge { position:absolute; top:-2px; right:-2px; min-width:14px; height:14px; padding:0 3px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-1); font-size:10px; font-weight:600; line-height:14px; text-align:center; font-variant-numeric:tabular-nums; }
 /* On the rail the count sits beside its icon, never on top of it. */
 .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 var(--space-2) 0 7px; }
 .rail-utilities .count-badge { position:static; min-width:18px; height:16px; padding:0 5px; box-shadow:none; font-size:11px; line-height:16px; }
@@ -3098,12 +3098,6 @@ select {
 .stage-mark--current-awaiting-approval {
   background: var(--accent-bright);
   border-color: var(--accent-bright);
-}
-
-/* An unread message is a neutral mark: the filled accent belongs to the primary action. */
-[data-conversation-signal="message"].stage-mark--current-awaiting-approval {
-  background: var(--unread-mark);
-  border-color: var(--unread-mark);
 }
 
 .stage-mark--errored {
