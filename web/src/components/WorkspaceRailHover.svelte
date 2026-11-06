@@ -14,11 +14,9 @@
   /* ``recapTarget`` is the agent that can be asked for a fresh recap.
    * ``onKeepOpen`` and ``onLeave`` hand the panel the same hover intent the rows use, so
    * the pointer can cross the gap and press what is inside without the panel closing. */
-  let { visible, instant, target, title, kicker, recap = "", worker = null, holderState = "", rail, signal = undefined, conversationId = null, recapTarget = null, onKeepOpen, onLeave, element = $bindable<HTMLDivElement | null>(null) }: {
+  let { visible, instant, target, title, kicker, recap = "", worker = null, rail, signal = undefined, conversationId = null, recapTarget = null, onKeepOpen, onLeave, element = $bindable<HTMLDivElement | null>(null) }: {
     visible: boolean; instant: boolean; target: HTMLElement | null; title: string; kicker: string;
     recap?: string; worker?: WorkItemTicketFacts | null;
-    /** A Manager's or the Chief's state in one sentence, where a Ticket shows its stage. */
-    holderState?: string;
     rail: HTMLElement | null; cards?: readonly WorkItemTicketFacts[];
     signal?: Partial<ConversationSignal>; conversationId?: string | null;
     recapTarget?: { kind: "ticket" | "manager" | "chief"; id: string } | null;
@@ -28,7 +26,7 @@
   let currentWorker = $derived(worker);
   const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
   let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
-  let stageSentence = $derived(unknownMac ? macAvailability(health.isError ? undefined : health.data) : currentWorker ? workspaceWorkerStageSentence(currentWorker) : holderState);
+  let stageSentence = $derived(unknownMac ? macAvailability(health.isError ? undefined : health.data) : currentWorker ? workspaceWorkerStageSentence(currentWorker) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
   let recapIdentity = $derived(recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null);
   let pointerVisit = $state<{ target: HTMLElement | null; recapIdentity: string | null } | null>(null);
@@ -165,7 +163,7 @@
   <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   <!-- Where the Ticket is in its work belongs with its name, so every preview ends the same
        way: the recap, then the ask for a fresh one. -->
-  {#if stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
+  {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}

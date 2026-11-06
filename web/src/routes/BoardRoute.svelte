@@ -20,7 +20,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
-  import { buildWorkspaceRail, workspaceListRecap, workspaceHolderStateSentence, type WorkspaceRailItem } from "../lib/workspaceRail";
+  import { buildWorkspaceRail, workspaceListRecap, type WorkspaceRailItem } from "../lib/workspaceRail";
   import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController, listenForUserScroll, railTitleFade, railReveal } from "../lib/workspaceRailInteraction";
   import { correctedWorkspaceAddress, whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import { parseUtilityPath, type UtilityHref, type WorkspaceUtility } from "../lib/utilityAddress";
@@ -210,9 +210,6 @@
     : workspaceListRecap(hoverBody.body ?? hoveredItem?.recap));
   let hoverSignal = $derived(hoverChief ? workspace?.chief?.conversation_signal : hoveredItem?.conversationSignal);
   let hoverConversationId = $derived(hoverChief ? workspace?.chief?.conversation_id : hoveredItem?.conversationId);
-  // A Manager's preview states it as a Ticket's states its stage, from the rows the rail shows.
-  let hoverState = $derived(hoverWorkerId ? "" : hoverChief ? workspaceHolderStateSentence(rail.chiefGroups, hoverSignal?.working)
-    : hoverItemId ? workspaceHolderStateSentence(rail.items.find((item) => item.id === hoverItemId)?.groups ?? hoveredItem?.groups ?? [], hoverSignal?.working) : "");
   // Every agent the panel can show keeps a recap, so every one of them can be asked.
   let hoverRecapTarget = $derived<{ kind: "ticket" | "manager" | "chief"; id: string } | null>(
     hoverWorker ? { kind: "ticket", id: hoverWorker.id }
@@ -505,7 +502,7 @@
     </div>
 </section>
 
-<WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible && !hoverGoalId} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={currentHoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} holderState={hoverState} recap={hoverRecap} rail={railElement} recapTarget={hoverRecapTarget} onKeepOpen={() => hover.keepOpen()} onLeave={() => {if (!hoverGoalId) hover.leave();}} />
+<WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible && !hoverGoalId} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={currentHoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} recap={hoverRecap} rail={railElement} recapTarget={hoverRecapTarget} onKeepOpen={() => hover.keepOpen()} onLeave={() => {if (!hoverGoalId) hover.leave();}} />
 <style>
   /* The pane's own scroller for a utility screen. It is here, scoped to this component,
      rather than in the shared stylesheet, so no skeleton rule can take it away. */
