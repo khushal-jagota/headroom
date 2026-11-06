@@ -61,8 +61,8 @@ p{margin:0;color:var(--tone-tertiary);font-size:var(--type-small)}
 .card-progress :global([data-block="checklist"] .checklist-header){margin:-6px calc(var(--page-row-outset) * -1) var(--space-1)}
 .card-progress :global([data-block="checklist"] .checklist-header .header){padding:6px var(--page-row-outset)}
 .card-progress :global([data-block="checklist"] .body-inner){padding:0}
-.card-progress :global([data-block="checklist"] .step-inner){padding:0}
-.card-progress :global([data-block="checklist"] .group-toggle){padding:0 0 0 calc(var(--page-check-size) + var(--space-3));margin-inline:0}
+.card-progress :global([data-block="checklist"] .step-inner){padding:var(--space-1) 0;margin-left:calc((var(--page-check-size) - var(--page-check-target)) / 2)}
+.card-progress :global([data-block="checklist"] .group-toggle){padding:0 0 0 calc(var(--page-check-target) + var(--space-3) + (var(--page-check-size) - var(--page-check-target)) / 2);margin-inline:0}
 /* A yes-or-no goal's card is a quiet row-card, one column of the grid and 64px tall: its
    title over its line on the left, its state on the right, centred on the pair. */
 .compact{display:grid;grid-template-columns:minmax(0,1fr) max-content;grid-template-areas:"title state" "meta state";column-gap:var(--space-4);align-items:center;padding:var(--page-row-card-pad-y) var(--page-row-card-pad-x)}

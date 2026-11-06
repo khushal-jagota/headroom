@@ -426,7 +426,9 @@
   --page-ring-size: 40px;
   --page-ring-fill: #f2f2f2;
   --page-ring-track: rgb(255 255 255 / 10%);
-  --page-check-size: 14px;
+  /* A checklist's check is staging's: a 22px circle on a 40px target (never smaller). */
+  --page-check-size: 22px;
+  --page-check-target: 40px;
   /* A disclosure's chevron, drawn the same at the right end of every fold. */
   --page-chevron: 14px;
   /* The page keeps this much room under its last block, so it can scroll fully clear of
