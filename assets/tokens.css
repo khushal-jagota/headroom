@@ -241,7 +241,7 @@
    * more and less of the same grey. */
   --wash-context: rgb(255 255 255 / 4%);
   --wash-selected: rgb(255 255 255 / 12%);
-  --wash-hover: rgb(255 255 255 / 5%);
+  --wash-hover: rgb(255 255 255 / 6%);
   /* Rail geometry. Every rail text, from the Manager's name to a Ticket, the Settled row
    * and the first destination icon, stands on one left edge: the rail edge plus the
    * group pad. A row's fill sits --rail-row-inset inside its group, so the row's 8px
@@ -254,13 +254,13 @@
    * the slot for a Ticket's quiet state mark (12px and a 6px gap). */
   --rail-indent: 18px;
   /* Rail text: the Manager's name leads, a row (goal or Ticket) reads, a label whispers. */
-  --rail-tone-rest: #a3a3a3;
+  --rail-tone-rest: var(--tone-secondary);
   /* A Manager's name at rest: a step brighter than a row at rest, so a bold dim name reads
    * as quiet type, not washed out. */
-  --rail-tone-title: #c2c2c2;
+  --rail-tone-title: var(--tone-secondary);
   /* A Manager's name: clearly above a row, but quieter than anything that needs you. */
-  --type-rail-title: 17px;
-  --rail-tone-label: #858585;
+  --type-rail-title: 16px;
+  --rail-tone-label: var(--tone-tertiary);
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }
@@ -278,8 +278,8 @@
  * Every page (Chief, Manager, Ticket, goal, review) draws from these. */
 :root {
   /* The page column. Every page and its composer share this width, centred in the pane. */
-  --page-measure: 840px;
-  --page-prose-measure: 720px;
+  --page-measure: 760px;
+  --page-prose-measure: 680px;
   /* The page's top band: the one line above the title (where it lives) on the left and the
    * page's own utilities on the right. One height on every page. */
   --page-band-height: 48px;
@@ -287,14 +287,14 @@
   --page-section-gap: 40px;
   /* Page type: a bold title, quiet section heads, body, and a small-print tier for chart
    * axes, table headers and dates. */
-  --type-page-title: 24px;
-  --weight-page-title: 700;
-  --type-page-section: 16px;
-  --weight-page-section: 650;
-  --type-small-print: 12px;
-  --tone-small-print: #9d9d9d;
+  --type-page-title: 26px;
+  --weight-page-title: 600;
+  --type-page-section: 15px;
+  --weight-page-section: 600;
+  --type-small-print: var(--type-small);
+  --tone-small-print: var(--tone-tertiary);
   /* Every button on a page: one height, one radius, one label size. */
-  --page-control-height: 32px;
+  --page-control-height: 28px;
   /* The composer zone fades in over the page's last lines instead of cutting them with a line,
    * and the page keeps enough room under its last block to scroll fully clear of it. */
   --composer-fade: 40px;
@@ -304,3 +304,24 @@
   --count-needs-you-fill: var(--accent-fill);
   --count-needs-you-ink: var(--surface-ink);
 }
+
+/* === Direction v2 roles (Manager-owned; notes/design-direction.md) ==========
+   Six type roles and five text tones for the whole app. Hierarchy comes from tone,
+   not from many sizes and weights. Tones are solid greys computed as white at the
+   stated alpha over the page surface #181818. Change these only through the Manager. */
+:root {
+  --tone-strong: #ececec;    /* 92%: titles, needs-you items, hovered/selected text */
+  --tone-primary: #dadada;   /* 84%: body prose, recaps, card content, section heads */
+  --tone-secondary: #a7a7a7; /* 62%: dimmed sidebar titles and rows at rest */
+  --tone-tertiary: #808080;  /* 45%: Small text: headings, eyebrows, meta, dates, axes */
+  --tone-faint: #626262;     /* 32%: placeholders and disabled only */
+  --type-body: 14px;         /* 400, line-height 1.55 */
+  --type-row: 13.5px;        /* 400; 500 when the item needs the person */
+  --type-small: 12.5px;      /* 450, tabular numerals */
+  --weight-body: 400;
+  --weight-small: 450;
+  --weight-needs-you: 500;
+  --weight-title: 600;
+  --leading-body: 1.55;
+}
+
