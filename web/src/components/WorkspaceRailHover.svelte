@@ -199,7 +199,8 @@
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
   /* The ask is a small outline button: the preview's one action, clearly an endpoint. */
-  .recap :global(.recap-ask) { display:flex; margin-top:var(--space-3); }
+  /* Actions sit at the right, the most important furthest right (owner rule). */
+  .recap :global(.recap-ask) { display:flex; justify-content:flex-end; margin-top:var(--space-3); }
   .recap :global(.recap-ask .request-recap-action) { height:24px; padding:0 var(--space-2); border-radius:6px; background:transparent; box-shadow:inset 0 0 0 var(--border-hairline) var(--button-outline-edge); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; }
   .recap :global(.recap-ask .request-recap-action:hover) { background:var(--button-outline-fill-hover); color:var(--tone-strong); }
   .doing { margin-top:var(--space-1); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; color:var(--tone-tertiary); }
