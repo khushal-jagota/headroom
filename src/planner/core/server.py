@@ -50,9 +50,9 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
 from planner.core.request_guidance import preserve_authored_request_examples
 from planner.core.response_compression import (
-    CompressExceptEventStreams,
-    answers_with_an_event_stream,
-    event_stream_route_patterns,
+    CompressExceptMarkedRoutes,
+    answers_uncompressed,
+    uncompressed_route_patterns,
 )
 from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
@@ -466,7 +466,13 @@ def create_app(
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
     from planner.executor.app_transport import build_executor_router
 
-    app.include_router(build_executor_router())
+    # The compression at the end of this function skips the marked routes. An included
+    # router's routes do not appear in app.routes, so each router adds its own marks here.
+    # The Mac update channel is among them.
+    uncompressed_patterns: list[re.Pattern[str]] = []
+    executor_router = build_executor_router()
+    app.include_router(executor_router)
+    uncompressed_patterns.extend(uncompressed_route_patterns(executor_router.routes))
     app.state.executor_id = config.executor_id
     app.state.config = config
     app.state.clock = clock
@@ -529,15 +535,12 @@ def create_app(
     app.add_exception_handler(PlannerError, handle_planner_error)
     app.add_exception_handler(PreviewError, handle_preview_error)
 
-    # Every router the application serves is included through here, so this is where the
-    # live streams among them are collected. The compression below has to know them.
-    event_stream_patterns: list[re.Pattern[str]] = []
-
+    # Every domain router is included through here, so its marked routes join the list.
     def include_router(router: APIRouter, prefix: str = "") -> None:
         from planner.core.authority.intake import request_admission
 
         app.include_router(router, prefix=prefix, dependencies=[Depends(request_admission)])
-        event_stream_patterns.extend(event_stream_route_patterns(router.routes, prefix))
+        uncompressed_patterns.extend(uncompressed_route_patterns(router.routes, prefix))
 
     for domain_router in (
         updates_router,
@@ -642,7 +645,7 @@ def create_app(
         return {"worker_types": [registry.manifest(worker_type)]}
 
     @app.get("/api/changes")
-    @answers_with_an_event_stream
+    @answers_uncompressed
     async def changes() -> StreamingResponse:
         return StreamingResponse(
             change_stream(SSE_HEARTBEAT_MS),
@@ -672,15 +675,14 @@ def create_app(
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
     # Reads are large and the link is remote, so bodies travel compressed. Level 4 is
     # the measured knee on the largest real body: it costs 100 ms of CPU and saves
-    # 7.5 MB, where level 9 spends 245 ms for 0.12 MB more. The change signal and the
-    # conversation tail go around the compression entirely, because the middleware holds
-    # every response's headers back until a body arrives, and a live stream that has
-    # nothing to say yet has no body to release them with.
+    # 7.5 MB, where level 9 spends 245 ms for 0.12 MB more. The live streams and the Mac
+    # update channel go around the compression entirely: the middleware holds a stream's
+    # headers back until a body arrives, and the Mac saves update bytes exactly as sent.
     app.add_middleware(
-        CompressExceptEventStreams,
-        event_stream_patterns=(
-            *event_stream_patterns,
-            *event_stream_route_patterns(app.routes),
+        CompressExceptMarkedRoutes,
+        uncompressed_patterns=(
+            *uncompressed_patterns,
+            *uncompressed_route_patterns(app.routes),
         ),
         minimum_size=1024,
         compresslevel=4,

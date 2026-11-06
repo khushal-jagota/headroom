@@ -787,8 +787,8 @@ async def boot(
     from fastapi import FastAPI
 
     from planner.core.response_compression import (
-        CompressExceptEventStreams,
-        event_stream_route_patterns,
+        CompressExceptMarkedRoutes,
+        uncompressed_route_patterns,
     )
     from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
     from planner.executor.app_transport import build_executor_router
@@ -796,14 +796,15 @@ async def boot(
     transport_app = FastAPI()
     transport_app.state.executor_id = "test-executor"
     transport_app.state.executor_endpoint = endpoint
-    transport_app.include_router(build_executor_router())
+    executor_router = build_executor_router()
+    transport_app.include_router(executor_router)
     transport_app.add_middleware(
         TrustedIngressMiddleware,
         config=TrustedIngressConfig("tailscale", "owner@example.com", "https://localhost"),
     )
     transport_app.add_middleware(
-        CompressExceptEventStreams,
-        event_stream_patterns=event_stream_route_patterns(transport_app.routes),
+        CompressExceptMarkedRoutes,
+        uncompressed_patterns=uncompressed_route_patterns(executor_router.routes),
         minimum_size=1024,
         compresslevel=4,
     )

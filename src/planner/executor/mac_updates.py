@@ -32,6 +32,7 @@ from planner.executor.update_configuration import (
     MAC_UPDATE_POLL_SECONDS,
     MAC_UPDATE_SCHEMA_VERSION,
     MAX_MAC_RUNTIME_ARCHIVE_BYTES,
+    MAX_MAC_UPDATE_DETAIL_CHARACTERS,
     MAX_MAC_UPDATE_RESPONSE_BYTES,
 )
 from planner.executor.update_contracts import (
@@ -153,10 +154,15 @@ class MacUpdateController:
         try:
             async with session.get(
                 self.server_url + archive_path,
-                headers={EXECUTOR_ID_HEADER: self.executor_id}, allow_redirects=False,
+                headers={EXECUTOR_ID_HEADER: self.executor_id, "Accept-Encoding": "identity"},
+                allow_redirects=False,
             ) as response:
                 if response.status != 200:
                     raise ConnectionError("Mac runtime archive is unavailable")
+                if response.headers.get("Content-Encoding"):
+                    # The session does not decode transport encoding, so encoded bytes
+                    # would only fail the size and hash checks later, as ValueError.
+                    raise ConnectionError("Mac runtime archive arrived with a transport encoding")
                 size = 0
                 with archive.open("wb") as stream:
                     async for block in response.content.iter_chunked(1024 * 1024):
@@ -303,7 +309,9 @@ class MacUpdateController:
             try:
                 runtime = await self._download(session, target)
             except (OSError, ValueError, ConnectionError, aiohttp.ClientError) as error:
-                detail = f"Mac runtime installation failed: {type(error).__name__}."
+                detail = f"Mac runtime installation failed: {type(error).__name__}: {error}"[
+                    :MAX_MAC_UPDATE_DETAIL_CHARACTERS
+                ]
                 atomic_record(self.root / "failure.json", {
                     "request_id": target.request_id, "phase": "failed", "detail": detail,
                 })

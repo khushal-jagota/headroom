@@ -10,6 +10,7 @@ from pydantic import TypeAdapter, ValidationError
 from starlette.requests import HTTPConnection
 from starlette.responses import FileResponse, StreamingResponse
 
+from planner.core.response_compression import answers_uncompressed
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_attempts import UpdateConflict
 from planner.execution_identity import ExecutorIdentity
@@ -61,7 +62,10 @@ def build_executor_router() -> APIRouter:
             raise HTTPException(503, "Mac update service unavailable")
         return service
 
+    # Mac runtimes in the field read these bodies without decoding transport encoding, so
+    # the whole update channel skips compression. The archives are gzipped already.
     @router.get("/api/executor/update")
+    @answers_uncompressed
     async def update_target(request: Request) -> MacUpdateCheck:
         try:
             return await asyncio.to_thread(updates_for(request).check)
@@ -69,6 +73,7 @@ def build_executor_router() -> APIRouter:
             raise HTTPException(409, str(error)) from error
 
     @router.get("/api/executor/update/{request_id}/archive")
+    @answers_uncompressed
     async def update_archive(request: Request, request_id: str) -> FileResponse:
         try:
             path = await asyncio.to_thread(updates_for(request).archive, request_id)
@@ -77,6 +82,7 @@ def build_executor_router() -> APIRouter:
         return FileResponse(path, media_type="application/gzip")
 
     @router.get("/api/executor/update/prefetch/{archive_sha256}")
+    @answers_uncompressed
     async def update_prefetch_archive(request: Request, archive_sha256: str) -> FileResponse:
         try:
             path = await asyncio.to_thread(updates_for(request).prefetch_archive, archive_sha256)
@@ -85,6 +91,7 @@ def build_executor_router() -> APIRouter:
         return FileResponse(path, media_type="application/gzip")
 
     @router.post("/api/executor/update")
+    @answers_uncompressed
     async def update_report(request: Request) -> dict[str, bool]:
         service = updates_for(request)
         body = bytearray()
