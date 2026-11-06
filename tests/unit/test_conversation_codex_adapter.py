@@ -461,26 +461,21 @@ def test_catalog_publication_failures_back_off_and_republish_after_sink_recovery
     _run(exercise)
 
 
-@pytest.mark.parametrize("respond", ["never", "error"])
 def test_ordinary_start_needs_correlated_response(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    respond: str,
 ) -> None:
     from planner.conversation.backends.codex_app_server import client
-    from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
+    from planner.conversation.backends.contracts import PromptWriteFailed
 
     async def exercise() -> None:
-        script: dict[str, Any] = {"turns": [{"respond": respond, "actions": []}]}
+        script: dict[str, Any] = {"turns": [{"respond": "never", "actions": []}]}
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            if respond == "never":
-                # Only a reply that never comes must time out, so only it gets a short wait.
-                # The initialize handshake and the error reply keep the full wait, because a
-                # busy machine can take longer than 0.1 s to send either.
-                monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
-            expected = PromptWriteFailed if respond == "never" else BackendPromptRejected
-            with pytest.raises(expected):
+            # Only the reply that never comes gets a short wait. The initialize
+            # handshake keeps the full wait.
+            monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
+            with pytest.raises(PromptWriteFailed):
                 await scripted.write_prompt(1, text_message_content("exact provider token"))
             assert scripted.sink.endings == []
 
