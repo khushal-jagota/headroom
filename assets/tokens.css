@@ -438,25 +438,24 @@
    * fixed CSS gradient, never measured. The page keeps this much room under its last block
    * (and above anything scrolled into view) to stand clear of the zone. */
   --composer-fade: var(--space-5);
-  --composer-clear: calc(var(--composer-zone) + var(--composer-fade));
+  --composer-clear: calc(var(--composer-zone) + var(--composer-preview-room) + var(--composer-fade));
   /* The composer: the reference composer's surface (10% white) with a 1px edge one step
-   * lighter, radius 12. The status line above it is small print on its inner edge. */
+   * lighter, radius 12. */
   --composer-surface: var(--surface-input);
   --composer-edge: var(--border-input);
   --composer-radius: 12px;
   --composer-inset: 16px;
-  --composer-status-gap: 6px;
-  /* The compact zone: a single-line composer (the reference composer is 42-44px), its status
-   * line under it as its footer, the pair floating over the page's last lines. */
+  /* The compact zone: staging's status line over a single-line composer (the reference
+   * composer is 42-44px), the pair floating over the page's last lines. The status line is a
+   * 32px row on an 8px/12px inset; an unread message under it adds up to three Body lines. */
   --composer-height: 44px;
   --composer-control: 32px;
-  --composer-status-height: 24px;
+  --composer-status-height: 52px;
+  --composer-preview-room: 70px;
   /* The run chips (model, delivery) are small print: 12.5px, secondary tone; the provider mark
    * is drawn at the same size in the same tone. */
   --composer-mark: 12.5px;
-  /* The latest message on the status line is an excerpt, never wider than this. */
-  --composer-excerpt: 280px;
-  --composer-zone: calc(var(--composer-height) + var(--composer-status-gap) + var(--composer-status-height) + var(--space-4));
+  --composer-zone: calc(var(--composer-status-height) + var(--composer-height) + var(--space-4));
   /* Counts are plain small numerals after their label, in the label's own tone. */
   --count-tone: var(--tone-tertiary);
   --count-needs-you-fill: transparent;

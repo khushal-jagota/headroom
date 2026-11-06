@@ -5430,12 +5430,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; }
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; }
 
-/* The status line is the composer's footer: small print under it, starting on the composer's
- * own left edge, its excerpt capped at --composer-excerpt with the chevron right after it. */
-.conversation-layer [data-conversation-rest-bar],
-.conversation-layer [data-conversation-dock-feedback] { order: 1; }
-.conversation-layer .conversation-column [data-conversation-rest-bar] { padding: var(--composer-status-gap) 0 0; }
-.conversation-layer .conversation-column [data-conversation-dock-feedback] { padding-inline: 0; }
+/* The status line stands over the composer, where staging placed it (ConversationRestBar). */
 
 /* The run chips are small print: the model's name and its provider mark (drawn in the chip's
  * own tone, ComposerRunControls) at 12.5px in the secondary tone, the reasoning effort a step
