@@ -32,6 +32,12 @@
     type ComposerAttachmentReference
   } from "./composer/attachments";
   import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
+  import {
+    controlsBelowTheDraft,
+    createDraftLineMeasurement,
+    moveBetweenDraftRows,
+    DRAFT_ROWS_MOTION_MS
+  } from "./composer/draftRows";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
@@ -1001,13 +1007,106 @@
     if (input.style.overflowY !== size.overflowY) input.style.overflowY = size.overflowY;
   }
 
+  // --- the draft's row ------------------------------------------------------------------------
+  /** The composer that is one row at rest: in a conversation layer, holding only the line. */
+  const ONE_ROW_COMPOSER =
+    ".conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label)))";
+  let boxElement = $state<HTMLDivElement | null>(null);
+  /** Whether the controls are on their own row under the draft. Written to the box as
+   *  data-composer-controls-below in the same step as it is decided, so the layout can be
+   *  read before and after it and the move drawn between the two. */
+  let controlsBelow = false;
+  let draftRowsMoving: Animation[] = [];
+  let draftLine: ReturnType<typeof createDraftLineMeasurement> | null = null;
+  /** On the one row, what lies between the add button and the next control that is not
+   *  the draft: the grid's two column gaps and the draft's own inset. Read whenever the one
+   *  row is showing; the columns are the same with the controls below, so it still holds. */
+  let oneRowGutter = 8;
+  let draftRowsKey: string | null = null;
+  /** Whether the last placement found the composer in the shape that has a one row. A box
+   *  coming back to that shape (an attachment removed, a voice take ended) has never been
+   *  drawn in either layout, so it is placed, not moved. */
+  let inOneRowShape = false;
+
+  function roomBesideControls(box: HTMLElement, input: HTMLTextAreaElement): number | null {
+    const foot = box.querySelector<HTMLElement>(":scope > .chat-foot");
+    const add = foot?.querySelector<HTMLElement>(":scope > .chat-add") ?? null;
+    if (foot === null || add === null) return null;
+    const following = Array.from(foot.children).filter(
+      (element) => element !== add && element.getClientRects().length > 0
+    );
+    if (following.length === 0) return null;
+    const between = Math.min(...following.map((element) => element.getBoundingClientRect().left))
+      - add.getBoundingClientRect().right;
+    if (!controlsBelow) oneRowGutter = between - input.clientWidth;
+    return between - oneRowGutter;
+  }
+
+  /** Put the controls beside the draft or under it, as the draft and its room now need. A
+   *  move the person made by writing is animated; the first placement, a different draft, a
+   *  return to this shape and a change of width are simply placed. */
+  function placeDraftRow(animate: boolean): void {
+    const box = boxElement;
+    const input = inputElement;
+    if (box === null || input === null || input.hidden || !box.matches(ONE_ROW_COMPOSER)) {
+      inOneRowShape = false;
+      return;
+    }
+    if (!inOneRowShape) animate = false;
+    inOneRowShape = true;
+    const room = roomBesideControls(box, input);
+    if (room === null) return;
+    const style = getComputedStyle(input);
+    const draftWidth = text === "" || text.includes("\n")
+      ? 0
+      : (draftLine ??= createDraftLineMeasurement(document)).measure(text, style);
+    const next = controlsBelowTheDraft({
+      controlsBelow,
+      text,
+      draftWidth,
+      roomBesideControls: room
+    });
+    if (next === controlsBelow) return;
+    const change = (): void => {
+      controlsBelow = next;
+      box.toggleAttribute("data-composer-controls-below", next);
+      resizeWritingArea();
+    };
+    if (!animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      for (const animation of draftRowsMoving) animation.cancel();
+      draftRowsMoving = [];
+      change();
+      return;
+    }
+    const foot = box.querySelector<HTMLElement>(":scope > .chat-foot");
+    const controls = Array.from(foot?.children ?? []).filter(
+      (element): element is HTMLElement => element instanceof HTMLElement && element.getClientRects().length > 0
+    );
+    draftRowsMoving = moveBetweenDraftRows(box, [input, ...controls], draftRowsMoving, change, {
+      duration: DRAFT_ROWS_MOTION_MS,
+      easing: style.getPropertyValue("--motion-ease").trim() || "ease-out"
+    });
+  }
+
   // Effects run after Svelte has written values and hidden-state changes into the DOM.
   $effect(() => {
     text;
     userInput;
     voiceState.phase;
     voiceFirstIdle;
+    attachments.length;
+    const key = draftKey;
+    const writing = draftRowsKey === key;
+    draftRowsKey = key;
+    placeDraftRow(writing);
+    const heightBefore = inputElement?.style.height;
     resizeWritingArea();
+    // A line gained or lost while the box is still growing: the box takes its new height
+    // now rather than at the end of the move.
+    if (draftRowsMoving.length > 0 && inputElement?.style.height !== heightBefore) {
+      for (const animation of draftRowsMoving) animation.cancel();
+      draftRowsMoving = [];
+    }
   });
 
   $effect(() => {
@@ -1023,7 +1122,10 @@
       // Write on the next frame, outside observer delivery. Even one intentional height
       // change to an observed input can otherwise report undelivered observations.
       cancelAnimationFrame(resizeFrame);
-      resizeFrame = requestAnimationFrame(resizeWritingArea);
+      resizeFrame = requestAnimationFrame(() => {
+        placeDraftRow(false);
+        resizeWritingArea();
+      });
     });
     observer.observe(input);
     return () => {
@@ -1056,6 +1158,8 @@
       releasePendingImages(pendingImages);
       voice?.dispose();
       voice = null;
+      draftLine?.dispose();
+      draftLine = null;
     };
   });
 </script>
@@ -1108,6 +1212,7 @@
 
     <div
       class="chat-box"
+      bind:this={boxElement}
       class:drag={draggingAttachments}
       class:has-ask={takenOver}
       data-conversation-box
