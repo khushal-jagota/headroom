@@ -1155,7 +1155,9 @@ a.pv-name:focus-visible { outline:0; }
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  height: var(--segment-height);
+  /* A control that wraps its segments (the Ideas project picker) grows with its rows, so
+   * nothing under it can sit on its second row. */
+  min-height: var(--segment-height);
 }
 
 .segmented-option {
@@ -4693,7 +4695,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 
 [data-screen="ideas"] .opt {
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-1) 10px;
   font-family: inherit;
   font-size: var(--type-xs);
   color: var(--text-faint);
@@ -4728,6 +4730,11 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
   filter: brightness(1.08);
 }
+
+/* As staging: Capture keeps its full height, and while there is nothing to capture it
+ * reads at half strength. */
+[data-screen="ideas"] [data-commit].button { height: auto; min-height: var(--button-height); line-height: 1.6; }
+[data-screen="ideas"] [data-commit].button:disabled { opacity: 0.5; color: var(--surface-ink); }
 
 /* Notifications — one quiet settings column; choices are content, not cards. */
 [data-screen="notifications"] {
