@@ -2446,22 +2446,35 @@ select {
   flex-direction: column;
 }
 
+/* THE REVIEW LINE: one line for the Worker, always on the decision card over its actions
+ * (WorkerProposalCard). A recessed fill, full width, no edge: the fill reads against the card on
+ * its own. It grows with what is written, up to ten lines. The focus ring is drawn on the whole
+ * line while its text has the caret. */
 .review-revision-box {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
+  align-items: flex-end;
+  gap: var(--space-1);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-recessed);
+}
+.review-revision-box:has(> .review-revision-input:focus) {
+  outline: var(--focus-width) solid var(--focus-ring);
+  outline-offset: 0;
 }
 
 .review-revision-input {
   flex: 1;
-  min-height: 2.75rem;
+  min-width: 0;
+  min-height: 36px;
+  max-height: calc(10lh + 2 * var(--space-2));
+  field-sizing: content;
   resize: none;
   border: 0;
   outline: 0;
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-3);
-  background: var(--surface-recessed);
+  padding: var(--space-2) 0;
+  background: transparent;
   color: var(--text-strong);
   caret-color: var(--accent-bright);
   font-family: var(--font-ui);
@@ -2473,30 +2486,16 @@ select {
   color: var(--text-faintest);
 }
 
-/* Send back — a quiet filled action beside the textarea, borderless per the
- * mockup, sized to sit level with the composer's top. */
-.review-revision-box .button {
-  flex: none;
-  border-color: transparent;
-  color: var(--text-muted);
-  padding: var(--space-3) var(--space-4);
-}
-
-.review-revision-box .button:hover:not(:disabled) {
-  color: var(--text-strong);
-}
-
-/* Voice on the revision box (t_0pgfmbsr): the mic is only an affordance beside the
- * textarea — Approve stays this screen's primary action. The live states reuse the
- * composer's .chat-voice-* language; these rules just seat them in this row. */
+/* Voice on the line (t_0pgfmbsr): the mic sits at the line's end, a full composer-size target;
+ * the live states reuse the composer's .chat-voice-* language in the same place. */
 .review-voice-mic {
   flex: none;
-  align-self: center;
-  width: var(--space-5);
-  height: var(--space-5);
+  width: var(--composer-control);
+  height: var(--composer-control);
+  margin-bottom: 2px;
   display: grid;
   place-items: center;
-  padding: var(--space-1);
+  padding: 0;
   background: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -2505,11 +2504,11 @@ select {
 }
 .review-voice-mic:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
 .review-voice-mic:disabled { opacity: 0.5; cursor: default; }
-.review-voice-mic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; }
-/* The centred line stands where the textarea rests, at its height, so nothing jumps. */
+.review-voice-mic svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+/* The centred line stands where the text rests, at its height, so nothing jumps. */
 .review-voice-mid {
   flex: 1;
-  min-height: 2.75rem;
+  min-height: 36px;
 }
 .review-revision-box .review-voice-action { align-self: center; }
 
@@ -5251,6 +5250,33 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-add { grid-column: 1; grid-row: 1; }
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; }
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; }
+
+/* THE DRAFT ROW. A draft that comes within ~40px of the controls, or holds a line break, takes
+ * the full width on a row of its own, and the controls stay on the row under it
+ * (ConversationComposer sets data-composer-controls-below, and clears it once the draft fits
+ * with ~80px to spare or is emptied). Where the one row would leave the draft under 240px (a
+ * phone, a tablet, a narrow window) the draft has its own row at rest too. The columns are the same in both layouts, so no control
+ * moves: the draft rises into its row and the box grows over it, the component animating both
+ * (180ms, none under reduced motion). The rows sit at the box's foot, so while the height
+ * moves the controls stay put and the draft travels with the box's top edge. The draft's
+ * first line keeps its 10px from the top and its left edge is the composer's inset. */
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) { align-content: end; }
+.conversation-layer .chat-box[data-composer-controls-below]:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-ta {
+  grid-column: 1 / -1;
+  width: auto;
+  margin: calc((var(--composer-control) - 24px) / 2) calc(var(--composer-inset) - var(--space-2) - var(--border-hairline));
+}
+.conversation-layer .chat-box[data-composer-controls-below]:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) :is(.chat-add, [data-conversation-model-picker], .chat-submit) { grid-row: 2; }
+/* The model picker sits at the right in both layouts, so its panel opens from the composer's
+ * right edge, inside the composer's width (it used to open from the chip's left and run past
+ * the composer, off screen at 768px). It is placed against the box, 8px above it, like the
+ * command menu. */
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { position: static; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] > .listbox-picker-panel {
+  left: auto;
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+}
 
 /* The status line stands over the composer, where staging placed it (ConversationRestBar). */
 
