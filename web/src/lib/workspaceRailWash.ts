@@ -4,7 +4,12 @@ type Layer = { node: HTMLDivElement; box: string; animation: Animation | null; f
 type Host = { node: HTMLElement; group: Layer; item: Layer; hover: Layer; focus: Layer };
 type Target = { node: HTMLElement; host: Host; group: HTMLElement | null; itemBox: Box; groupBox: Box | null };
 const properties = ['left', 'top', 'width', 'height'] as const;
-const targets = '.item-head, .worker-row, .goal, .settled-title, .utility';
+/* Each row is one element. The wash draws that element's box, and the same element owns
+ * the row's hover, click and preview, so the washed area and the area that responds are
+ * one area. Selection and keyboard focus are marked on a control inside some rows. */
+const rows = '.identity, .worker-row, .goal, .settled-row, .utility';
+const marks = '.item-head, .worker-row, .goal, .settled-title, .utility';
+const rowOf = (mark: HTMLElement | null) => mark?.closest<HTMLElement>(rows) ?? null;
 
 export function workspaceRailWash(root: HTMLElement) {
   const hosts = new Map<HTMLElement, Host>();
@@ -35,7 +40,7 @@ export function workspaceRailWash(root: HTMLElement) {
     for (const node of root.querySelectorAll<HTMLElement>('.active-work-scroll, .settled-body, .rail-utilities')) {
       if (!hosts.has(node)) { hosts.set(node, {node, group: layer(node,'group'), item:layer(node,'item'), hover:layer(node,'hover'), focus:layer(node,'focus')}); resize.observe(node); }
     }
-    for (const node of root.querySelectorAll('.manager-card, .identity, [data-goal-status], .worker-row, .goal, .settled-row')) { if (!observed.has(node)) {observed.add(node);resize.observe(node);} }
+    for (const node of root.querySelectorAll('.manager-card, .identity, .worker-row, .goal, .settled-row')) { if (!observed.has(node)) {observed.add(node);resize.observe(node);} }
     for (const node of observed) if (!root.contains(node)) {resize.unobserve(node);observed.delete(node);}
     for (const [node,host] of hosts) if (!root.contains(node)) {
       resize.unobserve(node);
@@ -51,19 +56,7 @@ export function workspaceRailWash(root: HTMLElement) {
     const local = (rect: DOMRect): Box => ({left:rect.left-base.left+host.node.scrollLeft,top:rect.top-base.top+host.node.scrollTop,width:rect.width,height:rect.height});
     const group = node.closest<HTMLElement>('.manager-card');
     const groupBox = group ? local(group.getBoundingClientRect()) : null;
-    const itemBox = local((node.closest('.settled-row') ?? node).getBoundingClientRect());
-    const inset = parseFloat(css('--space-1'));
-    if (groupBox) {
-      itemBox.left = groupBox.left+inset;
-      itemBox.width = groupBox.width-2*inset;
-      if (node.matches('.item-head')) {
-        const identity = local(node.closest('.identity')!.getBoundingClientRect());
-        const status = group?.querySelector<HTMLElement>('[data-goal-status]')?.getBoundingClientRect();
-        const bottom = status ? local(status).top + status.height : identity.top + identity.height;
-        itemBox.top = groupBox.top+inset;
-        itemBox.height = Math.min(bottom+2*inset,groupBox.top+groupBox.height-inset)-itemBox.top;
-      }
-    }
+    const itemBox = local(node.getBoundingClientRect());
     return {node,host,group,itemBox,groupBox};
   }
   const style = (box: Box) => Object.fromEntries(properties.map(key=>[key,`${box[key]}px`]));
@@ -101,7 +94,7 @@ export function workspaceRailWash(root: HTMLElement) {
     }
     hide(part);
   }
-  const identity = (node: HTMLElement) => node.dataset.railMotion ?? node.dataset.goalId ?? node.getAttribute('href') ?? node.closest<HTMLElement>('[data-settled-item]')?.dataset.settledItem ?? (node.matches('.item-head') ? node.closest<HTMLElement>('[data-rail-motion]')?.dataset.railMotion : undefined);
+  const identity = (node: HTMLElement) => node.dataset.railMotion ?? node.dataset.goalId ?? node.getAttribute('href') ?? node.closest<HTMLElement>('[data-settled-item]')?.dataset.settledItem ?? (node.matches('.identity') ? node.closest<HTMLElement>('[data-rail-motion]')?.dataset.railMotion : undefined);
   function select(next: Target | null) {
     // A bucket move recreates a keyed row in a different bucket. It is still the same selection.
     if (current && next && current.host===next.host && identity(current.node) && identity(current.node)===identity(next.node)) {
@@ -132,7 +125,7 @@ export function workspaceRailWash(root: HTMLElement) {
     current=next;
   }
   function decorate() {
-    const selected=root.querySelector<HTMLElement>(targets.split(', ').map(s=>`${s}[aria-current="page"]`).join(', '));
+    const selected=rowOf(root.querySelector<HTMLElement>(marks.split(', ').map(s=>`${s}[aria-current="page"]`).join(', ')));
     select(selected?geometry(selected):null);
     if (current) {
       draw(current.host.item,current.itemBox);current.host.item.node.hidden=false;
@@ -146,7 +139,7 @@ export function workspaceRailWash(root: HTMLElement) {
     if (hoverHeld && (media.matches || performance.now()>=hoverHeld.until)) hoverHeld=null;
     const hoverNode=hoverHeld?.node ?? (hovered!==current?.node?hovered:null);
     const hover=hoverNode?geometry(hoverNode):null;
-    const focusNode=root.querySelector<HTMLElement>(targets.split(', ').map(s=>`${s}:focus-visible`).join(', '));
+    const focusNode=rowOf(root.querySelector<HTMLElement>(marks.split(', ').map(s=>`${s}:focus-visible`).join(', ')));
     const focus=focusNode?geometry(focusNode):null;
     for (const host of hosts.values()) {
       if (hover?.host===host) {
@@ -169,10 +162,8 @@ export function workspaceRailWash(root: HTMLElement) {
   }
   function targetAt(node: EventTarget | null) {
     if (!(node instanceof Element)) return null;
-    const control=node.closest<HTMLElement>(targets);
-    if (control && root.contains(control)) return control;
-    const identity = node.closest('[data-goal-status]')?.closest('.manager-card') ?? node.closest('.identity');
-    return identity?.querySelector<HTMLElement>('.item-head') ?? null;
+    const row=node.closest<HTMLElement>(rows);
+    return row && root.contains(row) ? row : null;
   }
   function pointer(event: PointerEvent) {
     if(event.pointerType==='touch'){hovered=null;hoverHeld=null;}else hovered=targetAt(event.target);
