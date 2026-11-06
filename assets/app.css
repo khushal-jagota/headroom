@@ -5305,8 +5305,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 
 /* THE FOLD ROW — Steps, Artifacts and every band like them: the page list's own group
- * heading. Borderless, small print in the tertiary tone, its count after it, and the fold's
- * chevron right after the count. */
+ * heading. Borderless small print: its label in the secondary tone, its count after it in the
+ * tertiary tone, and the fold's chevron right after the count. */
 .disclosure-band,
 .disclosure-bands > .disclosure-band + .disclosure-band,
 .ticket-screen .worker-bands .worker-steps { border: 0; }
@@ -5321,14 +5321,14 @@ details:not([open]) > summary > .manager-workspace-chevron {
   margin-inline: calc(var(--page-row-outset) * -1);
   border-radius: var(--radius-md);
   background: none;
-  color: var(--tone-tertiary);
+  color: var(--tone-secondary);
   font-family: var(--font-ui);
   font-size: var(--type-small);
   font-weight: var(--weight-small);
   line-height: 20px;
 }
 .disclosure-band > summary:hover,
-.ticket-screen .worker-bands .worker-steps > summary:hover { background: none; color: var(--tone-secondary); }
+.ticket-screen .worker-bands .worker-steps > summary:hover { background: none; color: var(--tone-strong); }
 .disclosure-band-trailing,
 .ticket-screen .worker-bands .band-count {
   margin-left: 0;
@@ -5400,8 +5400,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * (PageFold.svelte): a list row, table row, checklist item, paragraph or heading that would
  * cross it waits below, whole or not shown. The page is cut at the row boundary where its
  * lines stop (--page-fold-cut, measured from the reading area's bottom): above it everything
- * is drawn whole, below it nothing is; a card's box fades out over --composer-fade (12px) under
- * that row, with no fade over any line. A solid band of page sits between it and the composer. */
+ * is drawn whole, below it nothing is; a card's sides and fill fade out over --composer-fade
+ * (32px) under that row, into the solid band of page above the composer, so the card reads as
+ * scrolling under rather than cut; no line is ever faded. */
 :is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) :is(.manager-doc, .ticket-doc) {
   /* Anything scrolled into view (a focused row, a found word) stops above the fold. */
   scroll-padding-bottom: var(--page-fold-clear);
@@ -5455,3 +5456,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-composer] .chat-foot .model-picker-face { color: inherit; }
 [data-conversation-composer] .chat-foot .model-picker-effort { color: var(--tone-tertiary); }
 [data-conversation-composer] .chat-ta:focus::placeholder { color: var(--tone-tertiary); }
+/* The composer's icons (add, voice, send at rest) stand in the secondary tone, one step above
+ * the placeholder, and lift to the strong tone on hover. */
+[data-conversation-composer] .chat-image:not(.on),
+[data-conversation-composer] .chat-send:not(.on) { color: var(--tone-secondary); }
+[data-conversation-composer] .chat-image:not(.on):hover:not(:disabled) { color: var(--tone-strong); }

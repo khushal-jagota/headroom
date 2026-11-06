@@ -111,11 +111,11 @@
 </div>
 
 <style>
-  /* Blocks of one page keep the section rhythm: 40px between them. */
+  /* Blocks of one page keep the block rhythm: 32px between them. */
   .blocks {
     display: flex;
     flex-direction: column;
-    gap: var(--page-section-gap);
+    gap: var(--page-block-gap);
     min-width: 0;
   }
 

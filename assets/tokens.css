@@ -381,8 +381,10 @@
   /* The page's top band: the one line above the title (where it lives) on the left and the
    * page's own utilities on the right. One height on every page. */
   --page-band-height: 48px;
-  /* The space before a section head, and from a head to its content. */
-  --page-section-gap: 32px;
+  /* The space before a section head (from the header, or the section above), and from a head
+   * to its content. A page of blocks without heads (the goal page) keeps 32px between them. */
+  --page-section-gap: 40px;
+  --page-block-gap: 32px;
   --page-head-gap: 14px;
   /* Page type: the page-title role and the section-head role. */
   --type-page-title: 26px;
@@ -422,11 +424,11 @@
   /* The page keeps this much room under its last block, so it can scroll fully clear of
    * the composer zone. */
   --page-end-room: var(--space-7);
-  /* Above the composer: a solid band of page, and above it the 12px over which a card's box
+  /* Above the composer: a solid band of page, and above it the 32px over which a card's box
    * fades below the row where the page is cut. Text never enters either: its lines stop at
    * the fold above both. */
   --composer-band: 24px;
-  --composer-fade: 12px;
+  --composer-fade: 32px;
   --page-fold-clear: calc(var(--composer-zone) + var(--composer-band) + var(--composer-fade));
   /* The composer: the reference composer's surface (10% white) with a 1px edge one step
    * lighter, radius 12. The status line above it is small print on its inner edge. */

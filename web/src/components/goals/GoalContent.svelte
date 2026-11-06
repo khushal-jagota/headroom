@@ -63,5 +63,5 @@
 </div>
 <style>
 .goal-content{container-type:inline-size}/* The approved card: the chart sits inside it without a second frame. */
-.measure-panel{margin-top:0;padding:var(--page-card-pad);border:var(--border-hairline) solid var(--page-card-edge);border-radius:var(--page-card-radius);background:var(--page-card-fill)}.measure-panel :global(.completion-card){min-height:124px}.panel-actions{display:flex;justify-content:flex-end;margin-top:var(--space-4)}.goal-page{margin-top:var(--page-section-gap)}.source-warning{font-size:var(--type-small);color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}
+.measure-panel{margin-top:0;padding:var(--page-card-pad);border:var(--border-hairline) solid var(--page-card-edge);border-radius:var(--page-card-radius);background:var(--page-card-fill)}.measure-panel :global(.completion-card){min-height:124px}.panel-actions{display:flex;justify-content:flex-end;margin-top:var(--space-4)}.goal-page{margin-top:var(--page-block-gap)}.source-warning{font-size:var(--type-small);color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}
 </style>
