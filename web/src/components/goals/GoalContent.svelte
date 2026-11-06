@@ -52,7 +52,7 @@
 <div class="goal-content" bind:clientWidth={width} data-goal-content={id}>
  {#if error}<ErrorLine {error}/>{/if}
  {#if checklist}<section class="checklist-panel" aria-label="Completion checklist">{#key `${goal.id}:${checklist.id}`}<PageChecklist block={checklist} presentation="normal"/>{/key}</section>{/if}
- {#if primary}<section class="measure-panel" aria-label="Current reading"><PageChart block={primary} integrated/>
+ {#if primary}<section class="measure-panel" aria-label="Current reading"><PageChart block={primary} integrated wide/>
   {#if goal.kind==='binary'}<div class="panel-actions"><Button variant="secondary" class="completion-action" onclick={()=>change({completed:!goal.completed})}>{goal.completed?'Mark not done':'Mark done'}</Button></div>{/if}
  </section>{/if}
  {#if readings.error}<ErrorLine error={readings.error}/>{/if}

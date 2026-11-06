@@ -14,7 +14,11 @@ const colors = { good: 'var(--accent-done)', bad: 'var(--accent-error)', attenti
 // A trend line keeps its per-reading status, drawn in calmer tones than the status text.
 const lineColors = { good: 'var(--chart-line-good)', bad: 'var(--chart-line-bad)', attention: 'var(--chart-line-attention)', neutral: colors.neutral };
 const C = { green: colors.good, blue: 'var(--accent-bright)', reference: 'var(--chart-reference)' };
-export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; projection?: ChartProjection; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean };
+export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; projection?: ChartProjection; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean; wide?: boolean };
+
+/** Plot heights: a goal card's, a page block's, and the wide goal page's, which takes a wider
+ *  aspect so the page under it starts sooner. */
+const PLOT_HEIGHT = { compact: 120, regular: 184, wide: 144 };
 
 /** The period switch is the shared segmented control (app.css, .segmented), in React. */
 export function Range({ value, onChange, block, projection }: { value: string; onChange: (v: string) => void; id: string; block: ChartBlock; projection?: ChartProjection }) {
@@ -38,7 +42,7 @@ function CategoryNotes({ headline, projection, range }: { headline: ReturnType<t
   return details.length ? <details className="observation-details caption"><summary>Observation details</summary><ul>{details.map(detail => <li key={detail}>{detail}</li>)}</ul></details> : null;
 }
 
-export function GoalChart({ block, values, projection, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false, integrated = false }: GoalChartProps) {
+export function GoalChart({ block, values, projection, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false, integrated = false, wide = false }: GoalChartProps) {
   const [preferences, setPreferences] = useState(() => {
     const saved = readChartPreference(preferenceKey);
     return block.ranges?.length && !block.ranges.some(r => r.id === saved.range) ? { ...saved, range: block.ranges[0].id } : saved;
@@ -103,7 +107,7 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
     ]} />;
   else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} />;
   else if (block.kind === 'number') chart = null;
-  else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 120 : 184)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
+  else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? PLOT_HEIGHT.compact : wide ? PLOT_HEIGHT.wide : PLOT_HEIGHT.regular)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
   // One period switch everywhere: a compact control at the bottom centre of the chart, each
   // segment sized to its label (the shared segmented control).
   const rangeOnTop = false;
