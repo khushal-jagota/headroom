@@ -837,12 +837,12 @@ strong {
   overflow-wrap: anywhere;
 }
 
-/* Table heads are Small text in the tertiary tone, like every other label. */
+/* Table heads, as staging: bold in the strong tone over a recessed band, at the table's
+ * own size. */
 .markdown th {
-  color: var(--tone-tertiary);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
-  vertical-align: bottom;
+  color: var(--tone-strong);
+  font-weight: var(--weight-title);
+  background: var(--surface-recessed);
 }
 
 .markdown img {
