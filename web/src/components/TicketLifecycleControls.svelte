@@ -37,7 +37,7 @@
       {#if ticket.is_backlogged}
         <Button variant="secondary" disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>
       {:else}
-        <Button variant="ghost" class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</Button>
+        <Button variant="secondary" class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</Button>
       {/if}
       {/if}
     </div>
@@ -48,7 +48,7 @@
 
 <style>
   .ticket-lifecycle { font-size:var(--type-small); color:var(--tone-tertiary); }
-  .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-1); }
+  .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); }
   .separator { display:none; }
   .state { color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); margin-right:var(--space-1); }
   .hint { margin:var(--space-2) 0; line-height:18px; }

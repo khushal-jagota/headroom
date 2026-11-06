@@ -104,8 +104,8 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
   else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} />;
   else if (block.kind === 'number') chart = null;
   else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 120 : 184)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
-  // One period switch everywhere: a row under the chart, the card's width split into equal
-  // columns, each option a pill hugging its label (the shared segmented control).
+  // One period switch everywhere: a compact control at the bottom centre of the chart, each
+  // segment sized to its label (the shared segmented control).
   const rangeOnTop = false;
   const plot = <>{chart}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 

@@ -13,10 +13,12 @@
   import { fateSentence } from "../lib/conversation/composer";
   import type { PromptDeliveryFate } from "../lib/conversation/wire";
 
-  let { kind, id, class: extraClass = "" }: {
+  let { kind, id, class: extraClass = "", variant = "secondary" }: {
     kind: "ticket" | "manager" | "chief";
     id: string;
     class?: string;
+    /** A page's own action is a secondary button; a quieter host may ask for the ghost. */
+    variant?: "secondary" | "ghost";
   } = $props();
 
   let sending = $state(false);
@@ -49,7 +51,7 @@
        Marked rather than disabled: a disabled control loses focus the instant it is
        pressed, and inside a hover panel losing focus is how the panel decides you left. -->
   <Button
-    variant="ghost"
+    {variant}
     class="request-recap-action"
     aria-disabled={sending}
     data-request-recap-action
@@ -60,6 +62,6 @@
 
 <style>
   .request-recap { display:inline-flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
-  /* A page's own utility: the ghost rank of the one Button. */
+
   .request-recap-note { color:var(--tone-tertiary); font-size:var(--type-small); }
 </style>

@@ -2,6 +2,7 @@
   import { isBrokenTicket } from "../lib/ticketIntegrity";
   import MacStatus from "../components/machines/MacStatus.svelte";
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
+  import PageFold from "../components/pageKit/PageFold.svelte";
   import MachineIdentity from "../components/machines/MachineIdentity.svelte";
   import { machineName } from "../lib/ticketMachines";
   import { onDestroy, tick, untrack } from "svelte";
@@ -472,6 +473,7 @@
           {/if}
         </div>
         {/if}
+        <PageFold />
       </main>
       {#if artifact.shown}
         <ArtifactPreview
