@@ -187,12 +187,12 @@
   --border-card: rgba(255, 255, 255, 0.07);
   --border-hover: rgba(255, 255, 255, 0.13);
   --border-focus: var(--focus-ring);
-  /* THE focus ring (Direction v2, Outcome 6), drawn the same way on every focusable control:
-   * a 1.5px line in the accent, 2px off the control. An outline follows the control's own
+  /* THE focus ring, drawn the same way on every focusable control: staging's 2px line in
+   * the accent, 2px off the control. An outline follows the control's own
    * radius, so at a 2px offset its radius is the control's radius + 2. It is a line, never a
    * fill, so it cannot read as "needs you". */
   --focus-ring: var(--accent-bright);
-  --focus-width: 1.5px;
+  --focus-width: 2px;
   --focus-offset: 2px;
   /* The floating plane's shadow: one soft drop, no dark ring (the ring is --border-raised). */
   --shadow-float: 0 4px 12px rgb(0 0 0 / 24%);

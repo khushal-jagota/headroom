@@ -1607,7 +1607,7 @@ button.list-row:hover .list-row-title {
 }
 
 .chat-overflow-history select:focus-visible {
-  outline: var(--border-hairline) solid var(--focus-ring);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -3015,7 +3015,7 @@ select {
 }
 
 .ed:focus {
-  outline: var(--border-hairline) solid var(--focus-ring);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: var(--space-1);
 }
 
@@ -3673,7 +3673,7 @@ select {
 .ticket-identity-fact:focus-within {
   color: var(--text-strong);
   border-bottom-color: var(--accent-bright);
-  outline: var(--border-hairline) solid var(--focus-ring);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -4041,7 +4041,7 @@ a.artifact-chip:hover,
 
 .stage-fold-summary:focus-visible,
 .stage-fold-close:focus-visible {
-  outline: var(--border-hairline) solid var(--focus-ring);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: calc(-1 * var(--border-hairline));
 }
 
