@@ -381,6 +381,8 @@
    * and a soft shadow, no ring. The fill's step over the rail and the page is its edge. */
   --rail-float-surface: #2a2a2a;
   --rail-float-shadow: 0 4px 16px rgb(0 0 0 / 28%);
+  /* A goal preview's header stands on a band one step lighter than the preview, as on staging. */
+  --rail-preview-band: rgb(255 255 255 / 4%);
   --rail-preview-width: 340px;
   --rail-preview-pad: 16px;
   --rail-preview-recap-size: 13px;
