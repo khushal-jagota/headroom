@@ -14,7 +14,7 @@
 [data-screen="vps"] .opt { padding:var(--space-1) var(--space-3); border:0; border-radius:var(--radius-sm); background:var(--surface-2); color:var(--text-faint); font:inherit; font-size:var(--type-xs); cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 [data-screen="vps"] .opt:hover { color:var(--text-default); }
 [data-screen="vps"] .opt[aria-pressed="true"] { color:var(--text-strong); background:var(--surface-recessed); }
-[data-screen="vps"] .opt:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:var(--border-strong); }
+[data-screen="vps"] .opt:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:var(--border-strong); }
 [data-screen="vps"] .instruments { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:var(--space-3); }
 [data-screen="vps"] .instrument { position:relative; overflow:hidden; background:var(--surface-1); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-md); }
 [data-screen="vps"] .instrument--wide { grid-column:span 2; }

@@ -108,7 +108,7 @@
 </section>
 <style>
   .worker-proposal { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }
-  h2 { margin:0; letter-spacing:-.01em; font-size:var(--type-lg); font-weight:640; line-height:1.4; color:var(--text-strong); }
+  h2 { margin:0; letter-spacing:-.008em; font-size:var(--type-md); font-weight:600; line-height:1.4; color:var(--text-strong); }
   .who { margin:2px 0 0; font-size:var(--type-sm); font-weight:500; letter-spacing:0; color:var(--text-faint); }
   .proposal-prose { max-width:68ch; line-height:1.6; margin-top:var(--space-3); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; }
@@ -121,7 +121,7 @@
   .primary:hover:not(:disabled) { background:var(--accent-fill-hover); }
   .ghost { background:var(--fill-secondary); color:var(--text-default); padding:0 14px; }
   .ghost:hover { background-color:rgb(255 255 255 / 12%); color:var(--text-strong); }
-  button:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
+  button:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   .return-unavailable { color:var(--text-faintest); font-size:var(--type-sm); margin:var(--space-2) 0 0; }
   .return-note { margin-top:var(--space-4); }
   label { display:block; font-size:var(--type-xs); color:var(--text-faint); }

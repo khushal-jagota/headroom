@@ -329,12 +329,13 @@
         <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <!-- Every page has one line above its title: where it lives, then its own facts.
                Under the title there is only the recap. -->
+          <!-- The machine's mark leads the line, as it leads a Ticket's row; its name is the
+               mark's accessible name and tooltip. -->
           <div class="worker-eyebrow" data-ticket-identity>
+            <span class="worker-machine" title={`Runs on ${machineName(masthead.locale)}`}><MachineIdentity locale={masthead.locale} /></span>
             <span data-project-fact>{masthead.project || "No project"}</span>
             <span aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
-            <span aria-hidden="true">·</span>
-            <span class="worker-machine"><MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span></span>
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title">
@@ -512,7 +513,7 @@
   .ticket-title-row { display:block; margin-top:var(--space-2); }
   .worker-machine { display:inline-flex; align-items:center; gap:5px; }
   .worker-machine :global(.machine-identity) { width:15px; height:15px; color:inherit; }
-  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:var(--type-display); font-weight:740; line-height:1.25; letter-spacing:-.022em; }
+  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:var(--type-display); font-weight:700; line-height:1.25; letter-spacing:-.02em; }
   .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is
      written, and a gap that went with them would move the page. */

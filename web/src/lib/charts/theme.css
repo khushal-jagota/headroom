@@ -16,7 +16,7 @@
   * { box-sizing:border-box; }
   h2 { margin:0; font-size:var(--type-md); font-weight:590; letter-spacing:-.006em; line-height:normal; color:var(--text-strong); }
   button { font-family:inherit; }
-  button:focus-visible,[role=slider]:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
+  button:focus-visible,[role=slider]:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   .metric-card { min-width:0; border:1px solid var(--chart-card-border); background:var(--chart-surface); border-radius:var(--radius-lg); padding:var(--space-5); }
   .hero-card { padding:var(--space-5); }
   .metric-top { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; min-height:40px; }
@@ -43,8 +43,9 @@
   .compact .metric-value { height:36px; }
   .compact .comparison { font-size:13px; }
   .compact .missing-value { font-size:var(--type-chart-compact); }
-  .compact .ranges { width:100%; justify-content:space-between; }
-  .compact .ranges button { flex:1; padding:0 8px; }
+  /* The range is one full-width row under every plot, a Manager's card or the goal page. */
+  .chart-range-footer .ranges { width:100%; justify-content:space-between; }
+  .chart-range-footer .ranges button { flex:1; padding:0 8px; }
   .compact .caption { font-size:12px; }
   .chart-range-footer { margin-top:20px; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
@@ -70,7 +71,7 @@
   .partial-reading { color:var(--chart-muted); }
   .observation-details { margin-top:12px; overflow-wrap:anywhere; }
   .observation-details summary { cursor:pointer; width:fit-content; }
-  .observation-details summary:focus-visible { outline:2px solid var(--focus-ring); outline-offset:4px; }
+  .observation-details summary:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:4px; }
   .observation-details ul { margin:8px 0 0; padding-left:20px; }
   .observation-details li + li { margin-top:4px; }
   .gauge-card { min-height:300px; }

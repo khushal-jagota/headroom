@@ -73,7 +73,7 @@
   .provider-popup label { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-2); color:var(--text-default); }
   input { accent-color:var(--text-muted); }
   .mobile-period { display:none; background:none; border:0; }
-  :is(button,a,summary,select,input):focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:var(--space-1); }
+  :is(button,a,summary,select,input):focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:var(--space-1); }
   @media(max-width:1100px) { .periods { display:none; }.mobile-period { display:block; max-width:calc(var(--space-7) + var(--space-2)); } }
   @media(max-width:760px) { .usage-header { flex-wrap:wrap; gap:var(--space-3); }.breadcrumbs { width:100%; gap:var(--space-2); }.toolbar { width:100%; gap:var(--space-2); }.metrics { flex:1; justify-content:space-between; }.metrics a { padding:var(--space-1) var(--space-2); } }
 </style>

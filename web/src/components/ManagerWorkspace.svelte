@@ -306,5 +306,5 @@
   .goal-chevron { font-size:var(--type-md); line-height:1; }
   .goal-chevron::before { content:"\203A"; }
   .goal-band[open] > summary .goal-chevron::before { content:"\2304"; }
-  a:focus-visible, button:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
+  a:focus-visible, button:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 </style>

@@ -398,7 +398,7 @@
           {#if railStatus}<div class="rail-status">{@render railStatus()}</div>{/if}
           {#if workspace}
             <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
-              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>({workspace?.globalCounts?.settled ?? rail.settledItems.length})</span></span></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>{workspace?.globalCounts?.settled ?? rail.settledItems.length}</span></span></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               {#if presentation.settledBodyOpen ?? settledOpen}
                 <div class="settled-body" data-settled-scroll use:navigationScrollWindow={{window:settledWindow,activate:()=>navigation?.owner.prioritizeWindow(settledWindow?.request),selector:'[data-settled-item]',key:node=>node.dataset.settledItem ?? '',move:(anchor,direction)=>railPage('settled',anchor,direction)}} onscroll={scrollHover}>
                 {#each rail.settledItems as item (item.id)}
@@ -528,6 +528,10 @@
   .board-workspace-right { position:relative; z-index:0; }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:var(--space-3) 0 var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
   .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
+  /* Rows scrolled out above pass under one hairline at the list's top edge, the same clean
+     edge the list ends on at its foot; nothing fades. */
+  .rail-work .rail-work::before { content:""; position:absolute; z-index:3; left:var(--rail-edge); right:var(--rail-edge); top:0; height:var(--border-hairline); background:var(--border-color); pointer-events:none; opacity:0; }
+  :global(.workspace-rail[data-rail-more-above]) .rail-work .rail-work::before { opacity:1; }
   /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
      included, without becoming a scroller that a hover could slide sideways. */
   .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
@@ -562,7 +566,7 @@
   .settled-title > span { flex:1; min-width:0; overflow-wrap:anywhere; }
   .reopen { opacity:0; margin-left:auto; color:var(--text-faint); font-size:12px; }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
-  button:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
+  button:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   @media(prefers-reduced-motion:reduce) {
     .rail-grip::after { transition:none; }
   }

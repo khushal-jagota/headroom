@@ -140,7 +140,7 @@
  .metadata:hover{color:var(--text-strong)}.metadata:hover > select,.metadata:hover > input{color:var(--text-strong)}
  select{cursor:pointer;text-overflow:ellipsis}
  select option{background:var(--surface-1);color:var(--text-default)}
- input:focus-visible,select:focus-visible{outline:var(--border-strong) solid var(--focus-ring);outline-offset:0}
+ input:focus-visible,select:focus-visible{outline:var(--focus-width) solid var(--focus-ring);outline-offset:0}
  input:disabled,select:disabled{opacity:.65}
  input::-webkit-calendar-picker-indicator{display:none}
  input::-webkit-datetime-edit,input::-webkit-datetime-edit-fields-wrapper,input::-webkit-datetime-edit-text,input::-webkit-datetime-edit-month-field,input::-webkit-datetime-edit-day-field,input::-webkit-datetime-edit-year-field{padding:0}
@@ -148,7 +148,7 @@
  .empty:not(:focus-within) .date-size,.empty:focus-within .deadline-empty{display:none}
  .empty:not(:focus-within) input{opacity:0}
  .signal{margin-left:auto}
- h1{font-size:var(--type-display);font-weight:740;line-height:1.25;letter-spacing:-.022em;margin:0;max-width:750px;color:var(--text-strong)}
+ h1{font-size:var(--type-display);font-weight:700;line-height:1.25;letter-spacing:-.02em;margin:0;max-width:750px;color:var(--text-strong)}
  .why{font-size:var(--type-ui);font-weight:500;line-height:22px;color:var(--text-muted);margin-top:var(--space-2);max-width:none}
  .why :global(.ed){min-height:1.6em;white-space:pre-wrap}
  h1,.why{overflow-wrap:anywhere}

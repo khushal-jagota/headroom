@@ -145,10 +145,13 @@
     const moved = event.relatedTarget as Node | null;
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
-  <!-- The eyebrow follows every page's line above its title: where the Ticket lives, then the
-       machine it runs on, named as well as drawn. -->
-  <div class="kicker"><span class="kicker-place">{kicker}</span>{#if currentWorker?.locale}<span class="kicker-dot" aria-hidden="true">·</span><span class="kicker-machine"><MachineIdentity locale={currentWorker.locale} accessible={false} /><span>{machineName(currentWorker.locale)}</span></span>{/if}</div>
+  <!-- The machine's mark leads the eyebrow, as it leads the Ticket's line on its page; its name
+       is the mark's accessible name and tooltip. -->
+  <div class="kicker">{#if currentWorker?.locale}<span class="kicker-machine" title={`Runs on ${machineName(currentWorker.locale)}`}><MachineIdentity locale={currentWorker.locale} /></span>{/if}<span class="kicker-place">{kicker}</span></div>
   <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <!-- Where the Ticket is in its work belongs with its name, so every preview ends the same
+       way: the recap, then the ask for a fresh one. -->
+  {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}
@@ -161,22 +164,20 @@
       {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
     </div>
   {/if}
-  {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
   /* A compact raised card: where it belongs (kicker), what it is (title), then the recap as the
      body you opened it for. The ask is a quiet line under it, not a second button. */
-  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(304px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-3) 14px 14px; border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg); background:var(--surface-raised); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
+  .rail-hover-panel { font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(288px,calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--space-3); border:var(--border-hairline) solid var(--border-hover); border-radius:var(--radius-lg); background:var(--surface-raised); box-shadow:var(--shadow-float); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
   .kicker { display:flex; align-items:center; gap:6px; min-width:0; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faint); margin-bottom:2px; }
   .kicker-place { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .kicker-dot { flex:none; color:var(--text-faintest); }
-  .kicker-machine { flex:none; display:inline-flex; align-items:center; gap:4px; }
-  .kicker-machine :global(.machine-identity) { width:13px; height:13px; color:inherit; }
+  .kicker-machine { flex:none; display:inline-flex; align-items:center; }
+  .kicker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
-  .title { font-size:var(--type-ui); font-weight:640; line-height:20px; letter-spacing:-.006em; color:var(--text-strong); overflow-wrap:anywhere; }
+  .title { font-size:var(--type-ui); font-weight:600; line-height:20px; letter-spacing:-.006em; color:var(--text-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
   /* The name leads; the recap is the body the preview is opened for: bright, given its own
      space, and the only paragraph in the panel. */
@@ -185,8 +186,8 @@
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
   .recap :global(.recap-ask) { display:flex; margin-top:var(--space-2); font-size:var(--type-xs); }
-  .recap :global(.recap-ask .request-recap-action) { height:auto; padding:0; border-radius:var(--radius-sm); background:none; color:var(--text-faint); font-size:var(--type-xs); font-weight:500; line-height:16px; }
+  .recap :global(.recap-ask .request-recap-action) { height:auto; padding:0; border-radius:var(--radius-sm); background:none; box-shadow:none; color:var(--text-faint); font-size:var(--type-xs); font-weight:500; line-height:16px; }
   .recap :global(.recap-ask .request-recap-action:hover) { background:none; color:var(--text-strong); }
-  .doing { margin-top:var(--space-2); font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faint); }
+  .doing { margin-top:2px; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faint); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
 </style>

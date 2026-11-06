@@ -354,7 +354,7 @@
   .header-action { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-faint); font-size: var(--type-sm); font-weight: 590; }
   .header-toggle { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .header-toggle:focus-visible, .check:focus-visible, .step-title:focus-visible, .action:focus-visible, .group-toggle:focus-visible {
-    outline: var(--border-strong) solid var(--focus-ring);
+    outline: var(--focus-width) solid var(--focus-ring);
     outline-offset: 2px;
   }
   .small .body-inner { padding: var(--space-1); }
@@ -374,8 +374,9 @@
     padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-md);
   }
-  /* The open step keeps its mark as a quiet fill, never a rule beside it. */
-  .step.current .step-inner { background: var(--wash-hover); }
+  /* The open step is marked by its own note under its name; a fill inside the card would only
+     be one more grey on the card's surface. */
+  .step.current .step-inner { background: transparent; }
   .check {
     display: grid;
     width: 40px;

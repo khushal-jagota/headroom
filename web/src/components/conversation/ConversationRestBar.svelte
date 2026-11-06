@@ -46,7 +46,7 @@
     color:var(--text-strong); background-color:var(--wash-selected); }
   .c2-rest-control svg { width:calc(var(--conversation-glyph) - var(--space-2)); height:calc(var(--conversation-glyph) - var(--space-2));
     fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
-  .c2-rest:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:var(--space-1); }
+  .c2-rest:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:var(--space-1); }
   .c2-rest-feedback { flex:none; padding-bottom:var(--space-2); color:var(--text-faint); font:var(--type-sm)/1.5 var(--font-ui); }
   .c2-mark--running { flex:none; width:calc(var(--space-2) + var(--border-strong)); height:calc(var(--space-2) + var(--border-strong));
     border-radius:var(--radius-pill); border:1.5px solid var(--text-faintest); border-top-color:var(--text-muted);

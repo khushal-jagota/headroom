@@ -52,16 +52,17 @@ export function workspaceRailWash(root: HTMLElement) {
     const group = node.closest<HTMLElement>('.manager-card');
     const groupBox = group ? local(group.getBoundingClientRect()) : null;
     const itemBox = local((node.closest('.settled-row') ?? node).getBoundingClientRect());
-    const inset = parseFloat(css('--space-1'));
+    const inset = parseFloat(css('--rail-row-inset'));
+    const headPad = parseFloat(css('--rail-head-pad'));
     if (groupBox) {
       itemBox.left = groupBox.left+inset;
       itemBox.width = groupBox.width-2*inset;
       if (node.matches('.item-head')) {
-        // A Manager's name is selected, hovered and focused like any other row: one fill
-        // around the name's line, inside the same context tint its goals and Tickets get.
-        const head = local(node.getBoundingClientRect());
-        itemBox.top = head.top-inset;
-        itemBox.height = head.height+2*inset;
+        // A Manager's header is its project eyebrow and its name together: selected, hovered
+        // and focused as one block, inside the same context tint its goals and Tickets get.
+        const header = local(node.closest('.identity')!.getBoundingClientRect());
+        itemBox.top = header.top-headPad;
+        itemBox.height = header.height+2*headPad;
       }
     }
     return {node,host,group,itemBox,groupBox};

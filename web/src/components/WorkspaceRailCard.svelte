@@ -12,7 +12,6 @@
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import WorkerRow from "./WorkerRow.svelte";
-  import RailStateGlyph from "./RailStateGlyph.svelte";
   import ManagerEyebrow from "./ManagerEyebrow.svelte";
   let { beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
     beforeGroups?: Snippet;
@@ -47,8 +46,8 @@
 <section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
   <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
   <div class="identity" onclick={(event) => { if (!(event.target as HTMLElement).closest('button, a')) { const head = event.currentTarget.querySelector<HTMLButtonElement>('.item-head'); head?.click(); } }} onpointerenter={(event) => { if (!suppressBackgroundPreview) input().pointerEnter(event); }} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => { if (!(event.target as HTMLElement).closest('button')) input().down(event); }} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()}>
-    <!-- The Chief's place is the Workspace itself, the word its page carries above its name. -->
-    {#if chief}<ManagerEyebrow project="Workspace" {title} rail settleable={false} {onSettle} />{:else}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
+    <!-- The Chief belongs to no project, so its header is its name alone. -->
+    {#if !chief}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
     <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={(event) => input().leave(event)}>
       <span class="item-title">{title}</span>
       <ConversationSignalMark {signal} {conversationId} />
@@ -56,15 +55,12 @@
   </div>
   {#if beforeGroups}{@render beforeGroups()}{/if}
   {#each groups as group (group.key)}
-    {@const attention = ["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key)}
-    <!-- A group that needs the person is named over its rows. A group that is with an agent
-         names itself on each row instead, as a quiet mark in the indent; its heading stays
-         for assistive technology. -->
-    {#snippet stateGlyph()}<RailStateGlyph key={group.key} label={group.label} />{/snippet}
-    <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key} data-tone={attention ? "attention" : "quiet"}>
-      <div class="bucket-label" class:bucket-label--quiet={!attention} data-rail-motion={`heading:${id}:${group.key}`}>{group.label}</div>
+    <!-- Every group is named over its rows in one quiet heading; a group that needs the
+         person names itself in a brighter tone. -->
+    <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key} data-tone={["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key) ? "attention" : "quiet"}>
+      <div class="bucket-label" data-rail-motion={`heading:${id}:${group.key}`}>{group.label}</div>
       {#each group.cards as ticket (ticket.id)}
-        <WorkerRow machine={false} lead={attention ? undefined : stateGlyph} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} data-rail-motion={`row:${ticket.id}`} onclick={() => { if (input(ticket).click()) onTicket(ticket.id); }} onpointerenter={(event: PointerEvent) => {event.stopPropagation(); input(ticket).pointerEnter(event);}} onpointerleave={(event: PointerEvent) => input(ticket).leave(event)} onpointerdown={(event: PointerEvent) => input(ticket).down(event)} onpointermove={(event: PointerEvent) => input(ticket).move(event)} onpointerup={() => input(ticket).end()} onpointercancel={() => input(ticket).cancel()} onfocus={(event: FocusEvent) => input(ticket).focus(event)} onblur={(event: FocusEvent) => input(ticket).leave(event)} />
+        <WorkerRow machine={false} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} data-rail-motion={`row:${ticket.id}`} onclick={() => { if (input(ticket).click()) onTicket(ticket.id); }} onpointerenter={(event: PointerEvent) => {event.stopPropagation(); input(ticket).pointerEnter(event);}} onpointerleave={(event: PointerEvent) => input(ticket).leave(event)} onpointerdown={(event: PointerEvent) => input(ticket).down(event)} onpointermove={(event: PointerEvent) => input(ticket).move(event)} onpointerup={() => input(ticket).end()} onpointercancel={() => input(ticket).cancel()} onfocus={(event: FocusEvent) => input(ticket).focus(event)} onblur={(event: FocusEvent) => input(ticket).leave(event)} />
       {/each}
     </div>
   {/each}
@@ -77,19 +73,21 @@
      project as a small eyebrow, the name large and bold, its goals as part of the name,
      then its Tickets in their groups. Nothing in the block is indented; size, weight and
      the group labels carry the structure. */
-  .manager-card { box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:var(--space-2) var(--rail-pad) var(--space-2); isolation:isolate; z-index:1; }
+  /* The group's padding is the row inset plus the air a fill keeps around its words, so a
+     selected header or row sits concentric inside the context tint on every side. */
+  .manager-card { box-sizing:border-box; position:relative; border:0; border-radius:var(--rail-group-radius); padding:calc(var(--rail-row-inset) + var(--rail-head-pad)) var(--rail-pad) var(--rail-row-inset); isolation:isolate; z-index:1; }
   .identity { display:flex; flex-direction:column; cursor:pointer; }
   .identity > :global(.manager-eyebrow) { margin-bottom:2px; }
-  .item-head { display:flex; align-items:center; gap:var(--space-2); width:100%; min-height:24px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
+  .item-head { display:flex; align-items:center; gap:var(--space-2); width:100%; min-height:22px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   /* A title is dimmed unless it needs the user: an unread message for them, or the pointer or
      the open page on it, brings it to full brightness. The dim title keeps its full size and
      weight, so it reads as at rest, not as off. */
-  .item-title { flex:1; min-width:0; font-size:var(--type-section); font-weight:700; line-height:24px; letter-spacing:-0.018em; color:var(--rail-tone-title); overflow-wrap:anywhere; transition:color var(--motion-fast) var(--motion-ease); }
+  .item-title { flex:1; min-width:0; font-size:var(--type-rail-title); font-weight:600; line-height:22px; letter-spacing:-0.014em; color:var(--rail-tone-title); overflow-wrap:anywhere; transition:color var(--motion-fast) var(--motion-ease); }
   .item-head[data-unread="true"] .item-title { color:var(--text-strong); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--text-strong); }
-  /* One row style: a title that runs out fades at its own edge, and the unread mark keeps a
-     clear gap after the fade so it never reads as part of the word. */
-  .bucket :global(.ticket-row-title) { white-space:nowrap; overflow:hidden; text-overflow:clip; mask-image:linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent); -webkit-mask-image:linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent); }
+  /* One row style: a title that runs out ends in an ellipsis, before a column kept for the
+     row's marks, so a mark never touches a word and every title stops at one edge. */
+  .bucket :global(.ticket-row-title) { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .bucket :global(.worker-row) { color:var(--rail-tone-rest); }
   .bucket[data-bucket-key="awaiting_approval"] :global(.worker-row),
   .bucket[data-bucket-key="awaiting_answer"] :global(.worker-row),

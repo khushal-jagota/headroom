@@ -59,8 +59,9 @@
 
 <style>
   .request-recap { display:inline-flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
-  .request-recap-action { display:inline-flex; align-items:center; height:32px; padding:0 var(--space-3); border:0; border-radius:var(--radius-md); background:var(--fill-secondary); color:var(--text-default); font:inherit; font-size:var(--type-sm); font-weight:550; cursor:pointer; text-decoration:none; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
-  .request-recap-action:hover { background-color:rgb(255 255 255 / 12%); color:var(--text-strong); }
+  /* A page's own quiet actions are outlined, not filled: the filled tier is the decision. */
+  .request-recap-action { display:inline-flex; align-items:center; height:32px; padding:0 var(--space-3); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:inset 0 0 0 var(--border-hairline) var(--border-hover); color:var(--text-muted); font:inherit; font-size:var(--type-sm); font-weight:500; cursor:pointer; text-decoration:none; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .request-recap-action:hover { background-color:var(--wash-hover); color:var(--text-strong); }
   .request-recap-action[aria-disabled="true"] { cursor:default; color:var(--text-faintest); }
   .request-recap-action[aria-disabled="true"]:hover { color:var(--text-faintest); }
   .request-recap-note { color:var(--text-faintest); font-size:var(--type-xs); }

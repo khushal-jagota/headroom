@@ -5,7 +5,7 @@
 .support-status{grid-column:1;min-height:18px;font-size:12px;line-height:18px}
 .support-status .comparison{margin:0;min-height:0;font:inherit}
 .support-chevron{position:absolute;right:0;top:1px;fill:none;stroke:var(--text-faintest);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
-.support-summary:focus-visible{outline:2px solid var(--focus-ring);outline-offset:8px;border-radius:4px}
+.support-summary:focus-visible{outline:var(--focus-width) solid var(--focus-ring);outline-offset:8px;border-radius:4px}
 .support-summary:hover .support-chevron{stroke:var(--text-strong)}
 .support-reveal{overflow:hidden;will-change:height}
 .support-chart-body{padding-top:24px;padding-bottom:2px;min-width:0}

@@ -25,11 +25,11 @@
 :root {
   /* Surfaces — two general neutral planes and one deliberately recessed plane.
    * Ink remains for knockout marks and the retired Day card. */
-  --surface-1: #191919;
+  --surface-1: #181818;
   --surface-2: #202020;
   --surface-recessed: #141414;
   /* The workspace rail: one close step above the page, divided by a hairline. */
-  --surface-rail: #202020;
+  --surface-rail: #212121;
   /* The quiet tiers under the one filled action: a neutral fill for the secondary
    * action, a smaller one for the tertiary ones (recap, backlog, skip, open). */
   --fill-secondary: rgb(255 255 255 / 8%);
@@ -64,6 +64,9 @@
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;
   --accent-surface: #222a38;
+  /* A needs-you count: the accent itself at low alpha behind the accent's text, so the badge
+   * is the accent in every surface it lands on, not a separate navy. */
+  --accent-badge: rgb(154 173 210 / 16%);
   --error-surface: #382226;
   /* The fill of small marked things — a chip, a pill, the primary button. Dark enough
    * that it barely lifts off the page, which is what makes it right for them. */
@@ -77,7 +80,7 @@
   --chart-surface: #202020;
   /* A trend line is drawn in the calm brand blue; the stretches that meet their target
    * turn the done green, and red stays with the status text. */
-  --chart-line-good: #8fae7a;
+  --chart-line-good: var(--accent-done);
   --chart-line-bad: #9aadd2;
   --chart-line-attention: #9aadd2;
   --chart-surface-raised: #252525;
@@ -157,7 +160,7 @@
   --measure-index: 760px;
   --space-page-tail: 128px;
   /* Shared title/text channel; conversation cards start and end on these same edges. */
-  --document-channel-measure: 760px;
+  --document-channel-measure: 800px;
   --file-preview-markdown-max-height: 24rem;
   /* The shell's nav bar. A screen that has to be exactly as tall as the space it was
      given works it out from the viewport, so its height has to be a value and not a
@@ -175,6 +178,8 @@
   /* The keyboard focus ring, drawn the same way on every focusable control: a crisp 2px
    * line in the accent's hue. It is a line, never a fill, so it cannot read as "needs you". */
   --focus-ring: rgb(154 173 210 / 82%);
+  /* The focus ring's line: fine, and drawn on the control's own edge so it follows its radius. */
+  --focus-width: 1.5px;
   --shadow-float: 0 0 0 1px rgb(0 0 0 / 20%), 0 var(--space-1) var(--space-3) rgb(0 0 0 / 22%);
 
   /* Type — two font stacks and shared sans sizes. The prose/display/hero sizes
@@ -186,10 +191,10 @@
   --type-ui: 14px;
   --type-md: 15px;
   --type-lg: 16px;
-  /* Section headings on a page: one step above card titles, one below the page title. */
-  --type-section: 18px;
+  /* Section headings on a page: a step above card titles (15), well below the page title. */
+  --type-section: 17px;
   --type-prose-lg: 15px;
-  --type-display: 26px;
+  --type-display: 24px;
   --type-hero: 30px;
 
   /* Focusable chat controls (the composer's textarea and pickers). Separate from
@@ -233,14 +238,14 @@
    * more and less of the same grey. */
   --wash-context: rgb(255 255 255 / 4%);
   --wash-selected: rgb(255 255 255 / 12%);
-  --wash-hover: rgb(255 255 255 / 6%);
+  --wash-hover: rgb(255 255 255 / 5%);
   /* Rail geometry. Every rail text, from the Manager's name to a Ticket, the Settled row
    * and the first destination icon, stands on one left edge: the rail edge plus the
    * group pad. A row's fill sits --rail-row-inset inside its group, so the row's 8px
    * radius is concentric with the group's 12px. */
-  --rail-edge: 10px;
-  --rail-pad: 10px;
-  --rail-row-inset: 4px;
+  --rail-edge: 8px;
+  --rail-pad: 14px;
+  --rail-row-inset: 6px;
   --rail-row-pad: calc(var(--rail-pad) - var(--rail-row-inset));
   /* Tickets are the rail's one indent: they belong under their Manager. The indent is also
    * the slot for a Ticket's quiet state mark (12px and a 6px gap). */
@@ -249,8 +254,19 @@
   --rail-tone-rest: #a3a3a3;
   /* A Manager's name at rest: a step brighter than a row at rest, so a bold dim name reads
    * as quiet type, not washed out. */
-  --rail-tone-title: #b0b0b0;
+  --rail-tone-title: #c2c2c2;
+  /* A Manager's name: clearly above a row, but quieter than anything that needs you. */
+  --type-rail-title: 17px;
   --rail-tone-label: #858585;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
+}
+
+/* Rail geometry, added with the rail's concentric pass. A group's radius is its row fill's
+ * radius (8px) plus the row inset (6px), so a selected row sits concentric in its group. */
+:root {
+  --rail-group-radius: 14px;
+  /* The fill around a Manager's header reaches this far past the header's text above and
+   * below, the same air a row keeps inside its own fill. */
+  --rail-head-pad: 4px;
 }

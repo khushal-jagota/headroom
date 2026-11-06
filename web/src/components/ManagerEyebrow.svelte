@@ -1,15 +1,15 @@
 <script lang="ts">
-  let { project, title, settled = false, rail = false, busy = false, settleable = true, onSettle }: {
+  let { project, title, settled = false, rail = false, busy = false, onSettle }: {
     project: string | null; title: string; settled?: boolean; rail?: boolean; busy?: boolean;
-    settleable?: boolean; onSettle: () => void;
+    onSettle: () => void;
   } = $props();
 </script>
 <div class="manager-eyebrow" class:rail>
   <span>{project ?? ""}</span>
-  {#if settleable}<button type="button" class="settle" disabled={busy} aria-label={`${settled ? "Reopen" : "Settle"} ${title}`} onclick={(event) => { event.stopPropagation(); onSettle(); }}>
+  <button type="button" class="settle" disabled={busy} aria-label={`${settled ? "Reopen" : "Settle"} ${title}`} onclick={(event) => { event.stopPropagation(); onSettle(); }}>
     <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
     {settled ? "Reopen" : "Settle"}
-  </button>{/if}
+  </button>
 </div>
 <style>
   .manager-eyebrow { display:flex; align-items:center; gap:var(--space-2); min-height:16px; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--rail-tone-label); }
@@ -20,5 +20,5 @@
   .rail .settle { flex-shrink:0; opacity:0; }
   :global(.manager-card .identity:hover) .settle, :global(.manager-card .identity:focus-within) .settle, .settle:focus-visible { opacity:1; }
   .settle:hover { color:var(--text-strong); }
-  .settle:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:3px; }
+  .settle:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:3px; }
 </style>

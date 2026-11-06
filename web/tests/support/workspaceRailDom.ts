@@ -31,7 +31,7 @@ export function railDomMatches(root:HTMLElement,rail:WorkspaceRail,chief:Workspa
     && cards[index+1].querySelector('.manager-eyebrow > span')?.textContent===(item.project ?? '')
     && cards[index+1].querySelector('.settle')?.getAttribute('aria-label')===`Settle ${item.title}`
     && head(cards[index+1],item.title,item.conversationSignal,item.conversationId) && groupsMatch(cards[index+1],item.groups))) return false;
-  if(root.querySelector('[data-settled-count]')?.textContent!==`(${settledCount})`) return false;
+  if(root.querySelector('[data-settled-count]')?.textContent!==`${settledCount}`) return false;
   if(root.querySelector('.settled [data-message-conversation]')) return false;
   const settled=[...root.querySelectorAll<HTMLElement>('[data-settled-item]')];
   return settledOpen ? settled.length===rail.settledItems.length && rail.settledItems.every((item,index)=>

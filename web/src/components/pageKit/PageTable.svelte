@@ -504,8 +504,8 @@
     padding: 0;
     border-bottom: var(--border-hairline) solid var(--chart-grid);
     color: var(--chart-muted);
-    font-size: var(--type-sm);
-    font-weight: 590;
+    font-size: var(--type-xs);
+    font-weight: 500;
     white-space: nowrap;
   }
   th[data-sorted] { color: var(--text-strong); }
@@ -595,7 +595,7 @@
   .box[data-on]:not([data-mixed]) .check,
   .box[data-mixed] .dash { stroke-dashoffset: 0; opacity: 1; }
   .hit-input:focus-visible + .box {
-    outline: var(--border-strong) solid var(--focus-ring);
+    outline: var(--focus-width) solid var(--focus-ring);
     outline-offset: 2px;
   }
   .hit-input:active + .box { transform: scale(0.95); }
@@ -669,7 +669,7 @@
     transform: scale(1) rotate(180deg);
   }
   .sort:focus-visible {
-    outline: var(--border-strong) solid var(--focus-ring);
+    outline: var(--focus-width) solid var(--focus-ring);
     outline-offset: -2px;
   }
   .sort:focus-visible .sort-hint { opacity: 0.6; }
