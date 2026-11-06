@@ -445,17 +445,17 @@
 <style>
   .table-block {
     min-width: 0;
-    padding: 28px;
+    padding: var(--space-5);
     border: 1px solid var(--chart-card-border);
-    border-radius: 28px;
+    border-radius: var(--radius-lg);
     background: var(--chart-surface);
     color: var(--text-strong);
   }
   .caption {
-    margin: 0 0 24px;
+    margin: 0 0 var(--space-4);
     color: var(--text-strong);
-    font-size: 18px;
-    font-weight: 550;
+    font-size: var(--type-md);
+    font-weight: 500;
     line-height: normal;
     letter-spacing: -.012em;
   }
@@ -595,7 +595,7 @@
   .box[data-on]:not([data-mixed]) .check,
   .box[data-mixed] .dash { stroke-dashoffset: 0; opacity: 1; }
   .hit-input:focus-visible + .box {
-    outline: var(--border-strong) solid var(--accent-bright);
+    outline: var(--border-strong) solid var(--focus-ring);
     outline-offset: 2px;
   }
   .hit-input:active + .box { transform: scale(0.95); }
@@ -669,7 +669,7 @@
     transform: scale(1) rotate(180deg);
   }
   .sort:focus-visible {
-    outline: var(--border-strong) solid var(--accent-bright);
+    outline: var(--border-strong) solid var(--focus-ring);
     outline-offset: -2px;
   }
   .sort:focus-visible .sort-hint { opacity: 0.6; }
@@ -745,7 +745,7 @@
   }
   .reduced .hit-input:active + .box { transform: none; }
   @container page (max-width: 620px) {
-    .table-block { padding: 24px 16px; border-radius: 24px; }
+    .table-block { padding: var(--space-5) var(--space-4); border-radius: var(--radius-lg); }
     .caption { padding-inline: 8px; }
     .scroller { overflow: visible; }
     .band { display: none; }

@@ -4,4 +4,4 @@
  let {principal,publication,onHover,onLeave}: {principal:ManagerPrincipal;publication?:import('../../lib/navigation/publication').NavigationPublication;onHover?:(element:HTMLElement,id:string,immediate?:boolean)=>void;onLeave?:()=>void}=$props();
 </script>
 <section class="page-tickets" aria-label="Tickets"><h2>Tickets</h2><ManagerChildren {principal} {publication} {onHover} {onLeave}/></section>
-<style>.page-tickets{margin-top:40px}h2{margin:0 0 20px;font-size:22px;font-weight:600;letter-spacing:-.015em;line-height:1.3}</style>
+<style>.page-tickets{margin-top:var(--space-7)}h2{margin:0 0 var(--space-3);font-size:var(--type-lg);font-weight:600;letter-spacing:-.011em;line-height:1.4;color:var(--text-strong)}</style>

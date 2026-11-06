@@ -505,32 +505,32 @@
 <style>
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
-  .ticket-head { padding-top:48px; }
-  .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
-  .ticket-title-row { display:block; margin-top:var(--space-3); }
-  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-.014em; }
+  .ticket-head { padding-top:var(--space-6); }
+  .worker-eyebrow { line-height:20px; min-height:24px; display:flex; align-items:center; gap:6px; font-size:var(--type-sm); color:var(--text-faint); }
+  .ticket-title-row { display:block; margin-top:var(--space-2); }
+  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:var(--type-display); font-weight:600; line-height:1.25; letter-spacing:-.02em; }
   .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is
      written, and a gap that went with them would move the page. */
-  .ticket-head :global([data-recap-slot]) { margin-top:var(--space-3); }
-  .ticket-head :global([data-recap]) { max-width:66ch; font-family:var(--font-ui); font-size:17px; line-height:1.6; color:var(--text-faint); }
+  .ticket-head :global([data-recap-slot]) { margin-top:var(--space-2); }
+  .ticket-head :global([data-recap]) { max-width:none; font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; color:var(--text-muted); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }
   .worker-current { margin-top:var(--space-6); }
-  .worker-live-card { padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }
-  .worker-live-card h2 { margin:var(--space-2) 0 0; letter-spacing:-.006em; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
+  .worker-live-card { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }
+  .worker-live-card h2 { margin:0; letter-spacing:-.011em; font-size:var(--type-lg); font-weight:600; line-height:1.4; color:var(--text-strong); }
   .worker-ceiling-line { margin-top:var(--space-3); }
-  .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:15px; line-height:1.3; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-sm); background:transparent; box-shadow:none; text-align:left; }
+  .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:var(--type-ui); line-height:1.4; color:var(--text-muted); padding:var(--space-2) var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:none; text-align:left; }
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
   .worker-bands { line-height:1.6; margin-top:var(--space-7); padding-bottom:var(--space-7); }
   .worker-steps { border-top:1px solid var(--border-color); }
-  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:13px; font-weight:600; color:var(--text-faint); cursor:pointer; list-style:none; }
+  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:var(--space-3) var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-sm); font-weight:500; color:var(--text-faint); cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }
   .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .band-count { margin-left:auto; font-weight:400; color:var(--text-faintest); }
   .worker-step-rows { padding-bottom:var(--space-4); }
   .worker-step-rows :global(.disclosure--stage) { margin:0; border:0; }
-  .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:9px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:15px; color:var(--text-muted); }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-ui); color:var(--text-muted); }
   .worker-step-rows :global(.disclosure--stage > .disclosure-summary:hover) { background-image:var(--interaction-hover); color:var(--text-strong); }
   .worker-step-rows :global(.disclosure--stage > .disclosure-body) { padding:var(--space-2) var(--space-2) var(--space-5); font-family:var(--font-ui); font-size:15px; color:var(--text-faint); }
-  .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:15px; letter-spacing:normal; }
+  .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:var(--type-ui); letter-spacing:normal; }
 </style>

@@ -342,7 +342,7 @@
     container-type: inline-size;
     width: 100%;
     min-width: 0;
-    border-radius: var(--space-5);
+    border-radius: var(--radius-lg);
     background: var(--surface-recessed);
     color: var(--text-default);
   }
@@ -350,11 +350,11 @@
   .roll > span { grid-area: 1 / 1; }
   .save-feedback { margin: 0; padding: 0 var(--space-5) var(--space-3); color: var(--text-faint); font-size: var(--type-sm); }
   .checklist-header { position: relative; border-radius: inherit; transition: background var(--motion-fast) var(--motion-ease); }
-  .checklist-header:hover { background: var(--surface-2); }
+  .checklist-header:hover { background-image: var(--interaction-hover); }
   .header-action { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-faint); font-size: var(--type-sm); font-weight: 500; }
   .header-toggle { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .header-toggle:focus-visible, .check:focus-visible, .step-title:focus-visible, .action:focus-visible, .group-toggle:focus-visible {
-    outline: var(--border-strong) solid var(--accent-bright);
+    outline: var(--border-strong) solid var(--focus-ring);
     outline-offset: 2px;
   }
   .small .body-inner { padding: var(--space-1); }
@@ -372,9 +372,9 @@
     column-gap: var(--space-3);
     align-items: start;
     padding: var(--space-1) var(--space-3);
-    border-radius: calc(var(--space-5) - var(--space-2));
+    border-radius: var(--radius-md);
   }
-  .step.current .step-inner { background: var(--surface-2); }
+  .step.current .step-inner { background: var(--interaction-hover); }
   .check {
     display: grid;
     width: 40px;
@@ -390,8 +390,8 @@
   .check-visual {
     position: relative;
     display: block;
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
     border: 1.5px solid var(--text-faint);
     border-radius: var(--radius-pill);
     background: var(--surface-recessed);
@@ -409,7 +409,7 @@
     transition: transform var(--motion-slow) var(--motion-ease), opacity var(--motion-fast) linear;
   }
   .check[aria-checked="true"] .check-fill { opacity: 1; transform: scale(1); }
-  .check-mark { position: absolute; inset: -1.5px; width: 22px; height: 22px; }
+  .check-mark { position: absolute; inset: -1.5px; width: 18px; height: 18px; }
   .check-mark path {
     fill: none;
     stroke: var(--surface-recessed);
@@ -491,7 +491,7 @@
     margin-top: 2px;
     padding: 0 var(--space-3) 0 64px;
     border: 0;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     background: transparent;
     color: var(--text-faint);
     font: inherit;
@@ -500,7 +500,7 @@
     text-align: left;
     cursor: pointer;
   }
-  .group-toggle:hover { background: var(--surface-2); color: var(--text-strong); }
+  .group-toggle:hover { background-image: var(--interaction-hover); color: var(--text-strong); }
   .sr {
     position: absolute;
     width: 1px;

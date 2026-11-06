@@ -14,22 +14,23 @@
 }
 @scope (.goal-chart-host) {
   * { box-sizing:border-box; }
-  h2 { margin:0; font-size:18px; font-weight:550; letter-spacing:-.012em; line-height:normal; color:var(--text-strong); }
+  h2 { margin:0; font-size:var(--type-md); font-weight:500; letter-spacing:-.006em; line-height:normal; color:var(--text-strong); }
   button { font-family:inherit; }
-  button:focus-visible,[role=slider]:focus-visible { outline:2px solid var(--accent-bright); outline-offset:4px; }
-  .metric-card { min-width:0; border:1px solid var(--chart-card-border); background:var(--chart-surface); border-radius:28px; padding:28px; }
-  .hero-card { padding:32px; }
+  button:focus-visible,[role=slider]:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
+  .metric-card { min-width:0; border:1px solid var(--chart-card-border); background:var(--chart-surface); border-radius:var(--radius-lg); padding:var(--space-5); }
+  .hero-card { padding:var(--space-5); }
   .metric-top { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; min-height:40px; }
   .metric-top h2 { flex:1 1 170px; }
-  .ranges { display:flex; gap:2px; padding:4px; border:1px solid var(--chart-range-border); background:var(--chart-range-surface); border-radius:16px; isolation:isolate; }
-  .ranges button { position:relative; border:0; background:transparent; color:var(--chart-muted); font:inherit; font-size:12px; padding:7px 12px; border-radius:12px; cursor:pointer; white-space:nowrap; }
+  .ranges { display:flex; gap:2px; padding:3px; border:1px solid var(--chart-range-border); background:var(--chart-range-surface); border-radius:var(--radius-md); isolation:isolate; }
+  .ranges button { position:relative; border:0; background:transparent; color:var(--chart-muted); font:inherit; font-size:var(--type-xs); font-weight:500; padding:5px 12px; border-radius:6px; cursor:pointer; white-space:nowrap; transition:color var(--motion-fast) var(--motion-ease); }
+  .ranges button:hover { color:var(--text-default); }
   .ranges button>span:not(.range-selection) { position:relative; }
   .ranges button[aria-pressed=true] { color:var(--text-strong); }
-  .range-selection { position:absolute; inset:0; background:var(--chart-range-selected); border:1px solid var(--chart-grid); border-radius:12px; box-shadow:var(--chart-range-shadow); z-index:-1; }
+  .range-selection { position:absolute; inset:0; background:var(--chart-range-selected); border:1px solid var(--chart-grid); border-radius:6px; box-shadow:var(--chart-range-shadow); z-index:-1; }
   .headline { margin:24px 0 28px; }
   .metric-value { height:44px; font-weight:500; letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1; }
   .missing-value { font-size:var(--type-chart-reading); }
-  .comparison { font-size:14px; line-height:20px; min-height:20px; margin-top:8px; }
+  .comparison { font-size:var(--type-sm); line-height:20px; min-height:20px; margin-top:var(--space-1); }
   .composition-summary { color:var(--chart-legend); }
   .support-reading .missing-value { font-size:inherit; }
   .caption { color:var(--chart-muted); font-size:13px; line-height:20px; margin:0 0 12px; font-variant-numeric:tabular-nums; min-height:20px; }
@@ -40,28 +41,33 @@
   .compact .metric-value { height:36px; }
   .compact .comparison { font-size:13px; }
   .compact .missing-value { font-size:var(--type-chart-compact); }
-  .compact .ranges { width:100%; justify-content:space-between; }
-  .compact .ranges button { flex:1; padding:6px 8px; }
+  .compact .ranges { width:fit-content; }
+  .compact .ranges button { padding:5px 12px; }
   .compact .caption { font-size:12px; }
   .chart-range-footer { margin-top:20px; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
   .integrated-card { border:0; background:transparent; border-radius:0; padding:0; }
   .integrated-card.compact { padding:0; --text-3xl:var(--type-chart-compact); }
   .integrated-card .metric-top { min-height:24px; }
-  .integrated-card .metric-top h2 { font-size:15px; font-weight:500; color:var(--chart-secondary); }
-  .integrated-card .headline { margin:20px 0 24px; min-height:0; }
+  .integrated-card .metric-top h2 { font-size:var(--type-sm); font-weight:500; color:var(--text-faint); }
+  .integrated-card .headline { margin:var(--space-2) 0 var(--space-4); min-height:0; }
   .integrated-card .comparison { font-size:12px; }
   .integrated-card .caption { font-size:12px; }
   .integrated-card .ranges button { padding:6px 8px; }
-  .integrated-card .chart-range-footer { margin-top:20px; }
+  .integrated-card .chart-range-footer { margin-top:var(--space-4); }
   /* The page card already reserves the room a standalone completion card holds. */
-  .integrated-card.completion-card { min-height:167px; }
+  .integrated-card.completion-card { min-height:0; }
+  .integrated-card .completion-content { padding:var(--space-1) 0 0; }
+  .integrated-card .completion-headline { margin:0; min-height:0; gap:10px; }
+  .integrated-card .completion-glyph { width:20px; height:20px; }
+  .integrated-card .completion-word { font-size:var(--type-md); font-weight:500; letter-spacing:-.006em; color:var(--text-default); }
+  .integrated-card .completion-context { margin-top:var(--space-2); font-size:var(--type-sm); }
   .bar-plot { position:relative; }
   .chart-empty-value { color:var(--chart-muted); text-align:center; padding:32px 0; }
   .partial-reading { color:var(--chart-muted); }
   .observation-details { margin-top:12px; overflow-wrap:anywhere; }
   .observation-details summary { cursor:pointer; width:fit-content; }
-  .observation-details summary:focus-visible { outline:2px solid var(--accent-bright); outline-offset:4px; }
+  .observation-details summary:focus-visible { outline:2px solid var(--focus-ring); outline-offset:4px; }
   .observation-details ul { margin:8px 0 0; padding-left:20px; }
   .observation-details li + li { margin-top:4px; }
   .gauge-card { min-height:300px; }
@@ -78,7 +84,7 @@
   .completion-glyph { flex-shrink:0; width:32px; height:32px; }
   .completion-word { position:relative; font-size:40px; font-weight:500; letter-spacing:-.025em; line-height:1.2; }
   .completion-word>span { display:block; }
-  .completion-context { display:flex; align-items:center; gap:8px; font-size:14px; line-height:20px; min-height:20px; }
+  .completion-context { display:flex; align-items:center; gap:8px; font-size:var(--type-ui); line-height:20px; min-height:20px; }
   .status-dot { width:5px; height:5px; flex-shrink:0; border-radius:50%; }
   .meter-value { display:flex; align-items:baseline; gap:12px; line-height:1; min-height:44px; }
   .meter-denominator { font-size:16px; color:var(--chart-muted); }

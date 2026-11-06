@@ -58,13 +58,13 @@
 </header>
 
 <style>
-  .manager-workspace-head { padding-top:var(--space-7); }
-  .manager-workspace-title { font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-0.014em; margin-top:var(--space-3); overflow-wrap:anywhere; }
+  .manager-workspace-head { padding-top:var(--space-6); }
+  .manager-workspace-title { font-family:var(--font-ui); font-size:var(--type-display); font-weight:600; line-height:1.25; letter-spacing:-0.02em; margin-top:var(--space-2); overflow-wrap:anywhere; }
   /* No padding on the clamped block itself: ClampedText measures its scrollHeight
      against a line count, so padding there reports an empty recap as overflowing. */
   /* The gap sits on the animating slot, not inside it: a margin on the clamped block
      would stay behind the height the slot is measuring. */
-  .manager-workspace-head :global([data-recap-slot]) { margin-top:var(--space-3); }
-  .manager-workspace-head :global(.manager-workspace-recap) { font-family:var(--font-ui); font-size:17px; line-height:1.6; max-width:66ch; color:var(--text-faint); }
-  .manager-workspace-recap-ask { margin-top:var(--space-3); font-size:13px; color:var(--text-muted); }
+  .manager-workspace-head :global([data-recap-slot]) { margin-top:var(--space-2); }
+  .manager-workspace-head :global(.manager-workspace-recap) { font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; max-width:none; color:var(--text-muted); }
+  .manager-workspace-recap-ask { margin-top:var(--space-3); font-size:var(--type-sm); color:var(--text-muted); }
 </style>

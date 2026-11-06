@@ -91,7 +91,7 @@
   .pill--ghost { background: transparent; color: var(--text-faint); }
   .pill:hover { background-image: var(--interaction-hover); }
   .pill--ghost:hover { color: var(--text-strong); }
-  .pill:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: 2px; }
+  .pill:focus-visible { outline: var(--border-strong) solid var(--focus-ring); outline-offset: 2px; }
   @keyframes dialog-in { from { opacity: 0; transform: translateY(var(--space-1)); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } .pill { transition: none; } }
 </style>

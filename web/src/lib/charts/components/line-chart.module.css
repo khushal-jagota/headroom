@@ -13,12 +13,12 @@
 .chart[data-loading] .series { opacity: .32; animation: breathe 1.4s var(--ease-in-out) infinite alternate; }
 .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: stroke var(--duration-standard) var(--ease-standard); }
 .line[data-dashed] { stroke-dasharray: 4 5; stroke-width: 1.75; }
-.area { fill: color-mix(in oklab, var(--series) 9%, transparent); stroke: none; }
+.area { fill: color-mix(in oklab, var(--foreground) 4%, transparent); stroke: none; }
 .dot { fill: var(--series); stroke: var(--surface); stroke-width: 2; opacity: 0; transition: opacity var(--duration-instant) var(--ease-standard); }
 .chart[data-scrubbing] .dot:not([data-hidden]) { opacity: 1; }
 
 /* The tooltip floats over the plot, so it is the one layer here with a shadow. Springs carry its position; opacity and a small scale bring it in. */
-.tooltip { position: absolute; top: 0; left: 0; z-index: 1; display: grid; min-width: 140px; max-width: min(220px, 100%); gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-raised); box-shadow: var(--shadow-floating); opacity: 0; pointer-events: none; scale: .96; transition: opacity var(--duration-fast) var(--ease-standard), scale var(--duration-fast) var(--ease-standard); }
+.tooltip { position: absolute; top: 0; left: 0; z-index: 1; display: grid; min-width: 140px; max-width: min(220px, 100%); gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: var(--shadow-floating); opacity: 0; pointer-events: none; scale: .96; transition: opacity var(--duration-fast) var(--ease-standard), scale var(--duration-fast) var(--ease-standard); }
 .chart[data-scrubbing] .tooltip { opacity: 1; scale: 1; }
 .tipTitle { margin: 0 0 2px; color: var(--text-secondary); font-size: var(--text-xs); line-height: var(--leading-body); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tipRow { display: flex; min-width: 0; align-items: center; gap: 8px; margin: 0; font-size: var(--text-sm); line-height: var(--leading-body); }

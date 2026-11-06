@@ -103,22 +103,27 @@
   {#if error}<ErrorLine {error} />{/if}
 </section>
 <style>
-  .worker-proposal { padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }
-  h2 { margin:var(--space-2) 0 0; letter-spacing:-.006em; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
-  .who { font-weight:400; color:var(--text-faint); }
-  .proposal-prose { line-height:1.6; margin-top:var(--space-4); }
-  .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:15px; line-height:1.6; }
-  .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-3); margin-top:var(--space-5); }
-  button { font:inherit; font-size:13px; font-weight:500; line-height:1.6; padding:8px 18px; border:0; border-radius:var(--radius-pill); cursor:pointer; }
+  .worker-proposal { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }
+  h2 { margin:0; letter-spacing:-.011em; font-size:var(--type-lg); font-weight:600; line-height:1.4; color:var(--text-strong); }
+  .who { font-size:var(--type-ui); font-weight:400; letter-spacing:0; color:var(--text-faint); }
+  .proposal-prose { line-height:1.6; margin-top:var(--space-3); }
+  .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; }
+  .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
+  button { display:inline-flex; align-items:center; justify-content:center; height:32px; font:inherit; font-size:var(--type-sm); font-weight:500; line-height:20px; padding:0 14px; border:0; border-radius:var(--radius-md); cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   button:disabled { opacity:.5; cursor:default; }
-  .reviewer { font:inherit; line-height:inherit; padding:0 5px; margin:0 -5px; background:transparent; color:inherit; border-radius:var(--radius-sm); }
+  .reviewer { display:inline; height:auto; font:inherit; line-height:inherit; padding:0 4px; margin:0 -4px; background:transparent; color:inherit; border-radius:var(--radius-sm); }
   .reviewer:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .primary { background:var(--accent-bright); color:var(--surface-ink); }
-  .ghost { background:transparent; color:var(--text-faint); padding:8px 12px; }
+  .primary:hover:not(:disabled) { background:color-mix(in srgb, var(--accent-bright) 82%, var(--text-strong)); }
+  .ghost { background:transparent; color:var(--text-muted); padding:0 12px; }
   .ghost:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .return-unavailable { color:var(--text-faintest); font-size:13px; margin:var(--space-2) 0 0; }
+  button:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
+  .return-unavailable { color:var(--text-faintest); font-size:var(--type-sm); margin:var(--space-2) 0 0; }
   .return-note { margin-top:var(--space-4); }
-  label { display:block; font-size:11px; color:var(--text-faintest); }
-  textarea { display:block; margin-top:var(--space-2); width:100%; min-height:90px; padding:var(--space-3); background:var(--surface-recessed); color:var(--text-default); border:1px solid var(--border-color); border-radius:var(--radius-md); font:inherit; font-size:13px; }
+  label { display:block; font-size:var(--type-xs); color:var(--text-faint); }
+  textarea { display:block; margin-top:var(--space-2); width:100%; min-height:90px; padding:var(--space-3); background:var(--surface-recessed); color:var(--text-default); border:1px solid var(--border-color); border-radius:var(--radius-md); font:inherit; font-size:var(--type-sm); }
+  textarea:focus { outline:none; border-color:var(--border-focus); }
   .context { margin-top:var(--space-4); }
+  /* The picker's own trigger is hidden here, so its empty line must not add height. */
+  .worker-proposal > :global(div:has(> [data-ceiling-picker])) { display:flex; }
 </style>

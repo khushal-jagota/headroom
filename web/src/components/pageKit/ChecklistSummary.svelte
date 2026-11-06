@@ -44,7 +44,7 @@
  .swap-text{grid-area:1/1}
  .ring{position:relative;display:grid;width:40px;height:40px;color:var(--text-strong)}
  .ring-arc,.ring-tick{grid-area:1/1;width:40px;height:40px}
- .ring-track{fill:none;stroke:var(--border-color);stroke-width:3}
+ .ring-track{fill:none;stroke:var(--border-hover);stroke-width:3}
  .ring-fill{fill:none;stroke:var(--text-strong);stroke-width:3;stroke-linecap:round;transition:stroke-dashoffset var(--motion-slow) var(--motion-ease)}
  .ring-tick path{fill:none;stroke:currentColor;stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:0;animation:draw 240ms var(--motion-ease) both}
  .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);border:0}

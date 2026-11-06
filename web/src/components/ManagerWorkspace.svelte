@@ -226,8 +226,7 @@
           {/snippet}
           <ManagerHeader heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
             recap={item.recap} onSaveRecap={(value)=>saveItem("recap",value)} recapTarget={{kind:"manager",id:item.id}}>
-            {#snippet eyebrow()}<div class="page-eyebrow"><span>{item.project}</span>
-              {#if backHref!==null}<span aria-hidden="true">/</span><a href={backHref} aria-label={`Back to ${workspaceName}`}>↖</a>{/if}
+            {#snippet eyebrow()}<div class="page-eyebrow">{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`}><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></a>{/if}<span>{item.project}</span>
               {@render settleButton()}
             </div>{/snippet}
             {#snippet title()}{@render managerTitle()}{/snippet}
@@ -288,18 +287,20 @@
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Manager"} worker={hoverWorker} cards={[]} rail={hoverTarget} recapTarget={hoverWorker ? { kind: "ticket", id: hoverWorker.id } : null} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
 <style>
-  .page-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
+  .page-eyebrow { display:flex; align-items:center; gap:var(--space-1); min-height:24px; font-size:var(--type-sm); line-height:20px; color:var(--text-faint); }
   .page-eyebrow a { color:inherit; text-decoration:none; }
-  .page-eyebrow a:hover { color:var(--text-strong); }
-  .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; margin-right:-8px; border:0; border-radius:var(--radius-sm); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
+  .page-back { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; margin-left:-6px; border-radius:var(--radius-md); }
+  .page-back svg { width:16px; height:16px; }
+  .page-eyebrow a:hover { color:var(--text-strong); background-image:var(--interaction-hover); }
+  .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 var(--space-2); margin-right:calc(var(--space-2) * -1); border:0; border-radius:var(--radius-md); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
   .page-settle svg { width:13px; height:13px; }
   :global(.manager-doc):hover .page-settle, .page-settle:focus-visible { opacity:1; }
   .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .manager-workers { margin-top:var(--space-5); }
   .manager-bands { margin-top:var(--space-5); }
-  .manager-goal { font-size:var(--type-md); line-height:1.6; color:var(--text-faint); max-width:66ch; }
+  .manager-goal { font-size:var(--type-md); line-height:1.6; color:var(--text-muted); max-width:66ch; }
   .goal-chevron { font-size:var(--type-md); line-height:1; }
   .goal-chevron::before { content:"\203A"; }
   .goal-band[open] > summary .goal-chevron::before { content:"\2304"; }
-  a:focus-visible, button:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+  a:focus-visible, button:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--border-strong) solid var(--focus-ring); outline-offset:2px; }
 </style>

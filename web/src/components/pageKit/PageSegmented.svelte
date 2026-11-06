@@ -105,7 +105,7 @@
   }
   button:hover { color: var(--text-strong); }
   button:focus-visible {
-    outline: var(--border-strong) solid var(--accent-bright);
+    outline: var(--border-strong) solid var(--focus-ring);
     outline-offset: -2px;
   }
   button[aria-checked="true"] {

@@ -140,7 +140,7 @@
     margin: 0;
     padding: var(--space-5);
     border: 0;
-    border-radius: var(--space-5);
+    border-radius: var(--radius-lg);
     background: var(--surface-recessed);
   }
   .callout[data-tone="attention"] { background: var(--accent-surface); }
@@ -181,8 +181,9 @@
   .metric {
     min-width: 0;
     padding: var(--space-5);
-    border-radius: var(--space-5);
-    background: var(--surface-recessed);
+    border-radius: var(--radius-lg);
+    background: var(--surface-2);
+    border: var(--border-hairline) solid var(--border-card);
   }
   .metric-top {
     display: flex;
@@ -301,7 +302,7 @@
   .grid[data-joined="true"] {
     gap: 0;
     border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--space-6);
+    border-radius: var(--radius-lg);
     overflow: hidden;
   }
   .grid[data-joined="true"] .grid-cell {

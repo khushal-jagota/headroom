@@ -44,7 +44,7 @@
   a { color:var(--text-muted); text-decoration:none; padding:var(--space-1) 0; }
   a[aria-current="page"] { color:var(--text-strong); font-weight:500; }
   a:hover { color:var(--text-strong); }
-  a:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:var(--space-1); }
+  a:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:var(--space-1); }
   @media(max-width:720px) {
     .settings-head { gap:var(--space-2); }
     .settings-sections { gap:var(--space-4); font-size:var(--type-xs); }
