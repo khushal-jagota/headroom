@@ -35,6 +35,7 @@ from planner.conversation.backends.contracts import (
     BackendEventValue,
     BackendPermissionAsk,
     BackendUserInputRequest,
+    CommandReplyReported,
     ComposerCatalogReported,
     ContextCompacted,
     ModelThinkingHappened,
@@ -105,6 +106,7 @@ class _RecordingSink:
         self.delta_tokens: list[TurnToken] = []
         self.agent_contents: list[MessageContent] = []
         self.agent_content_tokens: list[TurnToken] = []
+        self.command_replies: list[str] = []
         self.tool_calls_started: list[tuple[str, str, str]] = []
         self.tool_calls_progressed: list[tuple[str, str]] = []
         self.thinking_pulses: int = 0
@@ -175,6 +177,8 @@ class _RecordingSink:
             )
         elif isinstance(event, ContextCompacted):
             self.compactions += 1
+        elif isinstance(event, CommandReplyReported):
+            self.command_replies.append(event.reply_text)
         elif isinstance(event, AgentMessageCompleted):
             self.agent_contents.append(event.content)
             assert turn is not None

@@ -4,7 +4,7 @@ export const VIEW_PROJECTION_VERSION = 4;
 
 export type ConversationViewLens = "focus" | "full";
 
-export type ViewRowKind = "credential_request" | "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "turn_ended" | "turn_stopped";
+export type ViewRowKind = "credential_request" | "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "command_reply" | "turn_ended" | "turn_stopped";
 
 export type AskDeadReason = "turn_ended" | "no_ending_recorded";
 
@@ -150,6 +150,11 @@ export interface MarkerRowBody {
   kind: "context_compacted" | "turn_stopped";
 }
 
+export interface CommandReplyRowBody {
+  kind: "command_reply";
+  reply_text: string;
+}
+
 export interface RequestReplacement {
   credential_id: string;
   name: string;
@@ -194,7 +199,7 @@ export interface CredentialRequestRowBody {
   delivery: RequestDelivery | null;
 }
 
-export type ViewRowBody = CredentialRequestRowBody | PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody;
+export type ViewRowBody = CredentialRequestRowBody | PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody | CommandReplyRowBody;
 
 export interface ViewBodyReference {
   body_id: string;

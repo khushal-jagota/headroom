@@ -256,6 +256,7 @@ export function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Hap
     case "model_changed":
     case "token_usage":
     case "context_compacted":
+    case "command_reply":
       return null;
   }
 }

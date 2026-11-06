@@ -134,6 +134,21 @@ def test_an_ordinary_steer_still_carries_its_sender_label(tmp_path: Path) -> Non
     _run(exercise)
 
 
+def test_a_goal_command_reply_is_reported_as_the_command_reply(tmp_path: Path) -> None:
+    """Codex answers a goal through its own call, so no agent message carries the reply."""
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={"turns": []}) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("/goal set ship the fix"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.command_replies == ["Goal set: ship the fix"]
+            assert scripted.sink.agent_message_texts == []
+
+    _run(exercise)
+
+
 async def _until(condition: Any) -> None:
     import asyncio
 

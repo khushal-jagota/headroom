@@ -1250,6 +1250,17 @@ button.list-row:hover .list-row-title {
   color: var(--text-faint);
 }
 
+/* A backend's own answer to a slash command: the tool voice, kept whole, never a bubble. */
+.acp-command-reply {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  letter-spacing: var(--tracking-mono);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Turn-end and wire-exception pills: centred, flat, outline. */
 .acp-turn-end {
   align-self: center;
