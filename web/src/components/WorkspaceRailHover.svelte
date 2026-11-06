@@ -1,7 +1,7 @@
 <script lang="ts">
   import MachineActivityMark from "./machines/MachineActivityMark.svelte";
   import MachineIdentity from "./machines/MachineIdentity.svelte";
-  import { macActivityKnown, macAvailability } from "../lib/ticketMachines";
+  import { macActivityKnown, macAvailability, machineName } from "../lib/ticketMachines";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -145,7 +145,9 @@
     const moved = event.relatedTarget as Node | null;
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
-  <div class="kicker">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span>{kicker}</span></div>
+  <!-- The eyebrow follows every page's line above its title: where the Ticket lives, then the
+       machine it runs on, named as well as drawn. -->
+  <div class="kicker"><span class="kicker-place">{kicker}</span>{#if currentWorker?.locale}<span class="kicker-dot" aria-hidden="true">·</span><span class="kicker-machine"><MachineIdentity locale={currentWorker.locale} accessible={false} /><span>{machineName(currentWorker.locale)}</span></span>{/if}</div>
   <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
@@ -168,7 +170,11 @@
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
-  .kicker { display:flex; align-items:center; gap:6px; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faintest); margin-bottom:2px; }
+  .kicker { display:flex; align-items:center; gap:6px; min-width:0; font-size:var(--type-xs); font-weight:500; line-height:16px; color:var(--text-faint); margin-bottom:2px; }
+  .kicker-place { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .kicker-dot { flex:none; color:var(--text-faintest); }
+  .kicker-machine { flex:none; display:inline-flex; align-items:center; gap:4px; }
+  .kicker-machine :global(.machine-identity) { width:13px; height:13px; color:inherit; }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
   .title { font-size:var(--type-ui); font-weight:640; line-height:20px; letter-spacing:-.006em; color:var(--text-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
