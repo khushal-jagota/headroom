@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -491,12 +492,16 @@ def test_rerun_of_failed_suite_publishes_with_evidence_from_earlier_attempt(
     checks.collect(downloads, tmp_path / "publish", expected, passed)
     assert (tmp_path / "publish/reports/browser-evidence-77-2-browser/case.png").exists()
 
-    # Evidence from another run or another commit still never counts.
+    # One suite's evidence from another run or another commit still never counts.
     for index, foreign in enumerate((run | {"GITHUB_RUN_ID": "78"},
                                      run | {"GITHUB_SHA": "d" * 40})):
-        with pytest.raises(ValueError, match="identity"):
-            checks.collect(downloads, tmp_path / f"foreign-{index}",
-                           checks.identity(foreign | {"GITHUB_RUN_ATTEMPT": "2"}), passed)
+        mixed = tmp_path / f"foreign-{index}"
+        shutil.copytree(downloads, mixed)
+        shutil.rmtree(mixed / "unit")
+        checks.pack("unit", tmp_path / "gate-unit", mixed / "unit",
+                    checks.identity(foreign | {"GITHUB_RUN_ATTEMPT": "2"}), "2")
+        with pytest.raises(ValueError, match="unit: suite identity or selection differs"):
+            checks.collect(mixed, tmp_path / f"foreign-gate-{index}", expected, passed)
     # A rerun that fails again still blocks publication.
     with pytest.raises(ValueError, match="prerequisites did not succeed"):
         checks.collect(downloads, tmp_path / "failed", expected,
