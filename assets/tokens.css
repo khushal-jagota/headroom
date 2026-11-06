@@ -88,11 +88,11 @@
    * from the shell so the production renderer preserves the approved examples. */
   /* A standalone chart card's fill: the page card's (4.5% white over the page), opaque. */
   --chart-surface: #1d1d1d;
-  /* A trend line is drawn in the calm brand blue; the stretches that meet their target
-   * turn the done green, and red stays with the status text. */
+  /* A trend line says its status as staging did: green where it meets its target, red
+   * where it is below, amber where it is due. */
   --chart-line-good: var(--accent-done);
-  --chart-line-bad: #9aadd2;
-  --chart-line-attention: #9aadd2;
+  --chart-line-bad: var(--accent-error);
+  --chart-line-attention: var(--accent-attention);
   --chart-surface-raised: #252525;
   --chart-surface-muted: #1b1b1b;
   --chart-card-border: transparent;
