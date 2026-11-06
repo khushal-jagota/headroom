@@ -93,10 +93,8 @@
   const startValues = createQuery(() => queries.managerConversationStartValues(itemId));
   let conversationId = $state<string | null>(null);
   let selectedPastConversationId = $state<string | null>(null);
-  let legacyGoalId=$state<string|null>(null);
   let selectedConversationId = $derived(selectedPastConversationId ?? conversationId);
-  let historyOwner=$derived(selectedPastConversationId!==null&&legacyGoalId!==null?{kind:'goal' as const,id:legacyGoalId}:{kind:'manager' as const,id:itemId});
-  $effect(()=>{if(selectedPastConversationId===null)legacyGoalId=null;});
+  let historyOwner=$derived({kind:'manager' as const,id:itemId});
   $effect(()=>navigation.owner.setDemand('manager',{selected:historyOwner,selected_conversation_id:selectedPastConversationId,windows:[]}));
   onDestroy(()=>navigation.owner.setDemand('manager',undefined));
   let conversationState = $state<ConversationState>("rest");
@@ -104,7 +102,6 @@
   $effect(() => {
     if (!workspace.data || requestedConversationApplied === requestedConversationId) return;
     requestedConversationApplied = requestedConversationId;
-    legacyGoalId=requestedConversationId!==null&&requestedConversationId===soleGoal?.legacy_conversation_id?soleGoal.id:null;
     selectedPastConversationId = requestedConversationId && requestedConversationId !== workspace.data.conversation_id ? requestedConversationId : null;
     if (requestedConversationId) conversationState = "opened";
   });
@@ -239,7 +236,6 @@
           </div>
 
           {#if soleGoal}<GoalContent goal={soleGoal}/>
-            {#if soleGoal.legacy_conversation_id}<button type="button" class="previous-conversation" onclick={()=>{legacyGoalId=soleGoal!.id;selectedPastConversationId=soleGoal!.legacy_conversation_id;conversationState="opened";}}>Previous goal conversation</button>{/if}
           {:else}
             {#if held.held.length>1}<GoalsOverview goals={item.goals} holderKind="manager" holderId={itemId}/>{/if}
             {#if holderPage.data?.page}<HolderDocument holder={{kind:"manager",id:itemId}}/>{/if}
@@ -296,7 +292,6 @@
   .page-eyebrow a { color:inherit; text-decoration:none; }
   .page-eyebrow a:hover { color:var(--text-strong); }
   .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; margin-right:-8px; border:0; border-radius:var(--radius-sm); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
-  .previous-conversation {margin-top:24px;border:0;background:none;color:var(--text-muted);font:inherit;font-size:12px;padding:0;cursor:pointer}
   .page-settle svg { width:13px; height:13px; }
   :global(.manager-doc):hover .page-settle, .page-settle:focus-visible { opacity:1; }
   .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }

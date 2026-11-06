@@ -51,8 +51,6 @@ def origin_conversation(conn: sqlite3.Connection, ctx: RequestContext) -> str:
     elif principal.kind == PrincipalKind.manager:
         manager = manager_data.read_manager(conn, principal.id).item
         current = conversation_start.read_agent_conversation(conn, manager.manager_agent_key)
-    elif principal.kind == PrincipalKind.goal:
-        current = conversation_start.read_agent_conversation(conn, "goal_" + principal.id)
     else:
         current = None
     if current != origin:
@@ -73,9 +71,6 @@ def origin_conversation(conn: sqlite3.Connection, ctx: RequestContext) -> str:
         and identity.get("PLAN_TICKET_ID") == principal.id
         or principal.kind == PrincipalKind.chief
         and actor == "chief"
-        or principal.kind == PrincipalKind.goal
-        and actor == "goal"
-        and identity.get("PLAN_GOAL_ID") == principal.id
         or principal.kind == PrincipalKind.manager
         and actor == "manager"
         and identity.get("PLAN_MANAGER_ID")

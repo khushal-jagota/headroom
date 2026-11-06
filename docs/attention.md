@@ -26,7 +26,7 @@ Approval events and gate intervals are written when they happen, in the same tra
 
 - **No estimate of owner time.** Headroom sees messages and decisions, not reading time or work on the Mac. A gate wait is an elapsed delay, not hours of attention, so waits are never summed into a time figure. Chief asks Khushal about the rest.
 - **Unknown is not zero.** Older history can lack approvals, gates, or senders. A figure says what it covers and what it cannot know.
-- **Goals are partial.** Headroom has no link between Tickets and goals, so a goal figure covers only its own conversations. Other work stays unattributed.
+- **Goals have no conversations.** Conversation attention belongs to the holder. Old goal conversations remain unattributed.
 - **Totals are stable.** Paging and sorting never change totals or shares.
 
 ## Where it shows up

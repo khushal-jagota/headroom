@@ -171,7 +171,7 @@ class ConversationValue(TypedDict):
 
 
 class AddressValue(TypedDict):
-    owner_kind: Literal["ticket", "manager", "chief", "goal"]
+    owner_kind: Literal["ticket", "manager", "chief"]
     owner_id: str
     conversation_id: str
     current: bool

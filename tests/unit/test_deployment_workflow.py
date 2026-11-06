@@ -55,7 +55,7 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
     adoption = workflow["jobs"]["adopt"]
     assert publication["runs-on"] == "ubuntu-24.04"
     assert publication["env"]["PANELS_REHEARSAL"] == "true"
-    assert "2c0e05cefc82de100bfc576c1a8f3eda7a931f2d" in (
+    assert "53d64f0fdbda071a7887945a0d4ddc113694cf21" in (
         publication["env"]["PANELS_BASELINE_SHA"]
     )
     assert "workflow_dispatch" in adoption["if"]
@@ -69,10 +69,13 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
     assert names.index("Build exact candidate once") < names.index(
         "Seal immutable executable archive"
     )
-    assert names.index("Seal immutable executable archive") < names.index(
-        "Smoke exact retained archive"
+    start, wait = (
+        "Start sealed archive on Debian target beside the rehearsal",
+        "Wait for sealed archive on Debian target",
     )
-    assert names.index("Smoke exact retained archive") < names.index("Deploy exact app")
+    assert names.index("Seal immutable executable archive") < names.index(start)
+    assert names.index(start) < names.index("Deploy exact app") < names.index(wait)
+    assert names.index(wait) < names.index("Finalize deployment lifecycle")
     assert names.index("Collect rehearsal proof") < names.index("Check sealed archive is unchanged")
     assert "publication_checks.py verify-selection" in (
         next(step for step in workflow["jobs"]["publish"]["steps"]
@@ -89,6 +92,33 @@ def test_publication_is_hosted_and_owner_adoption_is_the_only_production_path() 
     for key in ("REQUEST_ID", "PUBLICATION_RUN_ID", "ARTIFACT_ID", "PROOF_ARTIFACT_ID",
                 "APP_SHA", "ARTIFACT_DIGEST", "ARCHIVE_SHA256"):
         assert f'"$UPDATE_{key}"' in commands
+
+
+@pytest.mark.parametrize("exit_status", [0, 3])
+def test_debian_target_check_beside_rehearsal_returns_its_own_outcome(
+    tmp_path: Path, exit_status: int,
+) -> None:
+    """A failed Debian check must still fail the build after it runs in the background."""
+    steps = {step.get("name"): step
+             for step in yaml.safe_load(WORKFLOW.read_text())["jobs"]["build"]["steps"]}
+    start = steps["Start sealed archive on Debian target beside the rehearsal"]
+    wait = steps["Wait for sealed archive on Debian target"]
+    # The progress shell reaps descendants at step end, so the start must not use it.
+    assert start["shell"] == "bash" and "shell" not in wait
+    assert wait["if"] == "${{ always() && steps.target_check_start.outcome == 'success' }}"
+    python = tmp_path / "venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_text(f"#!/bin/sh\nsleep 0.2\necho target check ran\nexit {exit_status}\n")
+    python.chmod(0o755)
+    variables = {"PATH": os.defpath, "PANELS_DEPLOY_VENV": str(tmp_path / "venv"),
+                 "PANELS_GATE_DIR": str(tmp_path), "PANELS_REQUESTED_SHA": "a" * 40}
+    # Capturing output proves the background check does not hold the step output open.
+    subprocess.run(["bash", "-c", start["run"]], env=variables, check=True, timeout=5,
+                   capture_output=True)
+    result = subprocess.run(["bash", "-eo", "pipefail", "-c", wait["run"]], env=variables,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == exit_status
+    assert "target check ran" in result.stdout
 
 
 @pytest.mark.parametrize("operation", ["adopt", "recover-legacy"])

@@ -393,7 +393,6 @@ class PageReadingSubject:
 class GoalResponse(TypedDict):
     holder_kind: Literal["chief", "manager"]
     holder_id: str | None
-    legacy_conversation_id: str | None
     id: str
     project_id: str
     title: str

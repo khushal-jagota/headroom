@@ -4,7 +4,7 @@ A notification is a phone or desktop push for a kind of attention Khushal opted 
 
 ## What it is made of
 
-- **Subjects.** Tickets, the Chief, Goals, and Managers. Preferences are per subject class: all Managers share one switch per kind, and so do all goals. A Chief preference never changes the matching Ticket preference.
+- **Subjects.** Tickets, the Chief, and Managers. Preferences are per subject class: all Managers share one switch per kind,  A Chief preference never changes the matching Ticket preference.
 - **Attention flags.** Each subject has separate flags for a message waiting for a reply, an ask waiting for an answer, and a failure. Tickets also have a proposal waiting for approval and a stage assigned to Khushal.
 - **Edges.** A flag flipping from false to true is an edge. An edge is the only thing that can notify.
 - **The policy.** One decision door that turns an edge into a push or drops it, according to Khushal's preferences.
@@ -30,7 +30,7 @@ The writer records the flag and the edge in the same transaction as the change t
 
 The flags are separate because the events are separate. Held as one flag, a message and an ask that arrived second would raise no edge and reach nobody. An ask awaits an answer only while its turn is open. When the turn ends, its unanswered asks clear, so the next ask can raise a new edge.
 
-A push carries a short title, a body such as "has a message for you", a link, and one replacement tag per subject, so a newer push replaces the older one on the device. It never carries the transcript, the prompt, or the text of an ask. The link opens the Ticket, Chief, goal, or Manager it is about.
+A push carries a short title, a body such as "has a message for you", a link, and one replacement tag per subject, so a newer push replaces the older one on the device. It never carries the transcript, the prompt, or the text of an ask. The link opens the Ticket, Chief, or Manager it is about.
 
 Changing a preference affects future edges and does not replay the past.
 
@@ -41,7 +41,7 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 - Only edges notify. A flag that stays true does not keep pushing, and a correction never pushes.
 - Every push passes the one policy door. Sources never call delivery, and delivery never reads source state.
 - The push payload is privacy-safe. What was said stays in Headroom.
-- Preferences are by class, not by item, so a new Manager or goal needs no setup.
+- Preferences are by class, not by item, so a new Manager needs no setup.
 
 ## Code
 

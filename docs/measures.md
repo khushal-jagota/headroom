@@ -5,7 +5,7 @@ A measure is a dated number that belongs to a Project: monthly revenue, events p
 ## What it is made of
 
 - **Measures.** A name, unit, Project, and timezone. Kind (reading, running total, period count) and period are descriptive. They do not restrict arithmetic.
-- **Sources.** A saved Python script that collects values for a Project, run on a schedule or on request. A source has a responsible Chief, Manager, or goal. That owner, and Workers it authorizes, edit and run it. A goal agent can manage a source for its own goal and no other.
+- **Sources.** A saved Python script that collects values for a Project, run on a schedule or on request. A source has a responsible Chief, Manager, or goal. That owner, and Workers it authorizes, edit and run it. Goals have no agent of their own.
 - **Datasets.** A retained table owned by a source: rows by date, with category dimensions and numeric fields. A measure is one number per date. A dataset is a breakdown, such as events by team. Goal charts read both.
 - **Credentials.** Named API keys that scripts look up by name. [Credentials](credentials.md) owns how they are stored and requested.
 
@@ -19,7 +19,7 @@ A measure is a dated number that belongs to a Project: monthly revenue, events p
 
 - **Taken.** Collected by a source script. Each value points to the run that wrote it.
 - **Assembled.** Calculated from other measures: constants, references with day offsets, arithmetic, minimums and maximums, elapsed days, date-based phases, and daily sums over a day, week, or month. It reads retained values only, never a provider, and cycles are refused. Goal expectation lines use the same evaluator.
-- **Manual.** Typed in by the owner or Chief. A goal agent can write a manual measure bound in its own goal.
+- **Manual.** Typed in by the owner or Chief.
 
 ## How collection works
 

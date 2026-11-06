@@ -25,8 +25,6 @@ from planner.core.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 
-X_PLAN_GOAL_ID: Final = "X-Plan-Goal-ID"
-PLAN_GOAL_ID_SCOPE_KEY: Final = "planner.request_goal_id"
 X_PLAN_CONVERSATION_ID: Final = "X-Plan-Conversation-ID"
 PLAN_CONVERSATION_ID_SCOPE_KEY: Final = "planner.request_conversation_id"
 X_PLAN_ACTOR: Final = "X-Plan-Actor"
@@ -55,14 +53,11 @@ def _classify(
     actor: str | None,
     ticket_id: str | None = None,
     manager_id: str | None = None,
-    goal_id: str | None = None,
 ) -> RequestContext:
     normalized_ticket_id = _normalize(ticket_id)
     normalized_manager_id = _normalize(manager_id)
     if actor is None:
         return RequestContext(OWNER_PRINCIPAL)
-    if actor == "goal" and _normalize(goal_id) is not None:
-        return RequestContext(Principal(PrincipalKind.goal, str(_normalize(goal_id))))
     if actor == "chief":
         return RequestContext(CHIEF_PRINCIPAL)
     if actor == "worker" and normalized_ticket_id is not None:
@@ -93,9 +88,8 @@ def request_context(request: Request) -> RequestContext:
         if PLAN_MANAGER_ID_SCOPE_KEY in request.scope
         else request.headers.get(X_PLAN_MANAGER_ID)
     )
-    goal_id = request.scope.get(PLAN_GOAL_ID_SCOPE_KEY, request.headers.get(X_PLAN_GOAL_ID))
     classified = _classify(
-        _normalize(actor), _normalize(ticket_id), manager_id, _normalize(goal_id)
+        _normalize(actor), _normalize(ticket_id), manager_id
     )
     origin = request.scope.get(
         PLAN_CONVERSATION_ID_SCOPE_KEY, request.headers.get(X_PLAN_CONVERSATION_ID)

@@ -5,7 +5,7 @@ Deployment is how a commit on `main` becomes the app the live host runs. Publica
 ```text
 push to main ─┬→ suites (unit, integration, e2e, browser) ─────────────────────────────────┐
               ├→ static checks (ruff, mypy, frontend, vitest) ─────────────────────────────┤
-              ├→ build once → seal archive → prove on clean root → smoke → rehearsal ──────┤
+              ├→ build once → seal archive → prove on clean root, beside rehearsal ────────┤
               └→ native Mac build → sealed runtime → native proof ─────────────────────────┤
                                                                                            │
                                                                      all passed → receipt
@@ -19,7 +19,7 @@ owner asks (now or when idle) → pinned request → host runner → admit → s
 
 ## What it is made of
 
-- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and the static checks run on their own machines. At the same time another machine builds once, seals the archive, proves it, and rehearses the install on a throwaway copy of a known-good release. A native Mac machine also builds and proves the Mac runtime for the same commit. A last machine waits for all of them. It checks the app proofs against the build digest, checks the Mac archive and proof, and writes the receipt. Panels offers a release only when the whole run passed and the receipt exists, so nothing can be installed before every check passes. If one job fails, "Re-run failed jobs" reruns only that job. Every attempt of a run checks the same commit, so the last machine accepts evidence from the attempt that made it, and still requires the latest result of every job to be a pass. Domain checks include their permission behavior; shared or unknown changes select all default suites.
+- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and the static checks run on their own machines. At the same time another machine builds once and seals the archive. It then proves the archive on a clean Debian root and, at the same time, rehearses the install on a throwaway copy of a known-good release. A native Mac machine also builds and proves the Mac runtime for the same commit. A last machine waits for all of them. It checks the app proofs against the build digest, checks the Mac archive and proof, and writes the receipt. Panels offers a release only when the whole run passed and the receipt exists, so nothing can be installed before every check passes. If one job fails, "Re-run failed jobs" reruns only that job. Every attempt of a run checks the same commit, so the last machine accepts evidence from the attempt that made it, and still requires the latest result of every job to be a pass. Domain checks include their permission behavior; shared or unknown changes select all default suites.
 - **The sealed release.** An archive plus a proof record. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages, including the Claude Code and Codex CLIs.
 - **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. Replacement changes only `app`. See [Environments](environments.md).
 - **The deployment runner.** A self-hosted GitHub runner on the VPS, used only to install.

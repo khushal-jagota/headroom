@@ -17,12 +17,10 @@ from planner.core.authctx import (
     AUTHENTICATED_OWNER_SCOPE_KEY,
     PLAN_ACTOR_SCOPE_KEY,
     PLAN_CONVERSATION_ID_SCOPE_KEY,
-    PLAN_GOAL_ID_SCOPE_KEY,
     PLAN_MANAGER_ID_SCOPE_KEY,
     PLAN_TICKET_ID_SCOPE_KEY,
     X_PLAN_ACTOR,
     X_PLAN_CONVERSATION_ID,
-    X_PLAN_GOAL_ID,
     X_PLAN_MANAGER_ID,
     X_PLAN_TICKET_ID,
 )
@@ -111,8 +109,6 @@ class TrustedIngressMiddleware:
                 scope = _without_header(scope, X_PLAN_CONVERSATION_ID)
                 scope[PLAN_CONVERSATION_ID_SCOPE_KEY] = None
                 scope = _without_header(scope, X_PLAN_ACTOR)
-                scope = _without_header(scope, X_PLAN_GOAL_ID)
-                scope[PLAN_GOAL_ID_SCOPE_KEY] = None
                 scope = _without_header(scope, X_PLAN_TICKET_ID)
                 scope = _without_header(scope, X_PLAN_MANAGER_ID)
                 scope[PLAN_ACTOR_SCOPE_KEY] = None

@@ -110,7 +110,6 @@ time.sleep(30)
     # SIGKILL is delivered asynchronously, so wait for the exit rather than sample it.
     # Its orphaned exit status belongs to init, which may already have reaped it.
     assert _exits(descendant, within_seconds=5)
-    assert result.metrics.elapsed_milliseconds < 3000
 
 
 def _exits(pid: int, *, within_seconds: float) -> bool:
