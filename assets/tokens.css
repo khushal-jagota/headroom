@@ -284,13 +284,13 @@
 
 /* Workspace selection tiers and travel. */
 :root {
-  /* The open row is one quiet fill and the pointer's a third of it, so hover never reads as
-   * selection and the selection never outshines the page. Nothing else in the rail is a grey
-   * fill: the Manager you are inside is framed by a hairline, a line around a block rather
-   * than a fill on a row. */
+  /* Three fills, no lines. The open row is one quiet fill (14%) and the pointer's about a third
+   * of it (5%), so hover never reads as selection. The Manager you are inside is the faintest
+   * of the three, 3% over its whole block: a place, not a row, so its shape (the block) tells
+   * it from a hovered row, and over it a hovered row still steps up a clear 5%. */
   --wash-selected: rgb(255 255 255 / 14%);
   --wash-hover: rgb(255 255 255 / 5%);
-  --wash-context-edge: rgb(255 255 255 / 16%);
+  --wash-context: rgb(255 255 255 / 3%);
   /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
    * (a Manager's header, a goal, a Ticket, Settled) sits --rail-edge in from the column on
    * both sides; every text stands --rail-pad inside its fill, so all of it shares one left
@@ -379,12 +379,10 @@
   /* A Manager's name: the largest words in the rail. */
   --type-rail-title: 18px;
   --rail-tone-label: #828282;
-  /* The rail's floating surfaces (hover previews and the icon bar's tooltips): the raised
-   * plane's #2a2a2a, with a lighter ring and shadow than a menu's, so a preview supports the
-   * row it describes rather than sitting over the page. */
-  --rail-float-surface: var(--surface-raised);
-  --rail-float-ring: rgb(255 255 255 / 8%);
-  --rail-float-shadow: 0 2px 8px rgb(0 0 0 / 20%);
+  /* The rail's floating surfaces (hover previews and the icon bar's tooltips): a #2a2a2a fill
+   * and a soft shadow, no ring. The fill's step over the rail and the page is its edge. */
+  --rail-float-surface: #2a2a2a;
+  --rail-float-shadow: 0 4px 16px rgb(0 0 0 / 28%);
   --rail-preview-width: 340px;
   --rail-preview-pad: 16px;
   --rail-preview-recap-size: 13px;

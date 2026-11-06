@@ -236,7 +236,7 @@ strong {
 .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 5px; }
 .rail-utilities .count-badge { position:static; min-width:20px; height:18px; padding:0 6px; border-radius:var(--radius-pill); background:var(--accent-badge); color:var(--accent-bright); box-shadow:none; font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
 .count-badge.hidden { display:none; }
-.utility-label { position:absolute; bottom:calc(100% + var(--focus-offset) + var(--focus-width) + 8px); left:50%; z-index:6; padding:2px var(--space-2); border:var(--border-hairline) solid var(--rail-float-ring); border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
+.utility-label { position:absolute; bottom:calc(100% + var(--focus-offset) + var(--focus-width) + 8px); left:50%; z-index:6; padding:2px var(--space-2); border:0; border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
 .utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
 .utility:hover .utility-label { transition-delay:400ms; }
 @keyframes shell-panel-in { from { opacity:0; transform:translateY(var(--space-2)); } to { opacity:1; transform:none; } }
@@ -5016,12 +5016,12 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* One moving decoration per scroller keeps selection distinct from the rail content. */
 .approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) { position:relative; isolation:isolate; }
 /* One quiet fill marks the open item and a fainter one follows the pointer, each on the row's
-   own box with the row's own radius. The Manager you are inside is framed: a 1px hairline
-   around its whole block, no fill, reaching --rail-context-outset past the fills so its 12px
-   corners stay concentric with theirs. */
+   own box with the row's own radius. The Manager you are inside carries the faintest fill over
+   its whole block, no line, reaching --rail-context-outset past the fills so its corners stay
+   concentric with theirs. */
 .rail-wash { position:absolute; pointer-events:none; z-index:0; border-radius:var(--radius-md); }
 .rail-wash[hidden] { display:none; }
-.rail-wash--group { background:none; box-shadow:inset 0 0 0 var(--border-hairline) var(--wash-context-edge); border-radius:var(--rail-context-radius); z-index:-1; }
+.rail-wash--group { background:var(--wash-context); border-radius:var(--rail-context-radius); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
 
 .rail-wash--hover { background:var(--wash-hover); }

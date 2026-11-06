@@ -168,16 +168,17 @@
           {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
         </RecapSlot>
       {/key}
-      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
+      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} variant="secondary" class="recap-ask" />{/if}
     </div>
   {/if}
   {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
-  /* Staging's preview, on the rail's float surface: where it belongs, what it is, the recap in
-     its recessed field (up to five lines, the full text kept), the ask at the right inside it,
-     and a Ticket's stage under it all. */
-  .rail-hover-panel { box-sizing:border-box; font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(var(--rail-preview-width),calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--rail-preview-pad); border:var(--border-hairline) solid var(--rail-float-ring); border-radius:var(--radius-lg); background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
+  /* Staging's preview, on the rail's float surface (a fill and a soft shadow, no ring): where it
+     belongs, what it is, the recap in its recessed field (up to five lines, the full text
+     kept), the ask at the right inside it as a filled secondary button, and a Ticket's stage
+     under it all. */
+  .rail-hover-panel { box-sizing:border-box; font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(var(--rail-preview-width),calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--rail-preview-pad); border:0; border-radius:var(--radius-lg); background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }

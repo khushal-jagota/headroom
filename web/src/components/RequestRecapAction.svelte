@@ -17,8 +17,9 @@
     kind: "ticket" | "manager" | "chief";
     id: string;
     class?: string;
-    /** A page's own action is an outline button; a quieter host may ask for the ghost. */
-    variant?: "outline" | "ghost";
+    /** A page's own action is an outline button; a hover preview asks for the filled
+     *  secondary button, a quieter host for the ghost. */
+    variant?: "outline" | "secondary" | "ghost";
   } = $props();
 
   let sending = $state(false);
