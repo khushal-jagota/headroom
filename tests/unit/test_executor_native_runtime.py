@@ -830,9 +830,10 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         }[backend]
         paths = ExecutorPaths(mac_home / "executor-data")
         if policy is WorkspacePathPolicy.executor_default:
-            configured_workspace = Path("/")
-            workspace = paths.workspace
-            assert not workspace.exists()
+            # A Project start names its folder inside the Mac workspace, never a VPS path.
+            configured_workspace = Path("/projects/project_panels")
+            workspace = paths.workspace / "projects" / "project_panels"
+            assert not paths.workspace.exists()
         spool = MacOutbox(paths.spool)
         received: list[ResolvedConversationStart] = []
         constructed: list[ResolvedConversationStart] = []
@@ -925,18 +926,22 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         assert received[0].workspace_path_policy is WorkspacePathPolicy.absolute
         if policy is WorkspacePathPolicy.executor_default:
             assert workspace.is_dir()
-            assert not (mac_home / "projects" / "owned-default").exists()
+            assert not (mac_home / "projects" / "project_panels").exists()
             marker = workspace / "retained.txt"
             marker.write_text("keep")
-            localized = registry._localize_start(
-                resolved,
-                reference,
-                "capability",
-                None,
-                {"PLAN_TICKET_ID": "t_own"},
-                paths.skills,
-            )
-            assert localized.workspace_folder == workspace
+            for subfolder, expected in (
+                ("projects/project_panels", workspace),
+                (None, paths.workspace),
+            ):
+                localized = registry._localize_start(
+                    replace(resolved, workspace_folder=Path("/")),
+                    reference,
+                    "capability",
+                    subfolder,
+                    {"PLAN_TICKET_ID": "t_own"},
+                    paths.skills,
+                )
+                assert localized.workspace_folder == expected.resolve()
             assert marker.read_text() == "keep"
         assert received[0].role_materials is not None
         identity = dict(received[0].role_materials.identity_environment_variables)
@@ -958,6 +963,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
     [
         (WorkspacePathPolicy.home_relative, "projects/missing"),
         (WorkspacePathPolicy.home_relative, "../escape"),
+        (WorkspacePathPolicy.executor_default, "../escape"),
         (WorkspacePathPolicy.absolute, None),
     ],
 )
@@ -991,6 +997,7 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
         assert outcome.result["error_type"] == "BackendSpawnFailed"
         assert native.starts == 0
         assert registry.children() == ()
+        assert not (registry.paths.workspace.parent / "escape").exists()
 
     asyncio.run(run())
 

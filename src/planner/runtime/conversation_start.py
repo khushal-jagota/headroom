@@ -216,24 +216,30 @@ def workspace_for_project(
     *,
     explicit: Path | None = None,
 ) -> tuple[Path, WorkspacePathPolicy]:
-    """Use the existing project localization policy for both drafts and real starts."""
-    policy = (
-        WorkspacePathPolicy.absolute
-        if locale == TicketLocale.macos
-        else WorkspacePathPolicy.home_relative
-    )
+    """Choose one start folder for both drafts and real starts.
+
+    An explicit folder wins. A Mac Ticket otherwise starts in the Mac's own workspace:
+    the Project's folder there when it has a Project, the workspace itself when not.
+    The server's Project path never goes to the Mac.
+    """
     if explicit is not None:
-        return explicit, policy
+        if locale == TicketLocale.macos:
+            return explicit, WorkspacePathPolicy.absolute
+        return explicit, WorkspacePathPolicy.home_relative
+    if locale == TicketLocale.macos:
+        if project_id is not None:
+            return mac_project_workspace_folder(project_id), WorkspacePathPolicy.executor_default
+        return Path("/"), WorkspacePathPolicy.executor_default
     if project_id is not None:
         project_folder = projects_data.read_project(conn, project_id).folder_path
-        if project_folder is not None:
-            if locale == TicketLocale.macos:
-                return project_folder, policy
-            if project_folder.is_dir():
-                return project_folder.resolve(strict=False), policy
-    if locale == TicketLocale.macos:
-        return Path("/"), WorkspacePathPolicy.executor_default
+        if project_folder is not None and project_folder.is_dir():
+            return project_folder.resolve(strict=False), WorkspacePathPolicy.home_relative
     return _default_workspace_folder(conn), WorkspacePathPolicy.home_relative
+
+
+def mac_project_workspace_folder(project_id: str) -> Path:
+    """A Project's folder inside the Mac workspace, written with that workspace as ``/``."""
+    return Path("/") / "projects" / project_id
 
 
 def agent_resolve(
