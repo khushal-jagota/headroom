@@ -125,7 +125,7 @@
     margin: 0;
     color: var(--text-default);
     font-size: var(--type-prose-lg);
-    font-weight: 450;
+    font-weight: 500;
     line-height: 1.6;
   }
   .text :global(p) {
@@ -152,7 +152,7 @@
     margin: 0 0 var(--space-2);
     color: var(--text-strong);
     font-size: var(--type-md);
-    font-weight: 530;
+    font-weight: 590;
     line-height: 1.4;
   }
   .callout[data-tone="attention"] .callout-title { color: var(--accent-bright); }
@@ -162,7 +162,7 @@
     margin: 0;
     color: var(--text-default);
     font-size: var(--type-md);
-    font-weight: 450;
+    font-weight: 500;
     line-height: 1.5;
     white-space: pre-wrap;
   }
@@ -195,7 +195,7 @@
     margin: 0;
     color: var(--text-muted);
     font-size: var(--type-sm);
-    font-weight: 450;
+    font-weight: 500;
     line-height: 1.4;
   }
   .metric-change {
@@ -206,7 +206,7 @@
     background: var(--surface-2);
     color: var(--text-muted);
     font-size: var(--type-xs);
-    font-weight: 530;
+    font-weight: 590;
     font-variant-numeric: tabular-nums;
     line-height: 1.4;
   }
@@ -226,7 +226,7 @@
     margin: var(--space-4) 0 0;
     color: var(--text-strong);
     font-size: var(--type-hero);
-    font-weight: 530;
+    font-weight: 590;
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--tracking-title);
     line-height: 1;
@@ -235,7 +235,7 @@
     margin: var(--space-2) 0 0;
     color: var(--text-faint);
     font-size: var(--type-xs);
-    font-weight: 450;
+    font-weight: 500;
     line-height: 1.4;
   }
 
@@ -250,14 +250,14 @@
     margin: 0;
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 450;
+    font-weight: 500;
     line-height: 1.4;
   }
   .fact dd {
     margin: var(--space-1) 0 0;
     color: var(--text-strong);
     font-size: var(--type-md);
-    font-weight: 530;
+    font-weight: 590;
     line-height: 1.4;
     white-space: pre-wrap;
   }
@@ -267,7 +267,7 @@
     min-height: var(--space-6);
     color: var(--text-default);
     font-size: var(--type-md);
-    font-weight: 530;
+    font-weight: 590;
     line-height: 1.4;
   }
   .status[data-tone="attention"] { color: var(--accent-bright); }
@@ -331,14 +331,14 @@
     margin: 0;
     color: var(--text-strong);
     font-size: var(--type-md);
-    font-weight: 530;
+    font-weight: 590;
     line-height: 1.4;
   }
   .row-detail {
     margin: 6px 0 0;
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 450;
+    font-weight: 500;
     line-height: 1.4;
   }
   .row-aside {
@@ -351,7 +351,7 @@
     margin: 0;
     color: var(--text-default);
     font-size: var(--type-sm);
-    font-weight: 530;
+    font-weight: 590;
     line-height: 1.4;
   }
   .row-aside[data-tone="attention"] .row-status { color: var(--accent-bright); }
@@ -361,7 +361,7 @@
     margin: 4px 0 0;
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 450;
+    font-weight: 500;
     line-height: 1.4;
   }
 

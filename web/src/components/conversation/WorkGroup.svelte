@@ -84,7 +84,6 @@
     min-width: 0;
     max-width: 100%;
     gap: var(--space-1);
-    border-inline-start: var(--border-hairline) solid var(--border-color);
     margin-inline-start: var(--space-3);
     padding-inline-start: var(--space-3);
   }

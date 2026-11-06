@@ -164,7 +164,7 @@
   .instant { transition:none; }
   .kicker { display:flex; align-items:center; gap:6px; font-size:var(--type-xs); line-height:16px; color:var(--text-faint); margin-bottom:var(--space-1); }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
-  .title { font-size:var(--type-sm); font-weight:600; line-height:1.4; letter-spacing:0; color:var(--text-muted); overflow-wrap:anywhere; }
+  .title { font-size:var(--type-sm); font-weight:660; line-height:1.4; letter-spacing:0; color:var(--text-muted); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
   /* The recap is why the preview is opened, so it leads: the brightest, largest text in
      the panel, with the name above it a quieter label. */

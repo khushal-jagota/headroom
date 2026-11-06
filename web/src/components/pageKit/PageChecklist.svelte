@@ -351,7 +351,7 @@
   .save-feedback { margin: 0; padding: 0 var(--space-5) var(--space-3); color: var(--text-faint); font-size: var(--type-sm); }
   .checklist-header { position: relative; border-radius: inherit; transition: background var(--motion-fast) var(--motion-ease); }
   .checklist-header:hover { background-image: var(--interaction-hover); }
-  .header-action { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-faint); font-size: var(--type-sm); font-weight: 530; }
+  .header-action { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-faint); font-size: var(--type-sm); font-weight: 590; }
   .header-toggle { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .header-toggle:focus-visible, .check:focus-visible, .step-title:focus-visible, .action:focus-visible, .group-toggle:focus-visible {
     outline: var(--border-strong) solid var(--focus-ring);
@@ -398,12 +398,12 @@
     transition: transform 110ms var(--motion-ease), border-color var(--motion-fast) var(--motion-ease);
   }
   .check:active .check-visual { transform: scale(0.92); }
-  .check[aria-checked="true"] .check-visual { border-color: var(--text-strong); }
+  .check[aria-checked="true"] .check-visual { border-color: var(--accent-done); }
   .check-fill {
     position: absolute;
     inset: -1.5px;
     border-radius: inherit;
-    background: var(--text-strong);
+    background: var(--accent-done);
     opacity: 0;
     transform: scale(0.6);
     transition: transform var(--motion-slow) var(--motion-ease), opacity var(--motion-fast) linear;
@@ -438,10 +438,10 @@
     padding: 0;
     border: 0;
     background: transparent;
-    color: var(--text-strong);
+    color: var(--text-default);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 530;
+    font-weight: 590;
     line-height: 1.4;
     text-align: left;
   }
@@ -461,7 +461,7 @@
   /* Named for this disclosure, so the application-wide .panel card cannot style it. */
   .step-panel { overflow: hidden; }
   .step-panel-inner { padding: 0 0 var(--space-3); }
-  .detail { white-space: pre-wrap; max-width: 46ch; margin: 0; color: var(--text-faint); font-size: var(--type-sm); font-weight: 450; line-height: 1.45; }
+  .detail { white-space: pre-wrap; max-width: 46ch; margin: 0; color: var(--text-faint); font-size: var(--type-sm); font-weight: 500; line-height: 1.45; }
   .blocked { margin: var(--space-2) 0 0; color: var(--accent-error); font-size: var(--type-sm); }
   .action {
     display: inline-flex;
@@ -476,7 +476,7 @@
     color: var(--surface-recessed);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 530;
+    font-weight: 590;
     cursor: pointer;
   }
   .action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -496,7 +496,7 @@
     color: var(--text-faint);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 530;
+    font-weight: 590;
     text-align: left;
     cursor: pointer;
   }

@@ -27,8 +27,8 @@
 
 <style>
   .mac-status { display:flex; flex-direction:column; gap:var(--space-1); padding:var(--space-3); font-size:var(--type-sm); line-height:1.5; overflow-wrap:anywhere; }
-  .needs-attention { border-left:var(--border-strong) solid var(--accent-bright); }
-  .mac-status-title { color:var(--text-strong); font-weight:600; }
+  .needs-attention { border-radius:var(--radius-md); background:var(--accent-surface); }
+  .mac-status-title { color:var(--text-strong); font-weight:660; }
   .mac-version { color:var(--text-default); }
   .mac-contact { color:var(--text-muted); }
 </style>

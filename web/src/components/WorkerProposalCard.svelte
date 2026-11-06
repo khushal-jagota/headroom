@@ -107,12 +107,12 @@
 </section>
 <style>
   .worker-proposal { padding:var(--space-5); background:var(--surface-2); border:var(--border-hairline) solid var(--border-card); border-radius:var(--radius-lg); }
-  h2 { margin:0; letter-spacing:-.01em; font-size:var(--type-lg); font-weight:650; line-height:1.4; color:var(--text-strong); }
-  .who { font-size:var(--type-sm); font-weight:450; letter-spacing:0; color:var(--text-faint); }
+  h2 { margin:0; letter-spacing:-.01em; font-size:var(--type-lg); font-weight:700; line-height:1.4; color:var(--text-strong); }
+  .who { font-size:var(--type-sm); font-weight:500; letter-spacing:0; color:var(--text-faint); }
   .proposal-prose { max-width:68ch; line-height:1.6; margin-top:var(--space-3); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-md); line-height:1.6; }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
-  button { display:inline-flex; align-items:center; justify-content:center; height:32px; font:inherit; font-size:var(--type-sm); font-weight:530; line-height:20px; padding:0 14px; border:0; border-radius:var(--radius-md); cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  button { display:inline-flex; align-items:center; justify-content:center; height:32px; font:inherit; font-size:var(--type-sm); font-weight:590; line-height:20px; padding:0 14px; border:0; border-radius:var(--radius-md); cursor:pointer; transition:background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   button:disabled { opacity:.5; cursor:default; }
   .reviewer { display:inline; height:auto; font:inherit; line-height:inherit; padding:0 4px; margin:0 -4px; background:transparent; color:inherit; border-radius:var(--radius-sm); }
   .reviewer:hover { background-image:var(--interaction-hover); color:var(--text-strong); }

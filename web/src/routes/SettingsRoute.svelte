@@ -42,7 +42,7 @@
   }
   .settings-sections { display:flex; gap:var(--space-4); flex-wrap:wrap; min-width:0; }
   a { color:var(--text-muted); text-decoration:none; padding:var(--space-1) 0; }
-  a[aria-current="page"] { color:var(--text-strong); font-weight:530; }
+  a[aria-current="page"] { color:var(--text-strong); font-weight:590; }
   a:hover { color:var(--text-strong); }
   a:focus-visible { outline:var(--border-strong) solid var(--focus-ring); outline-offset:var(--space-1); }
   @media(max-width:720px) {

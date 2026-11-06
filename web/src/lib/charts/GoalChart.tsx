@@ -107,8 +107,9 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
   else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} />;
   else if (block.kind === 'number') chart = null;
   else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 176 : 216)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
-  // A chart framed by a page card keeps its range beside the title, as the goal page does.
-  const rangeOnTop = !compact || integrated;
+  // A wide chart keeps its range beside the title; a narrow card keeps it as a full-width
+  // row under the chart, where it never wraps.
+  const rangeOnTop = !compact;
   const plot = <>{chart}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 
   if (block.kind === 'binary') return <article className={`metric-card indicator-card completion-card ${integrated ? 'integrated-card' : ''}`}>{block.title && <div className="metric-top"><h2>{block.title}</h2></div>}<CompletionReading done={completed} tone={colors[status]} context={completed ? 'Completed' : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : 'Not done'} /></article>;

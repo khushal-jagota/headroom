@@ -30,8 +30,6 @@
   --surface-recessed: #141414;
   /* The workspace rail: one close step above the page, divided by a hairline. */
   --surface-rail: #1d1d1d;
-  /* The quiet fill of a Manager's monogram in the rail. */
-  --badge-fill: rgb(255 255 255 / 14%);
   /* Inline code: a translucent lift that reads on every surface it lands on. */
   --surface-code: rgb(255 255 255 / 6%);
   /* Popovers, menus and hover previews: the one raised plane, with --shadow-float. */
@@ -71,10 +69,11 @@
   /* Approved chart-sheet surfaces and category palettes. These remain separate
    * from the shell so the production renderer preserves the approved examples. */
   --chart-surface: #202020;
-  /* Trend lines keep their status, in tones calmer than the status text. */
+  /* A trend line is drawn in the calm brand blue; the stretches that meet their target
+   * turn the done green, and red stays with the status text. */
   --chart-line-good: #8fae7a;
-  --chart-line-bad: #c8c8c8;
-  --chart-line-attention: #c8c8c8;
+  --chart-line-bad: #9aadd2;
+  --chart-line-attention: #9aadd2;
   --chart-surface-raised: #252525;
   --chart-surface-muted: #212121;
   --chart-card-border: #ffffff12;

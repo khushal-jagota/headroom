@@ -1,7 +1,7 @@
 .support-disclosure{min-width:0;--text-3xl:var(--type-display);border:var(--border-hairline) solid var(--chart-card-border);border-radius:24px;padding:24px 20px;background:var(--chart-surface)}
 .support-summary{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 20px;row-gap:8px;width:100%;min-height:88px;padding:0;border:0;background:none;color:var(--text-strong);font:inherit;text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.support-title-text{grid-column:1;font-size:14px;line-height:20px;font-weight:530;color:var(--chart-secondary)}
-.support-reading{grid-column:1;display:flex;align-items:baseline;height:32px;font-size:28px;line-height:32px;font-weight:530;font-variant-numeric:tabular-nums;letter-spacing:-.025em}
+.support-title-text{grid-column:1;font-size:14px;line-height:20px;font-weight:590;color:var(--chart-secondary)}
+.support-reading{grid-column:1;display:flex;align-items:baseline;height:32px;font-size:28px;line-height:32px;font-weight:590;font-variant-numeric:tabular-nums;letter-spacing:-.025em}
 .support-status{grid-column:1;min-height:18px;font-size:12px;line-height:18px}
 .support-status .comparison{margin:0;min-height:0;font:inherit}
 .support-chevron{position:absolute;right:0;top:1px;fill:none;stroke:var(--text-faintest);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}

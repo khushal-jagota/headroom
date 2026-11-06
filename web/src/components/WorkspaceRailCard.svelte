@@ -13,7 +13,6 @@
   import type { ConversationSignal } from "../lib/conversationSignal";
   import WorkerRow from "./WorkerRow.svelte";
   import ManagerEyebrow from "./ManagerEyebrow.svelte";
-  import chiefProfile from "../assets/chief-of-staff-profile.webp";
   let { beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
     beforeGroups?: Snippet;
     suppressBackgroundPreview?: boolean;
@@ -49,7 +48,6 @@
   <div class="identity" onclick={(event) => { if (!(event.target as HTMLElement).closest('button, a')) { const head = event.currentTarget.querySelector<HTMLButtonElement>('.item-head'); head?.click(); } }} onpointerenter={(event) => { if (!suppressBackgroundPreview) input().pointerEnter(event); }} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => { if (!(event.target as HTMLElement).closest('button')) input().down(event); }} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()}>
     {#if !chief}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
     <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={(event) => input().leave(event)}>
-      {#if chief}<img src={chiefProfile} class="chief-icon" alt="" />{:else}<span class="manager-mark" aria-hidden="true">{(project ?? title).trim().charAt(0).toUpperCase()}</span>{/if}
       <span class="item-title">{title}</span>
       <ConversationSignalMark {signal} {conversationId} />
     </button>
@@ -68,21 +66,19 @@
 <style>
   .manager-card-slot { min-width:0; }
   :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--space-3); }
-  /* Every Manager, the Chief included, is one header: a 20px mark, then its name. Its
-     goals and Tickets hang from the name's left edge, one indent for every child. */
-  .manager-card { --rail-child-indent:calc(20px + var(--space-2)); box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:var(--space-2) var(--space-3); isolation:isolate; z-index:1; }
+  /* Every Manager, the Chief included, is one text-only header. Its goals stand on the
+     name's left edge; Tickets are the one indent under it. */
+  .manager-card { --rail-child-indent:0px; box-sizing:border-box; position:relative; border:0; border-radius:var(--radius-lg); padding:var(--space-2) var(--space-3); isolation:isolate; z-index:1; }
   .manager-card.has-tickets { padding-bottom:var(--space-1); }
   .identity { display:flex; flex-direction:column; cursor:pointer; }
-  .identity > :global(.manager-eyebrow) { order:2; padding-left:var(--rail-child-indent); }
+  /* The project is the eyebrow above the name; hover-only Settle sits at its right end. */
+  .identity > :global(.manager-eyebrow) { margin-bottom:2px; }
   .item-head { display:flex; align-items:center; gap:var(--space-2); width:100%; min-height:24px; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   /* A title is dimmed unless it needs the user: an unread message for them, or the pointer or
      the open page on it, brings it to full brightness. */
-  .item-title { flex:1; min-width:0; font-size:var(--type-lg); font-weight:700; line-height:22px; letter-spacing:-0.014em; color:var(--text-faint); overflow-wrap:anywhere; }
+  .item-title { flex:1; min-width:0; font-size:var(--type-lg); font-weight:740; line-height:22px; letter-spacing:-0.014em; color:var(--text-faintest); overflow-wrap:anywhere; }
   .item-head[data-unread="true"] .item-title { color:var(--text-strong); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--text-strong); }
-  .chief-icon, .manager-mark { flex:none; width:20px; height:20px; border-radius:var(--radius-sm); }
-  .chief-icon { object-fit:cover; }
-  .manager-mark { display:grid; place-items:center; background:var(--badge-fill); color:var(--text-default); font-size:11px; font-weight:600; line-height:1; }
   /* A goal is part of its Manager's identity, so it stands flush with the name. Tickets are
      the work list under it and step in once more. */
   .manager-card :global(.goals-rail), .manager-card :global(.sole-status) { padding-left:var(--rail-child-indent); }

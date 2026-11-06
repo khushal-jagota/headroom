@@ -139,7 +139,7 @@
 {/if}
 
 <style>
-  .deadline { display: grid; flex: 0 0 auto; justify-items: end; align-self: start; max-width: 100%; color: var(--deadline-color); font-size: var(--type-xs); font-weight: 450; }
+  .deadline { display: grid; flex: 0 0 auto; justify-items: end; align-self: start; max-width: 100%; color: var(--deadline-color); font-size: var(--type-xs); font-weight: 500; }
   .field { position: relative; display: flex; align-items: center; min-height: 44px; }
   .date-face { display: flex; align-items: center; justify-content: center; min-width: 44px; padding-inline: var(--space-1); white-space: nowrap; pointer-events: none; }
   svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }

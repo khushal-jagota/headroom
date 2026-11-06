@@ -13,7 +13,7 @@
 [data-screen="config"] :is(.agents-page-head, .agents-detail-head) h1 {
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 530;
+  font-weight: 590;
   letter-spacing: var(--tracking-title);
   line-height: 1.2;
 }
@@ -21,7 +21,7 @@
 [data-screen="config"] .agents-section-title {
   margin-bottom: var(--space-2);
   color: var(--text-faint);
-  font-weight: 530;
+  font-weight: 590;
 }
 
 [data-screen="config"] .agents-index-section + .agents-index-section {
@@ -49,7 +49,7 @@
 
 [data-screen="config"] .agents-destination-name {
   color: var(--text-strong);
-  font-weight: 450;
+  font-weight: 500;
 }
 
 [data-screen="config"] .agents-destination-description {
@@ -101,7 +101,7 @@
   margin: 0;
   color: var(--text-strong);
   font-size: var(--type-md);
-  font-weight: 530;
+  font-weight: 590;
   line-height: 1.5;
 }
 
@@ -132,7 +132,7 @@
 }
 
 [data-screen="config"] .worker-stage-table th {
-  font-weight: 450;
+  font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
 }
@@ -147,7 +147,7 @@
 }
 
 [data-screen="config"] .worker-stage-name {
-  font-weight: 450;
+  font-weight: 500;
 }
 
 [data-screen="config"] .worker-stage-gated-field {
@@ -190,7 +190,7 @@
 
 [data-screen="config"] .worker-skill-meta dt,
 [data-screen="config"] .worker-skill-field > span {
-  font-weight: 450;
+  font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
 }

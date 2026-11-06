@@ -61,7 +61,7 @@
 <style>
   .manager-workspace-head { padding-top:var(--space-6); }
   .manager-workspace-eyebrow-slot { display:flex; align-items:center; min-height:24px; font-size:var(--type-sm); line-height:20px; color:var(--text-faint); }
-  .manager-workspace-title { font-family:var(--font-ui); font-size:var(--type-display); font-weight:700; line-height:1.25; letter-spacing:-0.022em; margin-top:var(--space-2); overflow-wrap:anywhere; }
+  .manager-workspace-title { font-family:var(--font-ui); font-size:var(--type-display); font-weight:740; line-height:1.25; letter-spacing:-0.022em; margin-top:var(--space-2); overflow-wrap:anywhere; }
   /* No padding on the clamped block itself: ClampedText measures its scrollHeight
      against a line count, so padding there reports an empty recap as overflowing. */
   /* The gap sits on the animating slot, not inside it: a margin on the clamped block

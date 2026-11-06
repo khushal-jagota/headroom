@@ -63,7 +63,7 @@
 <style>
   .preset-workflow { margin-top: var(--space-7); }
   header { margin-bottom: var(--space-5); }
-  h2 { font-size: var(--type-md); font-weight: 530; }
+  h2 { font-size: var(--type-md); font-weight: 590; }
   p { margin-top: var(--space-2); color: var(--text-muted); font-size: var(--type-sm); }
   footer { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-5); }
 </style>

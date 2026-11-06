@@ -124,7 +124,7 @@
  .error-actions button:disabled{opacity:.65}
  .goal-heading{margin-bottom:var(--space-6)}
  .goal-context{min-height:24px}
- .goal-context{display:flex;align-items:baseline;gap:var(--space-3);margin:0 calc(var(--space-1) * -1) var(--space-2);color:var(--text-faint);font-size:var(--type-sm);font-weight:450;line-height:20px;flex-wrap:wrap}
+ .goal-context{display:flex;align-items:baseline;gap:var(--space-3);margin:0 calc(var(--space-1) * -1) var(--space-2);color:var(--text-faint);font-size:var(--type-sm);font-weight:500;line-height:20px;flex-wrap:wrap}
  .goal-context > .metadata + .metadata::before{content:"·";position:absolute;top:2px;left:calc(var(--space-2) * -1 + 1px);line-height:inherit;color:var(--text-faintest);pointer-events:none}
  .date-display{grid-area:1/1;padding:2px var(--space-1);white-space:pre;pointer-events:none}
  .deadline:not(:focus-within) .date-size{visibility:hidden;width:0;overflow:hidden}
@@ -146,8 +146,8 @@
  .empty:not(:focus-within) .date-size,.empty:focus-within .deadline-empty{display:none}
  .empty:not(:focus-within) input{opacity:0}
  .signal{margin-left:auto}
- h1{font-size:var(--type-display);font-weight:700;line-height:1.25;letter-spacing:-.022em;margin:0;max-width:750px;color:var(--text-strong)}
- .why{font-size:var(--type-md);font-weight:450;line-height:1.6;color:var(--text-muted);margin-top:var(--space-2);max-width:650px}
+ h1{font-size:var(--type-display);font-weight:740;line-height:1.25;letter-spacing:-.022em;margin:0;max-width:750px;color:var(--text-strong)}
+ .why{font-size:var(--type-md);font-weight:500;line-height:1.6;color:var(--text-muted);margin-top:var(--space-2);max-width:650px}
  .why :global(.ed){min-height:1.6em;white-space:pre-wrap}
  h1,.why{overflow-wrap:anywhere}
  @container (max-width:640px){.goal-context{gap:var(--space-3)}h1{font-size:24px}}
