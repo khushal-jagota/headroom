@@ -78,12 +78,38 @@
     const currentTarget = target;
     const currentRail = rail;
     const currentPanel = element;
+    /* The panel never covers the row it describes or the conversation dock. Beside the
+     * rail it opens past the rail's edge, level with its row. A row in a page list opens
+     * below the row, or above it when the dock leaves no room underneath. */
     const place = () => {
       const rect = currentTarget.getBoundingClientRect();
-      const railRight = currentRail.getBoundingClientRect().right;
-      left = Math.max(12, Math.min(railRight + 14, window.innerWidth - currentPanel.offsetWidth - 12));
-      top = Math.max(12, Math.min(rect.top - 8, window.innerHeight - currentPanel.offsetHeight - 12));
-      clearOfRail = left >= railRight;
+      const width = currentPanel.offsetWidth;
+      const height = currentPanel.offsetHeight;
+      const dock = document.querySelector(".conversation-layer")?.getBoundingClientRect();
+      const floor = Math.min(window.innerHeight, dock && dock.height > 0 ? dock.top : window.innerHeight) - 12;
+      if (currentRail !== currentTarget) {
+        const railRight = currentRail.getBoundingClientRect().right;
+        left = Math.max(12, Math.min(railRight + 12, window.innerWidth - width - 12));
+        top = Math.max(12, Math.min(rect.top - 8, floor - height));
+        clearOfRail = left >= railRight;
+        return;
+      }
+      // Past the end of the row's title when there is room, level with the row; otherwise
+      // below the row, or above it when the dock leaves no room underneath.
+      const title = currentTarget.querySelector(".ticket-row-title");
+      let titleEnd = rect.left;
+      if (title) { const words = document.createRange(); words.selectNodeContents(title); titleEnd = words.getBoundingClientRect().right; }
+      if (titleEnd + 24 + width <= window.innerWidth - 12) {
+        left = titleEnd + 24;
+        top = Math.max(12, Math.min(rect.top - 8, floor - height));
+      } else {
+        left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+        const below = rect.bottom + 6;
+        const above = rect.top - 6 - height;
+        top = below + height <= floor ? below : above >= 12 ? above : Math.max(12, floor - height);
+      }
+      // Over the list it would sit on the rows the pointer travels to, so it stays a preview.
+      clearOfRail = false;
     };
     // Manifest arrival can change the height after the panel is already visible.
     const observer = new ResizeObserver(place);
@@ -136,9 +162,11 @@
   .instant { transition:none; }
   .kicker { display:flex; align-items:center; gap:6px; font-size:var(--type-xs); line-height:16px; color:var(--text-faint); margin-bottom:var(--space-1); }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
-  .title { font-size:var(--type-md); font-weight:600; line-height:1.4; letter-spacing:-.006em; color:var(--text-strong); overflow-wrap:anywhere; }
+  .title { font-size:var(--type-ui); font-weight:650; line-height:1.4; letter-spacing:-.006em; color:var(--text-default); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
-  .recap { margin-top:var(--space-2); font-size:var(--type-sm); line-height:1.5; color:var(--text-muted); }
+  /* The recap is why the preview is opened, so it leads: the brightest, largest text in
+     the panel, set off by a quiet rule rather than a second box. */
+  .recap { margin-top:var(--space-3); padding-left:var(--space-3); border-left:var(--border-strong) solid var(--border-hover); font-size:var(--type-ui); line-height:1.55; color:var(--text-strong); }
   .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }
