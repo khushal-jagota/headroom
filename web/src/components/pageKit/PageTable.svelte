@@ -28,6 +28,7 @@
   let measuredWidths = $derived(measured?.count === block.columns.length ? measured.widths : null);
   let widths = $derived(block.column_widths ?? measuredWidths);
   let band = $state<{ left: number; width: number } | null>(null);
+  let scrolled = $state(false);
 
   $effect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -350,7 +351,7 @@
     return { ...old, caption: raw };
   }} /></div>{/if}
   <div class="card">
-    <div class="scroller">
+    <div class="scroller" data-scrolled={scrolled ? "" : undefined} onscroll={(event) => (scrolled = event.currentTarget.scrollLeft > 0)}>
       {#if band}<span class="band" style:left="{band.left}px" style:width="{band.width}px" aria-hidden="true"></span>{/if}
       <table bind:this={tableEl} data-fixed={widths ? "" : undefined} style:--table-min-width={!block.column_widths && measuredWidths ? `${measured?.minWidth}px` : undefined} data-selectable={selectable ? "" : undefined}>
         {#if block.caption}<caption class="sr">{block.caption}</caption>{/if}
@@ -632,8 +633,8 @@
   }
   th[data-numeric] .sort { justify-content: flex-end; }
   .editable-sort { display: flex; min-height: 44px; align-items: center; padding-left: var(--space-4); }
-  .sort.icon-only { width: 28px; flex: none; justify-content: center; padding: 0; }
-  th[data-numeric] .editable-sort { flex-direction: row-reverse; justify-content: flex-start; padding: 0 var(--space-4) 0 0; }
+  .sort.icon-only { width: 40px; flex: none; justify-content: center; padding: 0; }
+  th[data-numeric] .editable-sort { justify-content: flex-end; }
   .sort-inner { display: inline-flex; align-items: center; gap: 6px; }
   th[data-numeric] .sort-inner { flex-direction: row-reverse; }
   .sort-icon {
@@ -756,6 +757,24 @@
     filter: none;
   }
   .reduced .hit-input:active + .box { transform: none; }
+  @container page (width > 620px) {
+    /* A number column holds only its label and values. The sort control sits in
+       the gap left of the label and takes no width of its own. */
+    th[data-numeric] .sort:not(.icon-only),
+    th[data-numeric] .editable-sort,
+    td[data-numeric]:not([data-primary]) { padding: 0 var(--space-2) 0 var(--space-1); }
+    th[data-numeric] .sort-inner { gap: 0; }
+    th[data-numeric] .sort-inner .sort-icon { margin: 0 -2px 0 -14px; }
+    th[data-numeric] .editable-sort { flex-direction: row-reverse; justify-content: flex-start; }
+    th[data-numeric] .sort.icon-only { width: 12px; margin-left: -12px; }
+    th[data-numeric] .sort.icon-only .sort-icon { margin: 0 -2px; }
+    /* A table too wide to fit scrolls, and its label column stays in view. */
+    table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) { position: sticky; left: 0; }
+    .scroller[data-scrolled] table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) {
+      z-index: 3;
+      box-shadow: inset calc(-1 * var(--border-hairline)) 0 var(--chart-grid);
+    }
+  }
   @container page (max-width: 620px) {
     .table-block { padding: 24px 16px; border-radius: 24px; }
     .caption { padding-inline: 8px; }
@@ -770,7 +789,6 @@
     th.select-cell { position: sticky; left: -8px; z-index: 1; width: 40px; margin-left: -8px; padding: 0 0 0 12px; background: var(--chart-surface); }
     th.select-cell .hit { height: 32px; }
     .editable-sort { min-height: 32px; padding-left: 10px; }
-    th[data-numeric] .editable-sort { flex-direction: row; padding: 0 0 0 10px; }
     th .sort.icon-only { width: 32px; padding: 0; }
     th .sort { width: auto; height: 32px; border-radius: 8px; padding: 0 10px; }
     th[data-sorted] .sort { background: var(--chart-surface-muted); }

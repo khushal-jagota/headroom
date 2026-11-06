@@ -2577,14 +2577,24 @@ def score_table(rounds):
 def score_table_geometry(table):
     return table.evaluate("""table => {
         const box = element => element.getBoundingClientRect();
+        const scroller = table.parentElement;
         const heads = [...table.querySelectorAll('thead th[data-key]')];
         const firstRow = table.querySelector('tbody tr');
-        const label = element => element.querySelector('[contenteditable]') ?? element;
+        const label = head => head.querySelector('[contenteditable]');
+        // The visible arrow is the middle of the 16px sort icon.
+        const glyph = head => {
+            const icon = box(head.querySelector('.sort-icon'));
+            return {left: icon.left + 4.75, right: icon.right - 4.75};
+        };
         return {
             widths: heads.map(head => box(head).width),
             // A header label that leaves its cell overlaps its neighbour.
             spill: heads.map(head => Math.max(box(label(head)).right - box(head).right,
                 box(head).left - box(label(head)).left)),
+            // Space between each number header's arrow and the labels on both sides.
+            arrowClearance: heads.slice(1).map((head, index) => Math.min(
+                glyph(head).left - box(label(heads[index])).right,
+                box(label(head)).left - glyph(head).right)),
             headerRight: heads.map(head => box(label(head)).right),
             valueRight: [...firstRow.querySelectorAll('td')].map(cell =>
                 box(cell.querySelector('.cell-copy')).right),
@@ -2594,15 +2604,35 @@ def score_table_geometry(table):
                 return {text: text.textContent.trim(),
                     lines: Math.round(box(text).height / lineHeight)};
             }),
-            scrolls: table.parentElement.scrollWidth > table.parentElement.clientWidth,
+            // The label column stays at the scroller's left edge.
+            labelOffset: box(heads[0]).left - box(scroller).left,
+            scrolls: scroller.scrollWidth > scroller.clientWidth,
         };
     }""")
 
 
+def assert_readable_score_table(geometry):
+    assert geometry["widths"][0] >= 180, geometry
+    assert min(geometry["widths"]) > 60, geometry
+    assert max(geometry["spill"]) <= 0.5, geometry
+    assert min(geometry["arrowClearance"]) >= 2, geometry
+    # Number headers end where their values end.
+    for header, value in zip(
+        geometry["headerRight"][1:], geometry["valueRight"][1:], strict=True
+    ):
+        assert abs(header - value) <= 1, geometry
+    # Labels wrap between words. Fresh load gave the longest label four lines.
+    for label in geometry["labelLines"]:
+        assert label["lines"] <= 3, geometry
+    assert {label["text"] for label in geometry["labelLines"]} == set(SCORE_LABELS), geometry
+
+
 def score_table_layout(browser, url):
-    """Columns added to an open table get width, labels wrap at words, headers align."""
+    """Score tables fit when they can, scroll with a pinned label column when not."""
     started = time.monotonic()
-    context = browser.new_context(viewport={"width": 1280, "height": 1400}, reduced_motion="reduce")
+    context = browser.new_context(
+        viewport={"width": 1280, "height": 1400}, reduced_motion="reduce"
+    )
     page = context.new_page()
     page.set_default_timeout(5000)
     fixture = NativeGoalEditFixture()
@@ -2612,40 +2642,57 @@ def score_table_layout(browser, url):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.route("**/api/**", fixture.respond)
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root, "score-table") if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+
+    def publish(rounds):
+        # The Manager changes the table while the page stays open.
+        goal["page"]["blocks"][-1] = score_table(rounds)
+        goal["revision"] += 1
+        fixture.version += 1
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))")
+        expect(table.locator("thead th[data-key]")).to_have_count(rounds + 1)
+        expect(table).to_have_attribute("data-fixed", "")
+
+    def screenshot(name):
+        if output:
+            table.locator("xpath=ancestor::*[@data-block='table']").screenshot(
+                path=str(output / name))
+
     try:
         page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
         table = page.locator(f'[data-goal-page="{identity}"] [data-block="table"] table')
         expect(table).to_have_attribute("data-fixed", "")
-        before = score_table_geometry(table)
-        assert len(before["widths"]) == 6, before
+        assert len(score_table_geometry(table)["widths"]) == 6
 
-        # The Manager adds two rounds while the page stays open.
-        goal["page"]["blocks"][-1] = score_table(7)
-        goal["revision"] += 1
-        fixture.version += 1
-        page.evaluate("document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))")
-        expect(table.locator("thead th[data-key]")).to_have_count(8)
-        expect(table).to_have_attribute("data-fixed", "")
-        after = score_table_geometry(table)
-        output = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
-        if output:
-            Path(output, "score-table").mkdir(parents=True, exist_ok=True)
-            block = table.locator("xpath=ancestor::*[@data-block='table']")
-            block.screenshot(path=str(Path(output, "score-table", "columns-added.png")))
-            table.evaluate("table => table.parentElement.scrollTo({left: 10000})")
-            block.screenshot(path=str(Path(output, "score-table", "scrolled-to-end.png")))
-            table.evaluate("table => table.parentElement.scrollTo({left: 0})")
-        assert min(after["widths"]) > 60, after
-        assert max(after["spill"]) <= 0.5, after
-        # Number headers end where their values end.
-        for header, value in zip(after["headerRight"][1:], after["valueRight"][1:], strict=True):
-            assert abs(header - value) <= 1, after
-        # Labels wrap between words. Fresh load gave the longest label four lines.
-        for label in after["labelLines"]:
-            assert label["lines"] <= 3, after
-        assert {label["text"] for label in after["labelLines"]} == set(SCORE_LABELS), after
+        # Eight columns fit the goal page's table width without scrolling.
+        publish(7)
+        eight = score_table_geometry(table)
+        screenshot("eight-columns.png")
+        assert_readable_score_table(eight)
+        assert not eight["scrolls"], eight
 
-        assert after["scrolls"], after
+        # Sorting keeps every column at its width.
+        table.get_by_role("button", name="Sort by Round 7", exact=True).click()
+        expect(table.locator("th[data-sorted]")).to_have_count(1)
+        assert score_table_geometry(table)["widths"] == eight["widths"]
+
+        # Ten columns cannot fit. The table scrolls and the label column stays pinned.
+        publish(9)
+        ten = score_table_geometry(table)
+        screenshot("ten-columns.png")
+        assert_readable_score_table(ten)
+        assert ten["scrolls"], ten
+        table.evaluate("table => table.parentElement.scrollTo({left: 10000})")
+        page.wait_for_function(
+            "table => table.parentElement.scrollLeft > 0", arg=table.element_handle())
+        scrolled = score_table_geometry(table)
+        screenshot("ten-columns-scrolled.png")
+        assert abs(scrolled["labelOffset"]) <= 1, scrolled
+        assert max(scrolled["spill"]) <= 0.5, scrolled
+
         # A narrower page keeps every column at its content and scrolls further.
         page.set_viewport_size({"width": 1000, "height": 1400})
         page.wait_for_function(
@@ -2653,13 +2700,6 @@ def score_table_layout(browser, url):
         narrow = score_table_geometry(table)
         assert max(narrow["spill"]) <= 0.5, narrow
         assert narrow["scrolls"], narrow
-        page.set_viewport_size({"width": 1280, "height": 1400})
-        expect(table).to_have_attribute("data-fixed", "")
-
-        # Sorting keeps every column at its width.
-        table.get_by_role("button", name="Sort by Round 7", exact=True).click()
-        expect(table.locator("th[data-sorted]")).to_have_count(1)
-        assert score_table_geometry(table)["widths"] == after["widths"]
         assert errors == [], errors
     finally:
         context.close()
