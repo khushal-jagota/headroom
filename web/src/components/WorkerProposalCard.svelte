@@ -93,7 +93,7 @@
       onkeydown={(event: KeyboardEvent) => { if (!finalApproval && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); scopePicker?.openApproval(event.currentTarget as HTMLElement); } }} disabled={disabled || busy || resolved || !nextCeiling}
       onclick={(event) => finalApproval ? void completeScope({ approval:true, ceiling:"none", holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
     {#if proposal.field !== "brief"}
-      <Button variant="quiet" data-send-back disabled={disabled || !canReturn || busy || resolved}
+      <Button variant="secondary" data-send-back disabled={disabled || !canReturn || busy || resolved}
         onclick={() => { if (canReturn) returning = true; }}>Send it back</Button>
     {/if}
     {#if trailingActions}<div class="trailing">{@render trailingActions()}</div>{/if}
@@ -106,7 +106,7 @@
     {#if revisionEditor}{@render revisionEditor()}{:else}
     <div class="return-note">
       <label>What needs changing<textarea data-revision-note bind:value={note} placeholder="What to do differently" disabled={busy || resolved}></textarea></label>
-      <div class="actions"><Button variant="primary" data-revision-send disabled={busy || resolved || !note.trim()} onclick={() => void sendBack()}>Send it back</Button><Button variant="pill" onclick={() => returning = false}>Cancel</Button></div>
+      <div class="actions"><Button variant="primary" data-revision-send disabled={busy || resolved || !note.trim()} onclick={() => void sendBack()}>Send it back</Button><Button variant="ghost" onclick={() => returning = false}>Cancel</Button></div>
     </div>
     {/if}
   {/if}

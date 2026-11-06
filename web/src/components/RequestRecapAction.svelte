@@ -49,7 +49,7 @@
        Marked rather than disabled: a disabled control loses focus the instant it is
        pressed, and inside a hover panel losing focus is how the panel decides you left. -->
   <Button
-    variant="pill"
+    variant="ghost"
     class="request-recap-action"
     aria-disabled={sending}
     data-request-recap-action

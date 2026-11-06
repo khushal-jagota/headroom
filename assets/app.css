@@ -236,39 +236,6 @@ strong {
 .utility:nth-last-child(1 of .utility) .utility-label { left:auto; right:0; transform:none; }
 .utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
 .utility:hover .utility-label { transition-delay:400ms; }
-/* The rail's list and its foot. BoardRoute draws them; their measures are the rail's.
-   The list's fills sit --rail-edge in from both sides of the column: its scrollbar is kept to
-   the column's own edge, drawn only while the pointer is over the list, so the right inset
-   matches the left with or without one. */
-/* The list's first fill still starts 12px down the rail: the list keeps --rail-ring-room of
-   its own above it, so a focus ring around the first header is never cut at the top. */
-.board-workspace-shell.approved-rail-shell .approved-rail { padding-top:calc(var(--space-3) - var(--rail-ring-room)); }
-.approved-rail-shell .approved-rail .active-work-scroll { padding:var(--rail-ring-room) max(0px, calc(var(--rail-edge) - var(--rail-scrollbar, 0px))) var(--rail-foot-clear) var(--rail-edge); scroll-padding-block:var(--rail-edge-fade); scrollbar-width:auto; scrollbar-color:auto; }
-.approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
-.approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar-track { background:transparent; }
-.approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar-thumb { border-radius:var(--radius-pill); background:transparent; }
-.approved-rail-shell .approved-rail .active-work-scroll:is(:hover, :active)::-webkit-scrollbar-thumb { background:var(--border-hover); }
-@supports not selector(::-webkit-scrollbar) { .approved-rail-shell .approved-rail .active-work-scroll { scrollbar-width:thin; scrollbar-color:var(--border-color) transparent; } }
-/* Where rows continue past an edge of the list, they fade into the rail over 8px. A list
-   that fits, or an edge with nothing past it, shows no fade. The fades
-   are layers over the list's box rather than a mask on the list, so a preview that opens
-   from a row is never masked with it. */
-.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail .rail-work .rail-work::before,
-.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail .rail-work .rail-work::after { content:""; position:absolute; z-index:3; left:0; right:0; height:var(--rail-edge-fade); pointer-events:none; opacity:0; transition:opacity var(--motion-fast) var(--motion-ease); }
-.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail .rail-work .rail-work::before { top:0; bottom:auto; background:linear-gradient(to bottom, var(--surface-rail), transparent); }
-.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail .rail-work .rail-work::after { bottom:0; background:linear-gradient(to top, var(--surface-rail), transparent); }
-.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail[data-rail-more-above] .rail-work .rail-work::before,
-.board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail[data-rail-more-below] .rail-work .rail-work::after { opacity:1; }
-/* Settled: one row in the rail's row voice, its count a plain Small numeral after it. */
-.approved-rail-shell .approved-rail .settled-head { box-sizing:border-box; height:var(--rail-row-height); min-height:0; padding:0 var(--rail-pad); margin-inline:0; width:100%; border-radius:var(--radius-md); font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; color:var(--rail-tone-rest); }
-.approved-rail-shell .approved-rail .settled-head:hover { color:var(--tone-strong); }
-.approved-rail-shell .approved-rail .settled-head .count { margin-left:5px; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--rail-tone-label); }
-.approved-rail-shell .approved-rail .settled-chevron { color:var(--rail-tone-label); }
-.approved-rail-shell .approved-rail .settled-item + .settled-item { margin-top:var(--rail-row-gap); }
-.approved-rail-shell .approved-rail .settled-row { box-sizing:border-box; height:var(--rail-row-height); padding:0 var(--rail-pad); margin:0; font-size:var(--type-row); line-height:20px; }
-.approved-rail-shell .approved-rail .settled-title { color:var(--rail-tone-rest); }
-.approved-rail-shell .approved-rail .settled-title > span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; overflow-wrap:normal; }
-.approved-rail-shell .approved-rail .reopen { font-size:var(--type-small); color:var(--rail-tone-label); }
 @keyframes shell-panel-in { from { opacity:0; transform:translateY(var(--space-2)); } to { opacity:1; transform:none; } }
 .compact-bar { display:none; }
 .destination-pane { display:flex; flex-direction:column; flex:1; width:100%; height:100%; min-width:0; min-height:0; overflow:auto; }
@@ -5283,7 +5250,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 .manager-column .page-tickets.page-tickets .manager-children .ticket-row .machine-identity { display: none; }
 .manager-column .page-tickets.page-tickets .manager-children .ticket-row:hover,
-.manager-column .page-tickets.page-tickets .manager-children [data-previewed] > .ticket-row,
 .manager-column .page-tickets.page-tickets .manager-children .ticket-row:focus-visible {
   background: var(--wash-hover);
   color: var(--tone-strong);
@@ -5306,55 +5272,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
   padding: 6px 0;
   color: var(--tone-tertiary);
   font-size: var(--type-small);
-}
-
-/* THE BUTTON ON A PAGE — interim. The one Button component ranks a page's actions: primary
- * (inverse), secondary ("quiet", which the shared Button maps to secondary: a 13% fill) and
- * ghost ("pill", mapped to ghost: no fill until hovered); 28px, radius 8, padding 0 12, label
- * 13.5/450, a hover adds one step. This block only carries the shared Buttons section's look
- * onto the pages while that section is not in this branch; once it is, this block can go. */
-:is(.manager-page, .ticket-screen, .review-screen) .button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex: none;
-  height: var(--page-control-height);
-  margin: 0;
-  padding: 0 12px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--tone-secondary);
-  font-family: var(--font-ui);
-  font-size: var(--type-row);
-  font-weight: var(--weight-small);
-  line-height: 1;
-  white-space: nowrap;
-  text-decoration: none;
-  cursor: pointer;
-  transition: background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
-}
-:is(.manager-page, .ticket-screen, .review-screen) .button svg { width: 14px; height: 14px; flex: none; }
-:is(.manager-page, .ticket-screen, .review-screen) .button:disabled { color: var(--tone-faint); opacity: 1; cursor: default; }
-:is(.manager-page, .ticket-screen, .review-screen) .button[aria-disabled="true"] { color: var(--tone-faint); cursor: default; }
-:is(.manager-page, .ticket-screen, .review-screen) .button--primary {
-  background: var(--page-button-primary-fill);
-  color: var(--page-button-primary-ink);
-}
-:is(.manager-page, .ticket-screen, .review-screen) .button--primary:hover:not(:disabled) { background: var(--page-button-primary-fill-hover); }
-:is(.manager-page, .ticket-screen, .review-screen) .button--primary:disabled { background: var(--page-button-secondary-fill); }
-:is(.manager-page, .ticket-screen, .review-screen) :is(.button--secondary, .button--quiet) {
-  background: var(--page-button-secondary-fill);
-  color: var(--tone-secondary);
-}
-:is(.manager-page, .ticket-screen, .review-screen) :is(.button--secondary, .button--quiet):hover:not(:disabled) {
-  background: var(--page-button-secondary-fill-hover);
-  color: var(--tone-strong);
-}
-:is(.manager-page, .ticket-screen, .review-screen) :is(.button--ghost, .button--pill):hover:not(:disabled):not([aria-disabled="true"]) {
-  background: var(--page-button-ghost-fill-hover);
-  color: var(--tone-strong);
 }
 
 /* THE CARD — one edge, one lift, one radius, one inset. */
@@ -5455,6 +5372,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * --composer-fade above the composer and is gone by the composer's top, so a card going
  * under the composer dissolves at the same line every time instead of being sliced. */
 :is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) :is(.manager-doc, .ticket-doc) {
+  /* Anything scrolled into view (a focused row, a found word) stops above the fade. */
+  scroll-padding-bottom: calc(var(--composer-zone) + var(--composer-fade));
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-zone) - var(--composer-fade)), transparent calc(100% - var(--composer-zone)));
           mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-zone) - var(--composer-fade)), transparent calc(100% - var(--composer-zone)));
 }

@@ -35,9 +35,9 @@
       {#if leading}<span class="separator" aria-hidden="true">·</span>{/if}
       {#if ticket.is_backlogged}<span class="state" data-ticket-backlogged>Backlogged</span>{/if}
       {#if ticket.is_backlogged}
-        <Button variant="quiet" disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>
+        <Button variant="secondary" disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>
       {:else}
-        <Button variant="pill" class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</Button>
+        <Button variant="ghost" class="text-action" disabled={busy} data-ticket-backlog-action onclick={() => void change("backlog")}>Backlog ticket</Button>
       {/if}
       {/if}
     </div>

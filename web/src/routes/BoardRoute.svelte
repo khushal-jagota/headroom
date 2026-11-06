@@ -526,19 +526,31 @@
      whole stack above pane content without moving native controls out of DOM order. */
   .workspace-rail { position:relative; z-index:1; }
   .board-workspace-right { position:relative; z-index:0; }
-  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:var(--space-3) 0 var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
+  /* The list's first fill still starts 12px down the rail: the list keeps --rail-ring-room of
+     its own above it, so a focus ring around the first header is never cut at the top. */
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:calc(var(--space-3) - var(--rail-ring-room)) 0 var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
   .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
-  /* Rows scrolled out above pass under one hairline at the list's top edge, the same clean
-     edge the list ends on at its foot; nothing fades. */
-  .rail-work .rail-work::before { content:""; position:absolute; z-index:3; left:var(--rail-edge); right:var(--rail-edge); top:0; height:var(--border-hairline); background:var(--border-color); pointer-events:none; opacity:0; }
-  :global(.workspace-rail[data-rail-more-above]) .rail-work .rail-work::before { opacity:1; }
+  /* Where rows continue past an edge of the list, they fade into the rail over 8px. A list
+     that fits, or an edge with nothing past it, shows no fade. The fades are layers over the
+     list's box rather than a mask on the list, so a preview that opens from a row is never
+     masked with it. */
+  .rail-work .rail-work::before, .rail-work .rail-work::after { content:""; position:absolute; z-index:3; left:0; right:0; height:var(--rail-edge-fade); pointer-events:none; opacity:0; transition:opacity var(--motion-fast) var(--motion-ease); }
+  .rail-work .rail-work::before { top:0; bottom:auto; background:linear-gradient(to bottom, var(--surface-rail), transparent); }
+  .rail-work .rail-work::after { bottom:0; background:linear-gradient(to top, var(--surface-rail), transparent); }
+  :global(.workspace-rail[data-rail-more-above]) .rail-work .rail-work::before,
+  :global(.workspace-rail[data-rail-more-below]) .rail-work .rail-work::after { opacity:1; }
   /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
      included, without becoming a scroller that a hover could slide sideways. */
   .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
-  /* The list reaches the rail's edges so its scrollbar, where the platform draws one, sits in
-     the right inset rather than adding to it: the right pad gives back what the gutter takes,
-     and the two sides measure the same with or without a scrollbar. */
-  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; padding:0 max(0px, calc(var(--rail-edge) - var(--rail-scrollbar, 0px))) var(--space-6) var(--rail-edge); scroll-padding-block:var(--space-6); }
+  /* The list's fills sit --rail-edge in from both sides of the column: its scrollbar is kept
+     to the column's own edge, drawn only while the pointer is over the list, so the right
+     inset matches the left with or without one. */
+  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:auto; scrollbar-color:auto; padding:var(--rail-ring-room) max(0px, calc(var(--rail-edge) - var(--rail-scrollbar, 0px))) var(--rail-foot-clear) var(--rail-edge); scroll-padding-block:var(--rail-edge-fade); }
+  .active-work-scroll::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
+  .active-work-scroll::-webkit-scrollbar-track { background:transparent; }
+  .active-work-scroll::-webkit-scrollbar-thumb { border-radius:var(--radius-pill); background:transparent; }
+  .active-work-scroll:is(:hover, :active)::-webkit-scrollbar-thumb { background:var(--border-hover); }
+  @supports not selector(::-webkit-scrollbar) { .active-work-scroll { scrollbar-width:thin; scrollbar-color:var(--border-color) transparent; } }
 
   .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-width:thin; }
   .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
@@ -551,20 +563,20 @@
   .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); margin-inline:var(--rail-edge); border-top:var(--border-hairline) solid var(--border-color); padding-top:var(--space-1); }
   /* The list ends at the foot's hairline and is clipped there cleanly: no fade leaves a row
      half legible. Its bottom padding lets the last row scroll fully clear of the edge. */
-  .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); min-height:30px; padding:5px var(--rail-row-pad); margin-inline:var(--rail-row-inset); border:0; border-radius:var(--radius-md); background:none; width:calc(100% - 2 * var(--rail-row-inset)); font:inherit; font-size:var(--type-sm); font-weight:500; line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
-  .settled-head:hover { background:var(--wash-hover); }
-  .settled-head:hover { color:var(--text-strong); }
+  /* Settled: one row in the rail's row voice, its count a plain Small numeral after it. */
+  .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); box-sizing:border-box; height:var(--rail-row-height); min-height:0; padding:0 var(--rail-pad); margin-inline:0; border:0; border-radius:var(--radius-md); background:none; width:100%; font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
+  .settled-head:hover { background:var(--wash-hover); color:var(--tone-strong); }
   .settled-count { position:relative; display:inline-block; }
   .settled-chevron { width:14px; height:14px; flex:none; color:var(--rail-tone-label); transition:transform var(--motion-base) var(--motion-ease); }
   .settled--open .settled-chevron { transform:rotate(90deg); }
-  .count { flex:none; margin-left:2px; font-size:var(--type-sm); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; }
-  .settled-item + .settled-item { margin-top:var(--space-3); }
-  .settled-row { display:flex; align-items:center; gap:var(--space-2); padding:5px var(--rail-row-pad); margin:0 var(--rail-row-inset); border-radius:var(--radius-md); font-size:var(--type-ui); line-height:20px; }
+  .count { flex:none; margin-left:5px; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; }
+  .settled-item + .settled-item { margin-top:var(--rail-row-gap); }
+  .settled-row { display:flex; align-items:center; gap:var(--space-2); box-sizing:border-box; height:var(--rail-row-height); padding:0 var(--rail-pad); margin:0; border-radius:var(--radius-md); font-size:var(--type-row); line-height:20px; }
   .settled-row:hover { color:var(--text-strong); }
   .settled-title,.reopen { border:0; background:none; font:inherit; cursor:pointer; color:var(--text-faintest); padding:0; }
-  .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; }
-  .settled-title > span { flex:1; min-width:0; overflow-wrap:anywhere; }
-  .reopen { opacity:0; margin-left:auto; color:var(--text-faint); font-size:12px; }
+  .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; color:var(--rail-tone-rest); }
+  .settled-title > span { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; overflow-wrap:normal; }
+  .reopen { opacity:0; margin-left:auto; color:var(--rail-tone-label); font-size:var(--type-small); }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
   button:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   @media(prefers-reduced-motion:reduce) {

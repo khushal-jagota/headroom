@@ -21,15 +21,9 @@
   .hero-card { padding:var(--space-5); }
   .metric-top { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; min-height:40px; }
   .metric-top h2 { flex:1 1 170px; }
-  /* One period switch everywhere, the page's segmented control: no track, 28px segments with
-     the button's 8px radius, the selected segment a 12% fill, a hover one 6% step. */
-  .ranges { display:flex; gap:2px; padding:0; border:0; background:none; border-radius:var(--radius-md); isolation:isolate; }
-  .ranges button { position:relative; display:inline-flex; align-items:center; justify-content:center; height:var(--page-control-height); border:0; background:transparent; color:var(--tone-secondary); font:inherit; font-size:var(--type-row); font-weight:var(--weight-small); line-height:18px; padding:0 12px; border-radius:var(--radius-md); cursor:pointer; white-space:nowrap; transition:color var(--motion-fast) var(--motion-ease), background-color var(--motion-fast) var(--motion-ease); }
-  .ranges button:hover { color:var(--tone-strong); background-color:var(--page-segment-hover-fill); }
-  .ranges button>span:not(.range-selection) { position:relative; }
-  .ranges button[aria-pressed=true] { color:var(--tone-strong); }
-  .ranges button[aria-pressed=true]:hover { background-color:transparent; }
-  .range-selection { position:absolute; inset:0; background:var(--page-segment-selected-fill); border:0; border-radius:var(--radius-md); box-shadow:none; z-index:-1; }
+  /* One period switch everywhere: the shared segmented control (app.css, .segmented); only its
+     width changes with placement. */
+  .ranges { display:flex; }
   .headline { margin:24px 0 28px; }
   /* The reading stands on the page-title role (26/600): the one number a goal is about. */
   .metric-value { height:32px; font-size:var(--type-page-title); font-weight:var(--weight-page-title); letter-spacing:var(--tracking-page-title); font-variant-numeric:tabular-nums; line-height:32px; color:var(--tone-strong); }
@@ -48,8 +42,8 @@
   .compact .caption { font-size:var(--type-small); }
   .chart-range-footer { margin-top:var(--space-4); }
   /* The range is one full-width row under every plot, a Manager's card or the goal page. */
-  .chart-range-footer .ranges { width:100%; justify-content:space-between; }
-  .chart-range-footer .ranges button { flex:1; padding:0 8px; }
+  .chart-range-footer .ranges { width:100%; }
+  .chart-range-footer .segmented-option { flex:1; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
   .integrated-card { border:0; background:transparent; border-radius:0; padding:0; }
   .integrated-card.compact { padding:0; --text-3xl:var(--type-page-title); }
@@ -57,7 +51,6 @@
   .integrated-card .metric-top { min-height:18px; }
   .integrated-card .metric-top h2 { font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; letter-spacing:0; color:var(--tone-tertiary); }
   .integrated-card .headline { margin:var(--space-1) 0 var(--space-4); min-height:0; }
-  .integrated-card .ranges button { padding:0 8px; }
   .integrated-card .chart-range-footer { margin-top:var(--space-4); }
   /* The page card already reserves the room a standalone completion card holds. */
   .integrated-card.completion-card { min-height:0; }
@@ -115,8 +108,8 @@
     /* The page's own card already holds this inset. Two would stack. */
     .integrated-card:not(.compact) { padding:0; border-radius:0; }
     .metric-card:not(.compact):not(.gauge-card) .metric-top h2 { flex-basis:100%; }
-    .metric-card:not(.compact) .ranges { width:100%; justify-content:space-between; }
-    .metric-card:not(.compact) .ranges button { flex:1; padding:0 8px; }
+    .metric-card:not(.compact) .ranges { width:100%; }
+    .metric-card:not(.compact) .segmented-option { flex:1; }
     .metric-card:not(.compact) .metric-value { height:32px; }
     .completion-word { font-size:var(--type-page-title); }
     .completion-card,.progress-card { min-height:260px; }

@@ -302,8 +302,8 @@
         {#key ticket.ticket_id}
           {#snippet decision()}
             <div class="review-ticket-decision-line review-ticket-decision-line--inline">
-              <Button variant="pill" data-skip disabled={messageBusy} onclick={()=>skip(ticket)}>Skip</Button>
-              <Button variant="pill" data-open-ticket href={workspaceAddress({kind:'ticket',id:ticket.ticket_id})}>Open ticket</Button>
+              <Button variant="ghost" data-skip disabled={messageBusy} onclick={()=>skip(ticket)}>Skip</Button>
+              <Button variant="ghost" data-open-ticket href={workspaceAddress({kind:'ticket',id:ticket.ticket_id})}>Open ticket</Button>
             </div>
           {/snippet}
           <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal) || ticket.messages.length > 0}>

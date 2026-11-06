@@ -397,16 +397,6 @@
   --composer-control: 32px;
   --composer-status-height: 20px;
   --composer-zone: calc(var(--composer-height) + var(--composer-status-gap) + var(--composer-status-height) + var(--space-4));
-  /* A page's button ranks and its chart range switch read the shared control tokens
-   * (Button, SegmentedControl) and carry the same numbers until those tokens are present. */
-  --page-button-primary-fill: var(--button-primary-fill, rgb(255 255 255 / 88%));
-  --page-button-primary-fill-hover: var(--button-primary-fill-hover, rgb(255 255 255 / 94%));
-  --page-button-primary-ink: var(--button-primary-ink, #181818);
-  --page-button-secondary-fill: var(--button-secondary-fill, rgb(255 255 255 / 13%));
-  --page-button-secondary-fill-hover: var(--button-secondary-fill-hover, rgb(255 255 255 / 19%));
-  --page-button-ghost-fill-hover: var(--button-ghost-fill-hover, rgb(255 255 255 / 6%));
-  --page-segment-selected-fill: var(--segment-selected-fill, rgb(255 255 255 / 12%));
-  --page-segment-hover-fill: var(--segment-hover-fill, rgb(255 255 255 / 6%));
   /* Counts are plain small numerals after their label, in the label's own tone. */
   --count-tone: var(--tone-tertiary);
   --count-needs-you-fill: transparent;

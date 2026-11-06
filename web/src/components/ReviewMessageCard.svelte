@@ -147,8 +147,8 @@
 <div bind:this={card} data-review-card data-review-item-type="message" data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
   {#snippet ownActions()}
     <div class="review-ticket-decision-line review-ticket-decision-line--inline">
-      {#if !embedded}<Button variant="pill" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>{/if}
-      <Button variant="pill" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
+      {#if !embedded}<Button variant="ghost" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>{/if}
+      <Button variant="ghost" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
     </div>
     {@render decisionActions?.()}
   {/snippet}
@@ -167,10 +167,10 @@
         <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
           {disabled} sendDisabled={busy || !ready} sending={busy}
           sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>
-        <div class="review-read-row"><Button variant="pill" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button><div class="review-card-trailing">{@render ownActions()}</div></div>
+        <div class="review-read-row"><Button variant="ghost" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button><div class="review-card-trailing">{@render ownActions()}</div></div>
         {#if error}<ErrorLine {error}/>{/if}
       </div>
-    {:else if error}<ErrorLine {error}/><div class="review-read-row"><button class="button button--quiet" onclick={()=>void load()}>Retry</button><div class="review-card-trailing">{@render ownActions()}</div></div>{/if}
+    {:else if error}<ErrorLine {error}/><div class="review-read-row"><Button variant="secondary" onclick={()=>void load()}>Retry</Button><div class="review-card-trailing">{@render ownActions()}</div></div>{/if}
   </SkeletonRegion>
   <!-- Until the card has drawn, the actions wait below it rather than vanish. -->
   {#if !loaded && !error}<div class="review-read-row"><div class="review-card-trailing">{@render ownActions()}</div></div>{/if}
@@ -184,8 +184,5 @@
   .review-message-said+.review-message-said{position:relative;margin-top:var(--space-5);padding-top:var(--space-4)}
   .review-message-said+.review-message-said::before{content:"";position:absolute;inset-block-start:0;inset-inline-start:0;inline-size:var(--space-6);border-block-start:var(--border-hairline) solid var(--text-faintest);opacity:.55}
   .review-recap-request{margin-top:var(--space-2);font-size:var(--type-sm)}
-  button:disabled{opacity:.5;cursor:default}
-  .review-read-row > button:hover:not(:disabled){background-image:var(--interaction-hover);color:var(--text-strong)}
   .review-read-row{display:flex;align-items:center;gap:var(--space-2);margin-top:var(--space-3);margin-left:calc(var(--space-3) * -1)}
-  .review-read-row > button{font:inherit;font-size:var(--type-sm);line-height:1.6;padding:8px 12px;border:0;border-radius:var(--radius-pill);background:none;color:var(--text-faint);cursor:pointer}
 </style>

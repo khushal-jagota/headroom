@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useRef, useLayoutEffect } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
 import type { ChartBlock, MeasureValue, ChartProjection, GoalResponse } from '../goals/contracts';
 import { LineChart, type LineChartDatum, type LineChartSeries } from './components/line-chart-integrated';
 import { AnimatedCounter } from './components/animated-counter';
@@ -8,7 +7,6 @@ import { SupportingMetric } from './components/supporting-metric';
 import { Gauge } from './components/gauge';
 import { ProgressCard, TimeBudgetCard, AllocationCard, seriesColor } from './components/goal-indicators';
 import { Bars } from './components/bar-chart';
-import { motionTokens } from './lib/motion-tokens';
 import { chartData, chartHeadline, chartTone, comparisonText, readingSuffix, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, observationDetails, seriesKey, allocationData } from './presentation';
 import './theme.css';
 
@@ -18,12 +16,11 @@ const lineColors = { good: 'var(--chart-line-good)', bad: 'var(--chart-line-bad)
 const C = { green: colors.good, blue: 'var(--accent-bright)', reference: 'var(--chart-reference)' };
 export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; projection?: ChartProjection; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean };
 
-export function Range({ value, onChange, id, block, projection }: { value: string; onChange: (v: string) => void; id: string; block: ChartBlock; projection?: ChartProjection }) {
-  const reduce = useReducedMotion();
+/** The period switch is the shared segmented control (app.css, .segmented), in React. */
+export function Range({ value, onChange, block, projection }: { value: string; onChange: (v: string) => void; id: string; block: ChartBlock; projection?: ChartProjection }) {
   const choices = (block.binding && projection?.kind === 'category' ? projection.ranges : block.ranges)?.map(r => [r.id, r.label]) ?? [['week', 'Week'], ['month', 'Month'], ['all', 'All time']];
-  return <div className="ranges" role="group" aria-label="Time range">{choices.map(([key, label]) => <button type="button" key={key} aria-pressed={value === key} onClick={() => onChange(key)}>
-    {key === value && <motion.span className="range-selection" layoutId={'range-' + id} transition={reduce ? { duration: 0 } : motionTokens.spring.snappy} />}
-    <span>{label}</span>
+  return <div className="ranges segmented" role="group" aria-label="Time range">{choices.map(([key, label]) => <button type="button" className="segmented-option" key={key} aria-pressed={value === key} onClick={() => onChange(key)}>
+    {label}
   </button>)}</div>;
 }
 
