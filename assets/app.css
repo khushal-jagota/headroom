@@ -5261,7 +5261,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-composer] .chat-foot .listbox-picker-trigger { font-size: var(--type-small); font-weight: var(--weight-small); color: var(--tone-secondary); }
 [data-conversation-composer] .chat-foot .listbox-picker-trigger:hover { color: var(--tone-strong); }
 [data-conversation-composer] .chat-foot .model-picker-face { color: inherit; }
-[data-conversation-composer] .chat-foot .model-picker-effort { color: var(--tone-tertiary); }
+[data-conversation-composer] .chat-foot .model-picker-effort { color: var(--composer-quiet-tone); }
 [data-conversation-composer] .chat-ta:focus::placeholder { color: var(--tone-secondary); }
 /* The composer's icons (add, voice, send at rest) stand in the secondary tone, one step above
  * the placeholder, and lift to the strong tone on hover. */
