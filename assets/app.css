@@ -5268,13 +5268,60 @@ details:not([open]) > summary > .manager-workspace-chevron {
   line-height: var(--leading-body);
 }
 
-/* The page ends at the composer zone without a line: the zone's top fades over the page's
- * last lines, and the column keeps room under its last block, so it can scroll fully clear. */
+/* THE COMPOSER ZONE — one compact floating zone: a single-line composer with its status line
+ * under it as its footer, like the reference composers. It floats over the page's last lines:
+ * the page runs the full height and scrolls under the composer along one fixed edge. Below the composer's middle the zone
+ * stands on the page's own plane, so nothing shows through under the composer or behind its
+ * status line. No fade, no hairline. */
 .conversation-layer::before { display: none; }
 .ticket-reading:not(:has(.ticket-artifact))::after,
-.manager-reading:not(:has(.ticket-artifact))::after {
-  height: var(--composer-fade);
-  background: linear-gradient(to bottom, color-mix(in srgb, var(--surface-1) 0%, transparent), var(--surface-1) 85%);
+.manager-reading:not(:has(.ticket-artifact))::after { height: 0; background: none; }
+:is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]):not([data-conversation-dock-transition]) > .conversation-layer {
+  position: absolute;
+  left: var(--conversation-visible-left, 0px);
+  right: var(--conversation-visible-right, 0px);
+  bottom: var(--conversation-visible-bottom, 0px);
+  padding-top: 0;
+  background: linear-gradient(to bottom, transparent calc(var(--composer-height) / 2), var(--surface-1) calc(var(--composer-height) / 2));
+  pointer-events: none;
 }
-.manager-column { padding-bottom: calc(var(--composer-fade) + var(--page-end-room)); }
-.ticket-col { padding-bottom: var(--composer-fade); }
+:is(.manager-page, .ticket-page) > .conversation-layer > .conversation-column { pointer-events: auto; }
+/* The page passes under the zone along one fixed edge: its content fades out over
+ * --composer-fade above the composer and is gone by the composer's top, so a card going
+ * under the composer dissolves at the same line every time instead of being sliced. */
+:is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) :is(.manager-doc, .ticket-doc) {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-zone) - var(--composer-fade)), transparent calc(100% - var(--composer-zone)));
+          mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-zone) - var(--composer-fade)), transparent calc(100% - var(--composer-zone)));
+}
+/* The page keeps room under its last block to scroll fully clear of the zone. */
+.manager-column { padding-bottom: calc(var(--composer-zone) + var(--page-section-gap)); }
+.ticket-col { padding-bottom: calc(var(--composer-zone) - var(--space-7) + var(--page-section-gap)); }
+
+/* The floating composer: one line, 44px; its + at the left, its model, delivery and voice
+ * controls at the right, all on the composer's own row. It grows with what is typed, and
+ * keeps its full layout whenever it holds anything but the line (attachments, an ask, a
+ * question, a voice take). */
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: end;
+  column-gap: var(--space-1);
+  min-height: var(--composer-height);
+  padding: calc((var(--composer-height) - var(--composer-control)) / 2 - var(--border-hairline)) var(--space-2);
+}
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-foot { display: contents; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-ta {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  margin: 0 0 calc((var(--composer-control) - 24px) / 2) var(--space-1);
+  line-height: 24px;
+}
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-add { grid-column: 1; grid-row: 1; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; }
+
+/* The status line is the composer's footer: small print under it on its inner edge. */
+.conversation-layer [data-conversation-rest-bar],
+.conversation-layer [data-conversation-dock-feedback] { order: 1; }
+.conversation-layer .conversation-column [data-conversation-rest-bar] { padding: var(--composer-status-gap) var(--composer-inset) 0; }

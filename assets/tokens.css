@@ -325,6 +325,12 @@
   --composer-radius: 12px;
   --composer-inset: 16px;
   --composer-status-gap: 6px;
+  /* The compact zone: a single-line composer (the reference composer is 42-44px), its status
+   * line under it as its footer, the pair floating over the page's last lines. */
+  --composer-height: 44px;
+  --composer-control: 32px;
+  --composer-status-height: 20px;
+  --composer-zone: calc(var(--composer-height) + var(--composer-status-gap) + var(--composer-status-height) + var(--space-4));
   /* A page's button ranks and its chart range switch read the shared control tokens
    * (Button, SegmentedControl) and carry the same numbers until those tokens are present. */
   --page-button-primary-fill: var(--button-primary-fill, rgb(255 255 255 / 88%));
