@@ -22,7 +22,10 @@
   let shiftHeld = false;
   let anchor: number | null = null;
   let tableEl = $state<HTMLTableElement | null>(null);
-  let measuredWidths = $state<number[] | null>(null);
+  // Widths measured for one column count. A block that gains or loses columns
+  // lays out again and is measured again, so new columns never get zero width.
+  let measured = $state<{ count: number; widths: number[]; minWidth: number } | null>(null);
+  let measuredWidths = $derived(measured?.count === block.columns.length ? measured.widths : null);
   let widths = $derived(block.column_widths ?? measuredWidths);
   let band = $state<{ left: number; width: number } | null>(null);
 
@@ -44,7 +47,16 @@
       const total = table.getBoundingClientRect().width;
       const cells = [...table.querySelectorAll<HTMLTableCellElement>("thead th[data-key]")];
       if (!total || cells.length !== block.columns.length) return false;
-      measuredWidths = cells.map((cell) => (cell.getBoundingClientRect().width / total) * 100);
+      const percents = cells.map((cell) => (cell.getBoundingClientRect().width / total) * 100);
+      // The narrowest table width at which every column still holds its content
+      // at its measured share. The fixed layout keeps it, so a crowded table scrolls.
+      table.style.width = "0";
+      const minWidth = Math.max(
+        table.getBoundingClientRect().width,
+        ...cells.map((cell, index) => cell.getBoundingClientRect().width / (percents[index] / 100)),
+      );
+      table.style.width = "";
+      measured = { count: cells.length, widths: percents, minWidth };
       return true;
     };
     if (measure()) return;
@@ -340,7 +352,7 @@
   <div class="card">
     <div class="scroller">
       {#if band}<span class="band" style:left="{band.left}px" style:width="{band.width}px" aria-hidden="true"></span>{/if}
-      <table bind:this={tableEl} data-fixed={widths ? "" : undefined} data-selectable={selectable ? "" : undefined}>
+      <table bind:this={tableEl} data-fixed={widths ? "" : undefined} style:--table-min-width={!block.column_widths && measuredWidths ? `${measured?.minWidth}px` : undefined} data-selectable={selectable ? "" : undefined}>
         {#if block.caption}<caption class="sr">{block.caption}</caption>{/if}
         {#if widths || selectable}
           <colgroup>
@@ -483,7 +495,7 @@
     position: relative;
     z-index: 1;
     width: 100%;
-    min-width: 560px;
+    min-width: max(560px, var(--table-min-width, 0px));
     border-collapse: separate;
     border-spacing: 0;
     font-size: 13px;
@@ -517,7 +529,7 @@
     font-weight: 400;
     overflow-wrap: anywhere;
   }
-  td[data-primary] { color: var(--text-strong); font-weight: 400; }
+  td[data-primary] { min-width: 180px; color: var(--text-strong); font-weight: 400; overflow-wrap: break-word; }
   td[data-missing] { color: var(--chart-muted); }
   td[data-tone="good"] { color: var(--accent-done); }
   td[data-tone="attention"] { color: var(--accent-attention); }
@@ -620,8 +632,8 @@
   }
   th[data-numeric] .sort { justify-content: flex-end; }
   .editable-sort { display: flex; min-height: 44px; align-items: center; padding-left: var(--space-4); }
-  .sort.icon-only { width: 40px; flex: none; justify-content: center; padding: 0; }
-  th[data-numeric] .editable-sort { justify-content: flex-end; }
+  .sort.icon-only { width: 28px; flex: none; justify-content: center; padding: 0; }
+  th[data-numeric] .editable-sort { flex-direction: row-reverse; justify-content: flex-start; padding: 0 var(--space-4) 0 0; }
   .sort-inner { display: inline-flex; align-items: center; gap: 6px; }
   th[data-numeric] .sort-inner { flex-direction: row-reverse; }
   .sort-icon {
@@ -758,6 +770,7 @@
     th.select-cell { position: sticky; left: -8px; z-index: 1; width: 40px; margin-left: -8px; padding: 0 0 0 12px; background: var(--chart-surface); }
     th.select-cell .hit { height: 32px; }
     .editable-sort { min-height: 32px; padding-left: 10px; }
+    th[data-numeric] .editable-sort { flex-direction: row; padding: 0 0 0 10px; }
     th .sort.icon-only { width: 32px; padding: 0; }
     th .sort { width: auto; height: 32px; border-radius: 8px; padding: 0 10px; }
     th[data-sorted] .sort { background: var(--chart-surface-muted); }
@@ -770,7 +783,7 @@
     table[data-selectable] tbody tr[data-selected] { --row-fill: color-mix(in srgb, var(--accent-bright) 8%, var(--chart-surface)); }
     tbody tr:last-child { border-bottom: 0; }
     td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--chart-secondary); font-size: 11px; text-align: left; }
-    td[data-primary] { order: 0; flex: 1 1 0; color: var(--text-strong); font-size: 13px; font-weight: 500; }
+    td[data-primary] { order: 0; flex: 1 1 0; min-width: 0; color: var(--text-strong); font-size: 13px; font-weight: 500; }
     td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: 8px; color: var(--text-strong); font-size: 13px; }
     td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--chart-secondary); font-size: 11px; }
     td[data-sorted]:not([data-primary]):not([data-tone]) { color: var(--text-strong); }
