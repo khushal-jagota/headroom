@@ -67,14 +67,17 @@
 </section>
 </div>
 <style>
-  .manager-card-slot { min-width:0; }
-  /* Blocks are separated by space alone: 32px, more than anything inside a block. */
+  /* Each Manager is a bubble: the old sidebar colour, 12px corners, 8px from the next. The fill
+     is drawn under the rail's selection and hover fills (which live in the list's own layer),
+     so they show on it; the Manager you are inside is lit by the rail's context fill over it. */
+  .manager-card-slot { position:relative; min-width:0; }
+  .manager-card-slot::before { content:""; position:absolute; inset:0; z-index:-2; border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); pointer-events:none; }
   :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--rail-block-gap); }
   /* Every Manager, the Chief included, is one block with the same parts in the same order:
      its header (the project eyebrow directly over the name, as one fill), its goals, then its
      Tickets in headed groups. Every fill spans the block, which spans the column less
      --rail-edge on each side; every text stands --rail-pad inside its fill. */
-  .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:0; border:0; isolation:isolate; z-index:1; }
+  .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:var(--rail-bubble-pad); border:0; isolation:isolate; z-index:1; }
   .identity { box-sizing:border-box; display:flex; flex-direction:column; padding:var(--rail-head-pad) var(--rail-pad); border-radius:var(--radius-md); cursor:pointer; }
   .item-head { position:relative; top:var(--rail-title-nudge); display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:start; width:100%; min-height:var(--rail-title-line); padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; align-self:start; height:var(--rail-title-line); }

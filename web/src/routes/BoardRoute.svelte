@@ -387,25 +387,30 @@
           </ResourceState>
           <!-- Outside the loading region, so the one card never remounts and shows while the workspace cannot load. -->
           {#if railStatus}<div class="rail-status">{@render railStatus()}</div>{/if}
-          {#if workspace}
-            <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
-              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>{workspace?.globalCounts?.settled ?? rail.settledItems.length}</span></span></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
-              {#if presentation.settledBodyOpen ?? settledOpen}
-                <div class="settled-body" data-settled-scroll use:navigationScrollWindow={{window:settledWindow,activate:()=>navigation?.owner.prioritizeWindow(settledWindow?.request),selector:'[data-settled-item]',key:node=>node.dataset.settledItem ?? '',move:(anchor,direction)=>railPage('settled',anchor,direction)}} onscroll={scrollHover}>
-                {#each rail.settledItems as item (item.id)}
-                  <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
-                  <div class="settled-row">
-                    <button class="settled-title" type="button" aria-current={opening.markedManagerId === item.id ? "page" : undefined} aria-label={`Open ${item.title}`} onclick={() => selectItem(item.id)}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
-                    <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
-                  </div>
-                  </div>
-                {/each}
-                </div>
-              {/if}
-            </div>
-          {/if}
           </div>
-          {#if railFoot}{@render railFoot()}{/if}
+          <!-- The dock: Settled and the destinations, one grouping at the foot of the column. -->
+          <div class="rail-dock">
+            <div class="rail-dock-inner">
+            {#if workspace}
+              <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
+                <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>{workspace?.globalCounts?.settled ?? rail.settledItems.length}</span></span></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                {#if presentation.settledBodyOpen ?? settledOpen}
+                  <div class="settled-body" data-settled-scroll use:navigationScrollWindow={{window:settledWindow,activate:()=>navigation?.owner.prioritizeWindow(settledWindow?.request),selector:'[data-settled-item]',key:node=>node.dataset.settledItem ?? '',move:(anchor,direction)=>railPage('settled',anchor,direction)}} onscroll={scrollHover}>
+                  {#each rail.settledItems as item (item.id)}
+                    <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
+                    <div class="settled-row">
+                      <button class="settled-title" type="button" aria-current={opening.markedManagerId === item.id ? "page" : undefined} aria-label={`Open ${item.title}`} onclick={() => selectItem(item.id)}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
+                      <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
+                    </div>
+                    </div>
+                  {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+            <div class="rail-dock-foot">{#if railFoot}{@render railFoot()}{/if}</div>
+            </div>
+          </div>
         </section>
         <!-- A focusable separator implements the WAI-ARIA window splitter keyboard pattern. -->
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -517,24 +522,32 @@
      whole stack above pane content without moving native controls out of DOM order. */
   .workspace-rail { position:relative; z-index:1; }
   .board-workspace-right { position:relative; z-index:0; }
-  /* No line divides the rail from the workspace: the rail's own surface (#1b1b1b against the
-     page's #121212) is the whole division. The list's first fill starts --rail-top down the rail: the list keeps --rail-ring-room of
-     that inside itself, so a focus ring around the first header is never cut at the top. */
-  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:calc(var(--rail-top) - var(--rail-ring-room)) 0 var(--space-2); border-right:0; }
+  /* Bubbles. The column has no surface of its own: it takes the page's colour, so the sidebar
+     and the page are one surface, and every Manager (the Chief first) is a rounded bubble in
+     the old sidebar colour, 8px from the column's sides and 8px from the next. The dock
+     (Settled and the destinations) is the last grouping at the foot. A line down the column's
+     right edge is an option (data-rail-divider="on"); none by default. */
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:0; border-right:0; background:var(--rail-column); }
+  .approved-rail::after { content:""; display:none; position:absolute; z-index:6; top:0; right:0; bottom:0; width:var(--border-hairline); background:var(--border-color); pointer-events:none; }
+  :global(:root[data-rail-divider="on"]) .approved-rail::after { display:block; }
   .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
-  /* The list's two edges always fade into the rail over 8px: a plain layer over the list's
-     box, the same whatever is scrolled where, never a mask on the list (so a preview that
-     opens from a row is never masked with it). Every row is always drawn; the list scrolls. */
-  .rail-work .rail-work::before, .rail-work .rail-work::after { content:""; position:absolute; z-index:3; left:0; right:0; height:var(--rail-edge-fade); pointer-events:none; }
-  .rail-work .rail-work::before { top:0; bottom:auto; background:linear-gradient(to bottom, var(--surface-rail), transparent); }
-  .rail-work .rail-work::after { bottom:0; background:linear-gradient(to top, var(--surface-rail), transparent); }
+  /* The list's two edges fade into the page's colour: a fixed layer over the list's box, the
+     same whatever is scrolled where (8px at the top; at the bottom --rail-list-fade, where the
+     list meets the dock). The list's own bottom padding is as tall as that fade, so every
+     bubble and row scrolls fully clear of it. Nothing is measured; the list simply scrolls. */
+  .rail-work .rail-work::before, .rail-work .rail-work::after { content:""; position:absolute; z-index:3; left:0; right:0; pointer-events:none; }
+  .rail-work .rail-work::before { top:0; bottom:auto; height:var(--rail-edge-fade); background:linear-gradient(to bottom, var(--rail-column), transparent); }
+  .rail-work .rail-work::after { bottom:0; height:var(--rail-list-fade); background:linear-gradient(to top, var(--rail-column), transparent); }
   /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
      included, without becoming a scroller that a hover could slide sideways. */
   .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
-  /* The list's fills sit --rail-edge in from both sides of the column: its scrollbar is kept
-     to the column's own edge, drawn only while the pointer is over the list, so the right
-     inset matches the left with or without one. */
-  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:auto; scrollbar-color:auto; padding:var(--rail-ring-room) max(0px, calc(var(--rail-edge) - var(--rail-scrollbar, 0px))) var(--rail-foot-clear) var(--rail-edge); scroll-padding-block:var(--rail-edge-fade); }
+  /* Scrollbars never move the bubbles. The list keeps a gutter on both sides
+     (scrollbar-gutter: stable both-edges), so the bubbles' left and right insets are always
+     equal, the same scrolled or not: a 4px styled scrollbar (Chromium, Safari) runs in the
+     right gutter at the column's outer edge with the bubbles 8px in on both sides; an overlay
+     scrollbar takes no gutter (4px in on both sides); a classic one keeps its own width on both
+     sides. The dock keeps the same gutters, so it lines up with the bubbles in every case. */
+  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:auto; scrollbar-color:auto; padding:var(--rail-bubble-gap) calc(var(--rail-bubble-gap) - var(--rail-scrollbar-width)) var(--rail-list-fade); scroll-padding-block:var(--rail-edge-fade) var(--rail-list-fade); }
   .active-work-scroll::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
   .active-work-scroll::-webkit-scrollbar-track { background:transparent; }
   .active-work-scroll::-webkit-scrollbar-thumb { border-radius:var(--radius-pill); background:transparent; }
@@ -551,10 +564,32 @@
   .resizing .rail-grip::after { background:var(--text-strong); }
   .resizing { user-select:none; cursor:col-resize; }
   .rail-status { flex:none; padding:var(--space-2) var(--rail-edge) 0; }
-  /* The rail's foot is a fixed band with one hairline edge; the list above ends at it. */
-  .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); margin-inline:var(--rail-edge); border-top:var(--border-hairline) solid var(--border-color); padding-top:var(--space-1); }
-  /* The list ends at the foot's hairline and is clipped there cleanly: no fade leaves a row
-     half legible. Its bottom padding lets the last row scroll fully clear of the edge. */
+  /* THE DOCK. (b) Bubble, the default: Settled and the destinations share one bubble like a
+     Manager's, 8px from the column's sides and foot, and the list fades into the page above
+     it. Its fills sit 4px inside it, concentric with its 12px corners; its words and first
+     icon stand on the rail's one text edge. */
+  .rail-dock { flex:0 1 auto; display:flex; flex-direction:column; min-height:0; max-height:var(--settled-max-height); overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:auto; scrollbar-color:auto; padding:0 calc(var(--rail-bubble-gap) - var(--rail-scrollbar-width)) var(--rail-bubble-gap); }
+  .rail-dock::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
+  .rail-dock-inner { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; padding:var(--rail-bubble-pad); border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); }
+  .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; margin:0; border:0; padding:0; }
+  .rail-dock-foot { flex:none; }
+  .rail-dock-foot :global(.rail-foot) { padding:var(--space-2) 0 0 calc(var(--rail-pad) - 9px); }
+  /* (a) Band: the dock is a full-width band of the old sidebar colour along the column's foot,
+     its top edge the only division; the list ends 8px above it. */
+  :global(:root[data-rail-dock="band"]) .rail-dock { padding-bottom:0; background:var(--rail-bubble-fill); }
+  :global(:root[data-rail-dock="band"]) .rail-dock-inner { padding:var(--space-2) var(--rail-bubble-pad); border-radius:0; background:none; }
+  /* (c) Split: Settled is the last bubble of the list (it is the settled Managers), and the
+     destinations, a toolbar, run on a full-width band of the old sidebar colour below it. */
+  :global(:root[data-rail-dock="split"]) .rail-dock { padding-bottom:0; background:linear-gradient(var(--rail-bubble-fill), var(--rail-bubble-fill)) bottom / 100% var(--rail-band-height) no-repeat; }
+  :global(:root[data-rail-dock="split"]) .rail-dock-inner { padding:0; border-radius:0; background:none; }
+  :global(:root[data-rail-dock="split"]) .settled { padding:var(--rail-bubble-pad); border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); }
+  :global(:root[data-rail-dock="split"]) .rail-dock-foot { margin-top:var(--rail-bubble-gap); }
+  :global(:root[data-rail-dock="split"]) .rail-dock-foot :global(.rail-foot) { padding:var(--space-2) 0 var(--space-2) calc(var(--rail-bubble-pad) + var(--rail-pad) - 9px); }
+  /* (d) Page: the dock stands on the page's own colour, no fill; one hairline between the list
+     and it (a divider between list sections). Made for the column line, fine without it. */
+  :global(:root[data-rail-dock="page"]) .rail-dock-inner { padding:var(--space-1) var(--rail-bubble-pad) 0; border-radius:0; background:none; }
+  :global(:root[data-rail-dock="page"]) .rail-dock { padding-bottom:var(--space-3); }
+  :global(:root[data-rail-dock="page"]) .settled { border-top:var(--border-hairline) solid var(--border-color); padding-top:var(--space-1); }
   /* Settled: one row in the rail's row voice, staging's 32px tall, its count a plain Small
      numeral after it. */
   .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); box-sizing:border-box; height:32px; min-height:0; padding:0 var(--rail-pad); margin-inline:0; border:0; border-radius:var(--radius-md); background:none; width:100%; font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
@@ -578,6 +613,9 @@
   @media(max-width:720px) {
     /* Phone shows the card above the bottom bar instead. */
     .rail-status { display:none; }
+    /* A phone's destinations are its bottom bar, so the dock is Settled alone: no band. */
+    :global(:root[data-rail-dock="split"]) .rail-dock { background:none; padding-bottom:var(--rail-bubble-gap); }
+    :global(:root[data-rail-dock="band"]) .rail-dock-inner { padding-bottom:var(--space-2); }
     .approved-rail-shell { grid-template-columns:1fr; }
     .rail-grip { display:none; }
     .board-workspace-shell--chief .approved-rail,

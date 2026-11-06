@@ -296,7 +296,7 @@
    * it from a hovered row, and over it a hovered row still steps up a clear 5%. */
   --wash-selected: rgb(255 255 255 / 14%);
   --wash-hover: rgb(255 255 255 / 5%);
-  --wash-context: rgb(255 255 255 / 3%);
+  --wash-context: rgb(255 255 255 / 4%);
   /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
    * (a Manager's header, a goal, a Ticket, Settled) sits --rail-edge in from the column on
    * both sides; every text stands --rail-pad inside its fill, so all of it shares one left
@@ -345,7 +345,22 @@
   --rail-header-clear: 12px;
   --rail-group-gap: 12px;
   --rail-heading-gap: 4px;
-  --rail-block-gap: 32px;
+  --rail-block-gap: var(--rail-bubble-gap);
+  /* Bubbles (this version): the column takes the page's colour and every Manager, the Chief
+   * first, is a bubble in the old sidebar colour (#1b1b1b), 12px corners, 8px from the column's
+   * sides and from the next bubble, its fills 4px inside it so their 8px corners are
+   * concentric with its 12px ones. The words still stand 22px from the column's edge. The
+   * Manager you are inside is its bubble one 4% step lighter (#242424): no line. */
+  --rail-column: var(--surface-1);
+  --rail-bubble-fill: var(--surface-rail);
+  --rail-bubble-gap: 8px;
+  --rail-bubble-pad: 4px;
+  --rail-bubble-radius: 12px;
+  /* Where the list meets the dock it fades into the page over this much, and its bottom
+   * padding is as tall, so the last bubble always scrolls fully clear of the fade. */
+  --rail-list-fade: 16px;
+  /* (c) Split's band under the Settled bubble: the 32px icon row and 8px above and below. */
+  --rail-band-height: 48px;
   /* The page list's rows (ManagerChildren) still stand 2px apart. */
   --rail-row-gap: 2px;
   /* The unread dot's column, kept on every row whether or not a dot is in it, so every
@@ -361,8 +376,8 @@
   --rail-tone-heading: #a3a3a3;
   /* The frame around the Manager you are inside reaches this far past its block's fills, so
    * its 12px corners are concentric with their 8px ones. */
-  --rail-context-outset: 6px;
-  --rail-context-radius: 14px;
+  --rail-context-outset: 0px;
+  --rail-context-radius: var(--rail-bubble-radius);
   /* The list's edges: a short fade, always the same, so a row's words keep their true tone
    * up to the edge; and clear air under the last block when the list is scrolled to its end. */
   --rail-edge-fade: 8px;
@@ -382,8 +397,9 @@
   --rail-tone-title: var(--rail-tone-rest);
   /* A Manager's name: the largest words in the rail. */
   --type-rail-title: 18px;
-  /* 4.9:1 on the rail, 4.5:1 on the context fill: no rail text reads under 4.5:1 at rest. */
-  --rail-tone-label: #898989;
+  /* 5.1:1 on a bubble, 4.6:1 on the lighter bubble of the Manager you are inside: no rail
+   * text reads under 4.5:1 at rest. */
+  --rail-tone-label: #8c8c8c;
   /* The rail's floating surfaces (hover previews and the icon bar's tooltips): a #2a2a2a fill
    * and a soft shadow, no ring. The fill's step over the rail and the page is its edge. */
   --rail-float-surface: #2a2a2a;
@@ -515,3 +531,7 @@
   --leading-body: 1.55;
 }
 
+
+/* The sidebar's dock options (bubbles version): the list's bottom fade where it meets a dock
+ * that is not a bubble is the plain 8px edge. */
+:root[data-rail-dock="band"], :root[data-rail-dock="page"] { --rail-list-fade: 8px; }

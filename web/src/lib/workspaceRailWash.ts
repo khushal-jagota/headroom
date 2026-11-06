@@ -1,7 +1,7 @@
 /** Rail decoration only. Selection and interaction remain owned by the existing controls. */
 type Box = { left: number; top: number; width: number; height: number; radius?: string };
 type Layer = { node: HTMLDivElement; box: string; animation: Animation | null; fade: Animation | null; arrival: number };
-type Host = { node: HTMLElement; group: Layer; item: Layer; hover: Layer; focus: Layer };
+type Host = { node: HTMLElement; origin: HTMLDivElement; group: Layer; item: Layer; hover: Layer; focus: Layer };
 type Target = { node: HTMLElement; host: Host; group: HTMLElement | null; itemBox: Box; groupBox: Box | null };
 const properties = ['left', 'top', 'width', 'height'] as const;
 const targets = '.item-head, .worker-row, .goal, .settled-title, .utility';
@@ -31,15 +31,27 @@ export function workspaceRailWash(root: HTMLElement) {
     if (kind === 'focus') host.append(node); else host.prepend(node);
     return { node, box: '', animation: null, fade: null, arrival: 0 };
   }
+  /* Where the host's layers are placed from: a zero-size mark at the host's padding-box origin,
+   * which scrolls with its content. Measuring from it (not from the host's border box) keeps
+   * every fill on its row whatever gutter the host keeps for a scrollbar, on either side. */
+  function originOf(host: HTMLElement): HTMLDivElement {
+    const node = document.createElement('div');
+    node.className = 'rail-wash-origin';
+    node.setAttribute('aria-hidden', 'true');
+    node.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;';
+    host.prepend(node);
+    return node;
+  }
   function discover() {
     for (const node of root.querySelectorAll<HTMLElement>('.active-work-scroll, .settled-body, .rail-utilities')) {
-      if (!hosts.has(node)) { hosts.set(node, {node, group: layer(node,'group'), item:layer(node,'item'), hover:layer(node,'hover'), focus:layer(node,'focus')}); resize.observe(node); }
+      if (!hosts.has(node)) { hosts.set(node, {node, origin: originOf(node), group: layer(node,'group'), item:layer(node,'item'), hover:layer(node,'hover'), focus:layer(node,'focus')}); resize.observe(node); }
     }
     for (const node of root.querySelectorAll('.manager-card, .identity, .worker-row, .goal, .settled-row')) { if (!observed.has(node)) {observed.add(node);resize.observe(node);} }
     for (const node of observed) if (!root.contains(node)) {resize.unobserve(node);observed.delete(node);}
     for (const [node,host] of hosts) if (!root.contains(node)) {
       resize.unobserve(node);
       for (const part of [host.group,host.item,host.hover,host.focus]) {part.animation?.cancel();part.fade?.cancel();part.node.remove();}
+      host.origin.remove();
       hosts.delete(node);
     }
   }
@@ -47,8 +59,8 @@ export function workspaceRailWash(root: HTMLElement) {
     const hostNode = node.closest<HTMLElement>('.active-work-scroll, .settled-body, .rail-utilities');
     const host = hostNode && hosts.get(hostNode);
     if (!host || !root.contains(node) || !node.getClientRects().length) return null;
-    const base = host.node.getBoundingClientRect();
-    const local = (rect: DOMRect): Box => ({left:rect.left-base.left+host.node.scrollLeft,top:rect.top-base.top+host.node.scrollTop,width:rect.width,height:rect.height});
+    const base = host.origin.getBoundingClientRect();
+    const local = (rect: DOMRect): Box => ({left:rect.left-base.left,top:rect.top-base.top,width:rect.width,height:rect.height});
     const group = node.closest<HTMLElement>('.manager-card');
     // The Manager you are inside is framed by a hairline around its whole block, reaching the
     // outset past the block's fills so its corners stay concentric with theirs.
@@ -198,7 +210,7 @@ export function workspaceRailWash(root: HTMLElement) {
     root.removeEventListener('pointerover',pointer);root.removeEventListener('pointerdown',pointer);root.removeEventListener('pointerleave',leave);
     root.removeEventListener('focusin',update);root.removeEventListener('focusout',update);root.removeEventListener('scroll',update,true);
     window.removeEventListener('resize',update);media.removeEventListener('change',preferenceChanged);
-    for(const host of hosts.values())for(const part of [host.group,host.item,host.hover,host.focus]){part.animation?.cancel();part.fade?.cancel();part.node.remove();}
+    for(const host of hosts.values()){host.origin.remove();for(const part of [host.group,host.item,host.hover,host.focus]){part.animation?.cancel();part.fade?.cancel();part.node.remove();}}
     for(const [node,ghost]of ghosts){ghost.animation.cancel();node.remove();}
   }};
 }
