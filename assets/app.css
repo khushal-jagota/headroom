@@ -2468,22 +2468,35 @@ select {
   flex-direction: column;
 }
 
+/* THE REVIEW LINE: one line for the Worker, always on the decision card over its actions
+ * (WorkerProposalCard). A recessed fill, full width, no edge: the fill reads against the card on
+ * its own. It grows with what is written, up to ten lines. The focus ring is drawn on the whole
+ * line while its text has the caret. */
 .review-revision-box {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
+  align-items: flex-end;
+  gap: var(--space-1);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-recessed);
+}
+.review-revision-box:has(> .review-revision-input:focus) {
+  outline: var(--focus-width) solid var(--focus-ring);
+  outline-offset: 0;
 }
 
 .review-revision-input {
   flex: 1;
-  min-height: 2.75rem;
+  min-width: 0;
+  min-height: 36px;
+  max-height: calc(10lh + 2 * var(--space-2));
+  field-sizing: content;
   resize: none;
   border: 0;
   outline: 0;
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-3);
-  background: var(--surface-recessed);
+  padding: var(--space-2) 0;
+  background: transparent;
   color: var(--text-strong);
   caret-color: var(--accent-bright);
   font-family: var(--font-ui);
@@ -2495,30 +2508,16 @@ select {
   color: var(--text-faintest);
 }
 
-/* Send back — a quiet filled action beside the textarea, borderless per the
- * mockup, sized to sit level with the composer's top. */
-.review-revision-box .button {
-  flex: none;
-  border-color: transparent;
-  color: var(--text-muted);
-  padding: var(--space-3) var(--space-4);
-}
-
-.review-revision-box .button:hover:not(:disabled) {
-  color: var(--text-strong);
-}
-
-/* Voice on the revision box (t_0pgfmbsr): the mic is only an affordance beside the
- * textarea — Approve stays this screen's primary action. The live states reuse the
- * composer's .chat-voice-* language; these rules just seat them in this row. */
+/* Voice on the line (t_0pgfmbsr): the mic sits at the line's end, a full composer-size target;
+ * the live states reuse the composer's .chat-voice-* language in the same place. */
 .review-voice-mic {
   flex: none;
-  align-self: center;
-  width: var(--space-5);
-  height: var(--space-5);
+  width: var(--composer-control);
+  height: var(--composer-control);
+  margin-bottom: 2px;
   display: grid;
   place-items: center;
-  padding: var(--space-1);
+  padding: 0;
   background: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -2527,11 +2526,11 @@ select {
 }
 .review-voice-mic:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
 .review-voice-mic:disabled { opacity: 0.5; cursor: default; }
-.review-voice-mic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; }
-/* The centred line stands where the textarea rests, at its height, so nothing jumps. */
+.review-voice-mic svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+/* The centred line stands where the text rests, at its height, so nothing jumps. */
 .review-voice-mid {
   flex: 1;
-  min-height: 2.75rem;
+  min-height: 36px;
 }
 .review-revision-box .review-voice-action { align-self: center; }
 
