@@ -264,9 +264,10 @@
   --rail-heading-below: 2px;
   --rail-heading-line: 16px;
   --rail-block-gap: 18px;
-  /* The list's edges: a fade where rows continue past them, and clear air under the last
-   * block when the list is scrolled to its end. */
-  --rail-edge-fade: 24px;
+  /* The list's edges: a short fade, only where rows continue past them, so a row's words
+   * keep their true tone up to the edge; and clear air under the last block when the list
+   * is scrolled to its end. */
+  --rail-edge-fade: 8px;
   --rail-foot-clear: 12px;
   /* Between the Settled row and the icon bar: the band the icons' names open into. */
   --rail-foot-gap: 20px;

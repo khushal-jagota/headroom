@@ -222,8 +222,8 @@ textarea {
 .approved-rail-shell .approved-rail .active-work-scroll::-webkit-scrollbar-thumb { border-radius:var(--radius-pill); background:transparent; }
 .approved-rail-shell .approved-rail .active-work-scroll:is(:hover, :active)::-webkit-scrollbar-thumb { background:var(--border-hover); }
 @supports not selector(::-webkit-scrollbar) { .approved-rail-shell .approved-rail .active-work-scroll { scrollbar-width:thin; scrollbar-color:var(--border-color) transparent; } }
-/* Where rows continue past an edge of the list, they fade into the rail over 24px, so the
-   list never ends on a heading cut from its rows. A list that fits shows no fade. The fades
+/* Where rows continue past an edge of the list, they fade into the rail over 8px. A list
+   that fits, or an edge with nothing past it, shows no fade. The fades
    are layers over the list's box rather than a mask on the list, so a preview that opens
    from a row is never masked with it. */
 .board-workspace-shell.approved-rail-shell .workspace-rail.approved-rail .rail-work .rail-work::before,
