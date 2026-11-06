@@ -21,7 +21,7 @@
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
   import { buildWorkspaceRail, workspaceListRecap, workspaceHolderStateSentence, type WorkspaceRailItem } from "../lib/workspaceRail";
-  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController, listenForUserScroll, railTitleFade, railWholeRows, railReveal } from "../lib/workspaceRailInteraction";
+  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController, listenForUserScroll, railTitleFade, railReveal } from "../lib/workspaceRailInteraction";
   import { correctedWorkspaceAddress, whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import { parseUtilityPath, type UtilityHref, type WorkspaceUtility } from "../lib/utilityAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
@@ -317,23 +317,14 @@
     observer.observe(observedRail);
     return () => observer.disconnect();
   });
-  // The rail's list fades at an edge only where rows actually continue past it, so a list
-  // that fits is never dimmed. The bottom padding is scroll room, not content.
+  // The list's padding gives back what its scrollbar takes, so its two insets match.
   function railOverflow(node: HTMLElement) {
     const rail = node.closest<HTMLElement>('.workspace-rail');
-    const update = () => {
-      rail?.style.setProperty('--rail-scrollbar', `${node.offsetWidth - node.clientWidth}px`);
-      const pad = Number.parseFloat(getComputedStyle(node).paddingBottom) || 0;
-      rail?.toggleAttribute('data-rail-more-below', node.scrollHeight - pad - node.scrollTop - node.clientHeight > 1);
-      rail?.toggleAttribute('data-rail-more-above', node.scrollTop > 1);
-    };
+    const update = () => { rail?.style.setProperty('--rail-scrollbar', `${node.offsetWidth - node.clientWidth}px`); };
     const resize = new ResizeObserver(update);
-    const watch = () => { resize.disconnect(); resize.observe(node); for (const child of node.children) resize.observe(child); update(); };
-    const mutation = new MutationObserver(watch);
-    mutation.observe(node, { childList:true });
-    node.addEventListener('scroll', update, { passive:true });
-    watch();
-    return { destroy() { resize.disconnect(); mutation.disconnect(); node.removeEventListener('scroll', update); rail?.removeAttribute('data-rail-more-below'); rail?.removeAttribute('data-rail-more-above'); } };
+    resize.observe(node);
+    update();
+    return { destroy() { resize.disconnect(); } };
   }
   function preferenceStorage(): Storage | null {
     try { return window.localStorage; } catch { return null; }
@@ -388,7 +379,7 @@
           <div class="rail-work">
           <ResourceState shape="block" layout="fill" loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
-            <div role="presentation" class="active-work-scroll" use:railOverflow use:railWholeRows use:railReveal={`${opening.chiefMarked}|${opening.markedManagerId}|${opening.markedTicketId}|${opening.markedGoalId}`} onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:renderedRailWindow('rail_parents'),pageRestoration:{coordinator:scrollCoordinator,priority:'parent',publicationId:presentation.scrollPublication?.publicationId ?? null,members:rail.items.map(item=>item.id)},activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.manager-card:not(.chief)',key:node=>node.dataset.manager ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={scrollHover}>
+            <div role="presentation" class="active-work-scroll" use:railOverflow use:railReveal={`${opening.chiefMarked}|${opening.markedManagerId}|${opening.markedTicketId}|${opening.markedGoalId}`} onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:renderedRailWindow('rail_parents'),pageRestoration:{coordinator:scrollCoordinator,priority:'parent',publicationId:presentation.scrollPublication?.publicationId ?? null,members:rail.items.map(item=>item.id)},activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.manager-card:not(.chief)',key:node=>node.dataset.manager ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={scrollHover}>
             <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} navigationWindow={renderedRailWindow('rail_tickets',{kind:'chief',id:'chief'})} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" suppressBackgroundPreview={Boolean(hoverGoalId)} title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked && !opening.markedGoalId} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => enterHover({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet beforeGroups()}<GoalRail structure={presentation.goalRails?.find(holder=>holder.owner.kind==='chief')} onPage={(anchor,direction)=>railPage('goals:chief',anchor,direction)} selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
             {#each rail.items as item (item.id)}
               <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} onVisibility={itemVisibility} navigationWindow={renderedRailWindow('rail_tickets',{kind:'manager',id:item.id})} onWindow={(anchor,direction)=>railPage(item.id,anchor,direction)} id={item.id} title={item.title} project={item.project} signal={item.conversationSignal} conversationId={item.conversationId} selected={opening.markedManagerId === item.id||soleGoalManager===item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target, immediate) => hoverItem(target,item,immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet beforeGroups()}<GoalRail structure={presentation.goalRails?.find(holder=>holder.owner.kind==='manager'&&holder.owner.id===item.id)} onPage={(anchor,direction)=>railPage(`goals:${item.id}`,anchor,direction)} selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
@@ -533,15 +524,12 @@
      that inside itself, so a focus ring around the first header is never cut at the top. */
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:calc(var(--rail-top) - var(--rail-ring-room)) 0 var(--space-2); border-right:var(--border-hairline) solid var(--border-color); }
   .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
-  /* Where rows continue past an edge of the list, they fade into the rail over 8px. A list
-     that fits, or an edge with nothing past it, shows no fade. The fades are layers over the
-     list's box rather than a mask on the list, so a preview that opens from a row is never
-     masked with it. */
-  .rail-work .rail-work::before, .rail-work .rail-work::after { content:""; position:absolute; z-index:3; left:0; right:0; height:var(--rail-edge-fade); pointer-events:none; opacity:0; transition:opacity var(--motion-fast) var(--motion-ease); }
+  /* The list's two edges always fade into the rail over 8px: a plain layer over the list's
+     box, the same whatever is scrolled where, never a mask on the list (so a preview that
+     opens from a row is never masked with it). Every row is always drawn; the list scrolls. */
+  .rail-work .rail-work::before, .rail-work .rail-work::after { content:""; position:absolute; z-index:3; left:0; right:0; height:var(--rail-edge-fade); pointer-events:none; }
   .rail-work .rail-work::before { top:0; bottom:auto; background:linear-gradient(to bottom, var(--surface-rail), transparent); }
   .rail-work .rail-work::after { bottom:0; background:linear-gradient(to top, var(--surface-rail), transparent); }
-  :global(.workspace-rail[data-rail-more-above]) .rail-work .rail-work::before,
-  :global(.workspace-rail[data-rail-more-below]) .rail-work .rail-work::after { opacity:1; }
   /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
      included, without becoming a scroller that a hover could slide sideways. */
   .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }

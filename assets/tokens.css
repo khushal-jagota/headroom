@@ -332,11 +332,8 @@
    * its 12px corners are concentric with their 8px ones. */
   --rail-context-outset: 6px;
   --rail-context-radius: 14px;
-  /* Where the list's edge cuts the framed block, the frame's sides fade out over this much. */
-  --rail-context-fade: 24px;
-  /* The list's edges: a short fade, only where rows continue past them, so a row's words
-   * keep their true tone up to the edge; and clear air under the last block when the list
-   * is scrolled to its end. */
+  /* The list's edges: a short fade, always the same, so a row's words keep their true tone
+   * up to the edge; and clear air under the last block when the list is scrolled to its end. */
   --rail-edge-fade: 8px;
   --rail-foot-clear: 12px;
   /* Between the Settled row and the icon bar: the band the icons' names open into. */

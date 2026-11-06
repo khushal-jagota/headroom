@@ -261,79 +261,23 @@ export function railTitleFade(root: HTMLElement) {
   return { destroy() { resize.disconnect(); mutation.disconnect(); if (frame) cancelAnimationFrame(frame); } };
 }
 
-/** The rail's list edges. At the top, a row (a header, a goal, a Ticket) that would cross the
- * edge waits until it fits, and a group heading waits with its first row. At the bottom, rows
- * run on under the edge and its short fade, as the references' lists do, and a heading waits
- * only while less than half of its first row would show, so the list never ends on a heading
- * without its rows. Waiting units keep their place; the stylesheet hides them
- * (data-rail-waiting). */
-const RAIL_UNITS = ".identity, .goal, .worker-row, .bucket-label";
-export function railWholeRows(list: HTMLElement) {
-  let frame = 0;
-  const run = () => {
-    frame = 0;
-    const box = list.getBoundingClientRect();
-    const top = box.top + list.clientTop - 0.5, bottom = box.top + list.clientTop + list.clientHeight + 0.5;
-    const clearOfTop = (rect: DOMRect) => rect.height > 0 && rect.top >= top;
-    for (const unit of list.querySelectorAll<HTMLElement>(RAIL_UNITS)) {
-      let shown = clearOfTop(unit.getBoundingClientRect());
-      if (shown && unit.matches(".bucket-label")) {
-        const first = unit.nextElementSibling?.getBoundingClientRect();
-        shown = !first || (clearOfTop(first) && Math.min(first.bottom, bottom) - first.top >= first.height / 2);
-      }
-      unit.toggleAttribute("data-rail-waiting", !shown);
-    }
-  };
-  const schedule = () => { if (!frame) frame = requestAnimationFrame(run); };
-  const resize = new ResizeObserver(schedule);
-  resize.observe(list);
-  const mutation = new MutationObserver(schedule);
-  mutation.observe(list, { subtree: true, childList: true });
-  list.addEventListener("scroll", schedule, { passive: true });
-  window.addEventListener("resize", schedule);
-  schedule();
-  return { destroy() { resize.disconnect(); mutation.disconnect(); list.removeEventListener("scroll", schedule); window.removeEventListener("resize", schedule); if (frame) cancelAnimationFrame(frame); } };
-}
-
-/** When a page opens, the rail shows where it is: the list scrolls just far enough that the
- * whole block of the Manager you are inside is in view, frame included, if it fits; otherwise
- * that the open item is. Standard reveal behaviour; it moves nothing that is already in view.
- * ``key`` names the open page, so the reveal runs once each time a page opens. */
+/** When a page opens and its item in the rail is off-screen, the list scrolls it into view:
+ * nearest edge, instantly, once. Nothing else ever moves the list. ``key`` names the open
+ * page; the item may arrive a few frames after the page does, so it is waited for. */
 export function railReveal(list: HTMLElement, key: string) {
   let current = key;
   let frame = 0;
-  // The rail's rows arrive after the page does, so for a short while after a page opens the
-  // reveal follows the list as it settles; anything the person does to the list ends it.
-  let settleUntil = 0;
-  const css = (name: string) => Number.parseFloat(getComputedStyle(list).getPropertyValue(name)) || 0;
+  let tries = 0;
   const reveal = () => {
     frame = 0;
-    if (performance.now() > settleUntil) return;
     const open = list.querySelector<HTMLElement>('.manager-card [aria-current="page"]');
-    if (!open) return;
-    const view = list.getBoundingClientRect();
-    const viewTop = view.top + list.clientTop, viewBottom = viewTop + list.clientHeight;
-    const outset = css("--rail-context-outset");
-    const below = outset + css("--rail-edge-fade");
-    const block = open.closest<HTMLElement>(".manager-card")?.getBoundingClientRect();
-    const fill = (open.closest<HTMLElement>(".identity") ?? open).getBoundingClientRect();
-    const target = block && block.height + outset + below <= list.clientHeight ? block : fill;
-    const top = target.top - outset, bottom = target.bottom + below;
-    const delta = top < viewTop ? top - viewTop : bottom > viewBottom ? bottom - viewBottom : 0;
-    if (delta) list.scrollTop += delta;
+    if (!open) { if (++tries < 120) frame = requestAnimationFrame(reveal); return; }
+    (open.closest<HTMLElement>(".identity") ?? open).scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
   };
-  const schedule = () => { if (!frame && performance.now() <= settleUntil) frame = requestAnimationFrame(reveal); };
-  const start = () => { settleUntil = performance.now() + 2000; schedule(); };
-  const stop = () => { settleUntil = 0; };
-  const resize = new ResizeObserver(schedule);
-  const watch = () => { resize.disconnect(); resize.observe(list); for (const card of list.querySelectorAll(".manager-card")) resize.observe(card); schedule(); };
-  const mutation = new MutationObserver(watch);
-  mutation.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-current"] });
-  for (const name of ["wheel", "touchstart", "keydown", "pointerdown"]) list.addEventListener(name, stop, { passive: true });
-  watch();
+  const start = () => { tries = 0; cancelAnimationFrame(frame); frame = requestAnimationFrame(reveal); };
   start();
   return {
     update(next: string) { if (next !== current) { current = next; start(); } },
-    destroy() { cancelAnimationFrame(frame); resize.disconnect(); mutation.disconnect(); for (const name of ["wheel", "touchstart", "keydown", "pointerdown"]) list.removeEventListener(name, stop); }
+    destroy() { cancelAnimationFrame(frame); }
   };
 }
