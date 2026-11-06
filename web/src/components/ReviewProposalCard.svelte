@@ -412,6 +412,16 @@
 {/if}
 
 </SkeletonRegion>
+<!-- While the approval loads or is being refreshed, the queue's own actions (Skip, Open ticket)
+     stay at hand at the right: they never wait on the proposal. -->
+{#if !detail.error && (!healthyDetail || (!manifestMissingWorkerType && isStale(healthyDetail)))}
+  <div class="review-card-actions" data-review-pending-actions>
+    {#if decisionActions}{@render decisionActions()}{:else}
+      {#if onSkip}<Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>{/if}
+      <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
+    {/if}
+  </div>
+{/if}
 
 <style>
   /* An error state's actions about the queue sit at the right, like every button row. */
