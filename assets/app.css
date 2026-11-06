@@ -4849,12 +4849,11 @@ details:not([open]) > summary > .manager-workspace-chevron {
   }
 }
 
-/* A Ticket group: one quiet heading, in the Small voice, at the Tickets' indent, with the
-   count of the rows it heads after it in the same tone. It binds to its rows: more air above
-   it than below. A heading is never heavier or brighter than the rows it introduces. */
+/* A Ticket group: one quiet heading in the rail's label voice, on the rail's one text edge,
+   with no count. It binds to its rows: more air above it than below. A heading is never
+   heavier or brighter than the rows it introduces. */
 .workspace-ticket-bucket { margin-top:0; display:flex; flex-direction:column; }
 .workspace-ticket-bucket .bucket-label { box-sizing:border-box; padding:var(--rail-heading-above) var(--rail-pad) var(--rail-heading-below) calc(var(--rail-pad) + var(--rail-indent)); margin:0; border:0; font-size:var(--rail-label-size); font-weight:var(--weight-small); line-height:var(--rail-heading-line); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.workspace-ticket-bucket .bucket-label[data-count]::after { content:attr(data-count); margin-left:4px; }
 /* A Ticket row: the same 30px fill as every rail row, its words one indent in, its title
    ending in an ellipsis before the column kept for its unread dot. A row that needs the
    person is bright and a step heavier; every other row rests dim. */
