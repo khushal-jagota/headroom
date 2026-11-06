@@ -1087,7 +1087,7 @@ a.pv-name:focus-visible { outline:0; }
  *   primary   — inverse: an 88% white fill with dark ink.
  *   secondary — a 13% white fill, no border, a secondary-tone label.
  *   outline   — a page header's own actions: no fill, a 1px edge at 10% white, a
- *               primary-tone label; a hover adds a 4% fill.
+ *               secondary-tone label (so a card's decision leads); a hover adds a 4% fill.
  *   ghost     — no fill and a secondary-tone label until hovered (6% fill).
  * The older variant names map onto these: quiet = secondary, pill = ghost. */
 .button {
@@ -1144,7 +1144,7 @@ a.pv-name:focus-visible { outline:0; }
 .button--outline {
   background: transparent;
   box-shadow: inset 0 0 0 var(--border-hairline) var(--button-outline-edge);
-  color: var(--tone-primary);
+  color: var(--tone-secondary);
 }
 
 .button--outline:hover:not(:disabled) {
@@ -5205,10 +5205,10 @@ details:not([open]) > summary > .manager-workspace-chevron {
   padding: var(--page-heading-above) var(--page-row-outset) var(--page-heading-below);
   border-radius: var(--radius-md);
   background: none;
-  color: var(--tone-tertiary);
+  color: var(--tone-page-list-label);
   font-family: var(--font-ui);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
+  font-size: var(--type-page-list-label);
+  font-weight: var(--weight-page-list-label);
   line-height: 20px;
   letter-spacing: 0;
 }
@@ -5219,10 +5219,11 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 .manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary:hover {
   background: none;
-  color: var(--tone-secondary);
+  color: var(--tone-strong);
 }
 .manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status-label {
-  font-size: var(--type-small);
+  font-size: inherit;
+  font-weight: inherit;
   color: inherit;
 }
 .manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary > .manager-workspace-count,
@@ -5235,8 +5236,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
   border-radius: 0;
   background: none;
   color: var(--count-tone);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
+  font-size: var(--type-page-list-label);
+  font-weight: var(--weight-page-list-label);
   line-height: 20px;
   text-align: left;
   font-variant-numeric: tabular-nums;
@@ -5283,7 +5284,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   font-weight: var(--weight-needs-you);
 }
 .manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_approval"] > summary,
-.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_answer"] > summary { color: var(--tone-tertiary); }
+.manager-column .page-tickets.page-tickets .manager-children [data-workspace-group="awaiting_answer"] > summary { color: var(--tone-page-list-label); }
 /* The unread dot keeps the rail's reserved right column, under the chevrons. */
 .manager-column .page-tickets.page-tickets .manager-children .ticket-row .conversation-signal-marks {
   flex: none;
@@ -5450,12 +5451,13 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* The run chips are small print: the model's name and its provider mark (drawn in the chip's
  * own tone, ComposerRunControls) at 12.5px in the secondary tone, the reasoning effort a step
- * quieter, the delivery chip the same. The placeholder stays tertiary, focused or not. */
+ * quieter, the delivery chip the same. The placeholder is tertiary at rest and secondary once
+ * the composer has focus. */
 [data-conversation-composer] .chat-foot .listbox-picker-trigger { font-size: var(--type-small); font-weight: var(--weight-small); color: var(--tone-secondary); }
 [data-conversation-composer] .chat-foot .listbox-picker-trigger:hover { color: var(--tone-strong); }
 [data-conversation-composer] .chat-foot .model-picker-face { color: inherit; }
 [data-conversation-composer] .chat-foot .model-picker-effort { color: var(--tone-tertiary); }
-[data-conversation-composer] .chat-ta:focus::placeholder { color: var(--tone-tertiary); }
+[data-conversation-composer] .chat-ta:focus::placeholder { color: var(--tone-secondary); }
 /* The composer's icons (add, voice, send at rest) stand in the secondary tone, one step above
  * the placeholder, and lift to the strong tone on hover. */
 [data-conversation-composer] .chat-image:not(.on),

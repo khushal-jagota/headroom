@@ -398,7 +398,7 @@
     display: block;
     width: var(--page-check-size);
     height: var(--page-check-size);
-    border: 1.5px solid var(--tone-tertiary);
+    border: 1.5px solid var(--tone-secondary);
     border-radius: var(--radius-pill);
     background: transparent;
     transition: transform 110ms var(--motion-ease), border-color var(--motion-fast) var(--motion-ease);
@@ -430,6 +430,10 @@
   .check[aria-checked="true"] .check-mark path { stroke-dashoffset: 0; opacity: 1; }
   .step-main { display: grid; min-width: 0; }
   .step-heading { display: flex; min-width: 0; align-items: start; gap: var(--space-2); }
+  /* A step's date (or the mark that sets one) follows its name, 8px after it, rather than
+     standing alone at the row's far end. */
+  .step-heading:has(:global([data-item-deadline])) > .step-title,
+  .step-heading:has(:global([data-item-deadline])) > .completed-title { flex: 0 1 auto; width: auto; }
   .step-inner:has(:global([data-item-deadline])) > .check { margin-top: 2px; }
   .step-heading:has(:global([data-item-deadline])) > .step-title,
   .step-heading:has(:global([data-item-deadline])) > .completed-title { min-height: 44px; }

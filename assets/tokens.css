@@ -247,7 +247,7 @@
   --button-secondary-fill-hover: rgb(255 255 255 / 19%);
   /* Ghost: no fill until hovered. */
   --button-ghost-fill-hover: var(--state-step);
-  /* Outline: no fill, a 1px edge at 10% white, a primary-tone label; a hover adds a 4% fill. */
+  /* Outline: no fill, a 1px edge at 10% white, a secondary-tone label; a hover adds a 4% fill. */
   --button-outline-edge: rgb(255 255 255 / 10%);
   --button-outline-fill-hover: rgb(255 255 255 / 4%);
   /* Segmented control: no track; the selected segment carries the selected fill. */
@@ -395,6 +395,10 @@
   --weight-page-section: 600;
   /* A card's lead paragraph: the section-head size, one step lighter than its title. */
   --weight-page-lead: 500;
+  /* A page list's group heading: the rail's label voice, 12px/500 at 56%. */
+  --type-page-list-label: 12px;
+  --weight-page-list-label: 500;
+  --tone-page-list-label: rgb(255 255 255 / 56%);
   --type-small-print: var(--type-small);
   --tone-small-print: var(--tone-tertiary);
   /* Every button on a page: one height, one radius, one label size. */
@@ -407,6 +411,9 @@
   --page-card-edge: rgb(255 255 255 / 7%);
   --page-card-radius: 12px;
   --page-card-pad: 20px;
+  /* A row-card (a yes-or-no goal): 64px tall, its two lines on an 11px inset. */
+  --page-row-card-pad-y: 11px;
+  --page-row-card-pad-x: 16px;
   /* A page list row: the rail's row at body size. Its fill reaches this far past the
    * column on both sides, so the words stay on the column's edge. */
   --page-row-height: 32px;
