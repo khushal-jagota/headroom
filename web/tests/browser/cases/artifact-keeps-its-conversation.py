@@ -47,6 +47,9 @@ MANAGER_TITLE = "Rollout manager"
 # reached by going to the owner's own page.
 MANAGER_ARTIFACT = "/files/tickets/t_elsewhere/artifacts/plan.md"
 CHIEF_ARTIFACT = "/files/tickets/t_faraway/artifacts/budget.md"
+# The Manager's own web page. A raw link to it downloads, because the server sends every
+# HTML file as an attachment, so chat must draw it as a preview card.
+MANAGER_PAGE = f"/files/managers/{MANAGER_ID}/artifacts/compare.html"
 MANAGER_TRANSCRIPT = "The rollout manager keeps its own thread."
 CHIEF_TRANSCRIPT = "The Chief keeps its own thread."
 
@@ -84,7 +87,8 @@ TRANSCRIPTS = {
     FILE_CONVERSATION: [prompt(1, "Read this artifact"), answer(2, "The file owner answers here. Read [the budget](/files/tickets/t_faraway/artifacts/budget.md).")],
     MANAGER_CONVERSATION: [
         prompt(1, "Where did the rollout plan end up?"),
-        answer(2, f"It landed on another Ticket: [the plan]({MANAGER_ARTIFACT}).\n\n{MANAGER_TRANSCRIPT}"),
+        answer(2, f"It landed on another Ticket: [the plan]({MANAGER_ARTIFACT}).\n\n"
+                  f"Compare it with [the comparison]({MANAGER_PAGE}).\n\n{MANAGER_TRANSCRIPT}"),
     ],
     CHIEF_CONVERSATION: [
         prompt(1, "What should I read first?"),
@@ -463,6 +467,22 @@ def run(browser, urls):
         page.evaluate("window.__reading.scrollTop"), scrolled_to)
     open_the_conversation()
     expect(transcript).to_be_visible()
+
+    # 7. A link to the Manager's own web page is a preview card, like a Ticket or goal
+    #    file, and not the raw link that downloads. Pressing it opens the page in place.
+    expect(conversation.locator(f'a[href="{MANAGER_PAGE}"]')).to_have_count(0)
+    page_card = conversation.locator('[data-file-preview-kind="html"]')
+    expect(page_card).to_have_count(1)
+    if screenshots:
+        page.screenshot(path=str(Path(screenshots) / "manager-page-card.png"))
+    page_card.locator(f'a[href*="manager={MANAGER_ID}"]:visible').first.click()
+    expect(artifact).to_have_attribute("aria-label", "compare.html")
+    expect(conversation).to_have_attribute("data-conversation-id", MANAGER_CONVERSATION)
+    if screenshots:
+        page.screenshot(path=str(Path(screenshots) / "manager-page-opened.png"))
+    artifact.get_by_role("button", name="Close", exact=True).click()
+    expect(artifact).to_have_count(0)
+    open_the_conversation()
 
     # 2. The conversation it was named in stays usable: words typed while the artifact is
     #    open land in the real composer, and a draft survives opening and closing it.
