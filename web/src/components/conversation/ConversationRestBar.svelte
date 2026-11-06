@@ -10,14 +10,11 @@
 
 <!-- The composer's status line, where staging placed it: above the composer, what the agent is
      doing on the left and the way to open the conversation at the right (its 32px target on the
-     composer's right edge), the latest unread message under them. -->
+     composer's right edge), the latest unread message under them (as staging: no dot here). -->
 <button type="button" class="c2-rest" data-conversation-rest-bar data-conversation-expand data-conversation-state-control
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
     <span class="c2-rest-activity">
-      <!-- An unread message from the agent: the accent dot leads its status, over the message
-           itself, never floating beside a page title. -->
-      {#if preview}<span class="c2-rest-unread" role="img" aria-label="Unread message" data-conversation-unread-dot></span>{/if}
       {#if running || backgroundWork}<span class="c2-mark--running" aria-label="working"></span>{/if}
       {#if connectionTrouble}<span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>{/if}
       {#if activity}<span data-conversation-rest-line>{activity}</span>{/if}
@@ -42,7 +39,6 @@
     min-width:0; min-height:var(--conversation-target); }
   .c2-rest-activity { display:flex; align-items:center; gap:var(--space-2); min-width:0; }
   [data-conversation-rest-line] { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .c2-rest-unread { flex:none; width:6px; height:6px; border-radius:var(--radius-pill); background:var(--accent-bright); }
   /* The arrow alone answers dock hover and the line's focus; its 32px backing ends on the
      composer's right edge. */
   .c2-rest-control { display:grid; place-items:center; width:var(--conversation-target); height:var(--conversation-target);
