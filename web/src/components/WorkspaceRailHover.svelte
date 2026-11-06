@@ -104,7 +104,11 @@
       // row, or over it when the composer leaves no room under it.
       const row = currentTarget.querySelector<HTMLElement>(".ticket-row") ?? currentTarget;
       const box = row.getBoundingClientRect();
-      const besideTop = Math.max(12, Math.min(box.top + box.height / 2 - height / 2, floor - height));
+      // Beside its row the panel stays with its list (never more than 10px above the list's
+      // own heading) and clear of the composer by 8px.
+      const listTop = (currentTarget.closest(".page-tickets") ?? currentTarget.closest("section") ?? currentTarget).getBoundingClientRect().top;
+      const besideFloor = floor + 4;
+      const besideTop = Math.max(12, listTop - 10, Math.min(box.top + box.height / 2 - height / 2, besideFloor - height));
       // Beside the row it also clears the rows and headings it lies level with, which hug
       // their words too, so it covers only empty column.
       const list = currentTarget.closest("[data-manager-children], .manager-children") ?? currentTarget.parentElement;
