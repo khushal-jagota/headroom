@@ -50,14 +50,14 @@ p{margin:0;color:var(--tone-tertiary);font-size:var(--type-small)}
 .card-progress{display:flex;flex-direction:column}.card-progress > :global(.goal-chart-host){flex:1;display:flex;flex-direction:column}.card-progress :global(.goal-chart-host > .metric-card){flex:1;display:flex;flex-direction:column}.card-progress :global(.chart-range-footer){margin-top:auto;padding-top:var(--space-4)}
 /* The card is the checklist's surface: the checklist draws no surface or inset of its own. */
 .card-progress:has(:global([data-block="checklist"])){padding:var(--space-4) var(--page-card-pad) var(--space-3)}
-/* Inside the card the checklist stands on the card's own inset: its ring and its checks share
-   one column on the card's edge, and its fills reach 8px past the words on hover. */
+/* Inside the card the checklist stands on the card's own inset: its checks stand on the card's
+   edge, and its fills reach 8px past the words on hover. */
 .card-progress :global([data-block="checklist"]){border:0}
 .card-progress :global([data-block="checklist"] .checklist-header){margin:-6px calc(var(--page-row-outset) * -1) var(--space-1)}
 .card-progress :global([data-block="checklist"] .checklist-header .header){padding:6px var(--page-row-outset)}
 .card-progress :global([data-block="checklist"] .body-inner){padding:0}
 .card-progress :global([data-block="checklist"] .step-inner){padding:0}
-.card-progress :global([data-block="checklist"] .group-toggle){padding:0 0 0 calc(var(--page-ring-size) + var(--space-3));margin-inline:0}
+.card-progress :global([data-block="checklist"] .group-toggle){padding:0 0 0 calc(var(--page-check-size) + var(--space-3));margin-inline:0}
 .compact{flex-direction:row;align-items:center}.compact .card-head{flex:1;min-width:0;padding:var(--space-4) var(--page-card-pad)}.compact .card-progress{flex:none;min-width:120px;padding:0 var(--page-card-pad) 0 0}.card-progress :global([data-block="checklist"]){background:transparent;border-radius:0}
 .compact .card-progress :global(.completion-headline){justify-content:flex-end}
 </style>

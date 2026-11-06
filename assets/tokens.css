@@ -348,6 +348,8 @@
   /* Prose (recaps, proposal text, page text) never runs wider than this inside the column:
    * about 85 characters of body text, the reference apps' reading measure. */
   --page-prose-measure: 580px;
+  /* Every page header starts this far down the pane, clear of the window's top edge. */
+  --page-top: 12px;
   /* The page's top band: the one line above the title (where it lives) on the left and the
    * page's own utilities on the right. One height on every page. */
   --page-band-height: 48px;
@@ -373,17 +375,24 @@
   /* A page list row: the rail's row at body size. Its fill reaches this far past the
    * column on both sides, so the words stay on the column's edge. */
   --page-row-height: 32px;
+  /* A group heading keeps the rail's rhythm: 8px above it, 2px below, so it binds to its rows. */
+  --page-heading-above: 8px;
+  --page-heading-below: 2px;
   --page-row-outset: 8px;
-  /* A progress ring inside a card is data: 2px, the done green at full strength on this
-   * track, at least 28px. */
-  --page-ring-size: 28px;
-  --page-ring-track: rgb(255 255 255 / 10%);
+  /* A checklist's progress is a segmented bar, one segment per step: done segments in the
+   * done green, the rest on this track. Its checks are 14px circles. */
+  --page-progress-height: 3px;
+  --page-progress-gap: 2px;
+  --page-progress-track: rgb(255 255 255 / 10%);
+  --page-check-size: 14px;
   /* A disclosure's chevron, drawn the same at the right end of every fold. */
   --page-chevron: 14px;
   /* The page keeps this much room under its last block, so it can scroll fully clear of
    * the composer zone. */
   --page-end-room: var(--space-7);
-  --composer-fade: 40px;
+  --composer-fade: 48px;
+  /* The fade ends this far above the composer's top edge; below it the page is solid. */
+  --composer-fade-gap: 8px;
   /* The composer: the reference composer's surface (10% white) with a 1px edge one step
    * lighter, radius 12. The status line above it is small print on its inner edge. */
   --composer-surface: var(--surface-input);

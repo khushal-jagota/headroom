@@ -1938,7 +1938,7 @@ button.list-row:hover .list-row-title {
   overflow-y: hidden;
   display: block;
 }
-.chat-ta::placeholder { color: var(--tone-faint); }
+.chat-ta::placeholder { color: var(--tone-tertiary); }
 /* The input actions use one row and one treatment at every width. */
 .chat-foot {
   display: flex;
@@ -5156,12 +5156,13 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* THE PAGE LIST — the rail's group heading and row, at body size. Words stand on the
  * column's edge; a row's fill reaches --page-row-outset past it on both sides. Counts are
- * plain small numerals in the heading's own tone. A heading keeps 12px above it and 4px
- * below, so it binds to its rows; the list starts 12px up so the first heading sits on the
- * section head's 14px. (.page-tickets is doubled to outrank the list's own scoped rules.) */
+ * plain small numerals in the heading's own tone. A heading keeps the rail's rhythm, 8px
+ * above it and 2px below, so it binds to its rows; the list starts 8px up so the first
+ * heading sits on the section head's 14px. (.page-tickets is doubled to outrank the list's
+ * own scoped rules.) */
 .manager-column .page-tickets.page-tickets .manager-children {
   --list-inset: 0px;
-  margin: -12px 0 0;
+  margin: calc(var(--page-heading-above) * -1) 0 0;
 }
 .manager-column .page-tickets.page-tickets .manager-children [data-worker-section],
 .manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] {
@@ -5179,9 +5180,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
   align-items: center;
   gap: 6px;
   min-height: 0;
-  height: 36px;
+  height: calc(var(--page-heading-above) + 20px + var(--page-heading-below));
   margin: 0 calc(var(--page-row-outset) * -1);
-  padding: 12px var(--page-row-outset) 4px;
+  padding: var(--page-heading-above) var(--page-row-outset) var(--page-heading-below);
   border-radius: var(--radius-md);
   background: none;
   color: var(--tone-tertiary);
@@ -5194,7 +5195,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* Backlogged and Done are two heading rows like every other group (never one shared line). */
 .manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] .manager-workspace-status > summary,
 .manager-column .page-tickets.page-tickets .manager-children [data-worker-section][data-empty="true"] + [data-worker-section][data-empty="true"] .manager-workspace-status > summary {
-  padding: 12px var(--page-row-outset) 4px;
+  padding: var(--page-heading-above) var(--page-row-outset) var(--page-heading-below);
 }
 .manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary:hover {
   background: none;
@@ -5220,14 +5221,15 @@ details:not([open]) > summary > .manager-workspace-chevron {
   text-align: left;
   font-variant-numeric: tabular-nums;
 }
-/* Every group is a fold, so every group heading shows the fold's chevron at the right. */
+/* Every group is a fold, so every group heading shows the fold's chevron, right after its
+ * count, where the eye already is. */
 .manager-column .page-tickets.page-tickets .manager-children .manager-workspace-status > summary::after,
 .page-fold > summary::after {
   content: "";
   flex: none;
   width: var(--page-chevron);
   height: var(--page-chevron);
-  margin-left: auto;
+  margin-left: 0;
   background: var(--tone-tertiary);
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
           mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
@@ -5282,29 +5284,35 @@ details:not([open]) > summary > .manager-workspace-chevron {
   padding: var(--page-card-pad);
 }
 
-/* THE FOLD ROW — Steps, Artifacts and every band like them: a label, its count in small
- * print, and the chevron at the right end. */
+/* THE FOLD ROW — Steps, Artifacts and every band like them: the page list's own group
+ * heading. Borderless, small print in the tertiary tone, its count after it, and the fold's
+ * chevron right after the count. */
+.disclosure-band,
+.disclosure-bands > .disclosure-band + .disclosure-band,
+.ticket-screen .worker-bands .worker-steps { border: 0; }
 .disclosure-band > summary,
 .ticket-screen .worker-bands .worker-steps > summary {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 40px;
-  padding: 0 var(--page-row-outset);
+  min-height: 0;
+  height: calc(var(--page-heading-above) + 20px + var(--page-heading-below));
+  padding: var(--page-heading-above) var(--page-row-outset) var(--page-heading-below);
   margin-inline: calc(var(--page-row-outset) * -1);
   border-radius: var(--radius-md);
-  color: var(--tone-secondary);
+  background: none;
+  color: var(--tone-tertiary);
   font-family: var(--font-ui);
-  font-size: var(--type-body);
-  font-weight: var(--weight-body);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
   line-height: 20px;
 }
 .disclosure-band > summary:hover,
-.ticket-screen .worker-bands .worker-steps > summary:hover { background-image: var(--interaction-hover); color: var(--tone-strong); }
+.ticket-screen .worker-bands .worker-steps > summary:hover { background: none; color: var(--tone-secondary); }
 .disclosure-band-trailing,
 .ticket-screen .worker-bands .band-count {
   margin-left: 0;
-  color: var(--tone-tertiary);
+  color: var(--count-tone);
   font-size: var(--type-small);
   font-weight: var(--weight-small);
   font-variant-numeric: tabular-nums;
@@ -5315,16 +5323,14 @@ details:not([open]) > summary > .manager-workspace-chevron {
   flex: none;
   width: var(--page-chevron);
   height: var(--page-chevron);
-  margin-left: auto;
-  background: var(--tone-tertiary);
+  margin-left: 0;
+  background: currentColor;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
           mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
   transition: transform var(--motion-fast) var(--motion-ease);
 }
 .disclosure-band[open] > summary::after,
 .ticket-screen .worker-bands .worker-steps[open] > summary::after { transform: rotate(90deg); }
-.disclosure-band > summary:hover::after,
-.ticket-screen .worker-bands .worker-steps > summary:hover::after { background: var(--tone-secondary); }
 
 /* The review chamber's line above the title is the same band. */
 .review-eyebrow {
@@ -5332,7 +5338,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
   margin-top: 0;
   margin-bottom: 0;
 }
-.review-screen { padding-top: 0; }
+.review-screen { padding-top: var(--page-top); }
+/* Every page header starts --page-top down the pane. */
+.manager-page .manager-column { padding-top: var(--page-top); }
 .review-screen .review-ticket-title {
   margin: var(--space-1) 0 0;
   color: var(--tone-strong);
@@ -5368,18 +5376,18 @@ details:not([open]) > summary > .manager-workspace-chevron {
   pointer-events: none;
 }
 :is(.manager-page, .ticket-page) > .conversation-layer > .conversation-column { pointer-events: auto; }
-/* The page passes under the zone along one fixed edge: its content fades out over
- * --composer-fade above the composer and is gone by the composer's top, so a card going
- * under the composer dissolves at the same line every time instead of being sliced. */
+/* The page passes under the zone along one fixed edge: its content fades out over a 48px
+ * gradient that ends 8px above the composer's top edge, and below that the page is solid, so
+ * a card or row going under the composer dissolves into a clean band instead of meeting it. */
 :is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) :is(.manager-doc, .ticket-doc) {
   /* Anything scrolled into view (a focused row, a found word) stops above the fade. */
-  scroll-padding-bottom: calc(var(--composer-zone) + var(--composer-fade));
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-zone) - var(--composer-fade)), transparent calc(100% - var(--composer-zone)));
-          mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-zone) - var(--composer-fade)), transparent calc(100% - var(--composer-zone)));
+  scroll-padding-bottom: calc(var(--composer-zone) + var(--composer-fade-gap) + var(--composer-fade));
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-zone) - var(--composer-fade-gap) - var(--composer-fade)), transparent calc(100% - var(--composer-zone) - var(--composer-fade-gap)));
+          mask-image: linear-gradient(to bottom, #000 calc(100% - var(--composer-zone) - var(--composer-fade-gap) - var(--composer-fade)), transparent calc(100% - var(--composer-zone) - var(--composer-fade-gap)));
 }
-/* The page keeps room under its last block to scroll fully clear of the zone. */
-.manager-column { padding-bottom: calc(var(--composer-zone) + var(--page-section-gap)); }
-.ticket-col { padding-bottom: calc(var(--composer-zone) - var(--space-7) + var(--page-section-gap)); }
+/* The page keeps room under its last block to scroll fully clear of the fade. */
+.manager-column { padding-bottom: calc(var(--composer-zone) + var(--composer-fade-gap) + var(--composer-fade) + var(--space-5)); }
+.ticket-col { padding-bottom: calc(var(--composer-zone) + var(--composer-fade-gap) + var(--composer-fade) + var(--space-5) - var(--space-7)); }
 
 /* The floating composer: one line, 44px; its + at the left, its model, delivery and voice
  * controls at the right, all on the composer's own row. It grows with what is typed, and

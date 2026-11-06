@@ -345,8 +345,8 @@
           </TicketLifecycleControls>{/if}
           </div>
           <div class="ticket-title-row">
-            <!-- The title owns the column less one fixed right column, where the activity and
-                 unread mark always stand: the rail's dot column, never a dot after the words. -->
+            <!-- The title owns the column less one fixed right column, where the working mark
+                 stands; the unread mark is on the composer's status line. -->
             <div class="ticket-title">
               <h1 class="page-title ticket-title-text"><InlineEdit
                 value={masthead.title}
@@ -514,7 +514,7 @@
 <style>
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
-  .ticket-head { padding-top:0; }
+  .ticket-head { padding-top:var(--page-top); }
   .ticket-title-row { display:block; margin-top:var(--space-1); }
   .worker-machine { display:inline-flex; align-items:center; margin-right:6px; color:var(--tone-tertiary); }
   .worker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
@@ -523,6 +523,9 @@
   .ticket-title-text { margin:0; }
   .ticket-title :global(.ed) { font:inherit; color:var(--tone-strong); }
   .ticket-title-mark { display:flex; align-items:center; justify-content:center; height:32px; }
+  /* The unread mark lives on the composer's status line (ConversationRestBar); the title's
+     column keeps only the working mark. */
+  .ticket-title-mark :global([data-conversation-signal="message"]) { display:none; }
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is
      written, and a gap that went with them would move the page. */
   .ticket-head :global([data-recap-slot]) { margin-top:var(--space-2); }
@@ -536,7 +539,6 @@
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
   /* Steps and Artifacts are two fold rows (app.css, THE FOLD ROW) between hairlines. */
   .worker-bands { line-height:var(--leading-body); margin-top:var(--space-6); padding-bottom:var(--space-7); }
-  .worker-steps { border-top:1px solid var(--border-color); }
   .worker-steps > summary { cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }
   .worker-step-rows { padding-bottom:var(--space-4); }

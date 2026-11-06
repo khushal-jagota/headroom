@@ -143,8 +143,8 @@
   .field { position: relative; display: flex; align-items: center; min-height: 44px; }
   .date-face { display: flex; align-items: center; justify-content: center; min-width: 44px; padding-inline: var(--space-1); white-space: nowrap; pointer-events: none; }
   svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
-  /* An undated step's way to set a date: a quiet 14px mark in the tertiary tone. */
-  .date-face svg { width: 14px; height: 14px; color: var(--tone-tertiary); }
+  /* An undated step's way to set a date: a 14px mark in the faint tone, so it recedes. */
+  .date-face svg { width: 14px; height: 14px; color: var(--tone-faint); }
   input { position: absolute; inset: 0; width: 100%; min-width: 0; margin: 0; padding: var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; opacity: 0; cursor: pointer; }
   input:focus { position: relative; width: 112px; opacity: 1; cursor: text; outline: var(--focus-width) solid var(--focus-ring); outline-offset: -2px; }
   .field:has(input:focus) .date-face { display: none; }

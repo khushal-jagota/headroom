@@ -362,18 +362,17 @@
   }
   .small .body-inner { padding: var(--space-1); }
   .small .step-inner { column-gap: var(--space-2); padding-inline: var(--space-2); }
-  .small .group-toggle { padding-left: calc(40px + var(--space-2) * 2); }
+  .small .group-toggle { padding-left: calc(var(--page-check-size) + var(--space-2) * 2); }
   .chevron { width: var(--page-chevron); height: var(--page-chevron); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-ease); }
   .chevron.turned { transform: rotate(180deg); }
   .body { overflow: hidden; }
   .body-inner { padding: 0 var(--space-2) var(--space-2); }
   .list { margin: 0; padding: 0; list-style: none; }
   .step { overflow: hidden; }
-  /* A step: a 16px check in the ring's 28px column, so every check sits under the ring and
-     every name under the checklist's own name. */
+  /* A step: a 14px check in its own column on the checklist's edge, the name after it. */
   .step-inner {
     display: grid;
-    grid-template-columns: var(--page-ring-size) minmax(0, 1fr);
+    grid-template-columns: var(--page-check-size) minmax(0, 1fr);
     column-gap: var(--space-3);
     align-items: start;
     padding: 0 var(--space-3);
@@ -384,7 +383,7 @@
   .step.current .step-inner { background: transparent; }
   .check {
     display: grid;
-    width: var(--page-ring-size);
+    width: var(--page-check-size);
     height: 32px;
     place-items: center;
     margin: 0;
@@ -397,8 +396,8 @@
   .check-visual {
     position: relative;
     display: block;
-    width: 16px;
-    height: 16px;
+    width: var(--page-check-size);
+    height: var(--page-check-size);
     border: 1.5px solid var(--tone-tertiary);
     border-radius: var(--radius-pill);
     background: transparent;
@@ -416,7 +415,7 @@
     transition: transform var(--motion-slow) var(--motion-ease), opacity var(--motion-fast) linear;
   }
   .check[aria-checked="true"] .check-fill { opacity: 1; transform: scale(1); }
-  .check-mark { position: absolute; inset: -1.5px; width: 16px; height: 16px; }
+  .check-mark { position: absolute; inset: -1.5px; width: var(--page-check-size); height: var(--page-check-size); }
   .check-mark path {
     fill: none;
     stroke: var(--surface-1);
@@ -492,11 +491,13 @@
     display: grid;
     width: 100%;
     min-height: 32px;
-    grid-template-columns: minmax(0, 1fr) auto;
+    /* The fold's chevron right after its count, as on every fold on the page. */
+    grid-template-columns: auto auto;
+    justify-content: start;
     align-items: center;
-    column-gap: var(--space-3);
+    column-gap: 6px;
     margin-top: 2px;
-    padding: 0 var(--space-3) 0 calc(var(--page-ring-size) + var(--space-3) * 2);
+    padding: 0 var(--space-3) 0 calc(var(--page-check-size) + var(--space-3) * 2);
     border: 0;
     border-radius: var(--radius-md);
     background: transparent;

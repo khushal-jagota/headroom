@@ -7,13 +7,6 @@
 </script>
 
 <div class="header" class:small={presentation==='small'} class:reduced>
- <span class="ring" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={checked} aria-valuetext="{checked} of {total} done">
-  <svg class="ring-arc" viewBox="0 0 40 40" aria-hidden="true">
-   <circle class="ring-track" cx="20" cy="20" r="16"/>
-   <g transform="rotate(-90 20 20)"><circle class="ring-fill" cx="20" cy="20" r="16" pathLength="1" stroke-dasharray="1" stroke-dashoffset={total?1-checked/total:1}/></g>
-  </svg>
-  {#if allDone}<svg class="ring-tick" viewBox="0 0 40 40" aria-hidden="true"><path d="M13.5 20.5 18 25l8.5-9.5" pathLength="1"/></svg>{/if}
- </span>
  <div class="heading">
    <h3 id={headingId}>
     <span class="sr">{heading}</span>
@@ -28,13 +21,16 @@
   </p>
  </div>
  {@render actions?.()}
+ <!-- How far the checklist has come, one segment per step: a measure, not a spinner. -->
+ {#if total > 0}<span class="progress" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={checked} aria-valuetext="{checked} of {total} done">
+  {#each Array.from({length: total}, (_, index) => index) as index (index)}<span class="segment" class:done={index < checked}></span>{/each}
+ </span>{/if}
 </div>
 
 <style>
- /* The checklist's line: a 28px progress ring (2px, the done green at full strength on a 10%
-    track), the checklist's name in body text and its count in small print, and the fold's
-    chevron at the right. */
- .header{display:grid;grid-template-columns:var(--page-ring-size) minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);padding:var(--page-card-pad)}
+ /* The checklist's line: its name in body text and its count in small print, the fold's
+    chevron at the right, and under them the segmented progress bar across the line. */
+ .header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);padding:var(--page-card-pad)}
  .header.small{padding:var(--space-4)}
  .heading{display:grid;min-width:0;gap:0}
  h3{margin:0;color:var(--tone-primary);font-size:var(--type-body);font-weight:var(--weight-body);line-height:20px}
@@ -45,14 +41,10 @@
  .swap{position:relative;display:inline-grid;max-width:100%;vertical-align:top}
  .swap-sizer{grid-area:1/1;visibility:hidden}
  .swap-text{grid-area:1/1}
- .ring{position:relative;display:grid;width:var(--page-ring-size);height:var(--page-ring-size);color:var(--accent-done)}
- .ring-arc,.ring-tick{grid-area:1/1;width:var(--page-ring-size);height:var(--page-ring-size)}
- /* Drawn in a 40-unit box at 28px, so a 2.857-unit stroke is 2px on screen. */
- .ring-track{fill:none;stroke:var(--page-ring-track);stroke-width:2.857}
- .ring-fill{fill:none;stroke:var(--accent-done);stroke-width:2.857;stroke-linecap:round;transition:stroke-dashoffset var(--motion-slow) var(--motion-ease)}
- .ring-tick path{fill:none;stroke:currentColor;stroke-width:2.857;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:0;animation:draw 240ms var(--motion-ease) both}
+ .progress{grid-column:1 / -1;display:flex;gap:var(--page-progress-gap);height:var(--page-progress-height);margin-top:var(--space-2)}
+ .segment{flex:1;min-width:0;border-radius:var(--page-progress-height);background:var(--page-progress-track);transition:background-color var(--motion-slow) var(--motion-ease)}
+ .segment.done{background:var(--accent-done)}
  .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);border:0}
- @keyframes draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
- .reduced .ring-fill,.reduced .ring-tick path{transition:none;animation:none}
- @media(prefers-reduced-motion:reduce){.ring-fill,.ring-tick path{transition:none;animation:none}}
+ .reduced .segment{transition:none}
+ @media(prefers-reduced-motion:reduce){.segment{transition:none}}
 </style>

@@ -42,15 +42,15 @@
   .compact .caption { font-size:var(--type-small); }
   .chart-range-footer { margin-top:var(--space-4); }
   /* The range is one full-width row under every plot, a Manager's card or the goal page. */
-  .chart-range-footer .ranges { width:100%; }
-  .chart-range-footer .segmented-option { flex:1; }
+  /* Under the chart the switch spans the card in equal columns; each option is the shared
+     segment, a pill hugging its label, centred in its column. */
+  .chart-range-footer .ranges { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); width:100%; height:auto; }
+  .chart-range-footer .segmented-option { justify-self:center; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
   .integrated-card { border:0; background:transparent; border-radius:0; padding:0; }
   .integrated-card.compact { padding:0; --text-3xl:var(--type-page-title); }
   /* The measure's name is small print over its reading. */
   .integrated-card .metric-top { min-height:18px; }
-  /* At the top right (the goal's own page) the switch is compact: each segment its label. */
-  .metric-top .ranges { flex:none; width:auto; }
   .integrated-card .metric-top h2 { font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; letter-spacing:0; color:var(--tone-tertiary); }
   .integrated-card .headline { margin:var(--space-1) 0 var(--space-4); min-height:0; }
   .integrated-card .chart-range-footer { margin-top:var(--space-4); }
@@ -110,8 +110,7 @@
     /* The page's own card already holds this inset. Two would stack. */
     .integrated-card:not(.compact) { padding:0; border-radius:0; }
     .metric-card:not(.compact):not(.gauge-card) .metric-top h2 { flex-basis:100%; }
-    .metric-card:not(.compact) .ranges { width:100%; }
-    .metric-card:not(.compact) .segmented-option { flex:1; }
+
     .metric-card:not(.compact) .metric-value { height:32px; }
     .completion-word { font-size:var(--type-page-title); }
     .completion-card,.progress-card { min-height:260px; }
