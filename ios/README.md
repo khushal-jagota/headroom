@@ -25,31 +25,56 @@ working endpoint rather than inventing a new backend route.
 
 ## Refresh work
 
-After each change signal the phone reads one navigation view snapshot for what
-is on screen, as desktop does. Review is always in that scope, for its badge.
-Workspace adds its rail windows while it is visible: active orchestrators, Chief's
-tickets and each card's tickets. A hidden Workspace leaves the scope and keeps its
-last rows; returning adds its windows back and reads at once. One coherent view
-replaces the earlier Review, manager and ticket list reads; the phone no longer
-reads `/api/review`. Chief settings and deployment use the existing
-resource-version API: unchanged versions need no body read. A body is accepted
-with the version from the same server snapshot. A failed or unknown version check
-keeps a full refresh, and servers without that API keep ordinary reads. Manual
-refresh and reconnect always read again. Then saved work drains, as before.
+While the app is in the foreground it follows one navigation view stream for
+what is on screen, as desktop does: a snapshot first, then patches. Review is
+always in that scope, for its badge. Workspace adds its rail windows while it is
+visible: active orchestrators, Chief's tickets and each card's tickets. A detail
+page adds its own record (and, for Chief and orchestrators, a children window). A
+new demand opens a stream for the new scope while the last view stays on screen;
+leaving a screen only narrows the next stream. One coherent view replaces the
+earlier Review, manager and ticket list reads; the phone no longer reads
+`/api/review`. A launch shows the last saved view at once. A return to the
+foreground, a dropped connection, a gap, a reset or a closed stream all start a
+fresh stream, whose first frame is a fresh snapshot; failures retry after 1, 2, 4
+and then 8 seconds and show Reconnecting. Then saved work drains, as before.
+
+Chief settings and deployment status are outside the view, and deployment status
+is not a navigation change at all, so those two keep the payload-free change
+stream and the resource-version API: a wake probes both versions, at most once a
+second, and unchanged versions need no body read. A body is accepted with the
+version from the same server snapshot. A failed or unknown version check keeps a
+full read, and servers without that API keep ordinary reads. Manual refresh reads
+both again and reconnects a view stream that is not current.
+
+A detail page reads its own detail when it opens, then again only when its own
+records in the view change: a Ticket and its step pages on the Ticket record;
+an orchestrator on its record and its children window; Chief on its record, its
+active children and its settings. Working and unread marks on those pages come
+from the view, so a mark change needs no detail read. A Review proposal reloads
+when its Ticket's record changes. Settled reads again when the settled count
+changes. An inline artifact list reads on expansion and when its owner's file
+count changes. Settings, Usage, Feedback and Ideas read when opened, on return
+to the foreground and on pull-to-refresh.
+
+`ResourceRefreshTests` adds one host test for the stream, which no earlier test
+reached: a patch applies without a read, a gap opens a fresh stream, a new detail
+scope opens its own stream, a withdrawal opens none, and a record's reload stamp
+moves only with that record. It reuses the existing URLProtocol fixture in the
+offline host package. The offline simulator stub serves the events stream as a
+snapshot frame each second.
 
 The view code lives in `Core/Navigation`. The wire subset is hand-written Codable,
 pinned to projection 7 and wire 3, and ignores fields the server adds. Ticket,
 orchestrator and Review facts are derived from view records the way desktop's
 `presentation.ts` derives them, then mapped into the existing native models.
-Frame application for the events stream (snapshot, checkpoint, patch, reset; a gap
-needs a fresh snapshot) is a pure unit, not yet used: this step reads snapshots.
+Frame application (snapshot, checkpoint, patch, reset; a gap needs a fresh
+snapshot) is a pure unit that each stream applies to its own snapshot.
 The server bounds a view to 256 rows and 60 per window. Mounted screens share
 that budget the way the web owner shares it. Orchestrator and Chief pages keep
 their own detail reads, which also supply goals, recaps and artifacts. Settled
 keeps its paged list read, and reads only while open; its count comes from the
 view.
 
-Conversation polling retains its 700 ms interval and its tail subscription.
 Overlapping refresh requests share a following read instead of being dropped.
 The transcript projection is retained until its message, expanded body, outgoing
 receipt, live text or ordering changes. An unchanged live-output reference reuses
@@ -153,10 +178,11 @@ do not prove physical-device haptics, frame rate, or every navigation flow.
 | `project.yml`, `Panels.xcodeproj` | Integration owner; regenerate once after combining added files |
 
 Inject `AppStore` through SwiftUI's environment. Use `store.client` for detail
-reads. The shell owns the sole `/api/changes` connection, cancels it in background,
-reconnects after disconnect, and coalesces pending refresh signals into one slot.
-`store.revision` lets mounted detail screens refresh after an overview update.
-Screens state their windows with `store.setNavigationDemand`. Overview reads run
+reads. The shell owns `store.run()`, which follows the view stream and the change
+stream, cancels both in background and reconnects after disconnect. Screens state
+their windows with `store.setNavigationDemand`; detail pages use `.navigationDemand`
+and key reloads with `.reload(onChangeOf:)` on `store.ticketStamp`,
+`managerStamp` or `chiefStamp`. Overview reads run
 concurrently and retain previous data with an explicit error on failure. Workspace
 shows Chief tickets and up to 60 active orchestrators; Previous and Next replace
 that page when there are more, as the web's window pages do. A manager's detail
@@ -168,8 +194,8 @@ writes need not emit a database change.
 `ConversationNavigation` supplies the shared composer and conversation page on Chief,
 Orchestrator and Ticket, described below. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
 screens. Feedback implements the Open/Handled inbox, grouped Ticket links, page
-context links and Dismiss/Reopen actions through its API adapter. It follows
-foreground change revisions and supports pull-to-refresh. Its empty state omits
+context links and Dismiss/Reopen actions through its API adapter. It reads when opened,
+on return to the foreground and on pull-to-refresh. Its empty state omits
 the web's capture button instruction because native global feedback capture is
 not yet implemented. Feedback writes are exercised only with an injected stub
 or URLProtocol interception.
@@ -322,7 +348,7 @@ it is absent at zero. Chief has no artifact catalog. Folders expand in place too
 `AppRoute.artifact(owner:path:title:)` opens a specific managed file. Catalog links
 retain their actual file owner, including links to files on another ticket.
 
-The inline list reads on expansion and page refresh, with paging and a search
+The inline list reads on expansion and when the owner's file count changes, with paging and a search
 field for larger catalogs. HTML runs
 inside a sandboxed frame in a nonpersistent WKWebView, with relative file assets
 and native navigation for managed links. HTML previews offer Phone width and Fit
@@ -409,8 +435,12 @@ keeps the keyboard and draft, and resumes following through streamed completion.
 The return uses the shared entrance motion; Reduce Motion makes it immediate.
 See [the Latest review](ConversationLatest.md) for the diagnosis and focused proof.
 
-The foreground surface subscribes to the existing Focus/Full tail and reads a
-coherent projection when it changes, with a 700ms refresh fallback. Full subscribes
+The foreground surface subscribes to the existing Focus/Full tail and applies its
+snapshot and change frames directly, without re-reading the transcript. A frame
+reads only changed live text and receipts for unsent messages; the configuration
+is read once per connection and again when the owner's latest message or the
+turn's running state changes. A gap or reset reopens the tail for a fresh
+snapshot. Full subscribes
 to live output and reads its versioned text body. Streaming and recorded replies
 share a visual identity. Focus follows the server's reply-only contract. Earlier
 pages and deferred bodies load on demand. Opening finds the first unread owner

@@ -2,8 +2,8 @@
 
 Review shows proposals and unread conversations in one queue, ordered by waiting
 time. Each conversation has one card containing its complete unread message run.
-The queue and badge come from the navigation view's review window, read after each
-change signal; desktop builds its queue from the same window. Skip keeps an item out of this visit's queue without
+The queue and badge come from the navigation view's review window, which the phone
+follows over the view's events stream; desktop builds its queue from the same window. Skip keeps an item out of this visit's queue without
 changing it on the server. When every remaining item was skipped, Revisit skipped
 items brings them back. A new proposal on the same ticket appears again.
 
