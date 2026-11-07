@@ -50,12 +50,12 @@ crash or across an unknown newly created conversation.
 
 ## Decisions and recordings
 
-Approval and send-back first enter the local outbox. The ask leaves Review and a
-pending row shows its state. Approvals send the original expected proposal
+Approval and send-back first enter the local outbox. The ask leaves Review, and
+Review shows no row for the saved decision. Approvals send the original expected proposal
 revision. Send-backs also send the saved proposal revision. Both fetch the proposal
 immediately before posting and compare field, creation time and revision.
-A mismatch or a server refusal of the revision becomes “This changed,
-review again”; saved words remain readable and selectable in the pending row.
+A mismatch or a server refusal of the revision marks the decision as changed,
+and the ask returns to the queue.
 
 The server checks the expected revision in the same transaction as either decision,
 so a change between the final read and the POST is refused. Neither decision endpoint
