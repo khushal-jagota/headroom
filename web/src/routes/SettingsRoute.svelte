@@ -27,6 +27,10 @@
 </section>
 
 <style>
+  [data-settings] { width:100%; max-width:var(--page-measure); margin-inline:auto; }
+  [data-settings] :global(.agents-page) { max-width:none; padding-inline:0; }
+  .settings-vps :global(.screen[data-screen="vps"]) { padding-inline:0; padding-top:var(--space-6); }
+
   .settings-title {
     padding:var(--space-3) 0;
     border-bottom:var(--border-hairline) solid var(--border-color);
@@ -45,7 +49,7 @@
     border-bottom:var(--border-hairline) solid var(--border-color);
   }
   .settings-sections { display:flex; gap:var(--space-4); flex-wrap:wrap; min-width:0; }
-  a { color:var(--text-muted); text-decoration:none; padding:var(--space-1) 0; }
+  a { font-weight:590; color:var(--text-muted); text-decoration:none; padding:var(--space-1) 0; }
   a[aria-current="page"] { color:var(--text-strong); font-weight:590; }
   a:hover { color:var(--text-strong); }
   a:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:var(--space-1); }

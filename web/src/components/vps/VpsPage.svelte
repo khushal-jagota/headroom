@@ -50,9 +50,9 @@
           <p class="asof" data-current={loading ? undefined : !current.stale} role="status" aria-live="polite">
             {#if loading}<VpsSkeleton />{:else}<span class="asof-mark" aria-hidden="true"></span><span>{current.label}</span>{/if}
           </p>
-          <div class="seg" role="group" aria-label="Window">
+          <div class="segmented seg" role="group" aria-label="Window">
             {#each windows as [id, window]}
-              <button type="button" class="opt" data-vps-window={id} aria-pressed={(metricsState?.window ?? '5m') === id} onclick={() => controller?.setWindow(id)}>{window.label}</button>
+              <button type="button" class="segmented-option opt" data-vps-window={id} aria-pressed={(metricsState?.window ?? '5m') === id} onclick={() => controller?.setWindow(id)}>{window.label}</button>
             {/each}
           </div>
         </div>

@@ -278,9 +278,9 @@
   --segment-radius: var(--button-radius);
   --segment-selected-fill: var(--surface-input);
   --segment-hover-fill: var(--state-step);
-  /* Inline code in text: Small mono on a 7% lift, 4px radius, 1px 4px padding. */
+  /* Inline code in text: Small mono on a 7% lift, 4px radius, 1px 2px padding. */
   --code-pad-y: 1px;
-  --code-pad-x: 4px;
+  --code-pad-x: 2px;
 }
 
 /* Touch screens get 16px chat inputs: anything smaller has iOS Safari zoom the

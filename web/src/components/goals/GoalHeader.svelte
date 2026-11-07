@@ -3,7 +3,7 @@
  import type {GoalResponse,GoalWriteFields} from '../../lib/goals/contracts';
  import type {InlineEditDraft} from '../../lib/inlineEditDraft';
  import {createGoalEditor} from '../../lib/goals/editing';
- import {deadlineTone,deadlineColor} from '../../lib/goals/presentation';
+ import {goalDateText,deadlineTone,deadlineColor} from '../../lib/goals/presentation';
  import {queries} from '../../lib/queryCatalogue';
  import InlineEdit from '../InlineEdit.svelte';
  import ErrorLine from '../ErrorLine.svelte';
@@ -101,7 +101,7 @@
   <span class="page-eyebrow-sep" aria-hidden="true">·</span>
   <span class="metadata deadline" class:empty={!deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)}>
    <span class="control-size date-size" aria-hidden="true">{dateText(deadline)}</span>
-   {#if !deadline}<span class="deadline-empty" aria-hidden="true">No deadline</span>{/if}
+   <span class="deadline-label" aria-hidden="true" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{deadline?`Due ${goalDateText(deadline)}`:'No deadline'}</span>
    <input type="date" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))} aria-label="By date" value={deadline} disabled={editFields.deadline.saving} onfocus={()=>start(editFields.deadline,true)} onclick={openDatePicker} oninput={e=>input(editFields.deadline,e.currentTarget)} onblur={e=>void commit(editFields.deadline,'deadline',e.currentTarget)} onkeydown={e=>keydown(e,editFields.deadline,'deadline')}/>
   </span>
   <span class="page-eyebrow-sep" aria-hidden="true">·</span>
@@ -127,11 +127,11 @@
  /* The fields' own padding and the dots between them set the spacing, as on other pages' lines. */
  .goal-context{min-height:var(--page-band-height);margin:0 calc(var(--space-1) * -1) 0;column-gap:0}
  .goal-context .page-eyebrow-sep{padding-inline:2px}
- .goal-context .signal{margin-left:var(--space-2)}
+ .goal-context .signal{margin-left:auto}
  .metadata{position:relative;display:inline-grid;grid-template-columns:minmax(0,1fr);align-items:baseline;min-width:0;max-width:100%}
- .control-size,.deadline-empty{grid-area:1/1;padding:2px var(--space-1);white-space:pre}
+ .control-size,.deadline-label{grid-area:1/1;padding:2px var(--space-1);white-space:pre}
  .control-size{visibility:hidden}
- .deadline-empty{color:var(--tone-tertiary);pointer-events:none}
+ .deadline-label{color:var(--tone-tertiary);pointer-events:none}
  input,select{position:absolute;inset:0;box-sizing:border-box;width:100%;height:100%;min-width:0;font:inherit;line-height:inherit;background:transparent;color:var(--tone-tertiary);border:0;border-radius:var(--radius-sm);padding:2px var(--space-1);appearance:none;cursor:pointer}
  .metadata:hover{color:var(--tone-strong)}.metadata:hover > select,.metadata:hover > input{color:var(--tone-strong)}
  select{cursor:pointer;text-overflow:ellipsis}
@@ -141,8 +141,8 @@
  input::-webkit-calendar-picker-indicator{display:none}
  input::-webkit-datetime-edit,input::-webkit-datetime-edit-fields-wrapper,input::-webkit-datetime-edit-text,input::-webkit-datetime-edit-month-field,input::-webkit-datetime-edit-day-field,input::-webkit-datetime-edit-year-field{padding:0}
  input::-webkit-date-and-time-value{text-align:left}
- .empty:not(:focus-within) .date-size,.empty:focus-within .deadline-empty{display:none}
- .empty:not(:focus-within) input{opacity:0}
+ .deadline:not(:focus-within) .date-size,.deadline:focus-within .deadline-label{display:none}
+ .deadline:not(:focus-within) input{opacity:0}
  /* The page's own actions are ghosts: the last label ends on the column's edge (the line
     already reaches 4px past it). */
  .signal{margin-left:auto;margin-right:calc(var(--space-1) - var(--button-pad-x))}

@@ -73,6 +73,7 @@
   let observedOpen = $derived(filter === "active" ? groupOpen : {[filter === "backlogged" ? "backlog" : "done"]:sectionOpen});
 
   let count = $derived(scopedWindow?.total);
+  let placeholderHeight = $derived(count === undefined ? undefined : `${Math.min(count, principal.kind === 'chief' ? 30 : 60) * 28 + 2}px`);
   let label = $derived(filter === "backlogged" ? "Backlogged" : "Done");
   $effect.pre(() => {
     groups;
@@ -102,6 +103,7 @@
     </div>
   {/snippet}
   {#snippet contents()}
+    <div class:known-child-count={filter !== 'active' && count !== undefined} style:--child-placeholder-height={placeholderHeight}>
     <ResourceState shape="rows" loading={!ready} hasData={ready} loadingText={`Loading ${filter === "active" ? "Workers" : label}…`}>
       {#if filter === "active"}
         {#each groups as group (group.key)}
@@ -124,6 +126,7 @@
         <NavigationWindowPages window={scopedWindow} label={filter==='active'?'Active Workers':label} onPage={(next,nextDirection)=>{anchor=next;direction=nextDirection;}} />
       {/if}
     </ResourceState>
+    </div>
   {/snippet}
   {#if filter === "active"}
     {@render contents()}
@@ -138,3 +141,16 @@
     </Disclosure>
   {/if}
 </div>
+
+<style>
+  /* A folded section already knows its count. Reserve its compact rows, not a full list. */
+  .known-child-count :global(.skeleton-region[data-active]) {
+    height:var(--child-placeholder-height);
+    min-height:var(--child-placeholder-height);
+    overflow:hidden;
+  }
+  .known-child-count :global(.skeleton-rows) { padding:0; }
+  .known-child-count :global(.skeleton-rows-head) { display:none; }
+  .known-child-count :global(.skeleton-rows-body) { padding:2px 0 0; }
+  .known-child-count :global(.skeleton-list-row) { height:28px; padding:2px var(--space-3); }
+</style>

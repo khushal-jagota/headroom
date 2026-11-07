@@ -23,6 +23,7 @@
 <style>
   .empty { margin:var(--space-2) 0; font-size:var(--type-small); color:var(--text-faintest); }
   .body :global(.artifact-strip) { display:block; padding:0; margin:0; border:0; }
+  .body :global(.artifact-catalog-window) { margin-inline:calc(-1 * var(--space-2)); padding-inline:var(--space-2); }
   .body :global(.artifact-strip-label) { display:none; }
   .body :global(.artifact-strip-items) { display:flex; flex-direction:column; gap:0; }
   .body :global(.artifact-chip) { width:calc(100% + 2 * var(--space-2)); margin-inline:calc(-1 * var(--space-2)); display:flex; justify-content:space-between; gap:var(--space-3); padding:9px var(--space-2); border:0; border-radius:var(--radius-sm); background:transparent; font-size:var(--type-body); color:var(--tone-secondary); }

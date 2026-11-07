@@ -84,5 +84,5 @@
   .approval-mark { display:inline-flex; align-items:center; justify-content:center; flex:none; }
   .approval-mark :global(svg) { width:14px; height:14px; stroke-width:1.8; }
   .approval-mark--owner { color:var(--accent-bright); }
-  .approval-mark--agent { color:var(--tone-faint); }
+  .approval-mark--agent { color:var(--rail-tone-label); }
 </style>

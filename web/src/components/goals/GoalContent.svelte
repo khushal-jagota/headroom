@@ -59,7 +59,7 @@
  {#each readings.data?.sources.filter(s=>s.health!=='healthy')??[] as source(source.source_id)}<p class="source-warning">{source.source_name}: {source.health}</p>{/each}
  <!-- The saved page is the goal's content. It carries its own authored headings; the page
       renderer adds none, and nothing here wraps it in a section of our own naming. -->
- <div class="goal-page">{#key goal.id}<PageDocument document={renderedPage} showHeader={false} supplementary/>{/key}</div>
+ {#if renderedPage.blocks.length}<div class="goal-page">{#key goal.id}<PageDocument document={renderedPage} showHeader={false} supplementary/>{/key}</div>{/if}
 </div>
 <style>
 .goal-content{container-type:inline-size}/* The approved card: the chart sits inside it without a second frame. */

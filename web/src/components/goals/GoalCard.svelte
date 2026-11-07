@@ -67,13 +67,13 @@ a:hover{color:var(--tone-strong);text-decoration-line:underline;text-decoration-
 p{margin:0;color:var(--tone-tertiary);font-size:var(--type-small)}
 /* The card is the checklist's surface: the checklist draws no surface or inset of its own. */
 .card-progress:has(:global([data-block="checklist"])){padding:var(--space-4) var(--page-card-pad) var(--space-3)}
-/* Inside the card the checklist stands on the card's own inset: its checks stand on the card's
-   edge, and its fills reach 8px past the words on hover. */
+/* Inside the card the checklist stands on the card's own inset: its 40px ring and check
+   targets share a center, and its fills reach 8px past the words on hover. */
 .card-progress :global([data-block="checklist"]){border:0}
 .card-progress :global([data-block="checklist"] .checklist-header){margin:-6px calc(var(--page-row-outset) * -1) var(--space-1)}
 .card-progress :global([data-block="checklist"] .checklist-header .header){padding:6px var(--page-row-outset)}
 .card-progress :global([data-block="checklist"] .body-inner){padding:0}
-.card-progress :global([data-block="checklist"] .step-inner){padding:var(--space-1) 0;margin-left:calc((var(--page-check-size) - var(--page-check-target)) / 2)}
-.card-progress :global([data-block="checklist"] .group-toggle){padding:0 0 0 calc(var(--page-check-target) + var(--space-3) + (var(--page-check-size) - var(--page-check-target)) / 2);margin-inline:0}
+.card-progress :global([data-block="checklist"] .step-inner){padding:var(--space-1) 0}
+.card-progress :global([data-block="checklist"] .group-toggle){padding:0 0 0 calc(var(--page-check-target) + var(--space-3));margin-inline:0}
 .card-progress :global([data-block="checklist"]){background:transparent;border-radius:0}
 </style>

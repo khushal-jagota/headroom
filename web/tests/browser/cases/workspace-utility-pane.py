@@ -209,7 +209,12 @@ def run(browser, urls):
     context = browser.new_context(viewport={"width": 1280, "height": 700})
     page = context.new_page()
     errors = []
+    invalid_height_keyframes = []
     page.on("pageerror", lambda error: errors.append(str(error)))
+    # Responsive navigation also animates sidebar groups while their rail is hidden.
+    # Chromium warns instead of throwing when that animation receives a nonfinite height.
+    page.on("console", lambda message: invalid_height_keyframes.append(message.text)
+            if "Invalid keyframe value" in message.text and "NaNpx" in message.text else None)
     page.route("**/api/**", respond)
 
     def host_with_boot_sha(route):
@@ -399,6 +404,7 @@ def run(browser, urls):
     verify_conversation_overlay(browser, url)
 
     assert not errors, errors
+    assert not invalid_height_keyframes, invalid_height_keyframes
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/notifications/settings", "/api/conversation", "/api/workers/chief-of-staff"))]
     assert not unwanted, unwanted
     context.close()

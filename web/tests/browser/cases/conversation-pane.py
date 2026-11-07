@@ -4083,8 +4083,9 @@ def _card_state_motion(browser, url):
                 page.keyboard.press('Escape')
             else:
                 page.locator('[data-conversation-collapse]').click()
-                expect(page.locator('[data-conversation-expand]')).to_be_focused()
             expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            # Escape must return the keyboard to the visible dock, just as Collapse does.
+            expect(page.locator('[data-conversation-expand]')).to_be_focused()
             _settle_conversation_layout(page)
             assert page.locator('.conversation-layer').evaluate("node=>[getComputedStyle(node).backgroundColor,getComputedStyle(node,'::before').opacity]") == ['rgb(18, 18, 18)', '1']
 

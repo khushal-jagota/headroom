@@ -26,6 +26,11 @@
     onSelect: () => void; onTicket: (id: string) => void; onSettle: () => void;
     onHover: (target: HTMLElement, immediate?: boolean) => void; onWorkerHover: (target: HTMLElement, ticket: WorkItemTicketFacts, immediate?: boolean) => void; onLeave: () => void;
   } = $props();
+  // Hidden rails have no measurable height. Svelte's slide reads "auto" as NaN there.
+  function groupSlide(node: HTMLElement) {
+    if (!node.getClientRects().length || !Number.isFinite(parseFloat(getComputedStyle(node).height))) return { duration: 0 };
+    return slide(node, { duration: focusSlideMs(), easing: cubicOut });
+  }
   function visibility(node:HTMLElement){const observer=new IntersectionObserver(entries=>onVisibility(id,entries[0].isIntersecting),{root:node.closest('.active-work-scroll'),rootMargin:'200px'});observer.observe(node);return{destroy(){observer.disconnect();onVisibility(id,false);}};}
   const inputs = new Map<string, ReturnType<typeof createRailPreviewInput>>();
   function input(ticket?: WorkItemTicketFacts) {
@@ -60,7 +65,7 @@
   {#each groups.filter(group => !(railFocus.on && FOCUS_HIDDEN_GROUPS.has(group.key))) as group (group.key)}
     <!-- Every group is named over its rows in one quiet heading (no count in the rail).
          A heading never outranks its rows: the rows that need the person are the bright ones. -->
-    <div class="bucket workspace-ticket-bucket" transition:slide={{ duration: focusSlideMs(), easing: cubicOut }} data-bucket-key={group.key} data-tone={["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key) ? "attention" : "quiet"}>
+    <div class="bucket workspace-ticket-bucket" transition:groupSlide data-bucket-key={group.key} data-tone={["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key) ? "attention" : "quiet"}>
       <div class="bucket-label" data-rail-motion={`heading:${id}:${group.key}`}>{group.label}</div>
       {#each group.cards as ticket (ticket.id)}
         <WorkerRow machine={false} approval={group.key === "awaiting_approval" ? "owner" : group.key === "status_awaiting_approval" ? "agent" : null} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} data-rail-motion={`row:${ticket.id}`} onclick={() => { if (input(ticket).click()) onTicket(ticket.id); }} onpointerenter={(event: PointerEvent) => {event.stopPropagation(); input(ticket).pointerEnter(event);}} onpointerleave={(event: PointerEvent) => input(ticket).leave(event)} onpointerdown={(event: PointerEvent) => input(ticket).down(event)} onpointermove={(event: PointerEvent) => input(ticket).move(event)} onpointerup={() => input(ticket).end()} onpointercancel={() => input(ticket).cancel()} onfocus={(event: FocusEvent) => input(ticket).focus(event)} onblur={(event: FocusEvent) => input(ticket).leave(event)} />

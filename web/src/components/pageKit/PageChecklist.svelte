@@ -361,8 +361,8 @@
     outline-offset: 2px;
   }
   .small .body-inner { padding: var(--space-1); }
-  .small .step-inner { column-gap: var(--space-2); padding-inline: var(--space-2); }
-  .small .group-toggle { padding-left: calc(var(--page-check-target) + var(--space-2) * 2); }
+  .small .step-inner { column-gap: var(--space-3); padding-inline: var(--space-3); }
+  .small .group-toggle { padding-left: calc(var(--page-check-target) + var(--space-3) * 2); }
   .chevron { width: var(--page-chevron); height: var(--page-chevron); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-ease); }
   .chevron.turned { transform: rotate(180deg); }
   .body { overflow: hidden; }

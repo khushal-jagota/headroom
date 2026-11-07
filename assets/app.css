@@ -755,7 +755,7 @@ strong {
   color: var(--tone-tertiary);
 }
 
-/* Inline code: Small mono on a 7% lift, radius 4, 1px 4px, on the text's own baseline and in
+/* Inline code: Small mono on a 7% lift, radius 4, 1px 2px, on the text's own baseline and in
  * the text's own tone. */
 .markdown code {
   font-family: var(--font-mono);
@@ -2361,8 +2361,7 @@ select {
   flex: 1;
   display: flex;
   flex-direction: column;
-  width: 100%;
-  max-width: var(--page-measure);
+  width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
   margin: 0 auto;
   padding: 0 0 var(--space-7);
 }
@@ -4801,28 +4800,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
   flex-wrap: wrap;
 }
 
-[data-screen="ideas"] .opt {
-  padding: var(--space-1) 10px;
-  font-family: inherit;
-  font-size: var(--type-xs);
-  color: var(--text-faint);
-  background: var(--surface-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: color var(--motion-fast) var(--motion-ease),
-    background var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="ideas"] .opt:hover {
-  color: var(--text-default);
-}
-
-[data-screen="ideas"] .opt[aria-pressed="true"] {
-  color: var(--text-strong);
-  background: var(--surface-recessed);
-}
-
 /* Commit — the one solid brand-accent action on the capture, the mockup's .commit. */
 [data-screen="ideas"] [data-commit].button {
   background: var(--accent-bright);
@@ -4845,9 +4822,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* Notifications — one quiet settings column; choices are content, not cards. */
 [data-screen="notifications"] {
-  width: min(100%, var(--measure-index));
+  width: 100%;
   margin: 0 auto;
-  padding: var(--space-7) var(--space-5) var(--space-page-tail);
+  padding: var(--space-6) 0 var(--space-page-tail);
 }
 
 .notifications-head .eyebrow,
@@ -5433,3 +5410,12 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-composer] .chat-image:not(.on),
 [data-conversation-composer] .chat-send:not(.on) { color: var(--tone-secondary); }
 [data-conversation-composer] .chat-image:not(.on):hover:not(:disabled) { color: var(--tone-strong); }
+
+/* Short page summaries keep their final words together when space allows. */
+:is(.manager-workspace-recap, .ticket-recap, .review-recap, .recap-text, .screen-header-description, .page-kit .summary, [data-recap]) { text-wrap: pretty; }
+
+/* Steps and machine sections use the same sentence case as the other page bands. */
+[data-stage-fold-open] { text-transform:none; letter-spacing:normal; }
+/* A destination tooltip replaces the Settled label visually for its pointer visit.
+ * Keep the button in place and in the accessibility tree, with its full hit target. */
+.rail-dock-inner:has(.rail-dock-foot :is(.utility, .focus-switch):is(:hover, :focus-visible)) .settled-head { opacity:0; }

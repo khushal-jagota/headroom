@@ -46,7 +46,7 @@
   <!-- A goal row: its name in the goal voice at the left, one state at the right. -->
   <div data-rail-motion={`row:${goal.id}`}>
   <a class:selected={selectedId===goal.id} class="goal" href={workspaceAddress({kind:'goal',id:goal.id})} data-goal-id={goal.id} aria-current={selectedId===goal.id?'page':undefined} aria-describedby={previewId===goal.id?`goal-preview-${goal.id}`:undefined} use:previewInput.row={{show:(target,immediate)=>onHover(target,goal.id,immediate),leave:onLeave}} onclick={onDismiss}><span class="row-title">{goal.title}</span>{@render state(goal)}</a>
-  {#if previewId===goal.id}{#key goal.id}<GoalRailPreview id={goal.id} target={previewTarget} {rail} {instant} {sessions} bind:element {onKeepOpen} {onLeave}/>{/key}{/if}
+  {#if previewId===goal.id}{#key goal.id}<GoalRailPreview id={goal.id} initialGoal={goal} target={previewTarget} {rail} {instant} {sessions} bind:element {onKeepOpen} {onLeave}/>{/key}{/if}
   </div>
  {/each}
  {#if !sole}<NavigationWindowPages window={goalWindow} {onPage}/>{/if}
