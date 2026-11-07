@@ -25,7 +25,7 @@ struct AppShell: View {
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
                 .tabItem { Label("Review", systemImage: "checkmark.circle") }
-                .badge(max(0, (store.review?.items.count ?? 0) - pendingDecisionCount)).tag(AppTab.review)
+                .badge(max(0, (store.review.map { $0.items.count + $0.unloadedCount } ?? 0) - pendingDecisionCount)).tag(AppTab.review)
             NavigationStack(path: $workspacePath) {
                 WorkspaceView()
                     .navigationDestination(for: AppRoute.self) { detail($0) }

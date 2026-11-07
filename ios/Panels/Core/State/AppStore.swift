@@ -5,21 +5,29 @@ import Observation
     var baseURL: URL
     private let session: URLSession
     var client: APIClient { APIClient(baseURL: baseURL, session: session) }
+    /// Workspace rows from the last view that carried the rail windows. A scope
+    /// without them, such as Review alone, keeps the last coherent Workspace.
     var managers: [ManagerSummary] = []
     var tickets: [TicketSummary] = []
+    var workspaceLoaded = false
     var chief: ChiefDetail?
+    var chiefSignal: ConversationSignal?
     var review: ReviewResponse?
+    var counts: ViewCounts?
+    /// The last admitted view; screens read window paging facts from it.
+    private(set) var view: ViewSnapshot?
     var deployment: DeploymentStatus?
-    var managerPage: PageFacts?
-    var ticketPage: PageFacts?
     var errors: [String: String] = [:]
     var isLoading = false
     var connection = "Connecting"
     var revision = 0
-    var workspaceVisible = true
+    private(set) var viewRequest = ViewRequest(windows: NavigationScope.baseWindows)
+    private var demands: [String: [ViewWindowRequest]] = [:]
+    private var running = false
+    private var viewReading = false
+    private var viewReadsStarted = 0
     private var resourceVersions = ResourceVersionState()
     private var refreshing = false
-    private var loadingMore = false
 
     init(baseURL suppliedBaseURL: URL? = nil, session: URLSession = .shared) {
         self.session = session
@@ -45,23 +53,65 @@ import Observation
     func configure(baseURL: URL) {
         self.baseURL = baseURL
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
-        managers = []; tickets = []; chief = nil; review = nil; deployment = nil
-        managerPage = nil; ticketPage = nil; errors = [:]
+        managers = []; tickets = []; workspaceLoaded = false; chief = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
+        deployment = nil; errors = [:]
         resourceVersions = ResourceVersionState()
         restore()
     }
 
+    // MARK: Saved views
+
+    /// The latest view, and separately the latest one that carried Workspace, so a
+    /// relaunch restores both even when Review was the last screen.
+    private func savedViewID(_ name: String) -> String { baseURL.absoluteString + "/api/navigation/view/snapshot#" + name }
+
     private func restore() {
-        let managers: ManagersResponse? = client.cached("/api/managers", query: [.init(name: "detail", value: "summary"), .init(name: "limit", value: "30"), .init(name: "offset", value: "0"), .init(name: "settled", value: "false")])
-        let tickets: TicketsResponse? = client.cached("/api/tickets", query: [.init(name: "detail", value: "summary"), .init(name: "limit", value: "30"), .init(name: "offset", value: "0"), .init(name: "is_backlogged", value: "false")])
-        self.managers = managers?.managers ?? []; managerPage = managers?.page
-        self.tickets = tickets?.tickets ?? []; ticketPage = tickets?.page
+        let server = LocalStore.server(baseURL)
+        for name in ["workspace", "latest"] {
+            guard let data = try? LocalStore.shared.record(server: server, kind: "cache", id: savedViewID(name))?.payload,
+                  case .snapshot(let snapshot)? = try? APIClient.decoder().decode(ViewFrame.self, from: data) else { continue }
+            admit(snapshot)
+        }
         chief = client.cached("/api/workers/chief-of-staff/settings")
-        review = client.cached("/api/review")
     }
+
+    private func save(_ snapshot: ViewSnapshot, data: Data, api: APIClient) async {
+        let server = LocalStore.server(api.baseURL)
+        try? await LocalStore.shared.cacheResponse(server: server, id: savedViewID("latest"), data: data)
+        if snapshot.window("rail_parents") != nil {
+            try? await LocalStore.shared.cacheResponse(server: server, id: savedViewID("workspace"), data: data)
+        }
+    }
+
+    // MARK: Scope
+
+    /// A mounted screen states the windows it shows; nil withdraws them.
+    func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?) {
+        guard demands[name] != windows else { return }
+        demands[name] = windows
+        let next = NavigationScope.request(demands: demands, previous: viewRequest)
+        guard next != viewRequest else { return }
+        viewRequest = next
+        if running { Task { await readView(from: client) } }
+    }
+
+    private func admit(_ snapshot: ViewSnapshot) {
+        let presentation = NavigationPresentation(snapshot.content.records)
+        if let managers = presentation.workspaceManagers(in: snapshot), let tickets = presentation.workspaceTickets(in: snapshot) {
+            self.managers = managers; self.tickets = tickets; workspaceLoaded = true
+        }
+        chiefSignal = presentation.chief?.signal.conversationSignal
+        review = presentation.reviewQueue(in: snapshot)
+        counts = snapshot.content.counts
+        view = snapshot
+    }
+
+    // MARK: Refresh
 
     /// Owned by the foreground shell task. SwiftUI cancels it on background or URL change.
     func run() async {
+        running = true
+        defer { running = false }
         await refresh()
         while !Task.isCancelled {
             do {
@@ -82,35 +132,51 @@ import Observation
     }
 
     func refresh(changesOnly: Bool = false) async {
-        // A refresh requested during pagination or another read must not be dropped.
+        // A refresh requested during another read must not be dropped.
         // Waiting remains cancellable when the shell leaves the foreground.
-        while refreshing || loadingMore {
+        while refreshing {
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
         }
         guard !Task.isCancelled else { return }
         refreshing = true
-        isLoading = managers.isEmpty && tickets.isEmpty && chief == nil
+        isLoading = view == nil && chief == nil
         defer { refreshing = false; isLoading = false }
         let api = client
-        let workspace = !changesOnly || workspaceVisible
         let keys = ["/api/workers/chief-of-staff/settings", "/api/deployment-status"]
         let probe = changesOnly ? try? await api.resourceVersions(keys) : nil
         guard !Task.isCancelled, api.baseURL == baseURL else { return }
-        let managerOffset = managerPage?.offset ?? 0
-        let ticketOffset = ticketPage?.offset ?? 0
-        async let managerRead: () = readIf(workspace, "Workspace", from: api) { try await api.managerWindow(through: managerOffset) } apply: { self.managers = $0.managers; self.managerPage = $0.page }
-        async let ticketRead: () = readIf(workspace, "Tickets", from: api) { try await api.ticketWindow(through: ticketOffset) } apply: { self.tickets = $0.tickets; self.ticketPage = $0.page }
+        async let viewRead: () = readView(from: api)
         async let chiefRead: () = readVersioned("Chief", path: keys[0], api: api, probe: probe, force: !changesOnly) { self.chief = $0 }
-        async let reviewRead: () = read("Review", from: api) { try await api.review() } apply: { self.review = $0 }
         async let deployRead: () = readVersioned("Deployment", path: keys[1], api: api, probe: probe, force: !changesOnly) { self.deployment = $0 }
-        _ = await (managerRead, ticketRead, chiefRead, reviewRead, deployRead)
+        _ = await (viewRead, chiefRead, deployRead)
         guard !Task.isCancelled, api.baseURL == baseURL else { return }
         revision += 1
         if errors.isEmpty { Task { await Outbox.shared.drain(api: api) } }
     }
 
-    private func readIf<T: Sendable>(_ needed: Bool, _ key: String, from api: APIClient, fetch: @Sendable () async throws -> T, apply: @MainActor @Sendable (T) -> Void) async {
-        if needed { await read(key, from: api, fetch: fetch, apply: apply) }
+    /// One bounded snapshot for the current scope. A read that starts after this call
+    /// covers it; concurrent callers wait for that read instead of repeating it.
+    private func readView(from api: APIClient) async {
+        let wanted = viewReadsStarted
+        while viewReading {
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        }
+        guard viewReadsStarted == wanted, !Task.isCancelled, api.baseURL == baseURL else { return }
+        viewReading = true
+        viewReadsStarted += 1
+        defer { viewReading = false }
+        let request = viewRequest
+        do {
+            let (snapshot, data) = try await api.navigationViewSnapshot(request)
+            guard !Task.isCancelled, api.baseURL == baseURL else { return }
+            guard snapshot.scopeGeneration == request.scopeGeneration else { throw APIError(status: 0, message: "The navigation view answered another scope.") }
+            admit(snapshot)
+            errors["Navigation"] = nil
+            await save(snapshot, data: data, api: api)
+        } catch {
+            guard !Task.isCancelled, api.baseURL == baseURL else { return }
+            errors["Navigation"] = error.localizedDescription
+        }
     }
 
     private func readVersioned<T: Decodable & Sendable>(_ label: String, path: String, api: APIClient, probe: ResourceVersions?, force: Bool, apply: @MainActor @Sendable (T) -> Void) async {
@@ -137,25 +203,6 @@ import Observation
         } catch {
             guard !Task.isCancelled, api.baseURL == baseURL else { return }
             errors[key] = error.localizedDescription
-        }
-    }
-
-    func loadMore() async {
-        guard !loadingMore, !refreshing else { return }
-        loadingMore = true
-        defer { loadingMore = false }
-        let api = client
-        if let offset = managerPage?.nextOffset {
-            await read("Workspace", from: api) { try await api.managers(offset: offset) } apply: { page in
-                let existing = Set(self.managers.map(\.id))
-                self.managers += page.managers.filter { !existing.contains($0.id) }; self.managerPage = page.page
-            }
-        }
-        if let offset = ticketPage?.nextOffset {
-            await read("Tickets", from: api) { try await api.tickets(offset: offset) } apply: { page in
-                let existing = Set(self.tickets.map(\.id))
-                self.tickets += page.tickets.filter { !existing.contains($0.id) }; self.ticketPage = page.page
-            }
         }
     }
 }

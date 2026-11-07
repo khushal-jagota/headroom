@@ -6,6 +6,7 @@ struct ReviewView: View {
     @State private var queue = ReviewQueue()
     @State private var displayedItem: ReviewItem?
     @State private var decisions: [String: ReviewDecision] = [:]
+    @State private var reviewPage: String?
     @State private var cardHeight: CGFloat = 180
     @State private var emptyVisible = false
     private var savedDecisions: [PendingWork] {
@@ -49,7 +50,7 @@ struct ReviewView: View {
                     if skippedCount > 0 {
                         Button("Revisit \(skippedCount) skipped \(skippedCount == 1 ? "item" : "items")") {
                             Haptics.selection()
-                            withAnimation(ReviewStyle.entrance) { queue.revisit() }
+                            withAnimation(ReviewStyle.entrance) { queue.revisit(); reviewPage = nil }
                         }
                         .buttonStyle(ReviewActionStyle())
                         .accessibilityIdentifier("review.revisitSkipped")
@@ -73,9 +74,13 @@ struct ReviewView: View {
                 }
             }
         }
-        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Review"]) { await store.refresh() }
+        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).panelsScreen()
-        .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:] }
+        .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:]; reviewPage = nil }
+        // The review window holds 30 cards. Once every loaded one was skipped or
+        // resolved here, the next page replaces it; Revisit returns to the first.
+        .onChange(of: reviewPage, initial: true) { _, page in demandReview(page) }
+        .onChange(of: pending.isEmpty) { _, empty in if empty { advancePage() } }
         .task(id: "\(store.baseURL):\(pending.prefix(30).map(\.id).joined(separator: ","))") {
             // Pin the visible ask until its exit finishes, including when the server
             // removes it from the live queue while its approval sheet is closing.
@@ -89,6 +94,13 @@ struct ReviewView: View {
             let ids = Set((store.review?.items ?? []).map(\.id))
             decisions = decisions.filter { ids.contains($0.key) || $0.key == displayedItem?.id }
         }
+    }
+
+    private func demandReview(_ page: String?) {
+        store.setNavigationDemand("review", [ViewWindowRequest(section: "review", anchor: page, limit: NavigationScope.reviewWindowLimit)])
+    }
+    private func advancePage() {
+        if let next = store.view?.window("review")?.next { reviewPage = next }
     }
 
     private func advance(_ item: ReviewItem, resolved: Bool) {

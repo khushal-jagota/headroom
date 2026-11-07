@@ -3,15 +3,6 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ReviewMessageTests: XCTestCase {
-    func testMixedReviewDecodesServerOrderAndConversationIdentity() throws {
-        let data = Data(#"{"items":[{"review_item_type":"message","conversation_id":"old","address_id":"history","owner_kind":"manager","owner_id":"m","title":"Older message","waiting_since":1,"recap":"Context"},{"review_item_type":"proposal","ticket_id":"t","field":"brief","title":"Proposal","waiting_since":2}],"running_worker_count":3}"#.utf8)
-        let queue = try APIClient.decoder().decode(ReviewResponse.self, from: data)
-        XCTAssertEqual(queue.items.map(\.title), ["Older message", "Proposal"])
-        XCTAssertEqual(queue.items.first?.owner, .manager("m"))
-        XCTAssertEqual(queue.items.first?.conversationId, "old")
-        XCTAssertTrue(queue.items.first!.isMessage)
-        XCTAssertFalse(queue.items.last!.isMessage)
-    }
     func testAutomaticRecoveryRetainsSenderInsteadOfBecomingOwnerWords() throws {
         let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"prompt","sender_label":"Panels deployment recovery","content":[{"piece":"text","text":"Inspect interrupted work"}]}"#.utf8))
         let model = ConversationModel()
