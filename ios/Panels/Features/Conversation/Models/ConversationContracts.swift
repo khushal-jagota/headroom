@@ -16,7 +16,10 @@ enum ConversationLens: String, CaseIterable, Sendable { case focus, full }
 struct ConversationSnapshot: Decodable, Sendable {
     let page: ConversationPage
     let status: ConversationStatus
+    /// The tail's cursor: a following changes frame continues from this sequence.
+    var coverage: ConversationCoverage? = nil
 }
+struct ConversationCoverage: Decodable, Equatable, Sendable { let throughSequence: Int }
 struct ConversationPage: Decodable, Sendable {
     let items: [ConversationItem]
     let older: ConversationCursor?
@@ -27,7 +30,7 @@ struct ConversationCursor: Codable, Sendable {
     let scope: Scope
     let order: Order
     struct Scope: Codable, Sendable { let kind: String; let key: String? }
-    struct Order: Codable, Sendable { let sequence: Int; let slot: Int }
+    struct Order: Codable, Equatable, Sendable { let sequence: Int; let slot: Int }
 }
 struct ConversationItem: Equatable, Decodable, Identifiable, Sendable {
     let kind: String
@@ -36,6 +39,7 @@ struct ConversationItem: Equatable, Decodable, Identifiable, Sendable {
     let turnKey: String?
     let sourceSequence: Int?
     let body: ConversationDeliveredBody?
+    var order: ConversationCursor.Order? = nil
     var id: String { senderMessageId ?? key }
 }
 struct ConversationDeliveredBody: Equatable, Decodable, Sendable {
@@ -79,6 +83,9 @@ struct ConversationStatus: Equatable, Decodable, Sendable {
     let turnRunning: Bool?
     let liveOutput: ConversationLiveOutput?
     let rest: Rest
+    /// A change of either needs a fresh tail snapshot, as on the web.
+    var stoppedWithoutEnding: Bool? = nil
+    var runtimeEpoch: String? = nil
     struct Rest: Equatable, Decodable, Sendable {
         let latestHappened: Happened?
         let latestOwnerMessageSequence: Int?
@@ -215,6 +222,44 @@ struct ConversationSpeechDraft {
         return result
     }
     mutating func cancel() { generation += 1; words = "" }
+}
+
+/// The open tail's frames (conversation/views/api.py `_tail`): a snapshot of the newest
+/// window, then changes against it. A reset or gap needs a fresh snapshot.
+struct ConversationTailChanges: Decodable, Sendable {
+    struct ScopeChanges: Decodable, Sendable { let scope: ConversationCursor.Scope; let itemKeys: [String]; let removedKeys: [String] }
+    let lens: String
+    let fromSequence: Int
+    let coverage: ConversationCoverage
+    let upserts: [ConversationItem]
+    let scopeChanges: [ScopeChanges]
+    let removedKeys: [String]
+    let invalidatedScopes: [ConversationCursor.Scope]
+    let status: ConversationStatus
+}
+enum ConversationTailFrame: Sendable {
+    case snapshot(ConversationSnapshot)
+    case changes(ConversationTailChanges)
+    case reset
+}
+/// URLSession's line sequence omits blank lines, so a frame is its `event:` line
+/// followed by one `data:` line. Comments are heartbeats; unknown events are ignored.
+struct ConversationTailParser {
+    private var event = "message"
+    mutating func consume(_ line: String) throws -> ConversationTailFrame? {
+        if line.hasPrefix("event:") { event = line.dropFirst(6).trimmingCharacters(in: .whitespaces); return nil }
+        guard line.hasPrefix("data:") else { return nil }
+        defer { event = "message" }
+        var payload = line.dropFirst(5)
+        if payload.first == " " { payload = payload.dropFirst() }
+        let data = Data(payload.utf8)
+        switch event {
+        case "snapshot": return .snapshot(try APIClient.decoder().decode(ConversationSnapshot.self, from: data))
+        case "changes": return .changes(try APIClient.decoder().decode(ConversationTailChanges.self, from: data))
+        case "reset": return .reset
+        default: return nil
+        }
+    }
 }
 
 struct ConversationLiveOutput: Equatable, Decodable, Sendable {

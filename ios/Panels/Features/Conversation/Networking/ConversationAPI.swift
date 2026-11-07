@@ -68,11 +68,12 @@ extension APIClient: ConversationServing {
 }
 
 extension APIClient {
-    // The subscription declares Full-mode live-output demand to the server.
-    // Frames coalesce into a fresh coherent projection read, as the app's other
-    // change streams do. Cancelling the view task also cancels this socket.
-    func conversationChanges(_ id: String, lens: ConversationLens) -> AsyncThrowingStream<Void, Error> {
-        AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+    // The subscription declares Full-mode live-output demand to the server. Its frames
+    // carry the window and its changes, decoded here off the main actor; nothing is
+    // dropped, because a missing change frame is a gap. Cancelling the view task also
+    // cancels this socket.
+    func conversationTail(_ id: String, lens: ConversationLens) -> AsyncThrowingStream<ConversationTailFrame, Error> {
+        AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     var request = try self.request(try url("/api/conversation/conversations/\(id)/view/tail", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]))
@@ -80,9 +81,10 @@ extension APIClient {
                     request.timeoutInterval = 120
                     let (bytes, response) = try await session.bytes(for: request)
                     try Self.validate(response)
+                    var parser = ConversationTailParser()
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
-                        if line.hasPrefix("data:") { continuation.yield(()) }
+                        if let frame = try parser.consume(line) { continuation.yield(frame) }
                     }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }

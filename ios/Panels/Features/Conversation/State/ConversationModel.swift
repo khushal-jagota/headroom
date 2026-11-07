@@ -215,72 +215,166 @@ import Observation
         let requestedLens = lens
         do {
             let snapshot = try await service.conversationSnapshot(id, lens: requestedLens, transcript: transcript)
-            let output = snapshot.status.liveOutput
-            let liveText: String?
-            if let output {
-                if id == liveConversationID, output.reference == liveReference, let liveRow { liveText = liveRow.text }
-                else { liveText = try await service.conversationLiveText(id, reference: output.reference) }
-            }
-            else { liveText = nil }
-            let receiptIDs = Array(outgoing.map(\.id).suffix(64))
-            let receipts = receiptIDs.isEmpty ? [] : try await service.conversationReceipts(id, messageIDs: receiptIDs)
-            try Task.checkCancellation()
-            guard id == conversationID, lens == requestedLens else { return }
-            if status != snapshot.status { status = snapshot.status }
-            if transcript {
-                if loadedLens != requestedLens { items = []; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
-                if let liveRow, output?.reference.version != liveRow.id.replacingOccurrences(of: "live:", with: "", options: .anchored),
-                   let settled = snapshot.page.items.last(where: { incoming in
-                       incoming.turnKey == liveTurnKey && incoming.body?.value?.kind == "agent_message" && !items.contains(where: { $0.key == incoming.key })
-                   }) {
-                    retryAliases[settled.id] = liveRow.id
-                }
-                // Replace the current window; retain explicitly loaded history before it.
-                let keys = Set(snapshot.page.items.map(\.key))
-                let nextItems: [ConversationItem]
-                if let first = snapshot.page.items.first, let at = items.firstIndex(where: { $0.key == first.key }) {
-                    nextItems = Array(items.prefix(at)).filter { !keys.contains($0.key) } + snapshot.page.items
-                } else { nextItems = snapshot.page.items; older = snapshot.page.older }
-                if items != nextItems { items = nextItems }
-                insertRemoteRows(items.map { retryAliases[$0.id] ?? $0.id })
-                let received = Set(items.compactMap(\.senderMessageId))
-                outgoing.removeAll { message in
-                    guard received.contains(message.id) else { return false }
-                    // A refusal remains retryable even after its server row arrives.
-                    let delivered = items.first(where: { $0.senderMessageId == message.id })?.body?.value?.kind == "prompt"
-                    if delivered { outgoingText[message.id] = nil; outgoingAttachments[message.id] = nil }
-                    return delivered
-                }
-                for item in items {
-                    guard let senderID = item.senderMessageId else { continue }
-                    switch item.body?.value?.kind {
-                    case "prompt_refused": setNote(senderID, "Not delivered", retryable: true)
-                    case "prompt_discarded": setNote(senderID, "Not delivered · no longer applicable")
-                    case "prompt_uncertain": setNote(senderID, "Delivery uncertain · do not resend")
-                    default: break
-                    }
-                }
-            }
-            if let output, let liveText, !liveText.isEmpty {
-                liveConversationID = id
-                liveReference = output.reference
-                liveTurnKey = output.turnKey
-                let identity = "live:" + output.reference.version
-                let row = ConversationRow(id: identity, text: liveText, own: false, note: nil)
-                if liveRow != row { liveRow = row }
-                rememberRows([identity])
-            } else { liveRow = nil; liveTurnKey = nil; liveReference = nil }
-            for receipt in receipts {
-                switch receipt.fate {
-                case "prompt": setNote(receipt.senderMessageId, "Sent")
-                case "prompt_refused": setNote(receipt.senderMessageId, "Not delivered", retryable: true)
-                case "prompt_uncertain": setNote(receipt.senderMessageId, "Delivery uncertain · do not resend")
-                case "prompt_discarded": setNote(receipt.senderMessageId, "Not delivered · no longer applicable")
-                default: break
-                }
-            }
+            try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, using: service)
             error = nil
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+
+    // MARK: Open tail
+
+    /// The open tail's cursor and the first order of its window, both from its last snapshot.
+    private var tailCoverage: Int?
+    private var tailFirstOrder: ConversationCursor.Order?
+    func beginTail() { tailCoverage = nil; tailFirstOrder = nil }
+
+    /// Applies one frame of the open tail without reading the transcript again. Only a
+    /// changed live-output reference or unsettled outgoing messages read anything.
+    /// Returns false when the stream must be reopened for a fresh snapshot: a reset, a
+    /// gap, an invalidated window, or a changed runtime epoch or stop, as on the web.
+    func applyTail(_ frame: ConversationTailFrame, using service: any ConversationServing) async -> Bool {
+        guard let id = conversationID else { return false }
+        let requestedLens = lens
+        switch frame {
+        case .reset: return false
+        case .snapshot(let snapshot):
+            do {
+                try await admit(snapshot, id: id, lens: requestedLens, transcript: true, using: service)
+                guard id == conversationID, lens == requestedLens else { return false }
+                tailCoverage = snapshot.coverage?.throughSequence
+                tailFirstOrder = snapshot.page.items.first?.order
+                error = nil
+                return true
+            } catch { if !Task.isCancelled { self.error = error.localizedDescription }; return false }
+        case .changes(let changes):
+            guard let coverage = tailCoverage, changes.fromSequence == coverage, changes.lens == requestedLens.rawValue,
+                  !changes.invalidatedScopes.contains(where: { $0.kind == "timeline" }),
+                  changes.status.stoppedWithoutEnding == status?.stoppedWithoutEnding,
+                  changes.status.runtimeEpoch == status?.runtimeEpoch else { return false }
+            do {
+                let (liveText, receipts) = try await lightReads(changes.status, id: id, using: service)
+                try Task.checkCancellation()
+                guard id == conversationID, lens == requestedLens, tailCoverage == coverage else { return false }
+                if status != changes.status { status = changes.status }
+                let timeline = changes.scopeChanges.first { $0.scope.kind == "timeline" }
+                let removed = Set(changes.removedKeys)
+                let leftWindow = Set(timeline?.removedKeys ?? [])
+                // Explicitly loaded history before the window keeps its rows.
+                func inWindow(_ item: ConversationItem) -> Bool {
+                    guard let first = tailFirstOrder, let order = item.order else { return true }
+                    return (order.sequence, order.slot) >= (first.sequence, first.slot)
+                }
+                var next = items.filter { !removed.contains($0.key) && !(leftWindow.contains($0.key) && inWindow($0)) }
+                let upserts = Dictionary(changes.upserts.map { ($0.key, $0) }, uniquingKeysWith: { _, latest in latest })
+                for key in timeline?.itemKeys ?? [] {
+                    guard let item = upserts[key] else { continue }
+                    if let at = next.firstIndex(where: { $0.key == key }) { next[at] = item; continue }
+                    let at = next.firstIndex { other in
+                        guard let order = item.order, let otherOrder = other.order else { return false }
+                        return (order.sequence, order.slot) < (otherOrder.sequence, otherOrder.slot)
+                    } ?? next.count
+                    next.insert(item, at: at)
+                }
+                settleLiveRow(candidates: changes.upserts, output: changes.status.liveOutput)
+                if items != next { items = next }
+                reconcileItems()
+                applyLive(changes.status.liveOutput, text: liveText, id: id)
+                applyReceipts(receipts)
+                tailCoverage = changes.coverage.throughSequence
+                error = nil
+                return true
+            } catch { if !Task.isCancelled { self.error = error.localizedDescription }; return false }
+        }
+    }
+
+    // MARK: Shared admission
+
+    /// One coherent snapshot, from an explicit read or the open tail.
+    private func admit(_ snapshot: ConversationSnapshot, id: String, lens requestedLens: ConversationLens, transcript: Bool, using service: any ConversationServing) async throws {
+        let (liveText, receipts) = try await lightReads(snapshot.status, id: id, using: service)
+        try Task.checkCancellation()
+        guard id == conversationID, lens == requestedLens else { return }
+        if status != snapshot.status { status = snapshot.status }
+        if transcript {
+            if loadedLens != requestedLens { items = []; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
+            settleLiveRow(candidates: snapshot.page.items, output: snapshot.status.liveOutput)
+            // Replace the current window; retain explicitly loaded history before it.
+            let keys = Set(snapshot.page.items.map(\.key))
+            let nextItems: [ConversationItem]
+            if let first = snapshot.page.items.first, let at = items.firstIndex(where: { $0.key == first.key }) {
+                nextItems = Array(items.prefix(at)).filter { !keys.contains($0.key) } + snapshot.page.items
+            } else { nextItems = snapshot.page.items; older = snapshot.page.older }
+            if items != nextItems { items = nextItems }
+            reconcileItems()
+        }
+        applyLive(snapshot.status.liveOutput, text: liveText, id: id)
+        applyReceipts(receipts)
+    }
+
+    /// The only reads a frame may need: changed live text and unsettled receipts.
+    private func lightReads(_ status: ConversationStatus, id: String, using service: any ConversationServing) async throws -> (String?, [ConversationReceipt]) {
+        let liveText: String?
+        if let output = status.liveOutput {
+            if id == liveConversationID, output.reference == liveReference, let liveRow { liveText = liveRow.text }
+            else { liveText = try await service.conversationLiveText(id, reference: output.reference) }
+        } else { liveText = nil }
+        let receiptIDs = Array(outgoing.map(\.id).suffix(64))
+        let receipts = receiptIDs.isEmpty ? [] : try await service.conversationReceipts(id, messageIDs: receiptIDs)
+        return (liveText, receipts)
+    }
+
+    /// A recorded reply that replaces the streamed one keeps the streamed row's identity.
+    private func settleLiveRow(candidates: [ConversationItem], output: ConversationLiveOutput?) {
+        if let liveRow, output?.reference.version != liveRow.id.replacingOccurrences(of: "live:", with: "", options: .anchored),
+           let settled = candidates.last(where: { incoming in
+               incoming.turnKey == liveTurnKey && incoming.body?.value?.kind == "agent_message" && !items.contains(where: { $0.key == incoming.key })
+           }) {
+            retryAliases[settled.id] = liveRow.id
+        }
+    }
+
+    private func reconcileItems() {
+        insertRemoteRows(items.map { retryAliases[$0.id] ?? $0.id })
+        let received = Set(items.compactMap(\.senderMessageId))
+        outgoing.removeAll { message in
+            guard received.contains(message.id) else { return false }
+            // A refusal remains retryable even after its server row arrives.
+            let delivered = items.first(where: { $0.senderMessageId == message.id })?.body?.value?.kind == "prompt"
+            if delivered { outgoingText[message.id] = nil; outgoingAttachments[message.id] = nil }
+            return delivered
+        }
+        for item in items {
+            guard let senderID = item.senderMessageId else { continue }
+            switch item.body?.value?.kind {
+            case "prompt_refused": setNote(senderID, "Not delivered", retryable: true)
+            case "prompt_discarded": setNote(senderID, "Not delivered · no longer applicable")
+            case "prompt_uncertain": setNote(senderID, "Delivery uncertain · do not resend")
+            default: break
+            }
+        }
+    }
+
+    private func applyLive(_ output: ConversationLiveOutput?, text liveText: String?, id: String) {
+        if let output, let liveText, !liveText.isEmpty {
+            liveConversationID = id
+            liveReference = output.reference
+            liveTurnKey = output.turnKey
+            let identity = "live:" + output.reference.version
+            let row = ConversationRow(id: identity, text: liveText, own: false, note: nil)
+            if liveRow != row { liveRow = row }
+            rememberRows([identity])
+        } else { liveRow = nil; liveTurnKey = nil; liveReference = nil }
+    }
+
+    private func applyReceipts(_ receipts: [ConversationReceipt]) {
+        for receipt in receipts {
+            switch receipt.fate {
+            case "prompt": setNote(receipt.senderMessageId, "Sent")
+            case "prompt_refused": setNote(receipt.senderMessageId, "Not delivered", retryable: true)
+            case "prompt_uncertain": setNote(receipt.senderMessageId, "Delivery uncertain · do not resend")
+            case "prompt_discarded": setNote(receipt.senderMessageId, "Not delivered · no longer applicable")
+            default: break
+            }
+        }
     }
     func loadOlder(using service: any ConversationServing) async {
         guard !loadingOlder, let id = conversationID, let cursor = older else { return }

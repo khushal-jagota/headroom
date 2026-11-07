@@ -166,6 +166,68 @@ import XCTest
         XCTAssertEqual(lenses.suffix(2), [.full, .focus])
         XCTAssertEqual(lenses.count, beforeOverlap + 2)
     }
+    // The bar follows its open tail: frames change the window without another transcript read.
+    func testTailFramesUpdateWindowWithoutReadingTranscript() async throws {
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let service = ConversationStub(fate: "started")
+        func ordered(_ id: String, _ sequence: Int, _ text: String) -> [String: Any] {
+            var item = Self.item(id, kind: "agent_message", text: text); item["order"] = ["sequence": sequence, "slot": 0]; return item
+        }
+        var parser = ConversationTailParser()
+        func frame(_ event: String, _ value: [String: Any]) throws -> ConversationTailFrame {
+            XCTAssertNil(try parser.consume(": heartbeat"))
+            XCTAssertNil(try parser.consume("event: \(event)"))
+            let data = try JSONSerialization.data(withJSONObject: value)
+            return try XCTUnwrap(try parser.consume("data: " + String(decoding: data, as: UTF8.self)))
+        }
+        var snapshot = try JSONSerialization.jsonObject(with: Data(Self.snapshot([ordered("a", 1, "First"), ordered("b", 2, "Second")]).utf8)) as! [String: Any]
+        snapshot["coverage"] = ["through_sequence": 2]
+        model.beginTail()
+        let applied = await model.applyTail(try frame("snapshot", snapshot), using: service)
+        XCTAssertTrue(applied)
+        XCTAssertEqual(model.latestLine, "Second")
+        let status = snapshot["status"]!
+        let changes: [String: Any] = ["kind": "changes", "lens": "focus", "from_sequence": 2, "coverage": ["through_sequence": 4],
+            "upserts": [ordered("b", 2, "Second, edited"), ordered("c", 4, "Third")],
+            "scope_changes": [["scope": ["kind": "timeline", "key": NSNull()], "item_keys": ["b", "c"], "removed_keys": []]],
+            "removed_keys": ["a"], "invalidated_scopes": [], "status": status]
+        let changed = await model.applyTail(try frame("changes", changes), using: service)
+        XCTAssertTrue(changed)
+        XCTAssertEqual(model.items.map(\.key), ["b", "c"])
+        XCTAssertEqual(model.rows.map(\.text), ["Second, edited", "Third"])
+        let reads = await service.requestedLenses
+        XCTAssertTrue(reads.isEmpty, "A tail frame never reads the transcript again")
+    }
+    func testTailGapResetOrChangedEpochNeedsFreshSnapshot() async throws {
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let service = ConversationStub(fate: "started")
+        let snapshotJSON = try JSONSerialization.jsonObject(with: Data(Self.snapshot([]).utf8)) as! [String: Any]
+        var withCoverage = snapshotJSON; withCoverage["coverage"] = ["through_sequence": 5]
+        func decode(_ value: [String: Any]) throws -> ConversationTailChanges {
+            try APIClient.decoder().decode(ConversationTailChanges.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+        func changes(from: Int, status: Any? = nil, invalidated: [[String: Any]] = []) throws -> ConversationTailFrame {
+            .changes(try decode(["lens": "focus", "from_sequence": from, "coverage": ["through_sequence": from + 1], "upserts": [], "scope_changes": [],
+                                  "removed_keys": [], "invalidated_scopes": invalidated, "status": status ?? snapshotJSON["status"]!]))
+        }
+        model.beginTail()
+        let beforeSnapshot = await model.applyTail(try changes(from: 0), using: service)
+        XCTAssertFalse(beforeSnapshot, "Changes need the stream's own snapshot first")
+        let snapshot = try APIClient.decoder().decode(ConversationSnapshot.self, from: JSONSerialization.data(withJSONObject: withCoverage))
+        let admitted = await model.applyTail(.snapshot(snapshot), using: service)
+        XCTAssertTrue(admitted)
+        let gap = await model.applyTail(try changes(from: 4), using: service)
+        XCTAssertFalse(gap)
+        let invalidated = await model.applyTail(try changes(from: 5, invalidated: [["kind": "timeline", "key": NSNull()]]), using: service)
+        XCTAssertFalse(invalidated)
+        var restarted = snapshotJSON["status"] as! [String: Any]; restarted["runtime_epoch"] = "later"
+        let epoch = await model.applyTail(try changes(from: 5, status: restarted), using: service)
+        XCTAssertFalse(epoch)
+        let reset = await model.applyTail(.reset, using: service)
+        XCTAssertFalse(reset)
+        let continued = await model.applyTail(try changes(from: 5), using: service)
+        XCTAssertTrue(continued)
+    }
     func testSendKeepsUncertainMessageAndDoesNotRetry() async {
         let model = ConversationModel()
         let service = ConversationStub(fate: "uncertain")

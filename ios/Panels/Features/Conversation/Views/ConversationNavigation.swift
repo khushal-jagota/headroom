@@ -99,29 +99,54 @@ private struct ConversationSurface: View {
                 do { currentConversationConfirmed = try await store.client.currentConversation(owner) == conversationID }
                 catch { currentConversationConfirmed = false; model.error = error.localizedDescription }
             }
-            while !Task.isCancelled {
-                await model.refresh(using: store.client, transcript: true)
-                let api = store.client
-                if let configuration = try? await api.conversationConfiguration(owner, id: model.conversationID), !Task.isCancelled, api.baseURL == store.baseURL { model.applyConfiguration(configuration) }
-                do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
-            }
+            // The open tail below delivers the transcript and status. A conversation that
+            // has not started yet has only its owner's start values to read.
+            if model.conversationID == nil { await readConfiguration() }
         }
         .task(id: "tail|\(store.baseURL)|\(model.conversationID ?? "")|\(model.lens)|\(scenePhase == .active)|\(active)") {
             guard active, scenePhase == .active, let id = model.conversationID else { return }
             while !Task.isCancelled {
+                model.beginTail()
+                var applied = false
                 do {
-                    for try await _ in store.client.conversationChanges(id, lens: model.lens) {
-                        await model.refresh(using: store.client, transcript: true)
+                    for try await frame in store.client.conversationTail(id, lens: model.lens) {
+                        let before = configurationFacts
+                        guard await model.applyTail(frame, using: store.client) else { break }
+                        // Held prompts, the read boundary and the running model change with a
+                        // new owner message or a turn edge, and are read once per connection.
+                        if !applied || configurationFacts != before { await readConfiguration() }
+                        applied = true
                     }
-                } catch { if Task.isCancelled { return } }
-                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                } catch {
+                    if Task.isCancelled { return }
+                    model.error = error.localizedDescription
+                    applied = false
+                }
+                if Task.isCancelled { return }
+                // A gap or an ended healthy stream reopens promptly for a fresh snapshot.
+                do { try await Task.sleep(for: applied ? .milliseconds(250) : .seconds(2)) } catch { return }
             }
         }
-        .onChange(of: LocalStore.shared.workRevision) { _, _ in model.syncOutbox() }
-        .onChange(of: model.lens) { _, _ in Task { await model.refresh(using: store.client, transcript: true) } }
+        .onChange(of: LocalStore.shared.workRevision) { _, _ in
+            let before = model.outgoing
+            model.syncOutbox()
+            // A saved message can be held by the server; its queue lives in the configuration.
+            if active, scenePhase == .active, model.outgoing != before { Task { await readConfiguration() } }
+        }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
         .onDisappear { speech.cancel() }
         .onChange(of: store.baseURL) { _, _ in speech.cancel() }
+    }
+
+    private var configurationFacts: String {
+        "\(model.status?.rest.latestOwnerMessageSequence ?? -1)|\(model.status?.turnRunning.map(String.init) ?? "unknown")"
+    }
+
+    private func readConfiguration() async {
+        let api = store.client
+        if let configuration = try? await api.conversationConfiguration(owner, id: model.conversationID), !Task.isCancelled, api.baseURL == store.baseURL {
+            model.applyConfiguration(configuration)
+        }
     }
 
     private var conversation: some View {

@@ -198,6 +198,41 @@ def main() -> int:
             with (output / "stub-requests.log").open("a") as log:
                 log.write(fmt % args + "\n")
 
+        def conversation_view(self, full: bool) -> dict[str, Any]:
+            latest = stub.items[-1]["body"]["value"]
+            live = stub.live if full else None
+            output = (
+                None
+                if not live
+                else {
+                    "turn_key": live["turn_key"],
+                    "reference": {
+                        "body_id": "live",
+                        "version": live["version"],
+                        "byte_count": len(live["text"].encode()),
+                        "media_type": "text/markdown",
+                    },
+                }
+            )
+            return {
+                "page": {"items": stub.items, "older": None},
+                "coverage": {"through_sequence": len(stub.items)},
+                "status": {
+                    "authority": "current",
+                    "turn_running": bool(stub.pending),
+                    "live_output": output,
+                    "rest": {
+                        "latest_happened": {
+                            "kind": latest["kind"],
+                            "excerpt": latest["content"][0]["text"],
+                        },
+                        "latest_tool": None,
+                        "permission_title_excerpt": None,
+                        "plan_progress": {"current_text_excerpt": None},
+                    },
+                },
+            }
+
         def respond(self, value: object, status: int = 200) -> None:
             body = json.dumps(value).encode()
             self.send_response(status)
@@ -321,16 +356,23 @@ def main() -> int:
                 )
                 return
             if path.endswith("/view/tail"):
+                # The app applies tail frames instead of reading /view again. A snapshot
+                # frame may arrive at any point, so the stub sends its current view.
+                full = parse_qs(urlparse(self.path).query).get("lens") == ["full"]
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
                 try:
-                    while True:
-                        self.wfile.write(b"event: status\ndata: {}\n\n")
+                    while not stub.offline:
+                        with stub.lock:
+                            stub.tick()
+                            frame = json.dumps(self.conversation_view(full))
+                        self.wfile.write(b"event: snapshot\ndata: " + frame.encode() + b"\n\n")
                         self.wfile.flush()
                         time.sleep(0.5)
                 except (BrokenPipeError, ConnectionResetError):
-                    return
+                    pass
+                return
             with stub.lock:
                 stub.tick()
                 if path.endswith("/view/body"):
@@ -352,41 +394,8 @@ def main() -> int:
                         }
                     )
                 elif path.endswith("/view"):
-                    latest = stub.items[-1]["body"]["value"]
                     full = parse_qs(urlparse(self.path).query).get("lens") == ["full"]
-                    live = stub.live if full else None
-                    output = (
-                        None
-                        if not live
-                        else {
-                            "turn_key": live["turn_key"],
-                            "reference": {
-                                "body_id": "live",
-                                "version": live["version"],
-                                "byte_count": len(live["text"].encode()),
-                                "media_type": "text/markdown",
-                            },
-                        }
-                    )
-                    self.respond(
-                        {
-                            "page": {"items": stub.items, "older": None},
-                            "status": {
-                                "authority": "current",
-                                "turn_running": bool(stub.pending),
-                                "live_output": output,
-                                "rest": {
-                                    "latest_happened": {
-                                        "kind": latest["kind"],
-                                        "excerpt": latest["content"][0]["text"],
-                                    },
-                                    "latest_tool": None,
-                                    "permission_title_excerpt": None,
-                                    "plan_progress": {"current_text_excerpt": None},
-                                },
-                            },
-                        }
-                    )
+                    self.respond(self.conversation_view(full))
                 elif path.endswith("/backends"):
                     self.respond(
                         {
