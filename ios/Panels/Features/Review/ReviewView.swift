@@ -113,7 +113,8 @@ struct ReviewView: View {
             } else {
                 let decision = decisions[item.id] ?? ReviewDecision()
                 decisions[item.id] = decision
-                if decision.proposal == nil { loads.append { await decision.load(item: item, api: api) } }
+                let stamp = store.ticketStamp(item.ticketId)
+                if decision.proposal == nil { loads.append { await decision.load(item: item, api: api); decision.loadedStamp = stamp } }
             }
         }
         await withTaskGroup(of: Void.self) { group in
@@ -155,6 +156,11 @@ struct ReviewView: View {
 
 private struct ReviewProposalView: View {
     let item: ReviewItem
+    private func loadProposal() async {
+        let stamp = store.ticketStamp(item.ticketId)
+        await decision.load(item: item, api: store.client)
+        decision.loadedStamp = stamp
+    }
     @Bindable var decision: ReviewDecision
     @Binding var cardHeight: CGFloat
     let openTicket: (() -> Void)?
@@ -255,15 +261,15 @@ private struct ReviewProposalView: View {
             let firstAppearance = !appeared
             appeared = true
             // A prefetched ask is ready to reveal; do not immediately dim its actions
-            // with a redundant load. A change to its Ticket's record, a return to the
-            // foreground or a recovered connection still reloads it.
-            if firstAppearance, decision.proposal != nil { return }
+            // with a redundant load, unless its Ticket changed after the read-ahead. A later
+            // change, a return to the foreground or a recovered connection reloads it.
+            if firstAppearance, decision.proposal != nil, decision.loadedStamp == store.ticketStamp(item.ticketId) { return }
             guard sheet == nil, !editing, !returning, drag == 0 else { return }
-            await decision.load(item: item, api: store.client)
+            await loadProposal()
         }
         .reload(onChangeOf: store.ticketStamp(item.ticketId)) {
             guard sheet == nil, !editing, !returning, drag == 0 else { return }
-            await decision.load(item: item, api: store.client)
+            await loadProposal()
         }
         .onAppear { withAnimation(.timingCurve(0.2, 0.7, 0.3, 1, duration: reduceMotion ? ReviewStyle.fadeOut : ReviewStyle.fadeIn)) { visible = true } }
         .alert("Rename ticket", isPresented: $renaming) {
