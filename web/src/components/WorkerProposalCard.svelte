@@ -168,8 +168,11 @@
   .actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
   /* Who reviews is a control, and reads as one: a filled chip at staging's target or larger
      (staging drew it 56x27 inside its 20px heading). */
-  .reviewer { display:inline-flex; align-items:center; justify-content:center; min-width:56px; height:28px; font:inherit; line-height:1; padding:0 var(--space-3); margin:0 var(--space-1); border:0; background:var(--button-secondary-fill); color:var(--tone-strong); border-radius:var(--radius-md); cursor:pointer; }
-  .reviewer:hover { background:var(--button-secondary-fill-hover); }
+  /* As staging: the reviewer is a word in the sentence ('For User to approve'), no fill until
+     pointed at, in the strong tone so it reads as the part you can change. Its target keeps the
+     28px height; the padding is given back by the margins, so the words keep their spacing. */
+  .reviewer { display:inline-flex; align-items:center; justify-content:center; height:28px; font:inherit; line-height:1; padding:0 var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; background:transparent; color:var(--tone-strong); border-radius:var(--radius-md); cursor:pointer; }
+  .reviewer:hover { background:var(--wash-hover); }
   .reviewer:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   .return-unavailable { color:var(--tone-tertiary); font-size:var(--type-small); margin:var(--space-2) 0 0; }
   .return-note { margin-top:var(--space-5); }
