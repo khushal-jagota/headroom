@@ -4,6 +4,7 @@
   import { createMetricsController } from '../../lib/vpsMetrics/controller';
   import { metricsConfig } from '../../lib/vpsMetrics/config';
   import { freshness, instruments, machineDescription, processRows, serviceRows } from '../../lib/vpsMetrics/presentation';
+  import SegmentedControl from '../SegmentedControl.svelte';
   import VpsInstrument from './VpsInstrument.svelte';
   import VpsWorkloadRows from './VpsWorkloadRows.svelte';
   import VpsSkeleton from './VpsSkeleton.svelte';
@@ -22,7 +23,9 @@
     { id: 'cpu', title: 'CPU' }, { id: 'memory', title: 'Memory' }, { id: 'load', title: 'Load' },
     { id: 'io', title: 'Disk I/O' }, { id: 'network', title: 'Network' }, { id: 'disk', title: 'Disk' }
   ];
-  const windows = Object.entries(metricsConfig.windows) as [WindowId, (typeof metricsConfig.windows)[WindowId]][];
+  const windows = Object.entries(metricsConfig.windows).map(([value, window]) => ({ value, label: window.label }));
+  let selectedWindow = $state<string | null>('5m');
+  $effect(() => { if (controller && selectedWindow && selectedWindow !== metricsState?.window) controller.setWindow(selectedWindow as WindowId); });
   $effect(() => { controller?.setVisible(visible && browserVisible); });
   onMount(() => {
     const runtime = createMetricsController();
@@ -50,11 +53,7 @@
           <p class="asof" data-current={loading ? undefined : !current.stale} role="status" aria-live="polite">
             {#if loading}<VpsSkeleton />{:else}<span class="asof-mark" aria-hidden="true"></span><span>{current.label}</span>{/if}
           </p>
-          <div class="segmented seg" role="group" aria-label="Window">
-            {#each windows as [id, window]}
-              <button type="button" class="segmented-option opt" data-vps-window={id} aria-pressed={(metricsState?.window ?? '5m') === id} onclick={() => controller?.setWindow(id)}>{window.label}</button>
-            {/each}
-          </div>
+          <SegmentedControl name="vps-window" label="Window" options={windows} bind:value={selectedWindow} optionAttributes={option => ({ 'data-vps-window': option.value ?? undefined })} />
         </div>
       </div>
     </header>

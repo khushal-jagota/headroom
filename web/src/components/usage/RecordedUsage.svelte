@@ -75,15 +75,15 @@
   </details>
 </div>
 <style>
-  .recorded { display:grid; gap:var(--space-5); color:var(--text-default); }
-  .card { border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-md); background:var(--surface-1); overflow:hidden; }
-  .chart-card { padding:var(--space-5); display:grid; gap:var(--space-4); }
-  .headline { display:grid; gap:var(--space-1); }.headline span { color:var(--text-faint); font-size:var(--type-sm); }.headline strong { color:var(--text-strong); font-size:clamp(2rem,5vw,3rem); line-height:1.2; font-variant-numeric:tabular-nums; }
-  h2 { font-size:var(--type-sm); color:var(--text-faint); margin:0; padding:var(--space-4); border-bottom:var(--border-hairline) solid var(--border-color); font-weight:590; }
+  .recorded { display:grid; gap:var(--page-block-gap); color:var(--tone-primary); }
+  .card { border-radius:var(--page-card-radius); background:var(--page-card-fill); overflow:hidden; }
+  .chart-card { padding:var(--page-card-pad); display:grid; gap:var(--space-4); }
+  .headline { display:grid; gap:var(--space-1); }.headline span { color:var(--text-faint); font-size:var(--type-body); }.headline strong { color:var(--text-strong); font-size:var(--page-reading); font-weight:var(--weight-page-title); line-height:1.2; font-variant-numeric:tabular-nums; }
+  h2 { font-size:var(--type-page-section); color:var(--tone-primary); margin:0; padding:var(--page-card-pad) var(--page-card-pad) 0; font-weight:var(--weight-page-section); }
   .empty-chart { height:180px; display:grid; place-items:center; color:var(--text-faint); }
-  .legend-line,.legend,.legend span,.row,.row>span { display:flex; align-items:center; gap:var(--space-2); }.legend-line,.row { justify-content:space-between; }.legend-line { color:var(--text-faint); font-size:var(--type-xs); }.legend { flex-wrap:wrap; justify-content:center; gap:var(--space-4); }
+  .legend-line,.legend,.legend span,.row,.row>span { display:flex; align-items:center; gap:var(--space-2); }.legend-line,.row { justify-content:space-between; }.legend-line { flex-wrap:wrap; color:var(--text-faint); font-size:var(--type-small); }.legend { flex-wrap:wrap; justify-content:center; gap:var(--space-4); }
   i { display:inline-block; width:.6rem; height:.6rem; border-radius:50%; flex-shrink:0; }
-  .provider-row { padding:var(--space-4); display:grid; gap:var(--space-2); }.provider-row+.provider-row,.model-row+.model-row { border-top:var(--border-hairline) solid var(--border-color); }.provider-row p { color:var(--text-faint); font-size:var(--type-sm); margin:0; }.bar { height:4px; background:var(--surface-recessed); border-radius:var(--radius-sm); overflow:hidden; }.bar>div { height:100%; }
-  strong { font-variant-numeric:tabular-nums; color:var(--text-strong); }.totals { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); }.totals>div { display:grid; gap:var(--space-1); padding:var(--space-4); }.totals span,small { color:var(--text-faint); font-size:var(--type-xs); }.totals strong { font-size:var(--type-lg); }.model-row { padding:var(--space-4); display:flex; align-items:center; gap:var(--space-3); }.model-row>div { display:grid; gap:var(--space-1); min-width:0; flex:1; }.model-row>div>span { overflow-wrap:anywhere; }.sources { color:var(--text-faint); font-size:var(--type-xs); }
+  .provider-row { padding:var(--page-card-pad); display:grid; gap:var(--space-2); }.provider-row+.provider-row,.model-row+.model-row { border-top:var(--border-hairline) solid var(--page-card-edge); }.provider-row p { color:var(--text-faint); font-size:var(--type-body); margin:0; }.bar { height:4px; background:var(--surface-recessed); border-radius:var(--radius-sm); overflow:hidden; }.bar>div { height:100%; }
+  strong { font-variant-numeric:tabular-nums; color:var(--text-strong); }.totals { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); }.totals>div { display:grid; gap:var(--space-1); padding:var(--page-card-pad); }.totals span,small { color:var(--text-faint); font-size:var(--type-small); }.totals strong { font-size:var(--page-reading); }.model-row { padding:var(--page-card-pad); display:flex; align-items:center; gap:var(--space-3); }.model-row>div { display:grid; gap:var(--space-1); min-width:0; flex:1; }.model-row>div>span { overflow-wrap:anywhere; }.sources { overflow-wrap:anywhere; color:var(--text-faint); font-size:var(--type-small); }
   @media(max-width:600px) { .totals { grid-template-columns:repeat(2,minmax(0,1fr)); }.legend-line { gap:var(--space-1); }.legend { gap:var(--space-2); } }
 </style>

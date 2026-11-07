@@ -9,9 +9,8 @@
   import ErrorLine from "../components/ErrorLine.svelte";
   import ListRow from "../components/ListRow.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
-  import Pill from "../components/Pill.svelte";
   import ResourceState from "../components/ResourceState.svelte";
-  import ScreenHeader from "../components/ScreenHeader.svelte";
+  import ManagerHeader from "../components/ManagerHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
@@ -64,11 +63,10 @@
 
 <section class="ideas-screen" data-screen="ideas">
   <div class="doc">
-    <ScreenHeader title="Ideas">
-      {#snippet meta()}
-        <Pill>{ideas.data?.ideas?.length || 0}</Pill>
-      {/snippet}
-    </ScreenHeader>
+    <ManagerHeader>
+      {#snippet title()}Ideas{/snippet}
+      {#snippet actions()}<span class="idea-count">{ideas.data?.ideas?.length || 0} captured</span>{/snippet}
+    </ManagerHeader>
     <div class="col">
       <section class="capture" data-create="idea">
         {#if createError}<ErrorLine error={createError} />{/if}
@@ -131,3 +129,8 @@
     </div>
   </div>
 </section>
+
+<style>
+  .ideas-screen { padding-top:var(--page-top); width:100%; max-width:var(--page-measure); margin-inline:auto; }
+  .idea-count { color:var(--tone-tertiary); font-size:var(--type-small); }
+</style>

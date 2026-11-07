@@ -1215,7 +1215,8 @@ a.pv-name:focus-visible { outline:0; }
   color: var(--tone-strong);
 }
 
-.segmented-option[aria-pressed="true"] {
+.segmented-option[aria-pressed="true"],
+.segmented-option[aria-current="page"] {
   background: var(--segment-selected-fill);
   color: var(--tone-strong);
 }
@@ -4666,22 +4667,21 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 [data-screen="ideas"] .screen-header,
 [data-screen="ideas"] .col {
-  max-width: var(--measure-read);                 /* a tight read+capture measure (matches Day) */
+  max-width: var(--page-measure);
   margin: 0 auto;
 }
 
 [data-screen="ideas"] .screen-header {
-  padding: var(--space-5) var(--space-4) var(--space-4);
+  padding: 0 0 var(--space-4);
 }
 
 [data-screen="ideas"] .col {
-  padding: 0 var(--space-4) var(--space-page-tail);
+  padding: 0 0 var(--space-page-tail);
 }
 
 /* capture — the hero: always open, the Today focus-line treatment */
 [data-screen="ideas"] .capture {
   padding: var(--space-5) 0;
-  border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
 /* The idea and its detail are the composer's field (ComposerField), one under the other. */
@@ -4798,135 +4798,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
   display: flex;
   gap: var(--space-1);
   flex-wrap: wrap;
-}
-
-/* Commit — the one solid brand-accent action on the capture, the mockup's .commit. */
-[data-screen="ideas"] [data-commit].button {
-  background: var(--accent-bright);
-  color: var(--surface-ink);
-  border-color: var(--accent-bright);
-  font-weight: var(--weight-title);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  transition: background var(--motion-base) var(--motion-ease);
-}
-
-[data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-
-/* As staging: Capture keeps its full height, and while there is nothing to capture it
- * reads at half strength. */
-[data-screen="ideas"] [data-commit].button { height: auto; min-height: var(--button-height); line-height: 1.6; }
-[data-screen="ideas"] [data-commit].button:disabled { opacity: 0.5; color: var(--surface-ink); }
-
-/* Notifications — one quiet settings column; choices are content, not cards. */
-[data-screen="notifications"] {
-  width: 100%;
-  margin: 0 auto;
-  padding: var(--space-6) 0 var(--space-page-tail);
-}
-
-.notifications-head .eyebrow,
-.notifications-section h2 {
-  font-family: var(--font-ui);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.notifications-head h1 {
-  margin: var(--space-2) 0 var(--space-7);
-  font-family: var(--font-ui);
-  font-size: var(--type-display);
-  font-weight: var(--weight-title);
-  color: var(--text-strong);
-}
-
-.notifications-section {
-  margin-bottom: var(--space-7);
-}
-
-.notifications-section h2 {
-  margin: 0 0 var(--space-3);
-}
-
-.notification-subject + .notification-subject {
-  margin-top: var(--space-6);
-}
-
-.notification-subject h3 {
-  margin: 0;
-  font-family: var(--font-ui);
-  font-size: var(--type-lg);
-  font-weight: var(--weight-title);
-  color: var(--text-strong);
-}
-
-.notification-option {
-  display: flex;
-  gap: var(--space-5);
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-4) 0;
-  border-bottom: var(--border-hairline) solid var(--border-color);
-  cursor: pointer;
-}
-
-.notification-option strong,
-.notification-option small {
-  display: block;
-}
-
-.notification-option strong {
-  font-family: var(--font-ui);
-  font-size: var(--type-prose-lg);
-  font-weight: var(--weight-title);
-  color: var(--text-strong);
-}
-
-.notification-option small,
-.notifications-section p {
-  margin-top: var(--space-1);
-  font-family: var(--font-ui);
-  font-size: var(--type-md);
-  color: var(--text-muted);
-}
-
-.notification-option input {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  accent-color: var(--accent-bright);
-}
-
-.notification-action {
-  margin-top: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  font: inherit;
-  color: var(--text-default);
-  background: var(--surface-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.notification-action--primary {
-  color: var(--surface-ink);
-  background: var(--accent-bright);
-  font-weight: var(--weight-title);
-}
-
-.notification-action:disabled {
-  opacity: 0.55;
-  cursor: wait;
-}
-
-@media (max-width: 720px) {
-  [data-screen="notifications"] {
-    padding: var(--space-5) 0 var(--space-page-tail);
-  }
 }
 
 /* A Ticket group: a readable heading (12/600 at 64%, no count) 4px over its rows, the rows
