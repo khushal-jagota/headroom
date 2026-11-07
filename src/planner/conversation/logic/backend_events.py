@@ -13,6 +13,7 @@ from planner.conversation.backends.contracts import (
     BackendEventValue,
     BackendPermissionAsk,
     BackendUserInputRequest,
+    CommandReplyReported,
     ContextCompacted,
     PermissionAskRaised,
     PlanUpdated,
@@ -27,6 +28,7 @@ from planner.conversation.backends.contracts import (
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.events import (
     AutomaticCompactionResult,
+    CommandReplyEventPayload,
     ContextCompactedEventPayload,
     ConversationEventPayload,
     ConversationTurnEnding,
@@ -187,6 +189,8 @@ def interpret_backend_event(
                 cost_usd=args.cost_usd,
             ),
         )
+    elif isinstance(args, CommandReplyReported):
+        payloads = (CommandReplyEventPayload(reply_text=args.reply_text),)
     elif compacted:
         payloads = (ContextCompactedEventPayload(),)
         if predicted is not None:

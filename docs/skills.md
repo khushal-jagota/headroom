@@ -8,7 +8,8 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 - **The published copies.** Headroom writes each row out as a skill file whenever a database opens and whenever a skill is saved. Every Hermes, Codex, and Claude home links to those copies, and a server with an explicit workspace links it there too.
 - **The seed.** The skill tree packaged with the code fills a database that has no skills yet. Nothing reads it after that.
 - **Skill history.** The editor keeps saved versions in the database. Worker steps do not record skill versions.
-- **The editor and the command.** One editor in Settings opens every role's skill. `panels skill list`, `show`, `edit`, and `apply` reach the same writer.
+- **Supporting files.** A skill folder can hold other files beside `SKILL.md`. They live only on disk: no row holds them, the skills backup copies them, and republication leaves them alone.
+- **The editor and the command.** One editor in Settings opens every role's skill. `panels skill list`, `show`, `edit`, `apply`, `delete`, and `write-file` reach the same owner-only writer.
 
 ```
  editor or panels skill ──► skill row ──► published copy ◄── agent homes link here
@@ -18,7 +19,7 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 
 ## How it works
 
-Khushal and the Chief stand above skills, so both may edit them. A Worker or a Manager that wants a skill changed hands the exact text to the owner or the Chief. A reviewed batch applies in one transaction. Specialist guidance changes through its structured preset editor.
+Khushal and the Chief stand above skills, so both may edit them. `panels skill delete` removes a skill's row and its whole folder, and refuses a role skill and any skill that a Worker type or an unfinished Ticket uses. The next server start removes the dead links that a deleted skill leaves in agent homes. `panels skill write-file` writes a supporting file inside a skill folder, and never the skill's own `SKILL.md`. A Worker or a Manager that wants a skill changed hands the exact text to the owner or the Chief. A reviewed batch applies in one transaction. Specialist guidance changes through its structured preset editor.
 
 The specialist reference saved on a Ticket decides which skill a preset Worker reads. A custom Ticket receives its assembled guide at kickoff. See [Worker types](worker-types.md). A saved skill reaches an agent the next time it loads the skill. A turn already running keeps what it read. Saving a skill sends no prompt, so the conversation notebook does not change.
 
@@ -37,4 +38,4 @@ The specialist reference saved on a Ticket decides which skill a preset Worker r
 - `src/planner/skills/`: the seed.
 - `web/src/components/RoleSkillEditor.svelte`: the editor.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-07._

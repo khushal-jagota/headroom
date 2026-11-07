@@ -398,7 +398,9 @@
                   <div class="settled-body" data-settled-scroll use:navigationScrollWindow={{window:settledWindow,activate:()=>navigation?.owner.prioritizeWindow(settledWindow?.request),selector:'[data-settled-item]',key:node=>node.dataset.settledItem ?? '',move:(anchor,direction)=>railPage('settled',anchor,direction)}} onscroll={scrollHover}>
                   {#each rail.settledItems as item (item.id)}
                     <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
-                    <div class="settled-row">
+                    <!-- The whole row is the washed area, so a press anywhere on it opens the item. Reopen keeps its own press. -->
+                    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+                    <div class="settled-row" onclick={(event) => { if (!(event.target as HTMLElement).closest('button')) selectItem(item.id); }}>
                       <button class="settled-title" type="button" aria-current={opening.markedManagerId === item.id ? "page" : undefined} aria-label={`Open ${item.title}`} onclick={() => selectItem(item.id)}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
                       <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
                     </div>
@@ -581,7 +583,7 @@
   .settled--open .settled-chevron { transform:rotate(90deg); }
   .count { flex:none; margin-left:5px; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; }
   .settled-item + .settled-item { margin-top:var(--rail-row-gap); }
-  .settled-row { display:flex; align-items:center; gap:var(--space-2); box-sizing:border-box; min-height:var(--rail-row-height); padding:5px var(--rail-pad); margin:0; border-radius:var(--radius-md); font-size:var(--type-row); line-height:20px; }
+  .settled-row { display:flex; align-items:center; gap:var(--space-2); box-sizing:border-box; min-height:var(--rail-row-height); padding:5px var(--rail-pad); margin:0; border-radius:var(--radius-md); font-size:var(--type-row); line-height:20px; cursor:pointer; }
   .settled-row:hover { color:var(--rail-tone-bright); }
   .settled-title,.reopen { border:0; background:none; font:inherit; cursor:pointer; color:var(--text-faintest); padding:0; }
   .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; color:var(--rail-tone-rest); }

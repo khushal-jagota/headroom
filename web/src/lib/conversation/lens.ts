@@ -56,6 +56,7 @@ export function conversationEventIsInFocus(
     case "message_to_owner":
       return event.payload.recipient.kind === "owner";
     case "credential_request":
+    case "command_reply":
       return true;
     case "permission_asked":
     case "permission_answered":
@@ -112,6 +113,7 @@ export function conversationRowsForLens(
     || row.kind === "permission_ask"
     || row.kind === "user_input"
     || row.kind === "credential_request"
+    || row.kind === "command_reply"
     || (row.kind === "turn_ended" && row.ending !== "completed")
     || row.kind === "turn_stopped"
   ));

@@ -245,6 +245,10 @@
       <div class="acp-compaction" role="separator" data-conversation-row="context_compacted">
         <span>{CONTEXT_COMPACTED_SENTENCE}</span>
       </div>
+    {:else if item.row.kind === "command_reply"}
+      <!-- The backend answered a slash command itself. Its words are kept whole, quiet and
+           in the tool voice, because they are the backend's output rather than the agent's. -->
+      <p class="acp-command-reply" data-conversation-row="command_reply">{item.row.replyText}</p>
     {:else if item.row.kind === "turn_ended" && item.row.automaticCompactionResult === "not_compacted"}
       <div class="acp-compaction" role="status" data-conversation-row="turn_ended">
         {AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE}

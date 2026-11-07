@@ -100,6 +100,25 @@ def test_closed_turn_does_not_page_its_thousand_hidden_tool_bodies() -> None:
         assert older["body_bytes"] <= 128 * 1024
 
 
+@pytest.mark.parametrize("lens", ["focus", "full"])
+def test_a_command_reply_is_on_the_timeline_in_both_lenses(lens: ConversationViewLens) -> None:
+    """Nothing else shows a command's reply, so Focus must show it as well as Full."""
+    reply = "Goal: ship the fix (active, 0 tokens, 0s)\nSecond line"
+    events = [
+        prompt(),
+        event(2, "command_reply", {"reply_text": reply}),
+        event(3, "turn_ended", {"ending": "completed", "error_summary": None}),
+    ]
+    with database(events) as conn:
+        page = read_page(conn, "fixture", lens)
+        rows = {item["key"]: item for item in page["items"] if item["kind"] == "row"}
+        assert rows["e2"]["row_kind"] == "command_reply"
+        assert rows["e2"]["body"] == {
+            "kind": "inline",
+            "value": {"kind": "command_reply", "reply_text": reply},
+        }
+
+
 def test_oversized_body_chunks_preserve_unicode_and_one_logical_markdown_document() -> None:
     text = "# Title\n\n```text\n" + "界🙂" * 40_000 + "\n```\n\n[reference]: /target\n"
     with database([prompt(), event(2, "agent_message", {"text": text})]) as conn:

@@ -22,9 +22,13 @@
   let shiftHeld = false;
   let anchor: number | null = null;
   let tableEl = $state<HTMLTableElement | null>(null);
-  let measuredWidths = $state<number[] | null>(null);
+  // Widths measured for one column count. A block that gains or loses columns
+  // lays out again and is measured again, so new columns never get zero width.
+  let measured = $state<{ count: number; widths: number[]; minWidth: number } | null>(null);
+  let measuredWidths = $derived(measured?.count === block.columns.length ? measured.widths : null);
   let widths = $derived(block.column_widths ?? measuredWidths);
   let band = $state<{ left: number; width: number } | null>(null);
+  let scrolled = $state(false);
 
   $effect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -44,7 +48,16 @@
       const total = table.getBoundingClientRect().width;
       const cells = [...table.querySelectorAll<HTMLTableCellElement>("thead th[data-key]")];
       if (!total || cells.length !== block.columns.length) return false;
-      measuredWidths = cells.map((cell) => (cell.getBoundingClientRect().width / total) * 100);
+      const percents = cells.map((cell) => (cell.getBoundingClientRect().width / total) * 100);
+      // The narrowest table width at which every column still holds its content
+      // at its measured share. The fixed layout keeps it, so a crowded table scrolls.
+      table.style.width = "0";
+      const minWidth = Math.max(
+        table.getBoundingClientRect().width,
+        ...cells.map((cell, index) => cell.getBoundingClientRect().width / (percents[index] / 100)),
+      );
+      table.style.width = "";
+      measured = { count: cells.length, widths: percents, minWidth };
       return true;
     };
     if (measure()) return;
@@ -259,7 +272,7 @@
     const target = event.target;
     if (!(target instanceof HTMLElement) || !target.dataset.nav) return;
     const nav = target.dataset.nav;
-    const list = (name: string) => [...node.querySelectorAll<HTMLElement>(`[data-nav="${name}"]`)];
+    const list = (name: string) => [...node.querySelectorAll<HTMLElement>(`[data-nav="${name}"]`)].filter((item) => item.getClientRects().length > 0);
     const items = list(nav);
     const index = items.indexOf(target);
     if (index < 0) return;
@@ -312,6 +325,17 @@
   }
 </script>
 
+<!-- A number column shows its sort button before the label on wide pages and after it
+     on phones. Each layout shows one, so Tab order follows what the reader sees. -->
+{#snippet headSort(index: number, placement: "before" | "after")}
+  <button type="button" class="sort icon-only" data-placement={placement} data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
+    <span class="sort-icon" aria-hidden="true">
+      <svg class="sort-hint" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+      <svg class="sort-arrow" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
+    </span>
+  </button>
+{/snippet}
+
 {#snippet box(checked: boolean, mixed: boolean, label: string, nav: "head" | "row", role: string, onToggle: (extend: boolean) => void)}
   <label class="hit">
     <input
@@ -341,9 +365,9 @@
     return { ...old, caption: raw };
   }} /></div>{/if}
   <div class="card">
-    <div class="scroller">
+    <div class="scroller" data-scrolled={scrolled ? "" : undefined} onscroll={(event) => (scrolled = event.currentTarget.scrollLeft > 0)}>
       {#if band}<span class="band" style:left="{band.left}px" style:width="{band.width}px" aria-hidden="true"></span>{/if}
-      <table bind:this={tableEl} data-fixed={widths ? "" : undefined} data-selectable={selectable ? "" : undefined}>
+      <table bind:this={tableEl} data-fixed={widths ? "" : undefined} style:--table-min-width={!block.column_widths && measuredWidths ? `${measured?.minWidth}px` : undefined} data-selectable={selectable ? "" : undefined}>
         {#if block.caption}<caption class="sr">{block.caption}</caption>{/if}
         {#if widths || selectable}
           <colgroup>
@@ -372,13 +396,9 @@
               >
                 {#if context?.authorText}
                   <div class="editable-sort">
+                    {#if numeric[index]}{@render headSort(index, "before")}{/if}
                     <PageText blockId={block.id} field={`columns.${index}`} value={column} label={`Table column ${index + 1}`} update={(old, raw) => columnText(index, raw, old)} />
-                    <button type="button" class="sort icon-only" data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
-                      <span class="sort-icon" aria-hidden="true">
-                        <svg class="sort-hint" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
-                        <svg class="sort-arrow" viewBox="0 0 16 16"><path d="M8 12.25V3.75M4.75 7 8 3.75 11.25 7" /></svg>
-                      </span>
-                    </button>
+                    {@render headSort(index, "after")}
                   </div>
                 {:else}
                   <button type="button" class="sort" data-nav="head" aria-label={sortLabel(index)} onclick={() => sortBy(index)}>
@@ -490,7 +510,7 @@
     position: relative;
     z-index: 1;
     width: 100%;
-    min-width: 560px;
+    min-width: max(560px, var(--table-min-width, 0px));
     border-collapse: separate;
     border-spacing: 0;
     font-size: var(--type-body);
@@ -525,7 +545,9 @@
     font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
   }
-  td[data-primary] { color: var(--tone-primary); font-weight: var(--weight-body); }
+  /* A label cell keeps room to read when columns are added, and breaks long words only where
+     it must (staging); its words in the page's voice. */
+  td[data-primary] { min-width: 180px; color: var(--tone-primary); font-weight: var(--weight-body); overflow-wrap: break-word; }
   td[data-missing] { color: var(--tone-tertiary); }
   /* As staging, a cell with a status says it in its colour: the value and its dot in the
      status colour. In a column with any status every cell keeps the dot's slot (empty where
@@ -638,9 +660,11 @@
   th[data-numeric] .sort { justify-content: flex-end; }
   .editable-sort { display: flex; min-height: 44px; align-items: center; padding-left: var(--space-4); }
   .sort.icon-only { width: 40px; flex: none; justify-content: center; padding: 0; }
-  /* A numeric column's head ends where its values end: its sort mark goes before the words. */
+  /* A number column's head ends where its values end. Its sort button is drawn once, before
+     the words on wide pages and after them on phones (staging), so Tab order follows what the
+     reader sees. */
+  .sort[data-placement="before"] { display: none; }
   th[data-numeric] .editable-sort { justify-content: flex-end; padding-right: var(--space-4); }
-  th[data-numeric] .editable-sort > .sort.icon-only { order: -1; }
   th:last-child .editable-sort { padding-right: 0; }
   .sort-inner { display: inline-flex; align-items: center; gap: 6px; }
   th[data-numeric] .sort-inner { flex-direction: row-reverse; }
@@ -764,6 +788,29 @@
     filter: none;
   }
   .reduced .hit-input:active + .box { transform: none; }
+  @container page (width > 620px) {
+    /* A number column holds only its label and values. The sort control sits in
+       the gap left of the label and takes no width of its own. */
+    th[data-numeric] .sort:not(.icon-only),
+    th[data-numeric] .editable-sort,
+    td[data-numeric]:not([data-primary]) { padding: 0 var(--space-2) 0 6px; }
+    /* The 14px gap between two number labels holds a 12px arrow with 4px clear on each side. */
+    th[data-numeric] :is(.sort-hint, .sort-arrow) { inset: 2px; width: 12px; height: 12px; }
+    th[data-numeric] .sort-inner { gap: 0; }
+    th[data-numeric] .sort-inner .sort-icon { margin: 0 -1px 0 -15px; }
+    th[data-numeric] .sort[data-placement="before"] { display: flex; width: 14px; margin-left: -14px; }
+    th[data-numeric] .sort[data-placement="after"] { display: none; }
+    th[data-numeric] .sort.icon-only .sort-icon { margin: 0 -1px; }
+    /* The last column still stands on the card's inset, as every outer column does. */
+    th[data-numeric]:last-child :is(.sort:not(.icon-only), .editable-sort),
+    td[data-numeric]:last-child:not([data-primary]) { padding-right: 0; }
+    /* A table too wide to fit scrolls, and its label column stays in view. */
+    table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) { position: sticky; left: 0; }
+    .scroller[data-scrolled] table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) {
+      z-index: 3;
+      box-shadow: inset calc(-1 * var(--border-hairline)) 0 var(--chart-grid);
+    }
+  }
   @container page (max-width: 620px) {
     .table-block { padding: var(--space-5) var(--space-4); border-radius: var(--radius-lg); }
     .caption { padding-inline: 8px; }
@@ -790,7 +837,7 @@
     table[data-selectable] tbody tr[data-selected] { --row-fill: color-mix(in srgb, var(--accent-bright) 8%, var(--chart-surface)); }
     tbody tr:last-child { border-bottom: 0; }
     td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--chart-secondary); font-size: var(--type-small); text-align: left; }
-    td[data-primary] { order: 0; flex: 1 1 0; color: var(--text-strong); font-size: var(--type-body); font-weight: var(--weight-body); }
+    td[data-primary] { order: 0; flex: 1 1 0; min-width: 0; color: var(--text-strong); font-size: var(--type-body); font-weight: var(--weight-body); }
     td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: 8px; color: var(--text-strong); font-size: var(--type-body); }
     td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--chart-secondary); font-size: var(--type-small); }
     td[data-sorted]:not([data-primary]):not([data-tone]) { color: var(--text-strong); }

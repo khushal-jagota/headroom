@@ -252,6 +252,8 @@ def row_body(
         }
     if isinstance(source, event.ContextCompactedEventPayload):
         return {"kind": "context_compacted"}
+    if isinstance(source, event.CommandReplyEventPayload):
+        return {"kind": "command_reply", "reply_text": source.reply_text}
     if isinstance(source, event.TurnEndedEventPayload):
         return {
             "kind": "turn_ended",

@@ -87,7 +87,7 @@ The Mac sees its target once the VPS pauses work and installs it once the VPS in
 
 Saved results and their files remain in the outbox through the swap. A planned handoff retains their original authority until the VPS receives them. It does not repeat provider calls or restore stopped agents. Ordinary maintenance still waits for an empty outbox before exit.
 
-The VPS accepts the current work protocol or one older. The current window is protocols 19 and 20, both with outbox format 5. Messages ignore unknown fields but still check their known fields and identities. The protocol check detects schema changes without a version change. Unsupported outbox formats fail without conversion or deletion.
+The VPS accepts the current work protocol or one older. The current window is protocols 20 and 21, both with outbox format 5. Messages ignore unknown fields but still check their known fields and identities. The protocol check detects schema changes without a version change. Unsupported outbox formats fail without conversion or deletion.
 
 Existing installations need one operator-controlled bootstrap installation. Its Python environment and supervisor then remain fixed. Local fixtures do not prove permission retention, certificate renewal behavior, or Gatekeeper acceptance.
 

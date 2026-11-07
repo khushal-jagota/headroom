@@ -16,7 +16,6 @@ lives in ``tests/support/conversation_claude_agent_sdk_bench.py``.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -25,6 +24,7 @@ from uuid import UUID
 import pytest
 from anyio.abc import Process
 from claude_agent_sdk import (
+    AssistantMessage,
     ClaudeAgentOptions,
     CLINotFoundError,
     SystemMessage,
@@ -37,6 +37,8 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 from tests.support.conversation_claude_agent_sdk_bench import (
     ANOTHER_SESSION_ID,
     SESSION_ID,
+    TURN,
+    TURN_2,
     _assistant,
     _bench,
     _run,
@@ -80,8 +82,7 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
         child, sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=SESSION_ID)
         options = clients[0].options
-        assert options.settings is not None
-        assert json.loads(options.settings) == {"disableAllHooks": True}
+        assert options.settings is None
         assert options.setting_sources is None
         assert options.cwd == str(tmp_path)
         assert options.cli_path == Path("/usr/bin/claude")
@@ -122,8 +123,7 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
         child, _sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=None)
         options = clients[0].options
-        assert options.settings is not None
-        assert json.loads(options.settings) == {"disableAllHooks": True}
+        assert options.settings is None
         assert options.setting_sources is None
         assert options.cwd == str(tmp_path)
         assert options.cli_path == Path("/usr/bin/claude")
@@ -340,6 +340,88 @@ def test_background_tasks_follow_claudes_live_set(tmp_path: Path) -> None:
             BackgroundTaskStarted(task_id="c", task_description="sleep for c"),
             BackgroundTaskEnded(task_id="c", task_status="killed"),
             BackendStreamEnded(),
+        ]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_claudes_own_command_reply_is_reported_only_when_nothing_else_says_it(
+    tmp_path: Path,
+) -> None:
+    """Claude answers a local command with a ``<synthetic>`` message and no streamed text.
+
+    That message is the only place a command's reply exists. It is held, and reported as
+    soon as the model works on (``/goal set`` starts the goal in the same turn) or just
+    before a completed ending. A failed turn already shows its error, which Claude also
+    writes this way, and automatic compaction records its own outcome, so neither
+    repeats it. Ordinary model text stays ordinary agent output.
+    """
+    from claude_agent_sdk import ResultMessage, ToolUseBlock
+
+    goal_set = "Goal set: the file done.txt exists"
+    refusal = "/goal can't run while hooks are restricted."
+
+    def result(*, is_error: bool = False, text: str | None = None) -> ResultMessage:
+        return ResultMessage(
+            subtype="error_during_execution" if is_error else "success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=is_error,
+            num_turns=0,
+            session_id=SESSION_ID,
+            result=text,
+        )
+
+    def synthetic(text: str) -> AssistantMessage:
+        return _assistant(TextBlock(text=text), model="<synthetic>")
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=SESSION_ID)
+        # The order Claude 2.1.259 uses for /goal set: its reply, then the goal's work.
+        await _write(child, "/goal the file done.txt exists", TURN)
+        clients[0].say(
+            synthetic(goal_set),
+            _assistant(ToolUseBlock(id="write-1", name="Write", input={"file_path": "done.txt"})),
+            _assistant(TextBlock(text="Done.")),
+            result(),
+        )
+        await clients[0].until_taken_in()
+        assert sink.calls_in_order == [
+            "command_reply", "tool_call_started", "token_usage", "turn_ended",
+        ]
+        await _write(child, "/goal finish the work", TURN_2)
+        clients[0].say(synthetic(refusal), result())
+        await clients[0].until_taken_in()
+        failing_turn = TurnToken(conversation_id=TURN.conversation_id, turn_number=3)
+        await _write(child, "hello", failing_turn)
+        overloaded = "API Error: 529 Overloaded"
+        clients[0].say(synthetic(overloaded), result(is_error=True, text=overloaded))
+        await clients[0].until_taken_in()
+        compaction_turn = TurnToken(conversation_id=TURN.conversation_id, turn_number=4)
+        compact = text_message_content("/compact")
+        await child.write_prompt(
+            compaction_turn,
+            compact,
+            sender_content=compact,
+            sender_label="Panels",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+            automatic_compaction=True,
+        )
+        clients[0].say(synthetic("Error: No messages to compact"), result())
+        await clients[0].until_taken_in()
+
+        assert sink.command_replies == [(TURN, goal_set), (TURN_2, refusal)]
+        assert sink.message_texts == [(TURN, "Done.")]
+        assert [ending["ending"] for ending in sink.endings] == [
+            ConversationTurnEnding.completed,
+            ConversationTurnEnding.completed,
+            ConversationTurnEnding.failed,
+            ConversationTurnEnding.completed,
         ]
         await child.stop()
 

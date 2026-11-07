@@ -458,6 +458,33 @@ def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
     assert test_client.get("/api/skills/batch-role").json()["source_text"] == chief_source
 
 
+def test_skill_delete_and_file_write_refuse_agents_and_accept_the_chief(
+    client: tuple[TestClient, Path],
+) -> None:
+    """Risk: the two new skill writes open a door for Workers or Managers."""
+    test_client, db_path = client
+    file_body = {"path": "notes/extra.md", "content": "supporting"}
+    for headers in (
+        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
+    ):
+        deleted = test_client.delete("/api/skills/probe-worker", headers=headers)
+        written = test_client.put("/api/skills/panels/files", json=file_body, headers=headers)
+        for result in (deleted, written):
+            assert result.status_code == 400, result.text
+            assert result.json()["error"]["code"] == "agent_forbidden"
+    skills_home = db_path.parent / "skills"
+    assert (skills_home / "probe-worker" / "SKILL.md").is_file()
+    assert not (skills_home / "panels" / "notes").exists()
+    chief = {"X-Plan-Actor": "chief"}
+    written = test_client.put("/api/skills/panels/files", json=file_body, headers=chief)
+    assert written.status_code == 200, written.text
+    assert (skills_home / "panels" / "notes" / "extra.md").read_text() == "supporting"
+    deleted = test_client.delete("/api/skills/probe-worker", headers=chief)
+    assert deleted.status_code == 200, deleted.text
+    assert test_client.get("/api/skills/probe-worker").status_code == 404
+
+
 def test_committed_amendment_receipt_survives_skill_file_publication_failure(
     client: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:

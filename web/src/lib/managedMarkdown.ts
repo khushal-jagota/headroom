@@ -272,12 +272,14 @@ export function createManagedMarkdownSurface(
         ? renderedTarget.getAttribute("alt") || href
         : renderedTarget.textContent || href;
       const target = targetFromHref(href, label);
-      // Links are claimed when they name a managed ticket or goal file. Other links stay
-      // the anchor Markdown rendered. Images are claimed wherever the preview renders
-      // one, except inside a link that was left standing.
+      // Links are claimed when they name a managed ticket, Manager or goal file. Other
+      // links stay the anchor Markdown rendered. Images are claimed wherever the preview
+      // renders one, except inside a link that was left standing.
       const claimed = isImage
         ? !withinLink(renderedTarget, root) && resolvePreview(target).kind === "image"
-        : target.kind === "ticket-file" || target.kind === "goal-file";
+        : target.kind === "ticket-file" ||
+          target.kind === "manager-file" ||
+          target.kind === "goal-file";
       if (!claimed) {
         if (renderedTarget instanceof HTMLImageElement) {
           const image = renderedTarget;

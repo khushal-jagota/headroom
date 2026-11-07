@@ -1711,6 +1711,7 @@ def run(browser, urls):
     manual_unit_spacing(browser, urls[0])
     authored_goal_presentation(browser, urls[0])
     native_goal_edits(browser, urls[0])
+    score_table_layout(browser, urls[0])
 
 
 class NativeGoalEditFixture(GoalFixture):
@@ -2551,6 +2552,168 @@ def native_goal_edits(browser, url):
             json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
         )
     print(f"native goal edits metadata/page desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
+
+
+SCORE_LABELS = (
+    "Typography", "Colour", "Contrast and legibility", "Spacing and layout rhythm",
+    "Visual hierarchy", "Consistency across pages",
+    "Interaction states (hover, focus, selected)", "Polish (alignment, icons, detail)",
+)
+
+
+def score_table(rounds):
+    return {
+        "type": "table",
+        "id": "scores",
+        "columns": ["Category", *(f"Round {index}" for index in range(1, rounds + 1))],
+        "rows": [
+            [label, *(f"{6 + (row + index) % 30 / 10:.1f}" for index in range(rounds))]
+            for row, label in enumerate(SCORE_LABELS)
+        ],
+        "cell_tones": [[None, *("attention" for _ in range(rounds))] for _ in SCORE_LABELS],
+    }
+
+
+def score_table_geometry(table):
+    return table.evaluate("""table => {
+        const box = element => element.getBoundingClientRect();
+        const scroller = table.parentElement;
+        const heads = [...table.querySelectorAll('thead th[data-key]')];
+        const firstRow = table.querySelector('tbody tr');
+        const label = head => head.querySelector('[contenteditable]');
+        const shown = element => element.getClientRects().length > 0;
+        // The drawn arrow, with its stroke, spans the middle half of its icon.
+        const glyph = head => {
+            const icon = box([...head.querySelectorAll('svg.sort-arrow')].find(shown));
+            return {left: icon.left + icon.width / 4, right: icon.right - icon.width / 4};
+        };
+        return {
+            widths: heads.map(head => box(head).width),
+            // A header label that leaves its cell overlaps its neighbour.
+            spill: heads.map(head => Math.max(box(label(head)).right - box(head).right,
+                box(head).left - box(label(head)).left)),
+            // Space between each number header's arrow and the labels on both sides.
+            arrowClearance: heads.slice(1).map((head, index) => Math.min(
+                glyph(head).left - box(label(heads[index])).right,
+                box(label(head)).left - glyph(head).right)),
+            headerRight: heads.map(head => box(label(head)).right),
+            valueRight: [...firstRow.querySelectorAll('td')].map(cell =>
+                box(cell.querySelector('.cell-copy')).right),
+            labelLines: [...table.querySelectorAll('tbody td[data-primary]')].map(cell => {
+                const text = cell.querySelector('.cell-copy');
+                const lineHeight = parseFloat(getComputedStyle(text).lineHeight);
+                return {text: text.textContent.trim(),
+                    lines: Math.round(box(text).height / lineHeight)};
+            }),
+            // Header controls in Tab order, by their left edge.
+            tabOrder: [...table.querySelectorAll('thead button, thead [contenteditable="true"]')]
+                .filter(shown).map(element => box(element).left),
+            // The label column stays at the scroller's left edge.
+            labelOffset: box(heads[0]).left - box(scroller).left,
+            scrolls: scroller.scrollWidth > scroller.clientWidth,
+        };
+    }""")
+
+
+def assert_readable_score_table(geometry):
+    assert geometry["widths"][0] >= 180, geometry
+    assert min(geometry["widths"]) > 60, geometry
+    assert max(geometry["spill"]) <= 0.5, geometry
+    assert min(geometry["arrowClearance"]) >= 3.5, geometry
+    assert geometry["tabOrder"] == sorted(geometry["tabOrder"]), geometry
+    # Number headers end where their values end.
+    for header, value in zip(
+        geometry["headerRight"][1:], geometry["valueRight"][1:], strict=True
+    ):
+        assert abs(header - value) <= 1, geometry
+    # Labels wrap between words. Fresh load gave the longest label four lines.
+    for label in geometry["labelLines"]:
+        assert label["lines"] <= 3, geometry
+    assert {label["text"] for label in geometry["labelLines"]} == set(SCORE_LABELS), geometry
+
+
+def score_table_layout(browser, url):
+    """Score tables fit when they can, scroll with a pinned label column when not."""
+    started = time.monotonic()
+    context = browser.new_context(
+        viewport={"width": 1280, "height": 1400}, reduced_motion="reduce"
+    )
+    page = context.new_page()
+    page.set_default_timeout(5000)
+    fixture = NativeGoalEditFixture()
+    identity = "goal_wrapfixture"
+    goal = fixture.goals[identity]
+    goal["page"]["blocks"].append(score_table(5))
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.route("**/api/**", fixture.respond)
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root, "score-table") if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+
+    def publish(rounds):
+        # The Manager changes the table while the page stays open.
+        goal["page"]["blocks"][-1] = score_table(rounds)
+        goal["revision"] += 1
+        fixture.version += 1
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))")
+        expect(table.locator("thead th[data-key]")).to_have_count(rounds + 1)
+        expect(table).to_have_attribute("data-fixed", "")
+
+    def screenshot(name):
+        if output:
+            table.locator("xpath=ancestor::*[@data-block='table']").screenshot(
+                path=str(output / name))
+
+    try:
+        page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
+        table = page.locator(f'[data-goal-page="{identity}"] [data-block="table"] table')
+        expect(table).to_have_attribute("data-fixed", "")
+        assert len(score_table_geometry(table)["widths"]) == 6
+
+        # Eight columns fit the goal page's table width without scrolling.
+        publish(7)
+        eight = score_table_geometry(table)
+        screenshot("eight-columns.png")
+        assert_readable_score_table(eight)
+        assert not eight["scrolls"], eight
+
+        # Arrow keys move between the sort buttons that are shown.
+        table.get_by_role("button", name="Sort by Round 1", exact=True).focus()
+        page.keyboard.press("ArrowRight")
+        expect(table.get_by_role("button", name="Sort by Round 2", exact=True)).to_be_focused()
+
+        # Sorting keeps every column at its width.
+        table.get_by_role("button", name="Sort by Round 7", exact=True).click()
+        expect(table.locator("th[data-sorted]")).to_have_count(1)
+        assert score_table_geometry(table)["widths"] == eight["widths"]
+
+        # Ten columns cannot fit. The table scrolls and the label column stays pinned.
+        publish(9)
+        ten = score_table_geometry(table)
+        screenshot("ten-columns.png")
+        assert_readable_score_table(ten)
+        assert ten["scrolls"], ten
+        table.evaluate("table => table.parentElement.scrollTo({left: 10000})")
+        page.wait_for_function(
+            "table => table.parentElement.scrollLeft > 0", arg=table.element_handle())
+        scrolled = score_table_geometry(table)
+        screenshot("ten-columns-scrolled.png")
+        assert abs(scrolled["labelOffset"]) <= 1, scrolled
+        assert max(scrolled["spill"]) <= 0.5, scrolled
+
+        # A narrower page keeps every column at its content and scrolls further.
+        page.set_viewport_size({"width": 1000, "height": 1400})
+        page.wait_for_function(
+            "table => table.parentElement.clientWidth < 640", arg=table.element_handle())
+        narrow = score_table_geometry(table)
+        assert max(narrow["spill"]) <= 0.5, narrow
+        assert narrow["scrolls"], narrow
+        assert errors == [], errors
+    finally:
+        context.close()
+    print(f"score table layout: passed (+{time.monotonic() - started:.2f}s)", flush=True)
 
 
 class ChecklistDeadlineFixture(NativeGoalEditFixture):

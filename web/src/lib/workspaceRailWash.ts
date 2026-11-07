@@ -5,7 +5,12 @@ type Host = { node: HTMLElement; origin: HTMLDivElement; item: Layer; hover: Lay
 // `group` is the Manager block the row sits in: moving within one block glides the fill.
 type Target = { node: HTMLElement; host: Host; group: HTMLElement | null; itemBox: Box };
 const properties = ['left', 'top', 'width', 'height'] as const;
-const targets = '.item-head, .worker-row, .goal, .settled-title, .utility';
+/* Each row is one element. The wash draws that element's box, and the same element owns
+ * the row's hover, click and preview, so the washed area and the area that responds are
+ * one area. Selection and keyboard focus are marked on a control inside some rows. */
+const rows = '.identity, .worker-row, .goal, .settled-row, .utility';
+const marks = '.item-head, .worker-row, .goal, .settled-title, .utility';
+const rowOf = (mark: HTMLElement | null) => mark?.closest<HTMLElement>(rows) ?? null;
 
 export function workspaceRailWash(root: HTMLElement) {
   const hosts = new Map<HTMLElement, Host>();
@@ -63,10 +68,10 @@ export function workspaceRailWash(root: HTMLElement) {
     const local = (rect: DOMRect): Box => ({left:rect.left-base.left,top:rect.top-base.top,width:rect.width,height:rect.height});
     // Only the open item is lit; the Manager you are inside has no mark of its own (owner).
     const group = node.closest<HTMLElement>('.manager-card');
-    // Every fill is its row's own box with the row's own radius. A Manager's header is its
-    // project eyebrow and its name together: selected, hovered and focused as one block.
-    const fill = node.matches('.item-head') ? node.closest<HTMLElement>('.identity') ?? node : node.closest<HTMLElement>('.settled-row') ?? node;
-    const itemBox: Box = {...local(fill.getBoundingClientRect()), radius:getComputedStyle(fill).borderRadius};
+    // Every fill is its row's own box with the row's own radius. The node is the row itself,
+    // the same element that owns its hover, click and preview: a Manager's header is its
+    // project eyebrow, its name and a sole goal's line together, as one block.
+    const itemBox: Box = {...local(node.getBoundingClientRect()), radius:getComputedStyle(node).borderRadius};
     return {node,host,group,itemBox};
   }
   const style = (box: Box) => Object.fromEntries(properties.map(key=>[key,`${box[key]}px`]));
@@ -105,7 +110,7 @@ export function workspaceRailWash(root: HTMLElement) {
     }
     hide(part);
   }
-  const identity = (node: HTMLElement) => node.dataset.railMotion ?? node.dataset.goalId ?? node.getAttribute('href') ?? node.closest<HTMLElement>('[data-settled-item]')?.dataset.settledItem ?? (node.matches('.item-head') ? node.closest<HTMLElement>('[data-rail-motion]')?.dataset.railMotion : undefined);
+  const identity = (node: HTMLElement) => node.dataset.railMotion ?? node.dataset.goalId ?? node.getAttribute('href') ?? node.closest<HTMLElement>('[data-settled-item]')?.dataset.settledItem ?? (node.matches('.identity') ? node.closest<HTMLElement>('[data-rail-motion]')?.dataset.railMotion : undefined);
   function select(next: Target | null) {
     // A bucket move recreates a keyed row in a different bucket. It is still the same selection.
     if (current && next && current.host===next.host && identity(current.node) && identity(current.node)===identity(next.node)) {
@@ -131,7 +136,7 @@ export function workspaceRailWash(root: HTMLElement) {
     current=next;
   }
   function decorate() {
-    const selected=root.querySelector<HTMLElement>(targets.split(', ').map(s=>`${s}[aria-current="page"]`).join(', '));
+    const selected=rowOf(root.querySelector<HTMLElement>(marks.split(', ').map(s=>`${s}[aria-current="page"]`).join(', ')));
     select(selected?geometry(selected):null);
     if (current) {
       draw(current.host.item,current.itemBox);current.host.item.node.hidden=false;
@@ -142,7 +147,7 @@ export function workspaceRailWash(root: HTMLElement) {
     }
     const hoverNode=hovered!==current?.node?hovered:null;
     const hover=hoverNode?geometry(hoverNode):null;
-    const focusNode=root.querySelector<HTMLElement>(targets.split(', ').map(s=>`${s}:focus-visible`).join(', '));
+    const focusNode=rowOf(root.querySelector<HTMLElement>(marks.split(', ').map(s=>`${s}:focus-visible`).join(', ')));
     const focus=focusNode?geometry(focusNode):null;
     for (const host of hosts.values()) {
       if (hover?.host===host) {
@@ -166,9 +171,8 @@ export function workspaceRailWash(root: HTMLElement) {
   }
   function targetAt(node: EventTarget | null) {
     if (!(node instanceof Element)) return null;
-    const control=node.closest<HTMLElement>(targets);
-    if (control && root.contains(control)) return control;
-    return node.closest('.identity')?.querySelector<HTMLElement>('.item-head') ?? null;
+    const row=node.closest<HTMLElement>(rows);
+    return row && root.contains(row) ? row : null;
   }
   function pointer(event: PointerEvent) {
     if(event.pointerType==='touch')hovered=null;else hovered=targetAt(event.target);

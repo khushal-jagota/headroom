@@ -216,14 +216,14 @@ def _compatibility_commands() -> tuple[ChildCommand, ...]:
     )
 
 
-def test_previous_peer_accepts_every_current_command_against_frozen_protocol_19() -> None:
+def test_previous_peer_accepts_every_current_command_against_frozen_protocol_20() -> None:
     import json
 
     from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
     from planner.executor.protocol import ChildCommand, encode_command_for_peer
 
-    fixture = Path(__file__).parents[1] / "fixtures/executor_protocol/protocol_19_commands.json"
+    fixture = Path(__file__).parents[1] / "fixtures/executor_protocol/protocol_20_commands.json"
     old = json.loads(fixture.read_text())
     validator = Draft202012Validator(old["command_schema"])
     for command in _compatibility_commands():
@@ -237,7 +237,7 @@ def test_previous_peer_accepts_every_current_command_against_frozen_protocol_19(
 
         assert type_adapter(ChildCommand).validate_python(encoded) == command
     with pytest.raises(ProtocolRefused):
-        encode_command_for_peer(command, 18)
+        encode_command_for_peer(command, 19)
 
 
 def test_wire_ignores_nested_unknown_fields_without_relaxing_identity_or_local_ipc() -> None:
@@ -275,10 +275,10 @@ def test_wire_ignores_nested_unknown_fields_without_relaxing_identity_or_local_i
     with pytest.raises(ValidationError):
         type_adapter(ChildCommand).validate_python(malformed)
     identity = {
-        "protocol_version": 19, "application_revision": "old", "spool_format_version": 5,
+        "protocol_version": 20, "application_revision": "old", "spool_format_version": 5,
         "executor_incarnation": str(uuid4()), "connection_generation": 1, "future": True,
     }
-    assert parse_identity(identity).protocol_version == 19
+    assert parse_identity(identity).protocol_version == 20
     identity["connection_generation"] = True
     with pytest.raises(ProtocolRefused):
         parse_identity(identity)
