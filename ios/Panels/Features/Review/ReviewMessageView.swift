@@ -1,5 +1,4 @@
 import SwiftUI
-import QuickLook
 
 struct ReviewMessageView: View {
     let item: ReviewItem
@@ -139,14 +138,12 @@ private struct ReviewMessageContent: View {
     let pieces: [ReviewMessageEvent.Piece]
     let conversationID: String
     @Environment(AppStore.self) private var store
-    @Environment(\.openURL) private var openURL
-    @State private var selectedArtifact: ArtifactTarget?
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
             ForEach(Array(pieces.enumerated()), id: \.offset) { _, piece in
                 if let text = piece.text {
                     ArtifactMarkdownContent(source: text, baseURL: store.baseURL)
-                    ForEach(artifacts(text)) { target in ReviewInlineArtifact(target: target, openLink: follow) }
+                    ForEach(ReviewArtifactLinks.targets(in: text, baseURL: store.baseURL)) { target in ReviewInlineArtifact(target: target) }
                 } else if let id = piece.storedFileId,
                           let url = try? store.client.url("/api/conversation/conversations/\(conversationID)/files/\(id)") {
                     if piece.piece == "image" {
@@ -156,52 +153,6 @@ private struct ReviewMessageContent: View {
                 }
             }
         }
-        .environment(\.openURL, OpenURLAction { url in follow(url); return .handled })
-        .navigationDestination(item: $selectedArtifact) { target in
-            ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: false)
-        }
-    }
-    private func follow(_ url: URL) {
-        if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selectedArtifact = target }
-        else { openURL(url) }
-    }
-    private func artifacts(_ text: String) -> [ArtifactTarget] {
-        guard let rich = try? AttributedString(markdown: text, baseURL: store.baseURL) else { return [] }
-        var seen = Set<String>()
-        return rich.runs.compactMap { run in
-            guard let url = run.link, let target = ArtifactTarget.from(url, baseURL: store.baseURL), seen.insert(target.id).inserted else { return nil }
-            return target
-        }
-    }
-}
-
-private struct ReviewInlineArtifact: View {
-    let target: ArtifactTarget
-    let openLink: (URL) -> Void
-    @Environment(AppStore.self) private var store
-    @State private var document: ArtifactDocument?
-    @State private var error: String?
-    @State private var expanded = true
-    var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            if let document {
-                if target.kind == .html, let text = document.text {
-                    ArtifactWebView(source: text, url: document.remoteURL, openLink: openLink, failed: { error = $0 }, ready: {}, reload: { Task { await load() } }).frame(height: 320)
-                } else if target.kind == .markdown, let text = document.text {
-                    ArtifactMarkdownContent(source: text, baseURL: document.remoteURL)
-                } else if let text = document.text { Text(text).font(.system(.footnote, design: .monospaced)).textSelection(.enabled) }
-                else if let image = UIImage(contentsOfFile: document.localURL.path) { ArtifactImageView(image: image).frame(height: 320) }
-                else if target.path.lowercased().hasSuffix(".pdf") { ArtifactPDFView(url: document.localURL).frame(height: 320) }
-                else if ["mp4", "mov", "m4v", "mp3", "m4a", "wav"].contains((target.path as NSString).pathExtension.lowercased()) { ArtifactMediaView(url: document.localURL).frame(height: 320) }
-                else if QLPreviewController.canPreview(document.localURL as NSURL) { ArtifactSystemPreview(document: document).frame(height: 320) }
-                NavigationLink(value: AppRoute.artifact(owner: target.owner, path: target.path, title: target.title)) { Text("Open artifact") }
-            } else if let error { Text(error).foregroundStyle(PanelsTheme.error); Button("Retry") { Task { await load() } } }
-            else { RingSpinner() }
-        } label: { Text(target.title).font(PanelsTheme.TypeScale.artifactLink) }
-            .task { await load() }
-    }
-    private func load() async {
-        do { document = try await store.client.artifactDocument(target); error = nil }
-        catch { self.error = error.localizedDescription }
+        .reviewArtifactLinks()
     }
 }
