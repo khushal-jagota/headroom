@@ -217,7 +217,7 @@
   /* Type — two font stacks and the older size names. Each older name lands on one of the
    * six Direction v2 roles (page title, section head, body, rail title, row, small), so
    * no screen can reach a seventh size through them. */
-  --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --type-xs: var(--type-small);
   --type-sm: var(--type-small);
