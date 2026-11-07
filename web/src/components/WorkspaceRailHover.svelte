@@ -141,7 +141,7 @@
           {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
         </RecapSlot>
       {/key}
-      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} variant="secondary" class="recap-ask" />{/if}
+      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} variant="ghost" class="recap-ask" />{/if}
     </div>
   {/if}
   {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
@@ -158,7 +158,9 @@
   .kicker { display:flex; align-items:center; gap:var(--space-2); font-size:var(--type-small); font-weight:var(--weight-small); color:var(--tone-tertiary); margin-bottom:5px; }
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--type-body); font-weight:var(--weight-title); line-height:1.4; color:var(--tone-strong); overflow-wrap:anywhere; }
   .title-text { flex:1; min-width:0; }
-  .recap { margin-top:var(--space-3); padding:var(--space-3); background:var(--surface-recessed); border-radius:var(--radius-md); font-size:var(--rail-preview-recap-size); line-height:1.5; color:var(--tone-primary); }
+  /* Staging's recessed field (owner), one softer step deep: #161616 under the #202020 preview, and
+     its 'Ask for a recap' a quiet text action, so the preview stays light (round 17). */
+  .recap { margin-top:var(--space-3); padding:var(--space-3); background:var(--rail-preview-well); border-radius:var(--radius-md); font-size:var(--rail-preview-recap-size); line-height:1.5; color:var(--tone-primary); }
   .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
   /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
   .recap.no-space, .recap-text.no-room { display:none; }

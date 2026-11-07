@@ -97,11 +97,14 @@
     {#each projects.data?.projects??[] as project}<option value={project.id}>{project.name}</option>{/each}
    </select>
   </span>
+  <!-- The fields stand apart by dots, as every page's line above its title (round 17). -->
+  <span class="page-eyebrow-sep" aria-hidden="true">·</span>
   <span class="metadata deadline" class:empty={!deadline} data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)}>
    <span class="control-size date-size" aria-hidden="true">{dateText(deadline)}</span>
    {#if !deadline}<span class="deadline-empty" aria-hidden="true">No deadline</span>{/if}
    <input type="date" style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))} aria-label="By date" value={deadline} disabled={editFields.deadline.saving} onfocus={()=>start(editFields.deadline,true)} onclick={openDatePicker} oninput={e=>input(editFields.deadline,e.currentTarget)} onblur={e=>void commit(editFields.deadline,'deadline',e.currentTarget)} onkeydown={e=>keydown(e,editFields.deadline,'deadline')}/>
   </span>
+  <span class="page-eyebrow-sep" aria-hidden="true">·</span>
   <span class="metadata">
    <span class="control-size" aria-hidden="true">{(editFields.active.value??String(goal.active))==='true'?'Active':'Inactive'}</span>
    <select aria-label="State" value={editFields.active.value??String(goal.active)} disabled={editFields.active.saving} onfocus={()=>start(editFields.active,true)} onchange={e=>{input(editFields.active,e.currentTarget);void commit(editFields.active,'active',e.currentTarget);}} onkeydown={e=>keydown(e,editFields.active,'active')}><option value="true">Active</option><option value="false">Inactive</option></select>
@@ -121,7 +124,10 @@
  .goal-heading{margin-bottom:var(--page-block-gap)}
  /* The one eyebrow pattern (app.css .page-eyebrow) on the page band's height. Each fact is
     its own quiet control; its 4px edit inset is taken back so the words start on the column. */
- .goal-context{min-height:var(--page-band-height);margin:0 calc(var(--space-1) * -1) 0;column-gap:var(--space-3)}
+ /* The fields' own padding and the dots between them set the spacing, as on other pages' lines. */
+ .goal-context{min-height:var(--page-band-height);margin:0 calc(var(--space-1) * -1) 0;column-gap:0}
+ .goal-context .page-eyebrow-sep{padding-inline:2px}
+ .goal-context .signal{margin-left:var(--space-2)}
  .metadata{position:relative;display:inline-grid;grid-template-columns:minmax(0,1fr);align-items:baseline;min-width:0;max-width:100%}
  .control-size,.deadline-empty{grid-area:1/1;padding:2px var(--space-1);white-space:pre}
  .control-size{visibility:hidden}
@@ -144,5 +150,5 @@
  .why{font-size:var(--type-body);font-weight:var(--weight-body);line-height:var(--leading-body);color:var(--tone-primary);margin-top:var(--space-2);max-width:var(--page-prose-measure)}
  .why :global(.ed){min-height:1.6em;white-space:pre-wrap}
  h1,.why{overflow-wrap:anywhere}
- @container (max-width:640px){.goal-context{column-gap:var(--space-2)}}
+
 </style>

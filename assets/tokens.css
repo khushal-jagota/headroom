@@ -38,7 +38,7 @@
   --accent-fill: var(--button-primary-fill);
   --accent-fill-hover: var(--button-primary-fill-hover);
   /* Inline code: a translucent lift that reads on every surface it lands on. */
-  --surface-code: rgb(255 255 255 / 4%);
+  --surface-code: rgb(255 255 255 / 3%); /* round 17: quieter, so code in prose does not break its texture */
   /* Popovers, menus, tooltips and hover previews: the one raised plane. It carries a 1px
    * ring (--border-raised) and --shadow-float. */
   --surface-raised: #242424;
@@ -107,7 +107,10 @@
   --chart-surface-raised: #252525;
   --chart-surface-muted: #1b1b1b;
   --chart-card-border: transparent;
-  --chart-grid: #ffffff14;
+  /* Gridlines a step firmer (10%) so the plot has an edge; axis labels 11px in the tertiary tone,
+   * quieter than the card's text (round 17). */
+  --chart-grid: #ffffff1a;
+  --chart-axis-size: 11px;
   --chart-border-strong: #ffffff24;
   /* Chart text: labels, captions, legends and axes are Small text in the tertiary tone. */
   --chart-secondary: var(--tone-secondary);
@@ -428,6 +431,7 @@
    * band one solid step above it (#242424), not a white layer. The icon bar's tooltips stay on
    * the raised plane: they open over the dock's bubble, which shares the in-between's range. */
   --rail-preview-surface: var(--surface-step);
+  --rail-preview-well: #161616;
   --rail-preview-band: var(--surface-raised);
   --rail-preview-width: 340px;
   --rail-preview-pad: 16px;

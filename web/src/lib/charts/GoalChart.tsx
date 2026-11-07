@@ -17,8 +17,8 @@ const C = { green: colors.good, blue: 'var(--accent-bright)', reference: 'var(--
 export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; projection?: ChartProjection; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean; wide?: boolean };
 
 /** Plot heights, as staging: a goal card's (compact) and every full chart's. */
-// A goal card's chart is a glance, not the page's main surface: 144px (the goal page keeps 216).
-const PLOT_HEIGHT = { compact: 144, regular: 216, wide: 216 };
+// A goal card's chart is a glance, not the page's main surface: 120px (the goal page keeps 216).
+const PLOT_HEIGHT = { compact: 120, regular: 216, wide: 216 };
 
 /** The period switch is the shared segmented control (app.css, .segmented), in React. */
 export function Range({ value, onChange, block, projection }: { value: string; onChange: (v: string) => void; id: string; block: ChartBlock; projection?: ChartProjection }) {
