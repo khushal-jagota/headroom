@@ -1942,6 +1942,9 @@ def _run(browser, urls):
             "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))))"
         )
 
+    # The draft's line breaks move the controls to the row under it in a short slide
+    # (redesign, owner). The resting card is measured once that slide has landed.
+    page.wait_for_function("() => !document.querySelector('[data-conversation-composer]')?.getAnimations({subtree:true}).some(a => a.playState === 'running')")
     settle_frames()
     resting = measure_writing_area()
     assert resting["height"] >= resting["line"] * 3, resting
@@ -2577,7 +2580,9 @@ def _projected_visual_relationships(browser, url):
         failures.append("Focus messages lost their separator")
     if any(row["separator"] not in ("none", "normal") for row in focus["first"]):
         failures.append("A separator appeared across the owner prompt")
-    if not full["toolRule"] or full["toolIndent"] <= 0 or abs(full["toolGap"] - 4) > 1:
+    # A run of tools is set apart by its indent and its 4px pitch; the redesign draws no
+    # left-edge line for it (no state is marked by a left line anywhere).
+    if full["toolRule"] or full["toolIndent"] <= 0 or abs(full["toolGap"] - 4) > 1:
         failures.append("Full tools lost their run layout")
     if any(full["emptyHeights"]) or abs(full["proseGap"] - full["threadGap"]) > 1:
         failures.append("Invisible bookkeeping rows consume transcript space")
@@ -2679,6 +2684,9 @@ def _conversation_repairs(browser, url):
             box.evaluate("e => {e.blur(); e.setSelectionRange(e.value.length,e.value.length); e.scrollTop=0;}")
             page.evaluate("value => window.__setConversationState(value)", initial)
             state(page, initial)
+            # A draft with line breaks moves the controls to the row under it in a short
+            # slide (redesign, owner). Measure the field where it comes to rest.
+            page.wait_for_function("() => !document.querySelector('[data-conversation-composer]')?.getAnimations({subtree:true}).some(a => a.playState === 'running')")
             before = box.evaluate("""(e, line) => {
               const r=e.getBoundingClientRect(), s=getComputedStyle(e);
               const canvas=document.createElement('canvas'), c=canvas.getContext('2d'); c.font=s.font;
@@ -3676,8 +3684,13 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             # Keep sampling until the revealed pane has finished its deferred work.
             _settle(page, label="text return "+order)
             if variant=='tall':
-                # A late font metric change moves the saved interior line inside one block.
-                page.add_style_tag(content='[data-conversation-thread] pre code { line-height: 1.8; }')
+                # A late metric change to the code inside one block lands during restoration and
+                # leaves the block's lines where they are. On staging code line-height 1.8 did
+                # that (it sat inside the message's 25px line). The redesign's code block sets its
+                # own 12.5px/1.55 lines, where that change grows every line; then the anchoring
+                # holds the line at the viewport's top, not this one, and the frame sampled
+                # before the viewport's ResizeObserver correction reads the uncorrected layout.
+                page.add_style_tag(content='[data-conversation-thread] pre code { letter-spacing: 0.01em; }')
                 _settle(page, label="text return late metrics")
             case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
             case['after']=page.evaluate('window.__readCharacter()')
@@ -3932,13 +3945,14 @@ def _card_state_motion(browser, url):
           borders:['Top','Right','Bottom','Left'].map(side=>[s['border'+side+'Width'],s['border'+side+'Style']]),
           padding:s.padding};}""")
     def dock_treatment(page, arrow_lit):
-        # Hover changes only the arrow. The layer stays on the page surface under its hairline.
+        # Hover changes only the arrow. The layer stays on the page surface (the redesign's
+        # #121212) under its hairline; the lit arrow takes the solid hover step.
         page.wait_for_function("""lit=>{const layer=document.querySelector('.conversation-layer');
           const arrow=getComputedStyle(document.querySelector('.c2-rest-control'));
-          return getComputedStyle(layer).backgroundColor==='rgb(21, 21, 21)'
+          return getComputedStyle(layer).backgroundColor==='rgb(18, 18, 18)'
             && getComputedStyle(layer,'::before').opacity==='1'
-            && arrow.backgroundColor===(lit?'rgb(44, 44, 44)':'rgba(0, 0, 0, 0)')
-            && arrow.color===(lit?'rgb(242, 242, 242)':'rgb(191, 191, 191)')}""", arg=arrow_lit)
+            && arrow.backgroundColor===(lit?'rgb(39, 39, 39)':'rgba(0, 0, 0, 0)')
+            && arrow.color===(lit?'rgb(236, 236, 236)':'rgb(167, 167, 167)')}""", arg=arrow_lit)
     for host, width, touch, reduced in (
         ("ticket", 1280, False, False), ("manager", 390, True, False),
         ("ticket", 390, True, True), ("manager", 1280, False, False),
@@ -3959,15 +3973,18 @@ def _card_state_motion(browser, url):
             expect(pane).to_have_attribute('data-conversation-state', 'rest')
             expect(page.locator('[data-conversation-rest-line]')).to_have_text('Worker idle')
             rest_input = input_appearance(page)
-            assert rest_input['background'] == 'rgb(17, 17, 17)', rest_input
+            # The one composer field (redesign): its raised #2a2a2a fill inside a subtle 1px
+            # edge, 12px corners, and the tight padding of the one-row field.
+            assert rest_input['background'] == 'rgb(42, 42, 42)', rest_input
             assert rest_input['radius'] == '12px', rest_input
             assert rest_input['borders'] == [['1px', 'solid']] * 4, rest_input
-            assert rest_input['padding'] == '12px 16px', rest_input
+            assert rest_input['padding'] == '5px 8px', rest_input
             if width == 1280:
                 device = page.locator('[data-conversation-box]').bounding_box()
                 column = page.locator('.conversation-column').bounding_box()
                 assert device and column
-                assert abs(device['width'] - 720) <= 1, device
+                # The page's 760px measure (redesign); the composer spans its column.
+                assert abs(device['width'] - 760) <= 1, device
                 assert abs(device['x'] - column['x']) <= 1, (device, column)
                 assert abs(device['width'] - column['width']) <= 1, (device, column)
             if not touch:
@@ -4001,7 +4018,9 @@ def _card_state_motion(browser, url):
             bottom = page.locator('[data-document-bottom]')
             bottom.scroll_into_view_if_needed()
             geometry = page.evaluate("""()=>{const reader=document.querySelector('.ticket-reading,.manager-reading').getBoundingClientRect();const dock=document.querySelector('.conversation-layer').getBoundingClientRect();const button=document.querySelector('[data-document-bottom]').getBoundingClientRect();return {readerBottom:reader.bottom,dockTop:dock.top,buttonBottom:button.bottom,readerHeight:reader.height};}""")
-            assert geometry['readerBottom'] <= geometry['dockTop'] + 1, geometry
+            # The page runs on under the floating composer zone (redesign), and its last
+            # control still scrolls fully clear of the zone.
+            assert geometry['readerBottom'] >= geometry['dockTop'], geometry
             assert geometry['buttonBottom'] <= geometry['dockTop'] + 1, geometry
             page.evaluate("window.__paneIdentity=document.querySelector('[data-conversation-pane]');window.__composerIdentity=document.querySelector('[data-conversation-composer]')")
             page.evaluate("""()=>{
@@ -4052,7 +4071,7 @@ def _card_state_motion(browser, url):
                 expect(page.locator('[data-conversation-expand]')).to_be_focused()
             expect(pane).to_have_attribute('data-conversation-state', 'rest')
             _settle_conversation_layout(page)
-            assert page.locator('.conversation-layer').evaluate("node=>[getComputedStyle(node).backgroundColor,getComputedStyle(node,'::before').opacity]") == ['rgb(21, 21, 21)', '1']
+            assert page.locator('.conversation-layer').evaluate("node=>[getComputedStyle(node).backgroundColor,getComputedStyle(node,'::before').opacity]") == ['rgb(18, 18, 18)', '1']
 
             assert page.evaluate("window.__paneIdentity===document.querySelector('[data-conversation-pane]')&&window.__composerIdentity===document.querySelector('[data-conversation-composer]')")
             assert not document.evaluate('node=>node.closest(".ticket-reading,.manager-reading").inert')

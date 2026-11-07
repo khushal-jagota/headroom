@@ -25,12 +25,13 @@ RECAP_SEED = "Recap as it stood before anyone started typing."
 FIRST_HALF = " Composed the first half,"
 SECOND_HALF = " and the second half after the change."
 
-# Find the surface the composer scrolls inside, centre the composer in it, and keep both
-# for later: the same editor node must still hold the caret at the end, and its surface
-# must still be sitting at the same place.
+# Find the surface the composer scrolls inside, bring the composer to its top, and keep
+# both for later: the same editor node must still hold the caret at the end, and its
+# surface must still be sitting at the same place. The page header sits tight above the
+# recap, so centring the recap would not scroll; bringing it to the top always does.
 CAPTURE_COMPOSER = """selector => {
     const editor = document.querySelector(selector);
-    editor.scrollIntoView({ block: "center" });
+    editor.scrollIntoView({ block: "start" });
     let node = editor.parentElement;
     while (node) {
         const style = getComputedStyle(node);
