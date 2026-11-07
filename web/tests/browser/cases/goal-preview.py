@@ -1398,7 +1398,9 @@ def centered_checklist_row(row):
                 background:getComputedStyle(surface).backgroundColor};
     }""")
     assert geometry["hovered"], geometry
-    assert geometry["background"] != "rgba(0, 0, 0, 0)", geometry
+    # The redesign marks the open step by its own note under its name, with no fill behind
+    # the row on the card's surface.
+    assert geometry["background"] == "rgba(0, 0, 0, 0)", geometry
     for part in ("title", "checkbox"):
         assert abs(geometry[part]["centerY"] - geometry["surface"]["centerY"]) <= 1, geometry
     return geometry
@@ -2492,7 +2494,11 @@ def native_goal_edits(browser, url):
                 mode,
                 heading_geometry,
             )
-            assert heading_geometry["alignment"] == "baseline", heading_geometry
+            # The goal's line above its title is the page eyebrow every page uses (redesign):
+            # its facts and controls centred on one line.
+            assert heading_geometry["alignment"] == "center", heading_geometry
+            tops = {round(control["top"]) for control in heading_geometry["controls"]}
+            assert max(tops) - min(tops) <= 1, heading_geometry
             assert [control["name"] for control in heading_geometry["controls"]] == [
                 "Project", "By date", "State",
             ], heading_geometry
@@ -2520,15 +2526,19 @@ def native_goal_edits(browser, url):
             geometry = rail.evaluate("""rail => {
                 const chief = rail.closest('.chief').querySelector('[data-chief-destination]');
                 const c = chief.getBoundingClientRect(), r = rail.getBoundingClientRect();
-                const firstGoal = rail.querySelector('a[data-goal-id] .row-heading');
+                const firstGoal = rail.querySelector('a[data-goal-id] .row-title');
                 const first = firstGoal.getBoundingClientRect();
                 return {containerGap:r.top-c.bottom, firstGoalInset:first.top-c.bottom,
                     railMargin:getComputedStyle(rail).marginTop,
                     viewport:innerWidth, scrollWidth:document.documentElement.scrollWidth};
             }""")
-            assert abs(geometry["containerGap"] - 8) <= 1, geometry
-            assert abs(geometry["firstGoalInset"] - 16) <= 1, geometry
-            assert geometry["railMargin"] == "8px", geometry
+            print(f"{mode} rail geometry: {geometry}", flush=True)
+            # Goals belong to their Manager's header (redesign): the goal rows stack tight under
+            # the name with no gap of their own, the first goal's name 6px under it in its 28px
+            # row.
+            assert abs(geometry["containerGap"] - 2) <= 1, geometry
+            assert abs(geometry["firstGoalInset"] - 6) <= 1, geometry
+            assert geometry["railMargin"] == "0px", geometry
             assert geometry["scrollWidth"] <= geometry["viewport"], geometry
             if output:
                 page.screenshot(path=str(output / f"{mode}-rail.png"))
