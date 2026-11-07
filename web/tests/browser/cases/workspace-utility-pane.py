@@ -2145,9 +2145,10 @@ def verify_selection_washes(page, url, fixture, evidence):
         const host=target.closest('.active-work-scroll,.settled-body,.rail-utilities');
         const group=target.closest('.manager-card');
         const item=host.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
-        const context=host.querySelector('.rail-wash--group:not(.rail-wash--leaving)');
-        return {target:rect(target.closest('.settled-row')??target),group:rect(group),item:rect(item),context:rect(context),
-          itemHidden:item.hidden,contextHidden:context.hidden,
+        // Only the open item is lit: no layer marks the Manager the item sits in (owner).
+        const context=host.querySelector('.rail-wash--group');
+        return {target:rect(target.closest('.settled-row')??target),group:rect(group),item:rect(item),
+          itemHidden:item.hidden,contextPresent:!!context,
           targetBackground:getComputedStyle(target).backgroundColor,targetOutline:getComputedStyle(target).outlineStyle,
           itemBackground:getComputedStyle(item).backgroundColor,itemOpacity:+getComputedStyle(item).opacity,
           reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -2178,10 +2179,8 @@ def verify_selection_washes(page, url, fixture, evidence):
             group = frame["group"]
             assert abs(wash["x"] - group["x"] - 4) < 1.6, frame
             assert abs(wash["width"] - group["width"] + 8) < 1.6, frame
-            assert not frame["contextHidden"], frame
-        else:
-            assert frame["contextHidden"], frame
-        assert frame["itemBackground"] == "rgb(44, 44, 44)", frame
+        assert not frame["contextPresent"], frame
+        assert frame["itemBackground"] == "rgba(255, 255, 255, 0.14)", frame
 
     def capture(name, selector, change):
         page.evaluate("selector=>window.__washCapture(selector)", selector)
@@ -2207,7 +2206,6 @@ def verify_selection_washes(page, url, fixture, evidence):
         selection_settled(selector)
         frame = sample(selector)
         aligned(frame)
-        assert all(abs(frame['context'][key] - frame['group'][key]) < 1.6 for key in ['x', 'y', 'width', 'height']), frame
         page.screenshot(path=str(evidence / f'selection-wash-rail-{width}.png'))
 
     frames = capture('within-group', '.worker-row[data-ticket-id="wash_two"]', lambda: page.locator('.worker-row[data-ticket-id="wash_two"]').evaluate('node=>node.click()'))
@@ -2218,8 +2216,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     assert all(abs(f['item']['y'] - f['target']['y']) < 1.6 for f in frames if f['ms'] >= 350), frames
     aligned(frames[-1])
     frames = capture('deepen', '[data-manager="wash_b"] .item-head', lambda: page.locator('[data-manager="wash_b"] .item-head').evaluate('node=>node.click()'))
-    context_y = [f['context']['y'] for f in frames if not f['contextHidden']]
-    assert len({round(y, 1) for y in context_y}) > 3, frames
+    assert not any(f['contextPresent'] for f in frames), frames
     assert any(f['itemOpacity'] < .95 for f in frames), frames
     page.screenshot(path=str(evidence / 'selection-wash-deepen-final.png'))
 
@@ -2253,6 +2250,12 @@ def verify_selection_washes(page, url, fixture, evidence):
     hover = page.locator('.active-work-scroll > .rail-wash--hover:not(.rail-wash--leaving)')
     expect(hover).not_to_have_attribute('hidden', '')
     row.click()
+    # The fills are see-through: a click on the hovered row lights it at once and never shows the
+    # hover fill (or a fading copy of it) under the selected one, which would flash brighter.
+    page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
+    lit = page.evaluate("""() => { const host=document.querySelector('.active-work-scroll'); const item=host.querySelector(':scope > .rail-wash--item:not(.rail-wash--leaving)');
+      return {hover:[...host.querySelectorAll(':scope > .rail-wash--hover')].filter(n=>!n.hidden).length, itemOpacity:+getComputedStyle(item).opacity, itemHidden:item.hidden}; }""")
+    assert lit == {"hover": 0, "itemOpacity": 1, "itemHidden": False}, lit
     page.mouse.move(1300, 950)
     selection_settled(selector)
     expect(hover).to_have_attribute('hidden', '')
@@ -2289,7 +2292,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     aligned(sample('[data-goal-id="wash_goal"]'))
     fixture["goals"] = []
 
-    # Ungrouped selections have one strong wash and no context wash.
+    # Ungrouped selections have the same one fill.
     page.locator('.settled-head').click()
     page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
     settled_selector = '[data-settled-item="wash_settled"] .settled-title'

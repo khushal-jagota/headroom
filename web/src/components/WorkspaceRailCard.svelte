@@ -69,7 +69,7 @@
 <style>
   /* Each Manager is a bubble: the old sidebar colour, 12px corners, 8px from the next. The fill
      is drawn under the rail's selection and hover fills (which live in the list's own layer),
-     so they show on it; the Manager you are inside is lit by the rail's context fill over it. */
+     so they show on it. */
   .manager-card-slot { position:relative; min-width:0; }
   .manager-card-slot::before { content:""; position:absolute; inset:0; z-index:-2; border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); pointer-events:none; }
   :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--rail-block-gap); }
@@ -88,8 +88,8 @@
   .item-head[data-unread="true"] .item-title { color:var(--rail-tone-title-bright); }
   .identity:hover .item-title, .item-head[aria-current="page"] .item-title { color:var(--rail-tone-title-bright); }
   /* A Manager's name is bright under staging's condition alone: an unread message for you, the
-     pointer on its header, or its own page open. Being inside it (one of its items open) is
-     marked by the rail's context mark, not by brightness. */
+     pointer on its header, or its own page open. Being inside it (one of its items open) has
+     no mark of its own: only the open item is lit (owner). */
   .item-head :global(.stage-mark--current-running),
   .bucket[data-tone="quiet"] :global(.stage-mark--current-running) { border-color:var(--border-color); border-top-color:var(--tone-tertiary); border-right-color:var(--tone-tertiary); }
   .bucket :global(.worker-row:focus-visible) { outline:none; }

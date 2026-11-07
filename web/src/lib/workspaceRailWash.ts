@@ -1,18 +1,18 @@
 /** Rail decoration only. Selection and interaction remain owned by the existing controls. */
 type Box = { left: number; top: number; width: number; height: number; radius?: string };
 type Layer = { node: HTMLDivElement; box: string; animation: Animation | null; fade: Animation | null; arrival: number };
-type Host = { node: HTMLElement; origin: HTMLDivElement; group: Layer; item: Layer; hover: Layer; focus: Layer };
-type Target = { node: HTMLElement; host: Host; group: HTMLElement | null; itemBox: Box; groupBox: Box | null };
+type Host = { node: HTMLElement; origin: HTMLDivElement; item: Layer; hover: Layer; focus: Layer };
+// `group` is the Manager block the row sits in: moving within one block glides the fill.
+type Target = { node: HTMLElement; host: Host; group: HTMLElement | null; itemBox: Box };
 const properties = ['left', 'top', 'width', 'height'] as const;
 const targets = '.item-head, .worker-row, .goal, .settled-title, .utility';
 
 export function workspaceRailWash(root: HTMLElement) {
   const hosts = new Map<HTMLElement, Host>();
-  const ghosts = new Map<HTMLElement, { target: HTMLElement; group: boolean; animation: Animation }>();
+  const ghosts = new Map<HTMLElement, { target: HTMLElement; animation: Animation }>();
   const media = matchMedia('(prefers-reduced-motion: reduce)');
   let current: Target | null = null;
   let hovered: HTMLElement | null = null;
-  let hoverHeld: { node: HTMLElement; until: number } | null = null;
   let frame = 0;
   let followUntil = 0;
   let disposed = false;
@@ -44,13 +44,13 @@ export function workspaceRailWash(root: HTMLElement) {
   }
   function discover() {
     for (const node of root.querySelectorAll<HTMLElement>('.active-work-scroll, .settled-body, .rail-utilities')) {
-      if (!hosts.has(node)) { hosts.set(node, {node, origin: originOf(node), group: layer(node,'group'), item:layer(node,'item'), hover:layer(node,'hover'), focus:layer(node,'focus')}); resize.observe(node); }
+      if (!hosts.has(node)) { hosts.set(node, {node, origin: originOf(node), item:layer(node,'item'), hover:layer(node,'hover'), focus:layer(node,'focus')}); resize.observe(node); }
     }
     for (const node of root.querySelectorAll('.manager-card, .identity, .worker-row, .goal, .settled-row')) { if (!observed.has(node)) {observed.add(node);resize.observe(node);} }
     for (const node of observed) if (!root.contains(node)) {resize.unobserve(node);observed.delete(node);}
     for (const [node,host] of hosts) if (!root.contains(node)) {
       resize.unobserve(node);
-      for (const part of [host.group,host.item,host.hover,host.focus]) {part.animation?.cancel();part.fade?.cancel();part.node.remove();}
+      for (const part of [host.item,host.hover,host.focus]) {part.animation?.cancel();part.fade?.cancel();part.node.remove();}
       host.origin.remove();
       hosts.delete(node);
     }
@@ -61,17 +61,13 @@ export function workspaceRailWash(root: HTMLElement) {
     if (!host || !root.contains(node) || !node.getClientRects().length) return null;
     const base = host.origin.getBoundingClientRect();
     const local = (rect: DOMRect): Box => ({left:rect.left-base.left,top:rect.top-base.top,width:rect.width,height:rect.height});
+    // Only the open item is lit; the Manager you are inside has no mark of its own (owner).
     const group = node.closest<HTMLElement>('.manager-card');
-    // The Manager you are inside is framed by a hairline around its whole block, reaching the
-    // outset past the block's fills so its corners stay concentric with theirs.
-    const outset = parseFloat(css('--rail-context-outset')) || 0;
-    const block = group ? local(group.getBoundingClientRect()) : null;
-    const groupBox = block ? {left:block.left-outset,top:block.top-outset,width:block.width+2*outset,height:block.height+2*outset} : null;
     // Every fill is its row's own box with the row's own radius. A Manager's header is its
     // project eyebrow and its name together: selected, hovered and focused as one block.
     const fill = node.matches('.item-head') ? node.closest<HTMLElement>('.identity') ?? node : node.closest<HTMLElement>('.settled-row') ?? node;
     const itemBox: Box = {...local(fill.getBoundingClientRect()), radius:getComputedStyle(fill).borderRadius};
-    return {node,host,group,itemBox,groupBox};
+    return {node,host,group,itemBox};
   }
   const style = (box: Box) => Object.fromEntries(properties.map(key=>[key,`${box[key]}px`]));
   function draw(part: Layer, box: Box, travel = false) {
@@ -96,7 +92,7 @@ export function workspaceRailWash(root: HTMLElement) {
     hide(part);draw(part,box);part.node.hidden=false;
     if (!media.matches) part.fade=part.node.animate([{opacity:0},{opacity:1}],{duration,easing:'ease'});
   }
-  function fadeOut(part: Layer, target: HTMLElement, group: boolean, duration: number) {
+  function fadeOut(part: Layer, target: HTMLElement, duration: number) {
     if (part.node.hidden) return;
     if (!media.matches) {
       const ghost = part.node.cloneNode(true) as HTMLElement;
@@ -104,7 +100,7 @@ export function workspaceRailWash(root: HTMLElement) {
       ghost.classList.add('rail-wash--leaving');
       part.node.after(ghost);
       const animation=ghost.animate([{opacity:getComputedStyle(part.node).opacity},{opacity:0}],{duration,easing:'ease'});
-      ghosts.set(ghost,{target,group,animation});
+      ghosts.set(ghost,{target,animation});
       animation.onfinish=()=>{ghost.remove();ghosts.delete(ghost);};
     }
     hide(part);
@@ -118,25 +114,19 @@ export function workspaceRailWash(root: HTMLElement) {
     }
     if (current?.node === next?.node && current?.host === next?.host && current?.group === next?.group) {current=next;return;}
     const prev=current;
-    if (next && hovered === next.node) {
-      hoverHeld={node:next.node,until:performance.now()+ms('--motion-slow')};hovered=null;
-    }
+    // A click on the row under the pointer: the fills are see-through, so the hover fill and the
+    // selected fill must never overlap (they would add up to a brighter flash). The hover fill
+    // goes at once and the selected fill lands on the row at once, with no fade or travel.
+    const clicked=Boolean(next && hovered === next.node);
+    if (clicked) {hovered=null;lastHover=null;hide(next!.host.hover);}
     const sameHost=prev && next && prev.host===next.host;
     const sameGroup=sameHost && prev.group && prev.group===next.group;
     const deepen=sameHost && prev.group && next.group && prev.group!==next.group;
-    if (prev && !sameGroup) {
-      fadeOut(prev.host.item,prev.node,false,ms(deepen?'--motion-wash':'--motion-base'));
-      if (!deepen) fadeOut(prev.host.group,prev.node,true,ms('--motion-base'));
-    }
+    if (prev && !sameGroup) fadeOut(prev.host.item,prev.node,ms(deepen?'--motion-wash':'--motion-base'));
     if (next) {
-      if (sameGroup) draw(next.host.item,next.itemBox,true);
+      if (clicked) {hide(next.host.item);draw(next.host.item,next.itemBox);next.host.item.node.hidden=false;}
+      else if (sameGroup) draw(next.host.item,next.itemBox,true);
       else fadeIn(next.host.item,next.itemBox,ms(deepen?'--motion-wash':'--motion-slow'));
-      if (next.groupBox) {
-        if (next.host.group.node.hidden) fadeIn(next.host.group,next.groupBox,ms(sameGroup?'--motion-base':'--motion-slow'));
-        else if (sameGroup || deepen) draw(next.host.group,next.groupBox,Boolean(deepen));
-        else fadeIn(next.host.group,next.groupBox,ms('--motion-slow'));
-        next.host.group.node.hidden=false;
-      } else if (!next.host.group.node.hidden) fadeOut(next.host.group,next.node,true,ms('--motion-base'));
     }
     current=next;
   }
@@ -145,24 +135,21 @@ export function workspaceRailWash(root: HTMLElement) {
     select(selected?geometry(selected):null);
     if (current) {
       draw(current.host.item,current.itemBox);current.host.item.node.hidden=false;
-      if (current.groupBox) draw(current.host.group,current.groupBox);
     }
     for (const [node,ghost] of ghosts) {
       const target=geometry(ghost.target);
-      const box=ghost.group?target?.groupBox:target?.itemBox;
-      if (box) Object.assign(node.style,style(box));
+      if (target) Object.assign(node.style,style(target.itemBox));
     }
-    if (hoverHeld && (media.matches || performance.now()>=hoverHeld.until)) hoverHeld=null;
-    const hoverNode=hoverHeld?.node ?? (hovered!==current?.node?hovered:null);
+    const hoverNode=hovered!==current?.node?hovered:null;
     const hover=hoverNode?geometry(hoverNode):null;
     const focusNode=root.querySelector<HTMLElement>(targets.split(', ').map(s=>`${s}:focus-visible`).join(', '));
     const focus=focusNode?geometry(focusNode):null;
     for (const host of hosts.values()) {
       if (hover?.host===host) {
-        if (lastHover && lastHover!==hoverNode && !host.hover.node.hidden) fadeOut(host.hover,lastHover,false,ms('--motion-fast'));
+        if (lastHover && lastHover!==hoverNode && !host.hover.node.hidden) fadeOut(host.hover,lastHover,ms('--motion-fast'));
         if (host.hover.node.hidden) fadeIn(host.hover,hover.itemBox,ms('--motion-fast'));
         else draw(host.hover,hover.itemBox);
-      } else if (!host.hover.node.hidden) fadeOut(host.hover,lastHover ?? host.node,false,ms('--motion-fast'));
+      } else if (!host.hover.node.hidden) fadeOut(host.hover,lastHover ?? host.node,ms('--motion-fast'));
       // The layer takes the control's own box; its outline stands the focus offset clear of it.
       if (focus?.host===host) {draw(host.focus,focus.itemBox);host.focus.node.hidden=false;} else hide(host.focus);
     }
@@ -171,7 +158,7 @@ export function workspaceRailWash(root: HTMLElement) {
   function follow() {
     frame=0;if(disposed)return;
     discover();decorate();
-    if (performance.now()<followUntil || root.hasAttribute('data-rail-motion-busy') || hoverHeld || ghosts.size) frame=requestAnimationFrame(follow);
+    if (performance.now()<followUntil || root.hasAttribute('data-rail-motion-busy') || ghosts.size) frame=requestAnimationFrame(follow);
   }
   function update() {
     followUntil=performance.now()+ms('--motion-wash');
@@ -184,13 +171,12 @@ export function workspaceRailWash(root: HTMLElement) {
     return node.closest('.identity')?.querySelector<HTMLElement>('.item-head') ?? null;
   }
   function pointer(event: PointerEvent) {
-    if(event.pointerType==='touch'){hovered=null;hoverHeld=null;}else hovered=targetAt(event.target);
+    if(event.pointerType==='touch')hovered=null;else hovered=targetAt(event.target);
     update();
   }
   function preferenceChanged() {
     if (media.matches) {
-      hoverHeld=null;
-      for (const host of hosts.values()) for (const part of [host.group,host.item,host.hover,host.focus]) {part.animation?.cancel();part.fade?.cancel();part.animation=null;part.fade=null;part.arrival=0;}
+      for (const host of hosts.values()) for (const part of [host.item,host.hover,host.focus]) {part.animation?.cancel();part.fade?.cancel();part.animation=null;part.fade=null;part.arrival=0;}
       for (const [node,ghost] of ghosts) {ghost.animation.cancel();node.remove();} ghosts.clear();
     }
     update();
@@ -210,7 +196,7 @@ export function workspaceRailWash(root: HTMLElement) {
     root.removeEventListener('pointerover',pointer);root.removeEventListener('pointerdown',pointer);root.removeEventListener('pointerleave',leave);
     root.removeEventListener('focusin',update);root.removeEventListener('focusout',update);root.removeEventListener('scroll',update,true);
     window.removeEventListener('resize',update);media.removeEventListener('change',preferenceChanged);
-    for(const host of hosts.values()){host.origin.remove();for(const part of [host.group,host.item,host.hover,host.focus]){part.animation?.cancel();part.fade?.cancel();part.node.remove();}}
+    for(const host of hosts.values()){host.origin.remove();for(const part of [host.item,host.hover,host.focus]){part.animation?.cancel();part.fade?.cancel();part.node.remove();}}
     for(const [node,ghost]of ghosts){ghost.animation.cancel();node.remove();}
   }};
 }

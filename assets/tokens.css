@@ -290,13 +290,13 @@
 
 /* Workspace selection tiers and travel. */
 :root {
-  /* Three fills, no lines. The open row is one quiet fill (14%) and the pointer's about a third
-   * of it (5%), so hover never reads as selection. The Manager you are inside is the faintest
-   * of the three, 3% over its whole block: a place, not a row, so its shape (the block) tells
-   * it from a hovered row, and over it a hovered row still steps up a clear 5%. */
+  /* Fills, no lines. In the rail the open row is the one quiet fill (14%) and the pointer's
+   * about a third of it (5%), so hover never reads as selection. The Manager you are inside
+   * gets no mark of its own (owner): only the open item is lit. The faintest fill (3%) is a
+   * page table's column wash. */
   --wash-selected: rgb(255 255 255 / 14%);
   --wash-hover: rgb(255 255 255 / 5%);
-  --wash-context: rgb(255 255 255 / 4%);
+  --wash-context: rgb(255 255 255 / 3%);
   /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
    * (a Manager's header, a goal, a Ticket, Settled) sits --rail-edge in from the column on
    * both sides; every text stands --rail-pad inside its fill, so all of it shares one left
@@ -320,37 +320,39 @@
    *   its goals, part of the header, stacked with no gap: the goal's name (14/400, line 20)
    *     over its state and date (12/400, line 16), 6px inside its fill: 48px, a larger target
    *     than staging's (291x48 against 263x52 at 1440, 247x48 against 218x52 at 768);
-   *   12px clear, then its Tickets in headed groups: a heading (12/600, line 20) 4px over its
-   *     first row; rows tight, no gap, each 13.5/400 on a 20px line 4px inside its fill (28px,
-   *     staging's row is 27.5px; a wrapped title adds 20px); 12px between groups;
-   *   32px between Manager blocks. */
-  --rail-row-height: 28px;
-  --rail-row-pad-y: 4px;
+   *   12px clear, then its Tickets in headed groups: a heading in capitals, as staging (11/600,
+   *     line 16) 2px over its first row; rows tight, no gap, each 13.5/400 on a 20px line 2px
+   *     inside its fill (24px: tighter than staging's 27.5px row, by the owner's request);
+   *     12px between groups;
+   *   8px between Manager bubbles. */
+  --rail-row-height: 24px;
+  --rail-row-pad-y: 2px;
   --rail-row-line: 20px;
   /* Baselines land on the grid too. A face sets its baseline a fixed way down its line box
    * (Inter and SF alike: 15px down a 20px line at 13.5-14px, 18px down a 24px line at 18px,
    * 12px down a 16px line and 14px down a 20px line at 12px), so each text is let down or up
    * by the pixel or two that puts its baseline on a multiple of 4. A row's 4px padding is
    * split 5/3 for the same reason, its dot moving with its words. */
-  --rail-row-pad-top: 5px;
-  --rail-row-pad-bottom: 3px;
+  --rail-row-pad-top: 2px;
+  --rail-row-pad-bottom: 2px;
   --rail-title-nudge: 2px;
   --rail-goal-title-nudge: -1px;
   --rail-goal-state-nudge: 2px;
-  --rail-heading-nudge: 2px;
+  --rail-heading-nudge: 0px;
+  --rail-heading-line: 16px;
   --rail-head-pad: 4px;
   --rail-title-line: 24px;
   --rail-goal-pad-y: 6px;
   --rail-goal-size: 14px;
   --rail-header-clear: 12px;
   --rail-group-gap: 12px;
-  --rail-heading-gap: 4px;
+  --rail-heading-gap: 2px;
   --rail-block-gap: var(--rail-bubble-gap);
   /* Bubbles (this version): the column takes the page's colour and every Manager, the Chief
    * first, is a bubble in the old sidebar colour (#1b1b1b), 12px corners, 8px from the column's
    * sides and from the next bubble, its fills 4px inside it so their 8px corners are
-   * concentric with its 12px ones. The words still stand 22px from the column's edge. The
-   * Manager you are inside is its bubble one 4% step lighter (#242424): no line. */
+   * concentric with its 12px ones. The words still stand 22px from the column's edge. No line
+   * divides the column from the page (owner: line off). */
   --rail-column: var(--surface-1);
   --rail-bubble-fill: var(--surface-rail);
   --rail-bubble-gap: 8px;
@@ -359,8 +361,6 @@
   /* Where the list meets the dock it fades into the page over this much, and its bottom
    * padding is as tall, so the last bubble always scrolls fully clear of the fade. */
   --rail-list-fade: 16px;
-  /* (c) Split's band under the Settled bubble: the 32px icon row and 8px above and below. */
-  --rail-band-height: 48px;
   /* The page list's rows (ManagerChildren) still stand 2px apart. */
   --rail-row-gap: 2px;
   /* The unread dot's column, kept on every row whether or not a dot is in it, so every
@@ -369,15 +369,12 @@
   /* The rail's label voice for the project eyebrow (and Settled's count): 12/500, quiet. */
   --rail-label-size: var(--type-small);
   --rail-label-weight: 500;
-  /* A group heading is a label to read, not a whisper: 12/600 at 64% white, a little open. */
-  --rail-heading-size: var(--type-small);
+  /* A group heading is a label to read, not a whisper: in capitals as staging (owner), 11/600
+   * at 64% white, opened 0.06em as capitals need. */
+  --rail-heading-size: 11px;
   --rail-heading-weight: 600;
-  --rail-heading-tracking: 0.01em;
+  --rail-heading-tracking: 0.06em;
   --rail-tone-heading: #a3a3a3;
-  /* The frame around the Manager you are inside reaches this far past its block's fills, so
-   * its 12px corners are concentric with their 8px ones. */
-  --rail-context-outset: 0px;
-  --rail-context-radius: var(--rail-bubble-radius);
   /* The list's edges: a short fade, always the same, so a row's words keep their true tone
    * up to the edge; and clear air under the last block when the list is scrolled to its end. */
   --rail-edge-fade: 8px;
@@ -397,12 +394,12 @@
   --rail-tone-title: var(--rail-tone-rest);
   /* A Manager's name: the largest words in the rail. */
   --type-rail-title: 18px;
-  /* 5.1:1 on a bubble, 4.6:1 on the lighter bubble of the Manager you are inside: no rail
-   * text reads under 4.5:1 at rest. */
+  /* 5.1:1 on a bubble: no rail text reads under 4.5:1 at rest. */
   --rail-tone-label: #8c8c8c;
-  /* The rail's floating surfaces (hover previews and the icon bar's tooltips): a #2a2a2a fill
-   * and a soft shadow, no ring. The fill's step over the rail and the page is its edge. */
-  --rail-float-surface: #2a2a2a;
+  /* The rail's floating surfaces (hover previews and the icon bar's tooltips): the scale's
+   * raised plane (#242424, one step under the old #2a2a2a, owner) and a soft shadow, no ring.
+   * The fill's step over the bubbles and the page is its edge. */
+  --rail-float-surface: var(--surface-raised);
   --rail-float-shadow: 0 4px 16px rgb(0 0 0 / 28%);
   /* A goal preview's header stands on a band one step lighter than the preview, as on staging. */
   --rail-preview-band: rgb(255 255 255 / 4%);
@@ -531,7 +528,3 @@
   --leading-body: 1.55;
 }
 
-
-/* The sidebar's dock options (bubbles version): the list's bottom fade where it meets a dock
- * that is not a bubble is the plain 8px edge. */
-:root[data-rail-dock="band"], :root[data-rail-dock="page"] { --rail-list-fade: 8px; }

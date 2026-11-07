@@ -525,11 +525,9 @@
   /* Bubbles. The column has no surface of its own: it takes the page's colour, so the sidebar
      and the page are one surface, and every Manager (the Chief first) is a rounded bubble in
      the old sidebar colour, 8px from the column's sides and 8px from the next. The dock
-     (Settled and the destinations) is the last grouping at the foot. A line down the column's
-     right edge is an option (data-rail-divider="on"); none by default. */
+     (Settled and the destinations) is the last bubble, at the foot. No line divides the column
+     from the page (owner). */
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:0; border-right:0; background:var(--rail-column); }
-  .approved-rail::after { content:""; display:none; position:absolute; z-index:6; top:0; right:0; bottom:0; width:var(--border-hairline); background:var(--border-color); pointer-events:none; }
-  :global(:root[data-rail-divider="on"]) .approved-rail::after { display:block; }
   .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
   /* The list's two edges fade into the page's colour: a fixed layer over the list's box, the
      same whatever is scrolled where (8px at the top; at the bottom --rail-list-fade, where the
@@ -564,32 +562,16 @@
   .resizing .rail-grip::after { background:var(--text-strong); }
   .resizing { user-select:none; cursor:col-resize; }
   .rail-status { flex:none; padding:var(--space-2) var(--rail-edge) 0; }
-  /* THE DOCK. (b) Bubble, the default: Settled and the destinations share one bubble like a
-     Manager's, 8px from the column's sides and foot, and the list fades into the page above
-     it. Its fills sit 4px inside it, concentric with its 12px corners; its words and first
-     icon stand on the rail's one text edge. */
+  /* The dock: Settled and the destinations share one bubble like a Manager's, 8px from the
+     column's sides and foot, and the list fades into the page above it. Its fills sit 4px
+     inside it, concentric with its 12px corners; its words and first icon stand on the rail's
+     one text edge. The destinations sit directly under Settled, no gap (owner). */
   .rail-dock { flex:0 1 auto; display:flex; flex-direction:column; min-height:0; max-height:var(--settled-max-height); overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:auto; scrollbar-color:auto; padding:0 calc(var(--rail-bubble-gap) - var(--rail-scrollbar-width)) var(--rail-bubble-gap); }
   .rail-dock::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
   .rail-dock-inner { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; padding:var(--rail-bubble-pad); border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); }
   .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; margin:0; border:0; padding:0; }
   .rail-dock-foot { flex:none; }
-  .rail-dock-foot :global(.rail-foot) { padding:var(--space-2) 0 0 calc(var(--rail-pad) - 9px); }
-  /* (a) Band: the dock is a full-width band of the old sidebar colour along the column's foot,
-     its top edge the only division; the list ends 8px above it. */
-  :global(:root[data-rail-dock="band"]) .rail-dock { padding-bottom:0; background:var(--rail-bubble-fill); }
-  :global(:root[data-rail-dock="band"]) .rail-dock-inner { padding:var(--space-2) var(--rail-bubble-pad); border-radius:0; background:none; }
-  /* (c) Split: Settled is the last bubble of the list (it is the settled Managers), and the
-     destinations, a toolbar, run on a full-width band of the old sidebar colour below it. */
-  :global(:root[data-rail-dock="split"]) .rail-dock { padding-bottom:0; background:linear-gradient(var(--rail-bubble-fill), var(--rail-bubble-fill)) bottom / 100% var(--rail-band-height) no-repeat; }
-  :global(:root[data-rail-dock="split"]) .rail-dock-inner { padding:0; border-radius:0; background:none; }
-  :global(:root[data-rail-dock="split"]) .settled { padding:var(--rail-bubble-pad); border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); }
-  :global(:root[data-rail-dock="split"]) .rail-dock-foot { margin-top:var(--rail-bubble-gap); }
-  :global(:root[data-rail-dock="split"]) .rail-dock-foot :global(.rail-foot) { padding:var(--space-2) 0 var(--space-2) calc(var(--rail-bubble-pad) + var(--rail-pad) - 9px); }
-  /* (d) Page: the dock stands on the page's own colour, no fill; one hairline between the list
-     and it (a divider between list sections). Made for the column line, fine without it. */
-  :global(:root[data-rail-dock="page"]) .rail-dock-inner { padding:var(--space-1) var(--rail-bubble-pad) 0; border-radius:0; background:none; }
-  :global(:root[data-rail-dock="page"]) .rail-dock { padding-bottom:var(--space-3); }
-  :global(:root[data-rail-dock="page"]) .settled { border-top:var(--border-hairline) solid var(--border-color); padding-top:var(--space-1); }
+  .rail-dock-foot :global(.rail-foot) { padding:0 0 0 calc(var(--rail-pad) - 9px); }
   /* Settled: one row in the rail's row voice, staging's 32px tall, its count a plain Small
      numeral after it. */
   .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); box-sizing:border-box; height:32px; min-height:0; padding:0 var(--rail-pad); margin-inline:0; border:0; border-radius:var(--radius-md); background:none; width:100%; font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
@@ -613,9 +595,6 @@
   @media(max-width:720px) {
     /* Phone shows the card above the bottom bar instead. */
     .rail-status { display:none; }
-    /* A phone's destinations are its bottom bar, so the dock is Settled alone: no band. */
-    :global(:root[data-rail-dock="split"]) .rail-dock { background:none; padding-bottom:var(--rail-bubble-gap); }
-    :global(:root[data-rail-dock="band"]) .rail-dock-inner { padding-bottom:var(--space-2); }
     .approved-rail-shell { grid-template-columns:1fr; }
     .rail-grip { display:none; }
     .board-workspace-shell--chief .approved-rail,

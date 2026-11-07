@@ -4856,8 +4856,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
    and goals) and every group stand 12px apart; all of it on the rail's 4px grid. */
 .workspace-ticket-bucket { display:flex; flex-direction:column; margin-top:var(--rail-group-gap); }
 .manager-card > :not(.workspace-ticket-bucket) + .workspace-ticket-bucket { margin-top:var(--rail-header-clear); }
-.workspace-ticket-bucket .bucket-label { box-sizing:border-box; display:block; min-height:var(--rail-row-line); padding:0 var(--rail-pad); margin:0 0 var(--rail-heading-gap); position:relative; top:var(--rail-heading-nudge); border:0; font-size:var(--rail-heading-size); font-weight:var(--rail-heading-weight); letter-spacing:var(--rail-heading-tracking); line-height:var(--rail-row-line); color:var(--rail-tone-heading); overflow-wrap:anywhere; }
-/* A Ticket row: 13.5/400 on a 20px line inside its 28px fill (padding 5/3, so its baseline is on the grid), on the rail's one text edge,
+.workspace-ticket-bucket .bucket-label { box-sizing:border-box; display:block; min-height:var(--rail-heading-line); padding:0 var(--rail-pad); margin:0 0 var(--rail-heading-gap); position:relative; top:var(--rail-heading-nudge); border:0; font-size:var(--rail-heading-size); font-weight:var(--rail-heading-weight); letter-spacing:var(--rail-heading-tracking); text-transform:uppercase; line-height:var(--rail-heading-line); color:var(--rail-tone-heading); overflow-wrap:anywhere; }
+/* A Ticket row: 13.5/400 on a 20px line inside its 24px fill (padding 2/2), on the rail's one text edge,
    the unread dot in a fixed column at the right. A row that needs the person is bright; every
    other row rests dim (tone only). */
 .workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:start; column-gap:0; width:100%; min-height:var(--rail-row-height); padding:var(--rail-row-pad-top) var(--rail-pad) var(--rail-row-pad-bottom); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:var(--rail-row-line); cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
@@ -5002,12 +5002,10 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* One moving decoration per scroller keeps selection distinct from the rail content. */
 .approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) { position:relative; isolation:isolate; }
 /* One quiet fill marks the open item and a fainter one follows the pointer, each on the row's
-   own box with the row's own radius. The Manager you are inside carries the faintest fill over
-   its whole block, no line, reaching --rail-context-outset past the fills so its corners stay
-   concentric with theirs. */
+   own box with the row's own radius. Nothing else is lit: the Manager you are inside has no
+   mark of its own (owner). */
 .rail-wash { position:absolute; pointer-events:none; z-index:0; border-radius:var(--radius-md); }
 .rail-wash[hidden] { display:none; }
-.rail-wash--group { background:var(--wash-context); border-radius:var(--rail-context-radius); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
 
 .rail-wash--hover { background:var(--wash-hover); }
