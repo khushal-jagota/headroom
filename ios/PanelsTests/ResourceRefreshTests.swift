@@ -72,18 +72,24 @@ import XCTest
         store.setNavigationDemand("ticket:A", selected: ViewOwner(kind: "ticket", id: "A"))
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.count }, 2)
+        // When Ticket A then leaves the stream's windows, a stream with A selected opens,
+        // so the page keeps following its record.
+        try await until { RefreshProtocol.state.withLock { $0.events.count } == 3 }
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.last?.selected }, "ticket:A")
+        try await until { store.view?.contentVersion == "8" }
+        XCTAssertNotNil(store.ticketStamp("A"))
         // An owner outside the view opens a stream for the new scope; the last view stays meanwhile.
         store.setNavigationDemand("ticket:Z", selected: ViewOwner(kind: "ticket", id: "Z"))
-        XCTAssertEqual(store.view?.contentVersion, "7")
+        XCTAssertEqual(store.view?.contentVersion, "8")
         try await until { store.view?.scopeGeneration == 2 }
         events = RefreshProtocol.state.withLock { $0.events }
-        XCTAssertEqual(events.count, 3)
+        XCTAssertEqual(events.count, 4)
         XCTAssertEqual(events.last?.generation, 2)
         XCTAssertEqual(events.last?.selected, "ticket:Z")
         // A withdrawal narrows only the next stream.
         store.withdrawNavigationDemand("ticket:Z")
         try await Task.sleep(for: .milliseconds(200))
-        XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.count }, 3)
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.count }, 4)
     }
 
     private func until(_ condition: @MainActor () -> Bool) async throws {
@@ -154,8 +160,9 @@ private struct RefreshFixture {
     }
 
     /// Stream 1: snapshot, patch, gap. Stream 2: a fresh snapshot, delayed so stream 1's
-    /// patched state can be observed. Later streams: a snapshot. Streams 2+ stay open.
-    mutating func events(_ url: URL) throws -> (chunks: [Data], delay: Double, finish: Bool) {
+    /// patched state can be observed, then a patch that drops Ticket A from the view.
+    /// Later streams: a snapshot. Streams 2+ stay open.
+    mutating func events(_ url: URL) throws -> (schedule: [(delay: Double, chunks: [Data])], finish: Bool) {
         let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "view" }!.value!
         let request = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as! [String: Any]
         let generation = request["scope_generation"] as! Int
@@ -169,20 +176,22 @@ private struct RefreshFixture {
              "content": ["records": Self.recordValues(working: working, ticketBUpdated: updated), "windows": Self.windows(windowRequests, members: members),
                          "counts": Self.counts, "review_context": [], "review_summary": ["skipped": 0, "new": 0]] as [String: Any]]
         }
-        func patch(from: String, to: String, upserts: [[String: Any]]) -> [String: Any] {
+        func patch(from: String, to: String, upserts: [[String: Any]], evictions: [[String: Any]] = [], members: [[String: Any]] = members) -> [String: Any] {
             ["event": "patch", "wire_version": 3, "projection_version": 7, "view_id": "v", "scope_generation": generation, "ordering_generation": "o",
              "coverage": Self.coverage(to), "previous_coverage": Self.coverage(from), "content_version": to, "previous_content_version": from,
-             "authority": Self.authority, "upserts": upserts, "evictions": [], "windows": Self.windows(windowRequests, members: members),
+             "authority": Self.authority, "upserts": upserts, "evictions": evictions, "windows": Self.windows(windowRequests, members: members),
              "counts": Self.counts, "review_context": [], "review_summary": ["skipped": 0, "new": 0]]
         }
         switch events.count {
         case 1:
             let changed = Self.recordValues(working: true, ticketBUpdated: 2)
-            return ([try Self.frame(snapshot("1", working: false, updated: 1)),
-                     try Self.frame(patch(from: "1", to: "2", upserts: [changed[3], changed[4]])),
-                     try Self.frame(patch(from: "5", to: "6", upserts: []))], 0, true)
-        case 2: return ([Data(": heartbeat\n\n".utf8), try Self.frame(snapshot("7", working: true, updated: 2))], 1, false)
-        default: return ([try Self.frame(snapshot("8", working: true, updated: 2))], 0, false)
+            return ([(0, [try Self.frame(snapshot("1", working: false, updated: 1)),
+                          try Self.frame(patch(from: "1", to: "2", upserts: [changed[3], changed[4]])),
+                          try Self.frame(patch(from: "5", to: "6", upserts: []))])], true)
+        case 2:
+            let evictA = try Self.frame(patch(from: "7", to: "7b", upserts: [], evictions: [["kind": "ticket", "id": "A"]], members: [["kind": "ticket", "id": "B"]]))
+            return ([(1, [Data(": heartbeat\n\n".utf8), try Self.frame(snapshot("7", working: true, updated: 2))]), (2.5, [evictA])], false)
+        default: return ([(0, [try Self.frame(snapshot("8", working: true, updated: 2))])], false)
         }
     }
 
@@ -234,12 +243,14 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
         }
         if url.path == "/api/navigation/view/events" {
             do {
-                let (chunks, delay, finish) = try Self.state.withLock { $0.paths.append(url.path); return try $0.events(url) }
+                let (schedule, finish) = try Self.state.withLock { $0.paths.append(url.path); return try $0.events(url) }
                 client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
-                DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [self] in
-                    guard !stopped.withLock({ $0 }) else { return }
-                    for chunk in chunks { client?.urlProtocol(self, didLoad: chunk) }
-                    if finish { client?.urlProtocolDidFinishLoading(self) }
+                for (index, step) in schedule.enumerated() {
+                    DispatchQueue.global().asyncAfter(deadline: .now() + step.delay) { [self] in
+                        guard !stopped.withLock({ $0 }) else { return }
+                        for chunk in step.chunks { client?.urlProtocol(self, didLoad: chunk) }
+                        if finish, index == schedule.count - 1 { client?.urlProtocolDidFinishLoading(self) }
+                    }
                 }
             } catch { client?.urlProtocol(self, didFailWithError: error) }
             return

@@ -221,7 +221,7 @@ import Observation
             viewConsumer = nil
             if Task.isCancelled { return }
             switch end {
-            case .cancelled: continue // A new scope: open its stream at once.
+            case .cancelled: continue // A new or widened scope: open its stream at once.
             case .ended(let admitted), .refused(let admitted):
                 // A stream that was current reconnects at once for its fresh snapshot.
                 if admitted { failures = 0; continue }
@@ -260,6 +260,10 @@ import Observation
                     Task { await Outbox.shared.drain(api: api) }
                 default: admit(next)
                 }
+                // A page that waited for the next stream was carried by another screen's
+                // window. Once its record leaves this stream, open one with it selected.
+                if let owner = selections.last?.owner, request.selected != owner,
+                   recordStamps[RecordKey(kind: owner.kind, id: owner.id)] == nil { return .cancelled }
             }
             return Task.isCancelled ? .cancelled : .ended(admitted: admitted)
         } catch {
