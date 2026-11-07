@@ -151,11 +151,22 @@ struct ConversationConfiguration: Decodable, Sendable {
     var heldPrompts: [HeldPrompt] = []
     let latestSequence: Int?
     let ownerReadThroughSequence: Int?
-    struct HeldPrompt: Decodable, Sendable {
+    struct HeldPrompt: Equatable, Decodable, Sendable {
         let heldPromptId: String
         let senderMessageId: String?
         let content: [ConversationBody.Piece]
+        var queueReason: String? = nil
         var text: String { content.compactMap(\.text).joined(separator: "\n") }
+        /// Why the server held this message, in the owner's words.
+        var note: String {
+            switch queueReason {
+            case "attachment": "Queued · attachments wait for the turn to end"
+            case "run_change": "Queued · a model change waits for the turn to end"
+            case "steer_refused": "Queued · could not join the running turn"
+            case "command_needs_its_own_turn": "Queued · a command needs its own turn"
+            default: "Queued"
+            }
+        }
     }
     enum CodingKeys: String, CodingKey { case backendKey, model, reasoningEffort, heldPrompts, latestSequence, ownerReadThroughSequence }
     init(from decoder: Decoder) throws {
