@@ -243,7 +243,7 @@ strong {
   /* A narrow sidebar shows no count over Review (owner): the icon's accent says reviews wait. */
   .rail-utilities .count-badge { display:none; }
 }
-.utility-label { position:absolute; bottom:calc(100% + var(--space-2)); left:50%; z-index:6; padding:2px var(--space-2); border:0; border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
+.utility-label { position:absolute; bottom:calc(100% + var(--space-2)); left:50%; z-index:6; padding:2px var(--space-2); border:0; border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-preview-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
 .utility:nth-child(1 of .utility) .utility-label { left:0; transform:none; }
 .utility:nth-last-child(1 of .utility) .utility-label { left:auto; right:0; transform:none; }
 .utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
@@ -5416,6 +5416,3 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* Steps and machine sections use the same sentence case as the other page bands. */
 [data-stage-fold-open] { text-transform:none; letter-spacing:normal; }
-/* A destination tooltip replaces the Settled label visually for its pointer visit.
- * Keep the button in place and in the accessibility tree, with its full hit target. */
-.rail-dock-inner:has(.rail-dock-foot :is(.utility, .focus-switch):is(:hover, :focus-visible)) .settled-head { opacity:0; }

@@ -568,8 +568,10 @@
      column's sides and foot, and the list fades into the page above it. Its fills sit 4px
      inside it, concentric with its 12px corners; its words and first icon stand on the rail's
      one text edge. The destinations sit directly under Settled, no gap (owner). */
-  .rail-dock { flex:0 1 auto; display:flex; flex-direction:column; min-height:0; max-height:var(--settled-max-height); overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:auto; scrollbar-color:auto; padding:0 calc(var(--rail-bubble-gap) - var(--rail-scrollbar-width)) var(--rail-bubble-gap); }
-  .rail-dock::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
+  .rail-dock { position:relative; z-index:2; flex:0 1 auto; display:flex; flex-direction:column; min-height:0; max-height:var(--settled-max-height); overflow:visible; padding:0 var(--rail-bubble-gap) var(--rail-bubble-gap); }
+  /* Settled already owns its bounded scrollbar. Leave its parent open so destination
+     labels can rise one header row above their icons, clear of the collapsed heading. */
+  .rail-dock :global(.utility-label) { bottom:calc(100% + var(--space-2) + 32px); }
   .rail-dock-inner { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; padding:var(--rail-bubble-pad); border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); }
   .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; margin:0; border:0; padding:0; }
   .rail-dock-foot { flex:none; }
