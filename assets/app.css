@@ -5217,10 +5217,26 @@ details:not([open]) > summary > .manager-workspace-chevron {
   left: var(--conversation-visible-left, 0px);
   right: var(--conversation-visible-right, 0px);
   bottom: var(--conversation-visible-bottom, 0px);
-  padding-top: var(--composer-fade);
-  background: linear-gradient(to bottom, transparent, var(--surface-1) var(--composer-fade));
+  padding-top: var(--space-3);
+  background: var(--surface-1);
   pointer-events: none;
 }
+/* Version with the line (as staging): the zone is opaque from its top, and a hairline across the
+ * pane marks where the page ends and the zone begins, so content scrolls cleanly up to the line
+ * instead of fading out under the status line. The line fades out as the conversation opens and
+ * back in on return (--conversation-dock-line). */
+:is(.manager-page, .ticket-page) > .conversation-layer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--border-hairline);
+  background: var(--border-color);
+  opacity: var(--conversation-dock-line, 1);
+  pointer-events: none;
+}
+[data-conversation-dock-state="opened"] > .conversation-layer::after { opacity: 0; }
 :is(.manager-page, .ticket-page) > .conversation-layer > .conversation-column { pointer-events: auto; }
 /* Anything scrolled into view (a focused row, a found word) stops clear of the zone, and the
  * page keeps room under its last block to scroll fully clear of it: the zone's own height (the
