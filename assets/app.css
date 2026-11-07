@@ -240,7 +240,8 @@ strong {
 @container rail-foot (max-width: 237px) {
   .rail-foot .rail-utilities { margin-left:-1px; }
   .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:0 1 32px; padding:0; }
-  .rail-utilities .count-badge { position:absolute; top:-3px; right:-3px; min-width:18px; height:18px; padding:0 5px; background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-rail); font-weight:var(--weight-needs-you); }
+  /* A narrow sidebar shows no count over Review (owner): the icon's accent says reviews wait. */
+  .rail-utilities .count-badge { display:none; }
 }
 .utility-label { position:absolute; bottom:calc(100% + var(--space-2)); left:50%; z-index:6; padding:2px var(--space-2); border:0; border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
 .utility:nth-child(1 of .utility) .utility-label { left:0; transform:none; }
@@ -253,11 +254,13 @@ strong {
 .focus-switch { position:relative; flex:none; display:grid; place-items:center; width:44px; height:32px; margin:0 0 0 auto; padding:0; border:0; border-radius:var(--radius-md); background:none; cursor:pointer; }
 .focus-switch-track { position:relative; display:block; width:34px; height:20px; border-radius:var(--radius-pill); background:var(--surface-input); box-shadow:inset 0 0 0 1px rgb(255 255 255 / 8%); transition:background var(--motion-fast) var(--motion-ease); }
 .focus-switch-knob { position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%; background:var(--tone-secondary); transition:transform var(--motion-base) var(--motion-ease), background var(--motion-fast) var(--motion-ease); }
+/* It answers the pointer as the icons do (the hover fill) and names itself in the same centred
+   tooltip over it. */
+.focus-switch:hover { background:var(--wash-hover); }
 .focus-switch:hover .focus-switch-knob { background:var(--tone-strong); }
 .focus-switch[aria-checked="true"] .focus-switch-track { background:color-mix(in srgb, var(--accent-bright) 28%, var(--surface-input)); }
 .focus-switch[aria-checked="true"] .focus-switch-knob { transform:translateX(14px); background:var(--accent-bright); }
 .focus-switch:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
-.focus-switch .utility-label { left:auto; right:0; transform:none; }
 .focus-switch:hover .utility-label, .focus-switch:focus-visible .utility-label { opacity:1; }
 @media (prefers-reduced-motion:reduce) { .focus-switch-knob, .focus-switch-track { transition:none; } }
 @keyframes shell-panel-in { from { opacity:0; transform:translateY(var(--space-2)); } to { opacity:1; transform:none; } }

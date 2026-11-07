@@ -201,7 +201,7 @@
     <!-- Focus (owner): the sidebar shows only what needs you while it is on. -->
     <button type="button" class="focus-switch" role="switch" aria-checked={railFocus.on} aria-label="Focus" onclick={() => setRailFocus(!railFocus.on)}>
       <span class="focus-switch-track" aria-hidden="true"><span class="focus-switch-knob"></span></span>
-      <span class="utility-label">{railFocus.on ? "Focus on: only what needs you" : "Focus"}</span>
+      <span class="utility-label">Focus</span>
     </button>
   </div>
 {/snippet}
