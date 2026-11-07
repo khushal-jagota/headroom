@@ -223,7 +223,7 @@
           {/snippet}
           {#snippet goalHeading()}
             {#if soleGoal}<GoalHeader goal={soleGoal}>
-              {#snippet title()}{@render managerTitle()}<ConversationSignalMark signal={item.conversation_signal} conversationId={item.conversation_id}/>{/snippet}
+              {#snippet title()}{@render managerTitle()}<ConversationSignalMark signal={item.conversation_signal && {...item.conversation_signal, working:false}} conversationId={item.conversation_id}/>{/snippet}
               {#snippet mark()}<span class="goal-head-actions">{@render settleButton()}<RequestRecapAction kind="manager" id={item.id} bind:note={recapNote} noteInline={false} /></span>{/snippet}
             </GoalHeader>{/if}
           {/snippet}

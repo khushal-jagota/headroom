@@ -356,7 +356,7 @@
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
               /></h1>
-              <span class="ticket-title-mark"><MachineActivityMark locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} /></span>
+              <span class="ticket-title-mark"><MachineActivityMark working={false} locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} /></span>
             </div>
             <RecapSlot>
             {#snippet children()}

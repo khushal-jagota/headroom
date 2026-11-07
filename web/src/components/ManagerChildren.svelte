@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { ManagerPrincipal, ManagerChildFilter } from "../lib/types";
   import ManagerChildrenSection from "./ManagerChildrenSection.svelte";
-  let { principal, publication, onHover = undefined, onLeave = () => undefined }: {
+  let { principal, publication, title = undefined, onHover = undefined, onLeave = () => undefined }: {
     principal: ManagerPrincipal;
+    title?: string;
     publication?: import("../lib/navigation/publication").NavigationPublication;
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave?: () => void;
@@ -12,6 +13,7 @@
 </script>
 
 <section class="manager-children" aria-label="Workers" data-manager-children={scope}>
+  {#if title}<h2 class="manager-children-title">{title}</h2>{/if}
   {#key scope}
     {#each sections as filter}
       <ManagerChildrenSection {principal} {publication} {filter} {onHover} {onLeave} />
@@ -28,6 +30,9 @@
      you; dim otherwise. Hover and the open row are the sidebar's fills. */
   .manager-children { box-sizing:border-box; padding:0 var(--space-2) var(--space-2); border-radius:var(--rail-bubble-radius); background:var(--surface-rail); }
   .manager-children :global(.manager-workspace-status) { margin-top:var(--space-3); }
+  /* The card's own title, set and placed as a goal card's: 15/600, 20px from the card's top and
+     left (the card's 8px plus a row's 12px). */
+  .manager-children-title { margin:0; padding:calc(var(--page-card-pad) - 0px) var(--space-3) var(--space-1); font-size:var(--type-page-section); font-weight:var(--weight-page-section); line-height:20px; letter-spacing:0; color:var(--tone-primary); }
   .manager-children :global(.manager-workspace-status > summary) { display:flex; align-items:center; gap:var(--space-3); box-sizing:border-box; min-height:28px; padding:0 var(--space-3); margin:0; font-family:var(--font-ui); font-size:var(--rail-heading-size); font-weight:var(--rail-heading-weight); letter-spacing:var(--rail-heading-tracking); text-transform:uppercase; line-height:16px; border:0; border-radius:var(--radius-md); background:none; color:var(--rail-tone-heading); cursor:pointer; list-style:none; transition:color var(--motion-fast) var(--motion-ease); }
   .manager-children :global(.manager-workspace-status > summary::-webkit-details-marker) { display:none; }
   .manager-children :global(.manager-workspace-status > summary:hover) { background:var(--wash-hover); color:var(--tone-strong); }

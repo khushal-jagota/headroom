@@ -40,7 +40,8 @@
   </div>
   <h1 class="manager-workspace-title">
     {@render title()}
-    <ConversationSignalMark {signal} {conversationId} class="manager-workspace-title-mark" />
+    <!-- The title shows the unread dot, never the working spinner: the status line says Working. -->
+    <ConversationSignalMark signal={signal && {...signal, working:false}} {conversationId} class="manager-workspace-title-mark" />
   </h1>
   {/if}
   {#if recap !== undefined && onSaveRecap}
