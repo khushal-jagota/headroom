@@ -4,6 +4,7 @@
   import CeilingPicker from "./CeilingPicker.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import ErrorLine from "./ErrorLine.svelte";
+  import ComposerField from "./conversation/ComposerField.svelte";
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
@@ -125,7 +126,7 @@
     <!-- The return form stands where the action row was; Cancel or Escape puts the row back. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="return-note" onkeydown={(event) => { if (event.key === "Escape") { event.preventDefault(); void cancelReturn(); } }}>
-      <label>What needs changing<textarea data-revision-note bind:value={note} placeholder="What to do differently" disabled={busy || resolved}></textarea></label>
+      <label>What needs changing<ComposerField bind:value={note} placeholder="What to do differently" disabled={busy || resolved} inputAttributes={{ "data-revision-note": "" }} /></label>
       <div class="actions return-actions"><Button variant="ghost" onclick={() => void cancelReturn()}>Cancel</Button><Button variant="primary" data-revision-send disabled={busy || resolved || !note.trim()} onclick={() => void sendBack(note.trim())}>Send it back</Button></div>
     </div>
   {:else}
@@ -177,9 +178,8 @@
   .return-unavailable { color:var(--tone-tertiary); font-size:var(--type-small); margin:var(--space-2) 0 0; }
   .return-note { margin-top:var(--space-5); }
   label { display:block; font-size:var(--type-small); color:var(--tone-tertiary); }
-  /* The return form's field: the recessed fill reads against the card on its own, so no edge. */
-  textarea { display:block; margin-top:var(--space-2); width:100%; min-height:90px; padding:var(--space-3); background:var(--surface-recessed); color:var(--tone-primary); border:0; border-radius:var(--radius-md); font:inherit; font-size:var(--type-body); }
-  textarea:focus { outline:var(--focus-width) solid var(--focus-ring); outline-offset:0; }
+  /* The return form's field is the composer's (ComposerField), under its label. */
+  .return-note :global(.composer-field) { margin-top:var(--space-2); }
   .return-actions { margin-top:var(--space-3); }
   /* The line for the Worker comes after the proposal; the actions follow it closely. */
   .revision { margin-top:var(--space-5); }
