@@ -2482,7 +2482,9 @@ def native_goal_edits(browser, url):
                     alignment:getComputedStyle(context).alignItems,
                     controls:[...context.querySelectorAll('input,select')].map(control=>{
                         const c=control.getBoundingClientRect();
-                        const sizer=[...control.parentElement.querySelectorAll('.control-size,.deadline-label')]
+                        const labels=control.parentElement.querySelectorAll(
+                            '.control-size,.deadline-label');
+                        const sizer=[...labels]
                             .find(node=>node.getClientRects().length>0);
                         const size=sizer.getBoundingClientRect();
                         return {name:control.getAttribute('aria-label'),width:c.width,
