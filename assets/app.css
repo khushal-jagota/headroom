@@ -4936,7 +4936,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; align-self:start; height:var(--rail-row-line); }
 .workspace-ticket-bucket:is([data-bucket-key="awaiting_approval"], [data-bucket-key="awaiting_answer"], [data-bucket-key="errored"]) .worker-row,
-.workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--rail-tone-bright); }
+.workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--rail-tone-attention); }
 .workspace-ticket-bucket .worker-row:is(:hover, [aria-current="page"]) { color:var(--rail-tone-bright); }
 .workspace-ticket-bucket .worker-row:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 

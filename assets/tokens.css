@@ -412,6 +412,8 @@
   --rail-tone-bright: #ececec;
   --rail-tone-rest: #949494; /* round 16: a shade lighter, so a dim Manager name reads as calm, not disabled */
   --rail-tone-title-bright: var(--rail-tone-bright);
+  /* A row that needs you (waits on your approval or answer, errored, or has a message for you). */
+  --rail-tone-attention: var(--rail-tone-bright);
   --rail-tone-title: var(--rail-tone-rest);
   /* A Manager's name: the largest words in the rail. */
   --type-rail-title: 18px;
@@ -430,9 +432,12 @@
    * (owner: darker, by the scale): the in-between step (#202020), and a goal preview's header
    * band one solid step above it (#242424), not a white layer. The icon bar's tooltips stay on
    * the raised plane: they open over the dock's bubble, which shares the in-between's range. */
-  --rail-preview-surface: var(--surface-step);
-  --rail-preview-well: #161616;
-  --rail-preview-band: var(--surface-raised);
+  /* Owner: previews a step lighter than the sidebar, and a goal preview in two tones, read washed
+   * out. A preview is the sidebar's own colour (#1b1b1b), one tone throughout; its recap field
+   * is recessed to the page's colour (#121212). */
+  --rail-preview-surface: var(--surface-rail);
+  --rail-preview-well: var(--surface-1);
+  --rail-preview-band: transparent;
   --rail-preview-width: 340px;
   --rail-preview-pad: 16px;
   --rail-preview-recap-size: 13px;
@@ -558,3 +563,10 @@
   --leading-body: 1.55;
 }
 
+/* Owner's variant to compare (?options=1, "Step up"): a Manager's name rests a step up from the
+ * dim level (#c2c2c2), and a row that needs you stands at that same step, never above its
+ * Manager's name. A Manager that needs you, and any hovered or open item, is full white. */
+:root[data-rail-tones="stepup"] {
+  --rail-tone-title: #c2c2c2;
+  --rail-tone-attention: #c2c2c2;
+}

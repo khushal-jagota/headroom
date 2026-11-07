@@ -43,7 +43,7 @@
   .manager-children :global(.ticket-row:hover) { background:var(--wash-hover); color:var(--tone-strong); }
   .manager-children :global(.ticket-row:focus-visible) { color:var(--tone-strong); }
   .manager-children :global(.manager-workspace-status:is([data-workspace-group="awaiting_approval"], [data-workspace-group="awaiting_answer"], [data-workspace-group="errored"]) .ticket-row),
-  .manager-children :global(.ticket-row[data-unread="true"]) { color:var(--rail-tone-bright); }
+  .manager-children :global(.ticket-row[data-unread="true"]) { color:var(--rail-tone-attention); }
   .manager-children :global(.ticket-row-title) { flex:1; min-width:0; display:block; overflow:visible; white-space:normal; overflow-wrap:anywhere; line-height:inherit; line-clamp:unset; -webkit-line-clamp:unset; -webkit-box-orient:initial; }
   .manager-children :global(.stage-mark) { width:7px; height:7px; }
   .manager-children :global(a:focus-visible), .manager-children :global(button:focus-visible), .manager-children :global(summary:focus-visible) { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
