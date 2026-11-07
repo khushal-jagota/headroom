@@ -44,8 +44,8 @@ import XCTest
 
     /// Risk: the phone follows the events stream instead of reading after each change.
     /// Patches must apply in order without a read, a gap must open a fresh stream rather
-    /// than guess, a new scope must open its own stream, and a record's reload identity
-    /// must move only with that record.
+    /// than guess, a new scope must open its own stream unless the stream already carries
+    /// it, and a record's reload identity must move only with that record.
     func testViewStreamAppliesPatchesResnapshotsAfterGapAndFollowsScope() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture() }
         let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
@@ -68,15 +68,20 @@ import XCTest
         XCTAssertEqual(events.map(\.generation), [0, 0])
         XCTAssertFalse(RefreshProtocol.state.withLock { $0.paths.contains("/api/navigation/view/snapshot") })
 
-        // A detail screen's owner opens a stream for the new scope; the last view stays meanwhile.
+        // A Ticket the stream already carries waits for the next stream: no read in front of its page's own.
         store.setNavigationDemand("ticket:A", selected: ViewOwner(kind: "ticket", id: "A"))
-        try await until { store.view?.scopeGeneration == 1 }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.count }, 2)
+        // An owner outside the view opens a stream for the new scope; the last view stays meanwhile.
+        store.setNavigationDemand("ticket:Z", selected: ViewOwner(kind: "ticket", id: "Z"))
+        XCTAssertEqual(store.view?.contentVersion, "7")
+        try await until { store.view?.scopeGeneration == 2 }
         events = RefreshProtocol.state.withLock { $0.events }
         XCTAssertEqual(events.count, 3)
-        XCTAssertEqual(events.last?.generation, 1)
-        XCTAssertEqual(events.last?.selected, "ticket:A")
+        XCTAssertEqual(events.last?.generation, 2)
+        XCTAssertEqual(events.last?.selected, "ticket:Z")
         // A withdrawal narrows only the next stream.
-        store.withdrawNavigationDemand("ticket:A")
+        store.withdrawNavigationDemand("ticket:Z")
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.count }, 3)
     }

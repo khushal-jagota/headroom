@@ -35,6 +35,8 @@ import Observation
     private var selections: [(name: String, owner: ViewOwner)] = []
     private var running = false
     private var viewConsumer: Task<ViewStreamEnd, Never>?
+    /// The scope the running stream follows, which may be wider than `viewRequest`.
+    private var streamRequest: ViewRequest?
     private var reconnectRequested = false
     private var viewReading = false
     private var viewReadsStarted = 0
@@ -109,14 +111,19 @@ import Observation
     }
 
     /// A detail screen names the one record it keys its reloads on, so the view carries
-    /// it wherever the screen was opened from. The most recent screen's owner wins.
+    /// it wherever the screen was opened from. The most recent screen's owner wins. When
+    /// the current stream already carries that record and those windows, as for a Ticket
+    /// opened from Workspace or Review, the new scope waits for the next stream, so no
+    /// view read goes in front of the page's own first read.
     func setNavigationDemand(_ name: String, selected owner: ViewOwner, windows: [ViewWindowRequest] = []) {
         let unchanged = demands[name] == windows && selections.last.map { $0.name == name && $0.owner == owner } == true
         guard !unchanged else { return }
+        let covered = connection == "Following changes" && recordStamps[RecordKey(kind: owner.kind, id: owner.id)] != nil
+            && windows.allSatisfy { streamRequest?.windows.contains($0) == true }
         demands[name] = windows
         selections.removeAll { $0.name == name }
         selections.append((name, owner))
-        updateScope(opening: true)
+        updateScope(opening: !covered)
     }
 
     func withdrawNavigationDemand(_ name: String) {
@@ -187,7 +194,7 @@ import Observation
     func run() async {
         running = true
         foregroundSession += 1
-        defer { running = false; viewConsumer = nil }
+        defer { running = false; viewConsumer = nil; streamRequest = nil }
         async let settings: () = followSettings()
         await followView()
         await settings
@@ -204,6 +211,7 @@ import Observation
             let api = client
             let request = viewRequest
             reconnectRequested = false
+            streamRequest = request
             let consumer = Task { await self.consume(request, api: api) }
             viewConsumer = consumer
             let end = await withTaskCancellationHandler { await consumer.value } onCancel: { consumer.cancel() }
