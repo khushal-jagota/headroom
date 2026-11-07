@@ -105,9 +105,10 @@ private struct ConversationSurface: View {
         }
         .task(id: "tail|\(store.baseURL)|\(model.conversationID ?? "")|\(model.lens)|\(scenePhase == .active)|\(active)") {
             guard active, scenePhase == .active, let id = model.conversationID else { return }
+            var misses = 0
             while !Task.isCancelled {
                 model.beginTail()
-                var applied = false
+                var applied = false, failed = false
                 do {
                     for try await frame in store.client.conversationTail(id, lens: model.lens) {
                         let before = configurationFacts
@@ -122,10 +123,16 @@ private struct ConversationSurface: View {
                     if Task.isCancelled { return }
                     model.error = error.localizedDescription
                     applied = false
+                    failed = true
                 }
                 if Task.isCancelled { return }
-                // A gap or an ended healthy stream reopens promptly for a fresh snapshot.
-                do { try await Task.sleep(for: applied ? .milliseconds(250) : .seconds(2)) } catch { return }
+                // A gap or an ended healthy stream reopens promptly for a fresh snapshot, and a
+                // failed connection after 2 s. A stream the server ends cleanly before its first
+                // frame waits 2, 4, 8 then 30 s, so a conversation the server cannot read does
+                // not cost it a request every 2 s.
+                misses = applied || failed ? 0 : misses + 1
+                let wait: Duration = applied ? .milliseconds(250) : failed ? .seconds(2) : .seconds(misses > 3 ? 30 : 1 << misses)
+                do { try await Task.sleep(for: wait) } catch { return }
             }
         }
         .onChange(of: LocalStore.shared.workRevision) { _, _ in
