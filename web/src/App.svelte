@@ -2,7 +2,6 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "./lib/queryCatalogue";
   import LazyRegion from "./components/LazyRegion.svelte";
-  import VpsPage from "./components/vps/VpsPage.svelte";
   import { cachedImport } from "./lib/lazyViews";
   import ErrorLine from "./components/ErrorLine.svelte";
   import { onMount, tick } from "svelte";
@@ -213,7 +212,7 @@
 
 {#snippet destinationPane()}
   {#key route.key}
-    <div class="destination-pane" data-utility-scroll class:destination-pane--document={!["review", "preview", "vps"].includes(route.name)} class:destination-pane--vps={route.name === "vps"} class:screen-enter={true}>
+    <div class="destination-pane" data-utility-scroll class:destination-pane--document={!["review", "preview"].includes(route.name)} class:screen-enter={true}>
       {#snippet selectedRoute()}
         {#if route.name === "review"}
           {#await import("./routes/ReviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
@@ -227,8 +226,6 @@
           {#await import("./routes/BackendsRoute.svelte") then view}<view.default tab={route.params.tab as UsageTab} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "preview"}
           {#await import("./routes/FilePreviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
-        {:else if route.name === "vps"}
-          <VpsPage />
         {:else}<div class="quiet-line">no such screen</div>{/if}
       {/snippet}
       {#if routeModule}<LazyRegion promise={routeModule} shape={routeShape} layout="fill">{@render selectedRoute()}</LazyRegion>{:else}{@render selectedRoute()}{/if}
