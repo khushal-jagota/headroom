@@ -25,7 +25,7 @@ struct ArtifactListView: View {
             .navigationDestination(item: $selectedArtifact) { target in
                 ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, conversationOwner: owner.kind == .ticket ? .ticket(owner.id) : .manager(owner.id))
             }
-            .task(id: "\(store.baseURL)|\(count ?? -1)") { await load(); refreshVersion += 1 }
+            .task(id: "\(store.baseURL)|\(count ?? -1)|\(store.connectionSession)") { await load(); refreshVersion += 1 }
 
     }
     private var searchContent: some View {

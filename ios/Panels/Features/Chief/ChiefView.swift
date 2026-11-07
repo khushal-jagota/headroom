@@ -46,7 +46,7 @@ struct ChiefView: View {
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
         .conversationNavigation(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", openConversationID: openConversationID, refreshError: error, retry: { await load() })
-        .task(id: store.baseURL.absoluteString) { await load() }
+        .task(id: "\(store.baseURL.absoluteString)|\(store.connectionSession)") { await load() }
         .reload(onChangeOf: store.chiefStamp()) { await load() }
         // Chief's own record is always in the view; its active children key the reloads too.
         .navigationDemand("chief", windows: [NavigationScope.children(of: .chief)])

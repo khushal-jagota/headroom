@@ -99,7 +99,7 @@ struct TicketStepPage: View {
                 }
                 if editing { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { editing = false }.disabled(busy) } }
             }
-            .task(id: store.baseURL.absoluteString) { await load() }
+            .task(id: "\(store.baseURL.absoluteString)|\(store.connectionSession)") { await load() }
             .reload(onChangeOf: store.ticketStamp(ticketID)) { await load() }
             .navigationDemand("ticket-step:\(ticketID)", selected: ViewOwner(kind: "ticket", id: ticketID))
             .navigationDestination(item: $artifact) { RouteDestination(route: $0) }

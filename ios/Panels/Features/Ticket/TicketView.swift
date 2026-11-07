@@ -47,7 +47,7 @@ struct TicketView: View {
         .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .panelsRefreshable { await load(); await loadArtifacts() }
         .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
-        .task(id: store.baseURL.absoluteString) { await load() }
+        .task(id: "\(store.baseURL.absoluteString)|\(store.connectionSession)") { await load() }
         .reload(onChangeOf: store.ticketStamp(ticketID)) { await load() }
         .navigationDemand("ticket:\(ticketID)", selected: ViewOwner(kind: "ticket", id: ticketID))
         .task(id: store.baseURL.absoluteString) { await loadArtifacts() }

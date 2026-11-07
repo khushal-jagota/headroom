@@ -93,8 +93,8 @@ struct WorkspaceView: View {
             settledError = nil; settledOpen = false; settledRequestedOffset = 0
         }
         // Settled rows keep their paged list read, only while the section is open, and
-        // read again when the view's settled count changes.
-        .task(id: "\(store.baseURL.absoluteString):\(store.counts?.settled ?? -1):\(visible):\(settledOpen)") { if visible && settledOpen { await refreshSupplementary() } }
+        // read again when the view's settled count changes or the connection recovers.
+        .task(id: "\(store.baseURL.absoluteString):\(store.counts?.settled ?? -1):\(store.connectionSession):\(visible):\(settledOpen)") { if visible && settledOpen { await refreshSupplementary() } }
         }
     }
 

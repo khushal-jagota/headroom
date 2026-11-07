@@ -22,9 +22,11 @@ import Observation
     /// The view stream's health: "Following changes" once the current stream delivered
     /// its snapshot, "Reconnecting" after a failure until the next snapshot.
     var connection = "Connecting"
-    /// Counts foreground sessions. Screens whose data the view does not carry read again
-    /// when the app returns to the foreground, not on unrelated changes.
-    private(set) var foregroundSession = 0
+    /// Counts connection sessions after the first: each return to the foreground and each
+    /// recovery from a dropped connection. Screens read their detail again at each, so a
+    /// read that failed offline is retried, and never on an unrelated change.
+    private(set) var connectionSession = 0
+    private var hasRun = false
     /// Each view record's reload identity. A detail screen reloads when its own records'
     /// stamps change, never because another record changed.
     private(set) var recordStamps: [RecordKey: String] = [:]
@@ -193,7 +195,8 @@ import Observation
     /// which closes both streams; the next foreground entry starts with fresh snapshots.
     func run() async {
         running = true
-        foregroundSession += 1
+        if hasRun { connectionSession += 1 }
+        hasRun = true
         defer { running = false; viewConsumer = nil; streamRequest = nil }
         async let settings: () = followSettings()
         await followView()
@@ -250,6 +253,7 @@ import Observation
                 case .snapshot:
                     admit(next)
                     admitted = true
+                    if connection == "Reconnecting" { connectionSession += 1 }
                     connection = "Following changes"
                     errors["Navigation"] = nil
                     Task { await self.save(next, data: data, api: api) }

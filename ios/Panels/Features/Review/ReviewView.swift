@@ -171,6 +171,7 @@ private struct ReviewProposalView: View {
     @State private var crossedThreshold = false
     @State private var leaving = false
     @State private var visible = false
+    @State private var appeared = false
     @State private var returning = false
     @State private var actionsVisible = true
     @State private var changingActions = false
@@ -250,10 +251,14 @@ private struct ReviewProposalView: View {
             .toolbar { reviewToolbar }
 
         }
-        .task(id: store.baseURL) {
+        .task(id: "\(store.baseURL)|\(store.connectionSession)") {
+            let firstAppearance = !appeared
+            appeared = true
             // A prefetched ask is ready to reveal; do not immediately dim its actions
-            // with a redundant load. A change to its Ticket's record still reloads it.
-            if decision.proposal != nil { return }
+            // with a redundant load. A change to its Ticket's record, a return to the
+            // foreground or a recovered connection still reloads it.
+            if firstAppearance, decision.proposal != nil { return }
+            guard sheet == nil, !editing, !returning, drag == 0 else { return }
             await decision.load(item: item, api: store.client)
         }
         .reload(onChangeOf: store.ticketStamp(item.ticketId)) {
