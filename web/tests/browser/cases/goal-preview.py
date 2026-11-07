@@ -2862,8 +2862,8 @@ def checklist_deadline_controls(browser, url):
                 node.dataset.pickerCalls = '0';
                 const open = node.showPicker.bind(node);
                 node.showPicker = () => {
-                    node.dataset.pickerCalls = String(Number(node.dataset.pickerCalls) + 1);
                     open();
+                    node.dataset.pickerCalls = String(Number(node.dataset.pickerCalls) + 1);
                 };
             }""")
             picker.tap() if phone else picker.click()
