@@ -149,6 +149,8 @@ struct ViewAttention: Decodable, Sendable {
 
 struct ViewConversationValue: Decodable, Sendable {
     let firstUnreadOwnerMessageAt: Double?
+    /// Moves with every event, so a new message joining an unread run moves it.
+    var latestSequence: Int?
     let ownerReadThroughSequence: Int
     let errorAcknowledgedThroughSequence: Int
     let attention: ViewAttention

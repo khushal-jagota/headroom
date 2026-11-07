@@ -96,6 +96,7 @@ struct NavigationReviewMessage: Equatable, Sendable {
     let waitingSince: Double
     let recap: String
     let ownerReadThroughSequence: Int
+    var latestSequence = 0
 }
 enum NavigationReviewCard: Equatable, Sendable {
     case ticket(id: String, title: String, waitingSince: Double, proposal: NavigationReviewProposal?, messages: [NavigationReviewMessage])
@@ -231,7 +232,7 @@ struct NavigationPresentation: Sendable {
             }
             let message = NavigationReviewMessage(conversationId: address.conversationId, addressId: addressId, addressCurrent: address.current,
                 ownerKind: address.ownerKind, ownerId: address.ownerId, title: title, waitingSince: waiting, recap: recap,
-                ownerReadThroughSequence: conversation.ownerReadThroughSequence)
+                ownerReadThroughSequence: conversation.ownerReadThroughSequence, latestSequence: conversation.latestSequence ?? 0)
             if address.ownerKind == "ticket" {
                 if reviewTickets[address.ownerId] == nil {
                     reviewTicketOrder.append(address.ownerId)

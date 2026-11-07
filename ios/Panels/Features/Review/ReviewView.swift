@@ -109,7 +109,7 @@ struct ReviewView: View {
         for item in pending.prefix(30) {
             if item.isMessage {
                 let decision = messageDecisions.decision(for: item)
-                if !decision.loaded { loads.append { await decision.load(item: item, api: api) } }
+                if !decision.isCurrent(for: item) { loads.append { await decision.load(item: item, api: api) } }
             } else {
                 let decision = decisions[item.id] ?? ReviewDecision()
                 decisions[item.id] = decision

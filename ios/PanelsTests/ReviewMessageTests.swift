@@ -25,6 +25,13 @@ import XCTest
         let marked = await decision.markRead()
         XCTAssertTrue(marked)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.last?["through_sequence"] as? Int, 66)
+        // A read-ahead card reads again when shown only if its conversation moved in the
+        // view, so a reply or Mark read never stops at a run that has since grown.
+        await decision.load(item: item(), api: api)
+        XCTAssertEqual(decision.through, 66, "Unchanged view facts read nothing")
+        var moved = item(); moved.latestSequence = 67
+        await decision.load(item: moved, api: api)
+        XCTAssertEqual(decision.through, 67)
     }
     func testRefusedReplyKeepsDraftAttachmentAndRetryBoundaryAcrossRecreation() async throws {
         let api = makeAPI()

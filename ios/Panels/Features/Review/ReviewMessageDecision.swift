@@ -58,6 +58,11 @@ extension APIClient {
     var attemptID: String?
     private var api: APIClient?
     private var item: ReviewItem?
+    /// The view facts the loaded run was read for. A card read ahead before its
+    /// conversation moved reads again; its earlier run stays on screen meanwhile.
+    private var loadedFreshness: String?
+    static func freshness(_ item: ReviewItem) -> String { "\(item.ownerReadThroughSequence)|\(item.addressCurrent)|\(item.latestSequence)" }
+    func isCurrent(for item: ReviewItem) -> Bool { loaded && loadedFreshness == Self.freshness(item) }
     var through: Int { events.last?.sequence ?? 0 }
     var attempt: PendingWork? {
         guard let api, let attemptID else { return nil }
@@ -73,12 +78,14 @@ extension APIClient {
         while loading {
             do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
         }
-        guard !loaded, !busy, let id = item.conversationId, let owner = item.owner else { return }
+        guard !isCurrent(for: item), !busy, let id = item.conversationId, let owner = item.owner else { return }
         loading = true; busy = true; defer { loading = false; busy = false }
         self.api = api; self.item = item
-        composer.conversationID = id
-        composer.restore(owner: owner, api: api, draftID: "review-message:\(id)")
-        composer.deliveryMode = "queue"
+        if !loaded {
+            composer.conversationID = id
+            composer.restore(owner: owner, api: api, draftID: "review-message:\(id)")
+            composer.deliveryMode = "queue"
+        }
         do {
             let messages = try await api.reviewMessages(id, after: item.ownerReadThroughSequence)
             try Task.checkCancellation()
@@ -100,7 +107,7 @@ extension APIClient {
                 composer.draft = message.content.compactMap(\.text).joined(separator: "\n")
                 composer.attachments = message.content.filter { $0.piece != "text" }
             }
-            loaded = true; error = nil
+            loaded = true; loadedFreshness = Self.freshness(item); error = nil
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
     func send() async -> Bool {

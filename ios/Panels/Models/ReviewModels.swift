@@ -25,6 +25,8 @@ struct ReviewItem: Identifiable, Sendable {
     var ownerReadThroughSequence = 0
     /// False when the owner has moved on to another conversation: read only.
     var addressCurrent = true
+    /// The conversation's latest event in the view; a read-ahead older than it is stale.
+    var latestSequence = 0
     var isMessage: Bool { reviewItemType == "message" }
     var id: String { isMessage ? "message:\(conversationId ?? ""):\(waitingSince)" : "\(ticketId):\(field):\(waitingSince)" }
     var owner: ConversationOwner? {

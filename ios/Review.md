@@ -38,7 +38,10 @@ threshold returns it without bounce. Skip fades the whole ask out over 120ms,
 resets its scroll position while hidden, then fades the next ask in over 200ms.
 The next asks are read ahead, three at a time: a proposal with its worker manifest,
 a message card with its unread run. The view already carries each conversation's
-read boundary and whether its address is current, so a message card needs one read.
+read boundary and whether its address is current, so a message card needs one read. A message card
+read ahead before its conversation's latest event moved in the view reads its run
+again as it is shown, with the read-ahead run on screen meanwhile; a message that
+arrives while the card is on screen stays outside the displayed run.
 The review window holds 30 cards; once every loaded card was skipped, the next
 page replaces it, and Revisit returns to the first with every skipped card. While a proposal is
 loading, its card reserves the previous card height. After approval succeeds,

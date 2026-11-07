@@ -18,6 +18,9 @@ struct ReviewMessageView: View {
     @State private var sendingPresentation = false
     @State private var outgoingAttempt: PendingWork?
     private var displayedAttempt: PendingWork? { sendingPresentation ? outgoingAttempt : decision.attempt }
+    /// The view's current facts for this card. A card read ahead before its conversation
+    /// moved reads its run again when shown, keeping the read-ahead run on screen meanwhile.
+    private var live: ReviewItem { store.review?.items.first { $0.id == item.id } ?? item }
 
     var body: some View {
         GeometryReader { geometry in
@@ -63,7 +66,7 @@ struct ReviewMessageView: View {
                     } else if decision.error == nil { ScreenLoadingView(title: "messages") }
                     if let error = decision.error {
                         Text(error).foregroundStyle(PanelsTheme.error)
-                        if !decision.loaded { Button("Try again") { Task { await decision.load(item: item, api: store.client) } } }
+                        if !decision.loaded { Button("Try again") { Task { await decision.load(item: live, api: store.client) } } }
                     }
                 }
                 .padding(.horizontal, ReviewStyle.gutter).padding(.top, PanelsTheme.Space.md).padding(.bottom, ReviewStyle.gutter)
@@ -83,8 +86,10 @@ struct ReviewMessageView: View {
                 .scrollDisabled(sendingPresentation || leaving)
         }
         .toolbar { skipToolbar }
+        // Read again only as the card is shown: a message arriving while it is on screen
+        // stays outside the displayed run and returns to Review after a reply.
         .task {
-            await decision.load(item: item, api: store.client)
+            await decision.load(item: live, api: store.client)
             if decision.accepted { finishReply() }
             else if decision.loaded, decision.events.isEmpty, decision.composer.draft.isEmpty, decision.composer.attachments.isEmpty, decision.attempt == nil { leave(resolved: true) }
         }
