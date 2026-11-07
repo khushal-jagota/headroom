@@ -23,7 +23,7 @@ Screens are assembled from a small shared kit rather than a new layout per featu
 - chips and pills that name a Project, a count, or a state;
 - a stage mark that carries Ticket and conversation state.
 
-Settings, VPS, Ideas, All goals, and Usage share the core page measure and title band. Their controls use the shared button and segmented styles. Notifications keeps native checkbox behavior with custom visuals. VPS charts use the goal cards’ surface and reading hierarchy, with labeled axes and explicit freshness states. Wide tables scroll within their column on phones; controls and details remain available.
+Settings, VPS, Ideas, All goals, and Usage share the core page measure and title band. Their controls use the shared button and segmented styles. Notifications keeps native checkbox behavior with custom visuals. VPS exists within Settings. The old `#/vps` address resolves to that same section. Its compact dashboard uses two equal columns on desktop and one on phones. Short plots retain labeled axes and explicit freshness states. Wide tables scroll within their column on phones; controls and details remain available.
 
 Some screens add layout rules in `assets/app.css`, keyed by a `data-screen` name. Most screens rely on the kit alone.
 

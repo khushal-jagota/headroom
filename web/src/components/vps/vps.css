@@ -10,12 +10,12 @@
 [data-screen="vps"] .asof { display:flex; align-items:center; gap:var(--space-2); color:var(--tone-tertiary); font-size:var(--type-small); font-variant-numeric:tabular-nums; }
 [data-screen="vps"] .asof-mark { width:var(--space-1); height:var(--space-1); flex:none; border-radius:var(--radius-pill); background:currentColor; }
 [data-screen="vps"] .asof[data-current="false"] { color:var(--chart-line-attention); }
-[data-screen="vps"] .instruments { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:var(--space-3); }
+[data-screen="vps"] .instruments { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-3); }
 [data-screen="vps"] .instrument { min-width:0; overflow:hidden; background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); --vps-line:var(--tone-secondary); }
-[data-screen="vps"] .instrument--wide { grid-column:span 2; }
+[data-screen="vps"] .instrument--wide { grid-column:auto; }
 [data-screen="vps"] .instrument[data-state="raised"] { --vps-line:var(--chart-line-attention); }
 [data-screen="vps"] .instrument[data-state="wrong"] { --vps-line:var(--chart-line-bad); }
-[data-screen="vps"] .instrument-body { display:flex; flex-direction:column; gap:var(--space-2); padding:var(--page-card-pad); }
+[data-screen="vps"] .instrument-body { display:flex; flex-direction:column; gap:var(--space-1); padding:var(--space-3) var(--space-4); }
 [data-screen="vps"] .instrument-top { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); justify-content:space-between; }
 [data-screen="vps"] .instrument-name { color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:1.5; }
 [data-screen="vps"] .instrument .pill { background:transparent; color:var(--vps-line); padding:0; font-size:var(--type-small); font-weight:var(--weight-small); }
@@ -26,9 +26,8 @@
 [data-screen="vps"] .waiting { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); color:var(--tone-tertiary); font-size:var(--type-small); line-height:1.55; font-variant-numeric:tabular-nums; }
 [data-screen="vps"] .waiting-track { flex:none; width:var(--space-7); height:var(--space-1); overflow:hidden; border-radius:var(--radius-pill); background:var(--chart-meter-track); }
 [data-screen="vps"] .waiting-fill { display:block; height:100%; min-width:var(--border-strong); border-radius:var(--radius-pill); background:var(--vps-line); }
-[data-screen="vps"] .trend { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--space-2) var(--space-3); padding:var(--space-2) var(--page-card-pad) var(--page-card-pad); }
-[data-screen="vps"] .trend-plot { min-width:0; height:calc(var(--space-7) * 3); }
-[data-screen="vps"] .instrument--wide .trend-plot { height:calc(var(--space-7) * 4); }
+[data-screen="vps"] .trend { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--space-1) var(--space-2); padding:0 var(--space-4) var(--space-3); }
+[data-screen="vps"] .trend-plot { min-width:0; height:calc(var(--space-7) + var(--space-5)); }
 [data-screen="vps"] .trend svg { display:block; width:100%; height:100%; overflow:visible; }
 [data-screen="vps"] .trend-grid { stroke:var(--chart-grid); stroke-width:var(--border-hairline); vector-effect:non-scaling-stroke; }
 [data-screen="vps"] .trend-area { fill:color-mix(in srgb,var(--vps-line) 8%,transparent); }
@@ -38,11 +37,11 @@
 [data-screen="vps"] :is(.trend-values,.trend-dates,.trend-legend) { color:var(--tone-tertiary); font-size:var(--chart-axis-size); font-weight:var(--weight-small); line-height:1; font-variant-numeric:tabular-nums; }
 [data-screen="vps"] .trend-values { display:flex; flex-direction:column; justify-content:space-between; text-align:right; }
 [data-screen="vps"] .trend-dates { display:flex; justify-content:space-between; gap:var(--space-2); }
-[data-screen="vps"] .trend-legend { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:var(--space-3); grid-column:1 / -1; margin-top:var(--space-2); }
+[data-screen="vps"] .trend-legend { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:var(--space-3); grid-column:1 / -1; margin-top:0; }
 [data-screen="vps"] .trend-legend span { display:flex; align-items:center; gap:var(--space-1); }
 [data-screen="vps"] .trend-legend i { width:var(--space-3); border-top:var(--border-strong) solid var(--vps-line); }
 [data-screen="vps"] .trend-legend i.secondary { border-top-style:dashed; border-color:var(--chart-reference); }
-[data-screen="vps"] .trend-loading { height:calc(var(--space-7) * 3); margin:0 var(--page-card-pad) var(--page-card-pad); }
+[data-screen="vps"] .trend-loading { height:calc(var(--space-7) + var(--space-5)); margin:0 var(--space-4) var(--space-3); }
 [data-screen="vps"] .section-heading { display:flex; align-items:baseline; flex-wrap:wrap; gap:var(--space-2); margin:var(--page-section-gap) 0 var(--space-3); color:var(--tone-primary); font-size:var(--type-page-section); font-weight:var(--weight-page-section); }
 [data-screen="vps"] .section-heading-count { color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); }
 [data-screen="vps"] .rows { min-width:0; }
@@ -62,10 +61,6 @@
 [data-screen="vps"] .quiet-line { padding:var(--space-3) 0; }
 [data-screen="vps"] .vps-accessible { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 @keyframes vps-shimmer { to { opacity:.5; } }
-@container (max-width:900px) {
-  [data-screen="vps"] .instruments { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  [data-screen="vps"] .instrument--wide { grid-column:span 2; }
-}
 @container (max-width:560px) {
   [data-screen="vps"] .instruments { grid-template-columns:minmax(0,1fr); }
   [data-screen="vps"] .instrument--wide { grid-column:auto; }
@@ -73,6 +68,5 @@
   [data-screen="vps"] .screen-header-meta { align-items:flex-start; }
   [data-screen="vps"] .list-row-title { flex-basis:100%; }
   [data-screen="vps"] .row-value { text-align:left; }
-  [data-screen="vps"] .trend-plot,[data-screen="vps"] .instrument--wide .trend-plot { height:calc(var(--space-7) * 4); }
 }
 @media (prefers-reduced-motion:reduce) { [data-screen="vps"] .vps-block { animation:none; } }
