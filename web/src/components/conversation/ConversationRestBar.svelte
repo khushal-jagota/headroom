@@ -30,10 +30,11 @@
 <style>
   /* Staging's status line in the page's tokens: Small print in the tertiary tone, a 32px row
      over the composer with the open arrow's 32px target at its right end, and the unread
-     message under it in Body, the secondary tone, at most three lines. */
+     message under it in Body, the secondary tone, at most three lines. It stands tight under
+     the page's line and 8px over the composer (owner: no dead space above the composer). */
   .c2-rest { display:flex; flex:none; flex-direction:column; align-items:stretch; gap:var(--space-1);
-    width:100%; min-width:0; min-height:calc(var(--conversation-target) + var(--space-2) + var(--space-3));
-    border:0; padding:var(--space-2) 0 var(--space-3); background:transparent; color:var(--tone-tertiary);
+    width:100%; min-width:0; min-height:calc(var(--conversation-target) + var(--space-2));
+    border:0; padding:0 0 var(--space-2); background:transparent; color:var(--tone-tertiary);
     text-align:left; cursor:pointer; font-family:var(--font-ui); font-size:var(--type-small); line-height:18px; font-weight:var(--weight-small); font-variant-numeric:tabular-nums; }
   .c2-rest-status { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3);
     min-width:0; min-height:var(--conversation-target); }

@@ -1776,13 +1776,12 @@ button.list-row:hover .list-row-title {
   padding: var(--space-3) var(--space-3) var(--space-2) calc(var(--composer-inset) - var(--border-hairline));
   transition: border-color var(--motion-fast) var(--motion-ease);
 }
-/* Focus is the one ring every control wears, drawn where the edge was (offset 0 from the
- * box's outer line), so the composer never shows an edge and a ring at once. */
+/* Focus, as staging (owner: the 2px accent ring was far too much): the composer's own 1px edge
+ * takes a faint blend of the accent, nothing more. The caret shows where typing goes. */
 .chat-box:focus-within {
-  border-color: transparent;
+  border-color: color-mix(in srgb, var(--accent-bright) 40%, var(--border-color));
   box-shadow: none;
-  outline: var(--focus-width) solid var(--focus-ring);
-  outline-offset: calc(var(--border-hairline) * -1);
+  outline: none;
 }
 /* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
 .chat-box.drag {
@@ -3545,6 +3544,12 @@ select {
 [data-conversation-dock-transition] > .conversation-layer .chat-panel {
   justify-content: flex-end;
 }
+/* While it moves, the composer keeps its own height: the dock starts (or ends) at its resting
+ * height, and anything the moving content lacks room for comes out of the header or the
+ * transcript above, never out of the composer, so the composer does not dip. */
+[data-conversation-dock-transition] > .conversation-layer .chat-panel > .c2-composer {
+  flex-shrink: 0;
+}
 [data-conversation-dock-state="opened"] > .ticket-reading,
 [data-conversation-dock-state="opened"] > .manager-reading {
   pointer-events: none;
@@ -5217,7 +5222,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   left: var(--conversation-visible-left, 0px);
   right: var(--conversation-visible-right, 0px);
   bottom: var(--conversation-visible-bottom, 0px);
-  padding-top: var(--space-3);
+  padding-top: var(--space-1);
   background: var(--surface-1);
   pointer-events: none;
 }
@@ -5225,6 +5230,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * pane marks where the page ends and the zone begins, so content scrolls cleanly up to the line
  * instead of fading out under the status line. The line fades out as the conversation opens and
  * back in on return (--conversation-dock-line). */
+/* The moving dock keeps the resting zone's top padding, so its resting height still holds the
+ * status line and the composer at the start and end of the move. */
+:is(.manager-page, .ticket-page)[data-conversation-dock-transition] > .conversation-layer { padding-top: var(--space-1); }
 :is(.manager-page, .ticket-page) > .conversation-layer::after {
   content: "";
   position: absolute;
