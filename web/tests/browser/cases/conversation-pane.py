@@ -1114,10 +1114,11 @@ def _run(browser, urls):
                     + str(n)
                     + ": "
                     + ("Loaded Markdown changes real content geometry. " * 3)
-                    for n in range(6)
+                    # Keep the response above the cap with either Inter or a fallback font.
+                    for n in range(12)
                 ),
             )
-            page.get_by_text("Delayed preview paragraph 5:", exact=False).wait_for()
+            page.get_by_text("Delayed preview paragraph 11:", exact=False).wait_for()
         settled(page)
         if capped_following:
             assert page.locator('.conversation-transcript-region').get_attribute('aria-busy') == 'false'
