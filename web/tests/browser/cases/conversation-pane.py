@@ -4142,8 +4142,14 @@ def _card_state_motion(browser, url):
                 held.hover()
                 page.keyboard.press('Escape')
                 _settle_conversation_layout(page)
+                expect(expand).to_be_focused()
                 dock_treatment(page, True)
                 input_box.hover()
+                # Escape returns keyboard focus to the status control. Its focus-visible
+                # treatment stays lit after the pointer leaves, until focus moves too.
+                dock_treatment(page, True)
+                input_box.focus()
+                expect(input_box).to_be_focused()
                 dock_treatment(page, False)
                 expect(pane).to_have_attribute('data-conversation-state', 'rest')
 

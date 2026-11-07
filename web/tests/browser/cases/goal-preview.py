@@ -2128,7 +2128,7 @@ def native_goal_edits(browser, url):
                 deadline = goal.get_by_label("By date", exact=True)
                 field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
                 expect(deadline).to_have_value("")
-                expect(goal.locator(".deadline-empty")).to_have_text("No deadline")
+                expect(goal.locator(".deadline-label")).to_have_text("No deadline")
                 deadline.click()
                 expect(deadline).to_be_focused()
                 deadline.press("Escape")
@@ -2289,7 +2289,7 @@ def native_goal_edits(browser, url):
                 )
                 deadline = goal.get_by_label("By date", exact=True)
                 field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
-                expect(goal.locator(".deadline-empty")).to_have_text("No deadline")
+                expect(goal.locator(".deadline-label")).to_have_text("No deadline")
                 deadline.tap()
                 expect(deadline).to_be_focused()
                 deadline.press("Escape")
@@ -2482,7 +2482,8 @@ def native_goal_edits(browser, url):
                     alignment:getComputedStyle(context).alignItems,
                     controls:[...context.querySelectorAll('input,select')].map(control=>{
                         const c=control.getBoundingClientRect();
-                        const sizer=control.parentElement.querySelector('.control-size');
+                        const sizer=[...control.parentElement.querySelectorAll('.control-size,.deadline-label')]
+                            .find(node=>node.getClientRects().length>0);
                         const size=sizer.getBoundingClientRect();
                         return {name:control.getAttribute('aria-label'),width:c.width,
                             measuredWidth:size.width,top:c.top,bottom:c.bottom,
