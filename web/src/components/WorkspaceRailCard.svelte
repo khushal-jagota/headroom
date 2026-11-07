@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { railFocus, FOCUS_HIDDEN_GROUPS } from "../lib/railFocus.svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   const navigation=navigationApplication();
   import { navigationScrollWindow } from "../lib/navigation/views/scrollWindow";
@@ -54,7 +55,7 @@
     </button>
   </div>
   {#if beforeGroups}{@render beforeGroups()}{/if}
-  {#each groups as group (group.key)}
+  {#each groups.filter(group => !(railFocus.on && FOCUS_HIDDEN_GROUPS.has(group.key))) as group (group.key)}
     <!-- Every group is named over its rows in one quiet heading (no count in the rail).
          A heading never outranks its rows: the rows that need the person are the bright ones. -->
     <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key} data-tone={["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key) ? "attention" : "quiet"}>

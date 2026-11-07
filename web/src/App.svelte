@@ -21,6 +21,9 @@
 
   import { parseShellDestination, type ShellDestination } from "./lib/shellDestination";
   import { SHELL_DESTINATIONS } from "./lib/shellDestinations";
+  import { railFocus, setRailFocus } from "./lib/railFocus.svelte";
+  // VPS lives in Settings (owner): the dock and the More sheet no longer list it; #/vps still opens it.
+  const DOCK_DESTINATIONS = SHELL_DESTINATIONS.filter(destination => destination.key !== "vps");
   import DestinationIcon from "./components/DestinationIcon.svelte";
   const navigation = provideNavigationApplication();
   let displayed = $state.raw<import("./lib/navigation/knowledge").EffectiveNavigationView | null>(null);
@@ -169,7 +172,7 @@
         {#each ["Work", "System"] as group}
           {#if group === "System"}<div class="sheet-divider"></div>{/if}
           <div class="sheet-group">{group}</div>
-          {#each SHELL_DESTINATIONS.filter(destination => destination.group === group) as destination}
+          {#each DOCK_DESTINATIONS.filter(destination => destination.group === group) as destination}
             <a class="sheet-item" href={destination.href} aria-current={selectedDestination === destination.key ? "page" : undefined}><DestinationIcon name={destination.key} />{destination.label}</a>
           {/each}
         {/each}
@@ -187,7 +190,7 @@
 {#snippet foot()}
   <div class="rail-foot" bind:this={desktopFoot}>
     <nav class="rail-utilities workspace-utility-nav" aria-label="Destinations">
-      {#each SHELL_DESTINATIONS as destination}
+      {#each DOCK_DESTINATIONS as destination}
         <a href={destination.href} class="utility" data-screen={destination.key} aria-label={destination.label} aria-current={selectedDestination === destination.key ? "page" : undefined}>
           <DestinationIcon name={destination.key} />
           {#if destination.key === "review"}<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span>{/if}
@@ -195,6 +198,11 @@
         </a>
       {/each}
     </nav>
+    <!-- Focus (owner): the sidebar shows only what needs you while it is on. -->
+    <button type="button" class="focus-switch" role="switch" aria-checked={railFocus.on} aria-label="Focus" onclick={() => setRailFocus(!railFocus.on)}>
+      <span class="focus-switch-track" aria-hidden="true"><span class="focus-switch-knob"></span></span>
+      <span class="utility-label">{railFocus.on ? "Focus on: only what needs you" : "Focus"}</span>
+    </button>
   </div>
 {/snippet}
 

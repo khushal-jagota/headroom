@@ -246,6 +246,20 @@ strong {
 .utility:nth-child(1 of .utility) .utility-label { left:0; transform:none; }
 .utility:nth-last-child(1 of .utility) .utility-label { left:auto; right:0; transform:none; }
 .utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
+/* FOCUS (owner): a switch at the end of the dock's icon row. Off, a grey knob on a dark track;
+   on, the knob slides right and both take the accent. 44x32 target, 34x20 track. */
+.rail-foot { display:flex; align-items:center; gap:var(--space-2); }
+.rail-foot .rail-utilities { flex:1 1 auto; min-width:0; }
+.focus-switch { position:relative; flex:none; display:grid; place-items:center; width:44px; height:32px; margin:0 0 0 auto; padding:0; border:0; border-radius:var(--radius-md); background:none; cursor:pointer; }
+.focus-switch-track { position:relative; display:block; width:34px; height:20px; border-radius:var(--radius-pill); background:var(--surface-input); box-shadow:inset 0 0 0 1px rgb(255 255 255 / 8%); transition:background var(--motion-fast) var(--motion-ease); }
+.focus-switch-knob { position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%; background:var(--tone-secondary); transition:transform var(--motion-base) var(--motion-ease), background var(--motion-fast) var(--motion-ease); }
+.focus-switch:hover .focus-switch-knob { background:var(--tone-strong); }
+.focus-switch[aria-checked="true"] .focus-switch-track { background:color-mix(in srgb, var(--accent-bright) 28%, var(--surface-input)); }
+.focus-switch[aria-checked="true"] .focus-switch-knob { transform:translateX(14px); background:var(--accent-bright); }
+.focus-switch:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
+.focus-switch .utility-label { left:auto; right:0; transform:none; }
+.focus-switch:hover .utility-label, .focus-switch:focus-visible .utility-label { opacity:1; }
+@media (prefers-reduced-motion:reduce) { .focus-switch-knob, .focus-switch-track { transition:none; } }
 @keyframes shell-panel-in { from { opacity:0; transform:translateY(var(--space-2)); } to { opacity:1; transform:none; } }
 .compact-bar { display:none; }
 .destination-pane { display:flex; flex-direction:column; flex:1; width:100%; height:100%; min-width:0; min-height:0; overflow:auto; }

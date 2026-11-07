@@ -1,4 +1,5 @@
 <script lang="ts">
+  import VpsPage from "../components/vps/VpsPage.svelte";
   import ConfigRoute from "./ConfigRoute.svelte";
   import NotificationsRoute from "./NotificationsRoute.svelte";
   import { nestedHref, prefixHref, type UtilityHref } from "../lib/utilityAddress";
@@ -16,10 +17,13 @@
     <nav class="settings-sections" aria-label="Settings">
       <a href={href(["config"])} aria-current={section === "config" ? "page" : undefined}>Config</a>
       <a href={href(["notifications"])} aria-current={section === "notifications" ? "page" : undefined}>Notifications</a>
+      <a href={href(["vps"])} aria-current={section === "vps" ? "page" : undefined}>VPS</a>
     </nav>
   </div>
   {#if section === "config"}<ConfigRoute {roleKind} {roleId} href={nestedHref(href, ["config"])} />
-  {:else if section === "notifications"}<NotificationsRoute />{/if}
+  {:else if section === "notifications"}<NotificationsRoute />
+  <!-- VPS lives in Settings (owner); #/vps still opens the same page on its own. -->
+  {:else if section === "vps"}<div class="settings-vps"><VpsPage /></div>{/if}
 </section>
 
 <style>
