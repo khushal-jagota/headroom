@@ -593,3 +593,68 @@ def test_workspace_migrates_only_its_previous_managed_skill_link(
     assert (exposed / "panels/SKILL.md").is_file()
     assert not (exposed / "panels-worker-personal-task").exists()
     assert (managed_skills_home(tmp_path) / "panels-worker-personal-task/SKILL.md").is_file()
+
+
+def test_skill_delete_removes_row_folder_and_dead_links_but_keeps_used_skills(
+    tmp_path: Path, database: sqlite3.Connection
+) -> None:
+    """Risk: a delete that leaves a half state, removes a Worker type's skill, or strands
+    agent-home links. No existing test covers any delete path."""
+    managed = managed_skills_home(tmp_path)
+    claude_home = tmp_path / "claude-home"
+    provision_native_backend_skills(claude_home, tmp_path)
+    (claude_home / "skills" / "own-dead-link").symlink_to(tmp_path / "elsewhere" / "gone")
+    service.write_skill_file(
+        database,
+        "probe-worker",
+        {"path": "notes/extra.md", "content": "supporting\n"},
+        database_parent=tmp_path,
+    )
+    versions = database.execute("SELECT COUNT(*) FROM managed_skill_versions").fetchone()[0]
+    assert (claude_home / "skills" / "probe-worker").is_symlink()
+
+    service.delete_skill(database, "probe-worker", database_parent=tmp_path)
+
+    with pytest.raises(PlannerError) as missing:
+        read_skill_source(database, "probe-worker")
+    assert missing.value.code is ErrorCode.not_found
+    assert not (managed / "probe-worker").exists()
+    assert database.execute("SELECT COUNT(*) FROM managed_skill_versions").fetchone()[0] == versions
+    provision_native_backend_skills(claude_home, tmp_path)
+    assert not (claude_home / "skills" / "probe-worker").is_symlink()
+    assert (claude_home / "skills" / "own-dead-link").is_symlink()
+
+    with pytest.raises(PlannerError) as used:
+        service.delete_skill(database, "panels-worker-coding", database_parent=tmp_path)
+    assert used.value.detail == {"skill_name": "panels-worker-coding", "worker_type": "coding"}
+    assert (managed / "panels-worker-coding" / "SKILL.md").is_file()
+    read_skill_source(database, "panels-worker-coding")
+
+
+@pytest.mark.parametrize(
+    "path", ("../panels-manager/SKILL.md", "/etc/x", "SKILL.md", "./SKILL.md", "", "a/../b")
+)
+def test_skill_file_write_stays_inside_the_folder_and_off_the_row_copy(
+    tmp_path: Path, database: sqlite3.Connection, path: str
+) -> None:
+    """Risk: a path that escapes the skill folder or overwrites the row's published copy."""
+    before = {p: p.read_bytes() for p in managed_skills_home(tmp_path).rglob("*") if p.is_file()}
+    with pytest.raises(PlannerError) as refused:
+        service.write_skill_file(
+            database, "panels", {"path": path, "content": "x"}, database_parent=tmp_path
+        )
+    assert refused.value.code is ErrorCode.validation
+    after = {p: p.read_bytes() for p in managed_skills_home(tmp_path).rglob("*") if p.is_file()}
+    assert after == before
+
+    written = service.write_skill_file(
+        database,
+        "panels",
+        {"path": "ticket-reclassification/SKILL.md", "content": "note\n"},
+        database_parent=tmp_path,
+    )
+    assert written == "ticket-reclassification/SKILL.md"
+    note = managed_skills_home(tmp_path) / "panels" / "ticket-reclassification" / "SKILL.md"
+    assert note.read_text(encoding="utf-8") == "note\n"
+    write_skill_home(database, tmp_path)
+    assert note.read_text(encoding="utf-8") == "note\n"

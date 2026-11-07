@@ -196,6 +196,20 @@ def test_skill_apply_sends_exact_reviewed_manifest(
     assert skill_requests[0][2]["json"] == manifest
 
 
+def test_skill_delete_and_write_file_send_one_request_each(
+    skill_requests: list[tuple[str, str, dict[str, Any]]],
+) -> None:
+    runner = CliRunner()
+    deleted = runner.invoke(main, ["skill", "delete", "custom-skill"])
+    written = runner.invoke(
+        main, ["skill", "write-file", "custom-skill", "notes/a.md"], input="# Note\n"
+    )
+    assert deleted.exit_code == written.exit_code == 0, deleted.output + written.output
+    assert skill_requests[0][:2] == ("DELETE", "/api/skills/custom-skill")
+    assert skill_requests[1][:2] == ("PUT", "/api/skills/custom-skill/files")
+    assert skill_requests[1][2]["json"] == {"path": "notes/a.md", "content": "# Note\n"}
+
+
 def test_worker_type_save_exposes_stage_and_ceiling_receipts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

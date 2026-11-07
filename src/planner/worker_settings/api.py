@@ -253,6 +253,22 @@ async def patch_skill(
     return _skill_json(skill)
 
 
+@router.delete("/skills/{skill_name}")
+async def delete_skill(skill_name: str, conn: DbConn, ctx: Ctx, config: Cfg) -> JsonDict:
+    service.delete_skill(conn, skill_name, database_parent=_database_parent(config))
+    return {"name": skill_name, "deleted": True}
+
+
+@router.put("/skills/{skill_name}/files")
+async def put_skill_file(
+    skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
+) -> JsonDict:
+    path = service.write_skill_file(
+        conn, skill_name, raw, database_parent=_database_parent(config)
+    )
+    return {"name": skill_name, "path": path}
+
+
 @router.get("/workers/chief-of-staff/settings")
 async def get_chief_settings(conn: DbConn) -> JsonDict:
     return _chief_json(service.read_chief_settings(conn))

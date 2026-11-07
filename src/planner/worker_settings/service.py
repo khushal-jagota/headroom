@@ -8,11 +8,12 @@ them. Nothing here reconciles two sources, because there is only one.
 from __future__ import annotations
 
 import re
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Final
 
 from planner.conversation.contracts import require_conversation_backend_key
@@ -20,6 +21,7 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.managed_skills import (
     SKILL_FILE_NAME,
     atomic_replace_text,
+    delete_skill_source,
     frontmatter_bounds,
     has_skill,
     read_all_skill_sources,
@@ -239,6 +241,72 @@ def save_skill(
     return _save_skill(
         conn, skill_name, payload, now=now, database_parent=database_parent, allow_create=False
     )
+
+
+def delete_skill(conn: sqlite3.Connection, skill_name: str, *, database_parent: Path | str) -> None:
+    """Remove a skill's row and its whole published folder.
+
+    The folder goes before the row commits. If the folder cannot go, the row stays, and
+    the next database open writes its file back, so the row remains the authority.
+    """
+    if conn.in_transaction:
+        raise RuntimeError("delete_skill requires a connection with no active transaction")
+    with skill_publication_lock(database_parent) as skills_home:
+        with _one_writer(conn):
+            delete_skill_source(conn, skill_name)
+            if PurePosixPath(skill_name).parts != (skill_name,) or skill_name in {".", ".."}:
+                raise PlannerError(
+                    ErrorCode.validation, "skill name is invalid", {"skill_name": skill_name}
+                )
+            folder = skills_home / skill_name
+            if folder.is_symlink() or folder.is_file():
+                folder.unlink()
+            elif folder.exists():
+                shutil.rmtree(folder)
+
+
+def write_skill_file(
+    conn: sqlite3.Connection,
+    skill_name: str,
+    payload: dict[str, Any],
+    *,
+    database_parent: Path | str,
+) -> str:
+    """Write one supporting file inside an existing skill's folder, and return its path.
+
+    The file lives only on disk: no row holds it, and republication never overwrites it.
+    The skill's own SKILL.md is the row's copy, so only the skill editor writes it.
+    """
+    if set(payload) != {"path", "content"}:
+        raise PlannerError(ErrorCode.validation, "send exactly path and content", {})
+    relative, content = payload["path"], payload["content"]
+    if not isinstance(content, str) or not content.strip():
+        raise PlannerError(ErrorCode.validation, "content must not be blank", {})
+    parts = PurePosixPath(relative).parts if isinstance(relative, str) else ()
+    if (
+        not parts
+        or relative.startswith("/")
+        or "\\" in relative
+        or any(part in {".", ".."} for part in parts)
+    ):
+        raise PlannerError(
+            ErrorCode.validation, "path must be relative and inside the skill folder", {}
+        )
+    if parts == (SKILL_FILE_NAME,):
+        raise PlannerError(
+            ErrorCode.validation, "edit SKILL.md through panels skill edit", {"path": relative}
+        )
+    with skill_publication_lock(database_parent) as skills_home:
+        read_skill_source(conn, skill_name)
+        folder = (skills_home / skill_name).resolve()
+        target = folder.joinpath(*parts)
+        resolved = target.resolve()
+        if not resolved.is_relative_to(folder) or resolved == folder / SKILL_FILE_NAME:
+            raise PlannerError(
+                ErrorCode.validation, "path must be relative and inside the skill folder", {}
+            )
+        atomic_replace_text(target, content)
+    return "/".join(parts)
 
 
 def save_worker_type_skill(

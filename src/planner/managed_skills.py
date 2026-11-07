@@ -274,6 +274,23 @@ def write_skill_source(
     )
 
 
+def delete_skill_source(conn: sqlite3.Connection, skill_name: str) -> None:
+    """Remove this skill's row, unless a Worker type still names it as its specialist.
+
+    A Worker type whose specialist skill is missing fails to load, so that skill stays.
+    Saved version history is immutable and stays too.
+    """
+    read_skill_source(conn, skill_name)
+    for row in conn.execute("SELECT worker_type, definition_json FROM worker_types"):
+        if json.loads(row[1]).get("profile", {}).get("specialist_skill") == skill_name:
+            raise PlannerError(
+                ErrorCode.validation,
+                "a Worker type uses this skill",
+                {"skill_name": skill_name, "worker_type": str(row[0])},
+            )
+    conn.execute("DELETE FROM managed_skills WHERE skill_name = ?", (skill_name,))
+
+
 def seed_packaged_skills(conn: sqlite3.Connection) -> None:
     """Put the skills this build ships in an empty table, and nothing in a populated one.
 
