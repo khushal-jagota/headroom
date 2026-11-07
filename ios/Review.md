@@ -18,7 +18,11 @@ the right. Both use rounded rectangles. Approve uses the filled accent backgroun
 ink text; Send back uses the raised surface, strong text and a hairline border.
 Both have 12pt corners. The title opens the
 ticket in Workspace; its long-press menu offers Rename. Recaps expand in place.
-Tapping the proposal edits it in place, with Done in the navigation bar. Approval
+Tapping the proposal edits it in place, with Done in the navigation bar. A tap on a
+link instead follows it. Proposal and message cards share one link route
+(`ReviewArtifacts.swift`): links resolve against the server address, a managed file
+opens the in-app viewer, and other links open in the system. Each linked file also
+shows an inline preview with Open artifact, hidden while editing. Approval
 sends the edited text together with the exact revision that was read. If the
 proposal changes during editing, Review keeps the draft and requires a reload.
 
