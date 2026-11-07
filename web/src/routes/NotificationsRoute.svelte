@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "../components/Button.svelte";
   import SkeletonRegion from "../components/SkeletonRegion.svelte";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -160,10 +161,6 @@
 </script>
 
 <section class="notifications-page" data-screen="notifications">
-  <header class="notifications-head">
-    <h1>Notifications</h1>
-  </header>
-
   <ResourceState shape="block" {...resourceStateForQueries(settings)} loadingText="Loading notifications…">
     <section class="notifications-section">
       <h2>What counts</h2>
@@ -178,17 +175,20 @@
                 data-notification-cell={key}
                 data-notification-type={item.id}
               >
-                <span>
+                <span class="notification-copy">
                   <strong>{item.label}</strong>
                   <small>{item.description}</small>
                 </span>
-                <input
-                  type="checkbox"
-                  checked={item.enabled}
-                  disabled={saving[key]}
-                  onchange={(event) =>
-                    void savePreference(subject.key, item.id, event.currentTarget.checked)}
-                />
+                <span class="notification-choice">
+                  {#if saving[key]}<span class="notification-saving" role="status">Saving…</span>{/if}
+                  <input
+                    type="checkbox"
+                    checked={item.enabled}
+                    disabled={saving[key]}
+                    onchange={(event) =>
+                      void savePreference(subject.key, item.id, event.currentTarget.checked)}
+                  />
+                </span>
               </label>
               {#if saveErrors[key]}
                 <div class="error-line">{errorMessage(saveErrors[key])}</div>
@@ -210,19 +210,18 @@
         <p>Notifications are blocked in this browser’s settings.</p>
       {:else if deviceState === "enabled"}
         <p>This device receives the notification types selected above.</p>
-        <button type="button" class="notification-action" onclick={() => void disableDevice()}>
+        <Button variant="secondary" onclick={() => void disableDevice()}>
           Disable on this device
-        </button>
+        </Button>
       {:else if deviceState !== "checking"}
         <p>Enable this device to receive selected notifications while Panels is closed.</p>
-        <button
-          type="button"
-          class="notification-action notification-action--primary"
+        <Button
+          variant="primary"
           disabled={deviceState === "working"}
           onclick={() => void enableDevice()}
         >
           {deviceState === "working" ? "Enabling…" : "Enable on this device"}
-        </button>
+        </Button>
       {/if}
       </SkeletonRegion>
       {#if deviceError}
@@ -231,3 +230,27 @@
     </section>
   </ResourceState>
 </section>
+
+<style>
+  .notifications-page { width:100%; padding:var(--page-block-gap) 0 var(--space-page-tail); }
+  .notifications-section + .notifications-section { margin-top:var(--page-section-gap); }
+  .notifications-section > h2 { margin:0 0 var(--page-head-gap); color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); }
+  .notification-subject + .notification-subject { margin-top:var(--page-block-gap); }
+  .notification-subject h3 { margin:0 0 var(--space-2); font-size:var(--type-page-section); font-weight:var(--weight-page-section); color:var(--tone-primary); }
+  .notification-option { display:flex; justify-content:space-between; align-items:center; gap:var(--space-4); padding:var(--space-3) 0; cursor:pointer; }
+  .notification-copy { min-width:0; }
+  .notification-copy strong,.notification-copy small { display:block; }
+  .notification-copy strong { color:var(--tone-primary); font-size:var(--type-body); font-weight:var(--weight-body); }
+  .notification-copy small,.notifications-section p { margin:var(--space-1) 0 0; color:var(--tone-secondary); font-size:var(--type-small); line-height:1.55; }
+  .notification-choice { display:flex; flex:none; align-items:center; gap:var(--space-2); }
+  .notification-saving { font-size:var(--type-small); color:var(--tone-tertiary); }
+  input[type="checkbox"] { appearance:none; display:grid; place-content:center; width:var(--space-5); height:var(--space-5); margin:0; border:var(--border-hairline) solid var(--tone-tertiary); border-radius:var(--radius-sm); background:transparent; color:var(--button-primary-ink); cursor:pointer; }
+  input[type="checkbox"]::before { content:""; width:var(--space-2); height:var(--space-3); border:solid currentColor; border-width:0 var(--border-strong) var(--border-strong) 0; transform:translateY(calc(-1 * var(--border-hairline))) rotate(45deg); opacity:0; }
+  input[type="checkbox"]:checked { background:var(--button-primary-fill); border-color:transparent; }
+  input[type="checkbox"]:checked::before { opacity:1; }
+  input[type="checkbox"]:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:var(--space-1); }
+  input[type="checkbox"]:disabled { opacity:.5; cursor:wait; }
+  .notifications-section :global(.button) { margin-top:var(--space-3); }
+  .error-line { margin-top:var(--space-2); color:var(--accent-error); font-size:var(--type-small); }
+  @media (forced-colors:active) { input[type="checkbox"] { appearance:auto; } input[type="checkbox"]::before { display:none; } }
+</style>

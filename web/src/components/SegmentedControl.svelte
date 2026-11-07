@@ -8,18 +8,22 @@
 
   let {
     name,
+    label,
     options,
     optionContent,
+    optionAttributes,
     value = $bindable<string | null>(null)
   }: {
     name: string;
+    label?: string;
     options: Option[];
     optionContent?: Snippet<[Option]>;
+    optionAttributes?: (option: Option) => Record<string, string | boolean | undefined>;
     value?: string | null;
   } = $props();
 </script>
 
-<div class="segmented seg" role="group" data-seg={name}>
+<div class="segmented seg" role="group" aria-label={label ?? name} data-seg={name}>
   {#each options as option}
     <button
       type="button"
@@ -27,6 +31,7 @@
       data-value={option.value === null ? "" : option.value}
       aria-pressed={option.value === value}
       onclick={() => (value = option.value)}
+      {...optionAttributes?.(option)}
     >
       {#if optionContent}{@render optionContent(option)}{:else}{option.label}{/if}
     </button>

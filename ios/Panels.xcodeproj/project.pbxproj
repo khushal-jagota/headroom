@@ -103,6 +103,7 @@
 		A29A4D112F11C5E9FC2FB65C /* ManagerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7687EE6822ECA78D49FE1A64 /* ManagerModels.swift */; };
 		A4208FFEBA30998FD7DB60E3 /* AgentRecap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 443B7885AC12C0E4D6E1481B /* AgentRecap.swift */; };
 		A47892D9718F06729227DA16 /* ChangeStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC948AEFA056E4850619C188 /* ChangeStream.swift */; };
+		A6E4A6380D517C26BA83986E /* ReviewArtifacts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BBCB2125F68B539BB3D9279 /* ReviewArtifacts.swift */; };
 		AA281C9650DB066295AD1311 /* conversation-claude.png in Resources */ = {isa = PBXBuildFile; fileRef = 17D2C09562A72FB3591F1805 /* conversation-claude.png */; };
 		AFFE3EDD867BCE1EA25DFBFC /* ArtifactMarkdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01D73A7F608F5039244AFEEC /* ArtifactMarkdown.swift */; };
 		B07E40DDAB3BC7D1E8E698A5 /* ConversationNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E10E3E0DF0562F29BABAD85 /* ConversationNavigation.swift */; };
@@ -168,6 +169,7 @@
 		0718559967EA837B4003EB0F /* WorkerGroups.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkerGroups.swift; sourceTree = "<group>"; };
 		08B13A66D381488CEFC63E89 /* artifacts.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = artifacts.json; sourceTree = "<group>"; };
 		0AA980845BC1C25E5F54217D /* ReviewModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewModels.swift; sourceTree = "<group>"; };
+		0BBCB2125F68B539BB3D9279 /* ReviewArtifacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewArtifacts.swift; sourceTree = "<group>"; };
 		0D4FCDBCAD742D3FCA6B73F0 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		0D7020D92DDE772AEDC127A8 /* NavigationPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationPresentation.swift; sourceTree = "<group>"; };
 		1704E7E98D27A5B4734FD5ED /* WorkerScreenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkerScreenTests.swift; sourceTree = "<group>"; };
@@ -541,6 +543,7 @@
 			isa = PBXGroup;
 			children = (
 				404E62C440C538359AC66882 /* ReviewAPI.swift */,
+				0BBCB2125F68B539BB3D9279 /* ReviewArtifacts.swift */,
 				9559468E71BEF0FF1726730A /* ReviewDecision.swift */,
 				A8CE03AA64F72CEFC0952C5C /* ReviewMessageDecision.swift */,
 				7926E33CF52C7E10F3726597 /* ReviewMessageView.swift */,
@@ -1133,6 +1136,7 @@
 				518A7C6FC817B4391BD9C57B /* ResourceVersions.swift in Sources */,
 				484C264CD5C2E94D8B75A184 /* ResponseCacheWriter.swift in Sources */,
 				93FEB6E430BA50A010E4EF97 /* ReviewAPI.swift in Sources */,
+				A6E4A6380D517C26BA83986E /* ReviewArtifacts.swift in Sources */,
 				8AB69B597603C5C20E4DFBE6 /* ReviewDecision.swift in Sources */,
 				A241B097CC2661F0E917032B /* ReviewMessageDecision.swift in Sources */,
 				B6047C61A30619FBEB03C7FB /* ReviewMessageView.swift in Sources */,

@@ -319,12 +319,14 @@ private struct ReviewProposalView: View {
             } else {
                 Button {
                     editing = true; editorFocused = true
-                } label: { ReviewProse(text: decision.draft) }
+                } label: { ReviewProse(text: decision.draft, baseURL: store.baseURL) }
                     .buttonStyle(.plain).accessibilityLabel("Proposal").accessibilityValue(decision.draft)
                     .accessibilityHint("Edits proposal").accessibilityIdentifier("review.edit")
                     .disabled(decision.busy || decision.changed)
+                ForEach(ReviewArtifactLinks.targets(in: decision.draft, baseURL: store.baseURL)) { target in ReviewInlineArtifact(target: target) }
             }
         }
+        .reviewArtifactLinks()
         .padding(ReviewStyle.gutter)
         .background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
         .overlay(alignment: .top) { RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg).stroke(Color.white.opacity(0.05), lineWidth: 1) }
@@ -398,10 +400,11 @@ private struct ReviewProposalView: View {
 
 private struct ReviewProse: View {
     let text: String
+    let baseURL: URL
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
             ForEach(Array(text.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, paragraph in
-                Text((try? AttributedString(markdown: paragraph, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(paragraph))
+                Text((try? AttributedString(markdown: paragraph, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: baseURL)) ?? AttributedString(paragraph))
                     .font(.body).lineSpacing(6).foregroundStyle(PanelsTheme.text).frame(maxWidth: .infinity, alignment: .leading)
             }
         }

@@ -13,8 +13,6 @@
 </script>
 
 <article class="instrument" class:instrument--wide={wide} class:instrument--small={!wide} data-state={instrument?.severity ?? 'normal'} data-vps-metric={id} aria-label={title}>
-  {#if loading}<div class="trend"><VpsSkeleton shape="trend" /></div>
-  {:else if instrument?.primary.value != null && trend}<VpsTrend {trend} ceiling={instrument.ceiling ?? null} />{/if}
   <div class="instrument-body">
     <div class="instrument-top">
       <h2 class="instrument-name">{#if loading}<VpsSkeleton />{:else}{title}{/if}</h2>
@@ -38,4 +36,6 @@
       </p>
     {/if}
   </div>
+  {#if loading}<div class="trend-loading"><VpsSkeleton shape="trend" /></div>
+  {:else if instrument?.primary.value != null && trend}<VpsTrend {trend} ceiling={instrument.ceiling ?? null} readingUnit={instrument.primary.unit} primaryLabel={id === 'io' ? 'Written' : id === 'network' ? 'In' : title} secondaryLabel={id === 'io' ? 'Read' : 'Out'} />{/if}
 </article>
