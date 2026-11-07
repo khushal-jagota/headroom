@@ -77,7 +77,12 @@
      its header (the project eyebrow directly over the name, as one fill), its goals, then its
      Tickets in headed groups. Every fill spans the block, which spans the column less
      --rail-edge on each side; every text stands --rail-pad inside its fill. */
-  .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:var(--rail-bubble-pad); border:0; isolation:isolate; z-index:1; }
+  /* The bubble holds its words the same distance from all four edges (about 14px of clear space,
+     owner: the last rows sat 8px from the bottom while the sides and top had 14): the bottom
+     keeps 6px more than the fills' 4px inset, and a header with a project eyebrow 3px more on
+     top, where the eyebrow's small line sits higher than the Chief's name. */
+  .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:var(--rail-bubble-pad) var(--rail-bubble-pad) calc(var(--rail-bubble-pad) + 6px); border:0; isolation:isolate; z-index:1; }
+  .manager-card:has(.identity :global(.manager-eyebrow)) { padding-top:calc(var(--rail-bubble-pad) + 3px); }
   .identity { box-sizing:border-box; display:flex; flex-direction:column; padding:var(--rail-head-pad) var(--rail-pad); border-radius:var(--radius-md); cursor:pointer; }
   .item-head { position:relative; top:var(--rail-title-nudge); display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:start; width:100%; min-height:var(--rail-title-line); padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; align-self:start; height:var(--rail-title-line); }

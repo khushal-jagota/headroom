@@ -377,7 +377,7 @@
   --rail-bubble-radius: 12px;
   /* Where the list meets the dock it fades into the page over this much, and its bottom
    * padding is as tall, so the last bubble always scrolls fully clear of the fade. */
-  --rail-list-fade: 24px;
+  --rail-list-fade: 16px;
   /* The page list's rows (ManagerChildren) still stand 2px apart. */
   --rail-row-gap: 2px;
   /* The unread dot's column, kept on every row whether or not a dot is in it, so every

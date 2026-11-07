@@ -55,7 +55,7 @@
    when it is due. */
 .goal-card{display:flex;flex-direction:column;min-width:0;border:var(--border-hairline) solid var(--page-card-edge);border-radius:var(--page-card-radius);overflow:hidden;background:var(--page-card-fill);cursor:pointer}
 /* The card answers the pointer as one target; the title underlines with it. */
-.goal-card:hover{background-image:var(--interaction-hover)}
+/* The card does not light up under the pointer (owner); its title's underline says it opens. */
 .goal-card:hover .card-head a{color:var(--tone-strong);text-decoration-line:underline;text-decoration-color:var(--tone-tertiary)}
 .card-head{padding:var(--page-card-pad) var(--page-card-pad) 0}
 .goal-meta{display:flex;align-items:center;flex-wrap:wrap;margin-top:2px;font-size:var(--type-small);font-weight:var(--weight-small);line-height:18px;color:var(--tone-tertiary);font-variant-numeric:tabular-nums}
