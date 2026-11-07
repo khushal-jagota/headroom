@@ -374,7 +374,7 @@
   --rail-bubble-radius: 12px;
   /* Where the list meets the dock it fades into the page over this much, and its bottom
    * padding is as tall, so the last bubble always scrolls fully clear of the fade. */
-  --rail-list-fade: 16px;
+  --rail-list-fade: 24px;
   /* The page list's rows (ManagerChildren) still stand 2px apart. */
   --rail-row-gap: 2px;
   /* The unread dot's column, kept on every row whether or not a dot is in it, so every
@@ -383,10 +383,10 @@
   /* The rail's label voice for the project eyebrow (and Settled's count): 12/500, quiet. */
   --rail-label-size: var(--type-small);
   --rail-label-weight: 500;
-  /* A group heading is a label to read, not a whisper: in capitals as staging (owner), 11/600
-   * at 64% white, opened 0.06em as capitals need. */
+  /* A group heading is a label to read, not a whisper: in capitals as staging (owner), 11/500
+   * at 64% white, opened 0.06em as capitals need (600 made them the loudest texture). */
   --rail-heading-size: 11px;
-  --rail-heading-weight: 600;
+  --rail-heading-weight: 500;
   --rail-heading-tracking: 0.06em;
   --rail-tone-heading: #a3a3a3;
   /* The list's edges: a short fade, always the same, so a row's words keep their true tone

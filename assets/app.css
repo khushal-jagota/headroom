@@ -5304,6 +5304,15 @@ details:not([open]) > summary > .manager-workspace-chevron {
   pointer-events: none;
 }
 [data-conversation-dock-state="opened"] > .conversation-layer::after { opacity: 0; }
+/* Over the line the page's last 12px fade into the page, so a line of text passing under it is
+ * never cut hard against the line. Fixed CSS, nothing measured; it fades out as the
+ * conversation opens. */
+:is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) > .conversation-layer::before {
+  display: block;
+  height: var(--space-3);
+  background: linear-gradient(to bottom, transparent, var(--surface-1));
+  opacity: var(--conversation-dock-line, 1);
+}
 :is(.manager-page, .ticket-page) > .conversation-layer > .conversation-column { pointer-events: auto; }
 /* Anything scrolled into view (a focused row, a found word) stops clear of the zone, and the
  * page keeps room under its last block to scroll fully clear of it: the zone's own height (the

@@ -41,10 +41,11 @@
   .compact .comparison { font-size:var(--type-small); }
   .compact .missing-value { font-size:var(--type-page-title); }
   .compact .caption { font-size:var(--type-small); }
-  /* Under a card's plot the switch is staging's full-width row: three equal segments. */
-  .chart-range-footer { margin-top:var(--space-4); }
-  .chart-range-footer .ranges { display:flex; width:100%; }
-  .chart-range-footer .ranges button { flex:1; }
+  /* Under a card's plot the switch is the same compact segmented control as on the goal page,
+     at the right, not a row stretched across the card. */
+  .chart-range-footer { display:flex; justify-content:flex-end; margin-top:var(--space-4); }
+  .chart-range-footer .ranges { display:flex; width:auto; }
+  .chart-range-footer .ranges button { flex:none; }
   /* A chart the page already framed: the page owns the card, the chart owns its content. */
   .integrated-card { border:0; background:transparent; border-radius:0; padding:0; }
   .integrated-card.compact { padding:0; --text-3xl:var(--page-reading); }

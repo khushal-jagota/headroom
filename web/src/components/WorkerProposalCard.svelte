@@ -201,6 +201,8 @@
   .worker-proposal:has(> .revision) > * { grid-column:1 / -1; }
   .worker-proposal:has(> .revision) > .revision { grid-column:1; }
   .worker-proposal:has(> .revision) > .actions { grid-column:2; margin-top:0; }
+  /* Beside the note the decisions are the note's height at rest (44px), so their edges line up. */
+  .worker-proposal:has(> .revision) > .actions .decision :global(.button) { height:var(--composer-rest-height, 44px); }
   @media (max-width:720px) {
     .worker-proposal:has(> .revision) > .actions { grid-column:1 / -1; margin-top:var(--space-3); }
   }

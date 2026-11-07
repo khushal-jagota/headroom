@@ -535,7 +535,7 @@
      bubble and row scrolls fully clear of it. Nothing is measured; the list simply scrolls. */
   .rail-work .rail-work::before, .rail-work .rail-work::after { content:""; position:absolute; z-index:3; left:0; right:0; pointer-events:none; }
   .rail-work .rail-work::before { top:0; bottom:auto; height:var(--rail-edge-fade); background:linear-gradient(to bottom, var(--rail-column), transparent); }
-  .rail-work .rail-work::after { bottom:0; height:var(--rail-list-fade); background:linear-gradient(to top, var(--rail-column), transparent); }
+  .rail-work .rail-work::after { bottom:0; height:var(--rail-list-fade); background:linear-gradient(to top, var(--rail-column) 12px, transparent); }
   /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
      included, without becoming a scroller that a hover could slide sideways. */
   .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
