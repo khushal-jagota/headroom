@@ -62,32 +62,6 @@ struct ReviewView: View {
                 .onDisappear { emptyVisible = false }
             } else { ScrollView { Color.clear.frame(height: 1) }.panelsRefreshable { await store.refresh() } }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(savedDecisions.filter { $0.state != .sent || Date().timeIntervalSince($0.completed ?? .distantPast) < 3 }) { work in
-                    HStack {
-                        Image(systemName: work.state == .sent ? "checkmark" : work.state == .changed ? "exclamationmark.circle" : "clock")
-                        VStack(alignment: .leading) {
-                            Text(work.ticketTitle ?? store.tickets.first { $0.id == work.ticketID }?.title ?? work.ticketID ?? "Ticket")
-                                .font(PanelsTheme.TypeScale.savedDecisionTitle)
-                            Text([work.displayText, work.proposalFieldLabel ?? work.proposal?.field.capitalized].compactMap { $0 }.joined(separator: " · "))
-                                .font(.subheadline)
-                            Text(work.note).font(.caption).foregroundStyle(PanelsTheme.faint)
-                            if [.changed, .uncertain, .failed].contains(work.state), let words = work.guidance ?? work.approval?.editedBody, !words.isEmpty {
-                                DisclosureGroup("Saved words") { Text(words).font(.body).textSelection(.enabled) }
-                            }
-                        }
-                        Spacer()
-                        if work.state == .changed || work.state == .uncertain {
-                            Button("Review") {
-                                if let id = work.ticketID { openTicket?(id) }
-                            }
-                        }
-                        if work.state == .failed { Button("Retry") { Outbox.shared.retry(work.id, api: store.client) } }
-                    }.padding(.horizontal, ReviewStyle.gutter).padding(.vertical, 8)
-                }
-            }.background(PanelsTheme.surface)
-        }
         .onChange(of: LocalStore.shared.workRevision) { _, _ in
             for decision in decisions.values { decision.refreshVoiceDraft() }
             if let item = displayedItem, !item.isMessage, !queueItems.contains(where: { $0.id == item.id }) { displayedItem = queue.current(in: queueItems) }

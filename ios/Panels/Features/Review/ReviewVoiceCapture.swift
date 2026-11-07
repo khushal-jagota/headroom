@@ -10,6 +10,9 @@ import Observation
     private var recorder: AVAudioRecorder?
     private var work: PendingWork?
     private var api: APIClient?
+    @ObservationIgnored private let awake: KeepAwake
+
+    init(awake: KeepAwake = .shared) { self.awake = awake }
 
     func restore(api: APIClient, draftID: String?) {
         guard recorder == nil, let draftID else { return }
@@ -43,10 +46,12 @@ import Observation
             let recorder = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44100, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64000])
             guard recorder.record() else { throw APIError(status: 0, message: "Recording could not start.") }
             self.recorder = recorder; startedAt = Date(); phase = .recording; error = nil
+            awake.hold(self)
             Haptics.light()
         } catch { self.error = error.localizedDescription; phase = .failed }
     }
     func preserve() {
+        awake.release(self)
         guard recorder != nil else { return }
         recorder?.stop(); recorder = nil
         try? AVAudioSession.sharedInstance().setActive(false)
@@ -72,6 +77,7 @@ import Observation
     }
     /// Only an explicit discard removes audio. Leaving the composer always preserves it.
     func cancel() {
+        awake.release(self)
         recorder?.stop(); recorder = nil
         try? AVAudioSession.sharedInstance().setActive(false)
         guard let work, let api else { phase = .idle; return }
