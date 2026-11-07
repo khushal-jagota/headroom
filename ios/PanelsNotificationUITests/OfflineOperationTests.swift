@@ -68,7 +68,7 @@ final class OfflineOperationTests: XCTestCase {
         app.terminate(); app.launch()
         XCTAssertTrue(chief.waitForExistence(timeout: 3), "Cached Workspace did not restore offline")
         app.tabBars.buttons["Review"].tap()
-        XCTAssertTrue(app.staticTexts["Waiting for connection"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Record offline'")).firstMatch.waitForExistence(timeout: 5), "Cached Review did not restore the remaining ask offline")
         try await proof(base, "online")
         for _ in 0..<20 {
             let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)

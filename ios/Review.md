@@ -49,11 +49,11 @@ retains audio on disk for retry after reconnect or relaunch. Closing the compose
 preserves the recording; only explicit discard removes it. Sending requires nonempty
 text and locks the field until the response. Failure keeps the words available.
 
-A decision is saved before its ask leaves the screen. A pending row shows waiting,
-sending, completion, or a need to review again. Both queued writes first check that
+A decision is saved before its ask leaves the screen. Like desktop, Review shows no
+receipt or status row for a saved decision. Both queued writes first check that
 the proposal is still current. Both send the displayed revision to the server,
 which checks it in the same transaction as the decision. If it changed after the
-last read, the pending row says “This changed, review again” and keeps the saved words.
+last read, the ask returns to the queue.
 
 A proposal title opens its ticket in Workspace. Cross-tab navigation sets the destination without an
 intermediate Workspace-root animation. Every pushed route hides the tab bar;
@@ -128,11 +128,6 @@ used sentence-case group labels, and hid Skip’s system toolbar capsule. Those
 small follow-ups received a fresh jobs-4 compile, without a second capture.
 
 See [offline recovery](Offline.md) for persistence, response-loss handling and focused verification.
-
-Saved approval and send-back operations retain the ticket title and proposal step
-label alongside delivery state and saved words. These names are saved with the
-operation, so advancing the queue or relaunching does not lose its identity. Older
-saved operations fall back to the loaded ticket title or ticket ID and field name.
 
 Unread-message verification uses `ReviewMessageTests` with the existing URLProtocol
 host: mixed queue decoding, a complete 65-message unread run, bounded Mark read,

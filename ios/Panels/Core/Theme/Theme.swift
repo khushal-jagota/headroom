@@ -37,7 +37,6 @@ enum PanelsTheme {
         static let reviewAction = Font.body.weight(.medium)
         static let sectionLabel = Font.footnote.weight(.semibold)
         static let reviewEyebrow = Font.caption2.weight(.semibold)
-        static let savedDecisionTitle = Font.subheadline.weight(.semibold)
         static let latestAction = Font.footnote.weight(.semibold)
         static let artifactTitle = Font.subheadline
         static let artifactLink = Font.subheadline.weight(.semibold)
