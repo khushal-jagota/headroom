@@ -3539,6 +3539,12 @@ select {
   height: var(--conversation-visible-height, 100%);
   --conversation-dock-line: 0;
 }
+/* While the dock moves, its content stands at the dock's foot. On return the pane is already
+ * at rest (status line and composer) while the dock is still shrinking from full height, so
+ * content laid out from the top would lift the composer to the top and ride it back down. */
+[data-conversation-dock-transition] > .conversation-layer .chat-panel {
+  justify-content: flex-end;
+}
 [data-conversation-dock-state="opened"] > .ticket-reading,
 [data-conversation-dock-state="opened"] > .manager-reading {
   pointer-events: none;
