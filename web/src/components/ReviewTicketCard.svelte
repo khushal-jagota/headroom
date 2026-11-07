@@ -47,5 +47,8 @@
 <style>
   .review-recap-request{display:flex;justify-content:flex-end;margin-top:var(--space-2);font-size:var(--type-sm)}
   .review-eyebrow--decisions{justify-content:flex-end}
+  /* On a desktop the quiet buttons' words line up with the column's edge; on a phone the column
+     has no room past its edge, so they stay inside it. */
   .review-ticket-decision-line--top{padding:0;margin-right:calc(var(--space-3) * -1)}
+  @media (max-width:720px){.review-ticket-decision-line--top{margin-right:0}}
 </style>

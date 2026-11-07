@@ -192,7 +192,10 @@
      card's own row keeps Mark read at the right, and Open conversation when the card sits inside
      a Ticket's item. */
   .review-eyebrow--decisions{justify-content:flex-end}
+  /* On a desktop the quiet buttons' words line up with the column's edge; on a phone the column
+     has no room past its edge, so they stay inside it. */
   .review-ticket-decision-line--top{padding:0;margin-right:calc(var(--space-3) * -1)}
+  @media (max-width:720px){.review-ticket-decision-line--top{margin-right:0}}
   .review-message-card{margin-top:var(--space-5);padding:var(--space-5);background:var(--surface-2);border-radius:var(--radius-lg)}
   .review-message-run{font-family:var(--font-ui);font-size:var(--type-md);line-height:1.68}
   .review-message-said+.review-message-said{position:relative;margin-top:var(--space-5);padding-top:var(--space-4)}
