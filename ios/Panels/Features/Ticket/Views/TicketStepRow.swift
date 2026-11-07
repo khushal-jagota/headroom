@@ -99,7 +99,9 @@ struct TicketStepPage: View {
                 }
                 if editing { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { editing = false }.disabled(busy) } }
             }
-            .task(id: store.revision) { await load() }
+            .task(id: store.baseURL.absoluteString) { await load() }
+            .reload(onChangeOf: store.ticketStamp(ticketID)) { await load() }
+            .navigationDemand("ticket-step:\(ticketID)", selected: ViewOwner(kind: "ticket", id: ticketID))
             .navigationDestination(item: $artifact) { RouteDestination(route: $0) }
             .environment(\.openURL, OpenURLAction { url in
                 if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { artifact = route; return .handled }

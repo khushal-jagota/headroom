@@ -19,15 +19,26 @@ import Observation
     var deployment: DeploymentStatus?
     var errors: [String: String] = [:]
     var isLoading = false
+    /// The view stream's health: "Following changes" once the current stream delivered
+    /// its snapshot, "Reconnecting" after a failure until the next snapshot.
     var connection = "Connecting"
-    var revision = 0
+    /// Counts foreground sessions. Screens whose data the view does not carry read again
+    /// when the app returns to the foreground, not on unrelated changes.
+    private(set) var foregroundSession = 0
+    /// Each view record's reload identity. A detail screen reloads when its own records'
+    /// stamps change, never because another record changed.
+    private(set) var recordStamps: [RecordKey: String] = [:]
+    private(set) var presentation: NavigationPresentation?
     private(set) var viewRequest = ViewRequest(windows: NavigationScope.baseWindows)
     private var demands: [String: [ViewWindowRequest]] = [:]
+    /// Detail screens that named a selected owner, most recent last.
+    private var selections: [(name: String, owner: ViewOwner)] = []
     private var running = false
+    private var viewConsumer: Task<ViewStreamEnd, Never>?
+    private var reconnectRequested = false
     private var viewReading = false
     private var viewReadsStarted = 0
     private var resourceVersions = ResourceVersionState()
-    private var refreshing = false
 
     init(baseURL suppliedBaseURL: URL? = nil, session: URLSession = .shared) {
         self.session = session
@@ -54,6 +65,7 @@ import Observation
         self.baseURL = baseURL
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
         managers = []; tickets = []; workspaceLoaded = false; chief = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
+        presentation = nil; recordStamps = [:]
         deployment = nil; errors = [:]
         resourceVersions = ResourceVersionState()
         restore()
@@ -62,7 +74,8 @@ import Observation
     // MARK: Saved views
 
     /// The latest view, and separately the latest one that carried Workspace, so a
-    /// relaunch restores both even when Review was the last screen.
+    /// relaunch restores both even when Review was the last screen. Each stream's
+    /// snapshot is saved as read; patches between them are not.
     private func savedViewID(_ name: String) -> String { baseURL.absoluteString + "/api/navigation/view/snapshot#" + name }
 
     private func restore() {
@@ -86,15 +99,40 @@ import Observation
     // MARK: Scope
 
     /// A mounted screen states the windows it shows; nil withdraws them. A new or
-    /// changed demand reads at once. A withdrawal only narrows the next read, so
-    /// leaving a screen adds no read in front of the next screen's own.
+    /// changed demand opens a stream for the new scope at once, and the last coherent
+    /// view stays on screen until its snapshot arrives. A withdrawal only narrows the
+    /// next stream, so leaving a screen puts no view read in front of the next screen's own.
     func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?) {
         guard demands[name] != windows else { return }
         demands[name] = windows
-        let next = NavigationScope.request(demands: demands, previous: viewRequest)
+        updateScope(opening: windows != nil)
+    }
+
+    /// A detail screen names the one record it keys its reloads on, so the view carries
+    /// it wherever the screen was opened from. The most recent screen's owner wins.
+    func setNavigationDemand(_ name: String, selected owner: ViewOwner, windows: [ViewWindowRequest] = []) {
+        let unchanged = demands[name] == windows && selections.last.map { $0.name == name && $0.owner == owner } == true
+        guard !unchanged else { return }
+        demands[name] = windows
+        selections.removeAll { $0.name == name }
+        selections.append((name, owner))
+        updateScope(opening: true)
+    }
+
+    func withdrawNavigationDemand(_ name: String) {
+        guard demands[name] != nil || selections.contains(where: { $0.name == name }) else { return }
+        demands[name] = nil
+        selections.removeAll { $0.name == name }
+        updateScope(opening: false)
+    }
+
+    private func updateScope(opening: Bool) {
+        let next = NavigationScope.request(demands: demands, selected: selections.last?.owner, previous: viewRequest)
         guard next != viewRequest else { return }
         viewRequest = next
-        if running, windows != nil { Task { await readView(from: client) } }
+        guard running, opening else { return }
+        // The follow loop opens the new scope's stream; several changes in one turn share it.
+        if let viewConsumer { viewConsumer.cancel() } else { reconnectRequested = true }
     }
 
     private func admit(_ snapshot: ViewSnapshot) {
@@ -105,59 +143,168 @@ import Observation
         chiefSignal = presentation.chief?.signal.conversationSignal
         review = presentation.reviewQueue(in: snapshot)
         counts = snapshot.content.counts
+        let stamps = Dictionary(snapshot.content.records.compactMap { record in record.stamp.map { (record.key, $0) } }, uniquingKeysWith: { _, latest in latest })
+        if stamps != recordStamps { recordStamps = stamps }
+        self.presentation = presentation
         view = snapshot
     }
 
-    // MARK: Refresh
+    // MARK: Reload identities
 
-    /// Owned by the foreground shell task. SwiftUI cancels it on background or URL change.
+    func ticketStamp(_ id: String) -> String? { recordStamps[RecordKey(kind: "ticket", id: id)] }
+
+    /// An orchestrator page: its record, and its children window's members and total.
+    func managerStamp(_ id: String) -> String? { ownerStamp(RecordKey(kind: "manager", id: id), children: .manager(id)) }
+
+    /// The Chief page: its record and children window, and its settings body.
+    func chiefStamp() -> String? {
+        ownerStamp(RecordKey(kind: "chief", id: "chief"), children: .chief).map { $0 + "\n" + (chief.map { $0.label + "\u{1f}" + $0.recap } ?? "") }
+    }
+
+    private func ownerStamp(_ key: RecordKey, children owner: ViewOwner) -> String? {
+        let identity = NavigationScope.children(of: owner).identity
+        guard let own = recordStamps[key], let window = view?.content.windows.first(where: { $0.request.identity == identity }) else { return nil }
+        return ([own, String(window.total)] + window.members.map { $0.id + "=" + (recordStamps[$0] ?? "") }).joined(separator: "\n")
+    }
+
+    /// A detail read's rows with the view's current working and unread marks, so a
+    /// mark change needs no detail read. Rows the view does not carry keep their own.
+    func withLiveMarks<Row: LiveMarkedWorker>(_ rows: [Row]) -> [Row] {
+        guard let presentation else { return rows }
+        return rows.map { row in
+            guard let live = presentation.ticketsById[row.id], let signal = live.signal.conversationSignal else { return row }
+            var row = row
+            row.conversationSignal = signal
+            if let state = live.agentState { row.agentState = state }
+            return row
+        }
+    }
+
+    // MARK: Following the view
+
+    /// Owned by the foreground shell task. SwiftUI cancels it on background or URL change,
+    /// which closes both streams; the next foreground entry starts with fresh snapshots.
     func run() async {
         running = true
-        defer { running = false }
-        await refresh()
+        foregroundSession += 1
+        defer { running = false; viewConsumer = nil }
+        async let settings: () = followSettings()
+        await followView()
+        await settings
+    }
+
+    fileprivate enum ViewStreamEnd { case cancelled, ended(admitted: Bool), refused(admitted: Bool), failed }
+
+    /// Mirrors web/src/lib/navigation/views/owner.ts: one stream per scope generation.
+    /// A gap, an obsolete frame, a reset or a closed stream needs a fresh snapshot, which
+    /// a new stream sends first. Failures retry with backoff and show Reconnecting.
+    private func followView() async {
+        var failures = 0
+        while !Task.isCancelled {
+            let api = client
+            let request = viewRequest
+            reconnectRequested = false
+            let consumer = Task { await self.consume(request, api: api) }
+            viewConsumer = consumer
+            let end = await withTaskCancellationHandler { await consumer.value } onCancel: { consumer.cancel() }
+            viewConsumer = nil
+            if Task.isCancelled { return }
+            switch end {
+            case .cancelled: continue // A new scope: open its stream at once.
+            case .ended(let admitted), .refused(let admitted):
+                // A stream that was current reconnects at once for its fresh snapshot.
+                if admitted { failures = 0; continue }
+                failures += 1
+            case .failed: failures += 1
+            }
+            connection = "Reconnecting"
+            // 1, 2, 4, then 8 s: a phone in the foreground wants to be current again soon.
+            let delay = Duration.seconds(1 << min(failures - 1, 3))
+            let deadline = ContinuousClock.now + delay
+            while ContinuousClock.now < deadline, !reconnectRequested {
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            }
+        }
+    }
+
+    private func consume(_ request: ViewRequest, api: APIClient) async -> ViewStreamEnd {
+        // Frames apply to this stream's own snapshot, never to a restored or older view.
+        var current: ViewSnapshot?
+        var admitted = false
+        do {
+            for try await (frame, data) in api.navigationViewEvents(request) {
+                guard !Task.isCancelled, api.baseURL == baseURL else { return .cancelled }
+                if let generation = frame.scopeGeneration, generation != request.scopeGeneration { return .refused(admitted: admitted) }
+                guard case .success(let next) = NavigationViewFrames.apply(current, frame) else { return .refused(admitted: admitted) }
+                current = next
+                switch frame {
+                case .checkpoint: continue // Coverage only; the content is unchanged.
+                case .snapshot:
+                    admit(next)
+                    admitted = true
+                    connection = "Following changes"
+                    errors["Navigation"] = nil
+                    Task { await self.save(next, data: data, api: api) }
+                    Task { await Outbox.shared.drain(api: api) }
+                default: admit(next)
+                }
+            }
+            return Task.isCancelled ? .cancelled : .ended(admitted: admitted)
+        } catch {
+            if Task.isCancelled || api.baseURL != baseURL { return .cancelled }
+            errors["Navigation"] = error.localizedDescription
+            return .failed
+        }
+    }
+
+    /// Chief settings and deployment status are outside the view, and deployment status
+    /// is not a navigation change at all, so these two small versioned reads keep the
+    /// payload-free change stream. Wakes are coalesced to one probe a second.
+    private func followSettings() async {
+        await readSettings(probing: false)
         while !Task.isCancelled {
             do {
-                connection = "Following changes"
                 for try await _ in client.changes() {
                     try Task.checkCancellation()
-                    await refresh(changesOnly: true)
-                    try await Task.sleep(for: .milliseconds(300))
+                    await readSettings(probing: true)
+                    try await Task.sleep(for: .seconds(1))
                 }
             } catch {
                 if Task.isCancelled { return }
             }
-            if Task.isCancelled { return }
-            connection = "Reconnecting"
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
-            await refresh()
         }
     }
 
-    func refresh(changesOnly: Bool = false) async {
-        // A refresh requested during another read must not be dropped.
-        // Waiting remains cancellable when the shell leaves the foreground.
-        while refreshing {
-            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
-        }
+    /// Manual refresh and confirmed writes. Chief settings and deployment read again. The
+    /// view follows its stream; a stream that is not current reconnects now. Without a
+    /// foreground stream, one snapshot is read.
+    func refresh() async {
         guard !Task.isCancelled else { return }
-        refreshing = true
         isLoading = view == nil && chief == nil
-        defer { refreshing = false; isLoading = false }
+        defer { isLoading = false }
+        if connection != "Following changes" { reconnectRequested = true }
         let api = client
-        let keys = ["/api/workers/chief-of-staff/settings", "/api/deployment-status"]
-        let probe = changesOnly ? try? await api.resourceVersions(keys) : nil
+        async let settingsRead: () = readSettings(probing: false)
+        if !running { await readView(from: api) }
+        await settingsRead
         guard !Task.isCancelled, api.baseURL == baseURL else { return }
-        async let viewRead: () = readView(from: api)
-        async let chiefRead: () = readVersioned("Chief", path: keys[0], api: api, probe: probe, force: !changesOnly) { self.chief = $0 }
-        async let deployRead: () = readVersioned("Deployment", path: keys[1], api: api, probe: probe, force: !changesOnly) { self.deployment = $0 }
-        _ = await (viewRead, chiefRead, deployRead)
-        guard !Task.isCancelled, api.baseURL == baseURL else { return }
-        revision += 1
         if errors.isEmpty { Task { await Outbox.shared.drain(api: api) } }
     }
 
-    /// One bounded snapshot for the current scope. A read that starts after this call
-    /// covers it; concurrent callers wait for that read instead of repeating it.
+    /// Probing reads a body only when its version moved; otherwise both bodies read.
+    func readSettings(probing: Bool) async {
+        let api = client
+        let keys = ["/api/workers/chief-of-staff/settings", "/api/deployment-status"]
+        let probe = probing ? try? await api.resourceVersions(keys) : nil
+        guard !Task.isCancelled, api.baseURL == baseURL else { return }
+        async let chiefRead: () = readVersioned("Chief", path: keys[0], api: api, probe: probe, force: !probing) { self.chief = $0 }
+        async let deployRead: () = readVersioned("Deployment", path: keys[1], api: api, probe: probe, force: !probing) { self.deployment = $0 }
+        _ = await (chiefRead, deployRead)
+    }
+
+    /// One bounded snapshot for the current scope, when no stream runs. A read that starts
+    /// after this call covers it; concurrent callers wait for that read instead of repeating it.
     private func readView(from api: APIClient) async {
         let wanted = viewReadsStarted
         while viewReading {

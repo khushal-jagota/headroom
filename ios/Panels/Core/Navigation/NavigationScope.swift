@@ -7,11 +7,20 @@ enum NavigationScope {
     /// Review is always in scope: it drives the tab badge and opens without a wait.
     static var baseWindows: [ViewWindowRequest] { [ViewWindowRequest(section: "review", limit: reviewWindowLimit)] }
     static let rowBudget = 256
+    /// A detail page's children window, whose members key its reloads. A manager's
+    /// children come most recently updated first; Chief's oldest first, so Chief follows
+    /// its active page, as its web child page does.
+    static func children(of owner: ViewOwner) -> ViewWindowRequest {
+        var window = ViewWindowRequest(section: "children", owner: owner, limit: owner.kind == "chief" ? 30 : maximumWindowRows)
+        if owner.kind == "chief" { window.childFilter = "active" }
+        return window
+    }
     static let maximumWindowRows = 60
 
     /// Mirrors refreshDemand in web/src/lib/navigation/views/owner.ts. Parent lists and
     /// Review keep their pages; other windows share what remains one row per window per round.
-    static func request(demands: [String: [ViewWindowRequest]], previous: ViewRequest) -> ViewRequest {
+    /// `selected` is the one owner whose record a detail screen keys its reloads on.
+    static func request(demands: [String: [ViewWindowRequest]], selected: ViewOwner? = nil, previous: ViewRequest) -> ViewRequest {
         var windows: [ViewWindowRequest] = []
         var position: [String: Int] = [:]
         for window in baseWindows + demands.keys.sorted().flatMap({ demands[$0]! }) {
@@ -39,6 +48,7 @@ enum NavigationScope {
         fill(&windows, elastic, desired: desired, available: max(0, rowBudget - fixed))
         var next = previous
         next.windows = windows
+        next.selected = selected
         guard next != previous else { return previous }
         next.scopeGeneration = previous.scopeGeneration + 1
         return next
@@ -50,6 +60,29 @@ enum NavigationScope {
             for index in indexes where remaining > 0 && windows[index].limit < desired[index] {
                 windows[index].limit += 1; remaining -= 1
             }
+        }
+    }
+}
+
+// MARK: Reload identities
+
+extension ViewRecord {
+    /// The facts a detail read shows for this record. Conversation marks are left out:
+    /// screens take them from the view, so a working or unread change needs no detail read.
+    var stamp: String? {
+        switch self {
+        case .ticket(_, let t):
+            let holder = t.ceilingHolder.map { $0.kind + ":" + $0.id } ?? ""
+            let parts: [String] = [String(t.updatedAt), t.title, t.recapPreview, t.stage, t.ticketStatus, String(t.isBacklogged),
+                                   String(t.blocked ?? false), t.proposalField ?? "", String(t.proposalRevision ?? -1),
+                                   String(t.proposalCreatedAt ?? 0), t.gatingField ?? "", t.stageOwnership ?? "", holder,
+                                   t.conversationId ?? "", t.managerId ?? "", t.integrityError?.reason ?? ""]
+            return parts.joined(separator: "\u{1f}")
+        case .manager(_, let m):
+            return [String(m.updatedAt), m.title, String(m.settled), m.recapPreview ?? "", m.conversationId ?? "", m.projectId ?? ""].joined(separator: "\u{1f}")
+        case .chief(let c):
+            return [c.label, c.conversationId ?? ""].joined(separator: "\u{1f}")
+        default: return nil
         }
     }
 }

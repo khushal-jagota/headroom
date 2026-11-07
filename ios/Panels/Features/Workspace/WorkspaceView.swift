@@ -87,14 +87,14 @@ struct WorkspaceView: View {
         }
         .onDisappear { visible = false; store.setNavigationDemand("workspace", nil) }
         .onChange(of: workspaceWindows) { _, windows in if visible { store.setNavigationDemand("workspace", windows) } }
-        .onChange(of: store.revision, initial: true) { _, _ in if visible { updateGroups() } }
         .onChange(of: store.view?.contentVersion) { _, _ in if visible { updateGroups() } }
         .onChange(of: store.baseURL) { _, _ in
             groups = [:]; managers = []; settled = nil; parentsPage = nil
             settledError = nil; settledOpen = false; settledRequestedOffset = 0
         }
-        // Settled rows keep their paged list read, only while the section is open.
-        .task(id: "\(store.baseURL.absoluteString):\(store.revision):\(visible):\(settledOpen)") { if visible && settledOpen { await refreshSupplementary() } }
+        // Settled rows keep their paged list read, only while the section is open, and
+        // read again when the view's settled count changes.
+        .task(id: "\(store.baseURL.absoluteString):\(store.counts?.settled ?? -1):\(visible):\(settledOpen)") { if visible && settledOpen { await refreshSupplementary() } }
         }
     }
 

@@ -18,7 +18,7 @@ struct ChiefView: View {
                     AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await store.refresh() }
                 }
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                    AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: chief?.conversationSignal)
+                    AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: store.chiefSignal ?? chief?.conversationSignal)
                     AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "", target: Principal(kind: "chief", id: "chief"), refresh: { await store.refresh() }, actions: actions)
                 }
                 if chief != nil {
@@ -27,16 +27,16 @@ struct ChiefView: View {
                             if active.tickets.isEmpty {
                                 Text("No active workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).padding(.vertical, PanelsTheme.Space.md)
                             } else {
-                                WorkerSections(tickets: active.tickets, showHistory: false)
+                                WorkerSections(tickets: store.withLiveMarks(active.tickets), showHistory: false)
                             }
                             loadMoreButton(page: active.page, filter: .active)
                         }
-                        WorkerDisclosure(title: "Backlogged", count: backlogged?.page.matchCount ?? 0, unreadCount: backlogged?.tickets.filter { $0.conversationSignal?.messageForOwner == true }.count ?? 0) {
-                            WorkerRows(tickets: WorkerGroup.ordered(backlogged?.tickets ?? []))
+                        WorkerDisclosure(title: "Backlogged", count: backlogged?.page.matchCount ?? 0, unreadCount: store.withLiveMarks(backlogged?.tickets ?? []).filter { $0.conversationSignal?.messageForOwner == true }.count) {
+                            WorkerRows(tickets: WorkerGroup.ordered(store.withLiveMarks(backlogged?.tickets ?? [])))
                             if let page = backlogged?.page { loadMoreButton(page: page, filter: .backlogged) }
                         }
-                        WorkerDisclosure(title: "Done", count: done?.page.matchCount ?? 0, unreadCount: done?.tickets.filter { $0.conversationSignal?.messageForOwner == true }.count ?? 0) {
-                            WorkerRows(tickets: WorkerGroup.ordered(done?.tickets ?? []))
+                        WorkerDisclosure(title: "Done", count: done?.page.matchCount ?? 0, unreadCount: store.withLiveMarks(done?.tickets ?? []).filter { $0.conversationSignal?.messageForOwner == true }.count) {
+                            WorkerRows(tickets: WorkerGroup.ordered(store.withLiveMarks(done?.tickets ?? [])))
                             if let page = done?.page { loadMoreButton(page: page, filter: .done) }
                         }
                     }
@@ -46,7 +46,10 @@ struct ChiefView: View {
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
         .conversationNavigation(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", openConversationID: openConversationID, refreshError: error, retry: { await load() })
-        .task(id: store.revision) { await load() }
+        .task(id: store.baseURL.absoluteString) { await load() }
+        .reload(onChangeOf: store.chiefStamp()) { await load() }
+        // Chief's own record is always in the view; its active children key the reloads too.
+        .navigationDemand("chief", windows: [NavigationScope.children(of: .chief)])
         .panelsRefreshable { await load() }
         .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }
         .accessibilityIdentifier("chief-screen")

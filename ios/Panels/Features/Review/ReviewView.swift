@@ -175,7 +175,6 @@ private struct ReviewProposalView: View {
     @State private var actionsVisible = true
     @State private var changingActions = false
     @State private var resolvedAfterDismiss = false
-    @State private var observedRevision: Int?
     @State private var renaming = false
     @State private var titleDraft = ""
     private enum ReviewSheet: String, Identifiable { case approve; var id: String { rawValue } }
@@ -251,13 +250,14 @@ private struct ReviewProposalView: View {
             .toolbar { reviewToolbar }
 
         }
-        .task(id: "\(store.baseURL):\(store.revision)") {
-            guard sheet == nil, !editing, !returning, drag == 0 else { return }
-            let firstAppearance = observedRevision == nil
-            observedRevision = store.revision
+        .task(id: store.baseURL) {
             // A prefetched ask is ready to reveal; do not immediately dim its actions
-            // with a redundant load. Subsequent server revisions still refresh it.
-            if firstAppearance, decision.proposal != nil { return }
+            // with a redundant load. A change to its Ticket's record still reloads it.
+            if decision.proposal != nil { return }
+            await decision.load(item: item, api: store.client)
+        }
+        .reload(onChangeOf: store.ticketStamp(item.ticketId)) {
+            guard sheet == nil, !editing, !returning, drag == 0 else { return }
             await decision.load(item: item, api: store.client)
         }
         .onAppear { withAnimation(.timingCurve(0.2, 0.7, 0.3, 1, duration: reduceMotion ? ReviewStyle.fadeOut : ReviewStyle.fadeIn)) { visible = true } }

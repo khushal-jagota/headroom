@@ -28,7 +28,7 @@ struct UsageView: View {
             if let error { Section { LoadErrorView(message: error) { await refresh() } } }
         }
         .panelsNavigationTitle("Usage", role: .usage).panelsScreen()
-        .task(id: "\(store.baseURL):\(metric):\(days):\(store.revision)") { await load() }
+        .task(id: "\(store.baseURL):\(metric):\(days):\(store.foregroundSession)") { await load() }
         .panelsRefreshable { await refresh() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

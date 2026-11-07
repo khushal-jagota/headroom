@@ -309,22 +309,85 @@ enum ViewFrame: Decodable, Sendable {
     }
 }
 
+extension ViewFrame {
+    /// The scope a frame answers; a reset names no scope the phone checks.
+    var scopeGeneration: Int? {
+        switch self {
+        case .snapshot(let value): value.scopeGeneration
+        case .patch(let value): value.scopeGeneration
+        case .checkpoint(let value): value.scopeGeneration
+        case .reset: nil
+        }
+    }
+}
+
+/// One server-sent frame per `data:` line. URLSession's line sequence omits the blank
+/// separator lines; `event:` names repeat the frame's own `event` field and heartbeat
+/// comments carry nothing.
+enum NavigationViewEventParser {
+    static func data(_ line: String) -> String? {
+        guard line.hasPrefix("data:") else { return nil }
+        let payload = line.dropFirst(5)
+        return String(payload.first == " " ? payload.dropFirst() : payload)
+    }
+}
+
 extension APIClient {
-    /// One bounded snapshot for the phone's current scope. Returns the raw body too,
-    /// so the last coherent view can be restored at launch.
-    func navigationViewSnapshot(_ request: ViewRequest) async throws -> (ViewSnapshot, Data) {
-        var components = URLComponents(url: try url("/api/navigation/view/snapshot"), resolvingAgainstBaseURL: false)!
+    private func navigationViewURL(_ path: String, _ request: ViewRequest) throws -> URL {
+        var components = URLComponents(url: try url(path), resolvingAgainstBaseURL: false)!
         // `+` would read as a space; encode everything outside the unreserved set.
         let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
         components.percentEncodedQuery = "view=" + (try request.encoded()).addingPercentEncoding(withAllowedCharacters: unreserved)!
-        var urlRequest = try self.request(components.url!)
+        return components.url!
+    }
+
+    private static func supported(_ snapshot: ViewSnapshot) -> Bool {
+        snapshot.wireVersion == NavigationViewVersion.wire && snapshot.projectionVersion == NavigationViewVersion.projection && snapshot.mode == "current"
+    }
+
+    /// One bounded snapshot for the phone's current scope. Returns the raw body too,
+    /// so the last coherent view can be restored at launch.
+    func navigationViewSnapshot(_ request: ViewRequest) async throws -> (ViewSnapshot, Data) {
+        var urlRequest = try self.request(try navigationViewURL("/api/navigation/view/snapshot", request))
         urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         urlRequest.timeoutInterval = 25
         let (data, response) = try await session.data(for: urlRequest)
         try Self.validate(response, data: data)
-        guard case .snapshot(let snapshot) = try Self.decoder().decode(ViewFrame.self, from: data),
-              snapshot.wireVersion == NavigationViewVersion.wire, snapshot.projectionVersion == NavigationViewVersion.projection,
-              snapshot.mode == "current" else { throw APIError(status: 0, message: "The server sent an unsupported navigation view.") }
+        guard case .snapshot(let snapshot) = try Self.decoder().decode(ViewFrame.self, from: data), Self.supported(snapshot)
+        else { throw APIError(status: 0, message: "The server sent an unsupported navigation view.") }
         return (snapshot, data)
+    }
+
+    /// The scope's events stream: a snapshot first, then patch, checkpoint and reset
+    /// frames. Each frame comes with its raw body, so a snapshot is saved as it was read.
+    /// The server ends the stream instead of sending a frame when its source changes.
+    /// Frames are decoded off the main actor and none is dropped: each patch follows the last.
+    func navigationViewEvents(_ request: ViewRequest) -> AsyncThrowingStream<(ViewFrame, Data), Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var urlRequest = try self.request(try navigationViewURL("/api/navigation/view/events", request))
+                    urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
+                    // Longer than the server's 15 s heartbeat, so a silent socket is noticed.
+                    urlRequest.timeoutInterval = 45
+                    let (bytes, response) = try await session.bytes(for: urlRequest)
+                    try Self.validate(response)
+                    let decoder = Self.decoder()
+                    for try await line in bytes.lines {
+                        try Task.checkCancellation()
+                        guard let payload = NavigationViewEventParser.data(line) else { continue }
+                        let data = Data(payload.utf8)
+                        let frame = try decoder.decode(ViewFrame.self, from: data)
+                        if case .snapshot(let snapshot) = frame, !Self.supported(snapshot) {
+                            throw APIError(status: 0, message: "The server sent an unsupported navigation view.")
+                        }
+                        continuation.yield((frame, data))
+                    }
+                    continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 }

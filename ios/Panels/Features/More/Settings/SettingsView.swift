@@ -34,7 +34,7 @@ struct SettingsView: View {
             }.listRowBackground(PanelsTheme.raised)
         }
         .panelsNavigationTitle("Settings").panelsScreen()
-        .task(id: "\(store.baseURL):\(section):\(store.revision)") { await load() }
+        .task(id: "\(store.baseURL):\(section):\(store.foregroundSession)") { await load() }
         .panelsRefreshable { await load() }
         .onChange(of: section) { _, _ in Haptics.selection() }
         .sheet(isPresented: $showingServer) {

@@ -15,7 +15,7 @@ struct ArtifactsRow: View {
                 }.buttonStyle(.plain)
                     .accessibilityLabel("Artifacts")
                     .accessibilityValue("\(count) files, \(opened ? "expanded" : "collapsed")")
-                if opened { ArtifactListView(owner: owner) }
+                if opened { ArtifactListView(owner: owner, count: count) }
             }
         }
     }

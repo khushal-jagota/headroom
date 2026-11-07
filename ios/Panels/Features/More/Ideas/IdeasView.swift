@@ -45,7 +45,7 @@ struct IdeasView: View {
             }
         }
         .panelsScreen()
-        .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await model.refresh(using: store.client) }
+        .task(id: "\(store.baseURL.absoluteString):\(store.foregroundSession)") { await model.refresh(using: store.client) }
         .panelsRefreshable { await model.refresh(using: store.client) }
     }
 
