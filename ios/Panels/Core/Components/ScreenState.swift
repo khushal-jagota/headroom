@@ -96,8 +96,9 @@ extension View {
 
 extension View {
     /// Reloads a screen's detail when its own records change in the navigation view.
-    /// The first load stays the screen's own task: a stamp that first appears, leaves or
-    /// returns unchanged never reloads, and a reload never cancels that first load.
+    /// The first load stays the screen's own task: a stamp that first appears never
+    /// reloads, and a reload never cancels that first load. A record that leaves the
+    /// view reloads once, because leaving a window is itself a change to the record.
     func reload(onChangeOf stamp: String?, _ reload: @escaping () async -> Void) -> some View {
         modifier(RecordReload(stamp: stamp, reload: reload))
     }
@@ -117,7 +118,10 @@ private struct RecordReload: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onChange(of: stamp, initial: true) { _, stamp in
-                guard let stamp else { return }
+                guard let stamp else {
+                    if seen != nil { seen = nil; reloads += 1 }
+                    return
+                }
                 if let seen, seen != stamp { reloads += 1 }
                 seen = stamp
             }

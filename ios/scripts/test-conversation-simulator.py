@@ -144,7 +144,10 @@ def main() -> int:
                 "--locked",
             ]
         )
-    assert LANE in {"PanelsLaneA", "PanelsLaneB", "PanelsLaneC"}, "Use an assigned Panels lane"
+    # A task may bring its own simulator: name the device as the lane and pass its UDID.
+    assert LANE in {"PanelsLaneA", "PanelsLaneB", "PanelsLaneC"} or "PANELS_CONVERSATION_DEVICE" in os.environ, (
+        "Use an assigned Panels lane or your own named simulator"
+    )
     assert BUNDLE.startswith("app.panels.ios.pios-"), "Use a separate task bundle"
     output = Path(os.environ["PANELS_CONVERSATION_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)

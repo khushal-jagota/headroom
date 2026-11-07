@@ -49,7 +49,7 @@ both again and reconnects a view stream that is not current.
 
 A detail page reads its own detail when it opens, after a return to the
 foreground or a recovered connection, and otherwise only when its own records in
-the view change: a Ticket and its step pages on the Ticket record;
+the view change or leave it: a Ticket and its step pages on the Ticket record;
 an orchestrator on its record and its children window; Chief on its record, its
 active children and its settings. Working and unread marks on those pages come
 from the view, so a mark change needs no detail read. A Review proposal reloads
@@ -471,8 +471,8 @@ It locks PanelsLaneA, uses the
 separate task bundle, and does not boot, shut down or erase a simulator. Set
 `PANELS_CONVERSATION_OUTPUT` to an external evidence directory. The optional
 `PANELS_CONVERSATION_LANE`, `PANELS_CONVERSATION_DEVICE`, and
-`PANELS_CONVERSATION_BUNDLE` select another assigned, already-booted lane and
-separate task bundle. `PANELS_CONVERSATION_TEST=ConversationLatestTests` selects
+`PANELS_CONVERSATION_BUNDLE` select another assigned, already-booted lane, or a
+task's own booted simulator named as the lane, and a separate task bundle. `PANELS_CONVERSATION_TEST=ConversationLatestTests` selects
 the focused Latest scenario in the same host. Debug smoke mode
 is restricted to loopback; without a valid stub URL it uses a closed loopback port.
 The voice scenario injects recognition output: it does not prove microphone capture
