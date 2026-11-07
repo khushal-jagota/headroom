@@ -415,6 +415,9 @@ def main() -> int:
                 # The navigation view and conversation tail send a fresh snapshot frame each
                 # second, so the app follows fixture changes without a change-driven read.
                 view = json.loads(query["view"][0]) if "view" in query else None
+                # A cold slow load holds the view's first frame as it held the snapshot read.
+                while view is not None and state["slow"]:
+                    time.sleep(0.1)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
