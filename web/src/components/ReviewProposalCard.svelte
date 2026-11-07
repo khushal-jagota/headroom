@@ -259,7 +259,7 @@
   <div>
     <ErrorLine error={detail.error} />
     {#if title !== null}<div class="quiet-line">{title}</div>{/if}
-    {#if decisionActions}{@render decisionActions()}{:else}
+    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}
     <div class="review-card-actions">
       {#if onSkip}
         <Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>
@@ -274,7 +274,7 @@
     <ErrorLine
       error={{ code: "invalid_workflow", message: "The Ticket workflow is unavailable." }}
     />
-    {#if decisionActions}{@render decisionActions()}{:else}
+    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}
     <div class="review-card-actions">
       {#if onSkip}
         <Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>
@@ -330,7 +330,7 @@
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
               onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); revisionDraft = ""; announceResolved(); }}
-              {revisionEditor} revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} utilityActions={decisionActions} />
+              {revisionEditor} revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
             {/key}
           {:else if decisionActions}{@render decisionActions()}
           {/if}
@@ -435,7 +435,7 @@
      stay at hand at the right: they never wait on the proposal. -->
 {#if !detail.error && (!healthyDetail || (!manifestMissingWorkerType && isStale(healthyDetail)))}
   <div class="review-card-actions" data-review-pending-actions>
-    {#if decisionActions}{@render decisionActions()}{:else}
+    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}
       {#if onSkip}<Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>{/if}
       <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
     {/if}

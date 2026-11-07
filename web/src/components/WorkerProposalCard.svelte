@@ -193,20 +193,15 @@
   .context { margin-top:var(--space-4); }
   .utilities { display:flex; align-items:center; gap:var(--space-2); margin-right:calc(var(--space-4) - var(--space-2)); }
   .decision { display:flex; align-items:center; gap:var(--space-2); }
-  /* The review card's layouts (owner to choose; ?options=1 switches them).
-     Split, the default: the queue's actions (Skip, Open ticket) at the row's left, the
-     decisions at its right, so the row is balanced instead of bunched at the right. */
-  .actions:has(> .utilities) { justify-content:space-between; }
-  .actions:has(> .utilities) .utilities { margin-right:0; margin-left:calc(var(--space-3) * -1); }
-  /* Top: Skip and Open ticket stand at the page's top right, as staging, and the card ends in
-     one row: the note, then Send it back and Approve. */
-  :global(:root[data-review-layout="top"]) .worker-proposal:has(> .revision) { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:var(--space-2); align-items:end; }
-  :global(:root[data-review-layout="top"]) .worker-proposal:has(> .revision) > * { grid-column:1 / -1; }
-  :global(:root[data-review-layout="top"]) .worker-proposal:has(> .revision) > .revision { grid-column:1; }
-  :global(:root[data-review-layout="top"]) .worker-proposal:has(> .revision) > .actions { grid-column:2; margin-top:0; }
-  :global(:root[data-review-layout="top"]) .worker-proposal .utilities { display:none; }
+  /* On the Review screen (where the card carries the line for the Worker) the card ends in one
+     row: the note, then Send it back and Approve; Skip and Open ticket stand in the page's top
+     band, as staging (owner's choice). On a phone the decisions go under the note. */
+  .worker-proposal:has(> .revision) { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:var(--space-2); align-items:end; }
+  .worker-proposal:has(> .revision) > * { grid-column:1 / -1; }
+  .worker-proposal:has(> .revision) > .revision { grid-column:1; }
+  .worker-proposal:has(> .revision) > .actions { grid-column:2; margin-top:0; }
   @media (max-width:720px) {
-    :global(:root[data-review-layout="top"]) .worker-proposal:has(> .revision) > .actions { grid-column:1 / -1; margin-top:var(--space-3); }
+    .worker-proposal:has(> .revision) > .actions { grid-column:1 / -1; margin-top:var(--space-3); }
   }
   /* The picker's own trigger is hidden here, so its empty line must not add height. */
   .worker-proposal > :global(div:has(> [data-ceiling-picker])) { display:flex; }
