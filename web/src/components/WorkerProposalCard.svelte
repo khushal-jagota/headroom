@@ -110,9 +110,13 @@
        is the card's title: the thing being decided, not the stage's generic name. -->
   <div class="proposal-line">
     <h2>{fieldLabelFor(lifecycle, proposal.field)}</h2>
-    <span class="proposal-line-sep" aria-hidden="true">·</span>
-    <p class="who">For
-      <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}</button> to approve</p>
+    <!-- Who approves is a property of the proposal and a select, so it reads as one: 'Approver'
+         and the chosen reviewer with a chevron, at the header's right (owner: the word inside a
+         sentence read badly). -->
+    <div class="approver">
+      <span class="approver-label">Approver</span>
+      <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}<svg class="reviewer-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
+    </div>
   </div>
   <div class="proposal-prose">
     <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; onEditedBodyChange?.(raw); }} onCancel={() => proposal.body} />
@@ -158,21 +162,21 @@
   .worker-proposal { --decision-button-height:var(--button-main-height); padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
   .proposal-line { display:flex; align-items:center; flex-wrap:wrap; min-height:20px; color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
   h2 { margin:0; font:inherit; letter-spacing:0; color:inherit; }
-  .proposal-line-sep { padding-inline:6px; color:var(--tone-tertiary); }
-  .who { margin:0; font:inherit; letter-spacing:0; color:inherit; }
+  /* The header: the stage at the left, the approver at the right. */
+  .proposal-line { justify-content:space-between; gap:var(--space-2) var(--space-4); }
+  .approver { display:inline-flex; align-items:center; gap:var(--space-1); margin-right:calc(var(--space-2) * -1); }
+  .approver-label { color:var(--tone-tertiary); }
   /* The proposal's first paragraph leads at the section-head size, at 500 so the page title stays the one peak; the rest
      is body text, all in the primary tone and never wider than the prose measure. */
   .proposal-prose { max-width:var(--page-prose-measure); margin-top:var(--space-2); color:var(--tone-primary); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-body); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
   .proposal-prose :global(.ed > p:first-child), .proposal-prose :global(.ed > .markdown > p:first-child), .proposal-prose :global(.ed > .markdown:first-child > :first-child:is(p)) { margin-bottom:var(--space-3); font-size:var(--type-page-section); font-weight:var(--weight-page-lead); line-height:22px; color:var(--tone-strong); }
   .actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
-  /* Who reviews is a control, and reads as one: a filled chip at staging's target or larger
-     (staging drew it 56x27 inside its 20px heading). */
-  /* As staging: the reviewer is a word in the sentence ('For User to approve'), no fill until
-     pointed at, in the strong tone so it reads as the part you can change. Its target keeps the
-     28px height; the padding is given back by the margins, so the words keep their spacing. */
-  .reviewer { display:inline-flex; align-items:center; justify-content:center; height:28px; font:inherit; line-height:1; padding:0 var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; background:transparent; color:var(--tone-strong); border-radius:var(--radius-md); cursor:pointer; }
-  .reviewer:hover { background:var(--wash-hover); }
+  /* The approver is a select: the reviewer's name in the primary tone with a chevron, no fill
+     until pointed at, on a 28px target. */
+  .reviewer { display:inline-flex; align-items:center; gap:var(--space-1); height:28px; font:inherit; font-weight:var(--weight-needs-you); line-height:1; padding:0 var(--space-2); border:0; background:transparent; color:var(--tone-primary); border-radius:var(--radius-md); cursor:pointer; }
+  .reviewer:hover, .reviewer[aria-expanded="true"] { background:var(--wash-hover); color:var(--tone-strong); }
+  .reviewer-chevron { width:12px; height:12px; flex:none; fill:none; stroke:var(--tone-tertiary); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .reviewer:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   .return-unavailable { color:var(--tone-tertiary); font-size:var(--type-small); margin:var(--space-2) 0 0; }
   .return-note { margin-top:var(--space-5); }
@@ -189,6 +193,21 @@
   .context { margin-top:var(--space-4); }
   .utilities { display:flex; align-items:center; gap:var(--space-2); margin-right:calc(var(--space-4) - var(--space-2)); }
   .decision { display:flex; align-items:center; gap:var(--space-2); }
+  /* The review card's layouts (owner to choose; ?options=1 switches them).
+     Split, the default: the queue's actions (Skip, Open ticket) at the row's left, the
+     decisions at its right, so the row is balanced instead of bunched at the right. */
+  .actions:has(> .utilities) { justify-content:space-between; }
+  .actions:has(> .utilities) .utilities { margin-right:0; margin-left:calc(var(--space-3) * -1); }
+  /* Top: Skip and Open ticket stand at the page's top right, as staging, and the card ends in
+     one row: the note, then Send it back and Approve. */
+  :global(:root[data-review-layout="top"]) .worker-proposal:has(> .revision) { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:var(--space-2); align-items:end; }
+  :global(:root[data-review-layout="top"]) .worker-proposal:has(> .revision) > * { grid-column:1 / -1; }
+  :global(:root[data-review-layout="top"]) .worker-proposal:has(> .revision) > .revision { grid-column:1; }
+  :global(:root[data-review-layout="top"]) .worker-proposal:has(> .revision) > .actions { grid-column:2; margin-top:0; }
+  :global(:root[data-review-layout="top"]) .worker-proposal .utilities { display:none; }
+  @media (max-width:720px) {
+    :global(:root[data-review-layout="top"]) .worker-proposal:has(> .revision) > .actions { grid-column:1 / -1; margin-top:var(--space-3); }
+  }
   /* The picker's own trigger is hidden here, so its empty line must not add height. */
   .worker-proposal > :global(div:has(> [data-ceiling-picker])) { display:flex; }
 </style>

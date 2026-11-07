@@ -144,7 +144,7 @@
   }
 </script>
 
-<div bind:this={card} data-review-card data-review-item-type="message" data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
+<div bind:this={card} data-review-card data-review-embedded={embedded ? "" : undefined} data-review-item-type="message" data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
   {#snippet ownActions()}
     <div class="review-ticket-decision-line review-ticket-decision-line--inline">
       {#if !embedded}<Button variant="ghost" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>{/if}
@@ -153,7 +153,14 @@
     {@render decisionActions?.()}
   {/snippet}
   {#if !embedded}
-  <div class="review-eyebrow" aria-hidden="true"></div>
+  <!-- Top layout: Skip and Open conversation stand in the page's top band at the right, as
+       staging; Split (default): they sit at the left of the card's own action row. -->
+  <div class="review-eyebrow review-eyebrow--decisions">
+    <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions>
+      <Button variant="ghost" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>
+      <Button variant="ghost" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
+    </div>
+  </div>
   <h1 class="review-ticket-title">{item.title}</h1>
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
   <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>
@@ -183,6 +190,16 @@
   .review-card-utilities{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:var(--space-2);min-width:0}
   .review-card-utilities :global(.review-ticket-decision-line){flex-wrap:wrap;justify-content:flex-end}
   .review-read-row:has(:global(.review-card-main)) .review-card-utilities{margin-right:calc(var(--space-4) - var(--space-2))}
+  /* The review card's layouts (owner to choose; ?options=1 switches them). Split, the default:
+     the queue's actions at the row's left, Mark read at its right. Top: they stand in the page's
+     top band instead. */
+  .review-read-row:has(:global(.review-card-main)){justify-content:space-between}
+  .review-read-row:has(:global(.review-card-main)) .review-card-utilities{margin-right:0;margin-left:calc(var(--space-3) * -1)}
+  .review-eyebrow--decisions{justify-content:flex-end}
+  .review-ticket-decision-line--top{padding:0;margin-right:calc(var(--space-3) * -1)}
+  :global(:root:not([data-review-layout="top"])) [data-review-top-decisions]{display:none}
+  /* Only a card that stands alone moves them up; a card inside a Ticket's item keeps its own. */
+  :global(:root[data-review-layout="top"]) [data-review-card]:not([data-review-embedded]) .review-card-utilities :global(.review-ticket-decision-line){display:none}
   .review-message-card{margin-top:var(--space-5);padding:var(--space-5);background:var(--surface-2);border-radius:var(--radius-lg)}
   .review-message-run{font-family:var(--font-ui);font-size:var(--type-md);line-height:1.68}
   .review-message-said+.review-message-said{position:relative;margin-top:var(--space-5);padding-top:var(--space-4)}

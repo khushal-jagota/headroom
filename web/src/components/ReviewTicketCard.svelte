@@ -22,9 +22,15 @@
 </script>
 <div data-review-ticket-card data-review-item-type="ticket" data-ticket-id={item.ticket_id}>
   {#if inlineDecision}
-    <!-- Skip and Open ticket sit in the decision card's own action row. The page's top band
-         stays (empty, as staging had no words here), so the title starts on every page's line. -->
-    <div class="review-eyebrow" aria-hidden="true"></div>
+    <!-- Split (default): Skip and Open ticket sit in the decision card's own action row, and the
+         page's top band stays empty, so the title starts on every page's line. Top: they stand in
+         that band at the right, as staging (the card's row then drops them). -->
+    <div class="review-eyebrow review-eyebrow--decisions">
+      <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions>
+        <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
+        <Button variant="ghost" data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket</Button>
+      </div>
+    </div>
   {:else}
   <div class="review-ticket-decision-line">
     <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
@@ -41,4 +47,7 @@
 
 <style>
   .review-recap-request{display:flex;justify-content:flex-end;margin-top:var(--space-2);font-size:var(--type-sm)}
+  .review-eyebrow--decisions{justify-content:flex-end}
+  .review-ticket-decision-line--top{padding:0;margin-right:calc(var(--space-3) * -1)}
+  :global(:root:not([data-review-layout="top"])) [data-review-top-decisions]{display:none}
 </style>

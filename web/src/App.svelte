@@ -13,6 +13,9 @@
   import type { UsageTab } from "./lib/usageAddress";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import ShellStatus from "./components/ShellStatus.svelte";
+  import ReviewOptions from "./components/ReviewOptions.svelte";
+  // The review card options switcher shows only for ?options=1 in the address (before the #).
+  const reviewOptions = new URLSearchParams(window.location.search).get("options") === "1";
   import { atUpdateDeadline } from "./lib/updates/deadline";
   import { UPDATE_RECOVERY_POLL_MS } from "./lib/updates/config";
   import { updatePresentation } from "./lib/updates/logic/presentation";
@@ -157,6 +160,7 @@
 
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} onfocusin={onWindowFocusIn} />
 
+{#if reviewOptions}<ReviewOptions />{/if}
 <div class="shell">
   <main class="shell-content" class:update-dimmed={update.dimmed} class:update-in-progress={update.state === "updating"}>
     <BoardRoute address={workspaceRouteAddress} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} {railStatus} />
