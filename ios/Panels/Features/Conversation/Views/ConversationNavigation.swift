@@ -113,7 +113,8 @@ private struct ConversationSurface: View {
                         let before = configurationFacts
                         guard await model.applyTail(frame, using: store.client) else { break }
                         // Held prompts, the read boundary and the running model change with a
-                        // new owner message or a turn edge, and are read once per connection.
+                        // new owner message, a turn edge or a held prompt's arrival, and are
+                        // read once per connection.
                         if !applied || configurationFacts != before { await readConfiguration() }
                         applied = true
                     }
@@ -139,7 +140,7 @@ private struct ConversationSurface: View {
     }
 
     private var configurationFacts: String {
-        "\(model.status?.rest.latestOwnerMessageSequence ?? -1)|\(model.status?.turnRunning.map(String.init) ?? "unknown")"
+        "\(model.status?.rest.latestOwnerMessageSequence ?? -1)|\(model.status?.turnRunning.map(String.init) ?? "unknown")|\(model.deliveredHeldPromptCount)"
     }
 
     private func readConfiguration() async {

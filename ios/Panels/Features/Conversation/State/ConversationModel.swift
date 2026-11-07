@@ -150,6 +150,11 @@ import Observation
     private func heldNote(_ id: String) -> String? {
         heldPrompts.first { ($0.senderMessageId ?? $0.heldPromptId) == id }?.note
     }
+    /// Held prompts whose rows have arrived: the server's queue has moved on.
+    var deliveredHeldPromptCount: Int {
+        let received = Set(items.compactMap(\.senderMessageId))
+        return heldPrompts.filter { received.contains($0.senderMessageId ?? $0.heldPromptId) }.count
+    }
     func applyConfiguration(_ configuration: ConversationConfiguration) {
         heldPrompts = configuration.heldPrompts
         readThroughSequence = configuration.ownerReadThroughSequence ?? 0
