@@ -801,9 +801,6 @@
     th[data-numeric] .sort[data-placement="before"] { display: flex; width: 14px; margin-left: -14px; }
     th[data-numeric] .sort[data-placement="after"] { display: none; }
     th[data-numeric] .sort.icon-only .sort-icon { margin: 0 -1px; }
-    /* The last column still stands on the card's inset, as every outer column does. */
-    th[data-numeric]:last-child :is(.sort:not(.icon-only), .editable-sort),
-    td[data-numeric]:last-child:not([data-primary]) { padding-right: 0; }
     /* A table too wide to fit scrolls, and its label column stays in view. */
     table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) { position: sticky; left: 0; }
     .scroller[data-scrolled] table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) {
