@@ -55,7 +55,7 @@ export function ticketSectionHeading(section:TicketSection,view:EffectiveNavigat
 export function ticketSectionRunLabel(section:TicketSection,view:EffectiveNavigationView | null | undefined):string | null {
   const row=section.record.value,facts=ticketSectionFacts(section,view);
   if(row.blocked || row.ticket_status==='blocked') return null;
-  return facts.awaiting_approval ? 'awaiting approval' : facts.assigned ? "you're on it" : null;
+  return facts.awaiting_approval ? 'Awaiting approval' : facts.assigned ? "You're on it" : null;
 }
 
 export function ticketSectionFieldState(section:TicketSection,view:EffectiveNavigationView | null | undefined,field:string):FieldStageVisualState {
