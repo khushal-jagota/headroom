@@ -28,7 +28,6 @@
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
   import GoalRail from "../components/goals/GoalRail.svelte";
-  import GoalSoleStatus from "../components/goals/GoalSoleStatus.svelte";
   import { blurGoalPreviewInput, createGoalRailPreviewInput } from "../lib/goals/railPreview";
   import GoalWorkspace from "../components/goals/GoalWorkspace.svelte";
   import ChiefConversation from "../components/ChiefConversation.svelte";
@@ -255,7 +254,7 @@
     enterHover({target,title:'',kicker:'',goalId},immediate);
   }
   $effect(() => { address.selection; untrack(() => { if (hoverGoalId) dismissHover(); }); });
-  $effect(()=>{const id=hoverGoalId;if(id&&!presentation.goalRails?.some(holder=>!holder.sole&&holder.rows.some(goal=>goal.id===id)))untrack(dismissHover);});
+  $effect(()=>{const id=hoverGoalId;if(id&&!presentation.goalRails?.some(holder=>holder.sole?.id===id||holder.rows.some(goal=>goal.id===id)))untrack(dismissHover);});
   function scrollHover(event: Event): void {
     // Only the person's own scrolling dismisses a row preview (listenForUserScroll).
     if (!hoverGoalId || goalHoverElement?.contains(event.target as Node)) return;
@@ -315,6 +314,15 @@
     observer.observe(observedRail);
     return () => observer.disconnect();
   });
+  // The list's padding gives back what its scrollbar takes, so its two insets match.
+  function railOverflow(node: HTMLElement) {
+    const rail = node.closest<HTMLElement>('.workspace-rail');
+    const update = () => { rail?.style.setProperty('--rail-scrollbar', `${node.offsetWidth - node.clientWidth}px`); };
+    const resize = new ResizeObserver(update);
+    resize.observe(node);
+    update();
+    return { destroy() { resize.disconnect(); } };
+  }
   function preferenceStorage(): Storage | null {
     try { return window.localStorage; } catch { return null; }
   }
@@ -368,10 +376,10 @@
           <div class="rail-work">
           <ResourceState shape="block" layout="fill" loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
-            <div role="presentation" class="active-work-scroll" onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:renderedRailWindow('rail_parents'),pageRestoration:{coordinator:scrollCoordinator,priority:'parent',publicationId:presentation.scrollPublication?.publicationId ?? null,members:rail.items.map(item=>item.id)},activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.manager-card:not(.chief)',key:node=>node.dataset.manager ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={scrollHover}>
-            <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} navigationWindow={renderedRailWindow('rail_tickets',{kind:'chief',id:'chief'})} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" suppressBackgroundPreview={Boolean(hoverGoalId)} title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked && !opening.markedGoalId} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => enterHover({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet identityDetail()}<GoalSoleStatus goal={presentation.goalRails?.find(holder=>holder.owner.kind==='chief')?.sole}/>{/snippet}{#snippet beforeGroups()}<GoalRail structure={presentation.goalRails?.find(holder=>holder.owner.kind==='chief')} onPage={(anchor,direction)=>railPage('goals:chief',anchor,direction)} selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
+            <div role="presentation" class="active-work-scroll" use:railOverflow onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:renderedRailWindow('rail_parents'),pageRestoration:{coordinator:scrollCoordinator,priority:'parent',publicationId:presentation.scrollPublication?.publicationId ?? null,members:rail.items.map(item=>item.id)},activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.manager-card:not(.chief)',key:node=>node.dataset.manager ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={scrollHover}>
+            <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} navigationWindow={renderedRailWindow('rail_tickets',{kind:'chief',id:'chief'})} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" suppressBackgroundPreview={Boolean(hoverGoalId)} title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked && !opening.markedGoalId} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => enterHover({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet beforeGroups()}<GoalRail structure={presentation.goalRails?.find(holder=>holder.owner.kind==='chief')} onPage={(anchor,direction)=>railPage('goals:chief',anchor,direction)} selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
             {#each rail.items as item (item.id)}
-              <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} onVisibility={itemVisibility} navigationWindow={renderedRailWindow('rail_tickets',{kind:'manager',id:item.id})} onWindow={(anchor,direction)=>railPage(item.id,anchor,direction)} id={item.id} title={item.title} project={item.project} signal={item.conversationSignal} conversationId={item.conversationId} selected={opening.markedManagerId === item.id||soleGoalManager===item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target, immediate) => hoverItem(target,item,immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet identityDetail()}<GoalSoleStatus goal={presentation.goalRails?.find(holder=>holder.owner.kind==='manager'&&holder.owner.id===item.id)?.sole}/>{/snippet}{#snippet beforeGroups()}<GoalRail structure={presentation.goalRails?.find(holder=>holder.owner.kind==='manager'&&holder.owner.id===item.id)} onPage={(anchor,direction)=>railPage(`goals:${item.id}`,anchor,direction)} selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
+              <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} onVisibility={itemVisibility} navigationWindow={renderedRailWindow('rail_tickets',{kind:'manager',id:item.id})} onWindow={(anchor,direction)=>railPage(item.id,anchor,direction)} id={item.id} title={item.title} project={item.project} signal={item.conversationSignal} conversationId={item.conversationId} selected={opening.markedManagerId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target, immediate) => hoverItem(target,item,immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet beforeGroups()}<GoalRail structure={presentation.goalRails?.find(holder=>holder.owner.kind==='manager'&&holder.owner.id===item.id)} onPage={(anchor,direction)=>railPage(`goals:${item.id}`,anchor,direction)} selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
             {/each}
             {#if settleError}<p role="alert">{settleError}</p>{/if}
             </div>
@@ -379,27 +387,32 @@
           </ResourceState>
           <!-- Outside the loading region, so the one card never remounts and shows while the workspace cannot load. -->
           {#if railStatus}<div class="rail-status">{@render railStatus()}</div>{/if}
-          {#if workspace}
-            <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
-              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>({workspace?.globalCounts?.settled ?? rail.settledItems.length})</span></span></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 10 3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
-              {#if presentation.settledBodyOpen ?? settledOpen}
-                <div class="settled-body" data-settled-scroll use:navigationScrollWindow={{window:settledWindow,activate:()=>navigation?.owner.prioritizeWindow(settledWindow?.request),selector:'[data-settled-item]',key:node=>node.dataset.settledItem ?? '',move:(anchor,direction)=>railPage('settled',anchor,direction)}} onscroll={scrollHover}>
-                {#each rail.settledItems as item (item.id)}
-                  <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
-                  <!-- The whole row is the washed area, so a press anywhere on it opens the item. Reopen keeps its own press. -->
-                  <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-                  <div class="settled-row" onclick={(event) => { if (!(event.target as HTMLElement).closest('button')) selectItem(item.id); }}>
-                    <button class="settled-title" type="button" aria-current={opening.markedManagerId === item.id ? "page" : undefined} aria-label={`Open ${item.title}`} onclick={() => selectItem(item.id)}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
-                    <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
-                  </div>
-                  </div>
-                {/each}
-                </div>
-              {/if}
-            </div>
-          {/if}
           </div>
-          {#if railFoot}{@render railFoot()}{/if}
+          <!-- The dock: Settled and the destinations, one grouping at the foot of the column. -->
+          <div class="rail-dock">
+            <div class="rail-dock-inner">
+            {#if workspace}
+              <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
+                <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>{workspace?.globalCounts?.settled ?? rail.settledItems.length}</span></span></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                {#if presentation.settledBodyOpen ?? settledOpen}
+                  <div class="settled-body" data-settled-scroll use:navigationScrollWindow={{window:settledWindow,activate:()=>navigation?.owner.prioritizeWindow(settledWindow?.request),selector:'[data-settled-item]',key:node=>node.dataset.settledItem ?? '',move:(anchor,direction)=>railPage('settled',anchor,direction)}} onscroll={scrollHover}>
+                  {#each rail.settledItems as item (item.id)}
+                    <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
+                    <!-- The whole row is the washed area, so a press anywhere on it opens the item. Reopen keeps its own press. -->
+                    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+                    <div class="settled-row" onclick={(event) => { if (!(event.target as HTMLElement).closest('button')) selectItem(item.id); }}>
+                      <button class="settled-title" type="button" aria-current={opening.markedManagerId === item.id ? "page" : undefined} aria-label={`Open ${item.title}`} onclick={() => selectItem(item.id)}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
+                      <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
+                    </div>
+                    </div>
+                  {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+            <div class="rail-dock-foot">{#if railFoot}{@render railFoot()}{/if}</div>
+            </div>
+          </div>
         </section>
         <!-- A focusable separator implements the WAI-ARIA window splitter keyboard pattern. -->
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -511,35 +524,75 @@
      whole stack above pane content without moving native controls out of DOM order. */
   .workspace-rail { position:relative; z-index:1; }
   .board-workspace-right { position:relative; z-index:0; }
-  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); border-right:0; }
-  .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
+  /* Bubbles. The column has no surface of its own: it takes the page's colour, so the sidebar
+     and the page are one surface, and every Manager (the Chief first) is a rounded bubble in
+     the old sidebar colour, 8px from the column's sides and 8px from the next. The dock
+     (Settled and the destinations) is the last bubble, at the foot. No line divides the column
+     from the page (owner). */
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:0; border-right:0; background:var(--rail-column); }
+  .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
+  /* The list's two edges fade into the page's colour: a fixed layer over the list's box, the
+     same whatever is scrolled where (8px at the top; at the bottom --rail-list-fade, where the
+     list meets the dock). The list's own bottom padding is as tall as that fade, so every
+     bubble and row scrolls fully clear of it. Nothing is measured; the list simply scrolls. */
+  .rail-work .rail-work::before, .rail-work .rail-work::after { content:""; position:absolute; z-index:3; left:0; right:0; pointer-events:none; }
+  .rail-work .rail-work::before { top:0; bottom:auto; height:var(--rail-edge-fade); background:linear-gradient(to bottom, var(--rail-column), transparent); }
+  .rail-work .rail-work::after { bottom:0; height:var(--rail-list-fade); background:linear-gradient(to top, var(--rail-column) 4px, transparent); }
   /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
      included, without becoming a scroller that a hover could slide sideways. */
   .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
-  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
-  .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
-  .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
+  /* Scrollbars never move the bubbles. The list keeps a gutter on both sides
+     (scrollbar-gutter: stable both-edges), so the bubbles' left and right insets are always
+     equal, the same scrolled or not: a 4px styled scrollbar (Chromium, Safari) runs in the
+     right gutter at the column's outer edge with the bubbles 8px in on both sides; an overlay
+     scrollbar takes no gutter (4px in on both sides); a classic one keeps its own width on both
+     sides. The dock keeps the same gutters, so it lines up with the bubbles in every case. */
+  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:auto; scrollbar-color:auto; padding:var(--rail-bubble-gap) calc(var(--rail-bubble-gap) - var(--rail-scrollbar-width)) var(--rail-list-fade); scroll-padding-block:var(--rail-edge-fade) var(--rail-list-fade); }
+  .active-work-scroll::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
+  .active-work-scroll::-webkit-scrollbar-track { background:transparent; }
+  .active-work-scroll::-webkit-scrollbar-thumb { border-radius:var(--radius-pill); background:transparent; }
+  .active-work-scroll:is(:hover, :active)::-webkit-scrollbar-thumb { background:var(--border-hover); }
+  @supports not selector(::-webkit-scrollbar) { .active-work-scroll { scrollbar-width:thin; scrollbar-color:var(--border-color) transparent; } }
+
+  .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-width:thin; }
+  /* The grip straddles the rail's edge above both panes. It keeps a compositing layer of its own:
+     without one Chromium squashes it with the page under it and, after some page changes, kept
+     showing stale fragments of the old page in the 5px of it over the page for seconds. */
+  .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); will-change:transform; cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
   .rail-grip::after { content:""; position:absolute; top:50%; left:50%; width:var(--space-1); height:var(--space-6); transform:translate(-50%,-50%) scaleY(var(--rail-grip-rest-scale)); border-radius:var(--radius-pill); background:var(--border-color); opacity:0; pointer-events:none; transition:opacity var(--motion-base) var(--motion-ease),background var(--motion-base) var(--motion-ease),transform var(--motion-enter) var(--motion-ease); }
   .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { opacity:1; transform:translate(-50%,-50%) scaleY(1); }
   .resizing .rail-grip::after { background:var(--text-strong); }
   .resizing { user-select:none; cursor:col-resize; }
-  .rail-status { flex:none; padding-top:var(--space-2); }
-  .settled { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); }
-  .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); padding:var(--space-2) calc(var(--space-3) + var(--border-hairline)); border:0; background:none; width:100%; font:inherit; color:var(--text-faint); cursor:pointer; }
-  .settled-head:hover { color:var(--text-strong); }
+  .rail-status { flex:none; padding:var(--space-2) var(--rail-edge) 0; }
+  /* The dock: Settled and the destinations share one bubble like a Manager's, 8px from the
+     column's sides and foot, and the list fades into the page above it. Its fills sit 4px
+     inside it, concentric with its 12px corners; its words and first icon stand on the rail's
+     one text edge. The destinations sit directly under Settled, no gap (owner). */
+  .rail-dock { position:relative; z-index:4; flex:0 1 auto; display:flex; flex-direction:column; min-height:0; max-height:var(--settled-max-height); overflow:visible; padding:0 var(--rail-bubble-gap) var(--rail-bubble-gap); }
+  /* Settled already owns its bounded scrollbar. Leave its parent open so destination
+     labels can rise one header row above their icons, clear of the collapsed heading. */
+  .rail-dock :global(.utility-label) { bottom:calc(100% + var(--space-2) + 32px); }
+  .rail-dock-inner { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; padding:var(--rail-bubble-pad); border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); }
+  .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; margin:0; border:0; padding:0; }
+  .rail-dock-foot { flex:none; }
+  .rail-dock-foot :global(.rail-foot) { padding:0 0 0 calc(var(--rail-pad) - 9px); }
+  /* Settled: one row in the rail's row voice, staging's 32px tall, its count a plain Small
+     numeral after it. */
+  .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); box-sizing:border-box; height:32px; min-height:0; padding:0 var(--rail-pad); margin-inline:0; border:0; border-radius:var(--radius-md); background:none; width:100%; font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
+  .settled-head:hover { background:var(--wash-hover); color:var(--rail-tone-bright); }
   .settled-count { position:relative; display:inline-block; }
-  .settled-chevron { width:16px; height:16px; flex:none; }
-  .settled--open .settled-chevron { transform:rotate(180deg); }
-  .count { flex:none; font-size:var(--type-xs); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
-  .settled-item + .settled-item { margin-top:var(--space-3); }
-  .settled-row { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-1) calc(var(--space-2) + var(--border-hairline)); margin:0 var(--space-1); border-radius:var(--radius-md); cursor:pointer; }
-  .settled-row:hover { color:var(--text-strong); }
+  .settled-chevron { width:14px; height:14px; flex:none; color:var(--rail-tone-label); transition:transform var(--motion-base) var(--motion-ease); }
+  .settled--open .settled-chevron { transform:rotate(90deg); }
+  .count { flex:none; margin-left:5px; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; }
+  .settled-item + .settled-item { margin-top:var(--rail-row-gap); }
+  .settled-row { display:flex; align-items:center; gap:var(--space-2); box-sizing:border-box; min-height:var(--rail-row-height); padding:5px var(--rail-pad); margin:0; border-radius:var(--radius-md); font-size:var(--type-row); line-height:20px; cursor:pointer; }
+  .settled-row:hover { color:var(--rail-tone-bright); }
   .settled-title,.reopen { border:0; background:none; font:inherit; cursor:pointer; color:var(--text-faintest); padding:0; }
-  .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; }
+  .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; color:var(--rail-tone-rest); }
   .settled-title > span { flex:1; min-width:0; overflow-wrap:anywhere; }
-  .reopen { opacity:0; margin-left:auto; color:var(--text-faint); font-size:12px; }
+  .reopen { opacity:0; margin-left:auto; color:var(--rail-tone-label); font-size:var(--type-small); }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
-  button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+  button:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   @media(prefers-reduced-motion:reduce) {
     .rail-grip::after { transition:none; }
   }

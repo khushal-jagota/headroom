@@ -177,6 +177,9 @@
   // cannot live in the stage. It lives here, where it outlives the move.
   let readerStageFolds = new SvelteMap<string, boolean>();
   let stepsOpen = $state(false);
+  let recapNote = $state<string | null>(null);
+  // A note belongs to the Ticket it was asked of.
+  $effect(() => { void stableId; recapNote = null; });
   const fieldDrafts = new Map<string, InlineEditDraft>();
   function fieldDraft(name: string): InlineEditDraft {
     let draft = fieldDrafts.get(name);
@@ -327,21 +330,33 @@
       <div class="ticket-reading">
       <main class="ticket-doc">
         <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
-          <div class="worker-eyebrow" data-ticket-identity>
+          <!-- Every page has one line above its title: where it lives, then its own facts.
+               Under the title there is only the recap. -->
+          <div class="page-band">
+          <div class="worker-eyebrow page-eyebrow page-band-place" data-ticket-identity>
+            <!-- Where the Ticket runs leads the line, as its icon alone; the machine's name is
+                 the mark's accessible name and tooltip. -->
+            <span class="worker-machine" title={`Runs on ${machineName(masthead.locale)}`}><MachineIdentity locale={masthead.locale} /></span>
             <span data-project-fact>{masthead.project || "No project"}</span>
-            <span aria-hidden="true">·</span>
+            <span class="page-eyebrow-sep" aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
-            <span aria-hidden="true">·</span>
-            <MachineIdentity locale={masthead.locale} accessible={false} /><span data-machine-name>{machineName(masthead.locale)}</span>
+          </div>
+          <!-- The Ticket's utilities sit at the band's right end as ghosts, quiet and always
+               shown, so the decision below is the page's one call to action. -->
+          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} variant="ghost">
+            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" bind:note={recapNote} noteInline={false} />{/snippet}
+          </TicketLifecycleControls>{/if}
           </div>
           <div class="ticket-title-row">
+            <!-- The title, then its marks beside its words as staging drew them: working, and
+                 the unread dot. -->
             <div class="ticket-title">
-              <InlineEdit
+              <h1 class="page-title ticket-title-text"><InlineEdit
                 value={masthead.title}
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
-              />
-              <MachineActivityMark locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} />
+              /></h1>
+              <span class="ticket-title-mark"><MachineActivityMark working={false} locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} /></span>
             </div>
             <RecapSlot>
             {#snippet children()}
@@ -363,11 +378,10 @@
             </ClampedText>
             {/snippet}
             </RecapSlot>
+            <!-- What became of an ask for a recap reads under the recap, as staging. -->
+            {#if recapNote}<p class="ticket-recap-note" role="status" data-request-recap-note>{recapNote}</p>{/if}
           </div>
           {#if masthead.locale === "macos"}<MacStatus health={machineHealth.isError ? undefined : machineHealth.data} showDisconnected />{/if}
-          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal}>
-            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
-          </TicketLifecycleControls>{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
               <span class="ticket-blocker-heading">Blocked by</span>
@@ -503,34 +517,44 @@
 </section>
 
 <style>
+  /* The ticket's ghost page actions end with their label on the column's edge. */
+  .ticket-head .page-band > :global(.ticket-lifecycle) { margin-right:calc(var(--button-pad-x) * -1); }
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
-  .ticket-head { padding-top:48px; }
-  .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
-  .ticket-title-row { display:block; margin-top:var(--space-3); }
-  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-.014em; }
-  .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
+  .ticket-head { padding-top:var(--page-top); }
+  .ticket-title-row { display:block; margin-top:var(--space-1); }
+  .ticket-recap-note { margin:var(--space-2) 0 0; color:var(--tone-tertiary); font-size:var(--type-small); line-height:18px; }
+  .worker-machine { display:inline-flex; align-items:center; margin-right:6px; color:var(--tone-tertiary); }
+  .worker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
+  /* The title and a fixed 16px mark column, centred on the title's first line. */
+  /* As staging: the title, then its marks right after its words. */
+  .ticket-title { display:flex; align-items:flex-start; gap:var(--space-3); }
+  .ticket-title-text { min-width:0; margin:0; }
+  .ticket-title :global(.ed) { font:inherit; color:var(--tone-strong); }
+  .ticket-title-mark { flex:none; display:flex; align-items:center; justify-content:center; height:32px; }
   /* The gap belongs to the slot, not to the words in it: the words go while a recap is
      written, and a gap that went with them would move the page. */
-  .ticket-head :global([data-recap-slot]) { margin-top:var(--space-3); }
-  .ticket-head :global([data-recap]) { max-width:66ch; font-family:var(--font-ui); font-size:17px; line-height:1.6; color:var(--text-faint); }
+  .ticket-head :global([data-recap-slot]) { margin-top:var(--space-2); }
+  .ticket-head :global([data-recap]) { max-width:var(--page-prose-measure); font-family:var(--font-ui); font-size:var(--type-body); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }
   .worker-current { margin-top:var(--space-6); }
-  .worker-live-card { padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }
-  .worker-live-card h2 { margin:var(--space-2) 0 0; letter-spacing:-.006em; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
+  .worker-live-card { padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
+  .worker-live-card h2 { margin:0; letter-spacing:0; font-size:var(--type-page-section); font-weight:var(--weight-page-section); line-height:20px; color:var(--tone-primary); }
   .worker-ceiling-line { margin-top:var(--space-3); }
-  .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:15px; line-height:1.3; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-sm); background:transparent; box-shadow:none; text-align:left; }
+  .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:var(--type-body); line-height:20px; color:var(--tone-secondary); padding:var(--space-2) var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:none; text-align:left; }
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
-  .worker-bands { line-height:1.6; margin-top:var(--space-7); padding-bottom:var(--space-7); }
-  .worker-steps { border-top:1px solid var(--border-color); }
-  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:13px; font-weight:600; color:var(--text-faint); cursor:pointer; list-style:none; }
+  /* Steps and Artifacts are staging's two bands between hairlines: the label at the left in
+     Small print, its count at the right. */
+  .worker-bands { line-height:1.6; margin-top:var(--space-6); padding-bottom:var(--space-7); }
+  .worker-steps { border-top:var(--border-hairline) solid var(--border-color); }
+  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:var(--type-small); font-weight:var(--weight-title); color:var(--tone-secondary); cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }
-  .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .band-count { margin-left:auto; font-weight:400; color:var(--text-faintest); }
+  .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--tone-strong); }
+  .band-count { margin-left:auto; font-weight:var(--weight-small); color:var(--tone-tertiary); }
   .worker-step-rows { padding-bottom:var(--space-4); }
   .worker-step-rows :global(.disclosure--stage) { margin:0; border:0; }
-  .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:9px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:15px; color:var(--text-muted); }
-  .worker-step-rows :global(.disclosure--stage > .disclosure-summary:hover) { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .worker-step-rows :global(.disclosure--stage > .disclosure-body) { padding:var(--space-2) var(--space-2) var(--space-5); font-family:var(--font-ui); font-size:15px; color:var(--text-faint); }
-  .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:15px; letter-spacing:normal; }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-body); color:var(--tone-secondary); }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-summary:hover) { background-image:var(--interaction-hover); color:var(--tone-strong); }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-body) { padding:var(--space-2) var(--space-2) var(--space-5); font-family:var(--font-ui); font-size:var(--type-body); color:var(--tone-primary); }
+  .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:var(--type-body); letter-spacing:normal; }
 </style>

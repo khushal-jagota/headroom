@@ -111,22 +111,21 @@
 </div>
 
 <style>
+  /* Blocks of one page keep the block rhythm: 32px between them. */
   .blocks {
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
+    gap: var(--page-block-gap);
     min-width: 0;
-  }
-  .blocks > :global(.section) ~ :global(.section) {
-    margin-top: calc(var(--space-7) - var(--space-6));
   }
 
   .text {
     margin: 0;
-    color: var(--text-default);
-    font-size: var(--type-prose-lg);
-    font-weight: 400;
-    line-height: 1.6;
+    max-width: var(--page-prose-measure);
+    color: var(--tone-primary);
+    font-size: var(--type-body);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-body);
   }
   .text :global(p) {
     white-space: pre-wrap;
@@ -140,7 +139,7 @@
     margin: 0;
     padding: var(--space-5);
     border: 0;
-    border-radius: var(--space-5);
+    border-radius: var(--radius-lg);
     background: var(--surface-recessed);
   }
   .callout[data-tone="attention"] { background: var(--accent-surface); }
@@ -152,7 +151,7 @@
     margin: 0 0 var(--space-2);
     color: var(--text-strong);
     font-size: var(--type-md);
-    font-weight: 500;
+    font-weight: var(--weight-title);
     line-height: 1.4;
   }
   .callout[data-tone="attention"] .callout-title { color: var(--accent-bright); }
@@ -162,7 +161,7 @@
     margin: 0;
     color: var(--text-default);
     font-size: var(--type-md);
-    font-weight: 400;
+    font-weight: var(--weight-body);
     line-height: 1.5;
     white-space: pre-wrap;
   }
@@ -181,8 +180,8 @@
   .metric {
     min-width: 0;
     padding: var(--space-5);
-    border-radius: var(--space-5);
-    background: var(--surface-recessed);
+    border-radius: var(--page-card-radius);
+    background: var(--page-card-fill);
   }
   .metric-top {
     display: flex;
@@ -194,7 +193,7 @@
     margin: 0;
     color: var(--text-muted);
     font-size: var(--type-sm);
-    font-weight: 400;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .metric-change {
@@ -205,7 +204,7 @@
     background: var(--surface-2);
     color: var(--text-muted);
     font-size: var(--type-xs);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     font-variant-numeric: tabular-nums;
     line-height: 1.4;
   }
@@ -225,7 +224,7 @@
     margin: var(--space-4) 0 0;
     color: var(--text-strong);
     font-size: var(--type-hero);
-    font-weight: 500;
+    font-weight: var(--weight-title);
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--tracking-title);
     line-height: 1;
@@ -234,7 +233,7 @@
     margin: var(--space-2) 0 0;
     color: var(--text-faint);
     font-size: var(--type-xs);
-    font-weight: 400;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
 
@@ -249,14 +248,14 @@
     margin: 0;
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 400;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .fact dd {
     margin: var(--space-1) 0 0;
     color: var(--text-strong);
     font-size: var(--type-md);
-    font-weight: 500;
+    font-weight: var(--weight-body);
     line-height: 1.4;
     white-space: pre-wrap;
   }
@@ -266,7 +265,7 @@
     min-height: var(--space-6);
     color: var(--text-default);
     font-size: var(--type-md);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .status[data-tone="attention"] { color: var(--accent-bright); }
@@ -298,10 +297,11 @@
   .grid[data-joined="true"][data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .grid[data-joined="true"][data-columns="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .grid-cell { min-width: 0; }
+  /* A joined grid is one card: its fill, no outer edge; hairlines only between its cells. */
   .grid[data-joined="true"] {
     gap: 0;
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--space-6);
+    background: var(--page-card-fill);
+    border-radius: var(--page-card-radius);
     overflow: hidden;
   }
   .grid[data-joined="true"] .grid-cell {
@@ -330,14 +330,14 @@
     margin: 0;
     color: var(--text-strong);
     font-size: var(--type-md);
-    font-weight: 500;
+    font-weight: var(--weight-body);
     line-height: 1.4;
   }
   .row-detail {
     margin: 6px 0 0;
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 400;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .row-aside {
@@ -350,7 +350,7 @@
     margin: 0;
     color: var(--text-default);
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .row-aside[data-tone="attention"] .row-status { color: var(--accent-bright); }
@@ -360,7 +360,7 @@
     margin: 4px 0 0;
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 400;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
 

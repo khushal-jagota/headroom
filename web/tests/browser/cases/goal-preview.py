@@ -373,7 +373,7 @@ def native_manual_controls(page, fixture):
             panel.get_by_role("button", name=re.compile("29 Oct,")).click()
             expect(value).to_have_value("2")
             value.fill("8")
-            value.press("Tab")
+            panel.locator("h1").click()
             expect(value).to_have_attribute("data-reading", "8")
             assert fixture.writes[-1][1]["date"] == YESTERDAY
         elif model == "individual_readings":
@@ -384,7 +384,7 @@ def native_manual_controls(page, fixture):
             plot.press("Enter")
             expect(value).to_have_value("2")
             value.fill("8")
-            value.press("Tab")
+            panel.locator("h1").click()
             expect(value).to_have_attribute("data-reading", "8")
             assert fixture.writes[-1][1]["date"] == YESTERDAY
         else:
@@ -506,12 +506,27 @@ def cumulative_preflight_lifetime(page, fixture):
 
 def native_owner_interactions(page):
     # The real adjacent document can cover a preview trapped in the rail's wash
-    # stacking context. Reuse this host to prove pointer access and native Tab.
+    # stacking context. Reuse this host to prove pointer access and sidebar Tab order.
     page.evaluate("location.hash='#/workspace/chief-of-staff'")
     expect(page.locator('.board-workspace-right--chief .manager-doc')).to_be_visible()
     panel = open_preview(page, "daily_quota")
     row = page.locator('a[data-goal-id="daily_quota"]')
+    # The reading control arrives after the preview opens. It must stay outside
+    # sequential navigation even after that asynchronous body admission.
+    expect(panel.get_by_role("textbox")).to_be_visible()
+    next_id = row.evaluate("""node => {
+      const rows=[...node.closest('.goals-rail').querySelectorAll('a[data-goal-id]')];
+      return rows[rows.indexOf(node)+1]?.dataset.goalId;
+    }""")
+    assert next_id, "This fixture needs an adjacent goal row for native Tab proof"
+    next_row = page.locator(f'a[data-goal-id="{next_id}"]')
     row.press("Tab")
+    expect(next_row).to_be_focused()
+    next_row.press("Shift+Tab")
+    expect(row).to_be_focused()
+    expect(panel).to_be_visible()
+    # Pointer input still reaches the same preview control.
+    panel.get_by_role("textbox").click()
     expect(panel.get_by_role("textbox")).to_be_focused()
     panel.get_by_role("textbox").fill("42")
     panel.get_by_role("textbox").press("Escape")
@@ -549,9 +564,10 @@ def native_owner_interactions(page):
         'node => node.dispatchEvent(new Event("scroll"))'
     )
     expect(panel).to_be_visible()
-    page.keyboard.press("Tab")
+    page.keyboard.press("Shift")
+    page.locator('a[data-goal-id="long"]').focus()
     expect(panel).to_be_visible()
-    # Keyboard focus scroll repositions instead of dismissing the preview.
+    # Keyboard row focus and layout scroll events retain the preview.
     page.locator("[data-active-work-scroll]").evaluate(
         'node => node.dispatchEvent(new Event("scroll"))'
     )
@@ -1398,7 +1414,9 @@ def centered_checklist_row(row):
                 background:getComputedStyle(surface).backgroundColor};
     }""")
     assert geometry["hovered"], geometry
-    assert geometry["background"] != "rgba(0, 0, 0, 0)", geometry
+    # The redesign marks the open step by its own note under its name, with no fill behind
+    # the row on the card's surface.
+    assert geometry["background"] == "rgba(0, 0, 0, 0)", geometry
     for part in ("title", "checkbox"):
         assert abs(geometry[part]["centerY"] - geometry["surface"]["centerY"]) <= 1, geometry
     return geometry
@@ -2061,6 +2079,11 @@ def native_goal_edits(browser, url):
             for label in ("Project", "By date", "State"):
                 expect(goal.get_by_label(label, exact=True)).to_be_visible()
             assert why.bounding_box()["height"] > 0
+            if not phone:
+                # Full-page editors retain their ordinary sequential Tab order.
+                title.focus()
+                title.press("Tab")
+                expect(why).to_be_focused()
             field_write(
                 "title", "Native Wren release", lambda: text_action(title, "Native Wren release")
             )
@@ -2126,7 +2149,7 @@ def native_goal_edits(browser, url):
                 deadline = goal.get_by_label("By date", exact=True)
                 field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
                 expect(deadline).to_have_value("")
-                expect(goal.locator(".deadline-empty")).to_have_text("No deadline")
+                expect(goal.locator(".deadline-label")).to_have_text("No deadline")
                 deadline.click()
                 expect(deadline).to_be_focused()
                 deadline.press("Escape")
@@ -2287,7 +2310,7 @@ def native_goal_edits(browser, url):
                 )
                 deadline = goal.get_by_label("By date", exact=True)
                 field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
-                expect(goal.locator(".deadline-empty")).to_have_text("No deadline")
+                expect(goal.locator(".deadline-label")).to_have_text("No deadline")
                 deadline.tap()
                 expect(deadline).to_be_focused()
                 deadline.press("Escape")
@@ -2480,7 +2503,10 @@ def native_goal_edits(browser, url):
                     alignment:getComputedStyle(context).alignItems,
                     controls:[...context.querySelectorAll('input,select')].map(control=>{
                         const c=control.getBoundingClientRect();
-                        const sizer=control.parentElement.querySelector('.control-size');
+                        const labels=control.parentElement.querySelectorAll(
+                            '.control-size,.deadline-label');
+                        const sizer=[...labels]
+                            .find(node=>node.getClientRects().length>0);
                         const size=sizer.getBoundingClientRect();
                         return {name:control.getAttribute('aria-label'),width:c.width,
                             measuredWidth:size.width,top:c.top,bottom:c.bottom,
@@ -2492,7 +2518,11 @@ def native_goal_edits(browser, url):
                 mode,
                 heading_geometry,
             )
-            assert heading_geometry["alignment"] == "baseline", heading_geometry
+            # The goal's line above its title is the page eyebrow every page uses (redesign):
+            # its facts and controls centred on one line.
+            assert heading_geometry["alignment"] == "center", heading_geometry
+            tops = {round(control["top"]) for control in heading_geometry["controls"]}
+            assert max(tops) - min(tops) <= 1, heading_geometry
             assert [control["name"] for control in heading_geometry["controls"]] == [
                 "Project", "By date", "State",
             ], heading_geometry
@@ -2520,15 +2550,19 @@ def native_goal_edits(browser, url):
             geometry = rail.evaluate("""rail => {
                 const chief = rail.closest('.chief').querySelector('[data-chief-destination]');
                 const c = chief.getBoundingClientRect(), r = rail.getBoundingClientRect();
-                const firstGoal = rail.querySelector('a[data-goal-id] .row-heading');
+                const firstGoal = rail.querySelector('a[data-goal-id] .row-title');
                 const first = firstGoal.getBoundingClientRect();
                 return {containerGap:r.top-c.bottom, firstGoalInset:first.top-c.bottom,
                     railMargin:getComputedStyle(rail).marginTop,
                     viewport:innerWidth, scrollWidth:document.documentElement.scrollWidth};
             }""")
-            assert abs(geometry["containerGap"] - 8) <= 1, geometry
-            assert abs(geometry["firstGoalInset"] - 16) <= 1, geometry
-            assert geometry["railMargin"] == "8px", geometry
+            print(f"{mode} rail geometry: {geometry}", flush=True)
+            # Goals belong to their Manager's header (redesign): the goal rows stack tight under
+            # the name with no gap of their own, the first goal's name 6px under it in its 28px
+            # row.
+            assert abs(geometry["containerGap"] - 2) <= 1, geometry
+            assert abs(geometry["firstGoalInset"] - 6) <= 1, geometry
+            assert geometry["railMargin"] == "0px", geometry
             assert geometry["scrollWidth"] <= geometry["viewport"], geometry
             if output:
                 page.screenshot(path=str(output / f"{mode}-rail.png"))

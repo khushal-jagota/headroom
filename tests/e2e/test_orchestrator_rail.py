@@ -160,7 +160,11 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     with closing(connect(str(server.db_path))) as conn:
         conn.execute("UPDATE managers SET updated_at=updated_at-1 WHERE id=?", (empty["id"],))
         conn.commit()
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible(timeout=WAIT_MS)
+    # The row waits on the owner's approval, so its mark column shows the Review mark, which
+    # outranks its unread message's dot (redesign, owner). The mark stays through settle,
+    # reopen and the other conversations' reads below.
+    attention = row.get_by_role("img", name="Needs your approval")
+    expect(attention).to_be_visible(timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
     question_row = card.locator(f'[data-ticket-id="{question["id"]}"]')
@@ -248,7 +252,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
             conn.execute("SELECT settled FROM managers WHERE id=?", (item["id"],)).fetchone()[0]
             == 0
         )
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
+    expect(attention).to_be_visible()
     capture_success(page, str(EVIDENCE / "rail-1440.png"))
     _message(server, "rail-chief", CHIEF_PRINCIPAL, "Chief own direct message")
     _message(
@@ -260,11 +264,11 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     page.reload()
     expect(card.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_be_visible(timeout=WAIT_MS)
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
+    expect(attention).to_be_visible()
     api.direct_post(
         server, "/api/conversation/conversations/rail-chief/owner-read", {"through_sequence": 1}
     )
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0, timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_be_visible()
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
+    expect(attention).to_be_visible()
     capture_success(page, str(EVIDENCE / "own-conversation-marks.png"))

@@ -79,7 +79,7 @@
   .card { border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-md); background:var(--surface-1); overflow:hidden; }
   .chart-card { padding:var(--space-5); display:grid; gap:var(--space-4); }
   .headline { display:grid; gap:var(--space-1); }.headline span { color:var(--text-faint); font-size:var(--type-sm); }.headline strong { color:var(--text-strong); font-size:clamp(2rem,5vw,3rem); line-height:1.2; font-variant-numeric:tabular-nums; }
-  h2 { font-size:var(--type-sm); color:var(--text-faint); margin:0; padding:var(--space-4); border-bottom:var(--border-hairline) solid var(--border-color); font-weight:500; }
+  h2 { font-size:var(--type-sm); color:var(--text-faint); margin:0; padding:var(--space-4); border-bottom:var(--border-hairline) solid var(--border-color); font-weight:590; }
   .empty-chart { height:180px; display:grid; place-items:center; color:var(--text-faint); }
   .legend-line,.legend,.legend span,.row,.row>span { display:flex; align-items:center; gap:var(--space-2); }.legend-line,.row { justify-content:space-between; }.legend-line { color:var(--text-faint); font-size:var(--type-xs); }.legend { flex-wrap:wrap; justify-content:center; gap:var(--space-4); }
   i { display:inline-block; width:.6rem; height:.6rem; border-radius:50%; flex-shrink:0; }

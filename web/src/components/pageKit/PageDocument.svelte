@@ -20,7 +20,7 @@
     container-name: page;
     container-type: inline-size;
     width: 100%;
-    max-width: var(--document-channel-measure);
+    max-width: var(--page-measure);
     color: var(--text-default);
     font-family: var(--font-ui);
   }
@@ -28,7 +28,7 @@
   h1 {
     margin: 0;
     font-size: var(--type-display);
-    font-weight: 500;
+    font-weight: var(--weight-title);
     letter-spacing: var(--tracking-title);
     line-height: 1.15;
     color: var(--text-strong);

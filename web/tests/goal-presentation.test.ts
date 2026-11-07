@@ -289,6 +289,6 @@ it('uses the supplied server date for deadline-only tones and gives saved comple
  expect(deadlineTone('2026-10-29',true,undefined)).toBe('neutral');
  expect(deadlineTone('2026-10-30',false,'2026-10-31')).toBe('bad');
  expect(['bad','attention','good','neutral'].map(tone=>deadlineColor(tone as GoalResponse['status']))).toEqual([
-  'var(--accent-error)','var(--accent-attention)','var(--accent-done)','var(--text-muted)',
+  'var(--accent-error)','var(--accent-attention)','var(--accent-done)','inherit',
  ]);
 });

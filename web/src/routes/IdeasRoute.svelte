@@ -4,6 +4,7 @@
   import { queries } from "../lib/queryCatalogue";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
+  import ComposerField from "../components/conversation/ComposerField.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import ListRow from "../components/ListRow.svelte";
@@ -50,8 +51,15 @@
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void capture();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
     }
   }
+
+  // The title was a one-line text input, which drops line breaks from whatever is pasted.
+  $effect(() => {
+    if (/[\r\n]/.test(title)) title = title.replace(/[\r\n]+/g, "");
+  });
 </script>
 
 <section class="ideas-screen" data-screen="ideas">
@@ -64,21 +72,20 @@
     <div class="col">
       <section class="capture" data-create="idea">
         {#if createError}<ErrorLine error={createError} />{/if}
-        <input
-          class="in title-in"
-          type="text"
-          placeholder="Capture an idea..."
-          data-input="title"
+        <!-- The composer's field (ComposerField), twice: the idea, which stays one line of words
+             as the text input it was (Enter captures; a line break never lands in it), and its
+             detail. -->
+        <ComposerField
           bind:value={title}
+          placeholder="Capture an idea..."
+          inputAttributes={{ "data-input": "title" }}
           onkeydown={keydown}
         />
-        <textarea
-          class="in detail-in"
-          rows="2"
-          placeholder="Add detail — optional"
-          data-input="body"
+        <ComposerField
           bind:value={detail}
-        ></textarea>
+          placeholder="Add detail — optional"
+          inputAttributes={{ "data-input": "body" }}
+        />
         <div class="foot">
           <SegmentedControl name="project" options={projectOptions} bind:value={project} />
           <div class="spacer"></div>

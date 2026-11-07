@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "../components/Button.svelte";
   import { tick, onDestroy } from "svelte";
   import { previewHashHref } from "../lib/filePreview";
   import { rememberReviewVisit, takeReviewVisit, reviewVisitItemKey } from "../lib/review/visit";
@@ -299,7 +300,7 @@
       {:else}
         {@const ticket = currentItem}
         {#key ticket.ticket_id}
-          <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy}>
+          <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal) || ticket.messages.length > 0}>
             {#if ticket.proposal}
               {@const proposal = ticket.proposal}
               {#key reviewProposalIdentity(proposal)}
@@ -311,7 +312,7 @@
                   onRevisionDraftChange={text=>{proposalDraft={identity:reviewProposalIdentity(proposal),text,editedBody:proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.editedBody : undefined};}}/>
               {/key}
             {/if}
-            {#each ticket.messages as message (message.conversation_id)}
+            {#each ticket.messages as message, index (message.conversation_id)}
               {#key messageGenerations[message.conversation_id] ?? 0}
                 <ReviewMessageCard item={message} embedded onSkip={()=>skip(ticket)}
                   onResolved={()=>messageResolved(message.conversation_id)} onBusy={value=>messageBusyChanged(message.conversation_id,value)}

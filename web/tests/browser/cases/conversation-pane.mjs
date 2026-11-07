@@ -885,7 +885,9 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     <div class="ticket-page" use:conversationDock use:dismissTicketOutside>
     <div class="ticket-reading">
     <main class="ticket-doc fixture-document">
-      <button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button>
+      <!-- The Ticket page's column and its bands' 48px foot, which together keep the room to
+           scroll clear of the composer zone. -->
+      <div class="ticket-col"><div style="padding-bottom:var(--space-7)"><button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button></div></div>
     </main>
     {#if cardArtifact}<ArtifactPreview target={{kind:"ticket-file", ticketId:"t_cardmotion",path:"artifact.html"}}
       registerArtifactFrame={ticketDismissal.registerArtifactFrame} onRefresh={() => artifactClicks += 1} onClose={() => artifactClicks += 1} />{/if}

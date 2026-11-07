@@ -2,8 +2,8 @@ import { railPreview, RAIL_TOUCH_MOVE_TOLERANCE } from '../workspaceRailInteract
 
 export const GOAL_PREVIEW_WIDTH = 340;
 export const GOAL_PREVIEW_GUTTER = 12;
-export const GOAL_PREVIEW_RAIL_GAP = 14;
-export const GOAL_PREVIEW_ANCHOR_OFFSET = 8;
+export const GOAL_PREVIEW_RAIL_GAP = 8;
+export const GOAL_PREVIEW_ANCHOR_OFFSET = 0;
 
 /** Commit native drafts while their controls are still mounted. */
 export function blurGoalPreviewInput(panel: HTMLElement | null): void {

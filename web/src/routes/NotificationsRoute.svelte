@@ -161,7 +161,6 @@
 
 <section class="notifications-page" data-screen="notifications">
   <header class="notifications-head">
-    <div class="eyebrow">Settings</div>
     <h1>Notifications</h1>
   </header>
 

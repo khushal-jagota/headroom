@@ -104,13 +104,20 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     )
     _bind(server, "feedback", feedback["id"])
     ticket = tickets[0]
+    # A row waiting on the owner's approval shows the Review mark, which outranks an unread
+    # dot (redesign, owner). The Manager-held approval's row shows its dot, so the durable
+    # dot is proved on that Worker.
+    dot_ticket = tickets[1]
     for name in ("dot-ticket", "dot-manager", "dot-chief"):
         _conversation(server, name)
-    _bind(server, "ticket", ticket["id"], "dot-ticket")
+    _bind(server, "ticket", dot_ticket["id"], "dot-ticket")
     _bind(server, "agent", item["manager"]["agent_key"], "dot-manager")
     _bind(server, "agent", "chief_of_staff", "dot-chief")
     _message(
-        server, "dot-ticket", Principal(PrincipalKind.ticket, ticket["id"]), "Child direct message"
+        server,
+        "dot-ticket",
+        Principal(PrincipalKind.ticket, dot_ticket["id"]),
+        "Child direct message",
     )
 
     context = context_factory()
@@ -131,7 +138,11 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
         left = page.locator(f'[data-manager="{item["id"]}"]')
         owner_row = left.locator(f'[data-ticket-id="{ticket["id"]}"]')
-        expect(owner_row.locator('[data-conversation-signal="message"]')).to_have_count(
+        expect(owner_row.locator('[data-approval-mark="owner"]')).to_have_count(
+            1, timeout=WAIT_MS
+        )
+        dot_row = left.locator(f'[data-ticket-id="{dot_ticket["id"]}"]')
+        expect(dot_row.locator('[data-conversation-signal="message"]')).to_have_count(
             1, timeout=WAIT_MS
         )
         expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(
@@ -191,7 +202,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         expect(right.get_by_text(tickets[1]["title"], exact=True)).to_be_visible(timeout=WAIT_MS)
         capture_success(page, str(EVIDENCE / "approvals-child-message.png"))
 
-        owner_row.click(timeout=WAIT_MS)
+        dot_row.click(timeout=WAIT_MS)
         page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
         page.wait_for_function(
             "() => document.querySelector('[data-conversation-state=opened]')", timeout=WAIT_MS
@@ -211,22 +222,22 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         diagnostics.record("transcript-route-remove-return")
         page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
         expect(page.get_by_text("Child direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
+        expect(dot_row).to_be_visible(timeout=WAIT_MS)
+        expect(dot_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert _read_position(server, "dot-ticket") == 1
 
         # The read is durable across refresh. A stale acknowledgement cannot eat a newer message.
         page.goto(server.base + "/#/workspace?view=items")
         page.reload()
-        reloaded_owner_row = page.locator(f'[data-ticket-id="{ticket["id"]}"]')
-        expect(reloaded_owner_row).to_be_visible(timeout=WAIT_MS)
-        expect(reloaded_owner_row.locator("[data-conversation-signal]")).to_have_count(
+        reloaded_dot_row = page.locator(f'[data-ticket-id="{dot_ticket["id"]}"]')
+        expect(reloaded_dot_row).to_be_visible(timeout=WAIT_MS)
+        expect(reloaded_dot_row.locator("[data-conversation-signal]")).to_have_count(
             0, timeout=WAIT_MS
         )
         _message(
             server,
             "dot-ticket",
-            Principal(PrincipalKind.ticket, ticket["id"]),
+            Principal(PrincipalKind.ticket, dot_ticket["id"]),
             "New child direct message",
         )
         _post(
@@ -234,7 +245,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         )
         page.reload()
         expect(
-            page.locator(f'[data-ticket-id="{ticket["id"]}"]').locator(
+            page.locator(f'[data-ticket-id="{dot_ticket["id"]}"]').locator(
                 '[data-conversation-signal="message"]'
             )
         ).to_have_count(1, timeout=WAIT_MS)
@@ -253,14 +264,14 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         )
         page.reload()
         expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
+        expect(dot_row).to_be_visible(timeout=WAIT_MS)
+        expect(dot_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
         left.locator(".item-head").click(timeout=WAIT_MS)
         expect(right.locator(".manager-workspace-title-mark")).to_be_visible(timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
+        expect(dot_row).to_be_visible(timeout=WAIT_MS)
+        expect(dot_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
         # Selecting the Manager keeps the conversation at rest and does not claim a read.
         expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)
@@ -275,8 +286,8 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         page.reload()
         expect(page.locator("[data-chief-destination] .stage-mark")).to_be_visible(timeout=WAIT_MS)
         assert left.locator(".item-head .stage-mark").count() == 0
-        expect(owner_row).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
+        expect(dot_row).to_be_visible(timeout=WAIT_MS)
+        expect(dot_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         capture_success(page, str(EVIDENCE / "chief-own-message-only.png"))
         page.locator("[data-chief-destination]").click(timeout=WAIT_MS)
         expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)

@@ -4,62 +4,125 @@
  * brand accent meaning "needs the human", a shared sans type scale. No new
  * categories without evidence of need (PRINCIPLES.md, SPEC §10). */
 
+/* Inter, self-hosted (OFL; see THIRD_PARTY_NOTICES.md). Macs keep the system face
+ * through the stack's first entries; every other platform renders Inter. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/assets/fonts/InterVariable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/assets/fonts/InterVariable-Italic.woff2") format("woff2");
+}
+
 :root {
   /* Surfaces — two general neutral planes and one deliberately recessed plane.
    * Ink remains for knockout marks and the retired Day card. */
-  --surface-1: #151515;
-  --surface-2: #1c1c1c;
-  --surface-recessed: #0d0d0d;
-  /* The approved rounded input remains distinct from the recessed dock. */
-  --surface-input: #111111;
+  --surface-1: #121212;
+  --surface-2: #1a1a1a;
+  --surface-recessed: #0e0e0e;
+  /* The workspace rail: one close step above the page; the step alone divides them. */
+  --surface-rail: #1b1b1b;
+  /* The secondary action's fill (Direction v2: 13% white, no border). Older callers that
+   * paint a secondary action with it land on the shared button's secondary fill. */
+  --fill-secondary: var(--button-secondary-fill);
+  /* The filled primary action. Direction v2 makes it inverse (88% white with dark ink), not
+   * accent: the accent is kept for needs-you marks. */
+  --accent-fill: var(--button-primary-fill);
+  --accent-fill-hover: var(--button-primary-fill-hover);
+  /* Inline code: a translucent lift that reads on every surface it lands on. */
+  --surface-code: rgb(255 255 255 / 3%); /* round 17: quieter, so code in prose does not break its texture */
+  /* Popovers, menus, tooltips and hover previews: the one raised plane. It carries a 1px
+   * ring (--border-raised) and --shadow-float. */
+  --surface-raised: #242424;
+  /* The scale (owner's colour pass), solid steps, never a white layer over whatever is beneath:
+   *   #0e0e0e recessed · #121212 page · #1b1b1b sidebar bubbles · #202020 hover previews ·
+   *   #242424 raised (tooltips, a preview's band) · #272727 hover · #2a2a2a input (composer,
+   *   secondary buttons, the selected segment) · #303030 selected (and a secondary button's hover).
+   * Hover and selection stand clearly off the bubble (+12 and +21) and apart from each other. */
+  --surface-step: #202020;
+  --surface-hover: #272727;
+  --surface-input-hover: #303030;
+  --surface-selected: #353535; /* round 16: one step clearer of hover, so the two never read alike */
+  --border-raised: rgb(255 255 255 / 10%);
+  /* The composer field: one clear step above the page, its fill alone (no edge: on the dark
+   * page the fill separates it; the focus ring stays). */
+  --surface-input: #2a2a2a;
+  --border-input: transparent;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;
    * scrim dims everything behind an open layer. They are intentionally not a
    * symmetric light/dark pair. */
   --interaction-hover: linear-gradient(
-    rgb(255 255 255 / 5%),
-    rgb(255 255 255 / 5%)
+    rgb(255 255 255 / 6%),
+    rgb(255 255 255 / 6%)
   );
   --scrim: rgb(10 9 8 / 55%);
 
-  /* Text tokens — descending neutral emphasis. Every step clears the
-   * body-text contrast floor against all three neutral surfaces. */
-  --text-strong: #f2f2f2;
-  --text-default: #d8d8d8;
-  --text-muted: #bfbfbf;
-  --text-faint: #a6a6a6;
-  --text-faintest: #8e8e8e;
+  /* Text tokens, older names. Each lands on one of the five Direction v2 tones (the
+   * "Direction v2 roles" block below), so every existing use speaks the same ladder:
+   * strong 92 -> primary 84 -> secondary 62 -> tertiary 45 -> faint 32. */
+  --text-strong: var(--tone-strong);
+  --text-default: var(--tone-primary);
+  --text-muted: var(--tone-secondary);
+  --text-faint: var(--tone-secondary);
+  --text-faintest: var(--tone-tertiary);
+  --text-placeholder: var(--tone-faint);
 
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;
   --accent-surface: #222a38;
+  /* The rail's needs-you count (the icon bar's review badge): the accent itself at low alpha
+   * behind the accent's text, so the badge is the accent on the rail, not a separate navy.
+   * A page list's needs-you count is --count-needs-you-fill below. */
+  --accent-badge: rgb(154 173 210 / 16%);
   --error-surface: #382226;
   /* The fill of small marked things — a chip, a pill, the primary button. Dark enough
    * that it barely lifts off the page, which is what makes it right for them. */
   --accent-text: #dce6f8;
   --accent-attention: #d4ab6c; /* binary goals due today */
-  --type-chart-reading: 40px;
-  --type-chart-compact: 32px;
-  --type-chart-completion: 36px;
+  /* A chart's reading numeral stands on the page-title role: no seventh size. */
+  --type-chart-reading: var(--type-page-title);
+  --type-chart-compact: var(--type-page-title);
+  /* A yes-or-no goal's reading ('Not done', 'Done') is a reading like a chart's number: the
+   * same 22px, never the page title's size. */
+  --type-chart-completion: var(--page-reading);
   /* Approved chart-sheet surfaces and category palettes. These remain separate
    * from the shell so the production renderer preserves the approved examples. */
-  --chart-surface: #1a1a1a;
+  /* A standalone chart card's fill: the page card's (4.5% white over the page), opaque. */
+  --chart-surface: #1d1d1d;
+  /* A trend line says its status as staging did: green where it meets its target, red
+   * where it is below, amber where it is due. */
+  --chart-line-good: var(--accent-done);
+  --chart-line-bad: var(--accent-error);
+  --chart-line-attention: var(--accent-attention);
   --chart-surface-raised: #252525;
-  --chart-surface-muted: #212121;
-  --chart-card-border: #ffffff0e;
-  --chart-grid: #ffffff0c;
+  --chart-surface-muted: #1b1b1b;
+  --chart-card-border: transparent;
+  /* Gridlines a step firmer (10%) so the plot has an edge; axis labels 11px in the tertiary tone,
+   * quieter than the card's text (round 17). */
+  --chart-grid: #ffffff1a;
+  --chart-axis-size: 11px;
   --chart-border-strong: #ffffff24;
-  --chart-secondary: #bfbfbf;
-  --chart-muted: #8e8e8e;
-  --chart-legend: #a6a6a6;
+  /* Chart text: labels, captions, legends and axes are Small text in the tertiary tone. */
+  --chart-secondary: var(--tone-secondary);
+  --chart-muted: var(--tone-tertiary);
+  --chart-legend: var(--tone-tertiary);
   --chart-reference: #777777;
-  --chart-range-surface: #232323;
+  --chart-range-surface: #171717;
   --chart-sample-control: #222222;
-  --chart-range-border: #ffffff06;
-  --chart-range-selected: #191919;
+  --chart-range-border: #ffffff0d;
+  --chart-range-selected: #2c2c2c;
   --chart-range-shadow: 0 1px 3px #0003;
-  --chart-meter-track: #2a2a2a;
+  --chart-meter-track: #242424;
   --chart-budget-track: #424242;
   --chart-budget-remaining: #676767;
   --chart-allocation-blue: #9aadd2;
@@ -72,7 +135,7 @@
   --chart-composition-blue-muted: #646f87;
   --chart-composition-blue-dark: #474b55;
   --accent-done: #7fa564;  /* the green done marks */
-  --accent-error: #d85d5d; /* red marks for errored ticket stages */
+  --accent-error: #c97c77; /* red marks for errored ticket stages */
   /* The one pure white in the palette: the row dot for a worker waiting on a permission
    * ask. Nothing else is this bright, so "only you can answer this" reads at a glance. */
   --accent-needs-me: #fff;
@@ -121,8 +184,9 @@
   --measure-read: 680px;
   --measure-index: 760px;
   --space-page-tail: 128px;
-  /* Shared title/text channel; conversation cards start and end on these same edges. */
-  --document-channel-measure: 720px;
+  /* Shared title/text channel; conversation cards start and end on these same edges. It is
+   * the page column, --page-measure, under its older name. */
+  --document-channel-measure: var(--page-measure);
   --file-preview-markdown-max-height: 24rem;
   /* The shell's nav bar. A screen that has to be exactly as tall as the space it was
      given works it out from the viewport, so its height has to be a value and not a
@@ -132,31 +196,91 @@
   /* Borders — widths plus the hairline seam colour */
   --border-hairline: 1px;
   --border-strong: 2px;
-  --border-color: rgba(255, 255, 255, 0.10);
-  --shadow-float: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
+  --border-color: rgba(255, 255, 255, 0.08);
+  /* The edge of a contained card, and the brighter edge of a focused field. */
+  --border-card: rgba(255, 255, 255, 0.07);
+  --border-hover: rgba(255, 255, 255, 0.13);
+  --border-focus: var(--focus-ring);
+  /* THE focus ring, drawn the same way on every focusable control: staging's 2px line in
+   * the accent, 2px off the control. An outline follows the control's own
+   * radius, so at a 2px offset its radius is the control's radius + 2. It is a line, never a
+   * fill, so it cannot read as "needs you". */
+  --focus-ring: var(--accent-bright);
+  /* The composer's focus (and every composer field's): its 1px edge, 85% of the accent. Between
+   * the 2px ring (too loud, owner) and staging's 40% blend (too quiet, owner). */
+  --composer-focus-edge: color-mix(in srgb, var(--accent-bright) 85%, var(--border-color));
+  --focus-width: 2px;
+  --focus-offset: 2px;
+  /* The floating plane's shadow: one soft drop, no dark ring (the ring is --border-raised). */
+  --shadow-float: 0 4px 12px rgb(0 0 0 / 24%);
 
-  /* Type — two font stacks and shared sans sizes. The prose/display/hero sizes
-   * preserve the former serif hierarchy under the owner's size-preservation exception. */
-  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Type — two font stacks and the older size names. Each older name lands on one of the
+   * six Direction v2 roles (page title, section head, body, rail title, row, small), so
+   * no screen can reach a seventh size through them. */
+  --font-ui: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
-  --type-xs: 11px;
-  --type-sm: 13px;
-  --type-md: 15px;
-  --type-lg: 20px;
-  --type-prose-lg: 18px;
-  --type-display: 28px;
-  --type-hero: 30px;
+  --type-xs: var(--type-small);
+  --type-sm: var(--type-small);
+  --type-ui: var(--type-body);
+  --type-md: var(--type-body);
+  --type-lg: var(--type-page-section);
+  /* Section headings on a page: the page system's section head, --type-page-section. */
+  --type-section: var(--type-page-section);
+  --type-prose-lg: var(--type-body);
+  /* The page title: the page system's title size, --type-page-title. */
+  --type-display: var(--type-page-title);
+  --type-hero: var(--type-page-title);
+  /* Inline code and other monospace runs inside text: Small size, so a mono run never looks
+   * larger than the sans text around it. */
+  --type-code: var(--type-small);
 
   /* Focusable chat controls (the composer's textarea and pickers). Separate from
    * the ladder because touch screens must raise them: iOS Safari zooms the whole
    * page into any focused field smaller than 16px. */
-  --type-input: var(--type-sm);
-  --type-input-compact: var(--type-xs);
+  --type-input: var(--type-body);
+  --type-input-compact: var(--type-small);
 
   /* Letter-spacing — tight on titles, open on uppercase labels, a hair on mono. */
-  --tracking-title: -0.008em;
+  --tracking-title: -0.01em;
   --tracking-label: 0.12em;
   --tracking-mono: 0.03em;
+}
+
+/* The shared controls (Direction v2, Outcome 5): one button, one segmented control. Every
+ * step is white over the control's own surface; a hover adds one step (6%). */
+:root {
+  /* Never shorter than staging's: a page's own actions were 27-29px there, its main
+   * actions (Mark done, Approve, Send it back) 37-39px. */
+  --button-height: 30px;
+  --button-main-height: 40px;
+  --button-radius: var(--radius-md);
+  --button-pad-x: 12px;
+  --button-gap: 6px;
+  --button-icon: 14px;
+  --type-button: var(--type-row);
+  --weight-button: var(--weight-small);
+  --state-step: rgb(255 255 255 / 6%);
+  /* Primary: inverse. */
+  --button-primary-fill: rgb(255 255 255 / 88%);
+  --button-primary-fill-hover: rgb(255 255 255 / 94%);
+  --button-primary-ink: #121212;
+  /* Secondary: the input step's fill (#2a2a2a), no border, a secondary-tone label. */
+  --button-secondary-fill: var(--surface-input);
+  --button-secondary-fill-hover: var(--surface-input-hover);
+  /* Ghost: no fill until hovered. */
+  --button-ghost-fill-hover: var(--state-step);
+  /* No button wears an outline (owner). The outline variant is drawn as the secondary fill,
+   * and anything that still reads these gets no edge and the ghost's hover step. */
+  --button-outline-edge: transparent;
+  --button-outline-fill-hover: var(--state-step);
+  /* Segmented control: no track; the selected segment carries the selected fill. */
+  --segment-height: var(--button-height);
+  --segment-radius: var(--button-radius);
+  --segment-selected-fill: var(--surface-input);
+  --segment-hover-fill: var(--state-step);
+  /* Inline code in text: Small mono on a 7% lift, 4px radius, 1px 2px padding. */
+  --code-pad-y: 1px;
+  --code-pad-x: 2px;
 }
 
 /* Touch screens get 16px chat inputs: anything smaller has iOS Safari zoom the
@@ -183,8 +307,264 @@
 
 /* Workspace selection tiers and travel. */
 :root {
-  --wash-context: var(--surface-1);
-  --wash-selected: #2c2c2c;
+  /* Fills, no lines, solid steps of the scale. The open row rests on the selected step (#303030),
+   * the pointer's row on the hover step (#272727): both clearly visible on a bubble, and apart
+   * (owner: the first pass, #242424 and #202020, was too faint; the white layers before it,
+   * #3b3b3b and #262626, too loud). The Manager you are inside gets no mark of its own (owner):
+   * only the open item is lit. The faintest fill (3%) is a page table's column wash. */
+  --wash-selected: var(--surface-selected);
+  --wash-hover: var(--surface-hover);
+  --wash-context: rgb(255 255 255 / 3%);
+  /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
+   * (a Manager's header, a goal, a Ticket, Settled) sits --rail-edge in from the column on
+   * both sides; every text stands --rail-pad inside its fill, so all of it shares one left
+   * edge 18px in. Tickets are the one indent. */
+  /* Fills stand 12px in from the column: the 6px frame inset plus 6px inside the frame. */
+  --rail-edge: 12px;
+  --rail-pad: 10px;
+  /* 16px of room above the list's first block. */
+  --rail-top: 16px;
+  /* A row fills its whole block, so nothing sits between a block's edge and a row's fill.
+   * The shell's Settled rows still read these two names. */
+  --rail-row-inset: 0px;
+  --rail-row-pad: var(--rail-pad);
+  /* Tickets and their headings stand on the Manager name's own text edge (owner decision):
+   * the header and the Ticket list are told apart by type and spacing, not by indent. */
+  --rail-indent: 0px;
+  /* The rail stands on a 4px grid: every block, fill and line box below is a multiple of 4,
+   * so every top lands on it. Size, weight and space make the hierarchy, in this order:
+   *   a Manager's header: the project eyebrow (12/500, line 16) directly over the name
+   *     (18/600, line 24), 4px inside its fill: 48px, 32px for the Chief (name alone);
+   *   its goals, part of the header, stacked with no gap: the goal's name (14/400, line 20)
+   *     over its state and date (12/400, line 16), 6px inside its fill: 48px, a larger target
+   *     than staging's (291x48 against 263x52 at 1440, 247x48 against 218x52 at 768);
+   *   12px clear, then its Tickets in headed groups: a heading in capitals, as staging (11/600,
+   *     line 16) 2px over its first row; rows tight, no gap, each 13.5/400 on a 20px line 2px
+   *     inside its fill (24px: tighter than staging's 27.5px row, by the owner's request);
+   *     12px between groups;
+   *   8px between Manager bubbles. */
+  --rail-row-height: 24px;
+  --rail-row-pad-y: 2px;
+  --rail-row-line: 20px;
+  /* Baselines land on the grid too. A face sets its baseline a fixed way down its line box
+   * (Inter and SF alike: 15px down a 20px line at 13.5-14px, 18px down a 24px line at 18px,
+   * 12px down a 16px line and 14px down a 20px line at 12px), so each text is let down or up
+   * by the pixel or two that puts its baseline on a multiple of 4. A row's 4px padding is
+   * split 5/3 for the same reason, its dot moving with its words. */
+  --rail-row-pad-top: 2px;
+  --rail-row-pad-bottom: 2px;
+  --rail-title-nudge: 2px;
+  --rail-goal-title-nudge: -1px;
+  --rail-goal-state-nudge: 2px;
+  --rail-heading-nudge: 0px;
+  --rail-heading-line: 16px;
+  --rail-head-pad: 4px;
+  --rail-title-line: 24px;
+  --rail-goal-pad-y: 6px;
+  /* A goal row: one line (owner), a 28px fill, a step taller than a Ticket row (24px). */
+  --rail-goal-row-height: 28px;
+  --rail-goal-size: 14px;
+  --rail-header-clear: 12px;
+  --rail-group-gap: 12px;
+  --rail-heading-gap: 2px;
+  --rail-block-gap: var(--rail-bubble-gap);
+  /* Bubbles (this version): the column takes the page's colour and every Manager, the Chief
+   * first, is a bubble in the old sidebar colour (#1b1b1b), 12px corners, 8px from the column's
+   * sides and from the next bubble, its fills 4px inside it so their 8px corners are
+   * concentric with its 12px ones. The words still stand 22px from the column's edge. No line
+   * divides the column from the page (owner: line off). */
+  --rail-column: var(--surface-1);
+  --rail-bubble-fill: var(--surface-rail);
+  --rail-bubble-gap: 8px;
+  --rail-bubble-pad: 4px;
+  --rail-bubble-radius: 12px;
+  /* Where the list meets the dock it fades into the page over this much, and its bottom
+   * padding is as tall, so the last bubble always scrolls fully clear of the fade. */
+  --rail-list-fade: 16px;
+  /* The page list's rows (ManagerChildren) still stand 2px apart. */
+  --rail-row-gap: 2px;
+  /* The unread dot's column, kept on every row whether or not a dot is in it, so every
+   * title ends at one edge and every dot stands in one column. */
+  --rail-mark-column: 16px;
+  /* The rail's label voice for the project eyebrow (and Settled's count): 12/500, quiet. */
+  --rail-label-size: var(--type-small);
+  --rail-label-weight: 500;
+  /* A group heading is a label to read, not a whisper: in capitals as staging (owner), 11/500
+   * at 64% white, opened 0.06em as capitals need (600 made them the loudest texture). */
+  --rail-heading-size: 11px;
+  --rail-heading-weight: 500;
+  --rail-heading-tracking: 0.06em;
+  /* Round 16: headings sit just under the dim rows (#8c8c8c, 5.1:1), so they recede beneath the work. */
+  --rail-tone-heading: var(--rail-tone-label);
+  /* The list's edges: a short fade, always the same, so a row's words keep their true tone
+   * up to the edge; and clear air under the last block when the list is scrolled to its end. */
+  --rail-edge-fade: 8px;
+  --rail-foot-clear: 12px;
+  /* The list's scrollbar lives in the column's own edge, never inside the rows. */
+  --rail-scrollbar-width: 4px;
+  /* Room the list keeps above its first fill for the focus ring (2px clear, 1.5px wide). */
+  --rail-ring-room: 6px;
+  /* Rail text, as white over the page. Brightness has exactly two levels, shared by Manager
+   * names and rows alike: 92% for anything that needs the person, 50% for anything that does
+   * not (white at 92% and 50% over the rail). Size and weight make a Manager lead its block
+   * (18/600 against a row's 13.5/400). Group headings are labels to read (12/600, 64%, above);
+   * the project eyebrow, a goal's state line and small counts stay quiet (12px at 54%). */
+  --rail-tone-bright: #ececec;
+  --rail-tone-rest: #949494; /* round 16: a shade lighter, so a dim Manager name reads as calm, not disabled */
+  --rail-tone-title-bright: var(--rail-tone-bright);
+  /* A row that needs you takes the rows' one tone (Step up, owner). */
+  --rail-tone-attention: var(--rail-tone-rest);
+  /* Step up (owner): a Manager's name rests a step above the dim level, so it always leads its
+   * rows; every Ticket row has one tone, a row that needs you no brighter than the rest (its
+   * group's heading and its mark say so). A Manager that needs you, and any hovered or open
+   * item, is full white. */
+  --rail-tone-title: #c2c2c2;
+  /* A Manager's name: the largest words in the rail. */
+  --type-rail-title: 18px;
+  /* 5.1:1 on a bubble: no rail text reads under 4.5:1 at rest. */
+  --rail-tone-label: #8c8c8c;
+  /* The rail's floating surfaces (hover previews and the icon bar's tooltips): the scale's
+   * raised plane (#242424, one step under the old #2a2a2a, owner) and a soft shadow, no ring.
+   * The fill's step over the bubbles and the page is its edge. */
+  --rail-float-surface: var(--surface-raised);
+  --rail-float-shadow: 0 4px 16px rgb(0 0 0 / 28%);
+  /* A hover preview floats over cards of nearly its own tone: a hairline of light defines its edge
+   * and a short, soft shadow lifts it, instead of a broad dark one (round 16). */
+  --rail-preview-shadow: 0 0 0 1px rgb(255 255 255 / 7%), 0 4px 12px rgb(0 0 0 / 22%);
+  /* A goal preview's header stands on a band one step lighter than the preview, as on staging. */
+  /* The hover previews (a Manager's, a Ticket's, a goal's) sit two steps under the old #2a2a2a
+   * (owner: darker, by the scale): the in-between step (#202020), and a goal preview's header
+   * band one solid step above it (#242424), not a white layer. The icon bar's tooltips stay on
+   * the raised plane: they open over the dock's bubble, which shares the in-between's range. */
+  /* Owner: previews a step lighter than the sidebar, and a goal preview in two tones, read washed
+   * out. A preview is the sidebar's own colour (#1b1b1b), one tone throughout; its recap field
+   * is recessed to the page's colour (#121212). */
+  --rail-preview-surface: var(--surface-rail);
+  --rail-preview-well: var(--surface-1);
+  --rail-preview-band: transparent;
+  --rail-preview-width: 340px;
+  --rail-preview-pad: 16px;
+  --rail-preview-recap-size: 13px;
   --motion-wash: 200ms;
   --motion-move: cubic-bezier(.45, 0, .55, 1);
 }
+
+/* The main pane's page system: one column, one type ladder, one end at the composer.
+ * Every page (Chief, Manager, Ticket, goal, review) draws from these. */
+:root {
+  /* The page column. Every page and its composer share this width, centred in the pane. */
+  --page-measure: 760px;
+  /* Prose (recaps, proposal text, page text) never runs wider than this inside the column:
+   * about 85 characters of body text, the reference apps' reading measure. */
+  --page-prose-measure: 580px;
+  /* Every page header starts this far down the pane, clear of the window's top edge. */
+  --page-top: 12px;
+  /* The page's top band: the one line above the title (where it lives) on the left and the
+   * page's own utilities on the right. One height on every page. */
+  --page-band-height: 48px;
+  /* The space before a section head (from the header, or the section above), and from a head
+   * to its content. A page of blocks without heads (the goal page) keeps 32px between them. */
+  --page-section-gap: 40px;
+  --page-block-gap: 32px;
+  --page-head-gap: 14px;
+  /* Page type: the page-title role and the section-head role. */
+  --type-page-title: 26px;
+  --weight-page-title: 600;
+  --tracking-page-title: -0.01em;
+  --type-page-section: 15px;
+  --weight-page-section: 600;
+  /* A card's lead paragraph: the section-head size, one step lighter than its title. */
+  --weight-page-lead: 500;
+  /* A page list's group heading: the rail's label voice, 12px/500 at 56%. */
+  --type-page-list-label: var(--type-small);
+  --weight-page-list-label: 500;
+  --tone-page-list-label: rgb(255 255 255 / 56%);
+  --type-small-print: var(--type-small);
+  --tone-small-print: var(--tone-tertiary);
+  /* Every button on a page: one height, one radius, one label size. */
+  --page-control-height: 28px;
+  /* A chart's reading: clearly under the page title, never level with it. */
+  --page-reading: 22px;
+  /* One card: a fill alone, 4.5% white over the page (no edge: the fill separates it), radius
+   * 12, padding 20. Nothing inside a card draws a surface of its own. */
+  --page-card-fill: rgb(255 255 255 / 4.5%);
+  --page-card-edge: transparent;
+  --page-card-radius: 12px;
+  --page-card-pad: 20px;
+  /* A row-card (a yes-or-no goal): 64px tall, its two lines on an 11px inset. */
+  --page-row-card-pad-y: 11px;
+  --page-row-card-pad-x: 16px;
+  /* A page list row: the rail's row at body size. Its fill reaches this far past the
+   * column on both sides, so the words stay on the column's edge. */
+  --page-row-height: 32px;
+  /* A group heading keeps the rail's rhythm: 8px above it, 2px below, so it binds to its rows. */
+  --page-heading-above: 8px;
+  --page-heading-below: 2px;
+  --page-row-outset: 8px;
+  /* A checklist's progress is staging's ring: 40px, a 3px stroke in staging's strong tone
+   * (#f2f2f2) on staging's 10% track. Its checks are 14px circles. */
+  --page-ring-size: 40px;
+  --page-ring-fill: #f2f2f2;
+  --page-ring-track: rgb(255 255 255 / 10%);
+  /* A checklist's check is staging's: a 22px circle on a 40px target (never smaller). */
+  --page-check-size: 22px;
+  --page-check-target: 40px;
+  /* A disclosure's chevron, drawn the same at the right end of every fold. */
+  --page-chevron: 14px;
+  /* The page keeps this much room under its last block, so it can scroll fully clear of
+   * the composer zone. */
+  --page-end-room: var(--space-7);
+  /* Above the composer the page fades out over 20px, as staging's document edge does: one
+   * fixed CSS gradient, never measured. The page keeps this much room under its last block
+   * (and above anything scrolled into view) to stand clear of the zone. */
+  --composer-fade: var(--space-5);
+  --composer-clear: calc(var(--composer-zone) + var(--composer-preview-room) + var(--composer-fade));
+  /* The page's last line scrolls this far clear of the composer zone. */
+  --page-end-clear: 24px;
+  /* The composer: the reference composer's surface, its fill alone, radius 12. */
+  --composer-surface: var(--surface-input);
+  --composer-edge: var(--border-input);
+  --composer-radius: 12px;
+  --composer-inset: 16px;
+  /* The compact zone: staging's status line over a single-line composer (the reference
+   * composer is 42-44px), the pair floating over the page's last lines. The status line is a
+   * 32px row on an 8px/12px inset; an unread message under it adds up to three Body lines. */
+  --composer-height: 44px;
+  --composer-control: 32px;
+  --composer-status-height: 52px;
+  --composer-preview-room: 70px;
+  /* The run chips (model, delivery) are small print: 12.5px, secondary tone; the provider mark
+   * is drawn at the same size in the same tone. */
+  --composer-mark: 12.5px;
+  /* The run chip's quieter word (the effort) on the composer's #2a2a2a: 4.85:1. */
+  --composer-quiet-tone: #969696;
+  --composer-zone: calc(var(--composer-status-height) + var(--composer-height) + var(--space-4));
+  /* Counts are plain small numerals after their label, in the label's own tone. */
+  --count-tone: var(--tone-tertiary);
+  --count-needs-you-fill: transparent;
+  --count-needs-you-ink: var(--tone-tertiary);
+}
+
+/* === Direction v2 roles (Manager-owned; notes/design-direction.md) ==========
+   Six type roles and five text tones for the whole app. Hierarchy comes from tone,
+   not from many sizes and weights. Tones are solid greys computed as white at the
+   stated alpha over a #181818 page; the page is now #121212 (owner: darker, all backgrounds evenly), so text reads a step crisper. Change these only through the Manager. */
+:root {
+  --tone-strong: #ececec;    /* 92%: titles, needs-you items, hovered/selected text */
+  --tone-primary: #dadada;   /* 84%: body prose, recaps, card content, section heads */
+  --tone-secondary: #a7a7a7; /* 62%: dimmed sidebar titles and rows at rest */
+  /* Small text: headings, eyebrows, meta, dates, axes. At least 4.5:1 on every surface it
+   * sits on: 5.6 on the page, 5.1 on a card, 4.6 on the raised plane. */
+  --tone-tertiary: #8c8c8c;
+  --tone-faint: #626262;     /* 32%: placeholders and disabled only */
+  --type-body: 14px;         /* 400, line-height 1.55 */
+  --type-row: 13.5px;        /* 400; 500 when the item needs the person */
+  --type-small: 12.5px;      /* 450, tabular numerals */
+  --weight-body: 400;
+  --weight-small: 450;
+  --weight-needs-you: 500;
+  --weight-title: 600;
+  --leading-body: 1.55;
+}
+
+

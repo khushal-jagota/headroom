@@ -85,7 +85,7 @@
   label { display: grid; gap: var(--space-2); font-size: var(--type-xs); color: var(--text-muted); }
   input, select, textarea { width: 100%; min-width: 0; padding: var(--space-3); border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--surface-recessed); color: var(--text-default); font: inherit; font-size: var(--type-sm); }
   textarea { resize: vertical; line-height: 1.5; }
-  input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent-bright); outline-offset: 1px; }
+  input:focus, select:focus, textarea:focus { outline: var(--focus-width) solid var(--focus-ring); outline-offset: 1px; }
   .workflow-stages { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
   .workflow-stage { border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow: hidden; }
   .workflow-stage-head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4); }

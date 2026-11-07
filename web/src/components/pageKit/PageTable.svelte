@@ -122,6 +122,9 @@
   }
 
   let numeric = $derived(block.columns.map((_, index) => numericColumn(index)));
+  /** A column where any cell carries a status keeps a dot slot in every cell, so its values
+   *  share one edge and one line whether or not they carry a dot. */
+  let toned = $derived(block.columns.map((_, index) => (block.cell_tones ?? []).some((row) => Boolean(row?.[index]))));
 
   let ordered = $derived.by(() => {
     const lines: Line[] = block.rows.map((cells, key) => ({ key, cells }));
@@ -442,7 +445,8 @@
                     data-numeric={numeric[index] ? "" : undefined}
                     data-tone={block.cell_tones?.[line.key]?.[index] ?? undefined}
                     data-missing={missing(cell) ? "" : undefined}
-                  ><div class="cell-copy">{#if block.cell_tones?.[line.key]?.[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}<PageText blockId={block.id} field={`rows.${line.key}.${index}`} value={cell} label={`${block.columns[index] ?? `Column ${index + 1}`}, row ${line.key + 1}`} update={(old, raw) => cellText(line.key, index, raw, old)} /></div></td>
+                    data-dot-slot={toned[index] ? "" : undefined}
+                  ><div class="cell-copy">{#if toned[index]}<span class="cell-status-dot" aria-hidden="true"></span>{/if}<PageText blockId={block.id} field={`rows.${line.key}.${index}`} value={cell} label={`${block.columns[index] ?? `Column ${index + 1}`}, row ${line.key + 1}`} update={(old, raw) => cellText(line.key, index, raw, old)} /></div></td>
                 {/each}
               </tr>
             {/each}
@@ -463,32 +467,35 @@
 </div>
 
 <style>
+  /* THE CARD (page system). The table sits on the card itself: no second box inside it,
+     only the hairlines between its rows. Its first and last columns stand on the card's
+     inset, the same edge as the caption above them. */
   .table-block {
     min-width: 0;
-    padding: 28px;
-    border: 1px solid var(--chart-card-border);
-    border-radius: 28px;
-    background: var(--chart-surface);
-    color: var(--text-strong);
+    padding: var(--page-card-pad);
+    border: var(--border-hairline) solid var(--page-card-edge);
+    border-radius: var(--page-card-radius);
+    background: var(--page-card-fill);
+    color: var(--tone-primary);
   }
   .caption {
-    margin: 0 0 24px;
-    color: var(--text-strong);
-    font-size: 18px;
-    font-weight: 550;
-    line-height: normal;
-    letter-spacing: -.012em;
+    margin: 0 0 var(--page-head-gap);
+    color: var(--tone-primary);
+    font-size: var(--type-page-section);
+    font-weight: var(--weight-page-section);
+    line-height: 20px;
+    letter-spacing: 0;
   }
   .card {
-    --column-wash: var(--chart-surface-muted);
-    --row-line: color-mix(in srgb, var(--chart-grid) 92%, transparent);
+    --column-wash: var(--wash-context);
+    --row-line: var(--border-color);
     position: relative;
     min-width: 0;
     overflow: hidden;
-    border: var(--border-hairline) solid var(--chart-grid);
-    border-radius: 8px;
-    background: var(--chart-surface);
-    color: var(--text-strong);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--tone-primary);
   }
   .scroller { position: relative; overflow-x: auto; overscroll-behavior-x: contain; }
   .band {
@@ -506,13 +513,13 @@
     min-width: max(560px, var(--table-min-width, 0px));
     border-collapse: separate;
     border-spacing: 0;
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: var(--type-body);
+    line-height: 20px;
     text-align: left;
   }
   table[data-fixed] { table-layout: fixed; }
   th, td {
-    --cell-base: var(--chart-surface);
+    --cell-base: transparent;
     --cell-fill: var(--cell-base);
     position: relative;
     background-color: var(--cell-fill);
@@ -520,33 +527,45 @@
   }
   th[data-sorted], td[data-sorted] { --cell-base: var(--column-wash); }
   th {
-    height: 44px;
+    height: 32px;
     padding: 0;
-    border-bottom: var(--border-hairline) solid var(--chart-grid);
-    color: var(--chart-muted);
-    font-size: var(--type-sm);
-    font-weight: 500;
+    border-bottom: var(--border-hairline) solid var(--row-line);
+    color: var(--tone-tertiary);
+    font-size: var(--type-small);
+    font-weight: var(--weight-small);
     white-space: nowrap;
   }
-  th[data-sorted] { color: var(--text-strong); }
+  th[data-sorted] { color: var(--tone-secondary); }
   td {
-    height: 52px;
+    height: 40px;
     padding: 0 var(--space-4);
     border-bottom: var(--border-hairline) solid var(--row-line);
-    color: var(--text-strong);
-    font-weight: 400;
+    color: var(--tone-primary);
+    font-weight: var(--weight-body);
+    font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
   }
-  td[data-primary] { min-width: 180px; color: var(--text-strong); font-weight: 400; overflow-wrap: break-word; }
-  td[data-missing] { color: var(--chart-muted); }
+  /* A label cell keeps room to read when columns are added, and breaks long words only where
+     it must (staging); its words in the page's voice. */
+  td[data-primary] { min-width: 180px; color: var(--tone-primary); font-weight: var(--weight-body); overflow-wrap: break-word; }
+  td[data-missing] { color: var(--tone-tertiary); }
+  /* As staging, a cell with a status says it in its colour: the value and its dot in the
+     status colour. In a column with any status every cell keeps the dot's slot (empty where
+     there is none), so the values share one right edge and one line. */
   td[data-tone="good"] { color: var(--accent-done); }
   td[data-tone="attention"] { color: var(--accent-attention); }
   td[data-tone="bad"] { color: var(--accent-error); }
   td[data-tone="neutral"] { color: var(--chart-legend); }
   td[data-tone="info"] { color: var(--accent-bright); }
-  td[data-tone] .cell-copy { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
-  .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  td[data-dot-slot] .cell-copy, td[data-numeric] .cell-copy { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  td[data-numeric] .cell-copy { justify-content: flex-end; }
+  .cell-status-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: transparent; }
+  td[data-tone] .cell-status-dot { background: currentColor; }
   tbody tr:last-child td { border-bottom: 0; }
+  /* The outer columns stand on the card's inset, so the rules between rows span exactly the
+     card's content width. */
+  td:first-child, th:first-child .sort, th:first-child .editable-sort { padding-left: 0; }
+  td:last-child, th:last-child .sort { padding-right: 0; }
   table[data-selectable] tbody tr { cursor: pointer; }
   tbody tr[data-selected] td {
     --cell-fill: color-mix(in srgb, var(--accent-bright) 8%, var(--cell-base));
@@ -561,7 +580,7 @@
     align-items: center;
     cursor: pointer;
   }
-  td.select-cell .hit { height: 52px; }
+  td.select-cell .hit { height: 40px; }
   .hit-input {
     position: absolute;
     inset: 0;
@@ -615,7 +634,7 @@
   .box[data-on]:not([data-mixed]) .check,
   .box[data-mixed] .dash { stroke-dashoffset: 0; opacity: 1; }
   .hit-input:focus-visible + .box {
-    outline: var(--border-strong) solid var(--accent-bright);
+    outline: var(--focus-width) solid var(--focus-ring);
     outline-offset: 2px;
   }
   .hit-input:active + .box { transform: scale(0.95); }
@@ -626,7 +645,7 @@
   .sort {
     display: flex;
     width: 100%;
-    height: 44px;
+    height: 32px;
     align-items: center;
     justify-content: flex-start;
     margin: 0;
@@ -641,8 +660,12 @@
   th[data-numeric] .sort { justify-content: flex-end; }
   .editable-sort { display: flex; min-height: 44px; align-items: center; padding-left: var(--space-4); }
   .sort.icon-only { width: 40px; flex: none; justify-content: center; padding: 0; }
+  /* A number column's head ends where its values end. Its sort button is drawn once, before
+     the words on wide pages and after them on phones (staging), so Tab order follows what the
+     reader sees. */
   .sort[data-placement="before"] { display: none; }
-  th[data-numeric] .editable-sort { justify-content: flex-end; }
+  th[data-numeric] .editable-sort { justify-content: flex-end; padding-right: var(--space-4); }
+  th:last-child .editable-sort { padding-right: 0; }
   .sort-inner { display: inline-flex; align-items: center; gap: 6px; }
   th[data-numeric] .sort-inner { flex-direction: row-reverse; }
   .sort-icon {
@@ -690,7 +713,7 @@
     transform: scale(1) rotate(180deg);
   }
   .sort:focus-visible {
-    outline: var(--border-strong) solid var(--accent-bright);
+    outline: var(--focus-width) solid var(--focus-ring);
     outline-offset: -2px;
   }
   .sort:focus-visible .sort-hint { opacity: 0.6; }
@@ -698,7 +721,7 @@
   .empty {
     height: 120px;
     color: var(--chart-muted);
-    font-weight: 400;
+    font-weight: var(--weight-small);
     text-align: center;
   }
   .footer {
@@ -712,7 +735,7 @@
     border-top: var(--border-hairline) solid var(--chart-grid);
     color: var(--chart-muted);
     font-size: var(--type-sm);
-    font-weight: 400;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .count { margin: 0; font-variant-numeric: tabular-nums; }
@@ -728,7 +751,7 @@
     color: var(--text-strong);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     cursor: pointer;
   }
   .sr {
@@ -786,7 +809,7 @@
     }
   }
   @container page (max-width: 620px) {
-    .table-block { padding: 24px 16px; border-radius: 24px; }
+    .table-block { padding: var(--space-5) var(--space-4); border-radius: var(--radius-lg); }
     .caption { padding-inline: 8px; }
     .scroller { overflow: visible; }
     .band { display: none; }
@@ -810,12 +833,12 @@
     table[data-selectable] tbody tr { padding-left: 44px; }
     table[data-selectable] tbody tr[data-selected] { --row-fill: color-mix(in srgb, var(--accent-bright) 8%, var(--chart-surface)); }
     tbody tr:last-child { border-bottom: 0; }
-    td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--chart-secondary); font-size: 11px; text-align: left; }
-    td[data-primary] { order: 0; flex: 1 1 0; min-width: 0; color: var(--text-strong); font-size: 13px; font-weight: 500; }
-    td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: 8px; color: var(--text-strong); font-size: 13px; }
-    td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--chart-secondary); font-size: 11px; }
+    td { order: 2; display: block; min-width: 0; height: auto; border: 0; padding: 0; background: transparent; color: var(--chart-secondary); font-size: var(--type-small); text-align: left; }
+    td[data-primary] { order: 0; flex: 1 1 0; min-width: 0; color: var(--text-strong); font-size: var(--type-body); font-weight: var(--weight-body); }
+    td[data-numeric]:not([data-primary]) { order: 0; flex: none; margin-left: auto; padding-left: 8px; color: var(--text-strong); font-size: var(--type-body); }
+    td[data-numeric] ~ td[data-numeric] { order: 2; margin-left: 0; padding-left: 0; color: var(--chart-secondary); font-size: var(--type-small); }
     td[data-sorted]:not([data-primary]):not([data-tone]) { color: var(--text-strong); }
-    td[data-tone] .cell-copy { font-size: 11px; }
+    td[data-tone] .cell-copy { font-size: var(--type-small); }
     td.select-cell { position: absolute; top: 0; bottom: 0; left: 4px; display: flex; width: 36px; align-items: center; padding: 0; }
     td.select-cell .hit { justify-content: center; }
     .empty { flex: 1 0 100%; height: auto; padding: 24px 0; text-align: center; }

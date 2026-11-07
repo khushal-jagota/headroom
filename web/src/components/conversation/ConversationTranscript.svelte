@@ -280,15 +280,16 @@
   .c2-streaming { color: var(--text-muted); }
   .c2-ask-row {
     align-self: stretch;
-    border-inline-start: var(--border-hairline) solid var(--accent-bright);
-    padding-inline-start: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--accent-surface);
     color: var(--text-default);
     font-family: var(--font-ui);
     font-size: var(--type-sm);
     overflow-wrap: anywhere;
   }
   .c2-ask-row.is-dead {
-    border-inline-start-color: var(--text-faintest);
+    background: var(--surface-2);
     color: var(--text-faintest);
   }
   .c2-ask-row.is-dead .c2-label { color: var(--text-faintest); }

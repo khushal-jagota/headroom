@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -136,5 +136,11 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
   );
 
 
-  return {inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./conversation-composer.py", import.meta.url))};
+  // The app server mounts assets/ at /assets, where tokens.css finds its self-hosted Inter.
+  // Serve the same files here, so the page loads what the app loads and logs no 404.
+  const fonts = ["InterVariable.woff2", "InterVariable-Italic.woff2"];
+  const resources = await Promise.all(fonts.map(async name => ({
+    path: `/assets/fonts/${name}`, contentType: "font/woff2", body: await readFile(join(repositoryRoot, "assets/fonts", name)),
+  })));
+  return {resources, inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./conversation-composer.py", import.meta.url))};
 }

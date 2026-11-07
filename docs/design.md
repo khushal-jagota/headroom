@@ -33,7 +33,7 @@ Focus mode hides tool noise and Full shows the notebook. The toggle is a lens on
 
 ## Decisions that shape it
 
-- Token edits retune the whole app, and kit edits retune every screen that uses them. A new screen that adds a second accent, a border on every card, or a caption on an obvious control has left the system.
+- Token edits retune the whole app, and kit edits retune every screen that uses them. A new screen that adds a second accent, a heavy border on every card, or a caption on an obvious control has left the system.
 
 ## Code
 

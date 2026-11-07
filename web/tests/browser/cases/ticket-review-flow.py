@@ -929,10 +929,12 @@ def run(browser, urls):
         absent=False,
     )
     expect(page.locator("[data-project-fact]")).to_have_text("One")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding · VPS")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Review ticket")
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.locator("[data-ticket-backlog-action]").click()
+    # The click returns before the browser's request reaches the route: wait for its record.
+    wait_for_write(lambda: len(backlog_writes) == 1)
     assert backlog_writes == [{"action": "backlog", "body": {}}]
     # Confirmed writes refetch the loaded body before source publication.
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Resume ticket")
@@ -941,6 +943,7 @@ def run(browser, urls):
     expect(page.locator("[data-ticket-backlogged]")).to_have_text("Backlogged")
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Resume ticket")
     page.locator("[data-ticket-backlog-action]").click()
+    wait_for_write(lambda: len(backlog_writes) == 2)
     assert backlog_writes[-1] == {"action": "resume", "body": {}}
     page.evaluate(
         "() => {\n      const control=document.querySelector('[data-ticket-lifecycle]');\n      window.__heldLifecycle={control,parent:control.parentNode,next:control.nextSibling};control.remove();\n    }"
@@ -971,7 +974,7 @@ def run(browser, urls):
     runtime_working = True
     drive("window.__batch()")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("Current Project · Personal · VPS")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("Current Project · Personal")
     expect(page.locator(".ticket-title [data-conversation-id]")).to_have_attribute(
         "data-conversation-id", "masthead-current"
     )
@@ -1032,9 +1035,9 @@ def run(browser, urls):
     assert page.locator("[data-stage-fold] [data-field=brief]").evaluate("(element)=>element.open")
     ticket["conversation_signal"]["message_for_owner"] = False
     drive("window.__batch()")
-    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_attribute(
-        "data-conversation-signal", "working"
-    )
+    # A page title never shows the working spinner (owner): the status line over the composer
+    # says Working. With no message for the owner, the title carries no signal at all.
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
     source_deleted = True
     drive("window.__batch()")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
@@ -1080,7 +1083,7 @@ def run(browser, urls):
         "data-section-stage", "needs_success_condition"
     )
     expect(page.locator("[data-approval-block] [contenteditable]")).to_have_text("A result")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding · VPS")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
     expect(page.locator("[data-parent-link]")).to_have_count(0)
     assert (
         page.locator(
@@ -1575,8 +1578,10 @@ def run(browser, urls):
         "(element) => element.open = true"
     )
     saved_artifacts = page.locator('[data-stage-fold] [data-field="brief"]')
-    html_link = saved_artifacts.get_by_role("link", name="HTML plan", exact=True)
-    assert html_link.get_attribute("href").startswith("/files/managers/")
+    # A Manager file link is a preview card like a Ticket or goal file link (staging, PR 613).
+    # The HTML plan's card names it with a link that opens the Manager file in place.
+    html_link = saved_artifacts.locator(".pv-name").filter(has_text="plan.html")
+    assert html_link.get_attribute("href").startswith("#/preview?source=manager&")
     original_url = page.url
 
     def click_was_claimed(link, **options):
@@ -1599,15 +1604,16 @@ def run(browser, urls):
     )
     assert click_was_claimed(html_link)
     expect(page.locator("[data-ticket-artifact]")).to_have_count(0)
-    for label in [
-        "Download receipt.json",
-        "Raw receipt",
-        "Unsupported",
-        "External",
-        "Dev preview",
-        "Malformed",
+    # Downloads (the Receipt, Raw receipt and Unsupported cards) and links that name no
+    # managed file stay the browser's.
+    downloads = saved_artifacts.locator("a.file-preview-link[download]")
+    expect(downloads).to_have_count(3)
+    for link in [
+        *downloads.all(),
+        *(saved_artifacts.get_by_role("link", name=label, exact=True)
+          for label in ["External", "Dev preview", "Malformed"]),
     ]:
-        assert not click_was_claimed(saved_artifacts.get_by_role("link", name=label, exact=True))
+        assert not click_was_claimed(link)
     # The opened conversation owns the full pane. Return to the document before a real click.
     for _ in range(2):
         if page.locator('[data-conversation-pane][data-conversation-state="rest"]').count():
@@ -1626,13 +1632,13 @@ def run(browser, urls):
     if os.environ.get("PANELS_ARTIFACT_SCREENSHOT"):
         page.screenshot(path=os.environ["PANELS_ARTIFACT_SCREENSHOT"], full_page=True)
     viewer.get_by_role("button", name="Close", exact=True).click()
-    page.locator("[data-approval-block]").get_by_role(
-        "link", name="Markdown plan", exact=True
-    ).click()
+    # The proposal's Manager file link is its card; the card's name opens it in place.
+    page.locator("[data-approval-block] .pv-name").filter(has_text="plan.md").click()
     expect(viewer).to_have_attribute("aria-label", "plan.md")
-    viewer.get_by_role("link", name="Nested image", exact=True).click()
-    expect(viewer).to_have_attribute("aria-label", "image.svg")
-    expect(viewer.locator("img")).to_be_visible()
+    # The document's own Manager image link is its image, shown in the document (PR 613).
+    nested = viewer.locator('[data-file-preview-kind="image"] img')
+    expect(nested).to_have_attribute("src", "/files/managers/si_artifacts/artifacts/image.svg")
+    expect(nested).to_be_visible()
     viewer.get_by_role("button", name="Close", exact=True).click()
     # The artifact takes the focus when it opens and hands it back to the pressed link
     # when it closes, so the keyboard is where the reading is and then where it was.
@@ -1659,7 +1665,8 @@ def run(browser, urls):
     expect(page.locator("[data-conversation-pane]")).to_have_attribute(
         "data-conversation-state", "opened"
     )
-    page.get_by_role("link", name="Audio plan", exact=True).click()
+    # In the conversation too a Manager file link is its card (PR 613); its Open link opens it.
+    page.locator("[data-conversation-pane]").get_by_role("link", name="Open plan.wav", exact=True).click()
     expect(viewer).to_have_attribute("aria-label", "plan.wav")
     expect(viewer.locator("audio")).to_have_attribute(
         "src", "/files/managers/si_artifacts/artifacts/plan.wav"
