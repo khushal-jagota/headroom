@@ -5309,6 +5309,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .conversation-layer::before { display: none; }
 .ticket-reading:not(:has(.ticket-artifact))::after,
 .manager-reading:not(:has(.ticket-artifact))::after { height: 0; background: none; }
+/* The zone is opaque, so it takes its own pointer across its whole width, as staging's dock
+ * row did: a press on its background opens the conversation, and nothing hidden under it can
+ * be clicked through it. Only the fade above it lets the page show and take the pointer. */
 :is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]):not([data-conversation-dock-transition]) > .conversation-layer {
   position: absolute;
   left: var(--conversation-visible-left, 0px);
@@ -5316,7 +5319,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
   bottom: var(--conversation-visible-bottom, 0px);
   padding-top: var(--space-1);
   background: var(--surface-1);
-  pointer-events: none;
 }
 /* Version with the line (as staging): the zone is opaque from its top, and a hairline across the
  * pane marks where the page ends and the zone begins, so content scrolls cleanly up to the line
