@@ -36,8 +36,9 @@ Workspace or Review; leaving a screen only narrows the next stream. One coherent
 earlier Review, manager and ticket list reads; the phone no longer reads
 `/api/review`. A launch shows the last saved view at once. A return to the
 foreground, a dropped connection, a gap, a reset or a closed stream all start a
-fresh stream, whose first frame is a fresh snapshot; failures retry after 1, 2, 4
-and then 8 seconds and show Reconnecting. Then saved work drains, as before.
+fresh stream, whose first frame is a fresh snapshot. A stream that was current
+reconnects after one second, as the web does; failures retry after 1, 2, 4 and
+then 8 seconds and show Reconnecting. Then saved work drains, as before.
 
 Chief settings and deployment status are outside the view, and deployment status
 is not a navigation change at all, so those two keep the payload-free change

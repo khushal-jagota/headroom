@@ -223,14 +223,15 @@ import Observation
             switch end {
             case .cancelled: continue // A new or widened scope: open its stream at once.
             case .ended(let admitted), .refused(let admitted):
-                // A stream that was current reconnects at once for its fresh snapshot.
-                if admitted { failures = 0; continue }
-                failures += 1
+                // A stream that was current reconnects after a second for its fresh
+                // snapshot, as the web does: the server closes on change-log gaps, and a
+                // repeating gap must not become a loop of full snapshots.
+                if admitted { failures = 0 } else { failures += 1 }
             case .failed: failures += 1
             }
-            connection = "Reconnecting"
+            if failures > 0 { connection = "Reconnecting" }
             // 1, 2, 4, then 8 s: a phone in the foreground wants to be current again soon.
-            let delay = Duration.seconds(1 << min(failures - 1, 3))
+            let delay = Duration.seconds(1 << min(max(failures, 1) - 1, 3))
             let deadline = ContinuousClock.now + delay
             while ContinuousClock.now < deadline, !reconnectRequested {
                 do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
