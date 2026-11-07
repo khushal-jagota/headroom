@@ -16,6 +16,9 @@ import Observation
     private var engine: AVAudioEngine?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var recognition: SFSpeechRecognitionTask?
+    @ObservationIgnored private let awake: KeepAwake
+
+    init(awake: KeepAwake = .shared) { self.awake = awake }
 
     func start(update: @escaping @MainActor @Sendable (String) -> Void) async {
         guard !recording, !starting, !transcribing else { return }
@@ -29,6 +32,7 @@ import Observation
                 capture.receive("Keep the newest message in view.\n", generation: currentGeneration)
             }
             recording = true; startedAt = Date(); level = 0.4; error = nil
+            awake.hold(self)
             return
         }
 #endif
@@ -76,6 +80,7 @@ import Observation
             }
             audio.prepare(); try audio.start()
             recording = true; startedAt = Date(); error = nil
+            awake.hold(self)
             Haptics.light()
         } catch { cancel(); self.error = "Speech could not start. Use the keyboard." }
     }
@@ -105,6 +110,7 @@ import Observation
         request?.endAudio(); recognition?.cancel()
         engine = nil; request = nil; recognition = nil; insert = nil
         recording = false; starting = false; transcribing = false; level = 0; startedAt = nil
+        awake.release(self)
         if hadSession { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
     }
 }

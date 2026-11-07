@@ -287,6 +287,37 @@ import XCTest
         model.selectedModel = "user-selection"
         model.applyConfiguration(configuration)
         XCTAssertEqual(model.selectedModel, "user-selection")
+        let held = json.replacingOccurrences(of: #""held_prompt_id""#, with: #""queue_reason":"attachment","held_prompt_id""#)
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(held.utf8)))
+        XCTAssertEqual(model.latestLine, "You: Waiting · Queued · attachments wait for the turn to end")
+    }
+
+    // The server holds any message that names a model until a new turn, so an unchanged
+    // selection must not ride along or a steer becomes a wait for the turn to end.
+    func testSendCarriesOnlyARealModelChange() async throws {
+        func configuration(_ model: String) throws -> ConversationConfiguration {
+            try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(#"{"backend_key":"claude","model":"MODEL","reasoning_effort":"medium"}"#.replacingOccurrences(of: "MODEL", with: model).utf8))
+        }
+        let model = ConversationModel()
+        let service = ConversationStub(fate: "injected")
+        model.conversationID = "conv_1"
+        model.applyConfiguration(try configuration("opus"))
+        model.applyConfiguration(try configuration("opus-next"))
+        XCTAssertEqual(model.selectedModel, "opus-next")
+        model.draft = "Steer this"
+        _ = await model.send(to: .chief, using: service)
+        let first = await service.lastMessage
+        var message = try XCTUnwrap(first)
+        XCTAssertEqual(message.mode, "steer")
+        XCTAssertNil(message.model)
+        XCTAssertNil(message.reasoningEffort)
+        model.selectedModel = "sonnet"
+        model.draft = "Switch"
+        _ = await model.send(to: .chief, using: service)
+        let second = await service.lastMessage
+        message = try XCTUnwrap(second)
+        XCTAssertEqual(message.model, "sonnet")
+        XCTAssertNil(message.reasoningEffort)
     }
 
     func testRetryKeepsAttachmentBytesWithoutDuplicatingFilenameInText() async throws {

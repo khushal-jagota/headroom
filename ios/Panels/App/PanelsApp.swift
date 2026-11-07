@@ -4,6 +4,7 @@ import SwiftUI
     @UIApplicationDelegateAdaptor(PanelsNotificationDelegate.self) private var notificationDelegate
     @State private var notifications = NotificationController.shared
     @State private var store = AppStore()
+    @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
             Group {
@@ -24,6 +25,7 @@ import SwiftUI
                 .environment(store).environment(notifications)
                 .preferredColorScheme(.dark)
                 .tint(PanelsTheme.accent)
+                .onChange(of: scenePhase, initial: true) { _, phase in KeepAwake.shared.foreground = phase == .active }
         }
     }
 }

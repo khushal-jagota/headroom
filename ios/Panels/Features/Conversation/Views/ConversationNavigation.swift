@@ -204,7 +204,7 @@ private struct ConversationSurface: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(held.text).lineLimit(2)
                             HStack {
-                                Text("Queued").foregroundStyle(PanelsTheme.faint)
+                                Text(held.note).foregroundStyle(PanelsTheme.faint)
                                 Spacer(minLength: 8)
                                 Button("Steer in") { changeQueue(held, discard: false) }
                                 Button { changeQueue(held, discard: true) } label: {
