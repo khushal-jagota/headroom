@@ -706,6 +706,36 @@ def skill_apply(input_json: str, as_json: bool) -> None:
     http.emit(data, as_json, f"applied {len(data['skills'])} skills")
 
 
+@skill_group.command("delete")
+@click.argument("name")
+@json_option
+def skill_delete(name: str, as_json: bool) -> None:
+    """Delete a skill and its whole folder. Refuses a skill a Worker type uses."""
+    data = http.send("DELETE", f"/api/skills/{quote(name, safe='')}", as_json=as_json)
+    http.emit(data, as_json, f"{data['name']} deleted")
+
+
+@skill_group.command("write-file")
+@click.argument("name")
+@click.argument("path")
+@json_option
+def skill_write_file(name: str, path: str, as_json: bool) -> None:
+    """Write a file at PATH inside a skill's folder. File text on redirected stdin.
+
+    The skill's own SKILL.md is not writable here; use `panels skill edit`.
+    """
+    content = "" if sys.stdin.isatty() else sys.stdin.read()
+    if not content.strip():
+        http.fail_validation("supply the file text on redirected stdin", as_json)
+    data = http.send(
+        "PUT",
+        f"/api/skills/{quote(name, safe='')}/files",
+        as_json=as_json,
+        json_body={"path": path, "content": content},
+    )
+    http.emit(data, as_json, f"{data['name']}/{data['path']} written")
+
+
 @skill_group.command("check")
 @json_option
 def skill_check(as_json: bool) -> None:

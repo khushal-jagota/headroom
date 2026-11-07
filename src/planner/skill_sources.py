@@ -154,6 +154,15 @@ def provision_native_backend_skills(
         raise FileExistsError(f"native backend skills path is not a directory: {target}")
     for skill_name in hidden_skills:
         _remove_path(target / skill_name)
+    # A deleted skill leaves its link behind. Remove only dead links into the managed
+    # home; a provider home's own links, dead or alive, stay.
+    for link in target.iterdir():
+        if (
+            link.is_symlink()
+            and not link.exists()
+            and (target / os.readlink(link)).parent.resolve() == source_root
+        ):
+            link.unlink()
     # Provider homes can already contain user-owned skills. Preserve them and
     # expose each missing Panels skill directly from the managed authority.
     for skill_name in panels_skill_names:
