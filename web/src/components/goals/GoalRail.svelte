@@ -72,5 +72,9 @@ a{color:inherit;text-decoration:none}
 .state:not(:has(> :global([data-tone=bad]), > .progress, > time)) > :global([data-tone]){position:static;width:auto;height:auto;overflow:visible;clip-path:none}
 .state :global([data-tone]){color:inherit}
 .state :global([data-tone=bad]){color:var(--accent-error)}
+/* Owner: the goal's state carries its colour in the sidebar too: red off track, yellow needing
+   attention, green on track. */
+.state :global([data-tone=attention]){color:var(--accent-attention)}
+.state :global([data-tone=good]){color:var(--accent-done)}
 .goal:focus-visible{outline:none}
 </style>
