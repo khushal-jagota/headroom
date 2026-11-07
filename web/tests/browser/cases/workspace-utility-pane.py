@@ -2049,7 +2049,7 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
 
     # Sidebar Tab skips the shared preview's recap action in both directions.
     # Existing pointer requests above prove that the excluded action still works.
-    sidebar_rows = page.locator('[data-manager="recap_manager"] [data-ticket-id]')
+    sidebar_rows = page.locator('[data-ticket-id="recap_floor"], [data-ticket-id="recap_neighbor"]')
     expect(sidebar_rows).to_have_count(2)
     first_row, second_row = sidebar_rows.nth(0), sidebar_rows.nth(1)
     page.keyboard.press('Shift')
