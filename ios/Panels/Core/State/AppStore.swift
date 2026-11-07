@@ -85,14 +85,16 @@ import Observation
 
     // MARK: Scope
 
-    /// A mounted screen states the windows it shows; nil withdraws them.
+    /// A mounted screen states the windows it shows; nil withdraws them. A new or
+    /// changed demand reads at once. A withdrawal only narrows the next read, so
+    /// leaving a screen adds no read in front of the next screen's own.
     func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?) {
         guard demands[name] != windows else { return }
         demands[name] = windows
         let next = NavigationScope.request(demands: demands, previous: viewRequest)
         guard next != viewRequest else { return }
         viewRequest = next
-        if running { Task { await readView(from: client) } }
+        if running, windows != nil { Task { await readView(from: client) } }
     }
 
     private func admit(_ snapshot: ViewSnapshot) {

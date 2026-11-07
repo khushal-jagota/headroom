@@ -128,6 +128,8 @@ struct ReviewView: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             if resolved { queue.resolve(item) } else { queue.skip(item) }
+            // A revisited message reads its run again, as a freshly opened card does.
+            if item.isMessage { messageDecisions.drop(item.id) }
             displayedItem = queue.current(in: queueItems)
         }
     }
@@ -144,6 +146,7 @@ struct ReviewView: View {
         return decision
     }
     func retain(_ ids: Set<String>) { decisions = decisions.filter { ids.contains($0.key) } }
+    func drop(_ id: String) { decisions[id] = nil }
 }
 
 private struct ReviewProposalView: View {
