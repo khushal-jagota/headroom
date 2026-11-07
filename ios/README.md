@@ -25,15 +25,29 @@ working endpoint rather than inventing a new backend route.
 
 ## Refresh work
 
-A global change still refreshes Review for its tab badge and tells selected pages
-to refresh. The overview's manager and ticket windows refresh while Workspace is
-visible; returning to Workspace reads its loaded window again. Hidden Workspace
-supplementary reads pause too. Chief settings and deployment use the existing
+After each change signal the phone reads one navigation view snapshot for what
+is on screen, as desktop does. Review is always in that scope, for its badge.
+Workspace adds its rail windows while it is visible: active orchestrators, Chief's
+tickets and each card's tickets. A hidden Workspace leaves the scope and keeps its
+last rows; returning adds its windows back and reads at once. One coherent view
+replaces the earlier Review, manager and ticket list reads; the phone no longer
+reads `/api/review`. Chief settings and deployment use the existing
 resource-version API: unchanged versions need no body read. A body is accepted
 with the version from the same server snapshot. A failed or unknown version check
 keeps a full refresh, and servers without that API keep ordinary reads. Manual
-refresh and reconnect always read again. Manager, ticket and Review list versions
-are not registered by the server, so visible lists still use ordinary reads.
+refresh and reconnect always read again. Then saved work drains, as before.
+
+The view code lives in `Core/Navigation`. The wire subset is hand-written Codable,
+pinned to projection 7 and wire 3, and ignores fields the server adds. Ticket,
+orchestrator and Review facts are derived from view records the way desktop's
+`presentation.ts` derives them, then mapped into the existing native models.
+Frame application for the events stream (snapshot, checkpoint, patch, reset; a gap
+needs a fresh snapshot) is a pure unit, not yet used: this step reads snapshots.
+The server bounds a view to 256 rows and 60 per window. Mounted screens share
+that budget the way the web owner shares it. Orchestrator and Chief pages keep
+their own detail reads, which also supply goals, recaps and artifacts. Settled
+keeps its paged list read, and reads only while open; its count comes from the
+view.
 
 Conversation polling retains its 700 ms interval and its tail subscription.
 Overlapping refresh requests share a following read instead of being dropped.
@@ -142,13 +156,12 @@ Inject `AppStore` through SwiftUI's environment. Use `store.client` for detail
 reads. The shell owns the sole `/api/changes` connection, cancels it in background,
 reconnects after disconnect, and coalesces pending refresh signals into one slot.
 `store.revision` lets mounted detail screens refresh after an overview update.
-The app uses the server's general change stream and REST reads, not a duplicate of
-the web navigation replica protocol. Overview reads run concurrently and retain
-previous data with an explicit error on failure. Active manager and ticket lists
-use bounded pages; Load more preserves the loaded window across refreshes. A
-manager's detail supplies its complete grouped tickets. Workspace shows Chief tickets and the loaded unsettled orchestrators. Tickets whose
-parent is settled stay inside Settled; loading more orchestrators reveals their
-children without inventing a second active card for a settled parent.
+Screens state their windows with `store.setNavigationDemand`. Overview reads run
+concurrently and retain previous data with an explicit error on failure. Workspace
+shows Chief tickets and up to 60 active orchestrators; Previous and Next replace
+that page when there are more, as the web's window pages do. A manager's detail
+supplies its complete grouped tickets. Tickets whose parent is settled stay inside
+Settled, so a settled parent never gets a second active card.
 Artifact directories refresh on selection and pull-to-refresh because filesystem
 writes need not emit a database change.
 
@@ -276,7 +289,7 @@ rebase checks.
 Workspace follows the web rail's section precedence and visibility: approval,
 answer, Yours, errors, Agent, Consequences, agent approval, then Other. Backlogged,
 blocked and completed tickets leave this rail. Unread dots and working spinners
-are independent. Chief activity comes from the read-only workers index.
+are independent. Chief activity comes from the navigation view's Chief record.
 
 The approved mobile design keeps hairline cards, full-width 32pt group bars with
 sentence-case labels on the cards’ 16pt inner line, one-line
@@ -537,8 +550,7 @@ usable and in the future, with a connected stream.
 
 Dependency-blocked workers take precedence over Agent and Errored on complete
 worker pages; Workspace continues to exclude blocked work. Loaded settled rows
-sort by newest update, with identifier ties. The existing REST pagination remains:
-unloaded managers are not globally reordered by the native client. Unread remains
+sort by newest update, with identifier ties. Unread remains
 a row mark, without a Messages group. Desktop rail geometry and browser bundle
 reload prompts have no native counterpart. The shared conversation still uses
 native scrolling; Latest returns to the newest loaded message, and opening
@@ -625,8 +637,9 @@ A different server or a new installed build has a separate compatibility state.
 Connection failures do not set this state.
 
 The app reads each ticket’s saved workflow for its fields, stages, and approval
-choices. The server groups Review items by ticket. The native decoder retains each
-nested proposal and message as a native card with its own identity and timestamp.
+choices. Review cards come from the view's review window, grouped by ticket as on
+desktop. Each card's proposal and messages stay separate native cards, each with
+its own identity and timestamp.
 Goal-owned messages use the existing shared conversation view.
 
 The `Native iOS` workflow runs the existing Swift host suites and an unsigned iOS

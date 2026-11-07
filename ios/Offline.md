@@ -1,7 +1,9 @@
 # Saved data and interrupted connections
 
 The phone keeps recently read Workspace, Review, ticket, orchestrator, Chief and
-conversation responses in one SwiftData database in Application Support. A screen
+conversation responses in one SwiftData database in Application Support. Workspace
+and Review restore from the last saved navigation view, and from the last one that
+carried Workspace, so a relaunch after Review still shows Workspace. A screen
 restores its saved response before starting a fresh read. New responses apply
 immediately, including changes that move rows. A failed refresh keeps the last
 successful response. A screen with no saved response shows still, rough blocks
