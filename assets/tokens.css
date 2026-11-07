@@ -42,12 +42,15 @@
   /* Popovers, menus, tooltips and hover previews: the one raised plane. It carries a 1px
    * ring (--border-raised) and --shadow-float. */
   --surface-raised: #242424;
-  /* The scale's state steps (owner's colour pass): every hover and selection is a solid step
-   * of this scale, never a white layer over whatever is beneath. The in-between step sits
-   * between the rail (#1b1b1b) and the raised plane (#242424): a hover. The raised plane is a
-   * selection. A secondary button rests on the input step (#2a2a2a) and hovers one step up. */
+  /* The scale (owner's colour pass), solid steps, never a white layer over whatever is beneath:
+   *   #0e0e0e recessed · #121212 page · #1b1b1b sidebar bubbles · #202020 hover previews ·
+   *   #242424 raised (tooltips, a preview's band) · #272727 hover · #2a2a2a input (composer,
+   *   secondary buttons, the selected segment) · #303030 selected (and a secondary button's hover).
+   * Hover and selection stand clearly off the bubble (+12 and +21) and apart from each other. */
   --surface-step: #202020;
+  --surface-hover: #272727;
   --surface-input-hover: #303030;
+  --surface-selected: #303030;
   --border-raised: rgb(255 255 255 / 10%);
   /* The composer field: one clear step above the page, its fill alone (no edge: on the dark
    * page the fill separates it; the focus ring stays). */
@@ -298,13 +301,13 @@
 
 /* Workspace selection tiers and travel. */
 :root {
-  /* Fills, no lines, solid steps of the scale (owner's colour pass: the old 14% and 5% white
-   * layers read far lighter than the bubble). The open row rests on the raised plane
-   * (#242424); the pointer's row on the in-between step (#202020), so hover never reads as
-   * selection. The Manager you are inside gets no mark of its own (owner): only the open item
-   * is lit. The faintest fill (3%) is a page table's column wash. */
-  --wash-selected: var(--surface-raised);
-  --wash-hover: var(--surface-step);
+  /* Fills, no lines, solid steps of the scale. The open row rests on the selected step (#303030),
+   * the pointer's row on the hover step (#272727): both clearly visible on a bubble, and apart
+   * (owner: the first pass, #242424 and #202020, was too faint; the white layers before it,
+   * #3b3b3b and #262626, too loud). The Manager you are inside gets no mark of its own (owner):
+   * only the open item is lit. The faintest fill (3%) is a page table's column wash. */
+  --wash-selected: var(--surface-selected);
+  --wash-hover: var(--surface-hover);
   --wash-context: rgb(255 255 255 / 3%);
   /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
    * (a Manager's header, a goal, a Ticket, Settled) sits --rail-edge in from the column on
@@ -352,6 +355,8 @@
   --rail-head-pad: 4px;
   --rail-title-line: 24px;
   --rail-goal-pad-y: 6px;
+  /* A goal row: one line (owner), a 28px fill, a step taller than a Ticket row (24px). */
+  --rail-goal-row-height: 28px;
   --rail-goal-size: 14px;
   --rail-header-clear: 12px;
   --rail-group-gap: 12px;
@@ -411,7 +416,12 @@
   --rail-float-surface: var(--surface-raised);
   --rail-float-shadow: 0 4px 16px rgb(0 0 0 / 28%);
   /* A goal preview's header stands on a band one step lighter than the preview, as on staging. */
-  --rail-preview-band: rgb(255 255 255 / 4%);
+  /* The hover previews (a Manager's, a Ticket's, a goal's) sit two steps under the old #2a2a2a
+   * (owner: darker, by the scale): the in-between step (#202020), and a goal preview's header
+   * band one solid step above it (#242424), not a white layer. The icon bar's tooltips stay on
+   * the raised plane: they open over the dock's bubble, which shares the in-between's range. */
+  --rail-preview-surface: var(--surface-step);
+  --rail-preview-band: var(--surface-raised);
   --rail-preview-width: 340px;
   --rail-preview-pad: 16px;
   --rail-preview-recap-size: 13px;

@@ -151,7 +151,7 @@
      belongs, what it is, the recap in its recessed field (up to five lines, the full text
      kept), the ask at the right inside it as a filled secondary button, and a Ticket's stage
      under it all. */
-  .rail-hover-panel { box-sizing:border-box; font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(var(--rail-preview-width),calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--rail-preview-pad); border:0; border-radius:var(--radius-lg); background:var(--rail-float-surface); box-shadow:var(--rail-float-shadow); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
+  .rail-hover-panel { box-sizing:border-box; font-size:var(--type-sm); line-height:normal; position:fixed; z-index:40; width:min(var(--rail-preview-width),calc(100vw - 24px)); max-height:74vh; overflow:hidden; padding:var(--rail-preview-pad); border:0; border-radius:var(--radius-lg); background:var(--rail-preview-surface); box-shadow:var(--rail-float-shadow); pointer-events:none; opacity:0; transform:translateX(-4px); transition:opacity var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease); }
   .visible { opacity:1; transform:none; }
   .interactive { pointer-events:auto; }
   .instant { transition:none; }
