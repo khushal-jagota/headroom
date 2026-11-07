@@ -27,12 +27,12 @@
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
+  import ComposerField from "./conversation/ComposerField.svelte";
   import { mintOutgoingMessage } from "../lib/conversation/outgoing";
   import { fateSentence } from "../lib/conversation/composer";
   import type { DeliveredMessage } from "../lib/conversation/wire";
   import {
     createVoiceCapture,
-    formatVoiceTime,
     voiceCaptureAvailable,
     voiceCaptureSupported,
     type VoiceCapture,
@@ -341,87 +341,34 @@
       {#snippet revisionEditor()}
         <!-- One line for the Worker, always on the card: Send it back (or Cmd/Ctrl+Enter here,
              as on staging) sends it as the return's guidance, and Approve delivers it to the
-             Worker and then approves. -->
-        <div class="review-revise review-arrive review-arrive--4" data-review-revision>
-          <div class="review-revision-box" data-review-voice={voiceState.phase}>
-            {#if voiceState.phase !== "idle"}
-              <!-- The same voice language as the composer: the centred shimmered
-                   word where the words would go, its actions at the line's end. -->
-              <div class="chat-voice-mid review-voice-mid">
-                {#if voiceState.phase === "recording"}
-                  <span class="live-text-shimmer">recording</span>
-                  <span class="chat-voice-time">{formatVoiceTime(voiceState.elapsedMs)}</span>
-                {:else if voiceState.phase === "transcribing"}
-                  <span class="live-text-shimmer">transcribing</span>
-                {:else}
-                  <span class="chat-voice-fail">
-                    transcription failed · kept
-                    <span class="chat-voice-time">{formatVoiceTime(voiceState.keptMs)}</span>
-                  </span>
-                {/if}
-              </div>
-              <button
-                type="button"
-                class="chat-voice-cancel review-voice-action"
-                data-voice-cancel
-                aria-label={voiceState.phase === "recording"
-                  ? "Cancel recording"
-                  : voiceState.phase === "transcribing"
-                    ? "Cancel transcription"
-                    : "Discard recording"}
-                onclick={() => voice?.cancel()}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
-              </button>
-              {#if voiceState.phase === "recording"}
-                <button
-                  type="button"
-                  class="chat-voice-stop review-voice-action"
-                  data-voice-stop
-                  aria-label="Stop recording and transcribe"
-                  onclick={() => voice?.stopRecording()}
-                ><span class="chat-voice-square"></span></button>
-              {:else if voiceState.phase === "failed"}
-                <button
-                  type="button"
-                  class="chat-voice-retry review-voice-action"
-                  data-voice-retry
-                  onclick={() => voice?.retry()}
-                >retry</button>
-              {/if}
-            {:else}
-              <textarea
-                class="review-revision-input"
-                data-review-revision-input
-                rows="1"
-                placeholder="Add a note for the worker…"
-                bind:value={revisionDraft}
-                onkeydown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.repeat) {
-                    event.preventDefault();
-                    event.currentTarget.closest("[data-approval-block]")
-                      ?.querySelector<HTMLButtonElement>("[data-send-back]")?.click();
-                  }
-                }}
-              ></textarea>
-              {#if voiceAvailable}
-                <!-- Speaking with words already in the line appends to them. -->
-                <button
-                  type="button"
-                  class="review-voice-mic"
-                  data-voice-record
-                  aria-label="Speak a revision"
-                  title="Speak a revision"
-                  onclick={() => void voice?.startRecording()}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <rect x="9" y="3" width="6" height="11" rx="3" />
-                    <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-                  </svg>
-                </button>
-              {/if}
-            {/if}
-          </div>
+             Worker and then approves. It is the composer's field (ComposerField); speaking
+             with words already in the line appends to them. -->
+        <div class="review-revise review-arrive review-arrive--4" data-review-revision data-review-voice={voiceState.phase}>
+          <ComposerField
+            bind:value={revisionDraft}
+            placeholder="Add a note for the worker…"
+            inputAttributes={{ "data-review-revision-input": "" }}
+            onkeydown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.repeat) {
+                event.preventDefault();
+                event.currentTarget.closest("[data-approval-block]")
+                  ?.querySelector<HTMLButtonElement>("[data-send-back]")?.click();
+              }
+            }}
+            record={voiceAvailable
+              ? {
+                  label: "Speak a revision",
+                  onclick: () => void voice?.startRecording(),
+                  attributes: { "data-voice-record": "", title: "Speak a revision" }
+                }
+              : undefined}
+            voice={{
+              state: voiceState,
+              cancel: () => voice?.cancel(),
+              stop: () => voice?.stopRecording(),
+              retry: () => voice?.retry()
+            }}
+          />
         </div>
       {/snippet}
     </div>
