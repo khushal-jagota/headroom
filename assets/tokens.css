@@ -89,7 +89,9 @@
   /* A chart's reading numeral stands on the page-title role: no seventh size. */
   --type-chart-reading: var(--type-page-title);
   --type-chart-compact: var(--type-page-title);
-  --type-chart-completion: var(--type-page-title);
+  /* A yes-or-no goal's reading ('Not done', 'Done') is a reading like a chart's number: the
+   * same 22px, never the page title's size. */
+  --type-chart-completion: var(--page-reading);
   /* Approved chart-sheet surfaces and category palettes. These remain separate
    * from the shell so the production renderer preserves the approved examples. */
   /* A standalone chart card's fill: the page card's (4.5% white over the page), opaque. */

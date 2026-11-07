@@ -78,9 +78,9 @@
   .completion-card,.progress-card { min-height:280px; }
   .time-budget-card,.allocation-card { min-height:302px; }
   .completion-content { padding:28px 0 4px; }
-  .completion-headline { display:flex; align-items:center; gap:12px; margin:12px 0 16px; min-height:48px; }
-  .completion-glyph { flex-shrink:0; width:32px; height:32px; }
-  .completion-word { position:relative; font-size:var(--type-chart-completion); font-weight:var(--weight-page-lead); letter-spacing:var(--tracking-page-title); line-height:32px; color:var(--tone-strong); }
+  .completion-headline { display:flex; align-items:center; gap:10px; margin:12px 0 16px; min-height:48px; }
+  .completion-glyph { flex-shrink:0; width:24px; height:24px; }
+  .completion-word { position:relative; font-size:var(--type-chart-completion); font-weight:var(--weight-title); letter-spacing:var(--tracking-page-title); line-height:28px; color:var(--tone-strong); }
   .completion-word>span { display:block; }
   .completion-context { display:flex; align-items:center; gap:8px; font-size:var(--type-body); line-height:20px; min-height:20px; }
   .status-dot { width:5px; height:5px; flex-shrink:0; border-radius:50%; }
@@ -111,7 +111,7 @@
     .metric-card:not(.compact) .ranges button { flex:1; }
 
     .metric-card:not(.compact) .metric-value { height:28px; }
-    .completion-word { font-size:var(--type-page-title); }
+    .completion-word { font-size:var(--type-chart-completion); }
     .completion-card,.progress-card { min-height:260px; }
     .time-budget-card,.allocation-card { min-height:286px; }
     .ring-layout { min-height:208px; padding-top:24px; gap:12px; }
