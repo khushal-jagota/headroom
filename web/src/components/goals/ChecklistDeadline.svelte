@@ -104,6 +104,11 @@
     editing = false;
     save();
   }
+  function openPickerFromField(event: MouseEvent) {
+    // Focus expands the input before pointerup. Its click can land on this wrapper.
+    if (event.target instanceof Element && event.target.closest('button')) return;
+    if (input) openPicker(input);
+  }
   function openPicker(node: HTMLInputElement) {
     if (pending || failed) return;
     if (typeof node.showPicker === 'function') try { node.showPicker(); } catch { /* Native keyboard entry remains available. */ }
@@ -112,12 +117,12 @@
 
 {#if editable || item.deadline}
   <div class="deadline" class:editing class:undated={!item.deadline} bind:this={root} data-item-deadline={item.id} data-tone={tone} style:--deadline-color={deadlineColor(tone)} onfocusin={begin} onfocusout={focusout}>
-    <div class="field">
+    <div class="field" role="presentation" onclick={openPickerFromField}>
       {#if editable}
         <span class="date-face" aria-hidden="true">
           {#if item.deadline}{goalDateText(item.deadline)}{:else}<svg viewBox="0 0 20 20"><rect x="3.5" y="5" width="13" height="11.5" rx="2"/><path d="M6.5 3.5v3M13.5 3.5v3M3.5 9h13"/></svg>{/if}
         </span>
-        <input bind:this={input} type="date" aria-label={`Deadline for ${item.label}`} aria-describedby={`${uid}-status${error ? ` ${uid}-error` : ''}`} aria-invalid={Boolean(error)} value={value} disabled={pending} readonly={failed} oninput={event => change(event.currentTarget)} onclick={event => openPicker(event.currentTarget)} onkeydown={keydown}/>
+        <input bind:this={input} type="date" aria-label={`Deadline for ${item.label}`} aria-describedby={`${uid}-status${error ? ` ${uid}-error` : ''}`} aria-invalid={Boolean(error)} value={value} disabled={pending} readonly={failed} oninput={event => change(event.currentTarget)} onkeydown={keydown}/>
         {#if editing && (value || draft?.error) && !failed}
           <button class="clear" type="button" aria-label={`Clear deadline for ${item.label}`} disabled={pending} onclick={clear}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 5 6 6M11 5l-6 6"/></svg></button>
         {/if}
