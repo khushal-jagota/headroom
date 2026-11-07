@@ -110,9 +110,9 @@
        is the card's title: the thing being decided, not the stage's generic name. -->
   <div class="proposal-line">
     <h2>{fieldLabelFor(lifecycle, proposal.field)}</h2>
-    <!-- Who approves is a property of the proposal and a select, so it reads as one: 'Approver'
-         and the chosen reviewer with a chevron, at the header's right (owner: the word inside a
-         sentence read badly). -->
+    <!-- What this is, then who approves it, as one pair (owner): 'Design · Approver User ⌄', the
+         reviewer a select with a chevron (the word inside 'For User to approve' read badly). -->
+    <span class="proposal-line-sep" aria-hidden="true">·</span>
     <div class="approver">
       <span class="approver-label">Approver</span>
       <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}<svg class="reviewer-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
@@ -162,10 +162,11 @@
   .worker-proposal { --decision-button-height:var(--button-main-height); padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
   .proposal-line { display:flex; align-items:center; flex-wrap:wrap; min-height:20px; color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
   h2 { margin:0; font:inherit; letter-spacing:0; color:inherit; }
-  /* The header: the stage at the left, the approver at the right. */
-  .proposal-line { justify-content:space-between; gap:var(--space-2) var(--space-4); }
-  .approver { display:inline-flex; align-items:center; gap:var(--space-1); margin-right:calc(var(--space-2) * -1); }
+  /* The header: the stage, a dot, then its approver, one pair at the left. */
+  .proposal-line-sep { padding-inline:var(--space-2); color:var(--tone-tertiary); }
+  .approver { display:inline-flex; align-items:baseline; gap:2px; }
   .approver-label { color:var(--tone-tertiary); }
+  .approver .reviewer { padding:0 var(--space-1) 0 6px; }
   /* The proposal's first paragraph leads at the section-head size, at 500 so the page title stays the one peak; the rest
      is body text, all in the primary tone and never wider than the prose measure. */
   .proposal-prose { max-width:var(--page-prose-measure); margin-top:var(--space-2); color:var(--tone-primary); }
