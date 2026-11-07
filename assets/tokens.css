@@ -563,11 +563,21 @@
   --leading-body: 1.55;
 }
 
-/* Owner's variant to compare (?options=1, "Step up"): a Manager's name rests a step up from the
- * dim level (#c2c2c2), and every Ticket row has one tone: a row that needs you is not brighter
- * (its group's heading and its unread dot already say so). A Manager that needs you, and any
- * hovered or open item, is full white. */
-:root[data-rail-tones="stepup"] {
+/* "Step up" is the owner's choice and the default: a Manager's name rests a step up from the dim
+ * level (#c2c2c2), and every Ticket row has one tone, a row that needs you no brighter than the
+ * rest (its group's heading and its mark say so). A Manager that needs you, and any hovered or
+ * open item, is full white. ?options=1 can switch back to "Two levels" to compare. */
+:root:not([data-rail-tones="two"]) {
   --rail-tone-title: #c2c2c2;
   --rail-tone-attention: var(--rail-tone-rest);
+}
+
+/* Owner's size option to compare (?options=1, Sizes "Larger"): a Manager's name one step up (20px
+ * on a 28px line), and its goals a step up from the Ticket rows (15px against 13.5px, in a 30px
+ * fill), so a goal reads as part of its Manager rather than as another Ticket. */
+:root[data-rail-sizes="larger"] {
+  --type-rail-title: 20px;
+  --rail-title-line: 28px;
+  --rail-goal-size: 15px;
+  --rail-goal-row-height: 30px;
 }

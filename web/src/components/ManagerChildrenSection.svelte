@@ -88,11 +88,11 @@
 </script>
 
 <div bind:this={root} data-worker-section={filter} data-empty={filter !== "active" && count === 0 ? "true" : undefined} use:navigationScrollWindow={{window:principal.kind==='chief'||scopedGroups||(filter!=='active'&&!sectionOpen)?undefined:scopedWindow,activate:()=>navigation?.owner.prioritizeWindow(scopedWindow?.request),selector:'[data-worker-ticket-id]',key:node=>node.dataset.workerTicketId ?? '',move:(next,nextDirection)=>{anchor=next;direction=nextDirection;}}}>
-  {#snippet ticketRows(items: readonly WorkItemTicketFacts[])}
+  {#snippet ticketRows(items: readonly WorkItemTicketFacts[], groupKey: string | null = null)}
     <div class="manager-workspace-status-body">
       {#each items as ticket (ticket.id)}
         <div use:railPreview={onHover ? {show:(element, immediate) => onHover?.(element, ticket.id, immediate), leave:onLeave} : null}>
-          <WorkerRow locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
+          <WorkerRow approval={groupKey === "awaiting_approval" ? "owner" : groupKey === "status_awaiting_approval" ? "agent" : null} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
             quiet={ticket.stage === "done"}
             href={workspaceAddress(principal.kind === "manager"
               ? { kind: "ticket", id: ticket.id, openedFromManagerId: principal.id } : { kind: "ticket", id: ticket.id })}
@@ -112,7 +112,7 @@
               <span class="manager-workspace-status-label">{group.label}</span>
               <span class="manager-workspace-count" data-group-count>{group.count}</span>
             {/snippet}
-            {#if groupOpen[group.key] ?? true}{@render ticketRows(group.tickets)}{/if}
+            {#if groupOpen[group.key] ?? true}{@render ticketRows(group.tickets, group.key)}{/if}
           </Disclosure>
           </div>
         {/each}
