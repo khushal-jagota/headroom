@@ -168,7 +168,7 @@ def run(browser, urls):
 
         tick(5000)
         expect(root).to_have_attribute("data-current", "false")
-        expect(root).to_contain_text("no feed")
+        expect(root).to_contain_text("No feed")
         expect(cpu).to_contain_text("27")
 
         fixture.now = page.evaluate("Date.now() / 1000")
@@ -194,7 +194,7 @@ def run(browser, urls):
         # A read failure immediately dims and retains the previous evidence.
         mode["fail"] = True
         tick()
-        expect(root).to_contain_text("no feed")
+        expect(root).to_contain_text("No feed")
         expect(root.get_by_text("Panels", exact=True)).to_be_visible()
         shot("vps-no-feed.png")
         mode["fail"] = False
@@ -317,7 +317,7 @@ def run(browser, urls):
             route.fulfill(status=503, json={"detail": "Controlled first read failure"})
         held_latest.clear()
         expect(root).to_have_attribute("aria-busy", "false")
-        expect(root).to_contain_text("no feed")
+        expect(root).to_contain_text("No feed")
         expect(cpu).to_contain_text("Unavailable")
         expect(rows).to_have_count(0)
         shot("vps-first-read-unavailable.png")

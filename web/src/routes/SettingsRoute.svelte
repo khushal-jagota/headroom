@@ -24,7 +24,7 @@
   {#if section === "config"}<ConfigRoute {roleKind} {roleId} href={nestedHref(href, ["config"])} />
   {:else if section === "notifications"}<NotificationsRoute />
   <!-- VPS lives in Settings (owner); #/vps still opens the same page on its own. -->
-  {:else if section === "vps"}<div class="settings-vps"><VpsPage /></div>{/if}
+  {:else if section === "vps"}<div class="settings-vps"><VpsPage embedded /></div>{/if}
 </section>
 
 <style>

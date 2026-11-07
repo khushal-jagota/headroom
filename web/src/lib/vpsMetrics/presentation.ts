@@ -28,7 +28,7 @@ export function freshness(latest: LatestResponse | null, now: number, failed: bo
   const timestamp = latest?.collection.last_sample_at;
   const age = timestamp == null ? null : Math.max(0, now - timestamp);
   const stale = failed || age === null || age > (latest?.collection.cadence_seconds ?? 2) * metricsConfig.staleCadences || latest?.collection.availability === 'unavailable';
-  return { stale, age, label: !stale ? 'now' : age === null ? 'no feed' : `${age < 60 ? `${Math.floor(age)}s` : age < 3600 ? `${Math.floor(age / 60)}m` : `${Math.floor(age / 3600)}h`} ago · no feed` };
+  return { stale, age, label: !stale ? 'Now' : age === null ? 'No feed' : `${age < 60 ? `${Math.floor(age)}s` : age < 3600 ? `${Math.floor(age / 60)}m` : `${Math.floor(age / 3600)}h`} ago · No feed` };
 }
 export function instruments(sample: Sample): Instrument[] {
   const get = (key: string) => reading(sample.metrics, key);

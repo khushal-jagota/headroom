@@ -2,7 +2,7 @@
   // Mechanical translation of T3 mobile UsageRouteScreen.tsx:392–620.
   import { type UsageSummary, type UsageSummaryInput, type UsageProviderKind } from "../../lib/usage/contracts";
   import { calculateUsageTotals } from "../../lib/usage/usageTotals";
-  import { enumerateDays, enumerateHourStarts, formatUsd, formatTokens, formatPercent, formatCount, formatDayShort, formatHourShort } from "../../lib/usage/usageFormat";
+  import { enumerateDays, enumerateHourStarts, formatUsd, formatTokens, formatPercent, formatCount, formatDayShort, formatHourShort, formatDateTimeShort } from "../../lib/usage/usageFormat";
   import { PROVIDER_LABEL, PROVIDER_COLOR } from "../../lib/usage/usageProviders";
   import UsageChart from "./UsageChart.svelte";
   let { summary, input, providers, metric }: {
@@ -67,11 +67,11 @@
     {/each}
   </section>{/if}
   <details class="sources"><summary>Sources · {summary.scanDurationMs} ms</summary>
-    <p>Observed {summary.readAt}</p>
+    <p>Observed {formatDateTimeShort(summary.readAt, input.timeZone)}</p>
     {#each summary.sources as source (`${source.fingerprint.provider}:${source.fingerprint.resolvedHomePath}`)}
       <p>{PROVIDER_LABEL[source.fingerprint.provider]} · {source.status} · {source.scannedFiles} files · {source.distinctSessions} sessions{source.message ? ` · ${source.message}` : ""}</p>
     {/each}
-    <p>Model prices: {summary.pricing.status} · {summary.pricing.knownModels} models{summary.pricing.fetchedAt ? ` · ${summary.pricing.fetchedAt}` : ""}</p>
+    <p>Model prices: {summary.pricing.status} · {summary.pricing.knownModels} models{summary.pricing.fetchedAt ? ` · ${formatDateTimeShort(summary.pricing.fetchedAt, input.timeZone)}` : ""}</p>
   </details>
 </div>
 <style>

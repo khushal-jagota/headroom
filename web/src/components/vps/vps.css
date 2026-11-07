@@ -5,6 +5,7 @@
 [data-screen="vps"] .screen-header-row { align-items:flex-start; gap:var(--space-4); }
 [data-screen="vps"] h1.screen-header-title { font-size:var(--type-page-title); font-weight:var(--weight-page-title); letter-spacing:var(--tracking-page-title); line-height:1.25; color:var(--tone-strong); }
 [data-screen="vps"] .machine { margin-top:var(--space-2); font-size:var(--type-small); font-weight:var(--weight-small); color:var(--tone-tertiary); line-height:1.55; }
+[data-screen="vps"].embedded .machine { margin-top:0; }
 [data-screen="vps"] .screen-header-meta { display:flex; flex-direction:column; align-items:flex-end; gap:var(--space-3); }
 [data-screen="vps"] .asof { display:flex; align-items:center; gap:var(--space-2); color:var(--tone-tertiary); font-size:var(--type-small); font-variant-numeric:tabular-nums; }
 [data-screen="vps"] .asof-mark { width:var(--space-1); height:var(--space-1); flex:none; border-radius:var(--radius-pill); background:currentColor; }
@@ -53,7 +54,7 @@
 [data-screen="vps"] :is(.row-count,.row-partial) { flex:none; color:var(--tone-tertiary); font-size:var(--type-small); font-variant-numeric:tabular-nums; }
 [data-screen="vps"] .row-value { flex:none; min-width:var(--space-7); text-align:right; color:var(--tone-secondary); font-variant-numeric:tabular-nums; font-size:var(--type-row); }
 [data-screen="vps"] .row-value--quiet { color:var(--tone-tertiary); font-size:var(--type-small); }
-[data-screen="vps"][data-current="false"] :is(.instrument-value,.instrument-of,.waiting,.trend,.list-row) { opacity:.55; }
+[data-screen="vps"][data-current="false"] :is(.instrument-unit,.instrument-unavailable,.instrument-of,.waiting,.trend,.list-row) { opacity:.55; }
 [data-screen="vps"] .vps-block { display:block; width:calc(var(--space-7) + var(--space-2)); height:var(--type-small); border-radius:var(--radius-sm); background:var(--skeleton-line); animation:vps-shimmer var(--motion-loop-bounce) linear infinite alternate; }
 [data-screen="vps"] .vps-block--value { width:calc(var(--space-7) * 2); height:var(--type-chart-reading); }
 [data-screen="vps"] .vps-block--detail { width:min(100%,calc(var(--space-7) * 3)); }

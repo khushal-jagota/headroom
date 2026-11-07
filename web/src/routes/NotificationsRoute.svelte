@@ -161,10 +161,6 @@
 </script>
 
 <section class="notifications-page" data-screen="notifications">
-  <header class="notifications-head">
-    <h2>Notifications</h2>
-  </header>
-
   <ResourceState shape="block" {...resourceStateForQueries(settings)} loadingText="Loading notifications…">
     <section class="notifications-section">
       <h2>What counts</h2>
@@ -237,8 +233,6 @@
 
 <style>
   .notifications-page { width:100%; padding:var(--page-block-gap) 0 var(--space-page-tail); }
-  .notifications-head { margin-bottom:var(--page-block-gap); }
-  .notifications-head h2 { margin:0; font-size:var(--type-page-section); font-weight:var(--weight-page-section); color:var(--tone-strong); }
   .notifications-section + .notifications-section { margin-top:var(--page-section-gap); }
   .notifications-section > h2 { margin:0 0 var(--page-head-gap); color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); }
   .notification-subject + .notification-subject { margin-top:var(--page-block-gap); }

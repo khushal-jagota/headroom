@@ -10,7 +10,7 @@
   import VpsSkeleton from './VpsSkeleton.svelte';
   import './vps.css';
 
-  let { visible = true }: { visible?: boolean } = $props();
+  let { visible = true, embedded = false }: { visible?: boolean; embedded?: boolean } = $props();
   let metricsState = $state.raw<VpsMetricsState | null>(null);
   let controller = $state.raw<MetricsController | null>(null);
   let browserVisible = $state(true);
@@ -43,10 +43,10 @@
 </script>
 
 <div class="vps-container">
-  <div class="screen" data-screen="vps" data-current={loading ? undefined : !current.stale} aria-busy={loading}>
+  <div class="screen" class:embedded data-screen="vps" data-current={loading ? undefined : !current.stale} aria-busy={loading}>
     <header class="screen-header">
       <div class="screen-header-row">
-        <div class="screen-header-title"><h1 class="screen-header-title">VPS</h1>
+        <div class="screen-header-title">{#if !embedded}<h1 class="screen-header-title">VPS</h1>{/if}
           {#if loading}<div class="machine"><VpsSkeleton shape="detail" /></div>{:else if sample}<p class="machine">{machineDescription(sample)}</p>{/if}
         </div>
         <div class="screen-header-meta">

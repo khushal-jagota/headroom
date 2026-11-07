@@ -126,9 +126,6 @@
 >
   {#if stableRoleKind === "index"}
     <div class="agents-page agents-page--index">
-      <header class="agents-page-head">
-        <h1>Config</h1>
-      </header>
       <ResourceState shape="document"
         {...resourceStateForQueries(workers, skillsHome)}
         loadingText="Loading configuration..."
