@@ -2855,6 +2855,21 @@ def checklist_deadline_controls(browser, url):
                 "Due today" not in publish.locator(".date-face").inner_text()
             )  # Status stays nonvisual.
 
+            # Focusing expands the date field before pointerup. The first click
+            # must still reach the picker, even when its target becomes the wrapper.
+            picker = publish.locator('input[type="date"]')
+            picker.evaluate("""node => {
+                node.dataset.pickerCalls = '0';
+                const open = node.showPicker.bind(node);
+                node.showPicker = () => {
+                    open();
+                    node.dataset.pickerCalls = String(Number(node.dataset.pickerCalls) + 1);
+                };
+            }""")
+            picker.tap() if phone else picker.click()
+            expect(picker).to_have_attribute("data-picker-calls", "1")
+            picker.press("Escape")
+
             # Native entry, intentional clear, and Escape never edit authored labels.
             original = copy.deepcopy(fixture.goals["checklist"]["page"])
             save_date(primary, "2026-11-03")
