@@ -2519,6 +2519,162 @@ select {
 }
 .review-revision-box .review-voice-action { align-self: center; }
 
+/* THE COMPOSER FIELD (ComposerField.svelte): the conversation composer's box wherever else a
+ * person writes (a reply in Review, the line for the Worker, the return note, an idea). Every
+ * measure is the composer's own (.chat-box and THE COMPOSER ZONE): its fill alone at rest,
+ * radius 12, staging's quiet 1px focus edge; one 44px row with the + at the left and the voice
+ * and send controls at the right; and, once the draft nears the controls or holds a line
+ * break, the draft on a row of its own over them (the component decides with draftRows.ts and
+ * animates the move, 180ms). Attachments take a strip under the draft, over the controls, so
+ * attaching never moves the words. A voice take keeps the one row: its X where the + is, its
+ * line where the words are, its stop or retry where send is. */
+.composer-field {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: end;
+  align-content: end;
+  column-gap: var(--space-1);
+  min-height: var(--composer-height);
+  padding: calc((var(--composer-height) - var(--composer-control)) / 2 - var(--border-hairline)) var(--space-2);
+  background: var(--composer-surface);
+  border: var(--border-hairline) solid var(--composer-edge);
+  border-radius: var(--composer-radius);
+  transition: border-color var(--motion-fast) var(--motion-ease);
+}
+/* Focus, as the composer's (.chat-box:focus-within): its 1px edge takes a faint blend of the
+ * accent, nothing more. The caret shows where typing goes. */
+.composer-field:focus-within {
+  border-color: color-mix(in srgb, var(--accent-bright) 40%, var(--border-color));
+}
+.composer-field-leading { grid-column: 1; grid-row: 1; display: flex; }
+.composer-field-trailing { grid-column: 3; grid-row: 1; display: flex; align-items: center; gap: var(--space-3); }
+.composer-field-input {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 0 calc((var(--composer-control) - 24px) / 2) var(--space-1);
+  padding: 0;
+  background: none;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow-y: hidden;
+  color: var(--text-default);
+  font-family: var(--font-ui);
+  font-size: max(var(--type-md), var(--type-input));
+  line-height: 24px;
+}
+.composer-field-input[hidden] { display: none; }
+/* With nothing at a side, the words keep the composer's inset from that edge. */
+.composer-field:not(.has-leading) > .composer-field-input { margin-inline-start: calc(var(--composer-inset) - var(--space-2) - var(--border-hairline) - var(--space-1)); }
+.composer-field:not(.has-trailing) > .composer-field-input { margin-inline-end: calc(var(--composer-inset) - var(--space-2) - var(--border-hairline) - var(--space-1)); }
+.composer-field-input::placeholder { color: var(--tone-tertiary); }
+.composer-field-input:focus::placeholder { color: var(--tone-secondary); }
+/* The draft on its own row, the controls on the row under it, in the same columns. */
+.composer-field[data-composer-field-controls-below] > .composer-field-input {
+  grid-column: 1 / -1;
+  width: auto;
+  margin: calc((var(--composer-control) - 24px) / 2) calc(var(--composer-inset) - var(--space-2) - var(--border-hairline));
+}
+.composer-field[data-composer-field-controls-below] > :is(.composer-field-leading, .composer-field-trailing) { grid-row: 2; }
+.composer-field-attachments { grid-column: 1 / -1; grid-row: 2; min-width: 0; margin-inline: calc(var(--composer-inset) - var(--space-2) - var(--border-hairline) - var(--space-1)); }
+.composer-field.has-attachments > :is(.composer-field-leading, .composer-field-trailing) { grid-row: 3; }
+.composer-field.is-voice > :is(.composer-field-leading, .composer-field-voice, .composer-field-trailing) { grid-row: 1; }
+/* Held after a send: the words where they were, the controls at the foot. */
+.composer-field[data-composer-field-held] { align-content: stretch; }
+.composer-field[data-composer-field-held][data-composer-field-controls-below] { grid-template-rows: minmax(0, 1fr) auto; }
+.composer-field[data-composer-field-held].has-attachments { grid-template-rows: minmax(0, 1fr) auto auto; }
+.composer-field[data-composer-field-held] > .composer-field-input { align-self: start; }
+
+/* The composer's icons (its .chat-image): a 32px target, the 22px glyph in the secondary tone,
+ * lifting to the strong tone on hover. */
+.composer-field-tool {
+  width: var(--composer-control);
+  height: var(--composer-control);
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--tone-secondary);
+  cursor: pointer;
+}
+.composer-field-tool:hover:not(:disabled) { color: var(--tone-strong); background-image: var(--interaction-hover); }
+.composer-field-tool svg {
+  display: block;
+  width: var(--conversation-glyph, 22px);
+  height: var(--conversation-glyph, 22px);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* The composer's send (.chat-send): a 28px round with the 14px arrow, lit when there is
+ * something to send. Its target stays 32px; the round is drawn inside it and the target
+ * reaches 2px past it on each side, so the round sits exactly where the composer's does. */
+.composer-field-send {
+  width: var(--composer-control);
+  height: var(--composer-control);
+  flex: none;
+  margin-inline: calc((28px - var(--composer-control)) / 2);
+  padding: calc((var(--composer-control) - 28px) / 2);
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-2);
+  background-clip: content-box;
+  color: var(--tone-secondary);
+  cursor: pointer;
+  line-height: 1;
+  transition: background-color var(--motion-base) var(--motion-ease), color var(--motion-base) var(--motion-ease);
+}
+.composer-field-send.on { background-color: var(--accent-bright); color: var(--surface-ink); }
+.composer-field-send:disabled { opacity: 0.5; cursor: default; }
+.composer-field-send svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.composer-field-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  animation: acp-spin var(--motion-loop-spin) linear infinite;
+}
+/* Voice, in the composer's own language (.chat-voice-*), at the composer's target size. */
+.composer-field-voice {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--composer-control);
+  font-size: var(--type-md);
+}
+.composer-field :is(.chat-voice-cancel, .chat-voice-stop) { width: var(--composer-control); height: var(--composer-control); }
+.composer-field .chat-voice-retry { height: var(--composer-control); }
+.composer-field .chat-voice-cancel svg { width: var(--conversation-glyph, 22px); height: var(--conversation-glyph, 22px); stroke-width: 1.35; }
+.composer-field .chat-voice-square { width: calc(var(--conversation-glyph, 22px) / 2); height: calc(var(--conversation-glyph, 22px) / 2); }
+
 /* Entrance rhythm: each decision's parts fade up in a short stagger. Keyed to the
  * current entry in the markup so advancing to the next decision re-runs it. */
 @keyframes review-arrive {
