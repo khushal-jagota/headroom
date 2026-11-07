@@ -50,7 +50,7 @@
   --surface-step: #202020;
   --surface-hover: #272727;
   --surface-input-hover: #303030;
-  --surface-selected: #303030;
+  --surface-selected: #353535; /* round 16: one step clearer of hover, so the two never read alike */
   --border-raised: rgb(255 255 255 / 10%);
   /* The composer field: one clear step above the page, its fill alone (no edge: on the dark
    * page the fill separates it; the focus ring stays). */
@@ -391,7 +391,8 @@
   --rail-heading-size: 11px;
   --rail-heading-weight: 500;
   --rail-heading-tracking: 0.06em;
-  --rail-tone-heading: #a3a3a3;
+  /* Round 16: headings sit just under the dim rows (#8c8c8c, 5.1:1), so they recede beneath the work. */
+  --rail-tone-heading: var(--rail-tone-label);
   /* The list's edges: a short fade, always the same, so a row's words keep their true tone
    * up to the edge; and clear air under the last block when the list is scrolled to its end. */
   --rail-edge-fade: 8px;
@@ -406,7 +407,7 @@
    * (18/600 against a row's 13.5/400). Group headings are labels to read (12/600, 64%, above);
    * the project eyebrow, a goal's state line and small counts stay quiet (12px at 54%). */
   --rail-tone-bright: #ececec;
-  --rail-tone-rest: #8b8b8b;
+  --rail-tone-rest: #949494; /* round 16: a shade lighter, so a dim Manager name reads as calm, not disabled */
   --rail-tone-title-bright: var(--rail-tone-bright);
   --rail-tone-title: var(--rail-tone-rest);
   /* A Manager's name: the largest words in the rail. */
@@ -418,6 +419,9 @@
    * The fill's step over the bubbles and the page is its edge. */
   --rail-float-surface: var(--surface-raised);
   --rail-float-shadow: 0 4px 16px rgb(0 0 0 / 28%);
+  /* A hover preview floats over cards of nearly its own tone: a hairline of light defines its edge
+   * and a short, soft shadow lifts it, instead of a broad dark one (round 16). */
+  --rail-preview-shadow: 0 0 0 1px rgb(255 255 255 / 7%), 0 4px 12px rgb(0 0 0 / 22%);
   /* A goal preview's header stands on a band one step lighter than the preview, as on staging. */
   /* The hover previews (a Manager's, a Ticket's, a goal's) sit two steps under the old #2a2a2a
    * (owner: darker, by the scale): the in-between step (#202020), and a goal preview's header

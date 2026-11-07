@@ -1032,9 +1032,9 @@ def run(browser, urls):
     assert page.locator("[data-stage-fold] [data-field=brief]").evaluate("(element)=>element.open")
     ticket["conversation_signal"]["message_for_owner"] = False
     drive("window.__batch()")
-    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_attribute(
-        "data-conversation-signal", "working"
-    )
+    # A page title never shows the working spinner (owner): the status line over the composer
+    # says Working. With no message for the owner, the title carries no signal at all.
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
     source_deleted = True
     drive("window.__batch()")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")

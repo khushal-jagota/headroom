@@ -2180,7 +2180,7 @@ def verify_selection_washes(page, url, fixture, evidence):
             assert abs(wash["x"] - group["x"] - 4) < 1.6, frame
             assert abs(wash["width"] - group["width"] + 8) < 1.6, frame
         assert not frame["contextPresent"], frame
-        assert frame["itemBackground"] == "rgb(48, 48, 48)", frame
+        assert frame["itemBackground"] == "rgb(53, 53, 53)", frame
 
     def capture(name, selector, change):
         page.evaluate("selector=>window.__washCapture(selector)", selector)
