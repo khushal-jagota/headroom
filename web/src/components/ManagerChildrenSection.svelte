@@ -96,7 +96,7 @@
             quiet={ticket.stage === "done"}
             href={workspaceAddress(principal.kind === "manager"
               ? { kind: "ticket", id: ticket.id, openedFromManagerId: principal.id } : { kind: "ticket", id: ticket.id })}
-            data-worker-ticket-id={ticket.id} />
+            data-worker-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} />
         </div>
       {/each}
     </div>
