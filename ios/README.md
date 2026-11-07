@@ -30,8 +30,9 @@ what is on screen, as desktop does: a snapshot first, then patches. Review is
 always in that scope, for its badge. Workspace adds its rail windows while it is
 visible: active orchestrators, Chief's tickets and each card's tickets. A detail
 page adds its own record (and, for Chief and orchestrators, a children window). A
-new demand opens a stream for the new scope while the last view stays on screen;
-leaving a screen only narrows the next stream. One coherent view replaces the
+new demand opens a stream for the new scope while the last view stays on screen,
+unless the running stream already carries it, as for a Ticket opened from
+Workspace or Review; leaving a screen only narrows the next stream. One coherent view replaces the
 earlier Review, manager and ticket list reads; the phone no longer reads
 `/api/review`. A launch shows the last saved view at once. A return to the
 foreground, a dropped connection, a gap, a reset or a closed stream all start a
@@ -46,15 +47,16 @@ version from the same server snapshot. A failed or unknown version check keeps a
 full read, and servers without that API keep ordinary reads. Manual refresh reads
 both again and reconnects a view stream that is not current.
 
-A detail page reads its own detail when it opens, then again only when its own
-records in the view change: a Ticket and its step pages on the Ticket record;
+A detail page reads its own detail when it opens, after a return to the
+foreground or a recovered connection, and otherwise only when its own records in
+the view change: a Ticket and its step pages on the Ticket record;
 an orchestrator on its record and its children window; Chief on its record, its
 active children and its settings. Working and unread marks on those pages come
 from the view, so a mark change needs no detail read. A Review proposal reloads
 when its Ticket's record changes. Settled reads again when the settled count
 changes. An inline artifact list reads on expansion and when its owner's file
 count changes. Settings, Usage, Feedback and Ideas read when opened, on return
-to the foreground and on pull-to-refresh.
+to the foreground, after a recovered connection and on pull-to-refresh.
 
 `ResourceRefreshTests` adds one host test for the stream, which no earlier test
 reached: a patch applies without a read, a gap opens a fresh stream, a new detail
@@ -195,7 +197,7 @@ writes need not emit a database change.
 Orchestrator and Ticket, described below. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
 screens. Feedback implements the Open/Handled inbox, grouped Ticket links, page
 context links and Dismiss/Reopen actions through its API adapter. It reads when opened,
-on return to the foreground and on pull-to-refresh. Its empty state omits
+on return to the foreground, after a recovered connection and on pull-to-refresh. Its empty state omits
 the web's capture button instruction because native global feedback capture is
 not yet implemented. Feedback writes are exercised only with an injected stub
 or URLProtocol interception.
