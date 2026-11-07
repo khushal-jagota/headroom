@@ -48,7 +48,7 @@
   .manager-children :global(.stage-mark) { width:7px; height:7px; }
   .manager-children :global(a:focus-visible), .manager-children :global(button:focus-visible), .manager-children :global(summary:focus-visible) { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   .manager-children :global(.ticket-row .machine-identity) { width:15px; height:15px; color:inherit; }
-  .manager-children :global(.ticket-row .conversation-signal-marks) { flex:none; justify-content:flex-end; width:var(--rail-mark-column); }
+  .manager-children :global(.ticket-row .conversation-signal-marks) { flex:none; justify-content:center; width:14px; }
   .manager-children :global(.manager-workspace-empty) { padding:var(--space-2) var(--space-3); color:var(--tone-tertiary); font-size:var(--type-small); }
   .manager-children :global(.child-pages) { display:flex; align-items:center; gap:var(--space-3); color:var(--tone-tertiary); font-family:var(--font-ui); font-size:var(--type-small); }
   .manager-children :global(.child-pages button) { height:var(--page-control-height); color:var(--tone-primary); background:var(--fill-secondary); border:0; border-radius:var(--radius-md); padding:0 var(--space-3); font:inherit; font-size:var(--type-row); }

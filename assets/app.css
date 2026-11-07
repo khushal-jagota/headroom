@@ -228,6 +228,10 @@ strong {
 /* On the rail the count sits beside its icon, never on top of it: the needs-you accent as
    text on its own quiet slate. It is the rail's one badge. */
 .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 7px; }
+/* When something waits for review, the Review destination wears the accent (owner): the same
+   periwinkle as the Review mark on a Ticket that needs your approval. */
+.rail-utilities .utility[data-screen="review"]:has(> .count-badge:not(.hidden)) { color:var(--accent-bright); }
+.rail-utilities .utility[data-screen="review"]:has(> .count-badge:not(.hidden)):hover { color:var(--accent-text); }
 .rail-utilities .count-badge { position:static; min-width:20px; height:18px; padding:0 6px; border-radius:var(--radius-pill); background:var(--accent-badge); color:var(--accent-bright); box-shadow:none; font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
 .count-badge.hidden { display:none; }
 /* A narrow rail (the resizer allows 232px) has no room for the count beside its icon: the row
@@ -4934,7 +4938,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* As staging: a Ticket's title stays on one line and ends in an ellipsis (CSS only); the full
    title is in its hover preview and on its page. */
 .workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; align-self:start; height:var(--rail-row-line); }
+/* Every mark in a row's mark column (the Review icon, the unread dot, the working mark) stands in
+   one 14px box, centred, so a dot and an icon share one centre line (owner). */
+.workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; align-self:start; height:var(--rail-row-line); width:14px; justify-content:center; }
 .workspace-ticket-bucket:is([data-bucket-key="awaiting_approval"], [data-bucket-key="awaiting_answer"], [data-bucket-key="errored"]) .worker-row,
 .workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--rail-tone-attention); }
 .workspace-ticket-bucket .worker-row:is(:hover, [aria-current="page"]) { color:var(--rail-tone-bright); }
