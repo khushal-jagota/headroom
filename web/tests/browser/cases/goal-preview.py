@@ -373,7 +373,7 @@ def native_manual_controls(page, fixture):
             panel.get_by_role("button", name=re.compile("29 Oct,")).click()
             expect(value).to_have_value("2")
             value.fill("8")
-            value.press("Tab")
+            panel.locator("h1").click()
             expect(value).to_have_attribute("data-reading", "8")
             assert fixture.writes[-1][1]["date"] == YESTERDAY
         elif model == "individual_readings":
@@ -384,7 +384,7 @@ def native_manual_controls(page, fixture):
             plot.press("Enter")
             expect(value).to_have_value("2")
             value.fill("8")
-            value.press("Tab")
+            panel.locator("h1").click()
             expect(value).to_have_attribute("data-reading", "8")
             assert fixture.writes[-1][1]["date"] == YESTERDAY
         else:
@@ -506,12 +506,27 @@ def cumulative_preflight_lifetime(page, fixture):
 
 def native_owner_interactions(page):
     # The real adjacent document can cover a preview trapped in the rail's wash
-    # stacking context. Reuse this host to prove pointer access and native Tab.
+    # stacking context. Reuse this host to prove pointer access and sidebar Tab order.
     page.evaluate("location.hash='#/workspace/chief-of-staff'")
     expect(page.locator('.board-workspace-right--chief .manager-doc')).to_be_visible()
     panel = open_preview(page, "daily_quota")
     row = page.locator('a[data-goal-id="daily_quota"]')
+    # The reading control arrives after the preview opens. It must stay outside
+    # sequential navigation even after that asynchronous body admission.
+    expect(panel.get_by_role("textbox")).to_be_visible()
+    next_id = row.evaluate("""node => {
+      const rows=[...node.closest('.goals-rail').querySelectorAll('a[data-goal-id]')];
+      return rows[rows.indexOf(node)+1]?.dataset.goalId;
+    }""")
+    assert next_id, "This fixture needs an adjacent goal row for native Tab proof"
+    next_row = page.locator(f'a[data-goal-id="{next_id}"]')
     row.press("Tab")
+    expect(next_row).to_be_focused()
+    next_row.press("Shift+Tab")
+    expect(row).to_be_focused()
+    expect(panel).to_be_visible()
+    # Pointer input still reaches the same preview control.
+    panel.get_by_role("textbox").click()
     expect(panel.get_by_role("textbox")).to_be_focused()
     panel.get_by_role("textbox").fill("42")
     panel.get_by_role("textbox").press("Escape")
@@ -549,9 +564,10 @@ def native_owner_interactions(page):
         'node => node.dispatchEvent(new Event("scroll"))'
     )
     expect(panel).to_be_visible()
-    page.keyboard.press("Tab")
+    page.keyboard.press("Shift")
+    page.locator('a[data-goal-id="long"]').focus()
     expect(panel).to_be_visible()
-    # Keyboard focus scroll repositions instead of dismissing the preview.
+    # Keyboard row focus and layout scroll events retain the preview.
     page.locator("[data-active-work-scroll]").evaluate(
         'node => node.dispatchEvent(new Event("scroll"))'
     )
@@ -2063,6 +2079,11 @@ def native_goal_edits(browser, url):
             for label in ("Project", "By date", "State"):
                 expect(goal.get_by_label(label, exact=True)).to_be_visible()
             assert why.bounding_box()["height"] > 0
+            if not phone:
+                # Full-page editors retain their ordinary sequential Tab order.
+                title.focus()
+                title.press("Tab")
+                expect(why).to_be_focused()
             field_write(
                 "title", "Native Wren release", lambda: text_action(title, "Native Wren release")
             )

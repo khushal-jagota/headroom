@@ -2047,6 +2047,24 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
                                   "twoLinesAfterExit": natural, "emptyAfterExit": empty})
         leave()
 
+    # Sidebar Tab skips the shared preview's recap action in both directions.
+    # Existing pointer requests above prove that the excluded action still works.
+    sidebar_rows = page.locator('[data-manager="recap_manager"] [data-ticket-id]')
+    expect(sidebar_rows).to_have_count(2)
+    first_row, second_row = sidebar_rows.nth(0), sidebar_rows.nth(1)
+    page.keyboard.press('Shift')
+    first_row.focus()
+    expect(panel).to_have_attribute('aria-hidden', 'false')
+    expect(panel.locator('[data-request-recap]')).to_have_attribute(
+        'data-request-recap', 'ticket:' + first_row.get_attribute('data-ticket-id'))
+    first_row.press('Tab')
+    expect(second_row).to_be_focused()
+    expect(panel.locator('[data-request-recap]')).to_have_attribute(
+        'data-request-recap', 'ticket:' + second_row.get_attribute('data-ticket-id'))
+    second_row.press('Shift+Tab')
+    expect(first_row).to_be_focused()
+    leave()
+
     # Keyboard focus opens the same panel without pointer entry. It must shrink.
     page.emulate_media(reduced_motion="no-preference")
     worker["recap"] = "Initial recap"

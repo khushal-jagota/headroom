@@ -1,5 +1,6 @@
 <script lang="ts">
  import {setContext,untrack} from 'svelte';
+ import {skipPreviewTabStops} from '../../lib/previewTabOrder';
  import {createQuery} from '@tanstack/svelte-query';
  import {queries} from '../../lib/queryCatalogue';
  import {goalQueries} from '../../lib/goals/queries';
@@ -71,9 +72,9 @@
   return()=>{observer.disconnect();window.removeEventListener('resize',place);window.removeEventListener('scroll',place,true);};
  });
 </script>
-<!-- The panel follows its row in DOM order, so native Tab reaches its controls. -->
+<!-- Native Tab continues to the next sidebar row. Preview controls remain available to the pointer. -->
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (The section only stops propagation after native control handlers. It performs no click action.) -->
-<section bind:this={element} data-goal-preview={goalId} data-goal-preview-panel id={`goal-preview-${goalId}`} class="goal-preview" class:instant={enterInstant} style:left={`${left}px`} style:top={`${top}px`} style:--preview-width={`${GOAL_PREVIEW_WIDTH}px`} style:--preview-gutters={`${GOAL_PREVIEW_GUTTER*2}px`} style:--preview-bottom={availableBottom===null?'100dvh':`${availableBottom}px`} aria-label={`Goal preview: ${goal?.title??'Goal'}`} onclick={event=>event.stopPropagation()} onpointerenter={onKeepOpen} onpointerleave={event=>{if(event.pointerType!=='touch'&&anchor)onLeave(anchor);}} onfocusin={onKeepOpen} onfocusout={event=>{if(event.relatedTarget&&!element?.contains(event.relatedTarget as Node)&&event.relatedTarget!==anchor&&anchor)onLeave(anchor);}}>
+<section bind:this={element} use:skipPreviewTabStops data-goal-preview={goalId} data-goal-preview-panel id={`goal-preview-${goalId}`} class="goal-preview" class:instant={enterInstant} style:left={`${left}px`} style:top={`${top}px`} style:--preview-width={`${GOAL_PREVIEW_WIDTH}px`} style:--preview-gutters={`${GOAL_PREVIEW_GUTTER*2}px`} style:--preview-bottom={availableBottom===null?'100dvh':`${availableBottom}px`} aria-label={`Goal preview: ${goal?.title??'Goal'}`} onclick={event=>event.stopPropagation()} onpointerenter={onKeepOpen} onpointerleave={event=>{if(event.pointerType!=='touch'&&anchor)onLeave(anchor);}} onfocusin={onKeepOpen} onfocusout={event=>{if(event.relatedTarget&&!element?.contains(event.relatedTarget as Node)&&event.relatedTarget!==anchor&&anchor)onLeave(anchor);}}>
  {#if goal}
   <header class="preview-header"><div class="preview-date">{#if project}<span class="preview-project">{project.name}</span><span aria-hidden="true">·</span>{/if}<span data-deadline-tone={deadlineTone(goal.deadline,goal.completed,goal.status_date)} style:color={deadlineColor(deadlineTone(goal.deadline,goal.completed,goal.status_date))}>{goal.deadline?`Due ${goalDateText(goal.deadline)}`:'No deadline'}</span></div><h1>{goal.title}</h1></header>
   {#if checklist}<div class="preview-checklist"><PageChecklist block={checklist} presentation="small"/></div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { skipPreviewTabStops } from "../lib/previewTabOrder";
   import MachineActivityMark from "./machines/MachineActivityMark.svelte";
   import MachineIdentity from "./machines/MachineIdentity.svelte";
   import { macActivityKnown, macAvailability } from "../lib/ticketMachines";
@@ -111,7 +112,7 @@
     return () => { observer.disconnect(); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
   });
 </script>
-<div bind:this={element} class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}
+<div bind:this={element} use:skipPreviewTabStops class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}
   onpointerenter={(event) => {
     if (visible && event.pointerType !== "touch" && window.matchMedia("(hover: hover) and (pointer: fine)").matches)
       pointerVisit = { target, recapIdentity };
