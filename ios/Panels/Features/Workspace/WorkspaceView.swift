@@ -44,11 +44,11 @@ struct WorkspaceView: View {
                 if hasContent {
                     WorkspaceCard(title: store.chief?.label ?? "Chief of Staff", chief: true,
                                   route: .chief, signal: store.chiefSignal, groups: groups["chief"] ?? [],
-                                  previewChanged: setPreviewOpen, open: open)
+                                  hiddenCount: store.workspaceHidden["chief"] ?? 0, previewChanged: setPreviewOpen, open: open)
                     ForEach(managers) { manager in
                         WorkspaceCard(title: manager.title, project: manager.project, route: .orchestrator(manager.id),
                                       signal: manager.conversationSignal, groups: groups[manager.id] ?? [],
-                                      previewChanged: setPreviewOpen, open: open)
+                                      hiddenCount: store.workspaceHidden[manager.id] ?? 0, previewChanged: setPreviewOpen, open: open)
                     }
                     if let window = parentsWindow, window.previous != nil || window.next != nil {
                         // The parent window holds at most 60 cards; pages replace it, as on the web.

@@ -73,7 +73,9 @@ orchestrator and Review facts are derived from view records the way desktop's
 Frame application (snapshot, checkpoint, patch, reset; a gap needs a fresh
 snapshot) is a pure unit that each stream applies to its own snapshot.
 The server bounds a view to 256 rows and 60 per window. Mounted screens share
-that budget the way the web owner shares it. Orchestrator and Chief pages keep
+that budget the way the web owner shares it. Workspace asks for every card's tickets in one
+scope, so with many cards each loads fewer rows; a card cut short ends with
+“+N more”, which opens its page. Orchestrator and Chief pages keep
 their own detail reads, which also supply goals, recaps and artifacts. Settled
 keeps its paged list read, and reads only while open; its count comes from the
 view.

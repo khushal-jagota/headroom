@@ -10,6 +10,9 @@ import Observation
     var managers: [ManagerSummary] = []
     var tickets: [TicketSummary] = []
     var workspaceLoaded = false
+    /// Per Workspace card (manager id, or "chief"), the active tickets its rail window
+    /// counts but did not load: the shared row budget can cut a card short.
+    var workspaceHidden: [String: Int] = [:]
     var chief: ChiefDetail?
     var chiefSignal: ConversationSignal?
     var review: ReviewResponse?
@@ -68,7 +71,7 @@ import Observation
     func configure(baseURL: URL) {
         self.baseURL = baseURL
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
-        managers = []; tickets = []; workspaceLoaded = false; chief = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
+        managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; chief = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
         presentation = nil; recordStamps = [:]
         deployment = nil; errors = [:]
         resourceVersions = ResourceVersionState()
@@ -148,6 +151,8 @@ import Observation
         let presentation = NavigationPresentation(snapshot.content.records)
         if let managers = presentation.workspaceManagers(in: snapshot), let tickets = presentation.workspaceTickets(in: snapshot) {
             self.managers = managers; self.tickets = tickets; workspaceLoaded = true
+            workspaceHidden = Dictionary(snapshot.content.windows.filter { $0.request.section == "rail_tickets" && $0.request.group == "all" }
+                .map { ($0.request.owner?.id ?? "chief", max(0, $0.total - $0.members.count)) }, uniquingKeysWith: { first, _ in first })
         }
         chiefSignal = presentation.chief?.signal.conversationSignal
         review = presentation.reviewQueue(in: snapshot)

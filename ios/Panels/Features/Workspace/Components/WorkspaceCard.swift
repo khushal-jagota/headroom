@@ -18,6 +18,8 @@ struct WorkspaceCard: View {
     let route: AppRoute
     let signal: ConversationSignal?
     let groups: [WorkspaceTicketGroup]
+    /// Active tickets beyond the rows this card loaded; the page shows them all.
+    var hiddenCount = 0
     let previewChanged: (Bool) -> Void
     let open: (AppRoute) -> Void
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -98,6 +100,14 @@ struct WorkspaceCard: View {
                                                    previewChanged: previewChanged, open: open))
                     .transition(.opacity)
                 }
+            }
+            if hiddenCount > 0 {
+                NavigationLink(value: route) {
+                    Text("+\(hiddenCount) more").panelsScaledFont(size: 16).foregroundStyle(PanelsTheme.faint)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("workspace-more")
             }
         }
         .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, groups.isEmpty ? 16 : 2)
