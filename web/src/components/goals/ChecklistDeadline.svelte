@@ -124,7 +124,9 @@
         </span>
         <input bind:this={input} type="date" aria-label={`Deadline for ${item.label}`} aria-describedby={`${uid}-status${error ? ` ${uid}-error` : ''}`} aria-invalid={Boolean(error)} value={value} disabled={pending} readonly={failed} oninput={event => change(event.currentTarget)} onkeydown={keydown}/>
         {#if editing && (value || draft?.error) && !failed}
-          <button class="clear" type="button" aria-label={`Clear deadline for ${item.label}`} disabled={pending} onclick={clear}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 5 6 6M11 5l-6 6"/></svg></button>
+          <!-- Pressing Clear keeps focus in the date field, so the field does not collapse and move Clear
+             from under the pointer before release (the left-aligned field shifts; its click would miss). -->
+          <button class="clear" type="button" aria-label={`Clear deadline for ${item.label}`} disabled={pending} onmousedown={event => event.preventDefault()} onclick={clear}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 5 6 6M11 5l-6 6"/></svg></button>
         {/if}
       {:else}
         <time datetime={item.deadline ?? undefined} aria-describedby={`${uid}-status`}>{goalDateText(item.deadline)}</time>
