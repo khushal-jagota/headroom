@@ -2453,72 +2453,6 @@ select {
   flex-direction: column;
 }
 
-/* THE REVIEW LINE: one line for the Worker, always on the decision card over its actions
- * (WorkerProposalCard). A recessed fill, full width, no edge: the fill reads against the card on
- * its own. It grows with what is written, up to ten lines. The focus ring is drawn on the whole
- * line while its text has the caret. */
-.review-revision-box {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-1);
-  min-height: 44px;
-  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--surface-recessed);
-}
-.review-revision-box:has(> .review-revision-input:focus) {
-  outline: var(--focus-width) solid var(--focus-ring);
-  outline-offset: 0;
-}
-
-.review-revision-input {
-  flex: 1;
-  min-width: 0;
-  min-height: 36px;
-  max-height: calc(10lh + 2 * var(--space-2));
-  field-sizing: content;
-  resize: none;
-  border: 0;
-  outline: 0;
-  padding: var(--space-2) 0;
-  background: transparent;
-  color: var(--text-strong);
-  caret-color: var(--accent-bright);
-  font-family: var(--font-ui);
-  font-size: var(--type-sm);
-  line-height: 1.5;
-}
-
-.review-revision-input::placeholder {
-  color: var(--text-faintest);
-}
-
-/* Voice on the line (t_0pgfmbsr): the mic sits at the line's end, a full composer-size target;
- * the live states reuse the composer's .chat-voice-* language in the same place. */
-.review-voice-mic {
-  flex: none;
-  width: var(--composer-control);
-  height: var(--composer-control);
-  margin-bottom: 2px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-faintest);
-  cursor: pointer;
-}
-.review-voice-mic:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
-.review-voice-mic:disabled { opacity: 0.5; cursor: default; }
-.review-voice-mic svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.2; }
-/* The centred line stands where the text rests, at its height, so nothing jumps. */
-.review-voice-mid {
-  flex: 1;
-  min-height: 36px;
-}
-.review-revision-box .review-voice-action { align-self: center; }
-
 /* THE COMPOSER FIELD (ComposerField.svelte): the conversation composer's box wherever else a
  * person writes (a reply in Review, the line for the Worker, the return note, an idea). Every
  * measure is the composer's own (.chat-box and THE COMPOSER ZONE): its fill alone at rest,
@@ -2664,11 +2598,13 @@ select {
   align-self: center;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: center;
-  gap: var(--space-2);
+  gap: 0 var(--space-2);
   min-width: 0;
   min-height: var(--composer-control);
   font-size: var(--type-md);
+  text-align: center;
 }
 .composer-field :is(.chat-voice-cancel, .chat-voice-stop) { width: var(--composer-control); height: var(--composer-control); }
 .composer-field .chat-voice-retry { height: var(--composer-control); }
