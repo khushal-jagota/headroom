@@ -3669,6 +3669,26 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
                 held_bodies=page.evaluate('window.__returnProbe.bodyWaiting')
                 page.evaluate('window.__returnProbe.releaseBodies()')
                 reads_completed('/view/body/content', held_bodies)
+                if variant=='tall':
+                    # Change the saved block's interior geometry while anchor history remains
+                    # pending. Extra inset moves every code line by 32px without changing
+                    # their pitch. This demands real offset restoration, unlike letter spacing.
+                    page.wait_for_function('''() => {
+                      const pre=document.querySelector('[data-conversation-view-key="e2000"] pre');
+                      return pre?.textContent.includes('Interior code line');
+                    }''')
+                    case['lateLayout']=page.evaluate('''() => {
+                      const pre=document.querySelector('[data-conversation-view-key="e2000"] pre');
+                      const before=pre.getBoundingClientRect().height;
+                      const historyPending=window.__returnProbe.waiting;
+                      const padding=parseFloat(getComputedStyle(pre).paddingTop)+32;
+                      const style=document.createElement('style');
+                      style.textContent=`[data-conversation-view-key="e2000"] pre {padding-top:${padding}px !important}`;
+                      document.head.append(style);
+                      return {growth:pre.getBoundingClientRect().height-before,historyPending,padding};
+                    }''')
+                    assert case['lateLayout']['historyPending']>0,case['lateLayout']
+                    assert abs(case['lateLayout']['growth']-32)<=1,case['lateLayout']
                 page.evaluate('window.__returnProbe.hold=false;window.__returnProbe.release()')
             else:
                 pages_before=page.evaluate("window.__completedReads.filter(path=>path.endsWith('/view/pages')).length")
@@ -3684,14 +3704,9 @@ def _text_tab_return(browser, url, output, *, completion_order=None):
             # Keep sampling until the revealed pane has finished its deferred work.
             _settle(page, label="text return "+order)
             if variant=='tall':
-                # A late metric change to the code inside one block lands during restoration and
-                # leaves the block's lines where they are. On staging code line-height 1.8 did
-                # that (it sat inside the message's 25px line). The redesign's code block sets its
-                # own 12.5px/1.55 lines, where that change grows every line; then the anchoring
-                # holds the line at the viewport's top, not this one, and the frame sampled
-                # before the viewport's ResizeObserver correction reads the uncorrected layout.
-                page.add_style_tag(content='[data-conversation-thread] pre code { letter-spacing: 0.01em; }')
-                _settle(page, label="text return late metrics")
+                padding=page.locator('[data-conversation-view-key="e2000"] pre').evaluate(
+                    '(pre)=>parseFloat(getComputedStyle(pre).paddingTop)')
+                assert abs(padding-case['lateLayout']['padding'])<=1,case['lateLayout']
             case['frames']=page.evaluate('window.__stopTextFrames=true;window.__textFrames')
             case['after']=page.evaluate('window.__readCharacter()')
             page.screenshot(path=str(output/f'text-return-{variant}-{backlog}-{order}-after.png'))

@@ -5360,6 +5360,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * no fade over its last lines. The height is the resting zone's, so opening the conversation
  * over it leaves the frame as it is. */
 :is(.manager-page, .ticket-page) .ticket-artifact { bottom: var(--conversation-layer-height, var(--composer-clear)); }
+/* The covered document keeps its reading position through dock and preview layout changes. */
+:is(.manager-reading, .ticket-reading):has(.ticket-artifact) > :is(.manager-doc, .ticket-doc) { overflow-anchor: none; }
 :is(.manager-page, .ticket-page):has(.ticket-artifact) > .conversation-layer::before { display: none; }
 .manager-column { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear)); }
 .ticket-col { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear) - var(--space-7)); }
