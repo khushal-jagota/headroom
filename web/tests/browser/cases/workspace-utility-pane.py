@@ -334,17 +334,20 @@ def run(browser, urls):
     bounds = pane.bounding_box()
     assert bounds and bounds['y'] >= 0 and bounds['y'] + bounds['height'] <= 701, bounds
 
-    # At minimum width all six controls and both end labels remain inside the rail.
+    # At minimum width all five destinations (VPS lives in Settings), the Focus switch and
+    # every label remain inside the rail.
     grip = page.get_by_role("separator", name="Resize workspace panel")
     grip.focus()
     for _ in range(20):
         page.keyboard.press("Shift+ArrowLeft")
     expect(grip).to_have_attribute("aria-valuenow", "232")
-    expect(rail.locator('.utility')).to_have_count(6)
+    expect(rail.locator('.utility')).to_have_count(5)
+    focus_switch = page.locator(".rail-foot").get_by_role("switch", name="Focus", exact=True)
+    expect(focus_switch).to_have_count(1)
     rail_bounds = page.locator('.workspace-rail').bounding_box()
     assert rail_bounds and abs(rail_bounds['width'] - 232) < 2, rail_bounds
-    for name in ["Review", "Usage", "Ideas", "Goals", "VPS", "Settings"]:
-        control = rail.get_by_label(name, exact=True)
+    for name in ["Review", "Usage", "Ideas", "Goals", "Settings", "Focus"]:
+        control = focus_switch if name == "Focus" else rail.get_by_label(name, exact=True)
         control.focus()
         label = control.locator('.utility-label')
         expect(label).to_have_css("opacity", "1")
@@ -441,7 +444,9 @@ def verify_settled_fold(page, url, fixture, evidence):
     page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
     page.reload(wait_until="domcontentloaded")
     head = page.locator(".settled-head")
-    expect(head).to_contain_text("(3)")
+    # The count is a plain numeral after the word (redesign), no brackets.
+    expect(head.locator("[data-settled-count]")).to_have_text("3")
+    expect(head).not_to_contain_text("(")
     page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
     page.evaluate("""() => {
       window.__foldProof = [];
@@ -1236,7 +1241,9 @@ def verify_conversation_overlay(browser, url):
         settle()
         doc_before = document.bounding_box()
         dock_before = page.locator('.conversation-layer').bounding_box()
-        assert doc_before['y'] + doc_before['height'] <= dock_before['y'] + 1, (name, doc_before, dock_before)
+        # The page scrolls under the composer zone (redesign): the document runs on beneath the
+        # dock, and its last line still scrolls clear of the dock (checked at the end below).
+        assert doc_before['y'] + doc_before['height'] >= dock_before['y'] + dock_before['height'] - 1, (name, doc_before, dock_before)
         document.evaluate('e=>e.scrollTop=240')
         scroll_before = document.evaluate('e=>e.scrollTop')
         page.locator('[data-conversation-expand]').click()
@@ -1479,7 +1486,7 @@ def verify_rail_overflow(page, fixture, evidence):
             fixture["active_count"] = count
             page.evaluate("void window.__refreshNavigation()")
             expect(rail.locator(".manager-card:not(.chief)")).to_have_count(count)
-            expect(head).to_contain_text(f"({count})")
+            expect(head.locator("[data-settled-count]")).to_have_text(str(count))
             for opened in [False, True]:
                 if head.get_attribute("aria-expanded") != str(opened).lower():
                     head.click()
@@ -1493,7 +1500,11 @@ def verify_rail_overflow(page, fixture, evidence):
                                   "scroller": scroller.get_attribute("class"), **values})
                     assert values["scrollWidth"] == values["clientWidth"], proof[-1]
                     assert values["scrollLeft"] == 0, proof[-1]
-                    assert values["overflowY"] == "auto" and values["gutter"] == "stable", proof[-1]
+                    # The active list keeps its gutter on both edges so its insets match; the
+                    # Settled list in the dock gives its gutter back (redesign). Neither scrolls
+                    # sideways, whatever its scrollbar takes.
+                    assert values["overflowY"] == "auto", proof[-1]
+                    assert values["gutter"] == ("stable both-edges" if scroller == active else "auto"), proof[-1]
                     if count == 24:
                         assert values["scrollHeight"] > values["clientHeight"], proof[-1]
                     scroller.evaluate("node => node.scrollTop=node.scrollHeight")
@@ -1560,7 +1571,8 @@ def verify_rail_overflow(page, fixture, evidence):
             for scroller, selector in [(active, ".manager-card:not(.chief) .settle"), (settled, ".reopen")]:
                 dimensions = geometry(scroller)
                 assert dimensions["scrollWidth"] == dimensions["clientWidth"] and dimensions["scrollLeft"] == 0, dimensions
-                assert dimensions["overflowY"] == "auto" and dimensions["gutter"] == "stable", dimensions
+                assert dimensions["overflowY"] == "auto", dimensions
+                assert dimensions["gutter"] == ("stable both-edges" if scroller == active else "auto"), dimensions
                 assert dimensions["scrollHeight"] > dimensions["clientHeight"], dimensions
                 scroller.evaluate("node => node.scrollTop=node.scrollHeight")
                 control = scroller.locator(selector).last
@@ -2323,12 +2335,14 @@ def verify_selection_washes(page, url, fixture, evidence):
     assert frame['effects'] == 0, frame
     page.screenshot(path=str(evidence / 'selection-wash-reduced.png'))
 
-    # The hover wash is the box of the row that responds. A header's padding, a sole
-    # goal's line and a settled row's padding are all inside it, and the card's own
-    # inset is outside it. Reduced motion lets the hover wash land in one frame.
+    # The hover wash is the box of the row that responds. A header's padding and a settled
+    # row's padding are inside it, and the bubble's own inset is outside it. A Manager's only
+    # goal is its own goal row (redesign), so it is washed, lit and clicked as that row.
+    # Reduced motion lets the hover wash land in one frame.
     fixture["goals"] = [{**goal, "id": "wash_sole", "title": "Ship the second group", "holder_kind": "manager", "holder_id": "wash_b"}]
     page.reload(wait_until="domcontentloaded")
-    expect(page.locator('[data-manager="wash_b"] .identity [data-goal-status="wash_sole"]')).to_be_visible()
+    sole_row = '[data-manager="wash_b"] .goals-rail a.goal[data-goal-id="wash_sole"]'
+    expect(page.locator(sole_row)).to_be_visible()
     page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
 
     def hover_at(row_selector, host_selector, where):
@@ -2344,16 +2358,19 @@ def verify_selection_washes(page, url, fixture, evidence):
         assert state["hover"] and not state["hidden"], state
         assert all(abs(a - b) < 1.6 for a, b in zip(state["row"], state["wash"], strict=True)), state
 
-    # The header reaches the card's 4px inset, and 8px past its last line. Without this
-    # the header could shrink back to its content and the wash would shrink with it.
-    for manager, last_line in [("wash_a", ".item-head"), ("wash_b", "[data-goal-status]")]:
-        header, card, line = page.evaluate("""([manager, last]) => {
+    # The header spans the bubble less its 4px inset on each side and ends 4px past the name's
+    # line. Without this the header could shrink back to its content and the wash with it.
+    for manager in ["wash_a", "wash_b"]:
+        header, card, line = page.evaluate("""manager => {
           const card=document.querySelector(`[data-manager="${manager}"]`);
           const box=n=>{const r=n.getBoundingClientRect();return [r.x,r.y,r.width,r.bottom];};
-          return [box(card.querySelector('.identity')), box(card), box(card.querySelector(last))];
-        }""", [manager, last_line])
-        expected = [card[0] + 4, card[1] + 4, card[2] - 8, line[3] + 8]
+          const head=card.querySelector('.item-head'), nudge=parseFloat(getComputedStyle(head).top)||0;
+          const line=box(head); line[3]-=nudge;
+          return [box(card.querySelector('.identity')), box(card), line];
+        }""", manager)
+        expected = [card[0] + 4, header[1], card[2] - 8, line[3] + 4]
         assert all(abs(a - b) < 1.6 for a, b in zip(header, expected, strict=True)), (manager, header, expected)
+        assert 4 - 0.6 <= header[1] - card[1] <= 7 + 0.6, (manager, header, card)
 
     def bottom_edge(box):
         return box["x"] + box["width"] / 2, box["y"] + box["height"] - 2
@@ -2361,15 +2378,18 @@ def verify_selection_washes(page, url, fixture, evidence):
     def left_edge(box):
         return box["x"] + 2, box["y"] + box["height"] / 2
 
+    def middle(box):
+        return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
     responds(hover_at('[data-manager="wash_a"] .identity', '.active-work-scroll', bottom_edge))
     responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', left_edge))
     responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', bottom_edge))
-    sole = page.locator('[data-goal-status="wash_sole"]').bounding_box()
-    responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', lambda box: (sole["x"] + sole["width"] / 2, sole["y"] + sole["height"] / 2)))
+    responds(hover_at(sole_row, '.active-work-scroll', left_edge))
+    responds(hover_at(sole_row, '.active-work-scroll', middle))
     outside = hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', lambda box: (box["x"] + box["width"] / 2, box["y"] - 2))
     assert not outside["hover"] and outside["hidden"], outside
-    page.mouse.click(sole["x"] + sole["width"] / 2, sole["y"] + sole["height"] / 2)
-    expect(page.locator('[data-manager="wash_b"] .item-head')).to_have_attribute("aria-current", "page")
+    page.mouse.click(*left_edge(page.locator(sole_row).bounding_box()))
+    expect(page.locator(sole_row)).to_have_attribute("aria-current", "page")
     if page.locator('.settled-head').get_attribute("aria-expanded") == "false":
         page.locator('.settled-head').click()
     page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")

@@ -169,9 +169,36 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     supervisor = page.locator(f'[data-manager="{item["id"]}"] .item-head')
     chief = page.locator("[data-chief-destination]")
     rows = {"proof-worker": worker, "proof-supervisor": supervisor, "proof-chief": chief}
-    for row in rows.values():
+
+    def row_marks(conversation: str, row: Locator, working: bool, message: bool) -> None:
+        if conversation == "proof-worker":
+            # The Worker waits on the owner's approval, so its row's mark column shows the
+            # Review mark, which outranks its working mark and unread dot (redesign, owner).
+            # Its signals are proved on the page's own marks below.
+            expect(row.locator('[data-approval-mark="owner"]')).to_have_count(1, timeout=WAIT_MS)
+            expect(row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
+        else:
+            _marks(row, working, message)
+
+    def pane_marks(pane: Locator, signal: Locator, working: bool, message: bool) -> None:
+        # A page title shows the unread dot but never the working spinner (redesign, owner):
+        # the status line over the composer says Working while the dock is at rest.
+        expect(signal.locator('[data-conversation-signal="working"]')).to_have_count(
+            0, timeout=WAIT_MS
+        )
+        expect(signal.locator('[data-conversation-signal="message"]')).to_have_count(
+            int(message), timeout=WAIT_MS
+        )
+        line = pane.locator("[data-conversation-rest-line]")
+        if line.is_visible():
+            if working:
+                expect(line).to_have_text("Working", timeout=WAIT_MS)
+            else:
+                expect(line).not_to_have_text("Working", timeout=WAIT_MS)
+
+    for conversation, row in rows.items():
         expect(row).to_be_visible(timeout=WAIT_MS)
-        _marks(row, False, False)
+        row_marks(conversation, row, False, False)
     page.evaluate("""() => {
         window.signalProofEvents = [];
         window.signalProofStream = new EventSource('/api/changes');
@@ -185,12 +212,12 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         before = page.evaluate("window.signalProofEvents.length")
         _post(server, f"/api/test/signals/{conversation}/start")
         if layout == "desktop":
-            _marks(row, True, False)
+            row_marks(conversation, row, True, False)
         page.wait_for_function(
             "before => window.signalProofEvents.length > before", arg=before, timeout=WAIT_MS
         )
         _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
-        _marks(row, True, True)
+        row_marks(conversation, row, True, True)
         if conversation == "proof-worker":
             _marks(supervisor, False, False)
             _marks(chief, False, False)
@@ -204,11 +231,15 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         row.click()
         pane = page.locator(".board-workspace-right")
         pane_signal = pane.locator(f'[data-conversation-id="{conversation}"]')
-        _marks(pane_signal, True, True)
+        pane_marks(pane, pane_signal, True, True)
         page.mouse.move(1400 if layout == "desktop" else 540, 350)
         expect(page.locator('[data-rail-hover-panel][aria-hidden="false"]')).to_have_count(0)
         if conversation == "proof-worker" and layout == "desktop":
-            expect(page.locator("[data-approval-block] h2")).to_contain_text("to approve")
+            # The proposal names its stage, then who approves it ("What Changes · Approver
+            # User", redesign).
+            approval = page.locator("[data-approval-block]")
+            expect(approval.locator("h2")).to_have_text("What Changes")
+            expect(approval.locator(".approver")).to_contain_text("Approver")
             delivered = _post(
                 server,
                 f"/api/tickets/{ticket['id']}/conversation/send",
@@ -222,9 +253,9 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
             assert delivered == {"conversation_id": conversation, "fate": "injected"}
             # An addressed owner send acknowledges its captured record. A new explicit
             # message stays unread until the held browser acknowledgement reaches it.
-            _marks(pane_signal, True, False)
+            pane_marks(pane, pane_signal, True, False)
             _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
-            _marks(pane_signal, True, True)
+            pane_marks(pane, pane_signal, True, True)
         capture_success(page, evidence / f"{conversation}-{layout}-page-message.png")
         rest = pane.locator("[data-conversation-rest-bar]")
         if rest.is_visible():
@@ -238,14 +269,14 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
             )
             read_route.continue_()
         page.unroute(read_pattern, defer_read)
-        _marks(pane_signal, True, False)
-        _marks(row, True, False)
+        pane_marks(pane, pane_signal, True, False)
+        row_marks(conversation, row, True, False)
         _post(server, f"/api/test/signals/{conversation}/finish")
-        _marks(pane_signal, False, False)
-        _marks(row, False, False)
+        pane_marks(pane, pane_signal, False, False)
+        row_marks(conversation, row, False, False)
         page.evaluate("location.hash = '#/workspace?view=items'")
         expect(row).to_be_visible(timeout=WAIT_MS)
-        _marks(row, False, False)
+        row_marks(conversation, row, False, False)
     events = page.evaluate("window.signalProofEvents")
     assert events and set(events) == {"change"}, events
     (evidence / "observations.json").write_text(
