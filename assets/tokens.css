@@ -42,6 +42,12 @@
   /* Popovers, menus, tooltips and hover previews: the one raised plane. It carries a 1px
    * ring (--border-raised) and --shadow-float. */
   --surface-raised: #242424;
+  /* The scale's state steps (owner's colour pass): every hover and selection is a solid step
+   * of this scale, never a white layer over whatever is beneath. The in-between step sits
+   * between the rail (#1b1b1b) and the raised plane (#242424): a hover. The raised plane is a
+   * selection. A secondary button rests on the input step (#2a2a2a) and hovers one step up. */
+  --surface-step: #202020;
+  --surface-input-hover: #303030;
   --border-raised: rgb(255 255 255 / 10%);
   /* The composer field: one clear step above the page, its fill alone (no edge: on the dark
    * page the fill separates it; the focus ring stays). */
@@ -247,9 +253,9 @@
   --button-primary-fill: rgb(255 255 255 / 88%);
   --button-primary-fill-hover: rgb(255 255 255 / 94%);
   --button-primary-ink: #121212;
-  /* Secondary: a 13% fill, no border, a secondary-tone label. */
-  --button-secondary-fill: rgb(255 255 255 / 13%);
-  --button-secondary-fill-hover: rgb(255 255 255 / 19%);
+  /* Secondary: the input step's fill (#2a2a2a), no border, a secondary-tone label. */
+  --button-secondary-fill: var(--surface-input);
+  --button-secondary-fill-hover: var(--surface-input-hover);
   /* Ghost: no fill until hovered. */
   --button-ghost-fill-hover: var(--state-step);
   /* No button wears an outline (owner). The outline variant is drawn as the secondary fill,
@@ -259,7 +265,7 @@
   /* Segmented control: no track; the selected segment carries the selected fill. */
   --segment-height: var(--button-height);
   --segment-radius: var(--button-radius);
-  --segment-selected-fill: rgb(255 255 255 / 12%);
+  --segment-selected-fill: var(--surface-input);
   --segment-hover-fill: var(--state-step);
   /* Inline code in text: Small mono on a 7% lift, 4px radius, 1px 4px padding. */
   --code-pad-y: 1px;
@@ -290,12 +296,13 @@
 
 /* Workspace selection tiers and travel. */
 :root {
-  /* Fills, no lines. In the rail the open row is the one quiet fill (14%) and the pointer's
-   * about a third of it (5%), so hover never reads as selection. The Manager you are inside
-   * gets no mark of its own (owner): only the open item is lit. The faintest fill (3%) is a
-   * page table's column wash. */
-  --wash-selected: rgb(255 255 255 / 14%);
-  --wash-hover: rgb(255 255 255 / 5%);
+  /* Fills, no lines, solid steps of the scale (owner's colour pass: the old 14% and 5% white
+   * layers read far lighter than the bubble). The open row rests on the raised plane
+   * (#242424); the pointer's row on the in-between step (#202020), so hover never reads as
+   * selection. The Manager you are inside gets no mark of its own (owner): only the open item
+   * is lit. The faintest fill (3%) is a page table's column wash. */
+  --wash-selected: var(--surface-raised);
+  --wash-hover: var(--surface-step);
   --wash-context: rgb(255 255 255 / 3%);
   /* Rail geometry, measured from the references (notes/ref-spec.md section 4). Every fill
    * (a Manager's header, a goal, a Ticket, Settled) sits --rail-edge in from the column on
