@@ -2,6 +2,7 @@
 """One local HTTP stub and the existing UI test host; never operates simulator lifecycle."""
 
 import copy
+import hashlib
 import http.server
 import json
 import os
@@ -100,6 +101,209 @@ def main() -> int:
             recording.send_signal(signal.SIGINT)
             recording.communicate(timeout=15)
             state["recording"] = None
+
+    def ticket_record(ticket: dict[str, Any], proposal: dict[str, Any] | None) -> dict[str, Any]:
+        return {
+            "kind": "ticket",
+            "id": ticket["id"],
+            "value": {
+                "title": ticket["title"],
+                "recap": ticket["recap"],
+                "recap_preview": ticket["recap"],
+                "recap_reference": None,
+                "worker_type": ticket["worker_type"],
+                "stage_label": "Current",
+                "workflow_label": "Product design",
+                "stage": ticket["stage"],
+                "ticket_status": "awaiting_approval" if proposal else "empty",
+                "blocked": False,
+                "created_at": 1,
+                "updated_at": 1,
+                "worker_step_claim_out": False,
+                "deadline": None,
+                "project_id": None,
+                "manager_kind": "chief",
+                "manager_id": None,
+                "conversation_id": ticket["conversation_id"],
+                "is_backlogged": False,
+                "ceiling": ticket["stage"],
+                "ceiling_holder": {"kind": "owner", "id": "owner"},
+                "gating_field": "wireframe",
+                "proposal_field": "wireframe" if proposal else None,
+                "proposal_revision": proposal["revision"] if proposal else 0,
+                "proposal_created_at": proposal["created_at"] if proposal else None,
+                "stage_ownership": "worker",
+                "terminal": False,
+                "locale": "vps",
+            },
+        }
+
+    def conversation_record(identity: str, read: int, unread_at: int | None) -> dict[str, Any]:
+        unread = unread_at is not None
+        return {
+            "kind": "conversation",
+            "id": identity,
+            "value": {
+                "first_unread_owner_message_at": unread_at,
+                "owner_read_through_sequence": read,
+                "error_acknowledged_through_sequence": 0,
+                "attention": {
+                    "current": {
+                        "signal": {"working": False, "message_for_owner": unread},
+                        "awaiting_answer": False,
+                        "last_turn_failed": False,
+                    },
+                    "durable": {"message_for_owner": unread, "last_turn_failed": False},
+                },
+            },
+        }
+
+    def view_snapshot(request: dict[str, Any]) -> dict[str, Any]:
+        """The server's scoped view for this fixture: Review cards, owners, counts."""
+        records = {
+            ("chief", "chief"): {
+                "kind": "chief",
+                "id": "chief",
+                "value": {"label": "Chief of Staff", "conversation_id": "stub"},
+            }
+        }
+        cards: dict[tuple[str, str], int] = {}
+        owner = state["review_owner"] if REVIEW_MESSAGES else None
+        for ticket in tickets.values():
+            # A Ticket that owns the unread conversation is a message-only card here,
+            # so its conversation link opens first, as the connected case expects.
+            message_owner = owner == "ticket" and ticket["id"] == "offline-1"
+            proposal = None if message_owner else ticket["pending_proposal"]
+            records[("ticket", ticket["id"])] = ticket_record(ticket, proposal)
+            if proposal:
+                cards[("ticket", ticket["id"])] = proposal["created_at"]
+        conversations = [("stub", state["read_through"], None)]
+        if REVIEW_MESSAGES:
+            unread = state["read_through"] < (4 if state["new_message"] else 3)
+            stub_owner = {"chief": "chief", "ticket": "offline-1", "manager": "review-manager"}
+            addresses = [
+                (
+                    "chief",
+                    owner,
+                    stub_owner[owner],
+                    "stub",
+                    True,
+                    (1 if state["read_through"] < 3 else 3) if unread else None,
+                ),
+                (
+                    "chief-history",
+                    "chief",
+                    "chief",
+                    "history",
+                    False,
+                    None if state["historical_read"] else 5,
+                ),
+            ]
+            conversations = [
+                ("stub", state["read_through"], addresses[0][5]),
+                ("history", 0, addresses[1][5]),
+            ]
+            if owner == "manager":
+                records[("project", "review")] = {
+                    "kind": "project",
+                    "id": "review",
+                    "value": {"name": "Review"},
+                }
+                records[("manager", "review-manager")] = {
+                    "kind": "manager",
+                    "id": "review-manager",
+                    "value": {
+                        "title": "Review orchestrator",
+                        "recap": "",
+                        "recap_preview": "",
+                        "recap_reference": None,
+                        "created_at": 1,
+                        "updated_at": 1,
+                        "project_id": "review",
+                        "settled": False,
+                        "conversation_id": "stub",
+                    },
+                }
+            for address_id, kind, identity, conversation, current, waiting in addresses:
+                records[("address", address_id)] = {
+                    "kind": "address",
+                    "id": address_id,
+                    "value": {
+                        "owner_kind": kind,
+                        "owner_id": identity,
+                        "conversation_id": conversation,
+                        "current": current,
+                        "parent_kind": "chief" if kind == "ticket" else None,
+                        "parent_id": "chief" if kind == "ticket" else None,
+                    },
+                }
+                if waiting is None:
+                    continue
+                key = ("ticket", identity) if kind == "ticket" else ("address", address_id)
+                cards[key] = min(cards.get(key, waiting), waiting)
+        for identity, read, unread_at in conversations:
+            records[("conversation", identity)] = conversation_record(identity, read, unread_at)
+        order = sorted(
+            cards,
+            key=lambda key: (cards[key], "message" if key[0] == "address" else "ticket", key[1]),
+        )
+        windows = []
+        for window in request["windows"]:
+            members = order[: window["limit"]] if window["section"] == "review" else []
+            windows.append(
+                {
+                    "window_id": json.dumps([window["section"], window["owner"]]),
+                    "request": window,
+                    "members": [{"kind": kind, "id": identity} for kind, identity in members],
+                    "total": len(order) if window["section"] == "review" else 0,
+                    "previous": None,
+                    "next": None,
+                    "forward_overlap": None,
+                    "backward_overlap": None,
+                }
+            )
+        content = {
+            "records": list(records.values()),
+            "windows": windows,
+            "counts": {
+                "running_conversations": 7 if REVIEW_COMPLETION else 0,
+                "out_claims": 0,
+                "review": len(order),
+                "unread": 0,
+                "settled": 0,
+            },
+            "review_context": [],
+            "review_summary": {"skipped": 0, "new": len(order)},
+        }
+        version = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+        return {
+            "event": "snapshot",
+            "wire_version": 3,
+            "projection_version": 7,
+            "view_id": "fixture",
+            "scope_generation": request["scope_generation"],
+            "ordering_generation": "fixture",
+            "coverage": {
+                "scope": "fixture",
+                "schema_version": 10,
+                "semantics": "attention-knowledge-v10-ticket-workflows",
+                "epoch": "fixture",
+                "revision": "1",
+            },
+            "content_version": version,
+            "mode": "current",
+            "authority": {
+                "delivery_session_id": "fixture",
+                "availability": {"state": "current", "generation": "1", "reason": None},
+                "permit": {
+                    "scope": "fixture",
+                    "runtime_epoch": "fixture",
+                    "installation_id": "fixture",
+                    "generation": "1",
+                },
+            },
+            "content": content,
+        }
 
     def row(message: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -232,52 +436,8 @@ def main() -> int:
                         for seq, text in entries
                     ]
                 }
-            elif path == "/api/review":
-                value = {
-                    "items": [
-                        {
-                            "review_item_type": "proposal",
-                            "ticket_id": t["id"],
-                            "field": "wireframe",
-                            "title": t["title"],
-                            "waiting_since": t["pending_proposal"]["created_at"],
-                        }
-                        for t in tickets.values()
-                        if t["pending_proposal"]
-                    ],
-                    "running_worker_count": 7 if REVIEW_COMPLETION else 0,
-                }
-                if REVIEW_MESSAGES:
-                    unread = state["read_through"] < (4 if state["new_message"] else 3)
-                    if unread:
-                        value["items"].append(
-                            {
-                                "review_item_type": "message",
-                                "conversation_id": "stub",
-                                "address_id": "chief",
-                                "owner_kind": state["review_owner"],
-                                "owner_id": {
-                                    "chief": "chief",
-                                    "ticket": "offline-1",
-                                    "manager": "review-manager",
-                                }[state["review_owner"]],
-                                "title": "Unread conversation",
-                                "waiting_since": 1 if state["read_through"] < 3 else 3,
-                            }
-                        )
-                    if not state["historical_read"]:
-                        value["items"].append(
-                            {
-                                "review_item_type": "message",
-                                "conversation_id": "history",
-                                "address_id": "chief-history",
-                                "owner_kind": "chief",
-                                "owner_id": "chief",
-                                "title": "Earlier conversation",
-                                "waiting_since": 5,
-                            }
-                        )
-                    value["items"].sort(key=lambda item: item["waiting_since"])
+            elif path == "/api/navigation/view/snapshot":
+                value = view_snapshot(json.loads(query["view"][0]))
             elif path == "/api/workers/chief-of-staff/settings":
                 value = {
                     "employee_id": "chief",
