@@ -87,10 +87,10 @@ import XCTest
     func testHistoricalConversationCannotSendAndKeepsExactID() async throws {
         let api = makeAPI()
         ReviewMessageProtocol.state.reset()
-        ReviewMessageProtocol.state.currentID = "replacement"
         defer { clean(api) }
         let decision = ReviewMessageDecision()
-        await decision.load(item: item(), api: api)
+        // The view reports that the owner's current address has moved to another conversation.
+        await decision.load(item: item(current: false), api: api)
         XCTAssertTrue(decision.historical)
         XCTAssertEqual(decision.composer.conversationID, "c")
         decision.composer.draft = "Keep historical draft"
@@ -98,7 +98,7 @@ import XCTest
         XCTAssertFalse(sent)
         XCTAssertTrue(ReviewMessageProtocol.state.bodies.isEmpty)
     }
-    private func item() -> ReviewItem { .init(reviewItemType: "message", title: "Chief", waitingSince: 1, conversationId: "c", ownerKind: "chief", ownerId: "chief") }
+    private func item(current: Bool = true) -> ReviewItem { .init(reviewItemType: "message", title: "Chief", waitingSince: 1, conversationId: "c", ownerKind: "chief", ownerId: "chief", ownerReadThroughSequence: 1, addressCurrent: current) }
     private func makeAPI() -> APIClient {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [ReviewMessageProtocol.self]
         return APIClient(baseURL: URL(string: "https://review-\(UUID().uuidString.lowercased()).invalid")!, session: URLSession(configuration: config))
@@ -119,15 +119,13 @@ private final class ReviewMessageState: @unchecked Sendable {
     private var _bodies: [[String: Any]] = []
     private var _refuse = false
     private var _newMessage = false
-    private var _currentID = "c"
     private var _loseResponse = false
     private var held: Set<String> = []
     var loseResponse: Bool { get { lock.withLock { _loseResponse } } set { lock.withLock { _loseResponse = newValue } } }
     var bodies: [[String: Any]] { lock.withLock { _bodies } }
     var refuse: Bool { get { lock.withLock { _refuse } } set { lock.withLock { _refuse = newValue } } }
     var newMessage: Bool { get { lock.withLock { _newMessage } } set { lock.withLock { _newMessage = newValue } } }
-    var currentID: String { get { lock.withLock { _currentID } } set { lock.withLock { _currentID = newValue } } }
-    func reset() { lock.withLock { _bodies = []; _refuse = false; _newMessage = false; _currentID = "c"; _loseResponse = false; held = [] } }
+    func reset() { lock.withLock { _bodies = []; _refuse = false; _newMessage = false; _loseResponse = false; held = [] } }
     func response(_ request: URLRequest) throws -> Data {
         try lock.withLock {
             let path = request.url!.path
@@ -150,7 +148,6 @@ private final class ReviewMessageState: @unchecked Sendable {
                 events.append(["sequence": 90, "kind": "agent_message", "payload": ["text": "Internal output"]])
                 return try JSONSerialization.data(withJSONObject: ["events": events])
             }
-            if path == "/api/chief/conversation" { return try JSONSerialization.data(withJSONObject: ["conversation_id": _currentID]) }
             return try JSONSerialization.data(withJSONObject: ["backend_key": "codex", "held_prompts": held.map { ["held_prompt_id": $0, "sender_message_id": $0, "content": [["piece": "text", "text": "Queued once"]]] }, "owner_read_through_sequence": 1, "latest_sequence": 90])
         }
     }

@@ -3,12 +3,13 @@ import QuickLook
 
 struct ReviewMessageView: View {
     let item: ReviewItem
+    /// Owned by ReviewView so the next message can be read ahead, like proposals.
+    let decision: ReviewMessageDecision
     let onSkip: () -> Void
     let onResolved: () -> Void
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
-    @State private var decision = ReviewMessageDecision()
     @State private var visible = false
     @State private var leaving = false
     @State private var drag: CGFloat = 0

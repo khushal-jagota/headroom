@@ -53,6 +53,7 @@ extension APIClient {
     var loaded = false
     var historical = false
     var busy = false
+    private var loading = false
     var error: String?
     var attemptID: String?
     private var api: APIClient?
@@ -65,20 +66,23 @@ extension APIClient {
     var accepted: Bool { attempt.map { [.sent, .serverQueued].contains($0.state) } ?? false }
     var pending: Bool { attempt.map { [.waiting, .sending, .uncertain].contains($0.state) } ?? false }
 
+    /// The view supplies the read boundary and whether the address is still the
+    /// owner's current conversation, so the unread run is the only read. A prefetch
+    /// already in flight is awaited rather than repeated.
     func load(item: ReviewItem, api: APIClient) async {
+        while loading {
+            do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
+        }
         guard !loaded, !busy, let id = item.conversationId, let owner = item.owner else { return }
-        busy = true; defer { busy = false }
+        loading = true; busy = true; defer { loading = false; busy = false }
         self.api = api; self.item = item
         composer.conversationID = id
         composer.restore(owner: owner, api: api, draftID: "review-message:\(id)")
         composer.deliveryMode = "queue"
         do {
-            let configuration = try await api.conversationConfiguration(owner, id: id)
-            let messages = try await api.reviewMessages(id, after: configuration.ownerReadThroughSequence ?? 0)
-            let current = try await api.currentConversation(owner)
+            let messages = try await api.reviewMessages(id, after: item.ownerReadThroughSequence)
             try Task.checkCancellation()
-            events = messages; historical = current != id
-            composer.applyConfiguration(configuration)
+            events = messages; historical = !item.addressCurrent
             let saved = Outbox.shared.entries(LocalStore.server(api.baseURL)).last {
                 $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil &&
                 (![.sent, .serverQueued, .changed].contains($0.state) || ($0.message?.ownerReadThroughSequence ?? 0) >= (messages.last?.sequence ?? Int.max))
