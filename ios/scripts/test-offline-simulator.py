@@ -313,6 +313,32 @@ def main() -> int:
             "body": {"kind": "inline", "value": {"kind": "prompt", "content": message["content"]}},
         }
 
+    def conversation_view(path: str) -> dict[str, Any]:
+        value: dict[str, Any] = {
+            "page": {"items": [row(m) for m in state["messages"]], "older": None},
+            "coverage": {"through_sequence": len(state["messages"])},
+            "status": {
+                "authority": "current",
+                "turn_running": False,
+                "rest": {"plan_progress": {}},
+            },
+        }
+        if REVIEW_MESSAGES and "/conversations/history/" in path:
+            value["page"]["items"] = [
+                {
+                    "kind": "row",
+                    "key": "history",
+                    "body": {
+                        "kind": "inline",
+                        "value": {
+                            "kind": "agent_message",
+                            "content": [{"piece": "text", "text": "Historical transcript"}],
+                        },
+                    },
+                }
+            ]
+        return value
+
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
             with (output / "requests.log").open("a") as f:
@@ -385,13 +411,27 @@ def main() -> int:
                 return
             if self.disconnected():
                 return
-            if path == "/api/changes" or path.endswith("/view/tail"):
+            if path in ("/api/changes", "/api/navigation/view/events") or path.endswith("/view/tail"):
+                # The navigation view and conversation tail send a fresh snapshot frame each
+                # second, so the app follows fixture changes without a change-driven read.
+                view = json.loads(query["view"][0]) if "view" in query else None
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
                 try:
                     while not state["offline"]:
-                        self.wfile.write(b"data: change\n\n")
+                        with lock:
+                            if path == "/api/changes":
+                                frame = b"data: change\n\n"
+                            elif view is not None:
+                                frame = b"event: snapshot\ndata: " + json.dumps(view_snapshot(view)).encode() + b"\n\n"
+                            else:
+                                frame = (
+                                    b"event: snapshot\ndata: "
+                                    + json.dumps(conversation_view(path.removesuffix("/tail"))).encode()
+                                    + b"\n\n"
+                                )
+                        self.wfile.write(frame)
                         self.wfile.flush()
                         time.sleep(1)
                 except (BrokenPipeError, ConnectionResetError):
@@ -476,28 +516,7 @@ def main() -> int:
                     ]
                 }
             elif path.endswith("/view"):
-                value = {
-                    "page": {"items": [row(m) for m in state["messages"]], "older": None},
-                    "status": {
-                        "authority": "current",
-                        "turn_running": False,
-                        "rest": {"plan_progress": {}},
-                    },
-                }
-                if REVIEW_MESSAGES and "/conversations/history/" in path:
-                    value["page"]["items"] = [
-                        {
-                            "kind": "row",
-                            "key": "history",
-                            "body": {
-                                "kind": "inline",
-                                "value": {
-                                    "kind": "agent_message",
-                                    "content": [{"piece": "text", "text": "Historical transcript"}],
-                                },
-                            },
-                        }
-                    ]
+                value = conversation_view(path)
             elif (
                 path.endswith("/conversations/stub")
                 or path.endswith("/conversations/history")
