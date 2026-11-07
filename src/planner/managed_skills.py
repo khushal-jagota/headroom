@@ -274,13 +274,37 @@ def write_skill_source(
     )
 
 
-def delete_skill_source(conn: sqlite3.Connection, skill_name: str) -> None:
-    """Remove this skill's row, unless a Worker type still names it as its specialist.
+# Every Worker start requires panels and panels-worker, the Chief and Manager settings
+# read their role skills, and seeding refills only an empty table.
+ROLE_SKILL_NAMES: Final = frozenset(
+    {"panels", "panels-worker", "panels-manager", "panels-chief-of-staff"}
+)
 
-    A Worker type whose specialist skill is missing fails to load, so that skill stays.
-    Saved version history is immutable and stays too.
+
+def delete_skill_source(conn: sqlite3.Connection, skill_name: str) -> None:
+    """Remove this skill's row, unless something still needs it.
+
+    A role skill stays. So does a skill that a Worker type names as its specialist,
+    because that type then fails to load, and one that an unfinished Ticket's saved
+    workflow names, because its next Worker step then fails. Saved version history is
+    immutable and stays too.
     """
     read_skill_source(conn, skill_name)
+    if skill_name in ROLE_SKILL_NAMES:
+        raise PlannerError(
+            ErrorCode.validation, "a role skill cannot be deleted", {"skill_name": skill_name}
+        )
+    ticket = conn.execute(
+        "SELECT id FROM tickets WHERE stage != 'done' "
+        "AND json_extract(workflow_json, '$.specialist_skill') = ? LIMIT 1",
+        (skill_name,),
+    ).fetchone()
+    if ticket is not None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "an unfinished Ticket uses this skill",
+            {"skill_name": skill_name, "ticket_id": str(ticket[0])},
+        )
     for row in conn.execute("SELECT worker_type, definition_json FROM worker_types"):
         if json.loads(row[1]).get("profile", {}).get("specialist_skill") == skill_name:
             raise PlannerError(

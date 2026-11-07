@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.skill_publication import publication_process
 
 from planner.core.contracts import ErrorCode, PlannerError
@@ -25,6 +26,7 @@ from planner.skill_sources import (
     provision_native_backend_skills,
     provision_workspace_skills,
 )
+from planner.tickets import data as tickets_data
 from planner.worker_settings import service
 
 
@@ -598,9 +600,32 @@ def test_workspace_migrates_only_its_previous_managed_skill_link(
 def test_skill_delete_removes_row_folder_and_dead_links_but_keeps_used_skills(
     tmp_path: Path, database: sqlite3.Connection
 ) -> None:
-    """Risk: a delete that leaves a half state, removes a Worker type's skill, or strands
-    agent-home links. No existing test covers any delete path."""
+    """Risk: a delete that leaves a half state, strands agent-home links, or removes a
+    skill that a role, a Worker type, or an unfinished Ticket still needs. No existing
+    test covers any delete path."""
     managed = managed_skills_home(tmp_path)
+    for role in ("panels", "panels-worker", "panels-manager", "panels-chief-of-staff"):
+        with pytest.raises(PlannerError, match="role skill"):
+            service.delete_skill(database, role, database_parent=tmp_path)
+    ticket = tickets_data.create_ticket(
+        database,
+        worker_type="coding",
+        title="Uses the probe skill",
+        brief="Kickoff",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+    )
+    database.execute(
+        "UPDATE tickets SET workflow_json = "
+        "json_set(workflow_json, '$.specialist_skill', 'probe-worker') WHERE id = ?",
+        (ticket.id,),
+    )
+    database.commit()
+    with pytest.raises(PlannerError, match="unfinished Ticket"):
+        service.delete_skill(database, "probe-worker", database_parent=tmp_path)
+    database.execute("UPDATE tickets SET stage = 'done' WHERE id = ?", (ticket.id,))
+    database.commit()
     claude_home = tmp_path / "claude-home"
     provision_native_backend_skills(claude_home, tmp_path)
     (claude_home / "skills" / "own-dead-link").symlink_to(tmp_path / "elsewhere" / "gone")
@@ -646,6 +671,19 @@ def test_skill_file_write_stays_inside_the_folder_and_off_the_row_copy(
     assert refused.value.code is ErrorCode.validation
     after = {p: p.read_bytes() for p in managed_skills_home(tmp_path).rglob("*") if p.is_file()}
     assert after == before
+    folder = managed_skills_home(tmp_path) / "panels"
+    (tmp_path / "outside").mkdir(exist_ok=True)
+    (folder / "out").symlink_to(tmp_path / "outside", target_is_directory=True)
+    (folder / "here").symlink_to(folder, target_is_directory=True)
+    for planted in ("out/x.md", "here/SKILL.md"):
+        with pytest.raises(PlannerError, match="inside the skill folder"):
+            service.write_skill_file(
+                database, "panels", {"path": planted, "content": "x"}, database_parent=tmp_path
+            )
+    assert not (tmp_path / "outside" / "x.md").exists()
+    assert (folder / "SKILL.md").read_bytes() == before[folder / "SKILL.md"]
+    (folder / "out").unlink()
+    (folder / "here").unlink()
 
     written = service.write_skill_file(
         database,
