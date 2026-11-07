@@ -203,6 +203,9 @@
    * radius, so at a 2px offset its radius is the control's radius + 2. It is a line, never a
    * fill, so it cannot read as "needs you". */
   --focus-ring: var(--accent-bright);
+  /* The composer's focus (and every composer field's): its 1px edge, 85% of the accent. Between
+   * the 2px ring (too loud, owner) and staging's 40% blend (too quiet, owner). */
+  --composer-focus-edge: color-mix(in srgb, var(--accent-bright) 85%, var(--border-color));
   --focus-width: 2px;
   --focus-offset: 2px;
   /* The floating plane's shadow: one soft drop, no dark ring (the ring is --border-raised). */
