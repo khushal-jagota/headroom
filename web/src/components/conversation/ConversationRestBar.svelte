@@ -50,7 +50,8 @@
   .c2-rest-control svg { width:calc(var(--conversation-glyph) - var(--space-2)); height:calc(var(--conversation-glyph) - var(--space-2));
     fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .c2-rest:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:var(--space-1); border-radius:var(--radius-sm); }
-  .c2-rest-preview { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden;
+  /* The unread message under the status line keeps the prose measure, never the pane's width. */
+  .c2-rest-preview { max-width:var(--page-prose-measure); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden;
     white-space:normal; color:var(--tone-secondary); font:var(--weight-body) var(--type-body)/var(--leading-body) var(--font-ui); }
   .c2-rest-feedback { flex:none; padding-bottom:var(--space-2); color:var(--tone-tertiary); font:var(--weight-small) var(--type-small)/18px var(--font-ui); }
   .c2-mark--running { flex:none; width:calc(var(--space-2) + var(--border-strong)); height:calc(var(--space-2) + var(--border-strong));

@@ -229,7 +229,7 @@
           {/snippet}
           <ManagerHeader bind:recapNote heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
             recap={item.recap} onSaveRecap={(value)=>saveItem("recap",value)} recapTarget={{kind:"manager",id:item.id}}>
-            {#snippet eyebrow()}<div class="page-eyebrow"><span>{item.project}</span>{#if backHref!==null}<span class="page-eyebrow-sep" aria-hidden="true">/</span><a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`} title={`Back to ${workspaceName}`}>↖</a>{/if}</div>{/snippet}
+            {#snippet eyebrow()}<div class="page-eyebrow"><span>{item.project}</span>{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`} title={`Back to ${workspaceName}`}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11 11 5 5M5 10V5h5"/></svg></a>{/if}</div>{/snippet}
             {#snippet actions()}{@render settleButton()}{/snippet}
             {#snippet title()}{@render managerTitle()}{/snippet}
           </ManagerHeader>
@@ -296,8 +296,12 @@
   /* A sole goal's header keeps the page's utilities at the right end of its line, as every
      other page does: Settle (shown on hover), then Ask for a recap at the edge. */
   .goal-head-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--space-2); }
-  /* As staging: the project, then the way back to the Workspace (↖), at every width. */
-  .page-back { display:inline-grid; place-items:center; min-width:20px; min-height:20px; border-radius:var(--radius-sm); }
+  /* As staging: the project, then the way back to the Workspace (an up-left arrow), at every
+     width. It is drawn as an icon button, not a glyph after a slash, so it reads as a control
+     and not as a missing crumb: 24px target, no fill until pointed at. */
+  .page-back { display:inline-grid; place-items:center; width:24px; height:24px; margin-left:var(--space-1); border-radius:var(--radius-sm); color:var(--tone-tertiary); }
+  .page-back:hover { background:var(--wash-hover); color:var(--tone-strong); }
+  .page-back svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   /* Settle shows while the pointer is on the page or focus is on it, as staging. */
   :global(.page-settle.button) { opacity:0; transition:opacity var(--motion-fast) var(--motion-ease); }
   :global(.manager-doc:hover .page-settle.button), :global(.page-settle.button:focus-visible) { opacity:1; }
