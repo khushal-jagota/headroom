@@ -360,7 +360,11 @@ model and delivery choices stack above the action row, and icon sizes stay withi
 their tap targets. Labels can grow with the text size. The bottom uses the
 system safe area plus one point, matching the 35-point reference on the target
 phone. The model sheet reads the backend catalog and applies the selected model
-and reasoning to the next message. An existing conversation keeps its backend.
+and reasoning to the next message. A message names a model or reasoning only when
+the pick differs from what the conversation runs on. The server holds a message
+that names a model until a new turn, so an unchanged pick would turn every steer
+into a wait. The selection follows the conversation until the owner picks another
+value. An existing conversation keeps its backend.
 The plus menu accepts files, library pictures, camera photos and a slash command. Steer, Queue and Send now
 use the existing delivery modes. Stop interrupts the running turn. The separate
 microphone remains available while working or editing a draft.
@@ -370,7 +374,8 @@ Successfully delivered messages have no delivery label in the thread.
 The local message and its server row share one visual identity and position.
 Confirmed refusal and connection failures offer Retry in place. A timeout or lost
 response remains uncertain and cannot be retried blindly. Suppressed delivery
-says why the message was not delivered. Held messages are recovered from the
+says why the message was not delivered. A held message shows the server's reason,
+such as attachments or a model change waiting for the turn to end. Held messages are recovered from the
 conversation detail. Its held-prompt records make Steer in and removal available,
 including after relaunch, independently of delivery-note wording; receipts settle delivery
 even when the corresponding row falls outside the loaded window.

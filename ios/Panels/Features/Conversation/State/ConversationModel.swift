@@ -50,7 +50,7 @@ import Observation
     var status: ConversationStatus?
     var hasUnread = false
     private var readThroughSequence = 0
-    var heldPrompts: [ConversationConfiguration.HeldPrompt] = []
+    var heldPrompts: [ConversationConfiguration.HeldPrompt] = [] { didSet { if oldValue != heldPrompts { projectionRevision += 1 } } }
     var older: ConversationCursor?
     var error: String?
     var sending = false
@@ -75,6 +75,14 @@ import Observation
     var backendKey: String?
     var selectedModel: String?
     var reasoningEffort: String?
+    // What the conversation runs on, as the server last said. The server holds a message
+    // that names a different model until a new turn, so only a real change is sent.
+    private var runningModel: String?
+    private var runningEffort: String?
+    private var runChange: (model: String?, reasoningEffort: String?) {
+        guard conversationID != nil else { return (selectedModel, reasoningEffort) }
+        return (selectedModel == runningModel ? nil : selectedModel, reasoningEffort == runningEffort ? nil : reasoningEffort)
+    }
     private var pinnedMessageIDs: Set<String> = []
     private var rowOrder: [String] = [] { didSet { if oldValue != rowOrder { projectionRevision += 1 } } }
     private var supersededIDs: Set<String> = [] { didSet { if oldValue != supersededIDs { projectionRevision += 1 } } }
@@ -124,7 +132,7 @@ import Observation
                                    retryID: local?.retryable == true ? local?.id : nil, item: item)
         }
         var combined = remote + outgoing.filter { !received.contains($0.id) }.map {
-            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: $0.note, retryID: $0.retryable ? $0.id : nil)
+            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: heldNote($0.id) ?? $0.note, retryID: $0.retryable ? $0.id : nil)
         }
         if let liveRow, !liveRow.text.isEmpty { combined.append(liveRow) }
         let positions = Dictionary(uniqueKeysWithValues: rowOrder.enumerated().map { ($0.element, $0.offset) })
@@ -139,15 +147,21 @@ import Observation
         return row.previewText + delivery
     }
 
+    private func heldNote(_ id: String) -> String? {
+        heldPrompts.first { ($0.senderMessageId ?? $0.heldPromptId) == id }?.note
+    }
     func applyConfiguration(_ configuration: ConversationConfiguration) {
         heldPrompts = configuration.heldPrompts
         readThroughSequence = configuration.ownerReadThroughSequence ?? 0
         hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
-        if backendKey == nil {
+        // The selection follows the conversation until the owner picks something else.
+        if backendKey == nil || (selectedModel == runningModel && reasoningEffort == runningEffort) {
             backendKey = configuration.backendKey
             selectedModel = configuration.model
             reasoningEffort = configuration.reasoningEffort
         }
+        runningModel = configuration.model
+        runningEffort = configuration.reasoningEffort
         let received = Set(items.compactMap(\.senderMessageId))
         for held in configuration.heldPrompts {
             let id = held.senderMessageId ?? held.heldPromptId
@@ -296,7 +310,7 @@ import Observation
             let id = UUID().uuidString
             var message = ConversationSend(conversationId: conversationID, content: (text.isEmpty ? [] : [.init(text: text)]) + attachments,
                 senderMessageId: id, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
-            message.mode = deliveryMode; message.backendKey = backendKey; message.model = selectedModel; message.reasoningEffort = reasoningEffort
+            message.mode = deliveryMode; message.backendKey = backendKey; message.model = runChange.model; message.reasoningEffort = runChange.reasoningEffort
             let work = PendingWork(id: id, created: .now, kind: .message, owner: owner, message: message)
             do {
                 try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "outbox", id: id,
@@ -340,8 +354,8 @@ import Observation
         var message = ConversationSend(conversationId: conversationID, content: (text.isEmpty ? [] : [.init(text: text)]) + (outgoingAttachments[id] ?? []), senderMessageId: id, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
         message.mode = deliveryMode
         message.backendKey = backendKey
-        message.model = selectedModel
-        message.reasoningEffort = reasoningEffort
+        message.model = runChange.model
+        message.reasoningEffort = runChange.reasoningEffort
         do {
             let result = try await service.sendConversation(owner, message: message)
             if let newID = result.conversationId { conversationID = newID }
