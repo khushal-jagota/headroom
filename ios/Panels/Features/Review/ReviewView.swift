@@ -18,7 +18,11 @@ struct ReviewView: View {
             !savedDecisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state) }
         }
     }
-    private var skippedCount: Int { queue.skippedCount(in: queueItems) }
+    /// On a later page the skipped cards of earlier pages are not loaded; they still count.
+    private var skippedCount: Int { reviewPage == nil ? queue.skippedCount(in: queueItems) : queue.skipped.subtracting(queue.resolved).count }
+    /// As on the web, only a page whose every loaded card was skipped moves on;
+    /// resolved cards leave the server queue and the page refills by itself.
+    private var pageSkipped: Bool { !queueItems.isEmpty && queueItems.allSatisfy { queue.skipped.contains($0.id) } }
     private var pending: [ReviewItem] { queueItems.filter { !queue.skipped.contains($0.id) && !queue.resolved.contains($0.id) } }
 
     var body: some View {
@@ -78,10 +82,10 @@ struct ReviewView: View {
         .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).panelsScreen()
         .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:]; messageDecisions = ReviewMessageDecisions(); reviewPage = nil }
-        // The review window holds 30 cards. Once every loaded one was skipped or
-        // resolved here, the next page replaces it; Revisit returns to the first.
+        // The review window holds 30 cards. Once every loaded one was skipped here,
+        // the next page replaces it; Revisit returns to the first.
         .onChange(of: reviewPage, initial: true) { _, page in demandReview(page) }
-        .onChange(of: pending.isEmpty) { _, empty in if empty { advancePage() } }
+        .onChange(of: pageSkipped) { _, skipped in if skipped { advancePage() } }
         .task(id: "\(store.baseURL):\(pending.prefix(30).map(\.id).joined(separator: ","))") {
             // Pin the visible ask until its exit finishes, including when the server
             // removes it from the live queue while its approval sheet is closing.

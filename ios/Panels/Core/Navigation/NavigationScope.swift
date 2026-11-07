@@ -9,8 +9,8 @@ enum NavigationScope {
     static let rowBudget = 256
     static let maximumWindowRows = 60
 
-    /// Mirrors refreshDemand in web/src/lib/navigation/views/owner.ts. Parent lists keep
-    /// their pages; other windows share what remains one row per window per round.
+    /// Mirrors refreshDemand in web/src/lib/navigation/views/owner.ts. Parent lists and
+    /// Review keep their pages; other windows share what remains one row per window per round.
     static func request(demands: [String: [ViewWindowRequest]], previous: ViewRequest) -> ViewRequest {
         var windows: [ViewWindowRequest] = []
         var position: [String: Int] = [:]
@@ -21,7 +21,10 @@ enum NavigationScope {
             else { position[window.identity] = windows.count; windows.append(window) }
         }
         func stable(_ window: ViewWindowRequest) -> Bool {
-            window.section == "rail_parents" || window.section == "settled" || (window.section == "children" && window.owner?.kind == "chief")
+            // Review is always mounted on the phone, beside any other screen; its page
+            // keeps its size rather than shrinking as Workspace cards appear.
+            window.section == "review" || window.section == "rail_parents" || window.section == "settled"
+                || (window.section == "children" && window.owner?.kind == "chief")
         }
         let desired = windows.map(\.limit)
         let stableIndexes = windows.indices.filter { stable(windows[$0]) }

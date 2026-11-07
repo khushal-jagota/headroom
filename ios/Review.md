@@ -35,8 +35,8 @@ resets its scroll position while hidden, then fades the next ask in over 200ms.
 The next asks are read ahead, three at a time: a proposal with its worker manifest,
 a message card with its unread run. The view already carries each conversation's
 read boundary and whether its address is current, so a message card needs one read.
-The review window holds 30 cards; once every loaded card was skipped or resolved,
-the next page replaces it, and Revisit returns to the first. While a proposal is
+The review window holds 30 cards; once every loaded card was skipped, the next
+page replaces it, and Revisit returns to the first with every skipped card. While a proposal is
 loading, its card reserves the previous card height. After approval succeeds,
 the same transition waits for the approval sheet's dismissal callback. Reduce
 Motion keeps direct finger tracking and uses 120ms fades for the swap. Writes
