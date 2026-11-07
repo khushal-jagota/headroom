@@ -564,9 +564,10 @@
 }
 
 /* Owner's variant to compare (?options=1, "Step up"): a Manager's name rests a step up from the
- * dim level (#c2c2c2), and a row that needs you stands at that same step, never above its
- * Manager's name. A Manager that needs you, and any hovered or open item, is full white. */
+ * dim level (#c2c2c2), and every Ticket row has one tone: a row that needs you is not brighter
+ * (its group's heading and its unread dot already say so). A Manager that needs you, and any
+ * hovered or open item, is full white. */
 :root[data-rail-tones="stepup"] {
   --rail-tone-title: #c2c2c2;
-  --rail-tone-attention: #c2c2c2;
+  --rail-tone-attention: var(--rail-tone-rest);
 }
