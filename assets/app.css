@@ -4654,20 +4654,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
   border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
-[data-screen="ideas"] .capture .title-in {
-  font-family: var(--font-ui);
-  font-size: var(--type-lg);
-  font-weight: var(--weight-title);
-  line-height: 1.4;
-  color: var(--text-strong);
-}
-
-[data-screen="ideas"] .capture .detail-in {
+/* The idea and its detail are the composer's field (ComposerField), one under the other. */
+[data-screen="ideas"] .capture .composer-field + .composer-field {
   margin-top: var(--space-3);
-  font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.66;
-  color: var(--text-muted);
 }
 
 [data-screen="ideas"] .capture .foot {
@@ -4770,29 +4759,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 
 /* --- shared compose surfaces (Backlog + Ideas) --------------------------- */
-/* The transparent inline-edit inputs (brand-accent caret) and the chip-toggle selectors and
-   grayscale commit — one look across both compose forms. */
-
-/* THE CAPTURE INPUT — one transparent inline field (brand-accent caret) shared by the
- * backlog and ideas compose forms. Per-screen .title-in/.detail-in sizes below are
- * genuine differences (backlog is compact; the ideas capture is the hero). */
-.in {
-  width: 100%;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  outline: none;
-  font-family: inherit;
-  line-height: 1.6;
-  color: var(--text-default);
-  caret-color: var(--accent-bright);
-  resize: none;
-}
-
-.in::placeholder {
-  color: var(--text-faintest);
-  font-style: italic;
-}
+/* The chip-toggle selectors and grayscale commit — one look across both compose forms. */
 
 /* the deadline is a fact, not prose — a small sans field in the foot row */
 
