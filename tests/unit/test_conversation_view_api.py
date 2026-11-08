@@ -158,10 +158,14 @@ def test_an_out_of_date_view_answers_upgrading_until_it_is_rebuilt(harness: _Har
             )
             with db.connect(harness.runtime.database_path) as conn:
                 incremental = whole_view_projection(conn)
+                # An old view: an older version, and rows that differ from what the
+                # current writer makes. The rebuild must replace all of them.
                 conn.execute(
-                    "UPDATE conversation_view_state SET projection_version=?",
+                    "UPDATE conversation_view_state SET projection_version=?,plan_summary='old'",
                     (VIEW_PROJECTION_VERSION - 1,),
                 )
+                for table in ("rows", "turns", "groups", "lookups"):
+                    conn.execute(f"DELETE FROM conversation_view_{table}")
             path = f"{CONVERSATION_PREFIX}/conversations/c/view"
             receipts = {"message_ids": json.dumps(["any"])}
             for suffix, params in (("", {}), ("/tail", {}), ("/receipts", receipts)):

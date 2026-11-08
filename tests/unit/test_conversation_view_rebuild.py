@@ -90,7 +90,7 @@ def test_the_server_rebuilds_a_view_left_at_an_older_version(tmp_path: Path) -> 
     assert response.json()["page"]["projection_version"] == VIEW_PROJECTION_VERSION
 
 
-def test_a_view_computed_before_a_new_event_is_not_written(tmp_path: Path) -> None:
+def test_an_event_that_arrives_while_a_view_is_computed_is_caught_up(tmp_path: Path) -> None:
     """The view is computed without the write lock, so an event can arrive meanwhile."""
     from contextlib import closing
 
@@ -109,14 +109,19 @@ def test_a_view_computed_before_a_new_event_is_not_written(tmp_path: Path) -> No
                 "c", AgentMessageEventPayload(content=text_message_content("Arrived meanwhile"))
             )
         )
-        assert not rebuild.write_conversation_view_if_unchanged(conn, "c", computed_through)
-        computed_through = rebuild.compute_conversation_view(conn, "c")
-        assert rebuild.write_conversation_view_if_unchanged(conn, "c", computed_through)
+        rebuild.write_conversation_view(conn, "c", computed_through)
         assert tuple(
             conn.execute(
                 "SELECT projection_version,through_sequence FROM main.conversation_view_state"
             ).fetchone()
         ) == (VIEW_PROJECTION_VERSION, later.sequence)
+        assert (
+            conn.execute(
+                "SELECT row_kind FROM main.conversation_view_rows WHERE sequence=?",
+                (later.sequence,),
+            ).fetchone()[0]
+            == "agent_message"
+        )
 
 
 def test_failed_rebuilds_are_retried_in_the_same_run_and_what_is_left_is_logged(

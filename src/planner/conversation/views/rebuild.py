@@ -5,8 +5,8 @@ version needs nothing more: the running server finds every view that is not curr
 rebuilds it from its events here, one conversation at a time.
 
 A conversation's view is computed from a plain read into private temporary tables, without
-the write lock. The write lock is held only to check that nothing changed and to copy the
-rows in, so live writes never wait behind the computation.
+the write lock. The write lock is held only to catch up on events that arrived meanwhile and
+to copy the rows in, so live writes never wait behind the computation.
 
 The rebuild does not hold startup. Until a view is rebuilt, its reads answer 409.
 """
@@ -22,7 +22,7 @@ from contextlib import closing
 
 from planner.conversation.views.contracts import VIEW_PROJECTION_VERSION
 from planner.conversation.views.schema import SCHEMA_STATEMENTS
-from planner.conversation.views.writer import rebuild_conversation_view
+from planner.conversation.views.writer import append_events_after, rebuild_conversation_view
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.db import commit_without_change_signal, connect
 
@@ -38,8 +38,6 @@ _OUT_OF_DATE = (
     "WHERE c.latest_sequence>0 AND (v.conversation_id IS NULL OR v.projection_version!=?)"
 )
 
-# A conversation that keeps changing while its view is computed is left to a retry.
-_COMPUTE_ATTEMPTS = 3
 # Failed conversations are tried again later in the same run, after a growing wait.
 _RETRY_ROUNDS = 5
 _FIRST_RETRY_WAIT_SECONDS = 30.0
@@ -91,25 +89,20 @@ def compute_conversation_view(conn: sqlite3.Connection, conversation_id: str) ->
     return int(latest)
 
 
-def write_conversation_view_if_unchanged(
+def write_conversation_view(
     conn: sqlite3.Connection, conversation_id: str, computed_through: int
-) -> bool:
-    """Copy the private rows in, if the conversation is unchanged and still out of date.
+) -> None:
+    """Catch up on events that arrived after the computation, then copy the private rows in.
 
-    Returns False when a new event arrived after the computation, so it must run again.
+    The catch-up appends only those few events, the same way a live write does, so a busy
+    conversation still finishes with the write lock held briefly.
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
-        latest = conn.execute(
-            "SELECT latest_sequence FROM main.conversations WHERE conversation_id=?",
-            (conversation_id,),
-        ).fetchone()[0]
-        if latest != computed_through:
-            conn.rollback()
-            return False
         if conn.execute(
             _OUT_OF_DATE + " AND c.conversation_id=?", (VIEW_PROJECTION_VERSION, conversation_id)
         ).fetchone():
+            append_events_after(conn, conversation_id, computed_through)
             for table in _VIEW_TABLES:
                 name = f"conversation_view_{table}"
                 columns = ",".join(
@@ -121,21 +114,17 @@ def write_conversation_view_if_unchanged(
                 )
         # Only an open conversation shows these rows, and its reader retries on its own.
         commit_without_change_signal(conn)
-        return True
     except BaseException:
         conn.rollback()
         raise
 
 
 def rebuild_one_conversation_view(db_path: str, busy_timeout_ms: int, conversation_id: str) -> None:
-    """Rebuild one view, holding the write lock only to check and copy rows in."""
+    """Rebuild one view, holding the write lock only to catch up and copy rows in."""
     with closing(connect(db_path, busy_timeout_ms)) as conn:
         _create_private_view_tables(conn)
-        for _ in range(_COMPUTE_ATTEMPTS):
-            computed_through = compute_conversation_view(conn, conversation_id)
-            if write_conversation_view_if_unchanged(conn, conversation_id, computed_through):
-                return
-        raise RuntimeError("Conversation kept changing while its view was rebuilt")
+        computed_through = compute_conversation_view(conn, conversation_id)
+        write_conversation_view(conn, conversation_id, computed_through)
 
 
 async def _rebuild_each(

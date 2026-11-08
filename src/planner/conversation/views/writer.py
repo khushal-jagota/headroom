@@ -553,7 +553,11 @@ def rebuild_conversation_view(conn: sqlite3.Connection, conversation_id: str) ->
         conn.execute(
             f"DELETE FROM conversation_view_{table} WHERE conversation_id=?", (conversation_id,)
         )
-    after = 0
+    append_events_after(conn, conversation_id, 0)
+
+
+def append_events_after(conn: sqlite3.Connection, conversation_id: str, after: int) -> None:
+    """Append one conversation's events after ``after`` to its view, in order."""
     while rows := conn.execute(
         "SELECT sequence,created_at,kind,payload FROM conversation_events "
         "WHERE conversation_id=? AND sequence>? ORDER BY sequence LIMIT ?",
