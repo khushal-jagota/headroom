@@ -1047,7 +1047,16 @@
             reservedSpacePixels = 0;
             retainedTopInset = null;
           }
+        } else if (textRestoration === null && reader !== null && viewAnchor !== null) {
+          // A transcript kept at the dock reopens where a fresh open would land: the saved
+          // line is placed by its text, as on entry.
+          textRestoration = {reader, anchor:copyViewReaderAnchor(viewAnchor), attempt:reader.restorationAttempt, demand:null, unsubscribe:null};
+          manualReader = true;
         }
+        // The thread was not drawn at rest, so it is shown only once it is placed.
+        settledOnOpening = false;
+        placementReady = false;
+        entryPresentationPending = true;
       }
       requestReconciliation();
     });

@@ -85,8 +85,8 @@
   let resolvedAnnounced = false;
 
   // --- speaking a revision -----------------------------------------------------------------
-  // Same machine as the composer's, worn lighter: no voice-first face — Approve is this
-  // screen's primary action, so the mic is only an affordance on the revision box.
+  // Same machine as the composer's, worn lighter: Approve is this screen's primary action,
+  // so the mic is only an affordance on the revision box.
   let voiceSupported = $state(false);
   let voiceState = $state<VoiceCaptureState>({ phase: "idle" });
   let voice: VoiceCapture | null = null;

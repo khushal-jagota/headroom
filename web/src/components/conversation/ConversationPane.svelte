@@ -6,6 +6,7 @@
   import type {ConversationViewReader,ViewReaderAnchor} from '../../lib/conversation/view/reader.svelte';
   import {progressFor,restFor} from '../../lib/conversation/view/presentation';
   import { tick, setContext, type Snippet } from "svelte";
+  import { COMPACT_LAYOUT_MEDIA_QUERY } from "../../lib/compactLayout";
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
@@ -329,6 +330,14 @@
     if (restoreControlFocus) void tick().then(() => paneElement?.querySelector<HTMLButtonElement>("[data-conversation-state-control]")?.focus({ preventScroll: true }));
   }
 
+  /** On a phone the owner types in the open conversation, which stands directly above the
+   *  keyboard, never in the dock over a page the browser scrolls to show the field. The
+   *  person's own focus decides, not only a tap on the field: a phone can move a near-miss
+   *  tap's focus onto it. */
+  function openForWritingOnAPhone(): void {
+    if (conversationState === "rest" && window.matchMedia(COMPACT_LAYOUT_MEDIA_QUERY).matches) conversationState = "opened";
+  }
+
   function confirmNewConversation(): void {
     onNewConversation?.();
     closeMenu();
@@ -597,6 +606,7 @@
       {onPromoteHeldPrompt}
       {onStopDrawingHeldPrompt}
       {onSendHeldPromptAgain}
+      onFieldChosen={openForWritingOnAPhone}
     />
   {/if}
 </div>
