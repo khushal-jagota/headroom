@@ -25,7 +25,6 @@ import threading
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
-from pathlib import Path
 from time import monotonic as _monotonic
 from typing import Any, Final, Literal
 
@@ -211,17 +210,6 @@ async def _admitted_start_ready_worker_step(
                 current_ticket,
                 worker_type_definition=worker_type_definition,
                 revision_feedback=pending_revision_feedback,
-                specialist_skill_path=(
-                    str(
-                        Path(conn.execute("PRAGMA database_list").fetchone()[2]).parent
-                        / "skills"
-                        / worker_type_definition.specialist_skill
-                        / "SKILL.md"
-                    )
-                    if current_ticket.locale == "vps"
-                    and worker_type_definition.specialist_skill is not None
-                    else None
-                ),
                 memory_was_lost=worker_memory.conversation_holds_an_unanswered_memory_loss(
                     conn, conversation_id
                 ),

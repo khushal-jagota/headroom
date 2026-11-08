@@ -18,9 +18,9 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.managed_skills import skill_names
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
+    BOARD_COLUMN_ORDER_WORKER_TYPE,
     FieldDefinition,
     StageDefinition,
-    TicketTypeMigration,
     TicketWorkflowDefinition,
     WorkerProfile,
     WorkerTypeDefinition,
@@ -234,7 +234,7 @@ def write_definition(
     definition: WorkerTypeDefinition,
     *,
     now: int,
-) -> tuple[TicketTypeMigration, ...]:
+) -> None:
     """Save a preset without rewriting any existing Ticket's workflow."""
     with definition_transaction(conn):
         validate_definition(
@@ -251,7 +251,36 @@ def write_definition(
             "definition_json = excluded.definition_json, updated_at = excluded.updated_at",
             (definition.worker_type, int(next_position), definition_to_json(definition), now),
         )
-    return ()
+
+
+def delete_definition(conn: sqlite3.Connection, worker_type: str) -> None:
+    """Remove a preset. Tickets made from it keep running on their own copy.
+
+    Two things still read the preset rather than a Ticket's copy: the board's column
+    order, and the launch setup of a Ticket that saved no model. Either refuses.
+    """
+    with definition_transaction(conn):
+        read_definition(conn, worker_type)
+        if worker_type == BOARD_COLUMN_ORDER_WORKER_TYPE:
+            raise _fail(
+                "the board's columns follow this Worker type, so it cannot be removed",
+                {"worker_type": worker_type},
+            )
+        without_model = [
+            str(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM tickets WHERE worker_type = ? AND stage != 'done' "
+                "AND employee_launch_model IS NULL ORDER BY id",
+                (worker_type,),
+            )
+        ]
+        if without_model:
+            raise _fail(
+                "unfinished Tickets of this Worker type have no saved model and launch "
+                "from its defaults",
+                {"worker_type": worker_type, "ticket_ids": without_model},
+            )
+        conn.execute("DELETE FROM worker_types WHERE worker_type = ?", (worker_type,))
 
 
 def workflow_from_preset(definition: WorkerTypeDefinition) -> TicketWorkflowDefinition:

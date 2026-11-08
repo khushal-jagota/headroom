@@ -18,13 +18,16 @@ struct WorkspaceView: View {
     @State private var settledLoading = false
     @State private var settledRequestedOffset = 0
     @State private var settledError: String?
-    @State private var chiefSignal: ConversationSignal?
-    @State private var chiefSignalError: String?
-    @State private var loadingMore = false
+    @State private var parentsPage: (anchor: String, direction: String)?
 
-    private var hasContent: Bool { store.chief != nil || store.managerPage != nil || store.ticketPage != nil }
-    private var refreshError: String? {
-        store.errors["Workspace"] ?? store.errors["Tickets"] ?? store.errors["Chief"] ?? chiefSignalError
+    private var hasContent: Bool { store.chief != nil || store.workspaceLoaded }
+    private var refreshError: String? { store.errors["Navigation"] ?? store.errors["Chief"] }
+    private var parentsWindow: ViewWindow? { store.view?.window("rail_parents") }
+    /// The rail the web Workspace requests: active parents, Chief's and each card's tickets.
+    private var workspaceWindows: [ViewWindowRequest] {
+        [ViewWindowRequest(section: "rail_parents", anchor: parentsPage?.anchor, direction: parentsPage?.direction ?? "after", limit: 60),
+         ViewWindowRequest(section: "rail_tickets", owner: .chief, limit: 30)]
+            + store.managers.map { ViewWindowRequest(section: "rail_tickets", owner: .manager($0.id), limit: 60) }
     }
 
     private var motion: Animation? { reduceMotion ? nil : PanelsTheme.Motion.disclosure }
@@ -40,24 +43,20 @@ struct WorkspaceView: View {
             LazyVStack(spacing: 12) {
                 if hasContent {
                     WorkspaceCard(title: store.chief?.label ?? "Chief of Staff", chief: true,
-                                  route: .chief, signal: chiefSignal, groups: groups["chief"] ?? [],
-                                  previewChanged: setPreviewOpen, open: open)
+                                  route: .chief, signal: store.chiefSignal, groups: groups["chief"] ?? [],
+                                  hiddenCount: store.workspaceHidden["chief"] ?? 0, previewChanged: setPreviewOpen, open: open)
                     ForEach(managers) { manager in
                         WorkspaceCard(title: manager.title, project: manager.project, route: .orchestrator(manager.id),
                                       signal: manager.conversationSignal, groups: groups[manager.id] ?? [],
-                                      previewChanged: setPreviewOpen, open: open)
+                                      hiddenCount: store.workspaceHidden[manager.id] ?? 0, previewChanged: setPreviewOpen, open: open)
                     }
-                    if store.managerPage?.nextOffset != nil || store.ticketPage?.nextOffset != nil {
-                        Button {
-                            Task {
-                                loadingMore = true
-                                await store.loadMore()
-                                updateGroups()
-                                loadingMore = false
-                            }
-                        } label: {
-                            HStack { if loadingMore { RingSpinner() }; Text("Load more") }.frame(minHeight: 44)
-                        }.disabled(loadingMore)
+                    if let window = parentsWindow, window.previous != nil || window.next != nil {
+                        // The parent window holds at most 60 cards; pages replace it, as on the web.
+                        HStack {
+                            Button("Previous") { if let anchor = window.previous { parentsPage = (anchor, "before") } }.disabled(window.previous == nil)
+                            Spacer()
+                            Button("Next") { if let anchor = window.next { parentsPage = (anchor, "after") } }.disabled(window.next == nil)
+                        }.frame(minHeight: 44)
                     }
                     settledSection(proxy: proxy).padding(.top, 16)
                 }
@@ -82,17 +81,20 @@ struct WorkspaceView: View {
         .navigationDestination(item: $selectedRoute) { RouteDestination(route: $0) }
         .panelsScreen()
         .onAppear {
-            visible = true; store.workspaceVisible = true
+            visible = true
+            store.setNavigationDemand("workspace", workspaceWindows)
             updateGroups()
-            Task { await store.refresh() }
         }
-        .onDisappear { visible = false; store.workspaceVisible = false }
-        .onChange(of: store.revision, initial: true) { _, _ in if visible { updateGroups() } }
+        .onDisappear { visible = false; store.setNavigationDemand("workspace", nil) }
+        .onChange(of: workspaceWindows) { _, windows in if visible { store.setNavigationDemand("workspace", windows) } }
+        .onChange(of: store.view?.contentVersion) { _, _ in if visible { updateGroups() } }
         .onChange(of: store.baseURL) { _, _ in
-            groups = [:]; managers = []; settled = nil; chiefSignal = nil
-            settledError = nil; chiefSignalError = nil; settledOpen = false; settledRequestedOffset = 0
+            groups = [:]; managers = []; settled = nil; parentsPage = nil
+            settledError = nil; settledOpen = false; settledRequestedOffset = 0
         }
-        .task(id: "\(store.baseURL.absoluteString):\(store.revision):\(visible)") { if visible { await refreshSupplementary() } }
+        // Settled rows keep their paged list read, only while the section is open, and
+        // read again when the view's settled count changes or the connection recovers.
+        .task(id: "\(store.baseURL.absoluteString):\(store.counts?.settled ?? -1):\(store.connectionSession):\(visible):\(settledOpen)") { if visible && settledOpen { await refreshSupplementary() } }
         }
     }
 
@@ -109,9 +111,9 @@ struct WorkspaceView: View {
             } label: {
                 HStack(spacing: 8) {
                     Text("Settled").foregroundStyle(PanelsTheme.text)
-                    if let settled { Text(String(settled.page.matchCount)).foregroundStyle(PanelsTheme.faint) }
+                    if let count = settled?.page.matchCount ?? store.counts?.settled { Text(String(count)).foregroundStyle(PanelsTheme.faint) }
                     Spacer()
-                    if settled == nil && settledError == nil { RingSpinner(size: .compact) }
+                    if settledOpen && settled == nil && settledError == nil { RingSpinner(size: .compact) }
                 }.panelsScaledFont(size: 17).frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain)
                 .id("settledLine")
@@ -193,25 +195,11 @@ struct WorkspaceView: View {
 
     private func refresh() async {
         await store.refresh()
-        await refreshSupplementary()
+        if settledOpen { await refreshSupplementary() }
     }
 
     private func refreshSupplementary() async {
-        let api = store.client
-        async let signalRead: () = loadChiefSignal(api)
-        async let settledRead: () = loadSettled(api, through: settledRequestedOffset)
-        _ = await (signalRead, settledRead)
-    }
-
-    private func loadChiefSignal(_ api: APIClient) async {
-        do {
-            let signal = try await api.workspaceChiefSignal()
-            guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
-            chiefSignal = signal; chiefSignalError = nil
-        } catch {
-            guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
-            chiefSignalError = "Chief activity couldn’t refresh. \(error.localizedDescription)"
-        }
+        await loadSettled(store.client, through: settledRequestedOffset)
     }
 
     private func loadSettled(_ api: APIClient, through offset: Int) async {

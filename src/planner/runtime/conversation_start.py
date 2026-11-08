@@ -187,17 +187,16 @@ def worker_resolve(
         workspace_folder=selected_workspace,
         workspace_path_policy=workspace_policy,
     )
-    if ticket.workflow.specialist_skill is None:
-        values = replace(
-            values,
-            role_materials=replace(
-                values.role_materials,
-                role_text=values.role_materials.role_text
-                + "\n\n[Ticket workflow guidance]\n"
-                + render_workflow_guide(ticket.workflow)
-                + "\n[/Ticket workflow guidance]",
-            ),
-        )
+    values = replace(
+        values,
+        role_materials=replace(
+            values.role_materials,
+            role_text=values.role_materials.role_text
+            + "\n\n[Ticket workflow guidance]\n"
+            + render_workflow_guide(ticket.workflow)
+            + "\n[/Ticket workflow guidance]",
+        ),
+    )
     if ticket.employee_launch_model is None or overrides.model is not None:
         require_enabled_model(conn, values.backend_key, values.model)
     return values

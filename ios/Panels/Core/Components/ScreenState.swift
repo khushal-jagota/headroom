@@ -94,6 +94,59 @@ extension View {
     }
 }
 
+extension View {
+    /// Reloads a screen's detail when its own records change in the navigation view.
+    /// The first load stays the screen's own task: a stamp that first appears never
+    /// reloads, and a reload never cancels that first load. A record that leaves the
+    /// view reloads once, because leaving a window is itself a change to the record,
+    /// and reloads again if it returns changed from the last stamp seen.
+    func reload(onChangeOf stamp: String?, _ reload: @escaping () async -> Void) -> some View {
+        modifier(RecordReload(stamp: stamp, reload: reload))
+    }
+
+    /// While on screen, a detail screen names the record it shows and any windows it reads.
+    func navigationDemand(_ name: String, selected: ViewOwner? = nil, windows: [ViewWindowRequest] = []) -> some View {
+        modifier(NavigationDemand(name: name, selected: selected, windows: windows))
+    }
+}
+
+private struct RecordReload: ViewModifier {
+    let stamp: String?
+    let reload: () async -> Void
+    @State private var seen: String?
+    @State private var present = false
+    @State private var reloads = 0
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: stamp, initial: true) { _, stamp in
+                guard let stamp else {
+                    if present { present = false; reloads += 1 }
+                    return
+                }
+                if let seen, seen != stamp { reloads += 1 }
+                seen = stamp; present = true
+            }
+            .task(id: reloads) { if reloads > 0 { await reload() } }
+    }
+}
+
+private struct NavigationDemand: ViewModifier {
+    @Environment(AppStore.self) private var store
+    let name: String
+    let selected: ViewOwner?
+    let windows: [ViewWindowRequest]
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                if let selected { store.setNavigationDemand(name, selected: selected, windows: windows) }
+                else { store.setNavigationDemand(name, windows) }
+            }
+            .onDisappear { store.withdrawNavigationDemand(name) }
+    }
+}
+
 struct ConversationSignalMark: View {
     let signal: ConversationSignal?
     var body: some View {

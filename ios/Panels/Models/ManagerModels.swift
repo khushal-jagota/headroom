@@ -32,9 +32,10 @@ struct ManagerTicket: Codable, Identifiable, Sendable {
     let awaitingAnswer: Bool
     let awaitingApproval: Bool
     let awaitingAgentApproval: Bool
-    let agentState: String
+    var agentState: String
     let assigned: Bool
     let waitingToCloseout: Bool?
     let activityAt: Double?
-    let conversationSignal: ConversationSignal?
+    var conversationSignal: ConversationSignal?
 }
+extension ManagerTicket: LiveMarkedWorker {}

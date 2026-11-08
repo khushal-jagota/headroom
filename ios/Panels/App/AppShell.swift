@@ -25,7 +25,7 @@ struct AppShell: View {
                     .navigationDestination(for: AppRoute.self) { detail($0) }
             }
                 .tabItem { Label("Review", systemImage: "checkmark.circle") }
-                .badge(max(0, (store.review?.items.count ?? 0) - pendingDecisionCount)).tag(AppTab.review)
+                .badge(reviewBadge).tag(AppTab.review)
             NavigationStack(path: $workspacePath) {
                 WorkspaceView()
                     .navigationDestination(for: AppRoute.self) { detail($0) }
@@ -86,8 +86,12 @@ struct AppShell: View {
         }
     }
 
-    private var pendingDecisionCount: Int {
-        Outbox.shared.entries(LocalStore.server(store.baseURL)).filter { ($0.kind == .approval || $0.kind == .sendBack) && [.waiting, .sending].contains($0.state) }.count
+    private var reviewBadge: Int {
+        let pending = Set(Outbox.shared.entries(LocalStore.server(store.baseURL)).filter {
+            ($0.kind == .approval || $0.kind == .sendBack) && [.waiting, .sending].contains($0.state)
+        }.compactMap(\.ticketID))
+        let count = store.counts?.review ?? 0
+        return store.presentation?.reviewBadge(count: count, pendingDecisionTickets: pending) ?? max(0, count - pending.count)
     }
 
     private var moreTabImage: UIImage {
