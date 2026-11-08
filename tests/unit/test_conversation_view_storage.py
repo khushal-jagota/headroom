@@ -740,7 +740,8 @@ def test_focus_shows_every_running_turn_head_and_keeps_only_heads_that_left_some
         live = ConversationViewLiveOutput()
         try:
             status = read_status(conn, "fixture", "focus", live, running=True)
-            assert status["rest"]["latest_turn"]["key"] == "turn:e6"
+            latest_turn = status["rest"]["latest_turn"]
+            assert latest_turn is not None and latest_turn["key"] == "turn:e6"
             changes = _changes(
                 conn,
                 "fixture",
