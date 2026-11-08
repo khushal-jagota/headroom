@@ -9,9 +9,12 @@ server stops rebuilding out-of-date views after startup, this test fails.
 from __future__ import annotations
 
 import asyncio
+import logging
+import sqlite3
 import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from planner.conversation.contracts import (
@@ -85,3 +88,58 @@ def test_the_server_rebuilds_a_view_left_at_an_older_version(tmp_path: Path) -> 
     assert response.status_code == 200, response.text
     assert "An answer from before" in response.text
     assert response.json()["page"]["projection_version"] == VIEW_PROJECTION_VERSION
+
+
+def test_a_view_computed_before_a_new_event_is_not_written(tmp_path: Path) -> None:
+    """The view is computed without the write lock, so an event can arrive meanwhile."""
+    from contextlib import closing
+
+    from planner.conversation.views import rebuild
+
+    db_path = tmp_path / "planning.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    conn.close()
+    _seed_conversation_with_an_old_view(db_path)
+    with closing(connect(str(db_path))) as conn:
+        rebuild._create_private_view_tables(conn)
+        computed_through = rebuild.compute_conversation_view(conn, "c")
+        later = asyncio.run(
+            ConversationStore(str(db_path)).append_event(
+                "c", AgentMessageEventPayload(content=text_message_content("Arrived meanwhile"))
+            )
+        )
+        assert not rebuild.write_conversation_view_if_unchanged(conn, "c", computed_through)
+        computed_through = rebuild.compute_conversation_view(conn, "c")
+        assert rebuild.write_conversation_view_if_unchanged(conn, "c", computed_through)
+        assert tuple(
+            conn.execute(
+                "SELECT projection_version,through_sequence FROM main.conversation_view_state"
+            ).fetchone()
+        ) == (VIEW_PROJECTION_VERSION, later.sequence)
+
+
+def test_failed_rebuilds_are_retried_in_the_same_run_and_what_is_left_is_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from planner.conversation.views import rebuild
+    from planner.conversation.workspace_admission import WorkspaceAdmission
+
+    attempts: list[str] = []
+
+    def rebuild_one(db_path: str, busy_timeout_ms: int, conversation_id: str) -> None:
+        attempts.append(conversation_id)
+        if conversation_id == "broken" or attempts.count(conversation_id) == 1:
+            raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(rebuild, "out_of_date_conversation_ids", lambda *_: ["flaky", "broken"])
+    monkeypatch.setattr(rebuild, "rebuild_one_conversation_view", rebuild_one)
+    monkeypatch.setattr(rebuild, "_FIRST_RETRY_WAIT_SECONDS", 0.0)
+    with caplog.at_level(logging.ERROR, logger=rebuild.__name__):
+        asyncio.run(rebuild.rebuild_out_of_date_views("unused.db", 5000, WorkspaceAdmission()))
+
+    assert attempts.count("flaky") == 2
+    assert attempts.count("broken") == rebuild._RETRY_ROUNDS + 1
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Conversation views left out of date after {rebuild._RETRY_ROUNDS + 1} attempts: broken"
+    ]

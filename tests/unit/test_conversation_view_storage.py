@@ -146,7 +146,7 @@ def test_oversized_body_chunks_preserve_unicode_and_one_logical_markdown_documen
             read_body_chunk(conn, "fixture", reference, 0)
 
 
-def _whole_projection(conn: sqlite3.Connection) -> dict[str, list[tuple[Any, ...]]]:
+def whole_view_projection(conn: sqlite3.Connection) -> dict[str, list[tuple[Any, ...]]]:
     return {
         table: sorted(
             tuple(row) for row in conn.execute(f"SELECT * FROM conversation_view_{table}")
@@ -159,7 +159,7 @@ def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental
     with database(FIXTURES[0]["events"]) as conn:
         conn.commit()
         before = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
-        incremental = _whole_projection(conn)
+        incremental = whole_view_projection(conn)
         encoded = json.dumps({"text": "Must roll back"})
         with pytest.raises(RuntimeError), conn:
             conn.execute(
@@ -216,7 +216,7 @@ def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental
         assert (
             list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence")) == before
         )
-        assert _whole_projection(conn) == incremental
+        assert whole_view_projection(conn) == incremental
 
 
 def test_tail_names_scope_membership_and_removes_children_from_the_timeline() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 
 from tests.unit.test_conversation_api import (
     CONVERSATION_PREFIX,
@@ -14,6 +15,7 @@ from tests.unit.test_conversation_api import (
 from tests.unit.test_conversation_api import (
     harness as harness,
 )
+from tests.unit.test_conversation_view_storage import whole_view_projection
 
 from planner.conversation.events import AgentMessageEventPayload
 from planner.conversation.message_content import text_message_content
@@ -155,6 +157,7 @@ def test_an_out_of_date_view_answers_upgrading_until_it_is_rebuilt(harness: _Har
                 "c", AgentMessageEventPayload(content=text_message_content("Kept answer"))
             )
             with db.connect(harness.runtime.database_path) as conn:
+                incremental = whole_view_projection(conn)
                 conn.execute(
                     "UPDATE conversation_view_state SET projection_version=?",
                     (VIEW_PROJECTION_VERSION - 1,),
@@ -166,6 +169,9 @@ def test_an_out_of_date_view_answers_upgrading_until_it_is_rebuilt(harness: _Har
                 assert refused.status_code == 409, suffix
                 assert refused.json()["detail"] == VIEW_UPGRADING_DETAIL
             rebuild_one_conversation_view(harness.runtime.database_path, 5000, "c")
+            # Computed off to one side, then copied in: the same view the live writes made.
+            with closing(db.connect(harness.runtime.database_path)) as conn:
+                assert whole_view_projection(conn) == incremental
             rebuilt = await client.get(path, params={"lens": "full"})
             assert rebuilt.status_code == 200
             assert "Kept answer" in rebuilt.text
