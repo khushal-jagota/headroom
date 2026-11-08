@@ -4,13 +4,8 @@ struct ChiefView: View {
     var openConversationID: String?
     @Environment(AppStore.self) private var store
     @State private var chief: ChiefRosterEntry?
-    @State private var active: TicketsResponse?
-    @State private var backlogged: TicketsResponse?
-    @State private var done: TicketsResponse?
     @State private var error: String?
-    @State private var loadingMore = false
     @State private var actions = AgentPageActions()
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
@@ -21,26 +16,7 @@ struct ChiefView: View {
                     AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: store.chiefSignal ?? chief?.conversationSignal)
                     AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "", target: Principal(kind: "chief", id: "chief"), refresh: { await store.refresh() }, actions: actions)
                 }
-                if chief != nil {
-                    VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-                        if let active {
-                            if active.tickets.isEmpty {
-                                Text("No active workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).padding(.vertical, PanelsTheme.Space.md)
-                            } else {
-                                WorkerSections(tickets: store.withLiveMarks(active.tickets), showHistory: false)
-                            }
-                            loadMoreButton(page: active.page, filter: .active)
-                        }
-                        WorkerDisclosure(title: "Backlogged", count: backlogged?.page.matchCount ?? 0, unreadCount: store.withLiveMarks(backlogged?.tickets ?? []).filter { $0.conversationSignal?.messageForOwner == true }.count) {
-                            WorkerRows(tickets: WorkerGroup.ordered(store.withLiveMarks(backlogged?.tickets ?? [])))
-                            if let page = backlogged?.page { loadMoreButton(page: page, filter: .backlogged) }
-                        }
-                        WorkerDisclosure(title: "Done", count: done?.page.matchCount ?? 0, unreadCount: store.withLiveMarks(done?.tickets ?? []).filter { $0.conversationSignal?.messageForOwner == true }.count) {
-                            WorkerRows(tickets: WorkerGroup.ordered(store.withLiveMarks(done?.tickets ?? [])))
-                            if let page = done?.page { loadMoreButton(page: page, filter: .done) }
-                        }
-                    }
-                }
+                if chief != nil { HolderContent(holder: .chief) }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -53,6 +29,55 @@ struct ChiefView: View {
         .panelsRefreshable { await load() }
         .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }
         .accessibilityIdentifier("chief-screen")
+    }
+
+    private func load() async {
+        let api = store.client
+        if chief == nil {
+            let roster: ChiefRoster? = api.cached("/api/workers")
+            chief = roster?.chiefOfStaff
+        }
+        do {
+            let result = try await api.chiefRoster()
+            guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
+            chief = result.chiefOfStaff; error = nil
+        } catch { if !Task.isCancelled, api.baseURL == store.baseURL { self.error = error.localizedDescription } }
+    }
+}
+
+struct HolderTickets: View {
+    let holder: GoalHolder
+    @Environment(AppStore.self) private var store
+    @State private var error: String?
+    @State private var active: TicketsResponse?
+    @State private var backlogged: TicketsResponse?
+    @State private var done: TicketsResponse?
+    @State private var loadingMore = false
+    private var holderStamp: String? { holder.kind == .chief ? store.chiefStamp() : store.managerStamp(holder.id ?? "") }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+            if let active {
+                if active.tickets.isEmpty {
+                    Text("No active workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).padding(.vertical, PanelsTheme.Space.md)
+                } else {
+                    WorkerSections(tickets: store.withLiveMarks(active.tickets), showHistory: false)
+                }
+                loadMoreButton(page: active.page, filter: .active)
+            }
+            WorkerDisclosure(title: "Backlogged", count: backlogged?.page.matchCount ?? 0, unreadCount: store.withLiveMarks(backlogged?.tickets ?? []).filter { $0.conversationSignal?.messageForOwner == true }.count) {
+                WorkerRows(tickets: WorkerGroup.ordered(store.withLiveMarks(backlogged?.tickets ?? [])))
+                if let page = backlogged?.page { loadMoreButton(page: page, filter: .backlogged) }
+            }
+            WorkerDisclosure(title: "Done", count: done?.page.matchCount ?? 0, unreadCount: store.withLiveMarks(done?.tickets ?? []).filter { $0.conversationSignal?.messageForOwner == true }.count) {
+                WorkerRows(tickets: WorkerGroup.ordered(store.withLiveMarks(done?.tickets ?? [])))
+                if let page = done?.page { loadMoreButton(page: page, filter: .done) }
+            }
+        }
+        // The holder's record and children window in the navigation view key the reloads.
+        .task(id: "\(store.baseURL.absoluteString)|\(store.connectionSession)") { await load() }
+        .reload(onChangeOf: holderStamp) { await load() }
+        if let error { LoadErrorView(message: error) { await load() } }
     }
 
     @ViewBuilder private func loadMoreButton(page: PageFacts, filter: TicketFilter) -> some View {
@@ -71,36 +96,16 @@ struct ChiefView: View {
 
     private func load() async {
         let api = store.client
-        if chief == nil {
-            let roster: ChiefRoster? = api.cached("/api/workers")
-            chief = roster?.chiefOfStaff
-            func saved(_ filter: TicketFilter) -> TicketsResponse? {
-                var query: [URLQueryItem] = [.init(name: "detail", value: "summary"), .init(name: "limit", value: "30"), .init(name: "offset", value: "0")]
-                switch filter {
-                case .active: query.append(.init(name: "is_backlogged", value: "false"))
-                case .backlogged: query.append(.init(name: "is_backlogged", value: "true"))
-                case .done: query += [.init(name: "include_terminal", value: "true"), .init(name: "stage", value: "done")]
-                }
-                query.append(.init(name: "manager_kind", value: "chief"))
-                return api.cached("/api/tickets", query: query)
-            }
-            active = saved(.active); backlogged = saved(.backlogged); done = saved(.done)
-        }
-        // Keep a single local writer while paging so a refresh cannot shrink its window.
-        while loadingMore {
-            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
-        }
-        loadingMore = true
-        defer { loadingMore = false }
+        while loadingMore { do { try await Task.sleep(for: .milliseconds(50)) } catch { return } }
+        loadingMore = true; defer { loadingMore = false }
         do {
-            async let roster = api.chiefRoster()
-            async let activeRead = api.chiefWorkers(filter: .active, through: active?.page.offset ?? 0)
-            async let backlogRead = api.chiefWorkers(filter: .backlogged, through: backlogged?.page.offset ?? 0)
-            async let doneRead = api.chiefWorkers(filter: .done, through: done?.page.offset ?? 0)
-            let result = try await (roster, activeRead, backlogRead, doneRead)
+            async let activeRead = api.holderTickets(holder, filter: .active, through: active?.page.offset ?? 0)
+            async let backlogRead = api.holderTickets(holder, filter: .backlogged, through: backlogged?.page.offset ?? 0)
+            async let doneRead = api.holderTickets(holder, filter: .done, through: done?.page.offset ?? 0)
+            let result = try await (activeRead, backlogRead, doneRead)
             try Task.checkCancellation()
             guard api.baseURL == store.baseURL else { return }
-            chief = result.0.chiefOfStaff; active = result.1; backlogged = result.2; done = result.3; error = nil
+            active = result.0; backlogged = result.1; done = result.2; error = nil
         } catch { if !Task.isCancelled, api.baseURL == store.baseURL { self.error = error.localizedDescription } }
     }
 
@@ -110,7 +115,7 @@ struct ChiefView: View {
         defer { loadingMore = false }
         let api = store.client
         do {
-            let page = try await api.chiefWorkers(filter: filter, through: offset)
+            let page = try await api.holderTickets(holder, filter: filter, through: offset)
             try Task.checkCancellation()
             guard api.baseURL == store.baseURL else { return }
             switch filter {

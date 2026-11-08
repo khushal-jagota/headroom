@@ -1,7 +1,9 @@
 import Foundation
 import Observation
+import UniformTypeIdentifiers
 
 @MainActor @Observable final class ConversationModel {
+    var machineLocale: String?
     var conversationID: String?
     var draft = "" { didSet { saveDraft() } }
     private var persistenceAPI: APIClient?
@@ -24,6 +26,7 @@ import Observation
         if let id = conversationID,
            let snapshot: ConversationSnapshot = api.cached("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]) {
             if status != snapshot.status { status = snapshot.status }; items = snapshot.page.items; older = snapshot.page.older; loadedLens = lens
+            loadedConversationID = id
             rememberRows(items.map(\.id))
         }
         syncOutbox()
@@ -40,7 +43,8 @@ import Observation
         if conversationID == nil { conversationID = saved.last?.message?.conversationId }
         let received = Set(items.compactMap(\.senderMessageId))
         outgoing = saved.filter { !supersededIDs.contains($0.id) && (!received.contains($0.id) || $0.state != .sent) }.map {
-            Outgoing(id: $0.id, text: $0.displayText, note: $0.note, retryable: $0.state == .failed)
+            Outgoing(id: $0.id, text: $0.message?.content.compactMap(\.text).joined(separator: "\n") ?? $0.displayText, note: $0.note, retryable: $0.state == .failed,
+                     attachments: $0.message?.content.filter { $0.piece != "text" } ?? [])
         }
         rememberRows(saved.map { retryAliases[$0.id] ?? $0.id })
     }
@@ -50,6 +54,7 @@ import Observation
     var status: ConversationStatus?
     var hasUnread = false
     private var readThroughSequence = 0
+    private var readPositionConversationID: String?
     var heldPrompts: [ConversationConfiguration.HeldPrompt] = [] { didSet { if oldValue != heldPrompts { projectionRevision += 1 } } }
     var older: ConversationCursor?
     var error: String?
@@ -61,6 +66,7 @@ import Observation
         let text: String
         var note: String?
         var retryable = false
+        var attachments: [ConversationSend.Piece] = []
     }
     var deliveryMode = "steer"
     var attachments: [ConversationSend.Piece] = [] {
@@ -69,6 +75,15 @@ import Observation
             do { try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey, data: JSONEncoder().encode(attachments)) }
             catch { self.error = "Attachments could not be saved: \(error.localizedDescription)" }
         }
+    }
+    /// The one way a picked, pasted, dragged or photographed file joins the message.
+    /// Images become image pieces; anything else is a file piece.
+    @discardableResult func attach(_ data: Data, type: UTType?, fileName: String) -> Bool {
+        guard data.count <= 20_000_000 else { error = "Choose a file smaller than 20 MB."; return false }
+        let image = type?.conforms(to: .image) == true
+        attachments.append(.init(piece: image ? "image" : "file", data: data.base64EncodedString(),
+            mediaType: type?.preferredMIMEType ?? (image ? "image/jpeg" : "application/octet-stream"), fileName: fileName))
+        return true
     }
     private var outgoingText: [String: String] = [:]
     private var outgoingAttachments: [String: [ConversationSend.Piece]] = [:]
@@ -124,7 +139,7 @@ import Observation
             case "prompt_refused": note = "Not delivered · " + (body.refusalDetail ?? ConversationDelivery.refusalText(body.reason))
             case "prompt_uncertain": note = "Delivery uncertain · do not resend"
             case "prompt_discarded": note = "Not delivered · no longer applicable"
-            case "permission_ask", "user_input": note = "Respond on the web"
+            case "permission_ask", "user_input": note = body.answerSentence ?? (body.state == "live" ? "Respond on the web" : body.state?.capitalized)
             default: note = nil
             }
             return ConversationRow(id: retryAliases[item.id] ?? item.id, text: body.text, own: body.isOwnerPrompt, note: note,
@@ -132,7 +147,7 @@ import Observation
                                    retryID: local?.retryable == true ? local?.id : nil, item: item)
         }
         var combined = remote + outgoing.filter { !received.contains($0.id) }.map {
-            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: heldNote($0.id) ?? $0.note, retryID: $0.retryable ? $0.id : nil)
+            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: heldNote($0.id) ?? $0.note, retryID: $0.retryable ? $0.id : nil, attachments: $0.attachments)
         }
         if let liveRow, !liveRow.text.isEmpty { combined.append(liveRow) }
         let positions = Dictionary(uniqueKeysWithValues: rowOrder.enumerated().map { ($0.element, $0.offset) })
@@ -157,7 +172,11 @@ import Observation
     }
     func applyConfiguration(_ configuration: ConversationConfiguration) {
         heldPrompts = configuration.heldPrompts
-        readThroughSequence = configuration.ownerReadThroughSequence ?? 0
+        if readPositionConversationID != conversationID {
+            readPositionConversationID = conversationID
+            readThroughSequence = 0
+        }
+        readThroughSequence = max(readThroughSequence, configuration.ownerReadThroughSequence ?? 0)
         hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
         // The selection follows the conversation until the owner picks something else.
         if backendKey == nil || (selectedModel == runningModel && reasoningEffort == runningEffort) {
@@ -177,6 +196,37 @@ import Observation
             }
         }
     }
+    /// Only a rendered, visible remote row supplies evidence. Status/tail sequence
+    /// and local outgoing rows cannot acknowledge content the person did not see.
+    func visibleReadBoundary(rowIDs: Set<String>, active: Bool) -> ConversationReadBoundary? {
+        guard active, let id = conversationID, loadedConversationID == id else { return nil }
+        let sequence = rows.compactMap { row -> Int? in
+            guard rowIDs.contains(row.id), let item = row.item,
+                  item.body?.reference == nil || expandedBodies[item.key] != nil else { return nil }
+            return item.sourceSequence
+        }.max() ?? 0
+        let alreadyRead = readPositionConversationID == id ? readThroughSequence : 0
+        guard sequence > alreadyRead else { return nil }
+        return ConversationReadBoundary(conversationID: id, throughSequence: sequence)
+    }
+
+    func acknowledgeVisibleRows(_ rowIDs: Set<String>, active: Bool, using service: any ConversationServing) async {
+        guard !Task.isCancelled, let boundary = visibleReadBoundary(rowIDs: rowIDs, active: active) else { return }
+        do {
+            let confirmed = try await service.markConversationRead(boundary.conversationID, through: boundary.throughSequence)
+            guard !Task.isCancelled, conversationID == boundary.conversationID else { return }
+            if readPositionConversationID != conversationID {
+                readPositionConversationID = conversationID
+                readThroughSequence = 0
+            }
+            readThroughSequence = max(readThroughSequence, confirmed)
+            hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
+        } catch {
+            // A read acknowledgment is idempotent; keep unread state on failure.
+            // The next actual visibility change can try again, never a poll alone.
+        }
+    }
+
     var firstUnreadID: String? {
         guard hasUnread else { return nil }
         return items.first { ($0.sourceSequence ?? 0) > readThroughSequence && ["agent_message", "user_input", "permission_ask"].contains($0.body?.value?.kind ?? "") }.map { retryAliases[$0.id] ?? $0.id }
@@ -195,6 +245,7 @@ import Observation
         }
     }
     private var loadedLens: ConversationLens?
+    private var loadedConversationID: String?
 
     func updateSpeechTranscript(_ text: String, prefix: String) {
         let prefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -302,7 +353,7 @@ import Observation
         guard id == conversationID, lens == requestedLens else { return }
         if status != snapshot.status { status = snapshot.status }
         if transcript {
-            if loadedLens != requestedLens { items = []; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
+            if loadedConversationID != id || loadedLens != requestedLens { items = []; expandedBodies = [:]; loadedConversationID = id; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
             settleLiveRow(candidates: snapshot.page.items, output: snapshot.status.liveOutput)
             // Replace the current window; retain explicitly loaded history before it.
             let keys = Set(snapshot.page.items.map(\.key))
@@ -422,8 +473,7 @@ import Observation
             } catch { self.error = "Message is still in the composer: \(error.localizedDescription)"; return false }
         }
         let id = UUID().uuidString
-        let displayText = ([text] + attachments.compactMap(\.fileName)).filter { !$0.isEmpty }.joined(separator: "\n")
-        outgoing.append(Outgoing(id: id, text: displayText, note: "Sending…"))
+        outgoing.append(Outgoing(id: id, text: text, note: "Sending…", attachments: attachments))
         pinnedMessageIDs.insert(id)
         rememberRows([id])
         outgoingText[id] = text
@@ -445,7 +495,7 @@ import Observation
         outgoingText[next] = outgoingText.removeValue(forKey: id)
         outgoingAttachments[next] = outgoingAttachments.removeValue(forKey: id)
         items.removeAll { $0.senderMessageId == id }
-        outgoing[at] = Outgoing(id: next, text: old.text, note: "Sending…")
+        outgoing[at] = Outgoing(id: next, text: old.text, note: "Sending…", attachments: old.attachments)
         _ = await deliver(id: next, text: outgoingText[next] ?? old.text, to: owner, using: service)
     }
 

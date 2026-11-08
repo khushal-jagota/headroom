@@ -79,7 +79,7 @@ struct ReviewView: View {
                 }
             }
         }
-        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]) { await store.refresh() }
+        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]?.message) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).panelsScreen()
         .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:]; messageDecisions = ReviewMessageDecisions(); reviewPage = nil }
         // The review window holds 30 cards. Once every loaded one was skipped here,

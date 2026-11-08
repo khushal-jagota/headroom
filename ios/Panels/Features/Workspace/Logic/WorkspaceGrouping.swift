@@ -27,6 +27,7 @@ struct WorkspaceTicketGroup: Identifiable {
 
 enum WorkspaceGrouping {
     static func section(for ticket: TicketSummary) -> WorkspaceSection? {
+        if ticket.integrityError != nil { return .errored }
         guard !ticket.isBacklogged, ticket.blocked != true, ticket.ticketStatus != "blocked", ticket.stage != "done" else { return nil }
         if ticket.awaitingApproval { return .approval }
         if ticket.awaitingAnswer { return .answer }

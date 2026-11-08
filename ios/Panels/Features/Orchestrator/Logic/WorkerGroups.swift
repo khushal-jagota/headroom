@@ -2,6 +2,8 @@ import Foundation
 
 /// The facts already supplied by the two existing worker endpoints.
 protocol GroupedWorker: Identifiable where ID == String {
+    var integrityError: TicketIntegrityIssue? { get }
+    var locale: String? { get }
     var title: String { get }
     var recapPreview: String { get }
     var stage: String { get }
@@ -41,6 +43,7 @@ enum WorkerGroup: String, CaseIterable, Identifiable {
     var initiallyExpanded: Bool { self != .backlogged && self != .done }
 
     static func classify(_ ticket: some GroupedWorker) -> Self {
+        if ticket.integrityError != nil { return .errored }
         // Page sections are exclusive: history wins over a retained backlog flag.
         if ticket.stage == "done" { return .done }
         if ticket.isBacklogged { return .backlogged }

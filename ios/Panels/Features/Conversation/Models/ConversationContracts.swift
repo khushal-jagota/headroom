@@ -3,12 +3,12 @@ import Foundation
 // Subset of conversation/views/contracts.py, shared with the web projection.
 enum ConversationOwner: Codable, Hashable, Sendable {
     case chief, manager(String), ticket(String), goal(String)
-    var path: String {
+    var path: String? {
         switch self {
         case .chief: return "/api/chief/conversation"
         case .manager(let id): return "/api/managers/\(id)/conversation"
+        case .goal: return nil
         case .ticket(let id): return "/api/tickets/\(id)/conversation"
-        case .goal(let id): return "/api/goals/\(id)/conversation"
         }
     }
 }
@@ -69,6 +69,15 @@ struct ConversationBody: Equatable, Decodable, Sendable {
     let reason: String?
     let questions: [Question]?
     var senderLabel: String? = nil
+    var answerFate: String? = nil
+    var answerSentence: String? {
+        switch answerFate {
+        case "saved": "Answer saved on VPS; delivery to Mac is pending."
+        case "applied": "Answer applied on Mac."
+        case "unconfirmed": "Answer saved on VPS; the original Mac request is gone. Application is unconfirmed."
+        default: nil
+        }
+    }
     struct Piece: Equatable, Decodable, Sendable { let piece: String; let text: String?; let fileName: String? }
     struct Question: Equatable, Decodable, Sendable { let question: String }
     var text: String {
@@ -113,7 +122,7 @@ struct ConversationSend: Codable, Sendable {
     let senderMessageId: String
     let sentAtUnixMilliseconds: Int64
     var ownerReadThroughSequence: Int? = nil
-    struct Piece: Codable, Sendable {
+    struct Piece: Codable, Equatable, Sendable {
         var piece = "text"
         var text: String? = nil
         var data: String? = nil
@@ -141,7 +150,13 @@ struct ConversationDelivery: Decodable, Sendable {
         }
     }
 }
+struct ConversationReadBoundary: Equatable, Sendable {
+    let conversationID: String
+    let throughSequence: Int
+}
+
 protocol ConversationServing: Sendable {
+    func markConversationRead(_ id: String, through: Int) async throws -> Int
     func conversationSnapshot(_ id: String, lens: ConversationLens, transcript: Bool) async throws -> ConversationSnapshot
     func conversationLiveText(_ id: String, reference: ConversationBodyReference) async throws -> String
     func conversationReceipts(_ id: String, messageIDs: [String]) async throws -> [ConversationReceipt]
@@ -192,9 +207,11 @@ struct ConversationRow: Identifiable, Equatable {
     let own: Bool
     let note: String?
     var senderLabel: String? = nil
-    var previewText: String { (own ? "You: " : senderLabel.map { $0 + ": " } ?? "") + text }
+    var previewText: String { (own ? "You: " : senderLabel.map { $0 + ": " } ?? "") + (text.isEmpty ? attachments.compactMap(\.fileName).joined(separator: ", ") : text) }
     var retryID: String? = nil
     var item: ConversationItem? = nil
+    /// Attachments still on the phone, shown as previews until the server has the message.
+    var attachments: [ConversationSend.Piece] = []
 }
 
 struct ConversationReceipt: Decodable, Sendable {
