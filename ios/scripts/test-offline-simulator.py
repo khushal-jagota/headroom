@@ -350,6 +350,7 @@ def main() -> int:
         for ticket in tickets.values():
             # A Ticket that owns the unread conversation is a message-only card here,
             # so its conversation link opens first, as the connected case expects.
+            # "ticket-stacked" keeps its proposal: one card with a proposal and a message.
             message_owner = owner == "ticket" and ticket["id"] == "offline-1"
             proposal = None if message_owner else ticket["pending_proposal"]
             records[("ticket", ticket["id"])] = ticket_record(ticket, proposal)
@@ -359,11 +360,16 @@ def main() -> int:
         conversations = [("stub", state["read_through"], None)]
         if REVIEW_MESSAGES:
             unread = state["read_through"] < (4 if state["new_message"] else 3)
-            stub_owner = {"chief": "chief", "ticket": "offline-1", "manager": "review-manager"}
+            stub_owner = {
+                "chief": "chief",
+                "ticket": "offline-1",
+                "ticket-stacked": "offline-1",
+                "manager": "review-manager",
+            }
             addresses = [
                 (
                     "chief",
-                    owner,
+                    "ticket" if owner == "ticket-stacked" else owner,
                     stub_owner[owner],
                     "stub",
                     True,
@@ -593,7 +599,10 @@ def main() -> int:
             if state.get("request_failed"):
                 self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
                 return
-            if path in ("/api/changes", "/api/navigation/view/events") or path.endswith("/view/tail"):
+            if (
+                path in ("/api/changes", "/api/navigation/view/events")
+                or path.endswith("/view/tail")
+            ):
                 # The navigation view and conversation tail send a fresh snapshot frame each
                 # second, so the app follows fixture changes without a change-driven read.
                 view = json.loads(query["view"][0]) if "view" in query else None
@@ -609,11 +618,17 @@ def main() -> int:
                             if path == "/api/changes":
                                 frame = b"data: change\n\n"
                             elif view is not None:
-                                frame = b"event: snapshot\ndata: " + json.dumps(view_snapshot(view)).encode() + b"\n\n"
+                                frame = (
+                                    b"event: snapshot\ndata: "
+                                    + json.dumps(view_snapshot(view)).encode()
+                                    + b"\n\n"
+                                )
                             else:
                                 frame = (
                                     b"event: snapshot\ndata: "
-                                    + json.dumps(conversation_view(path.removesuffix("/tail"))).encode()
+                                    + json.dumps(
+                                        conversation_view(path.removesuffix("/tail"))
+                                    ).encode()
                                     + b"\n\n"
                                 )
                         self.wfile.write(frame)
@@ -892,6 +907,7 @@ def main() -> int:
     env = os.environ.copy()
     env["TEST_RUNNER_PANELS_OFFLINE_STUB_URL"] = url
     env["TEST_RUNNER_PANELS_REVIEW_COMPLETION"] = "1" if REVIEW_COMPLETION else "0"
+    env["TEST_RUNNER_PANELS_REVIEW_STACKED"] = os.environ.get("PANELS_REVIEW_STACKED", "0")
     control = None
     if REACHABILITY_SMOKE:
         port = server.server_port

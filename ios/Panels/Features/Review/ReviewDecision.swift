@@ -130,17 +130,25 @@ import Observation
 }
 
 /// Skip is local, like the web. It never resolves a proposal or reduces the live badge.
+/// Skip acts on a whole card; a decision resolves one part, and the card stays while
+/// any part is unresolved. A new part on a skipped card brings the card back.
 struct ReviewQueue {
-    private(set) var skipped: Set<String> = []
+    /// Skipped part identities, each with its card's identity.
+    private(set) var skipped: [String: String] = [:]
     private(set) var resolved: Set<String> = []
-    func current(in items: [ReviewItem]) -> ReviewItem? {
-        items.first { !skipped.contains($0.id) && !resolved.contains($0.id) }
+    func pending(_ card: ReviewCard) -> [ReviewItem] { card.parts.filter { !resolved.contains($0.id) } }
+    func isSkipped(_ card: ReviewCard) -> Bool {
+        let parts = pending(card)
+        return !parts.isEmpty && parts.allSatisfy { skipped[$0.id] != nil }
     }
-    func skippedCount(in items: [ReviewItem]) -> Int {
-        items.filter { skipped.contains($0.id) && !resolved.contains($0.id) }.count
+    func current(in cards: [ReviewCard]) -> ReviewCard? {
+        cards.first { !pending($0).isEmpty && !isSkipped($0) }
     }
-    mutating func skip(_ item: ReviewItem) { skipped.insert(item.id) }
+    func skippedCount(in cards: [ReviewCard]) -> Int { cards.filter(isSkipped).count }
+    /// Skipped cards, including those on pages that are no longer loaded.
+    var skippedCardCount: Int { Set(skipped.filter { !resolved.contains($0.key) }.values).count }
+    mutating func skip(_ card: ReviewCard) { for part in pending(card) { skipped[part.id] = card.id } }
     mutating func resolve(_ item: ReviewItem) { resolved.insert(item.id) }
-    mutating func restore(_ item: ReviewItem) { resolved.remove(item.id); skipped.remove(item.id) }
+    mutating func restore(_ item: ReviewItem) { resolved.remove(item.id); skipped[item.id] = nil }
     mutating func revisit() { skipped.removeAll() }
 }

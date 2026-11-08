@@ -61,7 +61,7 @@ import XCTest
         XCTAssertNil(try store.record(server: "b", kind: "cache", id: "too-large"))
         XCTAssertEqual(store.draft(server: "a", id: "draft"), "Keep")
     }
-    func testCachedReadsDoNotInvalidateOutgoingWorkButEnqueueAndRemovalDo() throws {
+    func testCachedReadsAndPlainDraftsDoNotInvalidateOutgoingWorkButEnqueueAndRemovalDo() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = LocalStore(url: directory.appendingPathComponent("test.store"))
@@ -81,10 +81,38 @@ import XCTest
         try store.remove(server: "a", kind: "outbox", id: work.id)
         XCTAssertEqual(changes.withLock { $0 }, 2)
         XCTAssertTrue(outbox.entries("a").isEmpty)
+        // A key press saves the draft. It must not wake every saved-work observer.
         withObservationTracking { _ = store.workRevision } onChange: { changes.withLock { $0 += 1 } }
-        store.saveDraft("Keep the voice revision", server: "a", id: "voice")
-        XCTAssertEqual(changes.withLock { $0 }, 3)
-        XCTAssertEqual(store.draft(server: "a", id: "voice"), "Keep the voice revision")
+        store.saveDraft("Keep the typed words", server: "a", id: "text")
+        XCTAssertEqual(changes.withLock { $0 }, 2)
+        XCTAssertEqual(store.draft(server: "a", id: "text"), "Keep the typed words")
+    }
+    func testClearFinishedRemovesSettledWorkAtItsWindowInOneSaveAndKeepsTheRest() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let outbox = Outbox(store: store)
+        let now = Date(), day: TimeInterval = 24 * 60 * 60
+        func work(_ id: String, _ state: PendingWork.State, age: TimeInterval, completedAge: TimeInterval? = nil) -> PendingWork {
+            PendingWork(id: id, created: now.addingTimeInterval(-age), kind: .message, state: state, completed: completedAge.map { now.addingTimeInterval(-$0) })
+        }
+        let rows = [
+            work("old-sent", .sent, age: 3 * day, completedAge: day), work("recent-sent", .sent, age: 3 * day, completedAge: day - 60),
+            // Changed work never records completion, so its creation time counts.
+            work("old-changed", .changed, age: day), work("recent-changed", .changed, age: day - 60),
+            work("old-uncertain", .uncertain, age: 7 * day), work("recent-uncertain", .uncertain, age: 7 * day - 60),
+            work("failed", .failed, age: 30 * day), work("waiting", .waiting, age: 30 * day), work("sending", .sending, age: 30 * day),
+            work("queued", .serverQueued, age: 30 * day), work("recording", .recording, age: 30 * day),
+        ]
+        for row in rows { try outbox.save(row, server: "a") }
+        try outbox.save(work("other-server", .sent, age: 3 * day, completedAge: 2 * day), server: "b")
+        let revision = store.workRevision
+        outbox.clearFinished("a", now: now)
+        XCTAssertEqual(store.workRevision, revision + 1)
+        XCTAssertEqual(Set(outbox.entries("a").map(\.id)), ["recent-sent", "recent-changed", "recent-uncertain", "failed", "waiting", "sending", "queued", "recording"])
+        XCTAssertEqual(outbox.entries("b").map(\.id), ["other-server"])
+        outbox.clearFinished("a", now: now)
+        XCTAssertEqual(store.workRevision, revision + 1)
     }
     func testEnqueueAndComposerClearShareDurableSave() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -123,8 +151,9 @@ import XCTest
         OfflineProtocol.state.reset(ticket: try Data(contentsOf: url))
     }
     override func tearDown() async throws { try? FileManager.default.removeItem(at: directory) }
+    /// Recent creation times, ordered by `at`. Older uncertain work is past its cleanup window.
     private func message(_ id: String, at: TimeInterval = 1) -> PendingWork {
-        PendingWork(id: id, created: Date(timeIntervalSince1970: at), kind: .message, owner: .ticket("ticket"),
+        PendingWork(id: id, created: Date(timeIntervalSinceNow: at - 60), kind: .message, owner: .ticket("ticket"),
             message: ConversationSend(conversationId: "conversation", content: [.init(text: id)], senderMessageId: id, sentAtUnixMilliseconds: Int64(at * 1000)))
     }
     func testOfflineRelaunchDrainsInOrderOnceAndPreservesIdentity() async throws {
