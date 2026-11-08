@@ -24,6 +24,8 @@ from planner.conversation.events import (
 from planner.credentials.requests.contracts import CredentialRequestRowBody
 
 VIEW_PROTOCOL_VERSION = 1
+# Bump this when the stored view's rows change. A bump needs no migration: after startup
+# the server rebuilds every view at another version (views/rebuild.py).
 VIEW_PROJECTION_VERSION = 4
 
 type ConversationViewLens = Literal["focus", "full"]

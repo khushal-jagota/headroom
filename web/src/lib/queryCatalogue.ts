@@ -7,7 +7,6 @@ import { readBackends, readScopedBackends, type ConversationStartValues, type Ba
 import { usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
-  BoardResponse,
   ChiefManagementSettings,
   EmployeeConfigurationSnapshot,
   ManagerPrincipal,
@@ -69,7 +68,6 @@ export const queries = {
   updates: () => jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
   recordedUsage: (input: UsageSummaryInput) =>
     jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
-  board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
   managerTicketSummaries: (principal: ManagerPrincipal, filter: ManagerChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
       ["tickets", "manager", { principal, filter, offset, limit }],
