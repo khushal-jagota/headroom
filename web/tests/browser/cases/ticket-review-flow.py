@@ -1761,6 +1761,30 @@ def run(browser, urls):
     expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
     expect(page.locator("[data-conversation-rest-bar]")).to_be_visible()
     document_box = page.locator(".ticket-doc")
+    # The attribute and the bar report the state before the layout follows it: for a few
+    # frames after the resize the document is still sized for the old window and the dock
+    # is still shrinking. Wait until the document fits the window and its geometry holds
+    # still for several frames, or the position measured below comes from a stale range.
+    page.evaluate(
+        """() => new Promise((resolve, reject) => {
+            const document_box = document.querySelector(".ticket-doc");
+            const geometry = () => [
+                document_box.clientHeight,
+                document_box.scrollHeight,
+                document.querySelector("[data-conversation-pane]").getBoundingClientRect().height,
+            ].join();
+            let previous = "", still = 0, frames = 0;
+            const check = () => {
+                still = document_box.clientHeight <= innerHeight && geometry() === previous
+                    ? still + 1 : 0;
+                previous = geometry();
+                if (still >= 5) resolve();
+                else if (++frames > 300) reject(new Error("Layout did not settle: " + previous));
+                else requestAnimationFrame(check);
+            };
+            requestAnimationFrame(check);
+        })"""
+    )
     reading_range = document_box.evaluate(
         "(element) => element.scrollHeight - element.clientHeight"
     )

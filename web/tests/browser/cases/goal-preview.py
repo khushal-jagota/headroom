@@ -635,7 +635,9 @@ def touch_overlap(browser, url):
     evidence = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
     if evidence:
         Path(evidence).mkdir(parents=True, exist_ok=True)
-        page.screenshot(path=str(Path(evidence) / "goal-preview-short-phone.png"), animations="disabled")
+        page.screenshot(
+            path=str(Path(evidence) / "goal-preview-short-phone.png"), animations="disabled"
+        )
         (Path(evidence) / "goal-preview-short-phone.json").write_text(json.dumps({
             "preview": box, "footer": footer, "lastControl": last.bounding_box(),
             "checked": last.get_attribute("aria-checked"), "nativeTap": True,
