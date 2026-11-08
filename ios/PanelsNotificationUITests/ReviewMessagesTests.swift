@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 /// Reuses the offline harness: real SwiftUI, persisted outbox and loopback HTTP only.
 final class ReviewMessagesTests: XCTestCase {
@@ -38,6 +39,19 @@ final class ReviewMessagesTests: XCTestCase {
             }
             XCTAssertEqual(box.frame.height, collapsedHeight, accuracy: 2)
             XCTAssertTrue(app.keyboards.firstMatch.exists)
+            if owner == "ticket" {
+                // The Review reply shares the composer: a pasted image shows as a removable tile.
+                UIPasteboard.general.image = UIGraphicsImageRenderer(size: CGSize(width: 90, height: 60)).image { context in
+                    UIColor.systemTeal.setFill(); context.fill(CGRect(x: 0, y: 0, width: 90, height: 60))
+                }
+                input.press(forDuration: 1.2)
+                XCTAssertTrue(app.menuItems["Paste"].waitForExistence(timeout: 3))
+                app.menuItems["Paste"].tap()
+                XCTAssertTrue(box.descendants(matching: .any).matching(identifier: "conversation-attachment").firstMatch.waitForExistence(timeout: 5))
+                capture("ticket-review-pasted-image")
+                box.buttons["Remove Pasted image.png"].tap()
+                XCTAssertTrue(box.descendants(matching: .any).matching(identifier: "conversation-attachment").firstMatch.waitForNonExistence(timeout: 3))
+            }
             app.buttons["Record voice input"].firstMatch.tap()
             XCTAssertTrue(app.buttons["Stop recording"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.keyboards.firstMatch.exists)
