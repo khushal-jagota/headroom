@@ -192,6 +192,25 @@ class ExecutorStore(VpsDatabase):
                 ),
             )
 
+    def require_current_incarnation(self, identity: ExecutorIdentity) -> None:
+        """Fence a Mac item by the process that sent it, never by the state of its link.
+
+        A Mac process keeps its executor_incarnation across every reconnect, and a new
+        process takes a new one, like a Kafka producer epoch. So an item from a process
+        that has been replaced is refused here, before any write starts. A dropped link
+        or a newer connection_generation of the same process refuses nothing: the item
+        is the same item, and its sequence decides whether it is new.
+        """
+        connection = connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT executor_incarnation FROM executor_connections WHERE active=1"
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None or row[0] != identity.executor_incarnation:
+            raise _invalid("Executor incarnation has been replaced")
+
     @staticmethod
     def _current(connection: sqlite3.Connection, identity: ExecutorIdentity) -> sqlite3.Row:
         current = connection.execute("SELECT * FROM executor_connections WHERE active=1").fetchone()
