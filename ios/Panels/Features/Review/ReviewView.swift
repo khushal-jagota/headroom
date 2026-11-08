@@ -290,6 +290,9 @@ private struct ReviewCardView: View {
             .toolbar { reviewToolbar }
         }
         .onAppear { withAnimation(.timingCurve(0.2, 0.7, 0.3, 1, duration: reduceMotion ? ReviewStyle.fadeOut : ReviewStyle.fadeIn)) { visible = true } }
+        // A part that left and comes back, such as a proposal whose saved decision
+        // found it changed, shows again.
+        .onChange(of: parts.map(\.id)) { _, ids in exiting.formIntersection(ids) }
         .alert("Rename ticket", isPresented: $renaming) {
             TextField("Title", text: $titleDraft)
             Button("Cancel", role: .cancel) {}
