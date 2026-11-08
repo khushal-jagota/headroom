@@ -7,10 +7,11 @@ These decisions cut across systems and look removable until a change tries to re
 - **The claim starts work and does not watch it.** Starting a step stores one claim and sends one prompt. Nothing waits for the turn to end. See [Worker steps](worker-steps.md).
 - **Status is derived.** The claim, a parked proposal, and live blockers are the only stored facts behind a Ticket's status. See [Ticket lifecycle](tickets.md).
 - **You may act on anything strictly below you.** One rule decides guarded writes, so a Worker can never approve its own work. See [Who may act](authority.md).
+- **A write waits on its own thread.** The server answers every request on one event loop, so a write route does its database work on a worker thread. A test over the route table holds this. See [The product](product.md).
 - **The change signal carries no payload.** A commit announces only that something changed. Readers fetch current state, and the database stays canonical. See [Live screens](live-updates.md).
 - **Three backends, one home each.** A conversation runs Codex, Claude, or Hermes, and each agent identity keeps one login that Headroom never copies. See [Conversations](conversations.md).
 - **The skill row is the instruction.** Skill text lives in the database. Files on disk are copies. See [Skills](skills.md).
 - **The accent means a person is needed.** One color marks a gate or a required action, and nothing else. See [Design](design.md).
 - **Gates are workflow, not a sandbox.** Stages and authority govern the work record, not what an agent's process can touch. See [The product](product.md).
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-08._

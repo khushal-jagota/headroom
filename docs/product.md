@@ -36,6 +36,8 @@ When a Ticket is ready, the [worker-step loop](worker-steps.md) sends the Worker
 
 One host, the VPS, holds the SQLite database, the server, and the loops that start work. Most agents run there too, using the logins already on that machine, and their providers' limits and billing still apply. A Ticket can instead be pinned to Khushal's Mac, where its agent runs while the VPS keeps the record. See [Mac execution](executor.md).
 
+The server answers every request on one event loop, so work there holds up every request. A request's database writes, and those of a worker step the readiness loop starts, therefore run on a worker thread, and a write that waits on the database lock delays only its own request or step. Reads still run on the loop today.
+
 The browser is the main surface: the Workspace with Chief, Managers, and Tickets; Review; and the pages for goals, ideas, measures, and settings. The `panels` command reaches the same records over HTTP, for Khushal and for the agents themselves. A phone [notification](notifications.md) arrives when something newly needs him.
 
 ## Decisions that shape it

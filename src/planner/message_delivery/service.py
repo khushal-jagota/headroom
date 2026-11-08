@@ -320,11 +320,12 @@ async def send_message(
             )
     except BaseException:
         if admission is not None:
-            admission.abort_before_dispatch()
+            # Both admission steps write, so they wait on the SQLite lock on a worker thread.
+            await run_in_threadpool(admission.abort_before_dispatch)
         raise
 
     if admission is not None:
-        admission.finish(delivered.fate)
+        await run_in_threadpool(admission.finish, delivered.fate)
 
     return MessageDeliveryResult(
         recipient=recipient,

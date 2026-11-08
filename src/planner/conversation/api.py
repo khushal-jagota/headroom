@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -1110,7 +1111,11 @@ async def _pending_user_input(
 
 
 class VideoSendAdmission:
-    """Bind one upload before conversation creation and adopt it before dispatch."""
+    """Bind one upload before conversation creation and adopt it before dispatch.
+
+    Every step writes the upload's row in its own ``BEGIN IMMEDIATE`` transaction, so each
+    runs on a worker thread: the send that holds this admission is on the event loop.
+    """
 
     def __init__(
         self,
@@ -1135,7 +1140,8 @@ class VideoSendAdmission:
     async def preflight(self, current_conversation_id: str | None) -> MessageDeliveryResult | None:
         upload = next(piece for piece in self.sent if isinstance(piece, SentVideoUploadPiece))
         try:
-            self.checked = self.service.preflight(
+            self.checked = await run_in_threadpool(
+                self.service.preflight,
                 upload.upload_id,
                 self.destination.model_copy(
                     update={"expected_conversation_id": current_conversation_id}
@@ -1172,7 +1178,7 @@ class VideoSendAdmission:
                 fate = PromptDeliveryRefused(
                     payload.refusal_reason,
                 )
-        self.finish(fate)
+        await run_in_threadpool(self.finish, fate)
         assert self.recipient is not None
         return MessageDeliveryResult(self.recipient, prior, fate)
 
@@ -1336,7 +1342,7 @@ async def conversation_message_content(
                 )
             case SentVideoUploadPiece():
                 assert video_admission is not None
-                pieces.append(video_admission.adopt(conversation_id))
+                pieces.append(await run_in_threadpool(video_admission.adopt, conversation_id))
             case SentFilePiece():
                 contents, media_type = validated_files[file_index]
                 file_index += 1
