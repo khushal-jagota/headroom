@@ -543,46 +543,33 @@ def _repair_removed_boundaries(
         )
 
 
-def rebuild_projection(conn: sqlite3.Connection) -> None:
-    """Replace derived rows in the caller's migration transaction."""
+def rebuild_conversation_view(conn: sqlite3.Connection, conversation_id: str) -> None:
+    """Replace one conversation's derived rows from its events, in the caller's transaction.
+
+    The rows are written at the current ``VIEW_PROJECTION_VERSION``. Source bodies are
+    held in batches, never a full conversation.
+    """
     for table in ("lookups", "groups", "turns", "rows", "state"):
-        conn.execute(f"DELETE FROM conversation_view_{table}")
-    backfill_projection(conn)
-
-
-def backfill_projection(conn: sqlite3.Connection) -> None:
-    """One upgrade pass. Source bodies are held in batches, never a full conversation."""
-    conversation_after = ""
-    while True:
-        conversation = conn.execute(
-            "SELECT conversation_id FROM conversations WHERE conversation_id>? "
-            "ORDER BY conversation_id LIMIT 1",
-            (conversation_after,),
-        ).fetchone()
-        if conversation is None:
-            break
-        conversation_id = conversation[0]
-        after = 0
-        while True:
-            rows = conn.execute(
-                "SELECT sequence,created_at,kind,payload FROM conversation_events "
-                "WHERE conversation_id=? AND sequence>? ORDER BY sequence LIMIT ?",
-                (conversation_id, after, PROJECTION_BACKFILL_BATCH),
-            ).fetchall()
-            if not rows:
-                break
-            for sequence, created_at, kind, encoded in rows:
-                _append(
-                    conn,
-                    conversation_id,
-                    sequence,
-                    created_at,
-                    event.conversation_event_payload_from_canonical_json(
-                        event.ConversationEventKind(kind), encoded
-                    ),
-                )
-                after = sequence
-        conversation_after = conversation_id
+        conn.execute(
+            f"DELETE FROM conversation_view_{table} WHERE conversation_id=?", (conversation_id,)
+        )
+    after = 0
+    while rows := conn.execute(
+        "SELECT sequence,created_at,kind,payload FROM conversation_events "
+        "WHERE conversation_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+        (conversation_id, after, PROJECTION_BACKFILL_BATCH),
+    ).fetchall():
+        for sequence, created_at, kind, encoded in rows:
+            _append(
+                conn,
+                conversation_id,
+                sequence,
+                created_at,
+                event.conversation_event_payload_from_canonical_json(
+                    event.ConversationEventKind(kind), encoded
+                ),
+            )
+            after = sequence
 
 
 def repair_rest_line_after_deleting_rows(conn: sqlite3.Connection, conversation_id: str) -> None:

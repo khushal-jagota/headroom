@@ -139,3 +139,35 @@ def test_selected_body_stream_is_exact_and_obsolete_reference_is_409(harness: _H
             assert snapshot["page"]["projection_version"] == VIEW_PROJECTION_VERSION
 
     _run(exercise)
+
+
+def test_an_out_of_date_view_answers_upgrading_until_it_is_rebuilt(harness: _Harness) -> None:
+    """The client must tell "upgrading, try again" apart from a crash, on every door."""
+    from planner.conversation.views.api import VIEW_UPGRADING_DETAIL
+    from planner.conversation.views.rebuild import rebuild_one_conversation_view
+
+    harness.app.include_router(router, prefix=CONVERSATION_PREFIX)
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await harness.store.append_event(
+                "c", AgentMessageEventPayload(content=text_message_content("Kept answer"))
+            )
+            with db.connect(harness.runtime.database_path) as conn:
+                conn.execute(
+                    "UPDATE conversation_view_state SET projection_version=?",
+                    (VIEW_PROJECTION_VERSION - 1,),
+                )
+            path = f"{CONVERSATION_PREFIX}/conversations/c/view"
+            receipts = {"message_ids": json.dumps(["any"])}
+            for suffix, params in (("", {}), ("/tail", {}), ("/receipts", receipts)):
+                refused = await client.get(path + suffix, params=params)
+                assert refused.status_code == 409, suffix
+                assert refused.json()["detail"] == VIEW_UPGRADING_DETAIL
+            rebuild_one_conversation_view(harness.runtime.database_path, 5000, "c")
+            rebuilt = await client.get(path, params={"lens": "full"})
+            assert rebuilt.status_code == 200
+            assert "Kept answer" in rebuilt.text
+
+    _run(exercise)

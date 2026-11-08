@@ -37,6 +37,7 @@ from planner.conversation.video_uploads.config import CLEANUP_INTERVAL_SECONDS
 from planner.conversation.video_uploads.destinations import authorize_destination
 from planner.conversation.video_uploads.service import VideoUploadService
 from planner.conversation.views.api import router as conversation_views_router
+from planner.conversation.views.rebuild import rebuild_out_of_date_views
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import (
@@ -204,6 +205,7 @@ def create_app(
         attempt_observer: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
         ticket_scratch_task: asyncio.Task[None] | None = None
+        view_rebuild_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
         executor_endpoint = None
@@ -231,6 +233,8 @@ def create_app(
                 await attempt(cancel_task(video_cleanup_task))
             if ticket_scratch_task is not None:
                 await attempt(cancel_task(ticket_scratch_task))
+            if view_rebuild_task is not None:
+                await attempt(cancel_task(view_rebuild_task))
             if recovery_task is not None:
                 await attempt(cancel_task(recovery_task))
             await attempt(scoped_navigation.close())
@@ -318,6 +322,7 @@ def create_app(
 
                 async def release_normal_work() -> None:
                     nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
+                    nonlocal view_rebuild_task
                     nonlocal loops, metrics
                     conversation.live_tail.views.cleanup_stale_epochs()
                     database_parent = Path(config.db_path).resolve().parent
@@ -358,6 +363,13 @@ def create_app(
                                 )
 
                     recovery_task = asyncio.create_task(recover_conversations())
+                    view_rebuild_task = asyncio.create_task(
+                        rebuild_out_of_date_views(
+                            config.db_path,
+                            DB_BUSY_TIMEOUT_MS,
+                            conversation.system.workspace_admission,
+                        )
+                    )
                     app.state.conversation = conversation
                     await asyncio.to_thread(video_uploads.recover_and_cleanup)
                     video_cleanup_task = asyncio.create_task(_clean_video_uploads())

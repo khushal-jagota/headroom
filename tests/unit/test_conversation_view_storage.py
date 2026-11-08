@@ -37,7 +37,7 @@ from planner.conversation.views.storage import (
     read_page,
     read_turn,
 )
-from planner.conversation.views.writer import append_projection, rebuild_projection
+from planner.conversation.views.writer import append_projection, rebuild_conversation_view
 from planner.core.errors import ErrorCode, PlannerError
 
 
@@ -186,7 +186,7 @@ def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental
         conn.commit()
         stale = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
         with pytest.raises(RuntimeError, match="migration rollback"), conn:
-            rebuild_projection(conn)
+            rebuild_conversation_view(conn, "fixture")
             assert (
                 conn.execute("SELECT projection_version FROM conversation_view_state").fetchone()[0]
                 == VIEW_PROJECTION_VERSION
@@ -199,7 +199,7 @@ def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental
         assert list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence")) == stale
         original_factory = conn.row_factory
         conn.row_factory = None
-        rebuild_projection(conn)
+        rebuild_conversation_view(conn, "fixture")
         assert conn.row_factory is None
         conn.row_factory = original_factory
         assert (
