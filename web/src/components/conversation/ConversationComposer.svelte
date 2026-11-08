@@ -70,6 +70,7 @@
     formatVoiceTime,
     voiceCaptureAvailable,
     voiceCaptureSupported,
+    voiceFirstComposer,
     type VoiceCapture,
     type VoiceCaptureState
   } from "../../lib/conversation/voiceCapture";
@@ -137,8 +138,7 @@
     onDiscardHeldPrompt,
     onPromoteHeldPrompt,
     onStopDrawingHeldPrompt,
-    onSendHeldPromptAgain,
-    onFieldChosen
+    onSendHeldPromptAgain
   }: {
     /** The current conversation, or none before the first message creates it. */
     conversationId?: string | null;
@@ -212,9 +212,6 @@
     ) => Promise<void> | void;
     onStopDrawingHeldPrompt?: (senderMessageId: string) => Promise<void> | void;
     onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
-    /** The person put the cursor in the field: focused it, or pressed it or the box around
-     *  it. Focus the composer hands back after one of its own controls is not this. */
-    onFieldChosen?: () => void;
   } = $props();
 
   // Restored before the first paint, so a rebuilt composer comes back with the words
@@ -338,7 +335,12 @@
   let destroyed = false;
 
   // --- speaking instead of typing ----------------------------------------------------------
+  /** Whether the person asked for the keyboard instead of voice-first, kept for the
+   *  session so the composer does not snap back to the mic while they type. */
+  const KEYBOARD_PREFERRED = "panels.composer.voiceKeyboardPreferred";
+  let coarsePointer = $state(false);
   let voiceSupported = $state(false);
+  let keyboardPreferred = $state(false);
   let voiceState = $state<VoiceCaptureState>({ phase: "idle" });
   let voice: VoiceCapture | null = null;
 
@@ -347,6 +349,19 @@
   /** Browser recording capability controls availability. The question panel and
    *  permission ask always outrank voice. */
   let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, !takenOver));
+  let voiceTakeover = $derived(voiceState.phase !== "idle");
+  /** The empty composer on a phone leads with the mic. Anything composed, disabled, or
+   *  remembered as keyboard-preferred yields to the normal composer. */
+  let voiceFirstIdle = $derived(
+    voiceFirstComposer({
+      available: voiceAvailable,
+      coarsePointer,
+      active: voiceTakeover,
+      keyboardPreferred,
+      disabled: inputDisabled,
+      empty: text === "" && pendingImages.length === 0 && pendingFiles.length === 0 && pendingVideos.length === 0
+    })
+  );
   let livePlaceholder = $derived(ask !== null ? askPlaceholder(ask) : placeholder);
   /** The Add menu, and the camera the design's third choice needs. */
   let addMenuOpen = $state(false);
@@ -530,7 +545,7 @@
       intent.intent === "choose_model"
       || intent.intent === "choose_reasoning_effort"
     ) {
-      returnFocusToTheField();
+      inputElement?.focus();
     }
   }
 
@@ -614,7 +629,7 @@
       || text !== restoredText
       || compositionRevision !== restoredRevision
     ) return;
-    returnFocusToTheField();
+    input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
     cursorAt = input.value.length;
   }
@@ -749,7 +764,7 @@
       applyComposerDraft(result.draft); nextImageId = result.nextImageId; nextFileId = result.nextFileId;
       sendQueue.remove(entry.context.messageId);
       releaseOutgoingMessageImages(entry.context.messageId); releaseOutgoingMessageFiles(entry.context.messageId);
-      void tick().then(() => returnFocusToTheField());
+      void tick().then(() => inputElement?.focus());
     } else entry.error = "Your newer draft is kept. Finish it, then return this message to the composer.";
     videoChanged();
   }
@@ -912,7 +927,7 @@
     await tick();
     const input = inputElement;
     if (input === null) return;
-    returnFocusToTheField();
+    input.focus();
     input.setSelectionRange(cursorGoes, cursorGoes);
     theCursorIsInTheBox = true;
     cursorAt = cursorGoes;
@@ -933,14 +948,15 @@
     await tick();
     const input = inputElement;
     if (input === null) return;
-    returnFocusToTheField();
+    input.focus();
     input.setSelectionRange(1, 1);
     theCursorIsInTheBox = true;
     cursorAt = 1;
   }
 
   /** A transcription landed. The words join the draft the way typing them would have, and
-   *  the composer settles with the cursor at the end. An empty transcript is a no-op. */
+   *  the composer settles as the normal one with the cursor at the end — never back to the
+   *  voice-first face over text that was just spoken. An empty transcript is a no-op. */
   async function landTranscript(transcript: string): Promise<void> {
     if (transcript === "") return;
     recordDraftChange();
@@ -949,9 +965,20 @@
     await tick();
     const input = inputElement;
     if (input === null) return;
-    returnFocusToTheField();
+    input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
     cursorAt = input.value.length;
+  }
+
+  async function preferKeyboard(): Promise<void> {
+    keyboardPreferred = true;
+    try {
+      window.sessionStorage.setItem(KEYBOARD_PREFERRED, "1");
+    } catch {
+      // A browser that keeps nothing for the tab still switches faces for now.
+    }
+    await tick();
+    inputElement?.focus();
   }
 
   // A question panel or permission ask arriving mid-voice takes the composer: whatever
@@ -985,39 +1012,6 @@
   const ONE_ROW_COMPOSER =
     ".conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label)))";
   let boxElement = $state<HTMLDivElement | null>(null);
-
-  /** Whether focus now arriving in the field is the composer handing it back. */
-  let returningFocus = false;
-  function returnFocusToTheField(): void {
-    returningFocus = true;
-    try { inputElement?.focus(); } finally { returningFocus = false; }
-  }
-  function fieldFocused(): void {
-    readWhereTheCursorIs();
-    if (!returningFocus) onFieldChosen?.();
-  }
-  function fieldPressed(): void {
-    readWhereTheCursorIs();
-    onFieldChosen?.();
-  }
-
-  /** The box's own surface, its padding and the gaps between its controls, belongs to the
-   *  field: the line is 24px inside a taller box, and a press beside it should still write.
-   *  Controls, attachments and panels in the box keep their own presses. */
-  function pressOnTheBoxSurface(event: MouseEvent): boolean {
-    const target = event.target;
-    return target === boxElement
-      || (target instanceof HTMLElement && target.matches(".chat-foot, .chat-submit") && boxElement?.contains(target) === true);
-  }
-  function keepTheFieldFocused(event: MouseEvent): void {
-    if (pressOnTheBoxSurface(event) && document.activeElement === inputElement) event.preventDefault();
-  }
-  function focusTheFieldFromTheBox(event: MouseEvent): void {
-    const input = inputElement;
-    if (!pressOnTheBoxSurface(event) || input === null || input.hidden || input.disabled) return;
-    input.focus();
-    onFieldChosen?.();
-  }
   /** Whether the controls are on their own row under the draft. Written to the box as
    *  data-composer-controls-below in the same step as it is decided, so the layout can be
    *  read before and after it and the move drawn between the two. */
@@ -1099,6 +1093,7 @@
     text;
     userInput;
     voiceState.phase;
+    voiceFirstIdle;
     attachments.length;
     const key = draftKey;
     const writing = draftRowsKey === key;
@@ -1145,7 +1140,13 @@
 
   onMount(() => {
     void restoreLocalState();
+    coarsePointer = window.matchMedia("(pointer: coarse)").matches;
     voiceSupported = voiceCaptureSupported();
+    try {
+      keyboardPreferred = window.sessionStorage.getItem(KEYBOARD_PREFERRED) === "1";
+    } catch {
+      keyboardPreferred = false;
+    }
     voice = createVoiceCapture({
       onState: (state) => (voiceState = state),
       onTranscript: (transcript) => void landTranscript(transcript)
@@ -1209,8 +1210,6 @@
       onSendAgain={onSendHeldPromptAgain}
     />
 
-    <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
-    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <div
       class="chat-box"
       bind:this={boxElement}
@@ -1224,8 +1223,6 @@
       ondragover={onDragOver}
       ondragleave={onDragLeave}
       ondrop={onDrop}
-      onmousedown={keepTheFieldFocused}
-      onclick={focusTheFieldFromTheBox}
     >
       {#if userInput}
         <UserInputQuestionPanel
@@ -1322,6 +1319,22 @@
             </span>
           {/if}
         </div>
+      {:else if userInput === null && voiceFirstIdle}
+        <button
+          type="button"
+          class="chat-voice-idle"
+          data-conversation-voice="idle"
+          data-voice-record
+          aria-label="Tap to speak"
+          disabled={inputDisabled}
+          onclick={() => void voice?.startRecording()}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+          </svg>
+          <span>tap to speak</span>
+        </button>
       {/if}
 
       <textarea
@@ -1332,12 +1345,12 @@
         bind:this={inputElement}
         bind:value={text}
         disabled={inputDisabled}
-        hidden={userInput !== null || voiceState.phase !== "idle"}
+        hidden={userInput !== null || voiceState.phase !== "idle" || voiceFirstIdle}
         onkeydown={onKeydown}
         oninput={textChanged}
         onkeyup={readWhereTheCursorIs}
-        onclick={fieldPressed}
-        onfocus={fieldFocused}
+        onclick={readWhereTheCursorIs}
+        onfocus={readWhereTheCursorIs}
         onblur={() => (theCursorIsInTheBox = false)}
         onpaste={onPaste}
       ></textarea>
@@ -1384,6 +1397,20 @@
               onclick={() => voice?.retry()}
             >retry</button>
           {/if}
+        {:else if voiceFirstIdle}
+          <button
+            type="button"
+            class="chat-image chat-voice-kb"
+            data-voice-keyboard
+            aria-label="Type instead"
+            title="Type instead"
+            onclick={() => void preferKeyboard()}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="2.5" y="6" width="19" height="12" rx="2" />
+              <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6" />
+            </svg>
+          </button>
         {:else}
           <!-- One place to add something, rather than a row of separate buttons. What it
                offers is still the same set of things, and each of them still does exactly

@@ -105,6 +105,24 @@ export function voiceCaptureAvailable(
   return supported && transcriptAccepted;
 }
 
+export function voiceFirstComposer(input: {
+  available: boolean;
+  coarsePointer: boolean;
+  active: boolean;
+  keyboardPreferred: boolean;
+  disabled: boolean;
+  empty: boolean;
+}): boolean {
+  return (
+    input.available
+    && input.coarsePointer
+    && !input.active
+    && !input.keyboardPreferred
+    && !input.disabled
+    && input.empty
+  );
+}
+
 // --- the injectable browser edges -----------------------------------------------------------
 
 export type VoiceRecorderLike = {

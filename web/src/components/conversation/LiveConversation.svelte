@@ -485,10 +485,10 @@
     }
   }
   /** One cancellable reader per selected lens and visible transcript demand. */
-  function attachReader(id:string,transcript=documentIsVisible&&conversationState!=="rest"):ConversationViewReader{
+  function attachReader(id:string):ConversationViewReader{
     closeStream();
     let lastCoverage=-1;
-    const local=new ConversationViewReader(id,lens,transcript,()=>{
+    const local=new ConversationViewReader(id,lens,documentIsVisible&&conversationState!=="rest",()=>{
       if(reader!==local)return;
       connectionTrouble=local.trouble;
       livenessPulse++;
@@ -503,16 +503,10 @@
   }
   $effect(()=>{
     const selectedLens=lens;
-    const visible=documentIsVisible;
-    const opened=conversationState!=="rest";
+    const transcript=documentIsVisible&&conversationState!=="rest";
     const currentReader=untrack(()=>reader);
-    if(currentReader===null)return;
-    // Returning to the dock keeps a transcript already read, so opening again draws it at
-    // once instead of reconnecting and redrawing it. The viewport holds its place at rest
-    // and places it when the conversation opens; owner reads still wait for the open state.
-    const transcript=visible&&(opened||currentReader.transcript);
-    if(currentReader.lens===selectedLens&&currentReader.transcript===transcript)return;
-    const next=untrack(()=>attachReader(currentReader.id,transcript));
+    if(currentReader===null||currentReader.lens===selectedLens&&currentReader.transcript===transcript)return;
+    const next=untrack(()=>attachReader(currentReader.id));
     void next.connect().catch(()=>{if(reader===next)connectionTrouble=true;});
   });
   async function openConversation(id: string): Promise<void> {

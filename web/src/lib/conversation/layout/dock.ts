@@ -69,17 +69,14 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     if (nextComposer !== composer) { if (composer) sizes.unobserve(composer); composer = nextComposer; if (composer) sizes.observe(composer); }
     reader = host.querySelector<HTMLElement>('.ticket-reading, .manager-reading');
     layer = pane?.closest<HTMLElement>('.conversation-layer') ?? null;
+    const rect = host.getBoundingClientRect();
     const menuOpen = !!pane?.querySelector('.chat-menu, .chat-add-menu, .listbox-picker-panel, .chat-overflow-menu');
-    let rect = host.getBoundingClientRect();
-    let bounds = visibleHostBounds(rect, visibleViewport(menuOpen));
-    const publish = (): void => {
-      set('--conversation-visible-top', bounds.top);
-      set('--conversation-visible-bottom', bounds.bottom);
-      set('--conversation-visible-left', bounds.left);
-      set('--conversation-visible-right', bounds.right);
-      set('--conversation-visible-height', bounds.height);
-    };
-    publish();
+    const bounds = visibleHostBounds(rect, visibleViewport(menuOpen));
+    set('--conversation-visible-top', bounds.top);
+    set('--conversation-visible-bottom', bounds.bottom);
+    set('--conversation-visible-left', bounds.left);
+    set('--conversation-visible-right', bounds.right);
+    set('--conversation-visible-height', bounds.height);
     if (pane && layer) {
       const nextState = pane.dataset.conversationState;
       if (nextState !== state) {
@@ -94,11 +91,6 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
         }
         state = nextState;
         host.dataset.conversationDockState = nextState ?? 'rest';
-        // The state can change the host's own size (a phone hides its bottom bar while the
-        // owner writes in the open conversation), so the destination is read after it.
-        rect = host.getBoundingClientRect();
-        bounds = visibleHostBounds(rect, visibleViewport(menuOpen));
-        publish();
         if (reader) {
           reader.inert = nextState === 'opened';
           if (nextState === 'opened') reader.setAttribute('aria-hidden', 'true');
