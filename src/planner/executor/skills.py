@@ -77,20 +77,17 @@ def read_canonical_skill_snapshot(
         if row is None:
             raise ValueError("assigned Ticket does not exist")
         definition = workflow_from_row(row)
+        sources = read_all_skill_sources(conn)
         required = tuple(
             dict.fromkeys(
                 ("panels", "panels-worker")
-                + (
-                    (definition.specialist_skill,)
-                    if definition.specialist_skill is not None
-                    else ()
-                )
+                + ((definition.specialist_skill,) if definition.specialist_skill in sources else ())
             )
         )
         snapshot = CanonicalSkillSnapshot(
             sources=tuple(
                 CanonicalSkillSource(name, text)
-                for name, text in read_all_skill_sources(conn).items()
+                for name, text in sources.items()
                 if name not in WORKER_ONLY_SKILL_NAMES or name in required
             ),
             required_skill_names=required,
