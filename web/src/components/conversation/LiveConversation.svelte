@@ -420,6 +420,9 @@
   async function adopt(id: string): Promise<void> {
     closeStream();
     openedId = id;
+    // Restoring this tab's messages is part of opening. App recovery must not start
+    // a second opening while that asynchronous restoration still owns the first.
+    opening = true;
     refreshedReadThrough.clear();
     viewAnchor=null;
     viewFolds=new Set();
@@ -954,18 +957,17 @@
   $effect(() => tellWhenAWaitRunsOut(sentMessages, (told) => void holdOnTo(told)));
 
   onMount(() => {
-    // The record is the only thing that can settle a send this tab never heard an answer
-    // for, and most of the time it already has the answer: the row was written and this
-    // browser was not listening. So when the server comes back, read again. Coming back is
-    // not something this pane has to work out — the app's own connection says it, and a
-    // reconnect is what everything else on screen reacts to as well.
-    let reachable = false;
+    // App recovery also repairs a transcript whose own stream stalled silently.
+    // Unknown sends still need receipt recovery when their transcript is not visible.
+    // The subscription's initial value is not a reconnect: opening owns that read.
+    let reachable: boolean | null = null;
     const stopWatchingTheConnection = connectionStatus.subscribe((status) => {
       const nowReachable = status === "connected";
-      const cameBack = nowReachable && !reachable;
+      const cameBack = nowReachable && reachable === false;
       reachable = nowReachable;
       if (!cameBack) return;
-      if (!anOutgoingMessageIsWaitingOnTheRecord(sentMessages)) return;
+      const transcriptIsVisible = documentIsVisible && conversationState !== "rest";
+      if (!transcriptIsVisible && !anOutgoingMessageIsWaitingOnTheRecord(sentMessages)) return;
       readTheRecordAgain();
     });
     const onVisible = (): void => {
