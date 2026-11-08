@@ -569,6 +569,12 @@ def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
     assert deleted.json() == {"worker_type": "research", "deleted": True}, deleted.text
 
     assert test_client.get("/api/worker-types/research").status_code == 404
+    # The browser and the native app read the Ticket's own workflow from its detail.
+    detail = test_client.get("/api/tickets", params={"detail": "full", "id": running.id})
+    assert detail.status_code == 200, detail.text
+    assert [stage["id"] for stage in detail.json()["workflow"]["stages"]] == [
+        stage["id"] for stage in json.loads(workflow_before)["stages"]
+    ]
     assert "research" not in configured_worker_type_registry().registered_worker_types()
     with closing(connect(str(db_path))) as conn:
         kept = tickets_data.read_ticket(conn, running.id)
