@@ -9,7 +9,7 @@ struct ScreenPlaceholder: View {
     }
 }
 
-/// A refresh failure never replaces previously loaded content.
+/// Request failures retain loaded content; server reachability is handled by the shell.
 struct LoadErrorView: View {
     let message: String
     let retry: () async -> Void
@@ -32,6 +32,22 @@ private struct ScreenRetryButton: View {
         } label: {
             Text(retrying ? "Retrying…" : "Try again").frame(minHeight: 44)
         }.disabled(retrying)
+    }
+}
+
+struct ServerUnreachableView: View {
+    let retry: () async -> Void
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Panels can’t reach the server.", systemImage: "network.slash")
+        } description: {
+            Text("Turn on Tailscale, then try again.")
+        } actions: {
+            ScreenRetryButton(retry: retry).buttonStyle(.bordered)
+        }
+        .panelsScreen()
+        .accessibilityIdentifier("server-unreachable")
     }
 }
 
@@ -185,4 +201,25 @@ private struct AccessibleSegmentedPicker: ViewModifier {
 
 extension View {
     func accessibleSegmentedPicker() -> some View { modifier(AccessibleSegmentedPicker()) }
+}
+
+struct TicketMachineLabel: View {
+    let locale: String?
+    var body: some View {
+        if let name = TicketMachine.name(locale) {
+            Label(name, systemImage: locale == "macos" ? "laptopcomputer" : "server.rack")
+                .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                .accessibilityLabel("Runs on \(name)")
+        }
+    }
+}
+struct TicketActivityMark: View {
+    let locale: String?
+    let signal: ConversationSignal?
+    var completed = false
+    @Environment(AppStore.self) private var store
+    var body: some View {
+        ConversationSignalMark(signal: TicketMachine.signal(signal, locale: locale, health: store.executorHealth, completed: completed))
+
+    }
 }

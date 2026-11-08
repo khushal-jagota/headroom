@@ -3,6 +3,7 @@ import Observation
 import UniformTypeIdentifiers
 
 @MainActor @Observable final class ConversationModel {
+    var machineLocale: String?
     var conversationID: String?
     var draft = "" { didSet { saveDraft() } }
     private var persistenceAPI: APIClient?
@@ -25,6 +26,7 @@ import UniformTypeIdentifiers
         if let id = conversationID,
            let snapshot: ConversationSnapshot = api.cached("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]) {
             if status != snapshot.status { status = snapshot.status }; items = snapshot.page.items; older = snapshot.page.older; loadedLens = lens
+            loadedConversationID = id
             rememberRows(items.map(\.id))
         }
         syncOutbox()
@@ -52,6 +54,7 @@ import UniformTypeIdentifiers
     var status: ConversationStatus?
     var hasUnread = false
     private var readThroughSequence = 0
+    private var readPositionConversationID: String?
     var heldPrompts: [ConversationConfiguration.HeldPrompt] = [] { didSet { if oldValue != heldPrompts { projectionRevision += 1 } } }
     var older: ConversationCursor?
     var error: String?
@@ -136,7 +139,7 @@ import UniformTypeIdentifiers
             case "prompt_refused": note = "Not delivered · " + (body.refusalDetail ?? ConversationDelivery.refusalText(body.reason))
             case "prompt_uncertain": note = "Delivery uncertain · do not resend"
             case "prompt_discarded": note = "Not delivered · no longer applicable"
-            case "permission_ask", "user_input": note = "Respond on the web"
+            case "permission_ask", "user_input": note = body.answerSentence ?? (body.state == "live" ? "Respond on the web" : body.state?.capitalized)
             default: note = nil
             }
             return ConversationRow(id: retryAliases[item.id] ?? item.id, text: body.text, own: body.isOwnerPrompt, note: note,
@@ -169,7 +172,11 @@ import UniformTypeIdentifiers
     }
     func applyConfiguration(_ configuration: ConversationConfiguration) {
         heldPrompts = configuration.heldPrompts
-        readThroughSequence = configuration.ownerReadThroughSequence ?? 0
+        if readPositionConversationID != conversationID {
+            readPositionConversationID = conversationID
+            readThroughSequence = 0
+        }
+        readThroughSequence = max(readThroughSequence, configuration.ownerReadThroughSequence ?? 0)
         hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
         // The selection follows the conversation until the owner picks something else.
         if backendKey == nil || (selectedModel == runningModel && reasoningEffort == runningEffort) {
@@ -189,6 +196,37 @@ import UniformTypeIdentifiers
             }
         }
     }
+    /// Only a rendered, visible remote row supplies evidence. Status/tail sequence
+    /// and local outgoing rows cannot acknowledge content the person did not see.
+    func visibleReadBoundary(rowIDs: Set<String>, active: Bool) -> ConversationReadBoundary? {
+        guard active, let id = conversationID, loadedConversationID == id else { return nil }
+        let sequence = rows.compactMap { row -> Int? in
+            guard rowIDs.contains(row.id), let item = row.item,
+                  item.body?.reference == nil || expandedBodies[item.key] != nil else { return nil }
+            return item.sourceSequence
+        }.max() ?? 0
+        let alreadyRead = readPositionConversationID == id ? readThroughSequence : 0
+        guard sequence > alreadyRead else { return nil }
+        return ConversationReadBoundary(conversationID: id, throughSequence: sequence)
+    }
+
+    func acknowledgeVisibleRows(_ rowIDs: Set<String>, active: Bool, using service: any ConversationServing) async {
+        guard !Task.isCancelled, let boundary = visibleReadBoundary(rowIDs: rowIDs, active: active) else { return }
+        do {
+            let confirmed = try await service.markConversationRead(boundary.conversationID, through: boundary.throughSequence)
+            guard !Task.isCancelled, conversationID == boundary.conversationID else { return }
+            if readPositionConversationID != conversationID {
+                readPositionConversationID = conversationID
+                readThroughSequence = 0
+            }
+            readThroughSequence = max(readThroughSequence, confirmed)
+            hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
+        } catch {
+            // A read acknowledgment is idempotent; keep unread state on failure.
+            // The next actual visibility change can try again, never a poll alone.
+        }
+    }
+
     var firstUnreadID: String? {
         guard hasUnread else { return nil }
         return items.first { ($0.sourceSequence ?? 0) > readThroughSequence && ["agent_message", "user_input", "permission_ask"].contains($0.body?.value?.kind ?? "") }.map { retryAliases[$0.id] ?? $0.id }
@@ -207,6 +245,7 @@ import UniformTypeIdentifiers
         }
     }
     private var loadedLens: ConversationLens?
+    private var loadedConversationID: String?
 
     func updateSpeechTranscript(_ text: String, prefix: String) {
         let prefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -314,7 +353,7 @@ import UniformTypeIdentifiers
         guard id == conversationID, lens == requestedLens else { return }
         if status != snapshot.status { status = snapshot.status }
         if transcript {
-            if loadedLens != requestedLens { items = []; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
+            if loadedConversationID != id || loadedLens != requestedLens { items = []; expandedBodies = [:]; loadedConversationID = id; loadedLens = requestedLens; older = snapshot.page.older; liveRow = nil; liveTurnKey = nil }
             settleLiveRow(candidates: snapshot.page.items, output: snapshot.status.liveOutput)
             // Replace the current window; retain explicitly loaded history before it.
             let keys = Set(snapshot.page.items.map(\.key))

@@ -37,6 +37,7 @@ struct TicketPresentation {
         switch holder.kind {
         case "owner": return "User"
         case "chief": return "Chief"
+        case "goal": return "Goal · \(holder.id)"
         case "manager": return holder.id == ticket.managerId ? "Manager" : "Manager · \(holder.id)"
         default: return "Worker · \(holder.id)"
         }
@@ -45,6 +46,7 @@ struct TicketPresentation {
         var result = [Principal(kind: "owner", id: "owner")]
         if let id = ticket.managerId { result.append(Principal(kind: "manager", id: id)) }
         result.append(Principal(kind: "chief", id: "chief"))
+        if !result.contains(ticket.ceilingHolder) { result.append(ticket.ceilingHolder) }
         return result
     }
 }

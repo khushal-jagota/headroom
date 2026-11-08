@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
+import re
+import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
@@ -28,7 +32,7 @@ from planner.executor.configuration import (
     HTTP_CLOSE_TIMEOUT_SECONDS,
     HTTP_CONNECT_TIMEOUT_SECONDS,
     MAX_ENVELOPE_BYTES,
-    MAX_TRANSFERS,
+    MAX_FILE_TRANSFERS,
     REQUEST_TIMEOUT_SECONDS,
     WS_HEARTBEAT_SECONDS,
     validate_server_url,
@@ -43,6 +47,40 @@ from planner.executor.protocol import (
     encode_value,
     type_adapter,
 )
+
+
+class PeerClosedWebSocket(ConnectionError):
+    """The peer ended the WebSocket. Its close code says how: 1000 normal, 1001 going
+    away, 1006 dropped without a close frame, 1011 server error or missed keepalive."""
+
+    def __init__(self, close_code: int | None) -> None:
+        super().__init__(f"executor WebSocket closed (close code {close_code})")
+        self.close_code = close_code
+
+
+class PeerErrorReply(ValueError):
+    """The peer answered a request with an error reply, such as "retry later"."""
+
+    def __init__(self, payload: JsonObject) -> None:
+        super().__init__(str(payload))
+        error = payload.get("error")
+        code = error.get("code") if isinstance(error, dict) else None
+        safe = isinstance(code, str) and re.fullmatch(r"[a-z0-9_.-]{1,64}", code) is not None
+        self.code = cast(str, code) if safe else "unknown"
+
+
+def failure_name(error: BaseException) -> str:
+    """Name a failure for a log line without its message text, which can carry
+    payload content: the class, a peer close or error code, and the cause's class."""
+    if isinstance(error, PeerClosedWebSocket):
+        name = f"peer closed the WebSocket (close code {error.close_code})"
+    elif isinstance(error, PeerErrorReply):
+        name = f"error reply {error.code}"
+    else:
+        name = type(error).__name__
+    if error.__cause__ is not None:
+        name += f" from {type(error.__cause__).__name__}"
+    return name
 
 
 class ControlMessageStream(Protocol):
@@ -72,10 +110,13 @@ class WebSocketStream(ABC):
     @abstractmethod
     async def aclose(self) -> None: ...
 
+    def peer_close_code(self) -> int | None:
+        return None
+
     async def receive(self) -> WireMessage:
         body = await self.receive_bytes()
         if not body:
-            raise ConnectionError("executor WebSocket closed")
+            raise PeerClosedWebSocket(self.peer_close_code())
         return decode_message(body)
 
     async def send(self, message: WireMessage) -> None:
@@ -101,19 +142,29 @@ class ServerWebSocketPeer(WebSocketStream):
         super().__init__()
         self.socket = socket
         self._closed = False
+        self._peer_close_code: int | None = None
 
     @property
     def closed(self) -> bool:
         return self._closed or self.socket.client_state is WebSocketState.DISCONNECTED
 
+    def peer_close_code(self) -> int | None:
+        return self._peer_close_code
+
     async def receive_bytes(self) -> bytes:
         try:
             message = await self.socket.receive()
-        except (WebSocketDisconnect, RuntimeError):
+        except WebSocketDisconnect as disconnect:
+            self._closed = True
+            self._peer_close_code = disconnect.code
+            return b""
+        except RuntimeError:
             self._closed = True
             return b""
         if message["type"] == "websocket.disconnect":
             self._closed = True
+            code = message.get("code")
+            self._peer_close_code = code if isinstance(code, int) else None
             return b""
         data = message.get("bytes")
         if not isinstance(data, bytes) or not data or len(data) > MAX_ENVELOPE_BYTES:
@@ -144,6 +195,9 @@ class ClientWebSocketPeer(WebSocketStream):
     def closed(self) -> bool:
         return self.socket.closed
 
+    def peer_close_code(self) -> int | None:
+        return self.socket.close_code
+
     async def receive_bytes(self) -> bytes:
         try:
             message = await self.socket.receive()
@@ -154,6 +208,9 @@ class ClientWebSocketPeer(WebSocketStream):
             aiohttp.WSMsgType.CLOSED,
             aiohttp.WSMsgType.CLOSING,
         ):
+            # A missed heartbeat closes the socket locally and records its cause.
+            if self.socket.exception() is not None:
+                raise ConnectionError("executor WebSocket failed") from self.socket.exception()
             return b""
         if message.type is aiohttp.WSMsgType.ERROR:
             raise ConnectionError("executor WebSocket failed") from self.socket.exception()
@@ -275,7 +332,9 @@ class Link:
         self.last_received_at_ms = now_ms()
         self.refusal: JsonObject | None = None
         self.received: Callable[[int], None] | None = None
-        self._capacity = asyncio.Semaphore(MAX_TRANSFERS)
+        self._file_transfer_capacity = asyncio.Semaphore(MAX_FILE_TRANSFERS)
+        self._opened_at = time.monotonic()
+        self.close_reason: str | None = None
 
     def on(
         self,
@@ -292,9 +351,19 @@ class Link:
     def is_closing(self) -> bool:
         return self._down or self._stream.is_closing()
 
-    def close(self) -> None:
+    def close(self, reason: str = "closed without a stated reason") -> None:
+        """Close this generation once. The first reason given is the one logged."""
         if not self._down:
             self._down = True
+            self.close_reason = reason
+            logging.getLogger(__name__).warning(
+                "executor link closed at=%s generation=%s incarnation=%s up=%.1fs reason=%s",
+                datetime.now(UTC).isoformat(timespec="milliseconds"),
+                self.identity.connection_generation,
+                self.identity.executor_incarnation,
+                time.monotonic() - self._opened_at,
+                reason,
+            )
             self._stream.close()
             if self._reading is not None and self._reading is not asyncio.current_task():
                 self._reading.cancel()
@@ -335,8 +404,8 @@ class Link:
                 return False
             try:
                 await self._stream.send(WireMessage(kind, request_id or uuid4().hex, payload))
-            except (ConnectionError, OSError):
-                self.close()
+            except (ConnectionError, OSError) as error:
+                self.close(f"send of {kind.value} failed: {failure_name(error)}")
                 raise
             return True
 
@@ -356,20 +425,21 @@ class Link:
             raise ValueError("duplicate link request ID")
         future: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
+        seconds = REQUEST_TIMEOUT_SECONDS if timeout is None else timeout
         try:
-            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS if timeout is None else timeout):
+            async with asyncio.timeout(seconds):
                 if not await self.tell(kind, payload, request_id=request_id, admit=admit):
                     raise ConnectionError("executor link unavailable")
                 response = await future
             if response.kind is WireMessageKind.error:
-                raise ValueError(str(response.payload))
+                raise PeerErrorReply(response.payload)
             return response
         except ProtocolRefused:
-            self.close()
+            self.close(f"protocol refused during {kind.value} request")
             raise
         except TimeoutError:
             if close_on_timeout:
-                self.close()
+                self.close(f"request timeout on {kind.value} after {seconds:g}s")
             raise
         finally:
             self._pending.pop(request_id, None)
@@ -386,7 +456,7 @@ class Link:
             if response is not None:
                 await self.tell(response.kind, response.payload, request_id=message.request_id)
         except ProtocolRefused:
-            self.close()
+            self.close(f"protocol refused while handling {message.kind.value}")
             raise
         except (ValueError, TypeError, KeyError) as error:
             await self.tell(
@@ -394,10 +464,11 @@ class Link:
                 {"error": {"code": "validation", "message": str(error)}},
                 request_id=message.request_id,
             )
-        except Exception:
-            self.close()
+        except Exception as error:
+            self.close(f"handler for {message.kind.value} failed: {failure_name(error)}")
 
     async def _receive(self) -> None:
+        reason = "receive loop ended"
         try:
             while not self.is_closing():
                 message = await self._stream.receive()
@@ -414,6 +485,7 @@ class Link:
                     for pending in self._pending.values():
                         if not pending.done():
                             pending.set_exception(error)
+                    reason = "peer refused the protocol"
                     raise error
                 future = self._pending.get(message.request_id)
                 if future is not None:
@@ -423,8 +495,15 @@ class Link:
                     task = asyncio.create_task(self._dispatch(message))
                     self._work.add(task)
                     task.add_done_callback(self._handler_done)
+        except asyncio.CancelledError:
+            reason = "receive cancelled"
+            raise
+        except Exception as error:
+            if reason == "receive loop ended":
+                reason = f"receive failed: {failure_name(error)}"
+            raise
         finally:
-            self.close()
+            self.close(reason)
 
     def _handler_done(self, task: asyncio.Task[None]) -> None:
         self._work.discard(task)
@@ -433,7 +512,7 @@ class Link:
 
     @asynccontextmanager
     async def transfer_capacity(self) -> AsyncIterator[None]:
-        async with self._capacity:
+        async with self._file_transfer_capacity:
             if self.is_closing():
                 raise ConnectionError("executor file link unavailable")
             yield
@@ -459,7 +538,7 @@ async def dial_link(
             yield link
     finally:
         if link is not None:
-            link.close()
+            link.close("dialled connection ended")
         try:
             await client.close()
         finally:
@@ -502,9 +581,9 @@ async def accept_link(
             ):
                 raise ConnectionError("executor link lost during handshake")
             return link
-    except BaseException:
+    except BaseException as error:
         if link is not None:
-            link.close()
+            link.close(f"handshake failed: {failure_name(error)}")
         else:
             stream.close()
         raise

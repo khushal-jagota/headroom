@@ -17,6 +17,7 @@ from tests.support.conversation_system_under_test import (
     open_conversation_system_under_test,
 )
 
+import planner.conversation.storage as conversation_storage
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
@@ -208,28 +209,38 @@ def test_busy_manager_holds_a_wake_without_interrupt_then_delivers_it() -> None:
     asyncio.run(exercise())
 
 
-def test_marker_failure_preserves_the_wake_until_explicit_storage_resume(
+def test_marker_failure_preserves_the_wake_until_its_retry_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = ConversationStore.mark_held_sender_messages_leaving_queue
-    calls = 0
+    monkeypatch.setattr(
+        conversation_storage, "CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS", 0.01
+    )
+    monkeypatch.setattr(conversation_storage, "CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS", 0.05)
+    unavailable = True
+    failed_calls = 0
+    marked_calls = 0
     failed = asyncio.Event()
 
-    async def fail_once(
+    async def fail_until_available(
         store: ConversationStore,
         conversation_id: str,
         sender_message_ids: tuple[str, ...],
     ) -> int:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
+        nonlocal failed_calls, marked_calls
+        if unavailable:
+            failed_calls += 1
             failed.set()
             raise OSError("marker unavailable")
+        marked_calls += 1
         return await original(store, conversation_id, sender_message_ids)
 
-    monkeypatch.setattr(ConversationStore, "mark_held_sender_messages_leaving_queue", fail_once)
+    monkeypatch.setattr(
+        ConversationStore, "mark_held_sender_messages_leaving_queue", fail_until_available
+    )
 
     async def exercise() -> None:
+        nonlocal unavailable
         async with open_conversation_system_under_test() as subject:
             await subject.system.start_conversation(
                 ConversationStartRequest(
@@ -254,14 +265,17 @@ def test_marker_failure_preserves_the_wake_until_explicit_storage_resume(
             completing = asyncio.create_task(subject.complete_running_turn("marker-retry"))
             await failed.wait()
             assert not completing.done()
-            assert subject._store.resume_recording("marker-retry") == 1
+            assert len(await subject.backend_writes("marker-retry")) == 1
+            # The cause clears; the store's own retry marks the wake and it is delivered.
+            unavailable = False
             await completing
 
             writes = await subject.backend_writes("marker-retry")
             assert len(writes) == 2
             assert writes[0].text.endswith("incumbent work")
             assert writes[1].text.endswith("Review the manager wake.")
-            assert calls == 2
+            assert failed_calls >= 1
+            assert marked_calls == 1
 
     asyncio.run(exercise())
 

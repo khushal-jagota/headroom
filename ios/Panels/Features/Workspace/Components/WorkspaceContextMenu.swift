@@ -16,8 +16,8 @@ struct WorkspaceContextMenu: ViewModifier {
         content.contextMenu {
             Button("Open", systemImage: "arrow.up.right") { open(route) }
             Button("Ask for a recap", systemImage: "text.alignleft") { perform(.recap) }
-                .disabled(sending)
-            if let ticket {
+                .disabled(sending || ticket?.integrityError != nil)
+            if let ticket, ticket.integrityError == nil {
                 Button(ticket.isBacklogged ? "Resume ticket" : "Backlog ticket", systemImage: "tray") {
                     perform(ticket.isBacklogged ? .resume : .backlog)
                 }.disabled(sending)
@@ -32,8 +32,8 @@ struct WorkspaceContextMenu: ViewModifier {
                 .onTapGesture { open(route) }
         }
         .accessibilityActions {
-            Button("Ask for a recap") { perform(.recap) }.disabled(sending)
-            if let ticket {
+            Button("Ask for a recap") { perform(.recap) }.disabled(sending || ticket?.integrityError != nil)
+            if let ticket, ticket.integrityError == nil {
                 Button(ticket.isBacklogged ? "Resume ticket" : "Backlog ticket") {
                     perform(ticket.isBacklogged ? .resume : .backlog)
                 }.disabled(sending)
@@ -80,9 +80,10 @@ private struct WorkspacePreview: View {
             HStack(alignment: .top) {
                 Text(title).panelsScaledFont(size: 20, relativeTo: .title3, weight: .semibold).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                ConversationSignalMark(signal: signal)
+                if let ticket { TicketActivityMark(locale: ticket.locale, signal: signal, completed: ticket.stage == "done" || ticket.stage == "cancelled") }
+                else { ConversationSignalMark(signal: signal) }
             }
-            if !stageLine.isEmpty { Text(stageLine).panelsScaledFont(size: 15).foregroundStyle(PanelsTheme.muted) }
+            if !stageLine.isEmpty { Text(TicketMachine.activityUnknown(ticket?.locale, health: store.executorHealth) ? "Current activity on Mac is unknown." : stageLine).panelsScaledFont(size: 15).foregroundStyle(PanelsTheme.muted) }
             if let recap, !recap.isEmpty {
                 Text(recap).panelsScaledFont(size: 16).lineLimit(5)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)

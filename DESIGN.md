@@ -12,10 +12,10 @@ bubble-less assistant, recessed composer).
 ## Surface roles
 
 - `--surface-1` is the main neutral plane; `--surface-2` is the contained neutral
-  plane for cards, controls, and the human message bubble. A card carries one faint
-  `--border-card` edge. `--surface-rail` is the workspace rail, one close step from the
-  page with a hairline between them. `--surface-raised` is the one floating plane, for
-  popovers, menus, tooltips and hover previews (`#2a2a2a`), with a 1px
+  plane for cards, controls, and the human message bubble. A page card has no edge: its
+  fill alone separates it. The workspace rail's column takes the page's colour with no line
+  between them, and `--surface-rail` fills its bubbles, one close step from the page.
+  `--surface-raised` is the one floating plane, for popovers, menus, tooltips and hover previews (`#2a2a2a`), with a 1px
   `--border-raised` ring and `--shadow-float`; nothing nests a darker well inside it. The
   composer field is `--surface-input` with a 1px `--border-input` edge one step lighter.
 - `--surface-recessed` is for wells, editors, code, and persistent selections.

@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 REVIEW_COMPLETION = os.environ.get("PANELS_REVIEW_COMPLETION") == "1"
+REACHABILITY_SMOKE = os.environ.get("PANELS_REACHABILITY_SMOKE") == "1"
 DEVICE = os.environ.get("PANELS_OFFLINE_DEVICE") or (
     "566D051B-B6BB-4046-9038-66C05CCC2B96"
     if REVIEW_COMPLETION
@@ -29,7 +30,8 @@ LANE_LOCK = (
     + ".lock"
 )
 BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
-REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1"
+GOALS_SMOKE = os.environ.get("PANELS_GOALS_SMOKE") == "1"
+REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE
 
 
 def main() -> int:
@@ -75,9 +77,185 @@ def main() -> int:
             }
         ]
     }
+    # Goals reuse this host and the exact authored chart catalogue from the web.
+    catalogue_source = (ROOT / "ios/scripts/goal-component-examples.ts").read_text()
+    catalogue = (
+        json.loads(
+            catalogue_source.split(
+                "export const goalComponentExamples: GoalComponentExample[] = ", 1
+            )[1]
+            .strip()
+            .removesuffix(";")
+        )
+        if GOALS_SMOKE
+        else []
+    )
+    words_chart = dict(
+        type="chart",
+        id="words",
+        placement="primary",
+        kind="bar",
+        title="Words written",
+        unit="words",
+        measure_id="words",
+        target=1000,
+        manual=dict(model="daily_quota", increments=[100, 250]),
+    )
+    checklist = dict(
+        type="checklist",
+        id="release-checklist",
+        title="Before release",
+        items=[
+            dict(
+                id="first",
+                label="Check the build",
+                state="open",
+                detail="Read the evidence before release.",
+                action="Checked",
+                deadline="2026-11-04",
+            ),
+            dict(
+                id="next",
+                label="Prepare release notes",
+                state="blocked",
+                detail="Explain the change.",
+            ),
+        ],
+    )
+
+    def goal_record(
+        key: str,
+        title: str,
+        kind: str,
+        primary: object = None,
+        blocks: object = None,
+        selected: object = None,
+    ) -> dict[str, Any]:
+        return dict(
+            id=key,
+            project_id="project_personal",
+            title=title,
+            why="Keep the next step clear.",
+            kind=kind,
+            active=True,
+            completed=False,
+            primary_chart=primary,
+            primary_checklist_block_id=selected,
+            deadline="2026-11-04",
+            page=dict(
+                kind="headroom.page", version=1, title=title, summary="", blocks=blocks or []
+            ),
+            revision=1,
+            created_at=1,
+            updated_at=1,
+            employee_backend="codex",
+            employee_launch_model="sol",
+            employee_launch_reasoning_effort=None,
+            holder_kind="chief",
+            holder_id=None,
+            status="attention",
+            status_date="2026-11-04",
+            next_refresh_at=time.time() + 3600,
+        )
+
+    kit_blocks = [copy.deepcopy(item["samples"][0]["block"]) for item in catalogue]
+    kit_blocks += [
+        dict(
+            type="text", id="prose", text="Read the [release evidence](/files/goals/kit/proof.md)."
+        ),
+        dict(
+            type="grid",
+            id="grid",
+            blocks=[
+                dict(
+                    type="metrics",
+                    id="metric",
+                    items=[dict(label="Activation", value="35%", change="+2 pp", tone="good")],
+                ),
+                dict(
+                    type="properties", id="properties", items=[dict(label="Owner", value="Chief")]
+                ),
+            ],
+        ),
+        dict(
+            type="section",
+            id="section",
+            title="Next steps",
+            summary="Use the same page kit.",
+            blocks=[
+                dict(
+                    type="callout",
+                    id="callout",
+                    tone="attention",
+                    title="Check the evidence",
+                    text="Source history is partial.",
+                )
+            ],
+        ),
+        dict(
+            type="segmented",
+            id="views",
+            views=[
+                dict(
+                    id="plan",
+                    label="Plan",
+                    blocks=[
+                        dict(
+                            type="rows",
+                            id="rows",
+                            items=[
+                                dict(
+                                    title="Investigate",
+                                    detail="Read the report",
+                                    status="In progress",
+                                    tone="attention",
+                                    meta="Today",
+                                )
+                            ],
+                        )
+                    ],
+                ),
+                dict(
+                    id="status",
+                    label="Status",
+                    blocks=[dict(type="status", id="status", label="Ready", tone="good")],
+                ),
+            ],
+        ),
+        dict(
+            type="chart",
+            id="number",
+            kind="number",
+            placement="primary",
+            title="Reading only",
+            target=10,
+            series=[dict(name="Current", points=[dict(label="Today", value=8)])],
+        ),
+    ]
+    goals = {
+        g["id"]: g
+        for g in [
+            goal_record("words", "Write 1,000 words", "quantitative", words_chart),
+            goal_record(
+                "release", "Release the app", "binary", blocks=[checklist], selected=checklist["id"]
+            ),
+            goal_record("kit", "Explore the page kit", "binary", blocks=kit_blocks),
+        ]
+    }
+    manual: dict[str, Any] = dict(
+        measure_id="words",
+        definition_revision=1,
+        write_revision=1,
+        timezone="UTC",
+        current_date="2026-11-04",
+        date="2026-11-04",
+        observation=dict(value=400),
+        latest_observation=dict(value=400),
+    )
+    manual_receipts: dict[str, Any] = {}
     state: dict[str, Any] = {
         "offline": False,
-        "slow": not REVIEW_COMPLETION,
+        "slow": not REVIEW_COMPLETION and not GOALS_SMOKE and not REACHABILITY_SMOKE,
         "writes": [],
         "messages": [],
         "recording": None,
@@ -175,7 +353,8 @@ def main() -> int:
             message_owner = owner == "ticket" and ticket["id"] == "offline-1"
             proposal = None if message_owner else ticket["pending_proposal"]
             records[("ticket", ticket["id"])] = ticket_record(ticket, proposal)
-            if proposal:
+            # The Goals smoke reaches Review for its message card only.
+            if proposal and not GOALS_SMOKE:
                 cards[("ticket", ticket["id"])] = proposal["created_at"]
         conversations = [("stub", state["read_through"], None)]
         if REVIEW_MESSAGES:
@@ -411,6 +590,9 @@ def main() -> int:
                 return
             if self.disconnected():
                 return
+            if state.get("request_failed"):
+                self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
+                return
             if path in ("/api/changes", "/api/navigation/view/events") or path.endswith("/view/tail"):
                 # The navigation view and conversation tail send a fresh snapshot frame each
                 # second, so the app follows fixture changes without a change-driven read.
@@ -445,6 +627,63 @@ def main() -> int:
             page = dict(
                 match_count=0, return_count=0, limit=30, offset=0, complete=True, next_offset=None
             )
+            if GOALS_SMOKE and path == "/api/goals":
+                self.respond(
+                    dict(
+                        goals=list(goals.values()),
+                        status_date="2026-11-04",
+                        next_refresh_at=time.time() + 3600,
+                    )
+                )
+                return
+            if GOALS_SMOKE and path.startswith("/api/goals/"):
+                key = path.split("/")[3]
+                if path.endswith("/readings"):
+                    values = (
+                        [
+                            dict(
+                                measure_id="words",
+                                date=f"2026-11-{day:02d}",
+                                status="value",
+                                value=manual["observation"]["value"] if day == 4 else day * 100,
+                            )
+                            for day in range(1, 5)
+                        ]
+                        if key == "words"
+                        else []
+                    )
+                    self.respond(
+                        dict(
+                            goal_id=key,
+                            revision=goals[key]["revision"],
+                            status=goals[key]["status"],
+                            status_date="2026-11-04",
+                            next_refresh_at=time.time() + 3600,
+                            values=values,
+                            sources=[],
+                            charts={},
+                        )
+                    )
+                    return
+                if key in goals and len(path.split("/")) == 4:
+                    self.respond(goals[key])
+                    return
+            if GOALS_SMOKE and path == "/api/measures/words/manual-state":
+                response = copy.deepcopy(manual)
+                response["date"] = query.get("date", [manual["date"]])[0]
+                self.respond(response)
+                return
+            if GOALS_SMOKE and path == "/api/projects":
+                self.respond(dict(projects=[dict(id="project_personal", name="Personal")]))
+                return
+            if GOALS_SMOKE and path == "/files/goals/kit/proof.md":
+                content = b"# Release evidence\nNative goal artifact."
+                self.send_response(200)
+                self.send_header("Content-Type", "text/markdown")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
             if path == "/api/managers":
                 value = {"managers": [], "page": page}
             elif path == "/api/tickets":
@@ -540,6 +779,28 @@ def main() -> int:
                 return
             self.respond(value)
 
+        def do_PATCH(self) -> None:
+            path = urlparse(self.path).path
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
+            if not GOALS_SMOKE or not path.startswith("/api/goals/"):
+                self.respond({}, 404)
+                return
+            with lock:
+                goal = goals[path.split("/")[3]]
+                if body.pop("expected_revision") != goal["revision"]:
+                    self.respond(dict(error=dict(message="This goal changed.")), 409)
+                    return
+                goal.update(body)
+                goal["revision"] += 1
+                if goal["primary_checklist_block_id"]:
+                    items = goal["page"]["blocks"][0]["items"]
+                    goal["completed"] = bool(items) and all(
+                        item["state"] == "done" for item in items
+                    )
+                state["writes"].append(dict(path=path, body=body))
+                (output / "operations.json").write_text(json.dumps(state["writes"]))
+                self.respond(goal)
+
         def do_POST(self) -> None:
             value: dict[str, Any]
             if self.disconnected():
@@ -547,7 +808,36 @@ def main() -> int:
             path = urlparse(self.path).path
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
             with lock:
-                if REVIEW_MESSAGES and path.endswith("/owner-read"):
+                if GOALS_SMOKE and path == "/api/measures/words/manual-writes":
+                    identity = body["request_id"]
+                    if identity in manual_receipts:
+                        self.respond(manual_receipts[identity])
+                        return
+                    if (
+                        body["operation"] == "replace"
+                        and body["expected_write_revision"] != manual["write_revision"]
+                    ):
+                        self.respond(dict(error=dict(message="This reading changed.")), 409)
+                        return
+                    value_number = (
+                        body["value"]
+                        if body["operation"] == "replace"
+                        else manual["observation"]["value"] + body["delta"]
+                    )
+                    manual.update(
+                        date=body["date"],
+                        observation=dict(value=value_number),
+                        latest_observation=dict(value=value_number),
+                        write_revision=manual["write_revision"] + 1,
+                    )
+                    value = dict(
+                        receipt=dict(request_id=identity, date=body["date"]),
+                        state=copy.deepcopy(manual),
+                        replayed=False,
+                    )
+                    manual_receipts[identity] = value
+                    state["writes"].append(dict(path=path, body=body))
+                elif REVIEW_MESSAGES and path.endswith("/owner-read"):
                     state["writes"].append(body)
                     if "/history/" in path:
                         state["historical_read"] = True
@@ -602,6 +892,36 @@ def main() -> int:
     env = os.environ.copy()
     env["TEST_RUNNER_PANELS_OFFLINE_STUB_URL"] = url
     env["TEST_RUNNER_PANELS_REVIEW_COMPLETION"] = "1" if REVIEW_COMPLETION else "0"
+    control = None
+    if REACHABILITY_SMOKE:
+        port = server.server_port
+
+        class ConnectionControl(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                nonlocal server
+                action = self.path.removeprefix("/")
+                if action == "offline" and not state["offline"]:
+                    state["offline"] = True
+                    server.shutdown()
+                    server.server_close()
+                elif action == "online":
+                    state["request_failed"] = False
+                    if state["offline"]:
+                        state["offline"] = False
+                        server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+                        threading.Thread(target=server.serve_forever, daemon=True).start()
+                elif action == "request-failed":
+                    state["request_failed"] = True
+                else:
+                    self.send_error(400)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        control = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ConnectionControl)
+        threading.Thread(target=control.serve_forever, daemon=True).start()
+        env["TEST_RUNNER_PANELS_REACHABILITY_CONTROL_URL"] = f"http://127.0.0.1:{control.server_port}"
     try:
         return subprocess.call(
             [
@@ -653,6 +973,9 @@ def main() -> int:
         subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
         server.shutdown()
         server.server_close()
+        if control:
+            control.shutdown()
+            control.server_close()
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ struct ReviewArtifactLinks: ViewModifier {
             }
     }
     private func follow(_ url: URL) {
+        if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
         if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selected = target }
         else { openURL(url) }
     }

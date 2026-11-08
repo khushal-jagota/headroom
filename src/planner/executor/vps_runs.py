@@ -124,7 +124,10 @@ class MacRuns:
         await settled_io(self.store.begin_connection, identity)
         self.identity, self.link, self.ready = identity, link, False
         if old_link is not None:
-            old_link.close()
+            old_link.close(
+                f"replaced by generation={identity.connection_generation}"
+                f" incarnation={identity.executor_incarnation}"
+            )
 
     async def interrupt_replaced(self, old_identity: ExecutorIdentity | None) -> None:
         identity = self.identity

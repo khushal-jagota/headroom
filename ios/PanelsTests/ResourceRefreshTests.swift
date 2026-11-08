@@ -4,6 +4,43 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ResourceRefreshTests: XCTestCase {
+    func testOnlyUnreachableTransportFailuresRequireTailscaleState() {
+        for code in [URLError.cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .notConnectedToInternet] {
+            XCTAssertTrue(ServerReadFailure(URLError(code)).isServerUnreachable, "\(code)")
+            XCTAssertTrue(ServerReadFailure(NSError(domain: NSURLErrorDomain, code: code.rawValue)).isServerUnreachable)
+        }
+        for code in [URLError.timedOut, .networkConnectionLost, .cancelled, .secureConnectionFailed, .badServerResponse] {
+            XCTAssertFalse(ServerReadFailure(URLError(code)).isServerUnreachable, "\(code)")
+        }
+        let failure = ServerReadFailure(APIError(status: 503, message: "Request failed on the reachable server."))
+        XCTAssertFalse(failure.isServerUnreachable)
+        XCTAssertEqual(failure.message, "Request failed on the reachable server.")
+        XCTAssertFalse(ServerReadFailure(NSError(domain: NSPOSIXErrorDomain, code: URLError.cannotFindHost.rawValue)).isServerUnreachable)
+    }
+
+    /// Risk: the Tailscale state reads the navigation view and settings failures. An
+    /// unreachable server shows it without dropping the saved view, other failures do
+    /// not, and a recovered read clears it.
+    func testUnreachableReadsKeepSavedViewAndClearOnRecovery() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture() }
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        await store.refresh()
+        XCTAssertNotNil(store.review)
+        RefreshProtocol.state.withLock { $0.failure = .cannotFindHost }
+        await store.refresh()
+        XCTAssertTrue(store.serverUnreachable)
+        XCTAssertTrue(store.errors["Navigation"]?.isServerUnreachable == true)
+        XCTAssertNotNil(store.review, "The unavailable screen must not delete the saved view")
+        RefreshProtocol.state.withLock { $0.failure = .badServerResponse }
+        await store.refresh()
+        XCTAssertFalse(store.serverUnreachable, "Other request failures retain the current refresh behavior")
+        XCTAssertNotNil(store.errors["Navigation"])
+        RefreshProtocol.state.withLock { $0.failure = nil }
+        await store.refresh()
+        XCTAssertFalse(store.serverUnreachable)
+        XCTAssertTrue(store.errors.isEmpty)
+    }
+
     func testRefreshReadsOneScopedViewAndSettingsFollowVersions() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture() }
         let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
@@ -144,6 +181,7 @@ private struct RefreshFixture {
     var revision = "1"
     var epoch = "initial"
     var supportsVersions = true
+    var failure: URLError.Code?
     var sections: [String] = []
     static var authority: [String: Any] { ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()], "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]] }
     static func coverage(_ revision: String) -> [String: Any] {
@@ -221,6 +259,7 @@ private struct RefreshFixture {
 
     mutating func response(_ url: URL) throws -> Data {
         paths.append(url.path)
+        if let failure { throw URLError(failure) }
         if url.path == "/api/navigation/view/snapshot" {
             let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "view" }!.value!
             let request = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as! [String: Any]

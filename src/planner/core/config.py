@@ -19,8 +19,18 @@ from planner.environments.app import AppValidationError, validate_app_sha
 from planner.notifications.config import load_apns_config
 from planner.notifications.contracts import APNsConfig
 
-# ConversationStore retries only rolled-back SQLite writer contention.
+# ConversationStore retries rolled-back SQLite writer contention after this pause.
 CONVERSATION_WRITE_LOCK_RETRY_SECONDS: Final = 0.05
+# A conversation write that only the VPS holds is retried in order after any other
+# failure: first after this delay, then after double the last delay, up to the cap.
+CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS: Final = 0.5
+CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS: Final = 30.0
+# A Mac item still waiting on the VPS after this long is answered "retry later" and its
+# locks are let go; work that cannot stop part-way finishes on its own, and the resend
+# finds its receipt. The Mac waits 30 s for an answer (REQUEST_TIMEOUT_SECONDS in
+# executor/configuration.py). The answer comes by this limit whatever is still running,
+# so the 10 s left over is only for the trip back and a busy event loop.
+MAC_ITEM_RETRY_LATER_SECONDS: Final = 20.0
 
 HOST: Final = "127.0.0.1"  # §2: the bind is fixed, not tunable
 DEFAULT_CONFIG_PATH: Final = "config.yaml"

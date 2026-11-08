@@ -84,10 +84,14 @@ from planner.conversation.logic.conversation_start_resolution import bind_conver
 from planner.conversation.publication.coordinator import (
     SignalPublicationCoordinator,
 )
-from planner.conversation.publication.mutations import SignalRuntimeMutation
+from planner.conversation.publication.mutations import PlainFieldMutation, SignalRuntimeMutation
 from planner.conversation.views.writer import append_projection
-from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
-from planner.core.contracts import Principal, PrincipalKind
+from planner.core.config import (
+    CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS,
+    CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS,
+    CONVERSATION_WRITE_LOCK_RETRY_SECONDS,
+)
+from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.core.db import (
     ChangeSignallingConnection,
     commit_without_change_signal,
@@ -247,7 +251,16 @@ class ConversationStore:
         self._integer_now = integer_now
         self._busy_timeout_ms = busy_timeout_ms
         self._write_operations: set[asyncio.Task[object]] = set()
-        self._recording_failures: dict[asyncio.Task[Any], tuple[str, Exception, asyncio.Event]] = {}
+        # Loop time after which _write stops retrying SQLite contention, for a write a
+        # sender will send again. None retries contention for as long as it lasts.
+        self._contention_retry_until: ContextVar[float | None] = ContextVar(
+            "contention_retry_until", default=None
+        )
+        # Previous values of the runtime fields this publication connection has set,
+        # so a save that does not commit puts memory back as the rows are.
+        self._runtime_field_undo: ContextVar[list[PlainFieldMutation] | None] = ContextVar(
+            "runtime_field_undo", default=None
+        )
 
     def claim_runtime(self, *, existing_ownership: IO[bytes] | None = None) -> IO[bytes]:
         """Exclusively reconcile lost capabilities before this runtime admits work."""
@@ -526,36 +539,52 @@ class ConversationStore:
                 ),
             )
 
-    def recording_failures(self, conversation_id: str) -> tuple[Exception, ...]:
-        """Actual recording errors retained for explicit persistence reconciliation."""
-        return tuple(
-            error
-            for target, error, _ in self._recording_failures.values()
-            if target == conversation_id
-        )
-
-    def resume_recording(self, conversation_id: str) -> int:
-        """Resume failed storage calls, without repeating a backend exchange."""
-        pending = [
-            resumed
-            for target, _, resumed in self._recording_failures.values()
-            if target == conversation_id
-        ]
-        for resumed in pending:
-            resumed.set()
-        return len(pending)
-
     async def settle_recording[T](
-        self, conversation_id: str, operation: Callable[[], Coroutine[Any, Any, T]]
+        self,
+        conversation_id: str,
+        operation: Callable[[], Coroutine[Any, Any, T]],
+        *,
+        retry_later_at: float | None = None,
     ) -> T:
-        """A non-lock failure pauses this operation until explicit reconciliation.
+        """Run one conversation write until it succeeds, or tell its sender to send again.
 
-        SQLite contention is handled by _write, at the transaction boundary. All other
-        errors are exposed here and retained with the exact storage call. The caller
-        keeps its accepted turn and ordered event until this operation actually succeeds.
+        SQLite contention is retried by _write, at the transaction boundary. For any
+        other failure there are two cases, and neither waits for a release:
+
+        - A sender that keeps its own durable copy (the Mac outbox) passes
+          ``retry_later_at``. The write is attempted once and contention is retried
+          only until that loop time. A failure that can pass (SQLite operational
+          errors, which include busy and disk errors, and OSError) raises
+          ErrorCode.retry_later; any other failure would fail the same way every time
+          and is raised unchanged, for the caller to refuse. Either way the
+          transaction rolled back, memory is as it was, and the caller's locks go.
+        - Every other write is the VPS's only copy. It is retried in order after a
+          growing delay, up to a cap, and each failure is logged. The caller keeps its
+          locks meanwhile, so nothing later in the conversation overtakes it. An error
+          that will fail every time is retried too: such a write often records what
+          the agent has already been given (a delivered prompt), and handing the error
+          back would leave that turn reserved and the conversation stuck in silence.
         """
-        task = asyncio.current_task()
-        assert task is not None
+        log = logging.getLogger("planner.conversation")
+        if retry_later_at is not None:
+            limit = self._contention_retry_until.set(retry_later_at)
+            try:
+                return await operation()
+            except (sqlite3.OperationalError, OSError) as error:
+                log.warning(
+                    "conversation %s could not save an item its sender will send again: %r",
+                    conversation_id,
+                    error,
+                    exc_info=True,
+                )
+                raise PlannerError(
+                    ErrorCode.retry_later,
+                    f"The conversation could not save this item yet: {error}",
+                ) from error
+            finally:
+                self._contention_retry_until.reset(limit)
+        delay = CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS
+        failures = 0
         while True:
             try:
                 return await operation()
@@ -563,18 +592,17 @@ class ConversationStore:
                 # A proven pre-dispatch refusal is an admission outcome, not a failed write.
                 raise
             except Exception as error:
-                resumed = asyncio.Event()
-                self._recording_failures[task] = (conversation_id, error, resumed)
-                logging.getLogger("planner.conversation").error(
-                    "conversation %s recording paused: %r",
+                failures += 1
+                log.error(
+                    "conversation %s save failed (failure %d); retrying in %g s: %r",
                     conversation_id,
+                    failures,
+                    delay,
                     error,
                     exc_info=True,
                 )
-                try:
-                    await resumed.wait()
-                finally:
-                    self._recording_failures.pop(task, None)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS)
 
     async def _write[T](self, operation: Callable[..., T], *args: object, **kwargs: object) -> T:
         """Retain one SQLite operation through caller cancellation and lock contention.
@@ -584,13 +612,19 @@ class ConversationStore:
         Each next attempt starts after the previous thread finishes, never beside it.
         """
 
+        retry_until = self._contention_retry_until.get()
+
         async def finish() -> T:
+            loop = asyncio.get_running_loop()
             while True:
                 try:
                     return await asyncio.to_thread(lambda: operation(*args, **kwargs))
                 except sqlite3.OperationalError as error:
                     code = getattr(error, "sqlite_errorcode", None)
                     if code is None or code & 0xFF != sqlite3.SQLITE_BUSY:
+                        raise
+                    # Between attempts nothing is under way, so giving up here is safe.
+                    if retry_until is not None and loop.time() >= retry_until:
                         raise
                     await asyncio.sleep(CONVERSATION_WRITE_LOCK_RETRY_SECONDS)
 
@@ -1731,17 +1765,44 @@ class ConversationStore:
     def _publication_connection(
         self,
     ) -> Iterator[tuple[sqlite3.Connection, SignalRuntimeMutation | None]]:
+        """One save's connection. If the save does not commit, its runtime fields go back.
+
+        Every writer here commits as its last step, and nothing after COMMIT raises, so
+        an exception leaving this block means the rows rolled back. Memory must say the
+        same: a Mac item answered "retry later" or refused is interpreted again from it.
+        """
         conn = self._connect()
+        undo: list[PlainFieldMutation] = []
+        undo_scope = self._runtime_field_undo.set(undo)
         try:
             yield conn, self._signal_mutation.get()
+        except BaseException:
+            for previous in reversed(undo):
+                setattr(previous.target, previous.attribute, previous.value)
+            raise
         finally:
+            self._runtime_field_undo.reset(undo_scope)
             conn.close()
 
     def _apply_signal_mutation(
         self, conn: sqlite3.Connection, mutation: SignalRuntimeMutation | None
     ) -> None:
+        """Apply runtime fields before commit, so publication reads them.
+
+        Each previous value is kept before its field changes, so _publication_connection
+        can put it back if anything from here to COMMIT fails.
+        """
         if mutation is not None:
+            undo = self._runtime_field_undo.get()
             for operation in mutation.operations:
+                if undo is not None:
+                    undo.append(
+                        PlainFieldMutation(
+                            operation.target,
+                            operation.attribute,
+                            getattr(operation.target, operation.attribute),
+                        )
+                    )
                 setattr(operation.target, operation.attribute, operation.value)
             from planner.conversation.publication.persistence import mark_changed
 

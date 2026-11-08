@@ -26,6 +26,7 @@ from planner.executor.mac_outbox import DATABASE_NAME, MacOutbox, OutboxEntry
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
+    JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
     WireMessage,
@@ -214,13 +215,25 @@ def test_unsupported_format_preserved_without_conversion(tmp_path: Path) -> None
     assert not (root / "blobs").exists()
 
 
-def test_send_wakes_after_commit_four_conversations_and_one_each(tmp_path: Path) -> None:
+def receipt_reply(request_id: str, envelope: QueuedEnvelope) -> WireMessage:
+    return WireMessage(
+        WireMessageKind.receipt,
+        request_id,
+        json.loads(TypeAdapter(AcceptanceReceipt).dump_json(receipt(envelope))),
+    )
+
+
+def test_send_wakes_after_commit_and_stuck_conversations_hold_back_no_other(
+    tmp_path: Path,
+) -> None:
+    # 7 November: four conversations whose items never got a reply filled every
+    # send slot, so no other conversation's items were sent.
     async def run() -> None:
         outbox = MacOutbox(tmp_path / "outbox")
         active: set[str] = set()
         sent: list[QueuedEnvelope] = []
-        four_started = asyncio.Event()
         release = asyncio.Event()
+        stuck = ("c_a", "c_b", "c_c", "c_d")
 
         writer = peer()
         link = message_link(writer, IDENTITY)
@@ -236,20 +249,11 @@ def test_send_wakes_after_commit_four_conversations_and_one_each(tmp_path: Path)
                 ).fetchone()
             assert envelope.conversation_id not in active
             active.add(envelope.conversation_id)
-            assert len(active) <= 4
             sent.append(envelope)
-            if len(active) == 4:
-                four_started.set()
-            await release.wait()
+            if envelope.conversation_id in stuck:
+                await release.wait()
             active.remove(envelope.conversation_id)
-            await deliver(
-                link,
-                WireMessage(
-                    WireMessageKind.receipt,
-                    message.request_id,
-                    json.loads(TypeAdapter(AcceptanceReceipt).dump_json(receipt(envelope))),
-                ),
-            )
+            await deliver(link, receipt_reply(message.request_id, envelope))
 
         async def send(message: WireMessage) -> None:
             replies.append(asyncio.create_task(respond(message)))
@@ -258,17 +262,19 @@ def test_send_wakes_after_commit_four_conversations_and_one_each(tmp_path: Path)
         sender = asyncio.create_task(outbox.send_pending(link))
         await asyncio.sleep(0)
         try:
-            for conversation in ("c_a", "c_b", "c_c", "c_d", "c_e"):
+            for conversation in (*stuck, "c_e"):
                 for number in range(2):
                     await asyncio.to_thread(
                         outbox.add, entry(f"{conversation}_{number}", conversation)
                     )
-            await asyncio.wait_for(four_started.wait(), 2)
-            assert len(sent) == 4
+            assert await outbox.wait_confirmed("c_e_1", 2) is not None
+            assert {e.submission_id for e in sent if e.conversation_id in stuck} == {
+                f"{conversation}_0" for conversation in stuck
+            }
             release.set()
-            confirmed = await outbox.wait_confirmed("c_e_1", 2)
-            assert confirmed is not None
-            for conversation in ("c_a", "c_b", "c_c", "c_d", "c_e"):
+            for conversation in stuck:
+                assert await outbox.wait_confirmed(f"{conversation}_1", 2) is not None
+            for conversation in (*stuck, "c_e"):
                 assert [e.submission_id for e in sent if e.conversation_id == conversation] == [
                     f"{conversation}_0",
                     f"{conversation}_1",
@@ -283,6 +289,121 @@ def test_send_wakes_after_commit_four_conversations_and_one_each(tmp_path: Path)
             outbox.close()
 
     asyncio.run(run())
+
+
+def test_failing_conversation_backs_off_alone_and_keeps_the_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr("planner.executor.mac_outbox.OUTBOX_RETRY_INITIAL_SECONDS", 0.01)
+    monkeypatch.setattr("planner.executor.mac_outbox.OUTBOX_RETRY_MAX_SECONDS", 0.02)
+
+    async def run() -> None:
+        outbox = MacOutbox(tmp_path / "outbox")
+        attempts: list[tuple[str, float]] = []
+        others_confirmed = asyncio.Event()
+        writer = peer()
+        link = message_link(writer, IDENTITY)
+        replies: list[asyncio.Task[None]] = []
+
+        async def respond(message: WireMessage) -> None:
+            envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
+            if envelope.conversation_id == "c_bad":
+                attempts.append((envelope.submission_id, asyncio.get_running_loop().time()))
+                # Refuse until every other item is confirmed, and at least four times.
+                if not others_confirmed.is_set() or len(attempts) < 5:
+                    busy: JsonObject = {"error": {"code": "retry_later", "message": "VPS busy"}}
+                    reply = WireMessage(WireMessageKind.error, message.request_id, busy)
+                    await deliver(link, reply)
+                    return
+            await deliver(link, receipt_reply(message.request_id, envelope))
+
+        async def send(message: WireMessage) -> None:
+            replies.append(asyncio.create_task(respond(message)))
+
+        writer.send.side_effect = send
+        for submission, conversation in (
+            ("bad_0", "c_bad"),
+            ("bad_1", "c_bad"),
+            ("good_0", "c_good"),
+            ("good_1", "c_good"),
+            ("good_2", "c_good"),
+        ):
+            outbox.add(entry(submission, conversation))
+        sender = asyncio.create_task(outbox.send_pending(link))
+        try:
+            for submission in ("good_0", "good_1", "good_2"):
+                assert await outbox.wait_confirmed(submission, 10) is not None
+            others_confirmed.set()
+            assert await outbox.wait_confirmed("bad_1", 10) is not None
+            assert not link.is_closing() and not sender.done()
+            # The failing head was retried in place, never skipped, then the next sent.
+            names = [name for name, _ in attempts]
+            assert names[-1] == "bad_1" and set(names[:-1]) == {"bad_0"}
+            # Each retry waited the first delay; no busy loop. "Retry later" does not grow
+            # the delay, because the VPS already took its own time limit to answer.
+            gaps = [b - a for (_, a), (_, b) in zip(attempts[:-2], attempts[1:-1], strict=True)]
+            assert all(gap >= 0.009 for gap in gaps)
+            failures = [r.getMessage() for r in caplog.records if "outbox send failed" in r.message]
+            assert len(failures) == len(names) - 2
+            assert "conversation=c_bad" in failures[0]
+            assert failures[0].endswith("error=error reply retry_later")
+            assert outbox.pending_count() == 0
+        finally:
+            sender.cancel()
+            await asyncio.gather(sender, return_exceptions=True)
+            await asyncio.gather(*replies)
+            await link.wait_closed()
+            outbox.close()
+
+    asyncio.run(run())
+
+
+def test_link_loss_ends_sending_at_once_while_a_conversation_backs_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Back-off outlasts the test and no request is in flight to fail with the link,
+    # so only noticing the lost link itself can end sending in time.
+    monkeypatch.setattr("planner.executor.mac_outbox.OUTBOX_RETRY_INITIAL_SECONDS", 60.0)
+
+    async def run() -> None:
+        outbox = MacOutbox(tmp_path / "outbox")
+        writer = peer()
+        link = message_link(writer, IDENTITY)
+        sent: list[str] = []
+        replies: list[asyncio.Task[None]] = []
+
+        async def send(message: WireMessage) -> None:
+            envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
+            sent.append(envelope.conversation_id)
+            if envelope.conversation_id == "c_bad":
+                busy: JsonObject = {"error": {"code": "retry_later", "message": "VPS busy"}}
+                reply = WireMessage(WireMessageKind.error, message.request_id, busy)
+                replies.append(asyncio.create_task(deliver(link, reply)))
+
+        writer.send.side_effect = send
+        outbox.add(entry("bad_0", "c_bad"))
+        sender = asyncio.create_task(outbox.send_pending(link))
+        try:
+            while not any("outbox send failed" in r.message for r in caplog.records):
+                await asyncio.sleep(0.01)  # c_bad is now in its back-off.
+            assert sent == ["c_bad"] and not sender.done()
+            link.close("test drops the link")
+            with pytest.raises(ConnectionError):
+                await asyncio.wait_for(sender, 5)
+            remaining = [
+                task
+                for task in asyncio.all_tasks()
+                if "_send_conversation" in repr(task.get_coro())
+            ]
+            assert remaining == []
+            assert outbox.pending_count() == 1
+        finally:
+            sender.cancel()
+            await asyncio.gather(sender, *replies, return_exceptions=True)
+            await link.wait_closed()
+            outbox.close()
+
+    asyncio.run(asyncio.wait_for(run(), 20))
 
 
 def test_refused_confirmation_is_available_to_later_retry_without_requeue(tmp_path: Path) -> None:
