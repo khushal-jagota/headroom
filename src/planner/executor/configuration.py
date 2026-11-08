@@ -15,7 +15,8 @@ MAX_TOOL_DETAIL_CHARACTERS: Final = 64 * 1024
 FILE_MODIFIED_WINDOW_NS: Final = 2_000_000_000
 FILE_CHUNK_BYTES: Final = 256 * 1024
 TRANSFER_CHUNK_BYTES: Final = 64 * 1024
-MAX_TRANSFERS: Final = 4
+# Concurrent file transfers on one link. Outbox items are not limited by this.
+MAX_FILE_TRANSFERS: Final = 4
 
 # Request and connection timing.
 CLI_RESULT_TIMEOUT_SECONDS: Final = 30.0
@@ -26,6 +27,11 @@ RECONNECT_INTERVAL_SECONDS: Final = 5.0
 HTTP_CONNECT_TIMEOUT_SECONDS: Final = 10.0
 HTTP_CLOSE_TIMEOUT_SECONDS: Final = 5.0
 WS_HEARTBEAT_SECONDS: Final = 15.0
+# A conversation whose outbox send fails retries alone, doubling up to the cap.
+OUTBOX_RETRY_INITIAL_SECONDS: Final = 1.0
+OUTBOX_RETRY_MAX_SECONDS: Final = 60.0
+# A repeated connection failure of one kind is logged at most this often.
+CONNECTION_FAILURE_LOG_INTERVAL_SECONDS: Final = 60.0
 LAUNCH_AGENT_RESTART_THROTTLE_SECONDS: Final = 10
 
 # Agent environment and transport identity.

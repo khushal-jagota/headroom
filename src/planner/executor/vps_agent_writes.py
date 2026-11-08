@@ -234,8 +234,10 @@ class AgentWrites:
             connection.close()
 
         def save() -> AcceptanceReceipt:
+            # No sender check: the item was fenced by its process before the delivery,
+            # and the delivery has happened. A link that dropped meanwhile, or even a
+            # replaced process, must not turn its known outcome into "uncertain".
             with self.store._transaction() as conn:
-                self.store.runs._connected(conn, identity)
                 return self._finish_dispatch(conn, envelope, result)
 
         return await settled_io(save)
