@@ -120,7 +120,7 @@ extension NavigationPresentation {
             }
     }
 
-    /// The queue in review-window order, each card flattened to its native items.
+    /// The queue in review-window order. A Ticket card stays one entry with its parts.
     func reviewQueue(in snapshot: ViewSnapshot) -> ReviewResponse {
         let cards: [NavigationReviewCard]
         let window = snapshot.window("review")
@@ -128,15 +128,16 @@ extension NavigationPresentation {
             let byMember = Dictionary(review.map { ($0.member, $0) }, uniquingKeysWith: { first, _ in first })
             cards = window.members.compactMap { byMember[$0] }
         } else { cards = review }
-        let items = cards.flatMap { card -> [ReviewItem] in
+        let queue = cards.map { card -> ReviewCard in
             switch card {
-            case .message(let message): return [message.item]
-            case .ticket(_, _, _, let proposal, let messages):
-                return (proposal.map { [ReviewItem(reviewItemType: "proposal", ticketId: $0.ticketId, field: $0.field, title: $0.title, waitingSince: $0.waitingSince)] } ?? [])
+            case .message(let message): return ReviewCard(id: message.item.id, parts: [message.item])
+            case .ticket(let id, _, _, let proposal, let messages):
+                let parts = (proposal.map { [ReviewItem(reviewItemType: "proposal", ticketId: $0.ticketId, field: $0.field, title: $0.title, waitingSince: $0.waitingSince)] } ?? [])
                     + messages.map(\.item)
+                return ReviewCard(id: "ticket:\(id)", ticketId: id, parts: parts)
             }
         }
-        return ReviewResponse(items: items, runningWorkerCount: snapshot.content.counts.runningConversations,
+        return ReviewResponse(cards: queue, runningWorkerCount: snapshot.content.counts.runningConversations,
                               unloadedCount: window.map { max(0, $0.total - $0.members.count) } ?? 0)
     }
 }
