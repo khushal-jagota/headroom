@@ -548,6 +548,9 @@
      scrollbar takes no gutter (4px in on both sides); a classic one keeps its own width on both
      sides. The dock keeps the same gutters, so it lines up with the bubbles in every case. */
   .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:auto; scrollbar-color:auto; padding:var(--rail-bubble-gap) calc(var(--rail-bubble-gap) - var(--rail-scrollbar-width)) var(--rail-list-fade); scroll-padding-block:var(--rail-edge-fade) var(--rail-list-fade); }
+  /* The list isolates its selection washes. Lift that whole stack while a fixed goal
+     preview is open, so the dock cannot cover its controls on a short phone. */
+  .active-work-scroll:has(:global([data-goal-preview])) { z-index:5; }
   .active-work-scroll::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
   .active-work-scroll::-webkit-scrollbar-track { background:transparent; }
   .active-work-scroll::-webkit-scrollbar-thumb { border-radius:var(--radius-pill); background:transparent; }
