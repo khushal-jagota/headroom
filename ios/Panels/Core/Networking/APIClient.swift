@@ -104,7 +104,6 @@ struct APIClient: Sendable {
     func manager(_ id: String) async throws -> ManagerDetail { try await get("/api/managers/\(id)/workspace") }
     func chief() async throws -> ChiefDetail { try await get("/api/workers/chief-of-staff/settings") }
     func chiefConversation() async throws -> ConversationReference { try await get("/api/chief/conversation") }
-    func review() async throws -> ReviewResponse { try await get("/api/review") }
     func ideas() async throws -> IdeasResponse { try await get("/api/ideas") }
     func deployment() async throws -> DeploymentStatus { try await get("/api/deployment-status") }
     func artifacts(owner: ArtifactOwner, directory: String = "", offset: Int = 0) async throws -> ArtifactPage {
@@ -114,35 +113,11 @@ struct APIClient: Sendable {
 
 enum TicketFilter: String, CaseIterable, Sendable { case active, backlogged, done }
 
-// Preserve the user's loaded window when a change arrives. Pages remain bounded requests.
-extension APIClient {
-    func managerWindow(through lastOffset: Int) async throws -> ManagersResponse {
-        var page = try await managers()
-        var rows = page.managers
-        while let offset = page.page.nextOffset, offset <= lastOffset {
-            page = try await managers(offset: offset)
-            let ids = Set(rows.map(\.id))
-            rows += page.managers.filter { !ids.contains($0.id) }
-        }
-        return ManagersResponse(managers: rows, page: page.page)
-    }
-    func ticketWindow(through lastOffset: Int) async throws -> TicketsResponse {
-        var page = try await tickets()
-        var rows = page.tickets
-        while let offset = page.page.nextOffset, offset <= lastOffset {
-            page = try await tickets(offset: offset)
-            let ids = Set(rows.map(\.id))
-            rows += page.tickets.filter { !ids.contains($0.id) }
-        }
-        return TicketsResponse(tickets: rows, page: page.page)
-    }
-}
-
 // Cached data is explicit: preflight checks and receipt requests always use the network.
 extension APIClient {
     static func cacheable(_ path: String) -> Bool {
         !path.contains("/receipts") && !path.contains("/body") && !path.contains("/pages") &&
-        (path == "/api/review" || path == "/api/workers" || path.hasPrefix("/api/tickets") ||
+        (path == "/api/workers" || path.hasPrefix("/api/tickets") ||
          path.hasPrefix("/api/managers") || path.hasPrefix("/api/worker-types") ||
          path == "/api/workers/chief-of-staff/settings" || path == "/api/chief/conversation" ||
          path.hasPrefix("/api/conversation/conversations/"))

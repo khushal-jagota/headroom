@@ -33,7 +33,7 @@ struct FeedbackView: View {
         .panelsNavigationTitle("Feedback")
         .navigationBarTitleDisplayMode(.large)
         .panelsRefreshable { await model.load(using: store.client) }
-        .task(id: store.revision) { await model.load(using: store.client) }
+        .task(id: "\(store.baseURL):\(store.connectionSession)") { await model.load(using: store.client) }
     }
 
     private func tabTitle(_ title: String, count: Int?) -> String {

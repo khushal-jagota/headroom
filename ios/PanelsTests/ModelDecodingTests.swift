@@ -16,10 +16,7 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(tickets.tickets.first?.workerType, "exploration")
         XCTAssertEqual(tickets.page.returnCount, tickets.tickets.count)
     }
-    func testLiveReviewAndDetailContracts() throws {
-        let review = try decode("review", as: ReviewResponse.self)
-        XCTAssertEqual(review.items.last?.ticketId, "t_02zd37tz")
-        XCTAssertEqual(review.items.last?.field, "wireframe")
+    func testLiveDetailContracts() throws {
         let ticket = try decode("ticket-full", as: TicketDetail.self)
         XCTAssertEqual(ticket.id, "t_02zd37tz")
         XCTAssertEqual(ticket.manager.kind, "manager")
