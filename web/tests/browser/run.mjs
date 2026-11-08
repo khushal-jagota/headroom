@@ -110,6 +110,12 @@ async function runSelected(entries, options, receipt, requiredCompanions) {
     const serverStarted = performance.now();
     const types = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".woff2": "font/woff2"};
     const resources = new Map(prepared.flatMap(case_ => (case_.resources || []).map(resource => [resource.path, resource])));
+    // The app server mounts assets/ at /assets, where tokens.css finds its self-hosted Inter.
+    // Serve the same files to every case, so a page renders in the app's font whichever
+    // entries were selected.
+    for (const name of ["InterVariable.woff2", "InterVariable-Italic.woff2"]) {
+      resources.set(`/assets/fonts/${name}`, {contentType: "font/woff2", body: await readFile(join(repositoryRoot, "assets/fonts", name))});
+    }
     server = createServer(async (request, response) => {
       try {
         const pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname);

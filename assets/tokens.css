@@ -33,10 +33,6 @@
   /* The secondary action's fill (Direction v2: 13% white, no border). Older callers that
    * paint a secondary action with it land on the shared button's secondary fill. */
   --fill-secondary: var(--button-secondary-fill);
-  /* The filled primary action. Direction v2 makes it inverse (88% white with dark ink), not
-   * accent: the accent is kept for needs-you marks. */
-  --accent-fill: var(--button-primary-fill);
-  --accent-fill-hover: var(--button-primary-fill-hover);
   /* Inline code: a translucent lift that reads on every surface it lands on. */
   --surface-code: rgb(255 255 255 / 3%); /* round 17: quieter, so code in prose does not break its texture */
   /* Popovers, menus, tooltips and hover previews: the one raised plane. It carries a 1px
@@ -47,7 +43,6 @@
    *   #242424 raised (tooltips, a preview's band) · #272727 hover · #2a2a2a input (composer,
    *   secondary buttons, the selected segment) · #303030 selected (and a secondary button's hover).
    * Hover and selection stand clearly off the bubble (+12 and +21) and apart from each other. */
-  --surface-step: #202020;
   --surface-hover: #272727;
   --surface-input-hover: #303030;
   --surface-selected: #353535; /* round 16: one step clearer of hover, so the two never read alike */
@@ -75,7 +70,6 @@
   --text-muted: var(--tone-secondary);
   --text-faint: var(--tone-secondary);
   --text-faintest: var(--tone-tertiary);
-  --text-placeholder: var(--tone-faint);
 
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;
@@ -91,7 +85,6 @@
   --accent-attention: #d4ab6c; /* binary goals due today */
   /* A chart's reading numeral stands on the page-title role: no seventh size. */
   --type-chart-reading: var(--type-page-title);
-  --type-chart-compact: var(--type-page-title);
   /* A yes-or-no goal's reading ('Not done', 'Done') is a reading like a chart's number: the
    * same 22px, never the page title's size. */
   --type-chart-completion: var(--page-reading);
@@ -117,11 +110,7 @@
   --chart-muted: var(--tone-tertiary);
   --chart-legend: var(--tone-tertiary);
   --chart-reference: #777777;
-  --chart-range-surface: #171717;
   --chart-sample-control: #222222;
-  --chart-range-border: #ffffff0d;
-  --chart-range-selected: #2c2c2c;
-  --chart-range-shadow: 0 1px 3px #0003;
   --chart-meter-track: #242424;
   --chart-budget-track: #424242;
   --chart-budget-remaining: #676767;
@@ -181,12 +170,8 @@
   --page-gutter: var(--space-5);
   --surface-pad: var(--space-5);
   /* Reading measures + the read's generous bottom tail (layout, not the space grid) */
-  --measure-read: 680px;
   --measure-index: 760px;
   --space-page-tail: 128px;
-  /* Shared title/text channel; conversation cards start and end on these same edges. It is
-   * the page column, --page-measure, under its older name. */
-  --document-channel-measure: var(--page-measure);
   --file-preview-markdown-max-height: 24rem;
   /* The shell's nav bar. A screen that has to be exactly as tall as the space it was
      given works it out from the viewport, so its height has to be a value and not a
@@ -197,10 +182,7 @@
   --border-hairline: 1px;
   --border-strong: 2px;
   --border-color: rgba(255, 255, 255, 0.08);
-  /* The edge of a contained card, and the brighter edge of a focused field. */
-  --border-card: rgba(255, 255, 255, 0.07);
   --border-hover: rgba(255, 255, 255, 0.13);
-  --border-focus: var(--focus-ring);
   /* THE focus ring, drawn the same way on every focusable control: staging's 2px line in
    * the accent, 2px off the control. An outline follows the control's own
    * radius, so at a 2px offset its radius is the control's radius + 2. It is a line, never a
@@ -224,8 +206,6 @@
   --type-ui: var(--type-body);
   --type-md: var(--type-body);
   --type-lg: var(--type-page-section);
-  /* Section headings on a page: the page system's section head, --type-page-section. */
-  --type-section: var(--type-page-section);
   --type-prose-lg: var(--type-body);
   /* The page title: the page system's title size, --type-page-title. */
   --type-display: var(--type-page-title);
@@ -269,10 +249,6 @@
   --button-secondary-fill-hover: var(--surface-input-hover);
   /* Ghost: no fill until hovered. */
   --button-ghost-fill-hover: var(--state-step);
-  /* No button wears an outline (owner). The outline variant is drawn as the secondary fill,
-   * and anything that still reads these gets no edge and the ghost's hover step. */
-  --button-outline-edge: transparent;
-  --button-outline-fill-hover: var(--state-step);
   /* Segmented control: no track; the selected segment carries the selected fill. */
   --segment-height: var(--button-height);
   --segment-radius: var(--button-radius);
@@ -322,15 +298,6 @@
   /* Fills stand 12px in from the column: the 6px frame inset plus 6px inside the frame. */
   --rail-edge: 12px;
   --rail-pad: 10px;
-  /* 16px of room above the list's first block. */
-  --rail-top: 16px;
-  /* A row fills its whole block, so nothing sits between a block's edge and a row's fill.
-   * The shell's Settled rows still read these two names. */
-  --rail-row-inset: 0px;
-  --rail-row-pad: var(--rail-pad);
-  /* Tickets and their headings stand on the Manager name's own text edge (owner decision):
-   * the header and the Ticket list are told apart by type and spacing, not by indent. */
-  --rail-indent: 0px;
   /* The rail stands on a 4px grid: every block, fill and line box below is a multiple of 4,
    * so every top lands on it. Size, weight and space make the hierarchy, in this order:
    *   a Manager's header: the project eyebrow (12/500, line 16) directly over the name
@@ -344,7 +311,6 @@
    *     12px between groups;
    *   8px between Manager bubbles. */
   --rail-row-height: 24px;
-  --rail-row-pad-y: 2px;
   --rail-row-line: 20px;
   /* Baselines land on the grid too. A face sets its baseline a fixed way down its line box
    * (Inter and SF alike: 15px down a 20px line at 13.5-14px, 18px down a 24px line at 18px,
@@ -354,13 +320,10 @@
   --rail-row-pad-top: 2px;
   --rail-row-pad-bottom: 2px;
   --rail-title-nudge: 2px;
-  --rail-goal-title-nudge: -1px;
-  --rail-goal-state-nudge: 2px;
   --rail-heading-nudge: 0px;
   --rail-heading-line: 16px;
   --rail-head-pad: 4px;
   --rail-title-line: 24px;
-  --rail-goal-pad-y: 6px;
   /* A goal row: one line (owner), a 28px fill, a step taller than a Ticket row (24px). */
   --rail-goal-row-height: 28px;
   --rail-goal-size: 14px;
@@ -399,11 +362,8 @@
   /* The list's edges: a short fade, always the same, so a row's words keep their true tone
    * up to the edge; and clear air under the last block when the list is scrolled to its end. */
   --rail-edge-fade: 8px;
-  --rail-foot-clear: 12px;
   /* The list's scrollbar lives in the column's own edge, never inside the rows. */
   --rail-scrollbar-width: 4px;
-  /* Room the list keeps above its first fill for the focus ring (2px clear, 1.5px wide). */
-  --rail-ring-room: 6px;
   /* Rail text, as white over the page. Brightness has exactly two levels, shared by Manager
    * names and rows alike: 92% for anything that needs the person, 50% for anything that does
    * not (white at 92% and 50% over the rail). Size and weight make a Manager lead its block
@@ -427,7 +387,6 @@
    * raised plane (#242424, one step under the old #2a2a2a, owner) and a soft shadow, no ring.
    * The fill's step over the bubbles and the page is its edge. */
   --rail-float-surface: var(--surface-raised);
-  --rail-float-shadow: 0 4px 16px rgb(0 0 0 / 28%);
   /* A hover preview floats over cards of nearly its own tone: a hairline of light defines its edge
    * and a short, soft shadow lifts it, instead of a broad dark one (round 16). */
   --rail-preview-shadow: 0 0 0 1px rgb(255 255 255 / 7%), 0 4px 12px rgb(0 0 0 / 22%);
@@ -475,12 +434,6 @@
   --weight-page-section: 600;
   /* A card's lead paragraph: the section-head size, one step lighter than its title. */
   --weight-page-lead: 500;
-  /* A page list's group heading: the rail's label voice, 12px/500 at 56%. */
-  --type-page-list-label: var(--type-small);
-  --weight-page-list-label: 500;
-  --tone-page-list-label: rgb(255 255 255 / 56%);
-  --type-small-print: var(--type-small);
-  --tone-small-print: var(--tone-tertiary);
   /* Every button on a page: one height, one radius, one label size. */
   --page-control-height: 28px;
   /* A chart's reading: clearly under the page title, never level with it. */
@@ -491,15 +444,8 @@
   --page-card-edge: transparent;
   --page-card-radius: 12px;
   --page-card-pad: 20px;
-  /* A row-card (a yes-or-no goal): 64px tall, its two lines on an 11px inset. */
-  --page-row-card-pad-y: 11px;
-  --page-row-card-pad-x: 16px;
   /* A page list row: the rail's row at body size. Its fill reaches this far past the
    * column on both sides, so the words stay on the column's edge. */
-  --page-row-height: 32px;
-  /* A group heading keeps the rail's rhythm: 8px above it, 2px below, so it binds to its rows. */
-  --page-heading-above: 8px;
-  --page-heading-below: 2px;
   --page-row-outset: 8px;
   /* A checklist's progress is staging's ring: 40px, a 3px stroke in staging's strong tone
    * (#f2f2f2) on staging's 10% track. Its checks are 14px circles. */
@@ -511,9 +457,6 @@
   --page-check-target: 40px;
   /* A disclosure's chevron, drawn the same at the right end of every fold. */
   --page-chevron: 14px;
-  /* The page keeps this much room under its last block, so it can scroll fully clear of
-   * the composer zone. */
-  --page-end-room: var(--space-7);
   /* Above the composer the page fades out over 20px, as staging's document edge does: one
    * fixed CSS gradient, never measured. The page keeps this much room under its last block
    * (and above anything scrolled into view) to stand clear of the zone. */
@@ -540,9 +483,7 @@
   --composer-quiet-tone: #969696;
   --composer-zone: calc(var(--composer-status-height) + var(--composer-height) + var(--space-4));
   /* Counts are plain small numerals after their label, in the label's own tone. */
-  --count-tone: var(--tone-tertiary);
   --count-needs-you-fill: transparent;
-  --count-needs-you-ink: var(--tone-tertiary);
 }
 
 /* === Direction v2 roles (Manager-owned; notes/design-direction.md) ==========

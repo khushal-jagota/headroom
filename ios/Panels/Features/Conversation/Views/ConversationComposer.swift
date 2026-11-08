@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import PhotosUI
+import ImageIO
 
 struct ConversationComposer: View {
     @Bindable var model: ConversationModel
@@ -23,6 +24,7 @@ struct ConversationComposer: View {
     @State private var pickPicture = false
     @State private var picture: PhotosPickerItem?
     @State private var camera = false
+    @State private var dropTargeted = false
     @FocusState private var focused: Bool
     // Unknown Mac activity changes the indicator; Stop still targets the saved turn, as on the web.
     private var stopsTurn: Bool { !reviewReply && model.status?.turnRunning == true && model.draft.isEmpty && model.attachments.isEmpty && !speech.recording }
@@ -37,16 +39,16 @@ struct ConversationComposer: View {
             guard let selected else { return }
             Task {
                 do {
-                    guard let bytes = try await selected.loadTransferable(type: Data.self), bytes.count <= 20_000_000 else { model.error = "Choose a picture smaller than 20 MB."; return }
+                    guard let bytes = try await selected.loadTransferable(type: Data.self) else { return }
                     let type = selected.supportedContentTypes.first ?? .jpeg
-                    model.attachments.append(.init(piece: "image", data: bytes.base64EncodedString(), mediaType: type.preferredMIMEType ?? "image/jpeg", fileName: "Picture." + (type.preferredFilenameExtension ?? "jpg")))
+                    model.attach(bytes, type: type, fileName: "Picture." + (type.preferredFilenameExtension ?? "jpg"))
                     picture = nil
                 } catch { model.error = error.localizedDescription }
             }
         }
         .sheet(isPresented: $camera) {
             ConversationCamera { data in
-                if let data { model.attachments.append(.init(piece: "image", data: data.base64EncodedString(), mediaType: "image/jpeg", fileName: "Photo.jpg")) }
+                if let data { model.attach(data, type: .jpeg, fileName: "Photo.jpg") }
                 camera = false
             }.ignoresSafeArea()
         }
@@ -56,8 +58,7 @@ struct ConversationComposer: View {
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 let data = try Data(contentsOf: url)
-                guard data.count <= 20_000_000 else { model.error = "Choose a file smaller than 20 MB."; return }
-                model.attachments.append(.init(piece: "file", text: nil, data: data.base64EncodedString(), mediaType: UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream", fileName: url.lastPathComponent))
+                model.attach(data, type: UTType(filenameExtension: url.pathExtension), fileName: url.lastPathComponent)
             } catch { model.error = error.localizedDescription }
         }
         .onChange(of: capturingSpeech) { _, capturing in
@@ -84,10 +85,10 @@ struct ConversationComposer: View {
                 .accessibilityIdentifier("conversation-error")
         }
         if !model.attachments.isEmpty {
-            HStack {
-                Text(model.attachments.compactMap(\.fileName).joined(separator: ", ")).lineLimit(1)
-                Button("Remove") { model.attachments = [] }
-            }.font(PanelsTheme.TypeScale.small)
+            ConversationAttachmentTray(pieces: model.attachments) { index in
+                guard model.attachments.indices.contains(index) else { return }
+                model.attachments.remove(at: index)
+            }
         }
         if let statusNote {
             HStack {
@@ -127,6 +128,14 @@ struct ConversationComposer: View {
         }
         .background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: card ? 22 : 24))
         .overlay(RoundedRectangle(cornerRadius: card ? 22 : 24).stroke(PanelsTheme.border))
+        .overlay {
+            if dropTargeted { RoundedRectangle(cornerRadius: card ? 22 : 24).stroke(PanelsTheme.accent, lineWidth: 2) }
+        }
+        .onDrop(of: [.image], isTargeted: $dropTargeted) { providers in
+            guard !capturingSpeech else { return false }
+            for provider in providers { receiveImage(provider, fallbackName: "Dropped image") }
+            return true
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-input-box")
         .padding(.horizontal, card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
@@ -198,6 +207,7 @@ struct ConversationComposer: View {
             .disabled(capturingSpeech).allowsHitTesting(!capturingSpeech)
             .accessibilityHidden(capturingSpeech)
             .textFieldStyle(.plain).accessibilityIdentifier("conversation-input")
+            .modifier(ImagePaste(model: model))
     }
     private func primaryAction() {
         if speech.recording { speech.stop() }
@@ -217,9 +227,121 @@ struct ConversationComposer: View {
             }
         } else { startVoice() }
     }
+    /// Loads one dropped image in its own format, then attaches it.
+    private func receiveImage(_ provider: NSItemProvider, fallbackName: String) {
+        let type = provider.registeredContentTypes.first { $0.conforms(to: .image) } ?? .png
+        let name = provider.suggestedName ?? fallbackName
+        _ = provider.loadDataRepresentation(for: type) { data, error in
+            Task { @MainActor in
+                if let data {
+                    let fileName = (name as NSString).pathExtension.isEmpty ? name + "." + (type.preferredFilenameExtension ?? "png") : name
+                    model.attach(data, type: type, fileName: fileName)
+                } else if let error { model.error = error.localizedDescription }
+            }
+        }
+    }
     private func startVoice() {
         focused = false
         let prefix = model.draft
         Task { await speech.start { model.updateSpeechTranscript($0, prefix: prefix) } }
+    }
+}
+
+/// One tile for each attachment: the picture itself for images, and the type, name and
+/// size for other files. Remove is omitted where the message has already left the composer.
+struct ConversationAttachmentTray: View {
+    let pieces: [ConversationSend.Piece]
+    var remove: ((Int) -> Void)? = nil
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(pieces.enumerated()), id: \.offset) { index, piece in
+                    ConversationAttachmentTile(piece: piece, remove: remove.map { action in { action(index) } })
+                }
+            }.padding(.vertical, 2)
+        }
+        .scrollClipDisabled()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("conversation-attachments")
+    }
+}
+
+struct ConversationAttachmentTile: View {
+    let piece: ConversationSend.Piece
+    var remove: (() -> Void)? = nil
+    @State private var thumbnail: UIImage?
+    @ScaledMetric(relativeTo: .body) private var side = 64.0
+    private var name: String { piece.fileName ?? (piece.piece == "image" ? "Image" : "File") }
+    private var kind: String { let ext = (name as NSString).pathExtension.uppercased(); return ext.isEmpty ? "FILE" : String(ext.prefix(4)) }
+    private var byteCount: Int { (piece.data?.utf8.count ?? 0) / 4 * 3 }
+    var body: some View {
+        Group {
+            if piece.piece == "image" {
+                ZStack {
+                    PanelsTheme.raised
+                    if let thumbnail { Image(uiImage: thumbnail).resizable().scaledToFill() } else { RingSpinner(size: .compact) }
+                }
+                .frame(width: side, height: side).clipShape(RoundedRectangle(cornerRadius: 10))
+            } else {
+                HStack(spacing: 8) {
+                    Text(kind)
+                        .font(PanelsTheme.TypeScale.caption.weight(.semibold)).foregroundStyle(PanelsTheme.muted)
+                        .frame(width: 40, height: 40).background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(name).font(PanelsTheme.TypeScale.small).lineLimit(1).truncationMode(.middle)
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))
+                            .font(PanelsTheme.TypeScale.caption).foregroundStyle(PanelsTheme.faint)
+                    }.frame(maxWidth: 160, alignment: .leading)
+                }
+                .padding(.leading, 8).padding(.trailing, remove == nil ? 10 : 30)
+                .frame(minHeight: side).background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(PanelsTheme.border))
+        .overlay(alignment: .topTrailing) {
+            if let remove {
+                Button { Haptics.light(); remove() } label: {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(PanelsTheme.text)
+                        .frame(width: 22, height: 22).background(PanelsTheme.surface, in: Circle())
+                        .overlay(Circle().stroke(PanelsTheme.border))
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .offset(x: 14, y: -14)
+                .accessibilityLabel("Remove \(name)")
+            }
+        }
+        .padding(.top, remove == nil ? 0 : 8).padding(.trailing, remove == nil ? 0 : 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(name)
+        .accessibilityIdentifier("conversation-attachment")
+        .task(id: piece) {
+            guard piece.piece == "image", let encoded = piece.data else { return }
+            let target = CGSize(width: side * 3, height: side * 3)
+            thumbnail = await Task.detached(priority: .userInitiated) {
+                guard let data = Data(base64Encoded: encoded), let image = UIImage(data: data) else { return nil }
+                return await image.byPreparingThumbnail(ofSize: target) ?? image
+            }.value
+        }
+    }
+}
+
+/// Pastes images from the edit menu. Text paste stays with the text field.
+/// The SwiftUI paste hook exists from iOS 27 and the Xcode 27 SDK (Swift 6.4). Earlier
+/// systems and older SDKs, such as CI's Xcode 26, keep picker and drag only.
+private struct ImagePaste: ViewModifier {
+    let model: ConversationModel
+    func body(content: Content) -> some View {
+        #if compiler(>=6.4)
+        if #available(iOS 27.0, *) {
+            content.pasteDestination(for: Data.self) { items in
+                for data in items {
+                    let type = CGImageSourceCreateWithData(data as CFData, nil).flatMap(CGImageSourceGetType).flatMap { UTType($0 as String) } ?? .png
+                    model.attach(data, type: type, fileName: "Pasted image." + (type.preferredFilenameExtension ?? "png"))
+                }
+            } validator: { items in items.filter { UIImage(data: $0) != nil } }
+        } else { content }
+        #else
+        content
+        #endif
     }
 }

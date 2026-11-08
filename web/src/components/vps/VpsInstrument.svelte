@@ -6,13 +6,12 @@
   let { instrument, id, title, trend, loading = false }: {
     instrument?: Instrument; id: InstrumentId; title: string; trend?: Trend; loading?: boolean;
   } = $props();
-  let wide = $derived(id === 'cpu' || id === 'memory');
   let primary = $derived(instrument ? formatReading(instrument.primary, id === 'cpu' || id === 'disk' ? 0 : id === 'load' ? 1 : undefined) : null);
   let secondary = $derived(instrument?.secondary ? formatReading(instrument.secondary) : null);
   let unit = $derived(id === 'io' ? `${primary?.unit ?? ''} written` : id === 'network' ? `${primary?.unit ?? ''} in` : id === 'disk' ? '% full' : primary?.unit ?? '');
 </script>
 
-<article class="instrument" class:instrument--wide={wide} class:instrument--small={!wide} data-state={instrument?.severity ?? 'normal'} data-vps-metric={id} aria-label={title}>
+<article class="instrument" data-state={instrument?.severity ?? 'normal'} data-vps-metric={id} aria-label={title}>
   <div class="instrument-body">
     <div class="instrument-top">
       <h2 class="instrument-name">{#if loading}<VpsSkeleton />{:else}{title}{/if}</h2>

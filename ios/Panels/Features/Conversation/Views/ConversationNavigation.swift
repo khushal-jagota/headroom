@@ -320,7 +320,8 @@ struct ConversationThread: View {
                                 }
                                 if row.item?.body?.reference != nil, let item = row.item, model.expandedBodies[item.key] == nil {
                                     Button("Read message") { Task { await model.loadBody(item, using: store.client) } }
-                                } else { Text(.init(row.text)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
+                                } else if !row.text.isEmpty { Text(.init(row.text)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
+                                if !row.attachments.isEmpty { ConversationAttachmentTray(pieces: row.attachments) }
                                 if let note = row.note, note != "Sent" {
                                     HStack {
                                         if note == "Waiting for connection" { Image(systemName: "clock").foregroundStyle(PanelsTheme.faint) }

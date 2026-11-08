@@ -189,12 +189,19 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         expect(signal.locator('[data-conversation-signal="message"]')).to_have_count(
             int(message), timeout=WAIT_MS
         )
-        line = pane.locator("[data-conversation-rest-line]")
-        if line.is_visible():
+        # At rest the status line over the composer says Working. An open conversation shows
+        # its Stop control instead.
+        state = pane.locator("[data-conversation-pane]").get_attribute("data-conversation-state")
+        if state == "rest":
+            line = pane.locator("[data-conversation-rest-line]")
             if working:
                 expect(line).to_have_text("Working", timeout=WAIT_MS)
             else:
                 expect(line).not_to_have_text("Working", timeout=WAIT_MS)
+        else:
+            expect(pane.locator("[data-conversation-stop]")).to_have_count(
+                int(working), timeout=WAIT_MS
+            )
 
     for conversation, row in rows.items():
         expect(row).to_be_visible(timeout=WAIT_MS)

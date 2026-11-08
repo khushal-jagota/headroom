@@ -6,21 +6,12 @@
   padding: var(--page-block-gap) 0 var(--space-page-tail);
 }
 
-[data-screen="config"] .agents-page-head {
-  margin-bottom: var(--space-6);
-}
-
-[data-screen="config"] :is(.agents-page-head, .agents-detail-head) h1 {
+[data-screen="config"] .agents-detail-head h1 {
   font-family: var(--font-ui);
   font-size: var(--page-reading);
   font-weight: var(--weight-page-title);
   letter-spacing: var(--tracking-page-title);
   line-height: 1.2;
-}
-
-[data-screen="config"] .agents-page-head h1 {
-  font-size: var(--type-page-section);
-  font-weight: var(--weight-page-section);
 }
 
 [data-screen="config"] .agents-section-title {
