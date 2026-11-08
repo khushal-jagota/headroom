@@ -64,6 +64,27 @@ struct PendingWork: Codable, Identifiable, Sendable {
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
         }
     }
+    nonisolated static let finishedLifetime: TimeInterval = 24 * 60 * 60
+    nonisolated static let uncertainLifetime: TimeInterval = 7 * 24 * 60 * 60
+    /// Every reader decodes the whole list, so finished rows must not pile up. Sent and
+    /// changed work goes after a day, uncertain work after a week. Failed work waits for
+    /// the user's retry, and pending work is still owed to the server.
+    /// Returns the work it kept, so the drain needs no second read of the list.
+    @discardableResult
+    func clearFinished(_ server: String, now: Date = .now) -> [PendingWork] {
+        let all = entries(server)
+        let due = Set(all.filter { work in
+            let age = now.timeIntervalSince(work.completed ?? work.created)
+            switch work.state {
+            case .sent, .changed: return age >= Self.finishedLifetime
+            case .uncertain: return age >= Self.uncertainLifetime
+            case .recording, .waiting, .sending, .serverQueued, .failed: return false
+            }
+        }.map(\.id))
+        do { try store.remove(server: server, kind: "outbox", ids: Array(due)) }
+        catch { store.saveError = error.localizedDescription; return all }
+        return all.filter { !due.contains($0.id) }
+    }
     @discardableResult
     func retry(_ id: String, api: APIClient, content: [ConversationSend.Piece]? = nil) -> String? {
         let server = LocalStore.server(api.baseURL)
@@ -87,10 +108,13 @@ struct PendingWork: Codable, Identifiable, Sendable {
     }
     func drain(api: APIClient) async {
         let server = LocalStore.server(api.baseURL)
-        guard !NativeBuildGate.requiresUpdate(api.baseURL), networkAvailable, !draining.contains(server) else { return }
+        guard !draining.contains(server) else { return }
+        // Cleanup comes before the network guard, so an offline launch also clears the backlog.
+        let saved = clearFinished(server)
+        guard !NativeBuildGate.requiresUpdate(api.baseURL), networkAvailable else { return }
         draining.insert(server)
         defer { draining.remove(server) }
-        for var work in entries(server) {
+        for var work in saved {
             guard !Task.isCancelled, !NativeBuildGate.requiresUpdate(api.baseURL) else { return }
             guard [.waiting, .sending, .uncertain, .serverQueued].contains(work.state) else { continue }
             if case .goal = work.owner {

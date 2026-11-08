@@ -16,7 +16,8 @@ import SwiftData
     }
 }
 
-/// Only cached reads are evictable. Drafts, recordings and outgoing work have no age limit.
+/// Cached reads are evictable by count and size. Finished outgoing work is cleared by
+/// `Outbox.clearFinished`. Drafts, recordings and unfinished work have no age limit.
 @MainActor @Observable final class LocalStore {
     static let shared = LocalStore()
     nonisolated static let cacheLimit = 96
@@ -103,15 +104,22 @@ import SwiftData
                 }
             }
             try context.save()
-            if kind != "cache" || draft != nil { workRevision += 1 }
+            // A plain draft save is read back only by its own composer. Waking every
+            // saved-work observer on each key press made typing lag.
+            if (kind != "cache" && kind != "draft") || draft != nil { workRevision += 1 }
             saveError = nil
         } catch { context.rollback(); saveError = "Couldn’t save on this phone: \(error.localizedDescription)"; throw error }
     }
     func remove(server: String, kind: String, id: String) throws {
+        try remove(server: server, kind: kind, ids: [id])
+    }
+    /// One save and one observer wake for the whole batch.
+    func remove(server: String, kind: String, ids: [String]) throws {
+        guard !ids.isEmpty else { return }
         let context = try context
         do {
-            let key = Self.key(server, kind, id)
-            if let row = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first { context.delete(row) }
+            let keys = ids.map { Self.key(server, kind, $0) }
+            for row in try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { keys.contains($0.key) })) { context.delete(row) }
             try context.save()
             if kind != "cache" { workRevision += 1 }
         } catch { context.rollback(); throw error }
