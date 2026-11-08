@@ -1240,10 +1240,16 @@ def verify_conversation_overlay(browser, url):
         # Initial selection stays product-owned. Choose dock state for this proof.
         if pane.get_attribute('data-conversation-state') == 'opened':
             page.locator('[data-conversation-collapse]').click()
-        # Open by the same controls as an owner. A viewport read follows each layout.
-        box.click()
-        expect(pane).to_have_attribute('data-conversation-state', 'rest')
-        box.fill("Draft keeps its place.\n" * 6)
+        # On a phone, focus in the field opens the conversation. The dock proofs here take
+        # the draft without that focus, and the keyboard proof below takes it on purpose.
+        phone = width <= 720
+        if phone:
+            box.evaluate("e=>{e.value='Draft keeps its place.\\n'.repeat(6);e.dispatchEvent(new Event('input',{bubbles:true}))}")
+        else:
+            # Open by the same controls as an owner. A viewport read follows each layout.
+            box.click()
+            expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            box.fill("Draft keeps its place.\n" * 6)
         settle()
         doc_before = document.bounding_box()
         dock_before = page.locator('.conversation-layer').bounding_box()
@@ -1326,7 +1332,8 @@ def verify_conversation_overlay(browser, url):
         page.locator('[data-conversation-collapse]').click()
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         settle()
-        box.click()
+        if not phone:
+            box.click()
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         final = document.get_by_text(final_text, exact=True)
         document.evaluate('e=>e.scrollTop=e.scrollHeight')
@@ -1346,13 +1353,18 @@ def verify_conversation_overlay(browser, url):
         assert final_box['y'] + final_box['height'] <= card_peek['y'] + 1, (name, final_box, card_peek)
         page.screenshot(path=str(evidence / f'{name}-document-tail.png'), animations='disabled')
         # Simulated keyboard reduction plus displacement stays inside the host intersection.
+        # On a phone the keyboard comes with focus in the field, in the open conversation.
+        if phone:
+            box.focus()
+            expect(pane).to_have_attribute('data-conversation-state', 'opened')
         page.evaluate('window.__keyboardViewport(100, 420)')
         settle()
         card_keyboard = pane.bounding_box()
         assert card_keyboard['y'] >= max(host['y'], 100) - 1, (name, card_keyboard, host)
         assert card_keyboard['y'] + card_keyboard['height'] <= min(host['y'] + host['height'], 520) + 1, (name, card_keyboard, host)
         # Full conversation follows the displaced viewport without losing scrollback.
-        page.locator('[data-conversation-expand]').click()
+        if not phone:
+            page.locator('[data-conversation-expand]').click()
         expect(pane).to_have_attribute('data-conversation-state', 'opened')
         settle()
         assert_anchor('keyboard reduction and displacement')

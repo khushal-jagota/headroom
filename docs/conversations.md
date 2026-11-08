@@ -9,7 +9,7 @@ A conversation is one agent, working in one folder, with a permanent record of w
 - **The conversation system.** One core that holds messages while the agent is busy, starts and stops the child process, writes the notebook, and decides each send's fate.
 - **Three backend adapters.** Hermes over ACP, Codex through its app server, and Claude through the Claude Agent SDK. The backends are a closed set, and one door turns an untrusted name into a member of it or refuses it.
 - **Send Message.** The door a person, the Chief, a Manager, or a Worker uses to address someone. It finds the recipient's current conversation and records who sent the message.
-- **The pane.** The same conversation dock on a Ticket, the Chief, and a Manager (a [goal](goals.md) shows its holder's), with a composer for text, images, files, a video, and voice. Voice is transcribed into the draft, so audio never enters the conversation. The dock keeps its menus within the visible screen.
+- **The pane.** The same conversation dock on a Ticket, the Chief, and a Manager (a [goal](goals.md) shows its holder's), with a composer for text, images, files, a video, and voice. Voice is transcribed into the draft, so audio never enters the conversation. The dock opens into the full conversation, and on a phone typing always happens there: the open conversation fills the screen above the keyboard. A transcript already read stays loaded at the dock, so opening it again draws it at once. The dock keeps its menus within the visible screen.
 
 ```
  person or agent             Worker step · Manager wake · recovery

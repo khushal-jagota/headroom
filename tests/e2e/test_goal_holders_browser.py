@@ -65,9 +65,6 @@ def test_goal_promotion_and_stable_url_share_manager_name(
 
     expect(page.get_by_text("Previous goal conversation", exact=True)).to_have_count(0)
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
-    type_instead = page.get_by_role("button", name="Type instead", exact=True)
-    if type_instead.is_visible():
-        type_instead.click(timeout=WAIT_MS)
     composer = page.locator("[data-conversation-input]")
     expect(composer).to_be_editable(timeout=WAIT_MS)
     composer.fill("Help launch this guide", timeout=WAIT_MS)

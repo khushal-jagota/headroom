@@ -1,9 +1,16 @@
 import { MANAGED_ARTIFACT_PRIMARY_PRESS, type RegisterManagedArtifactFrame } from "../managedArtifactPress";
+import { COMPACT_LAYOUT_MEDIA_QUERY } from "../compactLayout";
 
-/** Dismiss on the press origin so a selection may finish outside the card. */
+/** Dismiss on the press origin so a selection may finish outside the card. On a wide
+ *  screen a press beside the pane is outside it. In the phone layout the pane fills the
+ *  width, and the strips of layer around it are where a finger lands beside or under the
+ *  composer: a phone moves that near-miss tap's focus onto the field while reporting the
+ *  press where the finger landed, so there the whole layer is inside. */
 export function isPrimaryPressOutsideConversation(event: PointerEvent): boolean {
-  return event.isPrimary && event.button === 0 && event.target instanceof Element &&
-    event.target.closest("[data-conversation-pane]") === null;
+  if (!event.isPrimary || event.button !== 0 || !(event.target instanceof Element)) return false;
+  const inside = window.matchMedia(COMPACT_LAYOUT_MEDIA_QUERY).matches
+    ? ".conversation-layer, [data-conversation-pane]" : "[data-conversation-pane]";
+  return event.target.closest(inside) === null;
 }
 
 /** Reject frames outside the current visible, unclipped part of this surface. */
