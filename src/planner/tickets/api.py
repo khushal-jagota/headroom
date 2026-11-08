@@ -16,7 +16,7 @@ validation envelope rather than FastAPI's 422, so the CLI and UI see one error s
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -118,7 +118,14 @@ def get_clock(request: Request) -> Clock:
     return cast(Clock, request.app.state.clock)
 
 
-async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
+def db_conn(request: Request) -> Iterator[sqlite3.Connection]:
+    """One connection per request, opened and closed on a worker thread.
+
+    A plain-function handler then does all its database work off the event loop, so a
+    write that waits on the SQLite lock holds up only its own request. An ``async def``
+    handler that takes it runs its database work on the loop instead. A write route must
+    not do that, and the route table test holds that rule.
+    """
     conn = cast(Callable[[], sqlite3.Connection], request.app.state.conn_factory)()
     try:
         yield conn
