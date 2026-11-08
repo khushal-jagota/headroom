@@ -23,8 +23,8 @@ outgoing work, such as a voice transcript, still raises it.
 Responses are bounded to 96 entries and 16 MiB across servers. A response larger
 than the budget is not cached. Drafts and outgoing work are separate records and
 are never removed by this eviction. Every screen that shows outgoing work reads the
-whole list, so the foreground send loop clears finished work when it starts and on
-each 3-second tick, before it checks the network. Sent and changed work is removed
+whole list, so each send pass first clears finished work, before it checks the
+network. The foreground loop runs a pass when it starts and every 3 seconds. Sent and changed work is removed
 24 hours after it finished, and uncertain work after 7 days. Failed work stays
 until the user retries it. Waiting, sending, recording and server-queued work stays.
 Everything is partitioned by server origin;
