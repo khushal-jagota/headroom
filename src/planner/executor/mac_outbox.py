@@ -15,13 +15,14 @@ from collections import defaultdict
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 from uuid import uuid4
 
+from planner.core.contracts import ErrorCode
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
 from planner.executor.configuration import (
     FILE_MODIFIED_WINDOW_NS,
-    MAX_TRANSFERS,
+    OUTBOX_RETRY_INITIAL_SECONDS,
+    OUTBOX_RETRY_MAX_SECONDS,
     ExecutorPaths,
 )
 from planner.executor.files import (
@@ -33,7 +34,7 @@ from planner.executor.files import (
     regular_descriptor,
     safe_component,
 )
-from planner.executor.link import Link
+from planner.executor.link import Link, PeerErrorReply, failure_name
 from planner.executor.link_files import put_file
 from planner.executor.protocol import (
     AcceptanceReceipt,
@@ -402,15 +403,25 @@ class MacOutbox:
                 )
             )
 
-    def pending_heads(self) -> tuple[QueuedEnvelope, ...]:
+    def pending_conversations(self) -> tuple[str, ...]:
+        """Conversations with a waiting item, the one waiting longest first."""
         with self._lock:
             return tuple(
-                self._envelope(row)
+                row[0]
                 for row in self._db.execute(
-                    "SELECT * FROM items WHERE sequence IN (SELECT MIN(sequence) FROM items "
-                    "WHERE receipt_json IS NULL GROUP BY conversation_id) ORDER BY sequence"
+                    "SELECT conversation_id FROM items WHERE receipt_json IS NULL "
+                    "GROUP BY conversation_id ORDER BY MIN(sequence)"
                 )
             )
+
+    def pending_head(self, conversation_id: str) -> QueuedEnvelope | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM items WHERE receipt_json IS NULL AND conversation_id=? "
+                "ORDER BY sequence LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            return None if row is None else self._envelope(row)
 
     def pending_count(self) -> int:
         with self._lock:
@@ -507,6 +518,8 @@ class MacOutbox:
             except ValueError as error:
                 if link.is_closing():
                     raise ConnectionError("file generation changed") from error
+                if isinstance(error, PeerErrorReply) and error.code == ErrorCode.retry_later:
+                    raise  # A passing condition must not refuse the item for good.
                 # This item cannot use the descriptor. Answer its request and
                 # obtain a durable refusal without disturbing other conversations.
                 refused = await link.request(
@@ -522,62 +535,119 @@ class MacOutbox:
             return None
 
     async def _send_one(self, link: Link, envelope: QueuedEnvelope) -> None:
+        # A reply that makes no progress fails the attempt, so it waits its back-off
+        # instead of resending at once without end.
+        uploaded: set[FileManifest] = set()
         while True:
             response = await link.request(WireMessageKind.envelope, as_object(envelope))
             if response.kind is WireMessageKind.missing_files:
                 missing = type_adapter(tuple[FileManifest, ...]).validate_python(
                     response.payload.get("files")
                 )
+                if not set(missing) - uploaded:
+                    raise ValueError("VPS asked for no file not already uploaded")
                 snapshots = {s.manifest: s for s in self.snapshots(envelope)}
                 for manifest in missing:
                     if manifest not in snapshots:
                         raise ValueError("VPS requested a file outside this item")
                     refusal = await self._upload(link, envelope, snapshots[manifest])
                     if refusal is not None:
+                        self._check_receipt_names(envelope, refusal)
                         await asyncio.to_thread(self.acknowledge, refusal)
                         return
+                    uploaded.add(manifest)
                 continue
             if response.kind is not WireMessageKind.receipt:
                 raise ValueError("expected outbox receipt")
             receipt = type_adapter(AcceptanceReceipt).validate_python(response.payload)
+            self._check_receipt_names(envelope, receipt)
             await asyncio.to_thread(self.acknowledge, receipt)
             return
+
+    @staticmethod
+    def _check_receipt_names(envelope: QueuedEnvelope, receipt: AcceptanceReceipt) -> None:
+        if receipt.submission_id != envelope.submission_id:
+            raise ValueError("receipt names another item")
+
+    async def _send_conversation(self, link: Link, conversation_id: str) -> None:
+        """Send one conversation's items in order, one in flight, until none wait.
+
+        A failure of this conversation's item, including reading it from the outbox,
+        backs off and retries it alone. Only the link's own loss ends this task with an
+        error, which ends all sending.
+        """
+        delay = OUTBOX_RETRY_INITIAL_SECONDS
+        attempt = 0
+        while not self._closed:
+            envelope: QueuedEnvelope | None = None
+            try:
+                envelope = await asyncio.to_thread(self.pending_head, conversation_id)
+                if envelope is None:
+                    return
+                await self._send_one(link, envelope)
+            except Exception as error:
+                if link.is_closing():
+                    raise
+                if self._closed:
+                    return  # Sending is ending; the item stays queued.
+                attempt += 1
+                logging.getLogger(__name__).warning(
+                    "outbox send failed conversation=%s sequence=%s attempt=%s"
+                    " retry_in=%gs error=%s",
+                    conversation_id,
+                    None if envelope is None else envelope.sequence,
+                    attempt,
+                    delay,
+                    failure_name(error),
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, OUTBOX_RETRY_MAX_SECONDS)
+            else:
+                delay, attempt = OUTBOX_RETRY_INITIAL_SECONDS, 0
 
     async def send_pending(self, link: Link) -> None:
         self._loop = asyncio.get_running_loop()
         async with self._sending:
-            tasks: dict[asyncio.Task[None], str] = {}
+            # Each conversation sends by itself, so none waits behind another's failure.
+            senders: dict[str, asyncio.Task[None]] = {}
             wake: asyncio.Task[bool] | None = None
+            # Ends sending as soon as the link is lost, even while every sender backs off.
+            link_closed = asyncio.create_task(link.closed())
 
             try:
                 while not self._closed:
                     self._wake.clear()
-                    active = set(tasks.values())
-                    for envelope in await asyncio.to_thread(self.pending_heads):
-                        if len(tasks) >= MAX_TRANSFERS:
-                            break
-                        if envelope.conversation_id not in active:
-                            tasks[asyncio.create_task(self._send_one(link, envelope))] = (
-                                envelope.conversation_id
+                    for conversation_id in await asyncio.to_thread(self.pending_conversations):
+                        if conversation_id not in senders:
+                            senders[conversation_id] = asyncio.create_task(
+                                self._send_conversation(link, conversation_id)
                             )
-                            active.add(envelope.conversation_id)
                     wake = asyncio.create_task(self._wake.wait())
-                    done, _ = await asyncio.wait(
-                        (*tasks, wake), return_when=asyncio.FIRST_COMPLETED
+                    await asyncio.wait(
+                        (*senders.values(), wake, link_closed),
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
                     wake.cancel()
                     await asyncio.gather(wake, return_exceptions=True)
-                    for task in done:
-                        if task is not wake:
-                            finished = cast(asyncio.Task[None], task)
-                            tasks.pop(finished)
-                            await finished
+                    if link_closed.done():
+                        await link_closed
+                        raise ConnectionError("executor link lost")
+                    for conversation_id, sender in tuple(senders.items()):
+                        if sender.done():
+                            del senders[conversation_id]
+                            await sender  # Raises only when the link itself was lost.
             finally:
                 if wake is not None:
                     wake.cancel()
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, *([wake] if wake else []), return_exceptions=True)
+                link_closed.cancel()
+                for sender in senders.values():
+                    sender.cancel()
+                await asyncio.gather(
+                    *senders.values(),
+                    link_closed,
+                    *([wake] if wake else []),
+                    return_exceptions=True,
+                )
 
     def close(self) -> None:
         with self._lock:

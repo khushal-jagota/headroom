@@ -22,7 +22,7 @@ from planner.executor.configuration import (
     validate_server_url,
 )
 from planner.executor.diagnostics import ConnectionPhase, connection_diagnostics
-from planner.executor.link import Link, create_client_session, dial_link
+from planner.executor.link import Link, create_client_session, dial_link, failure_name
 from planner.executor.mac_agent_gateway import AgentGateway
 from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox
@@ -108,10 +108,10 @@ class MacService:
     async def _command(self, command: ChildCommand, link: Link) -> None:
         try:
             outcome = await self.runner.run(command)
-        except (OSError, ValueError, sqlite3.Error):
+        except (OSError, ValueError, sqlite3.Error) as error:
             # Required output may not have reached disk. Reconnect retries that
             # publication before answering the ask; it never repeats the provider call.
-            link.close()
+            link.close(f"command output was not recorded: {failure_name(error)}")
             return
         # A command belongs to the retained native registry, not the connection
         # that first carried it. Publish its stable outcome on the admitted link;
@@ -169,7 +169,7 @@ class MacService:
             response.kind is not WireMessageKind.hello_accepted
             or parse_identity(response.payload) != self.identity
         ):
-            link.close()
+            link.close("hello accepted a different identity")
             raise ProtocolRefused("handshake identity changed")
         self.connection.refusal = None
         self.connection.link = link
@@ -187,6 +187,7 @@ class MacService:
     async def _serve(self) -> None:
         link: Link | None = None
         tasks: list[asyncio.Task[None] | asyncio.Task[bool]] = []
+        reason = "outbox closed"
         async with contextlib.AsyncExitStack() as transport:
             try:
                 link = await transport.enter_async_context(
@@ -207,6 +208,15 @@ class MacService:
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     await task
+                if self._stop.is_set():
+                    reason = "update requested" if self._update_requested else "executor stopping"
+            except asyncio.CancelledError:
+                reason = "executor service cancelled"
+                raise
+            except Exception as error:
+                # A close already made by the link keeps its own, earlier reason.
+                reason = f"{self.phase.value} failed: {failure_name(error)}"
+                raise
             finally:
                 if link is not None and link.refusal is not None:
                     self.connection.refusal = link.refusal
@@ -214,7 +224,7 @@ class MacService:
                 for task in tasks:
                     task.cancel()
                 if link is not None:
-                    link.close()
+                    link.close(reason)
                 await self.catalog.settle()
                 await asyncio.gather(*tasks, return_exceptions=True)
 

@@ -28,8 +28,10 @@ def run(executor_id: str, application_revision: str, panels_server_url: str) -> 
         validate_executor_launch(executor_id, application_revision, panels_server_url)
     except ValueError as error:
         raise click.ClickException(str(error)) from error
+    from planner.executor.diagnostics import configure_executor_logging
     from planner.executor.update_configuration import MAC_RUNTIME_CHILD_ENV
 
+    configure_executor_logging()
     if os.environ.get(MAC_RUNTIME_CHILD_ENV) != "1":
         from planner.executor.runtime_bootstrap import main as bootstrap_main
 

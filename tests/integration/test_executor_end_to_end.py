@@ -1603,11 +1603,11 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                     assert writer is not None
                     close = writer.close
 
-                    def restore_budget_and_close() -> None:
+                    def restore_budget_and_close(reason: str = "test closed the link") -> None:
                         # Accelerate only the missing receipt, not the fresh
                         # generation's real SSH and reconciliation setup.
                         monkeypatch.setattr("planner.executor.link.REQUEST_TIMEOUT_SECONDS", 30.0)
-                        close()
+                        close(reason)
 
                     monkeypatch.setattr(writer, "close", restore_budget_and_close)
             async with paused_outbox(harness.mac.outbox):
