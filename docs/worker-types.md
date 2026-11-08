@@ -16,7 +16,6 @@ User-owned stages are marked with `*`.
 | Type | For | Stages between Brief and Consequences |
 | --- | --- | --- |
 | Coding | Product and repository work | What Changes, Implementation |
-| General | Work that needs no special process | Work Done |
 | Debugging | Finding a cause and defining a fix, without implementing it | Problem Understanding, Root Cause, Proposed Fix |
 | Research | A framed question and a sourced synthesis | Research Plan, Findings |
 | Exploration | An unclear question worked through with the person | Understanding\*, Research Plan, Findings, Answer\*, Proposed Follow-up |
