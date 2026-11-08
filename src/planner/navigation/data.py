@@ -884,6 +884,12 @@ def _require_current_schema(conn: sqlite3.Connection) -> None:
         raise RuntimeError("navigation public reads require the current schema")
 
 
+def require_records_current(conn: sqlite3.Connection) -> None:
+    """Refuse a read whose own transaction holds source writes the records lack yet."""
+    if conn.execute("SELECT 1 FROM navigation_dirty LIMIT 1").fetchone():
+        raise RuntimeError("navigation read requires a transaction with no pending source writes")
+
+
 def _require_clean_read(conn: sqlite3.Connection) -> None:
     _require_current_schema(conn)
     if conn.execute("SELECT 1 FROM navigation_dirty LIMIT 1").fetchone():

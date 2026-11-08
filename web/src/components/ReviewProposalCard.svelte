@@ -28,8 +28,7 @@
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
-  import { mintOutgoingMessage } from "../lib/conversation/outgoing";
-  import { fateSentence } from "../lib/conversation/composer";
+  import { deliverReviewNote, forgetReviewNote, recallReviewNote, reviewNoteText, type ReviewNoteDelivery } from "../lib/review/noteDelivery";
   import type { DeliveredMessage } from "../lib/conversation/wire";
   import {
     createVoiceCapture,
@@ -79,10 +78,8 @@
   } = $props();
 
   let revisionDraft = $state("");
-  /** Words sent to the Worker with no answer saying whether they arrived (the conversation
-   *  was unsure, or the answer never came back). Approving again with the same words does not
-   *  send them a second time. */
-  let possiblyDelivered: string | null = null;
+  let noteDelivery = $state<ReviewNoteDelivery | null>(null);
+  let noteRecoveryError = $state<unknown>(null);
   let decisionKey = $state<string | null>(null);
 
   let resolvedAnnounced = false;
@@ -161,37 +158,6 @@
     return mutateJson(path,{...options});
   }
 
-  /** What is written in the line goes to the Worker as the owner's message, through the
-   *  door the Ticket page's composer uses, before the approval it rides with. A message the
-   *  conversation did not take stops the approval: the line keeps its words and says why. */
-  async function deliverToWorker(text: string): Promise<void> {
-    requireVisibleProposal();
-    if (text === possiblyDelivered) return;
-    const message = mintOutgoingMessage({ content: [{ piece: "text", text }], senderLabel: "owner", mode: "queue" });
-    let delivered: DeliveredMessage;
-    try {
-      delivered = await mutateJson<DeliveredMessage>(`/api/tickets/${ticketId}/conversation/send`, {
-        method: "POST",
-        body: {
-          conversation_id: healthyDetail?.conversation_id ?? null,
-          content: message.content,
-          sender_label: message.senderLabel,
-          mode: message.mode,
-          sender_message_id: message.messageId,
-          sent_at_unix_milliseconds: message.sentAtUnixMilliseconds
-        }
-      });
-    } catch (error) {
-      // Only the server turning the request away says the words went nowhere.
-      const status = (error as { status?: number }).status;
-      if (status === undefined || status < 400 || status >= 500) possiblyDelivered = text;
-      throw error;
-    }
-    if (delivered.fate === "started" || delivered.fate === "queued" || delivered.fate === "injected") return;
-    if (delivered.fate === "uncertain") possiblyDelivered = text;
-    throw Object.assign(new Error(fateSentence(delivered) ?? delivered.fate), { code: "not_approved" });
-  }
-
   /** One announcement per proposal, whichever way it left the queue. */
   function announceResolved(): void {
     if (resolvedAnnounced) return;
@@ -203,7 +169,14 @@
     if (currentKey !== decisionKey) {
       revisionDraft = decisionKey === null ? initialRevisionDraft : "";
       decisionKey = currentKey;
-      possiblyDelivered = null;
+      noteRecoveryError = null;
+      try {
+        noteDelivery = recallReviewNote(currentKey);
+        if (noteDelivery?.status === "pending" && !revisionDraft.trim()) revisionDraft = reviewNoteText(noteDelivery);
+      } catch (error) {
+        noteDelivery = null;
+        noteRecoveryError = error;
+      }
 
       resolvedAnnounced = false;
       // The box — and anything being spoken into it — belongs to one proposal.
@@ -230,17 +203,45 @@
 
   async function accept(payload: Record<string, unknown>): Promise<unknown> {
     if (!acceptField) throw new Error("Review decision is not a Ticket field");
+    requireVisibleProposal();
+    const proposalKey = currentKey;
+    const acceptingTicketId = ticketId;
+    const acceptingField = acceptField;
     const note = revisionDraft.trim();
-    if (note) {
-      await deliverToWorker(note);
-      // Delivered: the words are the Worker's now, so an approval that fails after this
-      // and is tried again does not send them twice.
-      revisionDraft = "";
-    }
-    const result = await write(`/api/tickets/${ticketId}/accept/${acceptField}`, {
+    await deliverReviewNote({
+      identity: proposalKey,
+      conversationId: healthyDetail?.conversation_id ?? null,
+      text: note,
+      onChange: (delivery) => {
+        if (currentKey === proposalKey) noteDelivery = delivery;
+      },
+      send: (delivery) => {
+        requireVisibleProposal();
+        if (currentKey !== proposalKey) throw new Error("the visible proposal changed; read it again before accepting");
+        return mutateJson<DeliveredMessage>(`/api/tickets/${acceptingTicketId}/conversation/send`, {
+          method: "POST",
+          body: {
+            conversation_id: delivery.conversationId,
+            content: delivery.message.content,
+            sender_label: delivery.message.senderLabel,
+            mode: delivery.message.mode,
+            sender_message_id: delivery.message.messageId,
+            sent_at_unix_milliseconds: delivery.message.sentAtUnixMilliseconds
+          }
+        });
+      }
+    });
+    requireVisibleProposal();
+    if (currentKey !== proposalKey) throw new Error("the visible proposal changed; read it again before accepting");
+    // An edit during delivery remains a draft for the reviewer to check.
+    if (revisionDraft.trim() !== note) throw new Error("The note changed. Check it before approval.");
+    revisionDraft = "";
+    const result = await write(`/api/tickets/${acceptingTicketId}/accept/${acceptingField}`, {
       method: "POST",
       body: payload
     });
+    forgetReviewNote(proposalKey);
+    if (currentKey !== proposalKey) return result;
     announceResolved();
     return result;
   }
@@ -250,6 +251,16 @@
       method: "PATCH",
       body: { title: raw }
     });
+  }
+
+  async function returnProposal(message: string): Promise<void> {
+    const proposalKey = currentKey;
+    await write(`/api/tickets/${ticketId}/reject`, { method: "POST", body: { message } });
+    forgetReviewNote(proposalKey);
+    if (currentKey !== proposalKey) return;
+    revisionDraft = "";
+    noteDelivery = null;
+    announceResolved();
   }
 
 </script>
@@ -322,7 +333,7 @@
               {initialEditedBody} {onEditedBodyChange} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
-              onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); revisionDraft = ""; announceResolved(); }}
+              onReturn={returnProposal}
               {revisionEditor} revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
             {/key}
           {:else if decisionActions}{@render decisionActions()}
@@ -337,6 +348,16 @@
              Worker and then approves. It is the composer's field (ComposerField); speaking
              with words already in the line appends to them. -->
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
+          {#if noteRecoveryError}
+            <ErrorLine error={noteRecoveryError} />
+          {:else if noteDelivery?.status === "pending"}
+            <div data-review-note-pending>
+              <ErrorLine error={{ code: "not_approved", message: "The note delivery is unconfirmed. Approve checks it again before approval." }} />
+              {#if revisionDraft.trim() !== reviewNoteText(noteDelivery)}
+                <MarkdownBlock text={reviewNoteText(noteDelivery)} />
+              {/if}
+            </div>
+          {/if}
           <ComposerField
             bind:value={revisionDraft}
             placeholder="Add a note for the worker…"

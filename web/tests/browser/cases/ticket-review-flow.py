@@ -168,6 +168,8 @@ def run(browser, urls):
     review_sibling_held = []
     review_sibling_transferred = False
     review_message_sends = []
+    review_note_sends = []
+    review_note_fate = None
     review_held = []
     review_send_fate = "refused"
     review_message_mode = False
@@ -654,8 +656,17 @@ def run(browser, urls):
                     "pending_user_input": None,
                     "composer_catalog": [],
                 }
-        elif path == "tickets/t_review/conversation/send":
+        elif path == "tickets/t_review/conversation/send" and review_note_fate is None:
             result = {"conversation_id": "ticket-delivered-local", "fate": "started"}
+        elif path == "tickets/t_review/conversation/send":
+            review_note_sends.append(route.request.post_data_json)
+            if review_note_fate == "network":
+                route.abort("failed")
+                return
+            if review_note_fate == "http503":
+                route.fulfill(status=503, json={"error": {"code": "unavailable", "message": "Delivery response unavailable"}})
+                return
+            result = {"conversation_id": "review-worker", "fate": review_note_fate}
         elif path == "tickets/t_review/conversation/reset":
             result = {}
         elif path.endswith("/conversation/start-values"):
@@ -1435,6 +1446,67 @@ def run(browser, urls):
     assert choices == ["owner", "outcome_kept", "chief"], choices
     expect(approve_row.get_by_role("option", name="Manager", exact=True)).to_have_count(1)
     approve_row.get_by_role("listbox").press("Escape")
+    # The real card must recover the original message receipt before it can approve.
+    # Mocked HTTP boundaries isolate this browser ownership/persistence regression.
+    note_check_started = time.monotonic()
+    original_note = "Keep the existing approval boundary."
+    note_input = page.locator("[data-review-revision-input]")
+    note_input.fill(original_note)
+    review_note_fate = "uncertain"
+
+    def assert_original_note_identity():
+        first = review_note_sends[0]
+        immutable = ("sender_message_id", "sent_at_unix_milliseconds", "content", "mode", "sender_label")
+        assert all({key: row[key] for key in immutable} == {key: first[key] for key in immutable} for row in review_note_sends)
+        assert first["conversation_id"] in (None, "review-worker")
+        assert all(row["conversation_id"] == "review-worker" for row in review_note_sends[1:])
+
+    def retry_note(expected_count):
+        page.locator("[data-accept]").click()
+        wait_for_write(lambda: len(review_note_sends) == expected_count)
+        assert len(review_note_sends) == expected_count
+        expect(page.locator("[data-accept]")).to_be_enabled()
+        assert not approvals
+        assert_original_note_identity()
+
+    retry_note(1)
+    expect(page.locator("[data-review-note-pending] .error-message")).to_be_visible()
+    retry_note(2)
+    if os.environ.get("PANELS_UNCERTAIN_NOTE_SCREENSHOT"):
+        page.screenshot(path=os.environ["PANELS_UNCERTAIN_NOTE_SCREENSHOT"], full_page=True, animations="disabled")
+    note_input.fill("A changed note cannot discard the unresolved instruction.")
+    retry_note(3)
+    note_input.fill("")
+    retry_note(4)
+    expect(review).to_contain_text(original_note)
+    page.evaluate("window.__showTicket('t_review')")
+    expect(page.locator("[data-review-card]")).to_have_count(0)
+    page.evaluate("window.__showReview()")
+    expect(review).to_be_visible()
+    retry_note(5)
+    page.reload()
+    page.evaluate("window.__showReview()")
+    expect(review).to_be_visible()
+    retry_note(6)
+    review_note_fate = "http503"
+    retry_note(7)
+    review_note_fate = "network"
+    retry_note(8)
+    # A recovered positive receipt allows acceptance. If that acceptance fails,
+    # its next attempt must not send the already confirmed note again.
+    review_note_fate = "started"
+    server_revision = 999
+    page.locator("[data-accept]").click()
+    expect(page.locator(".error-message")).to_contain_text("visible proposal changed")
+    assert len(review_note_sends) == 9
+    assert_original_note_identity()
+    assert review_note_sends[0]["content"] == [{"piece": "text", "text": original_note}]
+    assert not approvals
+    server_revision = 2
+    page.reload()
+    page.evaluate("window.__showReview()")
+    expect(review).to_be_visible()
+    print(f"Review uncertain note recovery: {time.monotonic() - note_check_started:.3f}s", flush=True)
     retained_editor = page.locator("[data-approval-block] [data-edit]")
     retained_editor.click()
     retained_editor.fill("Retained local draft")
@@ -1447,6 +1519,7 @@ def run(browser, urls):
     expect(page.get_by_role("listbox")).to_have_count(0)
     wait_for_write(lambda: approvals)
     assert len(approvals) == 1
+    assert len(review_note_sends) == 9
     assert approvals[0]["next_ceiling"] == "none"
     assert approvals[0]["next_holder"] == {"kind": "owner", "id": "owner"}
     assert approvals[0]["expected_proposal_revision"] == 2
