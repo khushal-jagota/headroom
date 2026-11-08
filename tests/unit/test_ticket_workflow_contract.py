@@ -128,7 +128,6 @@ def test_preset_rewrite_does_not_reinterpret_existing_ticket_stages(
     replacement["fields"] = [field for field in preset["fields"] if field["id"] != "implementation"]
     response = client.post("/api/worker-types", json=replacement)
     assert response.status_code == 200, response.text
-    assert response.json()["migrations"] == []
     for before in created:
         read = client.get("/api/tickets", params={"id": before["id"], "detail": "full"})
         assert read.status_code == 200, read.text

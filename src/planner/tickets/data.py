@@ -69,9 +69,7 @@ from planner.worker_types.configuration import (
 )
 from planner.worker_types.contracts import (
     BRIEF_FIELD_ID,
-    TicketTypeMigration,
     TicketWorkflowDefinition,
-    WorkerTypeDefinition,
     WorkflowDefinition,
 )
 from planner.worker_types.registry import WorkerTypeRegistry, validate_workflow
@@ -2131,57 +2129,3 @@ def set_ticket_backlog(
                 (int(is_backlogged), now, ticket_id),
             )
         return _load_ticket_for_write(conn, ticket_id)
-
-
-def apply_worker_type_migrations(
-    conn: sqlite3.Connection,
-    migrations: tuple[TicketTypeMigration, ...],
-    *,
-    definition: WorkerTypeDefinition,
-    previous_definition: WorkerTypeDefinition | None,
-    now: int,
-) -> None:
-    """Apply an already validated amendment without settling fields or changing authority."""
-    if not conn.in_transaction:
-        raise RuntimeError("Worker type migrations require the definition save transaction")
-    for migration in migrations:
-        if (migration.old_stage, migration.old_ceiling) != (
-            migration.new_stage,
-            migration.new_ceiling,
-        ):
-            conn.execute(
-                "UPDATE tickets SET stage = ?, ceiling = ?, updated_at = ? WHERE id = ?",
-                (migration.new_stage, migration.new_ceiling, now, migration.ticket_id),
-            )
-        if migration.old_stage != migration.new_stage:
-            conn.execute(
-                "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ?",
-                (migration.ticket_id,),
-            )
-            revision_feedback.discard(conn, migration.ticket_id)
-        capture_ticket_attention(conn, migration.ticket_id, now, worker_type_definition=definition)
-
-    # Step context is one-use state, not history. Inspect every Ticket of this type:
-    # stale rows can refer to a removed Stage even when the Ticket itself did not move.
-    changed_steps = (
-        tuple(
-            stage.id
-            for stage in previous_definition.stages
-            if definition.is_known_stage(stage.id)
-            and (
-                stage.gating_field != definition.gating_field(stage.id)
-                or stage.ownership_mode != definition.stage_definition(stage.id).ownership_mode
-            )
-        )
-        if previous_definition is not None
-        else ()
-    )
-    changed_placeholders = ",".join("?" for _ in changed_steps)
-    for table in ("ticket_paired_stage_openers", "ticket_revision_feedback"):
-        changed_clause = f" OR {table}.stage IN ({changed_placeholders})" if changed_steps else ""
-        conn.execute(
-            f"DELETE FROM {table} WHERE EXISTS ("
-            f"SELECT 1 FROM tickets t WHERE t.id = {table}.ticket_id "
-            f"AND t.worker_type = ? AND ({table}.stage != t.stage{changed_clause}))",
-            (definition.worker_type, *changed_steps),
-        )

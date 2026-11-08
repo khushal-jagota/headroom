@@ -123,10 +123,7 @@ def test_preset_edit_never_rewrites_dispatched_ticket_or_pending_approval(
         (values, proposal, ticket_id),
     )
     before = _row(database, ticket_id)
-    assert (
-        write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha", "beta"), now=2)
-        == ()
-    )
+    write_definition(database, _without(PROBE_WORKER_TYPE_DEFINITION, "alpha", "beta"), now=2)
     assert _row(database, ticket_id) == before
     load_worker_runtime_definitions(database)
     ticket = tickets_data.read_ticket(database, ticket_id)

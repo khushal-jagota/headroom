@@ -20,6 +20,8 @@ RETIRED_PLANNING_WORKER_TYPES: Final = frozenset(
 )
 # New-work admission is separate from the frozen three-type planning cutover.
 RETIRED_WORKER_TYPES: Final = RETIRED_PLANNING_WORKER_TYPES | frozenset({"personal"})
+# The board lays its columns out in this type's Stage order, so this type cannot be removed.
+BOARD_COLUMN_ORDER_WORKER_TYPE: Final = "coding"
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,15 +229,3 @@ class WorkerTypeManifest(TypedDict):
     default_backend: str
     default_model: str
     default_reasoning_effort: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class TicketTypeMigration:
-    """A save receipt, retained by the caller with the amendment's evidence."""
-
-    ticket_id: str
-    title: str
-    old_stage: str
-    new_stage: str
-    old_ceiling: str
-    new_ceiling: str

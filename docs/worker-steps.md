@@ -54,7 +54,7 @@ One guarded write takes the claim, re-running every readiness check inside it, s
 
 On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A turn that merely ends does not give it back. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot.
 
-A preset Ticket reads its saved specialist skill reference as usual. A custom Ticket receives the complete workflow guide at kickoff. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step.
+Every Ticket receives its complete workflow guide at kickoff, from its own copy, so a later edit to its Worker type does not change what it reads. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step.
 
 ## Where it shows up
 

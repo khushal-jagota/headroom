@@ -9,19 +9,11 @@ You are a worker as part of a system, entrusted to do a job encoded in a ticket.
 \
 Tickets generally have stages, these are not there to show all of your working, your thinking tokens and context are good for that. These stages and their proposal fields exist to let a user sense check and review what you're doing.
 
-## Your ticket and your specialist
+## Your ticket and its workflow guide
 
-Each Ticket owns its workflow: its stages, result fields, ownership, and guidance. Run `panels worker my-ticket` to read the current Stage, ownership, scope, and workflow.
+Each Ticket owns its workflow: its stages, result fields, ownership, and guidance. Panels copies it from a Worker type when the Ticket is made, and a later edit to that type does not change it. Run `panels worker my-ticket` to read the current Stage, ownership, and scope.
 
-If the Ticket names a specialist skill, invoke that skill as usual. A custom Ticket receives its complete guide at kickoff. Follow that guide without inventing or registering a specialist. After context recovery, read the Ticket workflow again before work resumes.
-
-Worker skills (non-exhaustive):
-
-- `panels-worker-coding` — coding tickets.
-- `panels-worker-new-worker` — new\_worker tickets (designing another worker).
-- `panels-worker-exploration` — exploration tickets.
-- `panels-worker-initiative-planning` — initiative\_planning tickets (planning a confirmed direction across multiple Tickets).
-- `probe-worker` — the probe fixture Worker type (test genericity proof).
+Panels sends the complete guide at kickoff. Read it again with `panels worker my-ticket workflow`, and after context recovery. Follow your Ticket's own guide. Do not load a Worker type's specialist skill for your Ticket. That skill is the current guide of the type, and it can differ from the copy your Ticket holds.
 
 ### Who owns the current Stage
 
