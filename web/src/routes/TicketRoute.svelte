@@ -425,7 +425,15 @@
               <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card data-proposal-created-at={detail.pending_proposal?.created_at} data-proposal-revision={detail.pending_proposal?.revision}>
                 {#if detail.pending_proposal?.field === currentField}
                   {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
-                    <WorkerProposalCard proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
+                    <WorkerProposalCard ticketId={stableId} conversationId={detail.conversation_id}
+                      onSendNote={(delivery) => sendToTicketWorker({
+                        conversation_id: delivery.conversationId,
+                        content: delivery.message.content,
+                        sender_label: delivery.message.senderLabel,
+                        mode: delivery.message.mode,
+                        sender_message_id: delivery.message.messageId,
+                        sent_at_unix_milliseconds: delivery.message.sentAtUnixMilliseconds
+                      })} proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
                       ceiling={detail.ceiling} holder={detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(detail.conversation_id)}
                       onAccept={(payload) => acceptField(currentField, payload)}
                       onScope={updateScope}
