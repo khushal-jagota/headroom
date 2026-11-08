@@ -14,6 +14,7 @@ struct SettingsWorker: Decodable, Sendable, Identifiable {
 struct SettingsSkills: Decodable, Sendable { let skills: [ManagedSkill] }
 struct SettingsSchedules: Decodable, Sendable { let schedules: [SettingsSchedule] }
 struct SettingsSchedule: Decodable, Sendable, Identifiable {
+    var locale: String? = nil
     let id: String
     let title: String
     let enabled: Bool

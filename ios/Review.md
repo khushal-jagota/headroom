@@ -29,8 +29,8 @@ proposal changes during editing, Review keeps the draft and requires a reload.
 
 The approval sheet shows How far as a list of gates and Who reviews as a native
 segmented picker. The suggested next gate and current holder are selected first.
-Nothing is written until Approve until <Stage> is pressed. The worker type's
-served manifest supplies the available gates; Review does not assume coding stages.
+Nothing is written until Approve until <Stage> is pressed. The Ticket's saved workflow supplies the available gates; Review does not assume
+coding stages or read controls from the current Worker preset.
 
 Swipe left past 30% of the screen to skip, or use the Skip button. The swipe never
 approves. The entire ask follows a leftward finger drag; releasing short of the
@@ -81,7 +81,7 @@ a terminal refusal receives a new identity while retaining the original read bou
 
 Mark read acknowledges only the displayed run and does not send a reply. Both
 Mark read and Open conversation use the existing secondary action style. Open
-conversation follows a link through the owning Ticket, Orchestrator or Chief page
+conversation follows a link through the owning Ticket, Orchestrator, Chief or Goal page
 and opens that page's normal conversation. Back or a left-edge swipe returns to
 that owner page. An older conversation whose owner has moved on remains read-only
 inside the same conversation page. Message cards retain their Review fade, swipe

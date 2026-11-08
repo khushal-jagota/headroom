@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 import sqlite3
 from collections.abc import Callable, Coroutine, Iterator
 from dataclasses import dataclass, field, replace
@@ -21,6 +23,7 @@ from typing import Any
 import pytest
 from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
 
+import planner.conversation.storage as conversation_storage
 import planner.conversation.system as conversation_system
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
@@ -43,6 +46,7 @@ from planner.conversation.backends.contracts import (
     PermissionAskRaised,
     PromptWriteRefused,
     SessionLoadFailed,
+    ToolCallStarted,
     TurnEnded,
     TurnToken,
     UserInputAnswerWriteFailed,
@@ -77,6 +81,7 @@ from planner.conversation.events import (
     PermissionAskOption,
     PromptDiscardedEventPayload,
     PromptEventPayload,
+    ToolCallStartedEventPayload,
     TurnEndedEventPayload,
     UserInputAnswer,
     UserInputOption,
@@ -636,6 +641,18 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     is a system that has stopped rather than one that is slow.
     """
     run_conversation_test(exercise)
+
+
+def _retry_failed_conversation_writes_quickly(
+    monkeypatch: pytest.MonkeyPatch, *, first: float = 0.01, maximum: float = 0.05
+) -> None:
+    """Shrink the store's own retry delay for a failing write, so a test waits briefly."""
+    monkeypatch.setattr(
+        conversation_storage, "CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS", first
+    )
+    monkeypatch.setattr(
+        conversation_storage, "CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS", maximum
+    )
 
 
 def _link_test_ticket_to_conversation(
@@ -1295,9 +1312,12 @@ def test_maintenance_releases_owner_and_worker_messages_in_order(
     _run(exercise)
 
 
-def test_accepted_compaction_recording_failure_retains_child_and_resumes_storage_only(
+def test_accepted_compaction_recording_failure_retains_child_and_retries_storage_only(
     harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _retry_failed_conversation_writes_quickly(monkeypatch)
+
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
@@ -1306,12 +1326,17 @@ def test_accepted_compaction_recording_failure_retains_child_and_resumes_storage
         real_append = harness.store.append_delivered_prompt
         failed = asyncio.Event()
         unavailable = True
+        recorded_compactions = 0
 
         async def fail_compaction_record(conversation_id: str, **kwargs):  # type: ignore[no-untyped-def]
-            if unavailable and message_content_text(kwargs["prompt"].content) == "/compact":
+            nonlocal recorded_compactions
+            is_compaction = message_content_text(kwargs["prompt"].content) == "/compact"
+            if unavailable and is_compaction:
                 failed.set()
                 raise sqlite3.OperationalError("record unavailable")
-            return await real_append(conversation_id, **kwargs)
+            recorded = await real_append(conversation_id, **kwargs)
+            recorded_compactions += is_compaction
+            return recorded
 
         harness.store.append_delivered_prompt = fail_compaction_record  # type: ignore[method-assign]
         sending = asyncio.create_task(
@@ -1324,14 +1349,16 @@ def test_accepted_compaction_recording_failure_retains_child_and_resumes_storage
         assert backend.live_children == 1
         assert backend.cancellations == 0
         assert not sending.done()
-        assert len(harness.store.recording_failures("c")) == 1
+        assert recorded_compactions == 0
         assert harness.system._conversations["c"].reserved_turn is not None
+        # The cause clears; the store's own retry records the compaction, and only storage
+        # is retried: the child is never asked for /compact again.
         unavailable = False
-        assert harness.store.resume_recording("c") == 1
         assert isinstance(await sending, PromptDeliveryQueued)
         await harness.complete_turn("c")
         assert backend.written_texts() == ("first", "/compact", "must stay held")
-        assert harness.store.recording_failures("c") == ()
+        assert backend.cancellations == 0
+        assert recorded_compactions == 1
 
     _run(exercise)
 
@@ -1556,33 +1583,60 @@ def test_a_waiting_message_that_names_another_model_starts_its_own_turn(
 # --- a turn that ended and could not be written down -----------------------------------------
 
 
-def test_failed_turn_recording_error_retains_event_until_explicit_storage_resume(
+def test_vps_only_write_failure_retries_in_order_with_growing_delay_until_it_succeeds(
     harness: _Harness,
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A write the VPS holds the only copy of is retried by itself until it lands.
+
+    Each failure is logged with the delay before the next try, which doubles up to a cap.
+    Meanwhile the turn ending stays unrecorded, the turn stays live, and backend news
+    behind it waits its turn; once the cause clears the ending is recorded exactly once,
+    and nothing has to release it.
+    """
+    _retry_failed_conversation_writes_quickly(monkeypatch, first=0.01, maximum=0.02)
+    caplog.set_level(logging.ERROR, logger="planner.conversation")
+
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("work"), sender_label="owner")
-        real_append = harness.store.commit_backend_event
-        failed = asyncio.Event()
-        calls = 0
+        backend = harness.backend("c")
+        turn = backend.live_turn_token
+        sink = backend.sink
+        assert turn is not None and sink is not None
+        # The same news while the turn is live is recorded, so dropping it later is a choice.
+        await sink.report(
+            turn, ToolCallStarted(tool_call_id="live", title="Read a file", tool_kind="read")
+        )
+        await harness.settle()
+        real_commit = harness.store.commit_backend_event
+        third_failure = asyncio.Event()
+        failures = 0
         available = False
 
         async def unavailable(*args, **kwargs):  # type: ignore[no-untyped-def]
-            nonlocal calls
+            nonlocal failures
             if available:
-                return await real_append(*args, **kwargs)
-            calls += 1
-            failed.set()
+                return await real_commit(*args, **kwargs)
+            failures += 1
+            if failures == 3:
+                third_failure.set()
             raise sqlite3.OperationalError("disk unavailable")
 
         harness.store.commit_backend_event = unavailable  # type: ignore[method-assign]
         completing = asyncio.create_task(harness.fail_turn("c", error_summary="the model refused"))
-        await failed.wait()
-        await asyncio.sleep(0)
+        await third_failure.wait()
+        # More news for the same turn, reported behind its ending through the same sink.
+        await sink.report(
+            turn, ToolCallStarted(tool_call_id="late", title="Read a file", tool_kind="read")
+        )
         assert not completing.done()
-        assert calls == 1
         assert await harness.recorded_endings("c") == ()
+        assert await harness.recorded_kinds("c") == (
+            ConversationEventKind.prompt,
+            ConversationEventKind.tool_call_started,
+        )
         state = harness.system._conversations["c"]
         assert state.running_turn is not None and not state.running_turn.ended
         waiting_for_record = asyncio.create_task(state.backend_event_queue.join())
@@ -1591,13 +1645,42 @@ def test_failed_turn_recording_error_retains_event_until_explicit_storage_resume
         waiting_for_record.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiting_for_record
-        assert "disk unavailable" in str(harness.store.recording_failures("c")[0])
+
         available = True
-        assert harness.store.resume_recording("c") == 1
         await completing
         assert await harness.recorded_endings("c") == (ConversationTurnEnding.failed,)
+        # The late news waited behind the ending, then was dropped: its turn had ended.
+        assert await harness.recorded_kinds("c") == (
+            ConversationEventKind.prompt,
+            ConversationEventKind.tool_call_started,
+            ConversationEventKind.turn_ended,
+        )
+        tool_calls = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, ToolCallStartedEventPayload)
+        ]
+        assert [tool_call.tool_call_id for tool_call in tool_calls] == ["live"]
         assert await harness.system.is_running("c") is False
-        assert any("recording paused" in record.getMessage() for record in caplog.records)
+
+        logged = [
+            record
+            for record in caplog.records
+            if record.name == "planner.conversation"
+            and "save failed (failure" in record.getMessage()
+        ]
+        assert len(logged) == failures >= 3
+        assert all(record.levelno == logging.ERROR for record in logged)
+        assert all("disk unavailable" in record.getMessage() for record in logged)
+        parsed = [
+            re.search(r"\(failure (\d+)\); retrying in ([0-9.]+) s", record.getMessage())
+            for record in logged
+        ]
+        assert all(match is not None for match in parsed)
+        numbers = [int(match.group(1)) for match in parsed if match is not None]
+        delays = [float(match.group(2)) for match in parsed if match is not None]
+        assert numbers == list(range(1, failures + 1))
+        assert delays == [0.01] + [0.02] * (failures - 1)
 
     _run(exercise)
 
@@ -2069,22 +2152,27 @@ def test_cancelled_exchange_or_sqlite_call_finishes_one_owned_settlement(
     _run(exercise)
 
 
-def test_non_lock_failure_preserves_accepted_identity_until_storage_resume(
+def test_non_lock_failure_preserves_accepted_identity_until_its_retry_succeeds(
     harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _retry_failed_conversation_writes_quickly(monkeypatch)
+
     async def exercise() -> None:
         await _start(harness, "c")
         original = harness.store.append_delivered_prompt
         entered = asyncio.Event()
         available = False
-        attempts = 0
+        failed_attempts = 0
+        recorded_attempts = 0
 
         async def unavailable(*args, **kwargs):  # type: ignore[no-untyped-def]
-            nonlocal attempts
-            attempts += 1
+            nonlocal failed_attempts, recorded_attempts
             if not available:
+                failed_attempts += 1
                 entered.set()
                 raise OSError("record volume unavailable")
+            recorded_attempts += 1
             return await original(*args, **kwargs)
 
         harness.store.append_delivered_prompt = unavailable  # type: ignore[method-assign]
@@ -2107,30 +2195,31 @@ def test_non_lock_failure_preserves_accepted_identity_until_storage_resume(
         )
         await asyncio.sleep(0.02)
         assert not sending.done() and not duplicate.done()
-        assert attempts == 1
+        assert failed_attempts >= 1 and recorded_attempts == 0
         assert len(harness.backend("c").writes) == 1
         assert harness.backend("c").live_children == 1
         assert await harness.store.read_events_after("c", 0) == ()
         state = harness.system._conversations["c"]
         assert state.reserved_turn is not None
-        assert "record volume unavailable" in str(harness.store.recording_failures("c")[0])
+        # The cause clears; the store's own retry records the one accepted prompt.
         available = True
-        assert harness.store.resume_recording("c") == 1
         assert await sending == PromptDeliveryStarted()
         assert await duplicate == PromptDeliveryStarted()
-        assert attempts == 2
+        assert recorded_attempts == 1
         assert len(harness.backend("c").writes) == 1
-        assert harness.store.recording_failures("c") == ()
+        assert len(await harness.store.read_events_after("c", 0)) == 1
 
     _run(exercise)
 
 
 @pytest.mark.parametrize("delivery", ["queued", "promoted"])
-def test_preflight_metadata_error_retains_held_guidance_for_explicit_resume(
+def test_preflight_metadata_error_retains_held_guidance_until_its_retry_succeeds(
     harness: _Harness,
     delivery: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _retry_failed_conversation_writes_quickly(monkeypatch)
+
     async def exercise() -> None:
         monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _: True)
         await _start(harness, "c")
@@ -2144,12 +2233,12 @@ def test_preflight_metadata_error_retains_held_guidance_for_explicit_resume(
         original = harness.store.all_sender_messages_are_manager_notices
         failed = asyncio.Event()
         available = False
-        calls = 0
+        failed_calls = 0
 
         async def unavailable(*args, **kwargs):  # type: ignore[no-untyped-def]
-            nonlocal calls
-            calls += 1
+            nonlocal failed_calls
             if not available:
+                failed_calls += 1
                 failed.set()
                 raise OSError("metadata read unavailable")
             return await original(*args, **kwargs)
@@ -2169,12 +2258,11 @@ def test_preflight_metadata_error_retains_held_guidance_for_explicit_resume(
             )
         await failed.wait()
         await asyncio.sleep(0.02)
-        assert calls == 1
+        assert failed_calls >= 1
         assert not progressing.done()
         assert harness.backend("c").written_texts() == ("incumbent",)
-        assert "metadata read unavailable" in str(harness.store.recording_failures("c")[0])
+        # The cause clears; the store's own retry reads the metadata and the guidance goes.
         available = True
-        assert harness.store.resume_recording("c") == 1
         await progressing
         assert harness.backend("c").written_texts().count("preserved human instruction") == 1
         events = await harness.store.read_events_after("c", 0)

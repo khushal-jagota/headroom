@@ -21,7 +21,7 @@ from planner.execution_identity import ExecutorIdentity, supports_executor_versi
 from planner.executor.catalog_relay import VpsCatalogRelay
 from planner.executor.clock import now_ms
 from planner.executor.files import file_digest
-from planner.executor.link import ControlMessageStream, Link, accept_link
+from planner.executor.link import ControlMessageStream, Link, accept_link, failure_name
 from planner.executor.link_files import GenerationTransfers, settled_io
 from planner.executor.protocol import (
     LIVE_BACKEND_EVENT_METHODS,
@@ -97,7 +97,7 @@ class VpsExecutor:
         writer = self.runs.link
         self._last_contact_at_ms = self.last_contact_at_ms
         if writer is not None:
-            writer.close()
+            writer.close("server shutdown")
             await self.runs.link_down(writer)
         await self.runs.close()
         await self.catalog.close()
@@ -149,6 +149,7 @@ class VpsExecutor:
     async def session(self, stream: ControlMessageStream) -> None:
         link: Link | None = None
         admitted: Link | None = None
+        reason = "session ended"
 
         async def admit(health: ExecutorHealth, candidate: Link) -> ExecutorIdentity:
             nonlocal admitted
@@ -171,6 +172,7 @@ class VpsExecutor:
             link = await accept_link(stream, admit, self._inspect_identity)
             identity = link.identity
             if self.runs.link is not link:
+                reason = "replaced by a newer generation during admission"
                 return
             self.transfers[identity] = GenerationTransfers(
                 identity, lambda: self.runs.identity == identity and self.runs.link is link
@@ -187,13 +189,17 @@ class VpsExecutor:
             }.items():
                 link.on(kind, partial(self._handle, writer=link, handler=handler))
             await link.closed()
-        except (ConnectionError, OSError, ValueError, TimeoutError, PlannerError):
-            pass
+        except (ConnectionError, OSError, ValueError, TimeoutError, PlannerError) as error:
+            # A close the link made itself keeps that earlier, more exact reason.
+            reason = f"session ended: {failure_name(error)}"
+        except asyncio.CancelledError:
+            reason = "session cancelled"
+            raise
         finally:
             owned = link or admitted
             if owned is not None:
                 identity = owned.identity
-                owned.close()
+                owned.close(reason)
                 if self.runs.link is owned:
                     self._last_contact_at_ms = self.last_contact_at_ms
                     await self.runs.link_down(owned)
@@ -209,8 +215,8 @@ class VpsExecutor:
             return None
         try:
             response = await handler(message, writer)
-        except (sqlite3.OperationalError, OSError):
-            writer.close()
+        except (sqlite3.OperationalError, OSError) as error:
+            writer.close(f"handler for {message.kind.value} failed: {failure_name(error)}")
             return None
         except (ValueError, PlannerError, KeyError, TypeError) as error:
             response = WireMessage(

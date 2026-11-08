@@ -12,6 +12,7 @@ only the five actor-neutral roots used for Panels work.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
@@ -545,6 +546,57 @@ def restart() -> None:
     except (ServerRestartConnectionError, ServerRestartProtocolError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo("Panels restart accepted.")
+
+
+@main.command("server-event-loop-tasks", hidden=True)
+@json_option
+def server_event_loop_tasks(as_json: bool) -> None:
+    """List what the running server waits on: every asyncio task on its event loop.
+
+    Each task shows its name, coroutine, the line it is awaiting, and its age, oldest
+    first. Reads only: no task is cancelled, woken, or changed.
+    """
+    from planner.cli.errors import exit_with_human_error
+    from planner.core.config import load_config
+    from planner.server_lifecycle.contracts import (
+        EventLoopTasksConnectionError,
+        EventLoopTasksError,
+        EventLoopTasksTimeoutError,
+    )
+    from planner.server_lifecycle.control import (
+        request_event_loop_tasks,
+        resolve_event_loop_tasks_socket_path,
+        resolve_server_control_socket_path,
+    )
+    from planner.server_lifecycle.logic.event_loop_tasks_text import render_event_loop_tasks
+    from planner.server_lifecycle.supervisor import resolve_planner_launch_root
+
+    launch_root = resolve_planner_launch_root()
+    config = load_config(os.environ.get("PLAN_CONFIG_PATH", str(launch_root / "config.yaml")))
+    tasks_socket_path = resolve_event_loop_tasks_socket_path(
+        resolve_server_control_socket_path(config.port, os.environ, launch_root)
+    )
+    try:
+        response = request_event_loop_tasks(tasks_socket_path)
+    except EventLoopTasksError as exc:
+        if isinstance(exc, EventLoopTasksConnectionError):
+            code, exit_code = "connection", http.EXIT_CONNECTION
+            no_route = "Only a Panels application started by `panels serve` answers it."
+        elif isinstance(exc, EventLoopTasksTimeoutError):
+            code, exit_code = "timeout", http.EXIT_CONNECTION
+            no_route = "Asking again will not help while the loop is blocked."
+        else:
+            code, exit_code = "protocol", http.EXIT_ERROR
+            no_route = "This command and the running server may be from different releases."
+        if as_json:
+            error = {"error": {"code": code, "message": str(exc), "detail": {}}}
+            print(json.dumps(error), file=sys.stderr)
+            raise SystemExit(exit_code) from exc
+        exit_with_human_error(str(exc), exit_code=exit_code, no_route=no_route)
+    if as_json:
+        click.echo(json.dumps(dataclasses.asdict(response)))
+    else:
+        click.echo(render_event_loop_tasks(response))
 
 
 # --- worker types -------------------------------------------------------------

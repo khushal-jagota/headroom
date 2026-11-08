@@ -17,7 +17,11 @@ from uuid import uuid4
 
 from planner.core.task_settlement import wait_for_settlement
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.configuration import FILE_CHUNK_BYTES, MAX_TRANSFERS, TRANSFER_CHUNK_BYTES
+from planner.executor.configuration import (
+    FILE_CHUNK_BYTES,
+    MAX_FILE_TRANSFERS,
+    TRANSFER_CHUNK_BYTES,
+)
 from planner.executor.files import copy_verified, directory_descriptor, regular_descriptor
 from planner.executor.protocol import FileManifest, FileSnapshot, FileTransfer, FileUploadRequest
 
@@ -58,7 +62,7 @@ class GenerationTransfers:
     def _admit(self, manifest: FileManifest) -> None:
         if not self.valid():
             raise ValueError("generation revoked")
-        if len(self.transfers) >= MAX_TRANSFERS:
+        if len(self.transfers) >= MAX_FILE_TRANSFERS:
             raise ValueError("transfer limit")
         if manifest.byte_count < 0 or not re.fullmatch("[a-f0-9]{64}", manifest.sha256):
             raise ValueError("invalid manifest length or digest")

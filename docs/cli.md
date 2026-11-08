@@ -17,6 +17,7 @@ Manager commands accept `panels manager` and `--manager`. The old Sprint Item an
   - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).
 - **The Worker group**, hidden from ordinary help: read my Ticket, file a proposal, set a recap, request help. A Worker can file a proposal. Accepting one is `ticket proposal`, for a caller who stands above the Ticket.
 - **Hidden groups** that a specialist skill or an operator names when needed: `serve`, `skill`, and `worker-type`.
+- **Server lifecycle commands**, also hidden, that use the server's local sockets instead of HTTP. `restart` asks the supervisor, over its control socket, to replace the application. `server-event-loop-tasks` asks the application, over its own socket beside that one, what it is waiting on: each asyncio task on its event loop, with its name, coroutine, the line it is awaiting, and its age, oldest first. A stall inside a task leaves every thread idle, so a stack dump cannot show it. The command only reads. A very long list stops at a size limit and says how many tasks it left out. A loop blocked by synchronous code cannot answer; a stack dump shows that case.
 
 ## How reads and writes work
 
@@ -35,6 +36,7 @@ A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advance
 ## Code
 
 - `src/planner/cli/main.py`: the command tree. `src/planner/cli/http.py`: the HTTP client and identity headers.
+- `src/planner/server_lifecycle/control.py`: the control socket and its messages. `event_loop_tasks.py`: the event loop tasks and the creation times it reads.
 - Each domain's `cli.py` holds its own group, such as `src/planner/credentials/cli.py` and `src/planner/goals/cli.py`. The routes they call are in each domain's `api.py`.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-08._

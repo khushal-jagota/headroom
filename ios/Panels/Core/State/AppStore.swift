@@ -19,8 +19,10 @@ import Observation
     var counts: ViewCounts?
     /// The last admitted view; screens read window paging facts from it.
     private(set) var view: ViewSnapshot?
+    var executorHealth: ExecutorHealth?
     var deployment: DeploymentStatus?
-    var errors: [String: String] = [:]
+    var errors: [String: ServerReadFailure] = [:]
+    var serverUnreachable: Bool { errors.values.contains { $0.isServerUnreachable } }
     var isLoading = false
     /// The view stream's health: "Following changes" once the current stream delivered
     /// its snapshot, "Reconnecting" after a failure until the next snapshot.
@@ -29,6 +31,9 @@ import Observation
     /// recovery from a dropped connection. Screens read their detail again at each, so a
     /// read that failed offline is retried, and never on an unrelated change.
     private(set) var connectionSession = 0
+    /// Counts settings reads, which run at start, on each change and on refresh. Goal
+    /// screens read again at each; they are outside the navigation view.
+    private(set) var revision = 0
     private var hasRun = false
     /// Each view record's reload identity. A detail screen reloads when its own records'
     /// stamps change, never because another record changed.
@@ -74,7 +79,7 @@ import Observation
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
         managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; chief = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
         presentation = nil; recordStamps = [:]
-        deployment = nil; errors = [:]
+        deployment = nil; errors = [:]; executorHealth = nil
         resourceVersions = ResourceVersionState()
         restore()
     }
@@ -281,7 +286,7 @@ import Observation
             return Task.isCancelled ? .cancelled : .ended(admitted: admitted)
         } catch {
             if Task.isCancelled || api.baseURL != baseURL { return .cancelled }
-            errors["Navigation"] = error.localizedDescription
+            errors["Navigation"] = ServerReadFailure(error)
             return .failed
         }
     }
@@ -329,7 +334,12 @@ import Observation
         guard !Task.isCancelled, api.baseURL == baseURL else { return }
         async let chiefRead: () = readVersioned("Chief", path: keys[0], api: api, probe: probe, force: !probing) { self.chief = $0 }
         async let deployRead: () = readVersioned("Deployment", path: keys[1], api: api, probe: probe, force: !probing) { self.deployment = $0 }
+        async let machineRead = api.executorHealth()
         _ = await (chiefRead, deployRead)
+        let health = try? await machineRead
+        guard !Task.isCancelled, api.baseURL == baseURL else { return }
+        executorHealth = health
+        revision += 1
     }
 
     /// One bounded snapshot for the current scope, when no stream runs. A read that starts
@@ -353,7 +363,7 @@ import Observation
             await save(snapshot, data: data, api: api)
         } catch {
             guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            errors["Navigation"] = error.localizedDescription
+            errors["Navigation"] = ServerReadFailure(error)
         }
     }
 
@@ -380,7 +390,7 @@ import Observation
             apply(value); errors[key] = nil
         } catch {
             guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            errors[key] = error.localizedDescription
+            errors[key] = ServerReadFailure(error)
         }
     }
 }

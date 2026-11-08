@@ -1,6 +1,13 @@
 import Foundation
 
 extension APIClient: ConversationServing {
+    func markConversationRead(_ id: String, through: Int) async throws -> Int {
+        struct Body: Encodable { let throughSequence: Int }
+        struct Response: Decodable { let ownerReadThroughSequence: Int }
+        let data = try await reviewWrite("/api/conversation/conversations/\(id)/owner-read", body: Body(throughSequence: through))
+        return try Self.decoder().decode(Response.self, from: data).ownerReadThroughSequence
+    }
+
     func changeHeldPrompt(_ id: String, heldID: String, discard: Bool) async throws -> ConversationHeldChange {
         let path = "/api/conversation/conversations/\(id)/held-prompts/\(heldID)" + (discard ? "" : "/promote")
         var request = try self.request(try url(path))
@@ -20,7 +27,8 @@ extension APIClient: ConversationServing {
         try Self.validate(response, data: data)
     }
     func conversationConfiguration(_ owner: ConversationOwner, id: String?) async throws -> ConversationConfiguration {
-        try await get(id.map { "/api/conversation/conversations/\($0)" } ?? owner.path + "/start-values")
+        guard let path = owner.path else { throw APIError(status: 410, message: "Goal conversations are retired. Open the goal to talk to its holder.") }
+        return try await get(id.map { "/api/conversation/conversations/\($0)" } ?? path + "/start-values")
     }
     func conversationSnapshot(_ id: String, lens: ConversationLens, transcript: Bool) async throws -> ConversationSnapshot {
         try await get("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: String(transcript))])
@@ -55,7 +63,8 @@ extension APIClient: ConversationServing {
         return text
     }
     func sendConversation(_ owner: ConversationOwner, message: ConversationSend) async throws -> ConversationDelivery {
-        var request = try self.request(try url(owner.path + "/send"))
+        guard let path = owner.path else { throw APIError(status: 410, message: "Goal conversations are retired. Open the goal to talk to its holder.") }
+        var request = try self.request(try url(path + "/send"))
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -32,8 +32,8 @@ import logging
 import sqlite3
 import time
 from collections import deque
-from collections.abc import Callable, Coroutine, Mapping
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
@@ -168,7 +168,7 @@ from planner.conversation.storage import (
 )
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core import change_signal
-from planner.core.contracts import Principal, PrincipalKind
+from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.execution_identity import ChildReference
 
 LOGGER = logging.getLogger("planner.conversation")
@@ -190,6 +190,27 @@ LOST_BACKGROUND_TASK_SENDER_LABEL = "Panels"
 BACKGROUND_TASK_ENDINGS_OF_THEIR_OWN: Final[frozenset[str]] = frozenset(
     {"completed", "failed", "ambient"}
 )
+
+
+@asynccontextmanager
+async def _retry_later_past(retry_later_at: float | None) -> AsyncIterator[None]:
+    """Bound a wait for an item whose sender keeps its own copy (the Mac outbox).
+
+    Past the loop time ``retry_later_at`` the item is answered ErrorCode.retry_later and
+    the sender sends it again. ``None`` is a VPS-local event, the only copy there is,
+    which waits its turn however long that takes.
+    """
+    if retry_later_at is None:
+        yield
+        return
+    try:
+        async with asyncio.timeout_at(retry_later_at):
+            yield
+    except TimeoutError as error:
+        raise PlannerError(
+            ErrorCode.retry_later,
+            "The conversation is still busy with earlier work; send this item again",
+        ) from error
 
 
 def _lost_background_task_prompt(task_description: str) -> str:
@@ -1393,25 +1414,31 @@ class SqliteProcessConversationSystem:
             return frozenset(state.running_turn.pending_user_input_questions)
 
     async def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
-        """Return a stable FIFO snapshot of the messages waiting in this process."""
+        """Return a stable FIFO snapshot of the messages waiting in this process.
+
+        A read, so it never waits for the conversation lock: a write that is slow or
+        retrying must not stall the screens that show the conversation. It needs no
+        lock to be consistent. The queue is only ever changed in one synchronous step
+        on the event loop, published to the live tail in that same step, and this copy
+        has no await inside it, so it always sees a queue the system has already shown.
+        """
         state = await self._conversation_state(conversation_id)
         if state is None:
             return ()
-        async with state.lock:
-            return tuple(
-                HeldPrompt(
-                    held_prompt_id=held.held_prompt_id,
-                    content=held.content,
-                    sender_label=held.sender_label,
-                    sender_message_id=held.sender_message_id,
-                    sent_at_unix_milliseconds=held.snapshot_sent_at_unix_milliseconds,
-                    sender=held.sender,
-                    recipient=held.recipient,
-                    queue_reason=held.queue_reason,
-                    delivery_uncertain=held.delivery_uncertain,
-                )
-                for held in state.held_prompts
+        return tuple(
+            HeldPrompt(
+                held_prompt_id=held.held_prompt_id,
+                content=held.content,
+                sender_label=held.sender_label,
+                sender_message_id=held.sender_message_id,
+                sent_at_unix_milliseconds=held.snapshot_sent_at_unix_milliseconds,
+                sender=held.sender,
+                recipient=held.recipient,
+                queue_reason=held.queue_reason,
+                delivery_uncertain=held.delivery_uncertain,
             )
+            for held in state.held_prompts
+        )
 
     async def promote_held_prompt(
         self,
@@ -3255,9 +3282,13 @@ class SqliteProcessConversationSystem:
         operation: Callable[[], Coroutine[Any, Any, T]],
         *,
         runtime_mutation: SignalRuntimeMutation | None = None,
+        retry_later_at: float | None = None,
     ) -> T:
+        """Every conversation write goes through here; see settle_recording for its rule."""
         with self._store.signal_mutation(runtime_mutation):
-            return await self._store.settle_recording(state.record.conversation_id, operation)
+            return await self._store.settle_recording(
+                state.record.conversation_id, operation, retry_later_at=retry_later_at
+            )
 
     async def _drain_held_prompts(self, state: _ConversationState) -> None:
         await self._own_settlement(state, self._drain_held_prompts_owned(state))
@@ -4207,6 +4238,8 @@ class SqliteProcessConversationSystem:
         provider_id: str,
         kind: str,
         in_commit: CommitParticipant,
+        *,
+        retry_later_at: float | None = None,
     ) -> AcceptedEvent:
         """Record late proof without reopening an ended or unavailable request."""
         state = await self._conversation_state(turn.conversation_id)
@@ -4214,7 +4247,9 @@ class SqliteProcessConversationSystem:
             raise ValueError("answer application names unknown conversation")
         return await self._own_settlement(
             state,
-            self._take_answer_application(state, turn, answer_id, provider_id, kind, in_commit),
+            self._take_answer_application(
+                state, turn, answer_id, provider_id, kind, in_commit, retry_later_at
+            ),
         )
 
     async def _take_answer_application(
@@ -4225,8 +4260,11 @@ class SqliteProcessConversationSystem:
         provider_id: str,
         kind: str,
         in_commit: CommitParticipant,
+        retry_later_at: float | None,
     ) -> AcceptedEvent:
-        async with state.lock:
+        async with _retry_later_past(retry_later_at):
+            await state.lock.acquire()
+        try:
 
             def write(
                 connection: sqlite3.Connection,
@@ -4305,11 +4343,15 @@ class SqliteProcessConversationSystem:
                 return {"recorded": True}, written
 
             result = await self._persist(
-                state, partial(self._store.commit_backend_event, write, in_commit)
+                state,
+                partial(self._store.commit_backend_event, write, in_commit),
+                retry_later_at=retry_later_at,
             )
             if result.taken:
                 self._take_in_written_rows(state, result.written)
             return AcceptedEvent(result.result, result.taken)
+        finally:
+            state.lock.release()
 
     async def take_backend_event(
         self,
@@ -4319,12 +4361,18 @@ class SqliteProcessConversationSystem:
         in_commit: CommitParticipant | None = None,
         conversation_id: str | None = None,
         expected_sink: object | None = None,
+        retry_later_at: float | None = None,
     ) -> AcceptedEvent:
         """Build one conversation effect, optionally joined by a transaction participant.
 
         A participant calls the supplied effect only for a new acceptance. Its result is
         opaque here; stale turns still reach the participant with applied=False.
         Session callbacks without a turn explicitly name their conversation.
+
+        ``retry_later_at`` is given for an event whose sender keeps its own copy (the
+        Mac). Its waits and its write end by that loop time, and a failure raises
+        ErrorCode.retry_later with nothing in memory or the record changed, so the same
+        event sent again applies exactly once.
         """
         if turn is not None:
             if conversation_id is not None and conversation_id != turn.conversation_id:
@@ -4337,7 +4385,9 @@ class SqliteProcessConversationSystem:
             raise ValueError("event names an unknown conversation")
         return await self._own_settlement(
             state,
-            self._take_backend_event_owned(state, turn, arguments, in_commit, expected_sink),
+            self._take_backend_event_owned(
+                state, turn, arguments, in_commit, expected_sink, retry_later_at
+            ),
         )
 
     async def _take_backend_event_owned(
@@ -4347,11 +4397,15 @@ class SqliteProcessConversationSystem:
         args: BackendEventValue,
         in_commit: CommitParticipant | None,
         expected_sink: object | None,
+        retry_later_at: float | None,
     ) -> AcceptedEvent:
-        while (reservation := state.reserved_turn) is not None and token == reservation.token:
-            await reservation.resolved.wait()
-        # Steer settlement owns its runtime predictions until its commit completes.
-        await self._acquire_after_steers(state)
+        # Nothing in memory changes before the commit, except the idle clock: an event
+        # answered "retry later" must find the conversation exactly as it left it.
+        async with _retry_later_past(retry_later_at):
+            while (reservation := state.reserved_turn) is not None and token == reservation.token:
+                await reservation.resolved.wait()
+            # Steer settlement owns its runtime predictions until its commit completes.
+            await self._acquire_after_steers(state)
         written: tuple[StoredConversationEvent, ...] = ()
         should_drain = False
         background_task_news = isinstance(
@@ -4381,11 +4435,9 @@ class SqliteProcessConversationSystem:
                 live = False
             if expected_sink is not None and state.child_event_sink is not expected_sink:
                 live = False
-            if live and token is not None:
+            agent_acted = live and token is not None
+            if agent_acted:
                 state.last_touched_monotonic = self._monotonic_now()
-                # The agent acted after any stop it was told of, so its session outlived
-                # those stops and the tasks ended on their own.
-                state.background_tasks_stopped_since_the_agent_last_acted.clear()
             interpreted = (
                 interpret_backend_event(
                     token,
@@ -4490,7 +4542,11 @@ class SqliteProcessConversationSystem:
                     )
                 elif live and isinstance(args, BackendStreamEnded):
                     lost_background_tasks = (
-                        *state.background_tasks_stopped_since_the_agent_last_acted.values(),
+                        *(
+                            ()
+                            if agent_acted
+                            else state.background_tasks_stopped_since_the_agent_last_acted.values()
+                        ),
                         *self._store.take_background_tasks_in_transaction(conn, conversation_id),
                     )
                 return {"applied": live}, written
@@ -4504,9 +4560,14 @@ class SqliteProcessConversationSystem:
                     always_announce=live and background_task_news,
                 ),
                 runtime_mutation=mutation,
+                retry_later_at=retry_later_at,
             )
             written = result.written
             if result.taken:
+                if agent_acted:
+                    # The agent acted after any stop it was told of, so its session
+                    # outlived those stops and the tasks ended on their own.
+                    state.background_tasks_stopped_since_the_agent_last_acted.clear()
                 if self._signal is None:
                     for operation in operations:
                         setattr(operation.target, operation.attribute, operation.value)

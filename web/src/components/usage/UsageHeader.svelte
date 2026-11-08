@@ -57,7 +57,6 @@
   .usage-header { margin-bottom:var(--page-block-gap); }
   .toolbar { display:flex; justify-content:space-between; align-items:center; gap:var(--space-3); flex-wrap:wrap; margin-top:var(--page-head-gap); }
   .metrics a { text-decoration:none; }
-  .metrics [aria-current="page"] { background:var(--segment-selected-fill); color:var(--tone-strong); }
   .periods button:disabled { opacity:.5; cursor:default; }
   .provider-filter { position:relative; font-size:var(--type-small); color:var(--tone-secondary); }
   summary { cursor:pointer; list-style:none; white-space:nowrap; }
