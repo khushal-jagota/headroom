@@ -26,7 +26,7 @@ FOLLOW_YOUR_WORKFLOW_GUIDE: Final = (
 
 MEMORY_LOSS_NOTICE: Final = (
     "Your context was compacted, so the conversation you were working from is gone. "
-    f"Re-read your Ticket with {READ_YOUR_TICKET_COMMAND}, re-load your Worker skill, "
+    f"Re-read your Ticket with {READ_YOUR_TICKET_COMMAND}, re-load the panels-worker skill, "
     "follow this Ticket’s workflow guide, then continue this step."
 )
 

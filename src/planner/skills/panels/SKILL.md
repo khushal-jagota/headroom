@@ -41,7 +41,7 @@ and `initiative_planning` (working out the shared top-level how for a confirmed
 direction before creating its downstream Tickets). New Worker types are added here
 as they ship.
 
-Ticket workers follow the stages saved on their Ticket. Each non-terminal stage fills one canonical field. Preset Tickets use their specialist skill as usual. Custom Tickets receive their complete guide at kickoff.
+Ticket workers follow the stages saved on their Ticket. Each non-terminal stage fills one canonical field. Every Ticket receives its own complete guide at kickoff, and its Worker follows that guide.
 
 ## Communication
 
