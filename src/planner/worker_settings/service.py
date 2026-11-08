@@ -391,8 +391,7 @@ def save_worker_type_definition(
 def delete_worker_type_definition(conn: sqlite3.Connection, worker_type: str) -> None:
     """Remove a preset and stop offering it, in one act.
 
-    Its specialist skill stays: `panels skill delete` refuses it while an unfinished
-    Ticket's workflow still names it.
+    Its specialist skill stays until explicitly deleted. Tickets keep their saved guide.
     """
     if conn.in_transaction:
         raise RuntimeError("Worker type delete requires its own outer transaction")

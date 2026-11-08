@@ -558,3 +558,74 @@ def test_unconfigured_mac_uses_executor_workspace_without_replacing_explicit_cho
         _default_workspace_folder(tmp_db),
         WorkspacePathPolicy.home_relative,
     )
+
+
+def test_deleted_specialist_keeps_saved_guide_on_start_restart_and_continue(
+    tmp_db: Connection, tmp_path: Path
+) -> None:
+    """Risk: skill deletion strands a saved Ticket at bootstrap or loses its guide.
+
+    Existing lifecycle tests retain every skill. Reuse the in-memory backend wire and
+    real database to exercise delivery, plus the executor's snapshot/install boundary.
+    """
+    from planner.executor.configuration import ExecutorPaths
+    from planner.executor.skills import install_native_skill_snapshot, read_canonical_skill_snapshot
+    from planner.worker_settings.service import delete_skill, delete_worker_type_definition
+    from planner.worker_types.guidance import render_workflow_guide
+
+    chosen = create_ticket(
+        tmp_db,
+        title="Keep the saved guide",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="general",
+        employee_backend="codex",
+        employee_launch_model="gpt-6.1-sol",
+    )
+    guide = render_workflow_guide(chosen.workflow)
+    specialist = chosen.workflow.specialist_skill
+    assert specialist is not None
+    delete_worker_type_definition(tmp_db, "general")
+    delete_skill(tmp_db, specialist, database_parent=tmp_path)
+    assert (
+        tmp_db.execute("SELECT 1 FROM managed_skills WHERE skill_name=?", (specialist,)).fetchone()
+        is None
+    )
+
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        previous_id: str | None = None
+        for now, action in enumerate(("start", "continue", "restart"), start=2):
+            if action == "restart":
+                await reset_ticket_conversation(system, tmp_db, chosen.id, now=now)
+            snapshot = read_canonical_skill_snapshot(tmp_db, chosen.id)
+            assert snapshot.required_skill_names == ("panels", "panels-worker")
+            install_native_skill_snapshot(
+                snapshot,
+                paths=ExecutorPaths(tmp_path / "executor"),
+                native_home=tmp_path / "account",
+            )
+            delivered = await send_to_ticket_conversation(
+                system,
+                tmp_db,
+                chosen.id,
+                text_message_content(action),
+                conversation_id=previous_id if action == "continue" else None,
+                sender_label="loop",
+                now=now,
+            )
+            assert isinstance(delivered.fate, PromptDeliveryStarted)
+            current_id = delivered.conversation_id
+            assert current_id is not None
+            if action == "continue":
+                assert current_id == previous_id
+            elif action == "restart":
+                assert current_id != previous_id
+            writes = system.backend_prompt_writes(current_id)
+            assert guide in writes[0].text
+            assert action in writes[-1].text
+            system.complete_running_turn(current_id)
+            previous_id = current_id
+
+    asyncio.run(exercise())
