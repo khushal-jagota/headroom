@@ -24,7 +24,7 @@ def _marshal_create_idea(raw: JsonDict) -> CreateIdeaBody:
 
 
 @router.post("/ideas")
-async def create_idea(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+def create_idea(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
     body = _marshal_create_idea(raw)
     project = projects_data.resolve_project(
         conn, project_id=body["project_id"], project_name=body["project"]
@@ -40,9 +40,7 @@ async def create_idea(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 
 
 @router.get("/ideas")
-async def list_ideas(
-    conn: DbConn, project: str | None = None, project_id: str | None = None
-) -> JsonDict:
+def list_ideas(conn: DbConn, project: str | None = None, project_id: str | None = None) -> JsonDict:
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sqlite3
 from typing import cast
@@ -66,8 +65,8 @@ def test_source_counters_are_atomic_narrow_and_reads_emit_no_change(
         assert snapshot is not None
         signals.clear()
         for _ in range(3):
-            result = asyncio.run(api.resource_versions(json.dumps([key]), request(), conn))
-            body = asyncio.run(api.resource_body(key, request(), conn))
+            result = api.resource_versions(json.dumps([key]), request(), conn)
+            body = api.resource_body(key, request(), conn)
             assert result["resources"][0]["revision"] == body["revision"] == snapshot.revision
             assert isinstance(body["body"], dict)
             settings = cast(dict[str, object], body["body"])
@@ -102,7 +101,7 @@ def test_body_uses_the_same_snapshot_as_its_version(
         previous = source.capture(conn, request(), key)
         assert previous is not None
         monkeypatch.setattr(api, "PROVIDERS", (ConcurrentCommit(),))
-        body = asyncio.run(api.resource_body(key, request(), conn))
+        body = api.resource_body(key, request(), conn)
         assert body["revision"] == previous.revision
         assert isinstance(body["body"], dict)
         settings = cast(dict[str, object], body["body"])

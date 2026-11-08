@@ -17,6 +17,7 @@ from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.managers import data as managers_data
 from planner.managers import service as managers_service
 from planner.message_delivery.contracts import (
@@ -315,7 +316,9 @@ async def send_message(
                             and explicit_choice
                         )
                     ):
-                        managers_data.update_manager_launch_configuration(
+                        # A write, so it waits on the SQLite lock on a worker thread.
+                        await run_on_worker_thread(
+                            managers_data.update_manager_launch_configuration,
                             conn,
                             item_id,
                             item.manager_launch_configuration.__class__(
@@ -336,11 +339,12 @@ async def send_message(
             )
     except BaseException:
         if admission is not None:
-            admission.abort_before_dispatch()
+            # Both admission steps write, so they wait on the SQLite lock on a worker thread.
+            await run_on_worker_thread(admission.abort_before_dispatch)
         raise
 
     if admission is not None:
-        admission.finish(delivered.fate)
+        await run_on_worker_thread(admission.finish, delivered.fate)
 
     return MessageDeliveryResult(
         recipient=recipient,

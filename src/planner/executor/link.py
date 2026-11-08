@@ -331,7 +331,7 @@ class Link:
         self._down = False
         self.last_received_at_ms = now_ms()
         self.refusal: JsonObject | None = None
-        self.received: Callable[[int], None] | None = None
+        self.received: Callable[[int], Awaitable[None]] | None = None
         self._file_transfer_capacity = asyncio.Semaphore(MAX_FILE_TRANSFERS)
         self._opened_at = time.monotonic()
         self.close_reason: str | None = None
@@ -476,7 +476,7 @@ class Link:
                     raise ConnectionError("executor generation revoked")
                 self.last_received_at_ms = now_ms()
                 if self.received is not None:
-                    self.received(self.last_received_at_ms)
+                    await self.received(self.last_received_at_ms)
                 if message.kind is WireMessageKind.protocol_refused:
                     error = ProtocolRefused(
                         str(message.payload.get("reason", "executor protocol refused"))
@@ -549,7 +549,7 @@ async def dial_link(
 async def accept_link(
     stream: ControlMessageStream,
     admit: Callable[[ExecutorHealth, Link], Awaitable[ExecutorIdentity]],
-    inspect_identity: Callable[[ExecutorIdentity], JsonObject | None] | None = None,
+    inspect_identity: Callable[[ExecutorIdentity], Awaitable[JsonObject | None]] | None = None,
 ) -> Link:
     """Read and validate the handshake before giving a generation to the owner."""
     link = None
@@ -559,7 +559,7 @@ async def accept_link(
             if hello.kind is not WireMessageKind.hello:
                 raise ProtocolRefused("executor handshake required")
             identity = parse_identity(hello.payload.get("identity"), check_versions=False)
-            refusal = inspect_identity(identity) if inspect_identity is not None else None
+            refusal = await inspect_identity(identity) if inspect_identity is not None else None
             if refusal is not None:
                 await stream.send(
                     WireMessage(WireMessageKind.protocol_refused, hello.request_id, refusal)

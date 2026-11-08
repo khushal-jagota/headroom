@@ -386,6 +386,10 @@ def connect(db_path: str, busy_timeout_ms: int = DB_BUSY_TIMEOUT_MS) -> sqlite3.
         isolation_level=None,
         timeout=busy_timeout_ms / 1000,
         factory=ChangeSignallingConnection,
+        # A request opens its connection on one worker thread and can run its handler on
+        # another, so the connection must be usable from any thread. Each connection is
+        # still used by one caller at a time.
+        check_same_thread=False,
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")

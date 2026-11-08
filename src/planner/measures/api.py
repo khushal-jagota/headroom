@@ -46,7 +46,7 @@ def _period(value: object) -> CountPeriod | None:
 
 
 @router.get("/measures")
-async def list_measures(
+def list_measures(
     conn: DbConn,
     project_id: str | None = None,
     source_id: str | None = None,
@@ -60,7 +60,7 @@ async def list_measures(
 
 
 @router.post("/measures/read")
-async def read_values(body: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+def read_values(body: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
     if set(body) - {"measure_ids", "first_date", "last_date", "limit"}:
         raise invalid("invalid measure read")
     identifiers = body.get("measure_ids")
@@ -77,12 +77,12 @@ async def read_values(body: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 
 
 @router.get("/measures/{measure_id}")
-async def read_measure(measure_id: str, conn: DbConn) -> JsonDict:
+def read_measure(measure_id: str, conn: DbConn) -> JsonDict:
     return data.measure_json(data.read_measure(conn, measure_id))
 
 
 @router.post("/measures")
-async def create_measure(
+def create_measure(
     body: Annotated[
         dict[str, Any],
         CREATE,
@@ -125,7 +125,7 @@ async def create_measure(
 
 
 @router.patch("/measures/{measure_id}")
-async def update_measure(
+def update_measure(
     measure_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     if set(body) - {"expected_revision", "name", "unit", "kind", "timezone", "period", "formula"}:
@@ -157,20 +157,18 @@ async def update_measure(
 
 
 @router.delete("/measures/{measure_id}")
-async def delete_measure(measure_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+def delete_measure(measure_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     actions.delete_measure(conn, measure_id, principal=ctx.principal, now=clk.now_unix())
     return {"deleted": True}
 
 
 @router.get("/measures/{measure_id}/manual-state")
-async def manual_state(
-    measure_id: str, conn: DbConn, clk: Clk, date: str | None = None
-) -> JsonDict:
+def manual_state(measure_id: str, conn: DbConn, clk: Clk, date: str | None = None) -> JsonDict:
     return asdict(manual.read_state(conn, measure_id, date, now=clk.now_unix()))
 
 
 @router.post("/measures/{measure_id}/manual-writes")
-async def manual_write(
+def manual_write(
     measure_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     return asdict(

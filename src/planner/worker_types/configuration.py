@@ -51,11 +51,13 @@ def load_worker_runtime_definitions(conn: sqlite3.Connection) -> ConfiguredWorke
 
     if not worker_types_table_exists(conn):
         return configured_worker_runtime_definitions()
-    definitions = build_worker_runtime_definitions(
-        worker_type_definitions=read_definitions(conn),
-        known_skills=skill_names(conn),
-    )
+    # Read and install under one guard. Type writes run on worker threads, so two can
+    # load at once, and the later read must be the one left in force.
     with _GUARD:
+        definitions = build_worker_runtime_definitions(
+            worker_type_definitions=read_definitions(conn),
+            known_skills=skill_names(conn),
+        )
         global _configured_worker_runtime_definitions
         _configured_worker_runtime_definitions = definitions
     return definitions

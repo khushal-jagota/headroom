@@ -124,7 +124,12 @@ class VpsExecutor:
             else "reconciling",
         }
 
-    def _inspect_identity(self, identity: ExecutorIdentity) -> JsonObject | None:
+    async def _record_contact(self, at_ms: int) -> None:
+        # Every frame records the time it arrived. The write waits on the database lock,
+        # so it runs on a worker thread: on the event loop it would hold up every request.
+        await settled_io(self.runs.store.contact, at_ms)
+
+    async def _inspect_identity(self, identity: ExecutorIdentity) -> JsonObject | None:
         if supports_executor_versions(identity.protocol_version, identity.spool_format_version):
             return None
         at_ms = now_ms()
@@ -143,7 +148,7 @@ class VpsExecutor:
         if self.runs.link is None:
             self._refusal = cast(JsonObject, refusal)
             self._last_contact_at_ms = at_ms
-            self.runs.store.contact(at_ms, refusal)
+            await settled_io(self.runs.store.contact, at_ms, refusal)
         return cast(JsonObject, refusal)
 
     async def session(self, stream: ControlMessageStream) -> None:
@@ -159,8 +164,8 @@ class VpsExecutor:
                 await self.runs.admit(candidate)
                 admitted = candidate
                 self._refusal = None
-                self.runs.store.contact(now_ms(), clear=True)
-                candidate.received = self.runs.store.contact
+                await settled_io(partial(self.runs.store.contact, clear=True), now_ms())
+                candidate.received = self._record_contact
             if old_identity is not None:
                 await self._close_transport(old_identity)
             if self.runs.link is not candidate:

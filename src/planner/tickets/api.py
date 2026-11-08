@@ -16,8 +16,8 @@ validation envelope rather than FastAPI's 422, so the CLI and UI see one error s
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
@@ -55,6 +55,7 @@ from planner.core.contracts import (
 )
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
 from planner.list_reads.detail import (
@@ -118,12 +119,37 @@ def get_clock(request: Request) -> Clock:
     return cast(Clock, request.app.state.clock)
 
 
-async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
+def db_conn(request: Request) -> Iterator[sqlite3.Connection]:
+    """One connection per request, opened and closed on a worker thread.
+
+    A plain-function handler then does all its database work off the event loop, so a
+    write that waits on the SQLite lock holds up only its own request. An ``async def``
+    handler that takes it runs its database work on the loop instead. A write route must
+    not do that, and the route table test holds that rule.
+    """
     conn = cast(Callable[[], sqlite3.Connection], request.app.state.conn_factory)()
     try:
         yield conn
     finally:
         conn.close()
+
+
+@asynccontextmanager
+async def connection_off_the_loop(request: Request) -> AsyncIterator[sqlite3.Connection]:
+    """The request connection for a write route that must stay ``async def``.
+
+    Such a route awaits the conversation system between its database steps, so it cannot
+    be a plain function. It opens its connection here instead of taking ``DbConn``, and
+    runs each database step it owns with ``run_on_worker_thread``. Only one step at a time
+    uses the connection, and the connection is opened and closed on a worker thread too.
+    """
+    conn = await run_on_worker_thread(
+        cast(Callable[[], sqlite3.Connection], request.app.state.conn_factory)
+    )
+    try:
+        yield conn
+    finally:
+        await run_on_worker_thread(conn.close)
 
 
 def get_conversation_system(request: Request) -> ConversationSystem:
@@ -184,7 +210,9 @@ async def reject_while_the_conversation_is_running(
     here and writing after is racy by nature; for one person driving one workspace that
     is the honest cost of keeping the writers pure database transactions.
     """
-    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
+    conversation_id = (
+        await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
+    ).conversation_id
     if conversation_id is None:
         return
     if await conversation_system.is_running(conversation_id):
@@ -210,7 +238,9 @@ async def silence_the_worker_before_deleting(
     The conversation record and its history survive, as they do for every deletion. An
     idle conversation, or none at all, means there is nothing to kill.
     """
-    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
+    conversation_id = (
+        await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
+    ).conversation_id
     if conversation_id is None:
         return
     await conversation_system.kill(conversation_id)
@@ -387,9 +417,7 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
     )
 
 
-def _parse_principal(
-    raw: object, field: str, *, allow_ticket: bool = False
-) -> Principal | None:
+def _parse_principal(raw: object, field: str, *, allow_ticket: bool = False) -> Principal | None:
     if raw is None:
         return None
     if not isinstance(raw, dict) or set(raw) != {"kind", "id"}:
@@ -522,7 +550,7 @@ def write_create_ticket(
 
 
 @router.post("/tickets")
-async def create_ticket(
+def create_ticket(
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
@@ -535,7 +563,7 @@ async def create_ticket(
 
 @router.get("/tickets")
 async def read_tickets(
-    conn: DbConn,
+    request: Request,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
@@ -558,120 +586,127 @@ async def read_tickets(
     offset: int | None = None,
 ) -> JsonDict:
     """Read Tickets at the level the caller asks for, or one Ticket by id."""
-    level = parse_read_detail(detail)
-    scope = {
-        "stage": stage,
-        "exclude_stage": exclude_stage,
-        "ticket_status": ticket_status,
-        "exclude_ticket_status": exclude_ticket_status,
-        "is_backlogged": is_backlogged,
-        "worker_type": worker_type,
-        "include_terminal": include_terminal or None,
-        "search": search,
-        "project": project,
-        "project_id": project_id,
-        "manager_id": manager_id,
-        "manager_kind": manager_kind,
-        "limit": limit,
-        "offset": offset,
-    }
-    if object_id is not None:
-        require_full_for_one(level)
-        reject_parameters("id", scope)
-        one = _ticket_detail(conn, object_id, clk.now_unix())
-        await add_work_attention(conn, conversations, conversation_record, tickets=(one,))
-        return one
 
-    # Stage is stored canonical data. Reading compares it directly and does not need
-    # to resolve or interpret the Ticket's Worker type.
-    resolved_project = projects_data.resolve_project(
-        conn, project_id=project_id, project_name=project
-    )
+    def read_rows(conn: sqlite3.Connection) -> tuple[JsonDict, Sequence[JsonDict]]:
+        """The response, and the Ticket rows in it that take work attention."""
+        level = parse_read_detail(detail)
+        scope = {
+            "stage": stage,
+            "exclude_stage": exclude_stage,
+            "ticket_status": ticket_status,
+            "exclude_ticket_status": exclude_ticket_status,
+            "is_backlogged": is_backlogged,
+            "worker_type": worker_type,
+            "include_terminal": include_terminal or None,
+            "search": search,
+            "project": project,
+            "project_id": project_id,
+            "manager_id": manager_id,
+            "manager_kind": manager_kind,
+            "limit": limit,
+            "offset": offset,
+        }
+        if object_id is not None:
+            require_full_for_one(level)
+            reject_parameters("id", scope)
+            one = _ticket_detail(conn, object_id, clk.now_unix())
+            return one, (one,)
 
-    if level is ReadDetail.full:
-        reject_parameters(
-            "detail=full",
-            {
-                "manager_kind": manager_kind,
-                "manager_id": manager_id,
-                "is_backlogged": is_backlogged,
-                "worker_type": worker_type,
-                "exclude_stage": exclude_stage,
-                "ticket_status": ticket_status,
-                "exclude_ticket_status": exclude_ticket_status,
-                "include_terminal": include_terminal or None,
-                "search": search,
-                "limit": limit,
-                "offset": offset,
-            },
+        # Stage is stored canonical data. Reading compares it directly and does not need
+        # to resolve or interpret the Ticket's Worker type.
+        resolved_project = projects_data.resolve_project(
+            conn, project_id=project_id, project_name=project
         )
-        if stage is not None and len(stage) > 1:
+
+        if level is ReadDetail.full:
+            reject_parameters(
+                "detail=full",
+                {
+                    "manager_kind": manager_kind,
+                    "manager_id": manager_id,
+                    "is_backlogged": is_backlogged,
+                    "worker_type": worker_type,
+                    "exclude_stage": exclude_stage,
+                    "ticket_status": ticket_status,
+                    "exclude_ticket_status": exclude_ticket_status,
+                    "include_terminal": include_terminal or None,
+                    "search": search,
+                    "limit": limit,
+                    "offset": offset,
+                },
+            )
+            if stage is not None and len(stage) > 1:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "detail=full takes at most one stage",
+                    {"stages": list(stage)},
+                )
+            rows = tickets_views.list_tickets(
+                conn,
+                clk.now_unix(),
+                stage=stage[0] if stage else None,
+                project_id=resolved_project.id if resolved_project is not None else None,
+                manager_id=manager_id,
+            )
+            return {"tickets": rows}, rows
+
+        manager = None
+        if manager_kind is not None or manager_id is not None:
+            manager = _parse_manager(
+                {
+                    "kind": manager_kind or "manager",
+                    "id": (
+                        "chief" if manager_kind == "chief" and manager_id is None else manager_id
+                    ),
+                }
+            )
+
+        included_stages = tuple(stage or ())
+        registry = configured_worker_type_registry()
+        terminal_stages = {
+            registry.require(worker_type).completed_stage()
+            for worker_type in registry.registered_worker_types()
+        }
+        requested_terminal = sorted(set(included_stages) & terminal_stages)
+        if requested_terminal and not include_terminal:
             raise PlannerError(
                 ErrorCode.validation,
-                "detail=full takes at most one stage",
-                {"stages": list(stage)},
+                "terminal stages require include_terminal",
+                {"stages": requested_terminal},
             )
-        rows = tickets_views.list_tickets(
+        statuses = tuple(
+            parse_enum(TicketStatus, value, "ticket_status") for value in (ticket_status or ())
+        )
+        excluded_statuses = tuple(
+            parse_enum(TicketStatus, value, "exclude_ticket_status")
+            for value in (exclude_ticket_status or ())
+        )
+        page = tickets_views.list_ticket_summaries(
             conn,
-            clk.now_unix(),
-            stage=stage[0] if stage else None,
+            page_request=ListPageRequest(
+                limit=DEFAULT_LIST_LIMIT if limit is None else limit,
+                offset=0 if offset is None else offset,
+            ),
+            filters=TicketListFilters(
+                manager=manager,
+                stages=included_stages,
+                excluded_stages=tuple(exclude_stage or ()),
+                ticket_statuses=statuses,
+                excluded_ticket_statuses=excluded_statuses,
+                is_backlogged=is_backlogged,
+                worker_types=tuple(worker_type or ()),
+                include_terminal=include_terminal,
+                search=search,
+            ),
             project_id=resolved_project.id if resolved_project is not None else None,
             manager_id=manager_id,
         )
+        return page.response("tickets"), page.rows
+
+    async with connection_off_the_loop(request) as conn:
+        response, rows = await run_on_worker_thread(read_rows, conn)
         await add_work_attention(conn, conversations, conversation_record, tickets=rows)
-        return {"tickets": rows}
-
-    manager = None
-    if manager_kind is not None or manager_id is not None:
-        manager = _parse_manager(
-            {
-                "kind": manager_kind or "manager",
-                "id": ("chief" if manager_kind == "chief" and manager_id is None else manager_id),
-            }
-        )
-
-    included_stages = tuple(stage or ())
-    registry = configured_worker_type_registry()
-    terminal_stages = {
-        registry.require(worker_type).completed_stage()
-        for worker_type in registry.registered_worker_types()
-    }
-    requested_terminal = sorted(set(included_stages) & terminal_stages)
-    if requested_terminal and not include_terminal:
-        raise PlannerError(
-            ErrorCode.validation,
-            "terminal stages require include_terminal",
-            {"stages": requested_terminal},
-        )
-    statuses = tuple(
-        parse_enum(TicketStatus, value, "ticket_status") for value in (ticket_status or ())
-    )
-    excluded_statuses = tuple(
-        parse_enum(TicketStatus, value, "exclude_ticket_status")
-        for value in (exclude_ticket_status or ())
-    )
-    page = tickets_views.list_ticket_summaries(
-        conn,
-        page_request=ListPageRequest(
-            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
-            offset=0 if offset is None else offset,
-        ),
-        filters=TicketListFilters(
-            manager=manager,
-            stages=included_stages,
-            excluded_stages=tuple(exclude_stage or ()),
-            ticket_statuses=statuses,
-            excluded_ticket_statuses=excluded_statuses,
-            is_backlogged=is_backlogged,
-            worker_types=tuple(worker_type or ()),
-            include_terminal=include_terminal,
-            search=search,
-        ),
-        project_id=resolved_project.id if resolved_project is not None else None,
-        manager_id=manager_id,
-    )
-    await add_work_attention(conn, conversations, conversation_record, tickets=page.rows)
-    return page.response("tickets")
+    return response
 
 
 @dataclass(frozen=True)
@@ -689,7 +724,7 @@ class ResolvedEmployeeConfiguration:
     employee_launch_reasoning_effort: str | None
 
 
-async def resolve_employee_configuration(
+def resolve_employee_configuration(
     request: Request,
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -727,7 +762,7 @@ def write_resolved_employee_configuration(
 
 
 @router.get("/tickets/{ticket_id}/worker-self")
-async def get_worker_self_ticket(
+def get_worker_self_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
@@ -757,7 +792,7 @@ async def get_worker_self_ticket(
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")
-async def put_ticket_employee_configuration(
+def put_ticket_employee_configuration(
     ticket_id: str,
     raw: dict[str, Any],
     request: Request,
@@ -783,7 +818,7 @@ async def put_ticket_employee_configuration(
         employee_launch_model=body_str(raw, "employee_launch_model"),
         employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
     )
-    resolved = await resolve_employee_configuration(
+    resolved = resolve_employee_configuration(
         request,
         conn,
         ticket_id,
@@ -800,7 +835,6 @@ async def restart_ticket_worker(
     ticket_id: str,
     raw: dict[str, Any],
     request: Request,
-    conn: DbConn,
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
@@ -825,19 +859,7 @@ async def restart_ticket_worker(
             "a launch configuration needs both a backend and a model",
             {},
         )
-    write_configuration: Callable[[sqlite3.Connection, int], None] | None = None
-    if backend is not None and model is not None:
-        resolved = await resolve_employee_configuration(
-            request,
-            conn,
-            ticket_id,
-            employee_backend=backend,
-            employee_launch_model=model,
-            employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
-        )
-
-        def write_configuration(open_conn: sqlite3.Connection, now: int) -> None:
-            write_resolved_employee_configuration(open_conn, ticket_id, resolved, now=now)
+    reasoning_effort = body_opt_str(raw, "employee_launch_reasoning_effort")
 
     async def start_worker_step() -> WorkerStepStartResult:
         return await start_ready_worker_step(
@@ -848,21 +870,37 @@ async def restart_ticket_worker(
             now=clk.now_unix,
         )
 
-    return await worker_restart.restart_worker(
-        conversations,
-        conn,
-        ctx.principal,
-        ticket_id,
-        write_employee_configuration=write_configuration,
-        start_worker_step=start_worker_step,
-        now=clk.now_unix,
-    )
+    async with connection_off_the_loop(request) as conn:
+        write_configuration: Callable[[sqlite3.Connection, int], None] | None = None
+        if backend is not None and model is not None:
+            resolved = await run_on_worker_thread(
+                resolve_employee_configuration,
+                request,
+                conn,
+                ticket_id,
+                employee_backend=backend,
+                employee_launch_model=model,
+                employee_launch_reasoning_effort=reasoning_effort,
+            )
+
+            def write_configuration(open_conn: sqlite3.Connection, now: int) -> None:
+                write_resolved_employee_configuration(open_conn, ticket_id, resolved, now=now)
+
+        return await worker_restart.restart_worker(
+            conversations,
+            conn,
+            ctx.principal,
+            ticket_id,
+            write_employee_configuration=write_configuration,
+            start_worker_step=start_worker_step,
+            now=clk.now_unix,
+        )
 
 
 @router.delete("/tickets/{ticket_id}")
 async def delete_ticket(
     ticket_id: str,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -872,17 +910,19 @@ async def delete_ticket(
     # the same place. Both walk past the running guards, so the Ticket's turn is killed
     # here instead: a Worker must never outlive the Ticket it belongs to.
     even_while_running = force or ctx.principal.kind is PrincipalKind.manager
-    if even_while_running:
-        await silence_the_worker_before_deleting(conn, conversations, ticket_id)
-    else:
-        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-    deleted = tickets_data.delete_ticket(
-        conn,
-        ticket_id,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        even_while_running=even_while_running,
-    )
+    async with connection_off_the_loop(request) as conn:
+        if even_while_running:
+            await silence_the_worker_before_deleting(conn, conversations, ticket_id)
+        else:
+            await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
+        deleted = await run_on_worker_thread(
+            tickets_data.delete_ticket,
+            conn,
+            ticket_id,
+            principal=ctx.principal,
+            now=clk.now_unix(),
+            even_while_running=even_while_running,
+        )
     return {
         "ok": True,
         "ticket_id": deleted.ticket_id,
@@ -960,20 +1000,23 @@ def write_patch_ticket(
 async def patch_ticket(
     ticket_id: str,
     body: dict[str, Any],
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
     notices: list[ReviewTransferNotice] = []
-    result = write_patch_ticket(ticket_id, body, conn, ctx, clk, review_transfer_notices=notices)
-    await notify_review_transfers(conversations, conn, notices, now=clk.now_unix())
+    async with connection_off_the_loop(request) as conn:
+        result = await run_on_worker_thread(
+            write_patch_ticket, ticket_id, body, conn, ctx, clk, review_transfer_notices=notices
+        )
+        await notify_review_transfers(conversations, conn, notices, now=clk.now_unix())
     return result
 
 
 @router.post("/tickets/{ticket_id}/propose")
-async def propose_current_field(
+def propose_current_field(
     ticket_id: str,
     raw: dict[str, Any],
     conn: DbConn,
@@ -998,7 +1041,7 @@ async def propose_current_field(
 
 
 @router.post("/tickets/{ticket_id}/accept/{field}")
-async def accept_field(
+def accept_field(
     ticket_id: str,
     field: str,
     raw: dict[str, Any],
@@ -1026,7 +1069,7 @@ async def accept_field(
 
 
 @router.post("/tickets/{ticket_id}/reject")
-async def reject_ticket_proposal(
+def reject_ticket_proposal(
     ticket_id: str,
     raw: dict[str, Any],
     conn: DbConn,
@@ -1089,13 +1132,13 @@ def _conversation_start_values_json(values: ConversationStartValues) -> JsonDict
 
 
 @router.get("/chief/conversation")
-async def read_chief_conversation(conn: DbConn) -> JsonDict:
+def read_chief_conversation(conn: DbConn) -> JsonDict:
     """Which conversation the Chief is currently talking in, or none."""
     return {"conversation_id": conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)}
 
 
 @router.get("/chief/conversation/start-values")
-async def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
+def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
     """What a conversation started for the Chief right now would run on.
 
     This is the question a panel with no conversation has to answer to show anything at
@@ -1110,7 +1153,6 @@ async def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
 async def send_to_chief_conversation(
     body: OwnerSendBody,
     request: Request,
-    conn: DbConn,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1137,42 +1179,44 @@ async def send_to_chief_conversation(
         CHIEF_PRINCIPAL,
         ctx.principal,
     )
-    delivered = await message_delivery_service.send_message(
-        conversations,
-        conn,
-        clk,
-        ctx,
-        CHIEF_PRINCIPAL,
-        admission
-        or partial(
-            conversation_message_content,
-            message_files,
-            sent=body.content,
+    async with connection_off_the_loop(request) as conn:
+        delivered = await message_delivery_service.send_message(
+            conversations,
+            conn,
+            clk,
+            ctx,
+            CHIEF_PRINCIPAL,
+            admission
+            or partial(
+                conversation_message_content,
+                message_files,
+                sent=body.content,
+                sender_message_id=body.sender_message_id,
+            ),
+            admission=admission,
+            conversation_id=body.conversation_id,
+            created_conversation_id=created_conversation_id,
+            runs_under=runs_under,
+            mode=body.mode,
+            owner_read_through_sequence=body.owner_read_through_sequence,
             sender_message_id=body.sender_message_id,
-        ),
-        admission=admission,
-        conversation_id=body.conversation_id,
-        created_conversation_id=created_conversation_id,
-        runs_under=runs_under,
-        mode=body.mode,
-        owner_read_through_sequence=body.owner_read_through_sequence,
-        sender_message_id=body.sender_message_id,
-        sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
-    )
+            sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
+        )
     return _delivered_message_json(delivered)
 
 
 @router.post("/chief/conversation/reset")
 async def reset_chief_conversation(
-    conn: DbConn, ctx: Ctx, conversations: Conversations
+    request: Request, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     """Cut the Chief loose from its conversation. This is what New does."""
-    await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
+    async with connection_off_the_loop(request) as conn:
+        await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
     return {"conversation_id": None}
 
 
 @router.get("/tickets/{ticket_id}/conversation/start-values")
-async def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) -> JsonDict:
+def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) -> JsonDict:
     """What a conversation started for this Ticket's worker right now would run on.
 
     The Chief's question, asked of a Ticket: the same resolve the send door runs, so the
@@ -1189,7 +1233,6 @@ async def send_to_ticket_conversation(
     ticket_id: str,
     body: OwnerSendBody,
     request: Request,
-    conn: DbConn,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1218,35 +1261,36 @@ async def send_to_ticket_conversation(
         Principal(PrincipalKind.ticket, ticket_id),
         ctx.principal,
     )
-    delivered = await message_delivery_service.send_message(
-        conversations,
-        conn,
-        clk,
-        ctx,
-        Principal(PrincipalKind.ticket, ticket_id),
-        admission
-        or partial(
-            conversation_message_content,
-            message_files,
-            sent=body.content,
+    async with connection_off_the_loop(request) as conn:
+        delivered = await message_delivery_service.send_message(
+            conversations,
+            conn,
+            clk,
+            ctx,
+            Principal(PrincipalKind.ticket, ticket_id),
+            admission
+            or partial(
+                conversation_message_content,
+                message_files,
+                sent=body.content,
+                sender_message_id=body.sender_message_id,
+            ),
+            admission=admission,
+            conversation_id=body.conversation_id,
+            created_conversation_id=created_conversation_id,
+            runs_under=_what_this_message_runs_under(body),
+            mode=body.mode,
+            owner_read_through_sequence=body.owner_read_through_sequence,
             sender_message_id=body.sender_message_id,
-        ),
-        admission=admission,
-        conversation_id=body.conversation_id,
-        created_conversation_id=created_conversation_id,
-        runs_under=_what_this_message_runs_under(body),
-        mode=body.mode,
-        owner_read_through_sequence=body.owner_read_through_sequence,
-        sender_message_id=body.sender_message_id,
-        sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
-    )
+            sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
+        )
     return _delivered_message_json(delivered)
 
 
 @router.post("/tickets/{ticket_id}/conversation/reset")
 async def reset_ticket_conversation(
     ticket_id: str,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1259,8 +1303,10 @@ async def reset_ticket_conversation(
     above already knows how to answer.
     """
     now = clk.now_unix()
-    await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
-    return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
+    async with connection_off_the_loop(request) as conn:
+        await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
+        ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
+    return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/complete/{field}")
@@ -1268,7 +1314,7 @@ async def complete_user_owned_gate(
     ticket_id: str,
     field: str,
     raw: dict[str, Any],
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1280,18 +1326,22 @@ async def complete_user_owned_gate(
     approval otherwise has.
     """
     body = GateCompletionBody(body=body_str(raw, "body"))
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
-    _validate_field(worker_type_definition, field)
-    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-    now = clk.now_unix()
-    ticket = tickets_data.complete_user_owned_gate(
-        conn,
-        ticket_id,
-        field=field,
-        new_body=body["body"],
-        principal=ctx.principal,
-        now=now,
-    )
+    async with connection_off_the_loop(request) as conn:
+        _ticket, worker_type_definition = await run_on_worker_thread(
+            _ticket_and_worker_type_definition, conn, ticket_id
+        )
+        _validate_field(worker_type_definition, field)
+        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
+        now = clk.now_unix()
+        ticket = await run_on_worker_thread(
+            tickets_data.complete_user_owned_gate,
+            conn,
+            ticket_id,
+            field=field,
+            new_body=body["body"],
+            principal=ctx.principal,
+            now=now,
+        )
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -1299,7 +1349,7 @@ async def complete_user_owned_gate(
 async def request_help(
     ticket_id: str,
     body: JsonDict,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1309,12 +1359,13 @@ async def request_help(
     message = body_str(body, "message")
     if not message.strip():
         raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    named = _parse_principal(body.get("recipient"), "recipient", allow_ticket=True)
-    recipient = named or ticket.ceiling_holder
-    delivered = await message_delivery_service.send_message(
-        conversations, conn, clk, ctx, recipient, message
-    )
+    async with connection_off_the_loop(request) as conn:
+        ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
+        named = _parse_principal(body.get("recipient"), "recipient", allow_ticket=True)
+        recipient = named or ticket.ceiling_holder
+        delivered = await message_delivery_service.send_message(
+            conversations, conn, clk, ctx, recipient, message
+        )
     fate = (
         {"fate": "recorded"}
         if isinstance(delivered.fate, MessageRecordedToOwner)
@@ -1328,27 +1379,28 @@ async def request_help(
 
 
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
-async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
+def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
 
 
 @router.get("/review")
 async def review(
-    conn: DbConn,
+    request: Request,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    response = tickets_views.review_view(conn)
-    response["running_worker_count"] = await read_running_conversation_count(
-        conn, conversations, conversation_record
-    )
+    async with connection_off_the_loop(request) as conn:
+        response = await run_on_worker_thread(tickets_views.review_view, conn)
+        response["running_worker_count"] = await read_running_conversation_count(
+            conn, conversations, conversation_record
+        )
     return response
 
 
 @router.post("/tickets/{ticket_id}/backlog")
-async def backlog_ticket(
+def backlog_ticket(
     ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     tickets_data.set_ticket_backlog(
@@ -1362,7 +1414,7 @@ async def backlog_ticket(
 
 
 @router.post("/tickets/{ticket_id}/resume")
-async def resume_ticket(
+def resume_ticket(
     ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     tickets_data.set_ticket_backlog(
