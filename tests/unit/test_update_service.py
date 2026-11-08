@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -169,6 +170,27 @@ def test_idle_wait_cancel_and_update_now(harness: Harness) -> None:
     assert harness.launched and harness.store.read().state == "installing"  # type: ignore[union-attr]
     with pytest.raises(UpdateConflict):
         harness.service.cancel(second.attempt_id)
+
+
+def test_idle_wait_outlives_the_install_deadline_then_installs(harness: Harness) -> None:
+    """A wait for idle has no deadline: hours of busy work leave it waiting, not failed.
+
+    On 7 November a refused start sent a wait back with its 15-minute deadline still set,
+    and the wait failed on that deadline while agents worked.
+    """
+    harness.system.activity = "busy"
+    waiting = harness.service.install(SHA_B, "idle", confirm_activity=False)
+    assert waiting.deadline_at is None
+    later = time.time() + 2 * 3600
+    harness.service._now = lambda: later
+    harness.advance()
+    assert harness.service.status().state == "waiting"
+    assert harness.store.read() == waiting and not harness.launched
+    harness.system.activity = "idle"
+    harness.advance()
+    recorded = harness.store.read()
+    assert recorded is not None and recorded.attempt_id == waiting.attempt_id
+    assert recorded.state == "installing" and harness.launched
 
 
 def test_refusals_before_stop_fail_plainly_and_reopen_work(harness: Harness) -> None:
