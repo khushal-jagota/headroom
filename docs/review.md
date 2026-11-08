@@ -11,9 +11,11 @@ Items about one Ticket share a card. A card is as old as its oldest item. Messag
 
 ## How it works
 
-Review is a reading of other records. It stores nothing of its own beyond where Khushal is in the current pass. Membership and order come from the navigation index, which tracks attention without loading every conversation. Acting on a card goes through the ordinary writers: approving or sending back goes to the proposal resolver, a reply goes through Send Message, and marking read updates the conversation. Each action clears only what that card showed, and the next card is whatever is now oldest.
+Review reads other records. Membership and order come from the navigation index, which tracks attention without a read of every conversation. Actions use the ordinary writers: decisions use the proposal resolver, replies use Send Message, and read marks update the conversation. Each action clears only what that card showed. The next card is whatever is now oldest.
 
 The proposal on a card is the same approval surface as on the Ticket page. Skipping a card defers it for this visit only.
+
+An approval note must reach the Worker before approval proceeds. The browser keeps its message identity for that exact proposal across revisits and reloads. If delivery is uncertain, another Approve checks the same message without duplicate delivery. A confirmed note stays confirmed if approval itself fails.
 
 If the index is not yet trustworthy, Review says it is unavailable instead of showing an empty queue that might be wrong.
 
@@ -32,4 +34,4 @@ Review is a primary destination in the browser, with a count. [Notifications](no
 - `src/planner/navigation/`: the index, and Review's membership and ordering (`review.py`, `review_logic.py`).
 - `web/src/routes/ReviewRoute.svelte` and `web/src/components/Review*.svelte`: the pass and its cards.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-08._
