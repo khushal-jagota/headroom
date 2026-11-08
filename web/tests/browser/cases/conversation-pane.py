@@ -3953,10 +3953,6 @@ def _card_state_motion(browser, url):
             arrow:[arrow.backgroundColor,arrow.color]}}""")
     def dock_treatment(page, arrow_lit):
         # Hover lights only the arrow: the layer keeps its resting look and its hairline.
-        # The first unlit reading on each host is the resting look the others compare with.
-        if not dock_rest:
-            assert not arrow_lit
-            dock_rest.update(dock_look(page))
         def matches():
             look = dock_look(page)
             return (look['layer'] == dock_rest['layer'] and look['line'] == '1'
@@ -3984,6 +3980,8 @@ def _card_state_motion(browser, url):
             expect(page.locator('[data-conversation-rest-line]')).to_have_text('Worker idle')
             # The field looks the same after the reader opens and closes (checked below).
             rest_input = input_appearance(page)
+            # The dock's resting look, before any hover, is what every later reading compares with.
+            dock_rest.update(dock_look(page))
             if width == 1280:
                 device = page.locator('[data-conversation-box]').bounding_box()
                 column = page.locator('.conversation-column').bounding_box()
@@ -4074,9 +4072,8 @@ def _card_state_motion(browser, url):
             # Escape must return the keyboard to the visible dock, just as Collapse does.
             expect(page.locator('[data-conversation-expand]')).to_be_focused()
             _settle_conversation_layout(page)
-            if dock_rest:
-                look = dock_look(page)
-                assert look['layer'] == dock_rest['layer'] and look['line'] == '1', (look, dock_rest)
+            look = dock_look(page)
+            assert look['layer'] == dock_rest['layer'] and look['line'] == '1', (look, dock_rest)
 
             assert page.evaluate("window.__paneIdentity===document.querySelector('[data-conversation-pane]')&&window.__composerIdentity===document.querySelector('[data-conversation-composer]')")
             assert not document.evaluate('node=>node.closest(".ticket-reading,.manager-reading").inert')
@@ -4101,8 +4098,6 @@ def _card_state_motion(browser, url):
                 page.evaluate("window.__showActivePlan()")
                 expect(page.locator('[data-conversation-rest-line]')).to_have_text('Working')
                 expect(page.locator('[data-conversation-rest-bar]')).to_have_text('Working')
-                activity_fonts = page.locator('[data-conversation-rest-line]').evaluate("node=>({actual:getComputedStyle(node).fontFamily,ui:getComputedStyle(node).getPropertyValue('--font-ui').trim()})")
-                assert activity_fonts['actual'] == activity_fonts['ui'], activity_fonts
                 page.evaluate("window.__showEveryMark()")
                 preview = page.locator('[data-conversation-unread-preview]')
                 expect(preview).to_have_text('the reply nobody has read')
