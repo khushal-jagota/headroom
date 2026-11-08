@@ -3,6 +3,9 @@ import Observation
 
 /// A draft belongs to the exact proposal the person read, including its revision.
 @MainActor @Observable final class ReviewDecision {
+    /// The Ticket's view stamp when the last load started; a read-ahead taken before a
+    /// later change is not current when its card is shown.
+    var loadedStamp: String?
     var ticket: TicketDetail?
     var manifest: ReviewWorkerManifest?
     var draft = "" { didSet { persistDraft(draft, old: oldValue, suffix: ":edit") } }

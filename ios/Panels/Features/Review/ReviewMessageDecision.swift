@@ -53,10 +53,19 @@ extension APIClient {
     var loaded = false
     var historical = false
     var busy = false
+    private var loading = false
     var error: String?
     var attemptID: String?
     private var api: APIClient?
     private var item: ReviewItem?
+    /// The view facts the loaded run was read for. The view carries no sequence that
+    /// moves when a message joins an unread run, so these only say when a read-ahead is
+    /// plainly out of date. The shown card reads its run again (see `load(shownAt:)`).
+    private var loadedFreshness: String?
+    /// When the read behind `events` started.
+    private var readStarted: ContinuousClock.Instant?
+    static func freshness(_ item: ReviewItem) -> String { "\(item.ownerReadThroughSequence)|\(item.addressCurrent)" }
+    func isCurrent(for item: ReviewItem) -> Bool { loaded && loadedFreshness == Self.freshness(item) }
     var through: Int { events.last?.sequence ?? 0 }
     var attempt: PendingWork? {
         guard let api, let attemptID else { return nil }
@@ -65,20 +74,31 @@ extension APIClient {
     var accepted: Bool { attempt.map { [.sent, .serverQueued].contains($0.state) } ?? false }
     var pending: Bool { attempt.map { [.waiting, .sending, .uncertain].contains($0.state) } ?? false }
 
-    func load(item: ReviewItem, api: APIClient) async {
-        guard !loaded, !busy, let id = item.conversationId, let owner = item.owner else { return }
-        busy = true; defer { busy = false }
+    /// The view supplies the read boundary and whether the address is still the
+    /// owner's current conversation, so the unread run is the only read. A read
+    /// already in flight is awaited rather than repeated.
+    ///
+    /// `shownAt` is when the card came on screen. A run read before then reads again,
+    /// because messages can join it after a read-ahead. The earlier run stays on screen
+    /// meanwhile, and Mark read and a reply wait for the new read.
+    func load(item: ReviewItem, api: APIClient, shownAt: ContinuousClock.Instant? = nil) async {
+        await settled()
+        if isCurrent(for: item), let readStarted, shownAt.map({ readStarted >= $0 }) ?? true { return }
+        guard !busy, let id = item.conversationId, let owner = item.owner else { return }
+        let first = !loaded
+        loading = true; if first { busy = true }
+        defer { loading = false; if first { busy = false } }
         self.api = api; self.item = item
-        composer.conversationID = id
-        composer.restore(owner: owner, api: api, draftID: "review-message:\(id)")
-        composer.deliveryMode = "queue"
+        let started = ContinuousClock.now
+        if !loaded {
+            composer.conversationID = id
+            composer.restore(owner: owner, api: api, draftID: "review-message:\(id)")
+            composer.deliveryMode = "queue"
+        }
         do {
-            let configuration = try await api.conversationConfiguration(owner, id: id)
-            let messages = try await api.reviewMessages(id, after: configuration.ownerReadThroughSequence ?? 0)
-            let current = try await api.currentConversation(owner)
+            let messages = try await api.reviewMessages(id, after: item.ownerReadThroughSequence)
             try Task.checkCancellation()
-            events = messages; historical = current != id
-            composer.applyConfiguration(configuration)
+            events = messages; historical = !item.addressCurrent
             let saved = Outbox.shared.entries(LocalStore.server(api.baseURL)).last {
                 $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil &&
                 (![.sent, .serverQueued, .changed].contains($0.state) || ($0.message?.ownerReadThroughSequence ?? 0) >= (messages.last?.sequence ?? Int.max))
@@ -96,10 +116,17 @@ extension APIClient {
                 composer.draft = message.content.compactMap(\.text).joined(separator: "\n")
                 composer.attachments = message.content.filter { $0.piece != "text" }
             }
-            loaded = true; error = nil
+            loaded = true; loadedFreshness = Self.freshness(item); readStarted = started; error = nil
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
+    /// Waits for a read in flight, so a reply or Mark read uses the newest run.
+    private func settled() async {
+        while loading {
+            do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
+        }
+    }
     func send() async -> Bool {
+        await settled()
         guard let api, let item, let owner = item.owner, let id = item.conversationId,
               loaded, through > 0, !historical, !busy, !pending else { return false }
         let text = composer.draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -128,6 +155,7 @@ extension APIClient {
         } catch { self.error = error.localizedDescription; return false }
     }
     func markRead() async -> Bool {
+        await settled()
         guard let api, let id = item?.conversationId, loaded, through > 0, !busy, !pending else { return false }
         busy = true; defer { busy = false }
         do { try await api.markReviewRead(id, through: through); return true }

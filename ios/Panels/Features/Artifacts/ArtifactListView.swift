@@ -4,6 +4,9 @@ import SwiftUI
 struct ArtifactListView: View {
     let owner: ArtifactOwner
     var directory: String = ""
+    /// The owner's file count from its detail read. A changed count reads the list again;
+    /// file writes have no database change of their own.
+    var count: Int?
     @Environment(AppStore.self) private var store
     @State private var entries: [ArtifactEntry] = []
     @State private var total = 0
@@ -22,7 +25,7 @@ struct ArtifactListView: View {
             .navigationDestination(item: $selectedArtifact) { target in
                 ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, conversationOwner: owner.kind == .ticket ? .ticket(owner.id) : .manager(owner.id))
             }
-            .task(id: store.revision) { await load(); refreshVersion += 1 }
+            .task(id: "\(store.baseURL)|\(count ?? -1)|\(store.connectionSession)") { await load(); refreshVersion += 1 }
 
     }
     private var searchContent: some View {

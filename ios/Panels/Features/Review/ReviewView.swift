@@ -6,6 +6,8 @@ struct ReviewView: View {
     @State private var queue = ReviewQueue()
     @State private var displayedItem: ReviewItem?
     @State private var decisions: [String: ReviewDecision] = [:]
+    @State private var messageDecisions = ReviewMessageDecisions()
+    @State private var reviewPage: String?
     @State private var cardHeight: CGFloat = 180
     @State private var emptyVisible = false
     private var savedDecisions: [PendingWork] {
@@ -16,14 +18,18 @@ struct ReviewView: View {
             !savedDecisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state) }
         }
     }
-    private var skippedCount: Int { queue.skippedCount(in: queueItems) }
+    /// On a later page the skipped cards of earlier pages are not loaded; they still count.
+    private var skippedCount: Int { reviewPage == nil ? queue.skippedCount(in: queueItems) : queue.skipped.subtracting(queue.resolved).count }
+    /// As on the web, only a page whose every loaded card was skipped moves on;
+    /// resolved cards leave the server queue and the page refills by itself.
+    private var pageSkipped: Bool { !queueItems.isEmpty && queueItems.allSatisfy { queue.skipped.contains($0.id) } }
     private var pending: [ReviewItem] { queueItems.filter { !queue.skipped.contains($0.id) && !queue.resolved.contains($0.id) } }
 
     var body: some View {
         Group {
             if let item = displayedItem ?? queue.current(in: queueItems) {
                 if item.isMessage {
-                    ReviewMessageView(item: item, onSkip: { advance(item, resolved: false) }, onResolved: {
+                    ReviewMessageView(item: item, decision: messageDecisions.decision(for: item), onSkip: { advance(item, resolved: false) }, onResolved: {
                         advance(item, resolved: true)
                         Task { await store.refresh() }
                     }).id(item.id).transition(.identity)
@@ -49,7 +55,7 @@ struct ReviewView: View {
                     if skippedCount > 0 {
                         Button("Revisit \(skippedCount) skipped \(skippedCount == 1 ? "item" : "items")") {
                             Haptics.selection()
-                            withAnimation(ReviewStyle.entrance) { queue.revisit() }
+                            withAnimation(ReviewStyle.entrance) { queue.revisit(); reviewPage = nil }
                         }
                         .buttonStyle(ReviewActionStyle())
                         .accessibilityIdentifier("review.revisitSkipped")
@@ -73,22 +79,53 @@ struct ReviewView: View {
                 }
             }
         }
-        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Review"]) { await store.refresh() }
+        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).panelsScreen()
-        .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:] }
+        .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedItem = nil; decisions = [:]; messageDecisions = ReviewMessageDecisions(); reviewPage = nil }
+        // The review window holds 30 cards. Once every loaded one was skipped here,
+        // the next page replaces it; Revisit returns to the first.
+        .onChange(of: reviewPage, initial: true) { _, page in demandReview(page) }
+        .onChange(of: pageSkipped) { _, skipped in if skipped { advancePage() } }
         .task(id: "\(store.baseURL):\(pending.prefix(30).map(\.id).joined(separator: ","))") {
             // Pin the visible ask until its exit finishes, including when the server
             // removes it from the live queue while its approval sheet is closing.
             if displayedItem == nil || (displayedItem?.isMessage == false && !queueItems.contains(where: { $0.id == displayedItem?.id })) { displayedItem = queue.current(in: queueItems) }
-            // Keep the next complete ask ready before the current one leaves.
-            for item in pending.prefix(30) where !item.isMessage {
+            await prefetch()
+        }
+    }
+
+    private func demandReview(_ page: String?) {
+        store.setNavigationDemand("review", [ViewWindowRequest(section: "review", anchor: page, limit: NavigationScope.reviewWindowLimit)])
+    }
+    private func advancePage() {
+        if let next = store.view?.window("review")?.next { reviewPage = next }
+    }
+
+    /// Keep the next complete asks ready before the current one leaves: proposals
+    /// with their manifest, messages with their unread run. A few at a time.
+    private func prefetch() async {
+        let api = store.client
+        var loads: [@MainActor @Sendable () async -> Void] = []
+        for item in pending.prefix(30) {
+            if item.isMessage {
+                let decision = messageDecisions.decision(for: item)
+                if !decision.isCurrent(for: item) { loads.append { await decision.load(item: item, api: api) } }
+            } else {
                 let decision = decisions[item.id] ?? ReviewDecision()
                 decisions[item.id] = decision
-                if decision.proposal == nil { await decision.load(item: item, api: store.client) }
+                let stamp = store.ticketStamp(item.ticketId)
+                if decision.proposal == nil { loads.append { await decision.load(item: item, api: api); decision.loadedStamp = stamp } }
             }
-            let ids = Set((store.review?.items ?? []).map(\.id))
-            decisions = decisions.filter { ids.contains($0.key) || $0.key == displayedItem?.id }
         }
+        await withTaskGroup(of: Void.self) { group in
+            for (index, load) in loads.enumerated() {
+                if index >= 3 { await group.next() }
+                group.addTask { await load() }
+            }
+        }
+        let ids = Set((store.review?.items ?? []).map(\.id))
+        decisions = decisions.filter { ids.contains($0.key) || $0.key == displayedItem?.id }
+        messageDecisions.retain(ids.union([displayedItem?.id].compactMap { $0 }))
     }
 
     private func advance(_ item: ReviewItem, resolved: Bool) {
@@ -96,13 +133,34 @@ struct ReviewView: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             if resolved { queue.resolve(item) } else { queue.skip(item) }
+            // A revisited message reads its run again, as a freshly opened card does.
+            if item.isMessage { messageDecisions.drop(item.id) }
             displayedItem = queue.current(in: queueItems)
         }
     }
 }
 
+/// Message decisions keyed by item, shared by the visible card and the read-ahead.
+/// Plain storage: creating one while the view renders publishes nothing.
+@MainActor private final class ReviewMessageDecisions {
+    private var decisions: [String: ReviewMessageDecision] = [:]
+    func decision(for item: ReviewItem) -> ReviewMessageDecision {
+        if let existing = decisions[item.id] { return existing }
+        let decision = ReviewMessageDecision()
+        decisions[item.id] = decision
+        return decision
+    }
+    func retain(_ ids: Set<String>) { decisions = decisions.filter { ids.contains($0.key) } }
+    func drop(_ id: String) { decisions[id] = nil }
+}
+
 private struct ReviewProposalView: View {
     let item: ReviewItem
+    private func loadProposal() async {
+        let stamp = store.ticketStamp(item.ticketId)
+        await decision.load(item: item, api: store.client)
+        decision.loadedStamp = stamp
+    }
     @Bindable var decision: ReviewDecision
     @Binding var cardHeight: CGFloat
     let openTicket: (() -> Void)?
@@ -119,11 +177,11 @@ private struct ReviewProposalView: View {
     @State private var crossedThreshold = false
     @State private var leaving = false
     @State private var visible = false
+    @State private var appeared = false
     @State private var returning = false
     @State private var actionsVisible = true
     @State private var changingActions = false
     @State private var resolvedAfterDismiss = false
-    @State private var observedRevision: Int?
     @State private var renaming = false
     @State private var titleDraft = ""
     private enum ReviewSheet: String, Identifiable { case approve; var id: String { rawValue } }
@@ -199,14 +257,19 @@ private struct ReviewProposalView: View {
             .toolbar { reviewToolbar }
 
         }
-        .task(id: "\(store.baseURL):\(store.revision)") {
-            guard sheet == nil, !editing, !returning, drag == 0 else { return }
-            let firstAppearance = observedRevision == nil
-            observedRevision = store.revision
+        .task(id: "\(store.baseURL)|\(store.connectionSession)") {
+            let firstAppearance = !appeared
+            appeared = true
             // A prefetched ask is ready to reveal; do not immediately dim its actions
-            // with a redundant load. Subsequent server revisions still refresh it.
-            if firstAppearance, decision.proposal != nil { return }
-            await decision.load(item: item, api: store.client)
+            // with a redundant load, unless its Ticket changed after the read-ahead. A later
+            // change, a return to the foreground or a recovered connection reloads it.
+            if firstAppearance, decision.proposal != nil, decision.loadedStamp == store.ticketStamp(item.ticketId) { return }
+            guard sheet == nil, !editing, !returning, drag == 0 else { return }
+            await loadProposal()
+        }
+        .reload(onChangeOf: store.ticketStamp(item.ticketId)) {
+            guard sheet == nil, !editing, !returning, drag == 0 else { return }
+            await loadProposal()
         }
         .onAppear { withAnimation(.timingCurve(0.2, 0.7, 0.3, 1, duration: reduceMotion ? ReviewStyle.fadeOut : ReviewStyle.fadeIn)) { visible = true } }
         .alert("Rename ticket", isPresented: $renaming) {

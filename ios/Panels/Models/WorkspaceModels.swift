@@ -33,9 +33,16 @@ struct TicketSummary: Codable, Identifiable, Sendable {
     let awaitingApproval: Bool
     let awaitingAgentApproval: Bool
     let assigned: Bool
-    let agentState: String
-    let conversationSignal: ConversationSignal?
+    var agentState: String
+    var conversationSignal: ConversationSignal?
 }
+/// A detail read's worker row whose working and unread marks the navigation view keeps current.
+protocol LiveMarkedWorker {
+    var id: String { get }
+    var agentState: String { get set }
+    var conversationSignal: ConversationSignal? { get set }
+}
+extension TicketSummary: LiveMarkedWorker {}
 struct ManagerSummary: Codable, Identifiable, Sendable {
     let id: String
     let title: String

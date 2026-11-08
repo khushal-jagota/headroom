@@ -47,7 +47,9 @@ struct TicketView: View {
         .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .panelsRefreshable { await load(); await loadArtifacts() }
         .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
-        .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await load() }
+        .task(id: "\(store.baseURL.absoluteString)|\(store.connectionSession)") { await load() }
+        .reload(onChangeOf: store.ticketStamp(ticketID)) { await load() }
+        .navigationDemand("ticket:\(ticketID)", selected: ViewOwner(kind: "ticket", id: ticketID))
         .task(id: store.baseURL.absoluteString) { await loadArtifacts() }
         .sheet(isPresented: $scopeOpen) {
             if let presentation {
@@ -98,7 +100,7 @@ struct TicketView: View {
                 }.disabled(busy || titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Cancel") { renaming = false }
             } else {
-                AgentPageTitle(title: detail.title, signal: detail.conversationSignal)
+                AgentPageTitle(title: detail.title, signal: store.presentation?.ticketsById[ticketID]?.signal.conversationSignal ?? detail.conversationSignal)
                     .contextMenu { Button("Rename", systemImage: "pencil") { titleDraft = detail.title; renaming = true } }
             }
             Group {

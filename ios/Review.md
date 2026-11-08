@@ -2,7 +2,8 @@
 
 Review shows proposals and unread conversations in one queue, ordered by waiting
 time. Each conversation has one card containing its complete unread message run.
-The queue and badge follow the shared change stream. Skip keeps an item out of this visit's queue without
+The queue and badge come from the navigation view's review window, which the phone
+follows over the view's events stream; desktop builds its queue from the same window. Skip keeps an item out of this visit's queue without
 changing it on the server. When every remaining item was skipped, Revisit skipped
 items brings them back. A new proposal on the same ticket appears again.
 
@@ -35,7 +36,14 @@ Swipe left past 30% of the screen to skip, or use the Skip button. The swipe nev
 approves. The entire ask follows a leftward finger drag; releasing short of the
 threshold returns it without bounce. Skip fades the whole ask out over 120ms,
 resets its scroll position while hidden, then fades the next ask in over 200ms.
-The next proposal and its worker manifest are prefetched. While a proposal is
+The next asks are read ahead, three at a time: a proposal with its worker manifest,
+a message card with its unread run. The view already carries each conversation's
+read boundary and whether its address is current, so a message card needs one read. A message card
+read ahead before its conversation's latest event moved in the view reads its run
+again as it is shown, with the read-ahead run on screen meanwhile; a message that
+arrives while the card is on screen stays outside the displayed run.
+The review window holds 30 cards; once every loaded card was skipped, the next
+page replaces it, and Revisit returns to the first with every skipped card. While a proposal is
 loading, its card reserves the previous card height. After approval succeeds,
 the same transition waits for the approval sheet's dismissal callback. Reduce
 Motion keeps direct finger tracking and uses 120ms fades for the swap. Writes
@@ -134,9 +142,14 @@ small follow-ups received a fresh jobs-4 compile, without a second capture.
 See [offline recovery](Offline.md) for persistence, response-loss handling and focused verification.
 
 Unread-message verification uses `ReviewMessageTests` with the existing URLProtocol
-host: mixed queue decoding, a complete 65-message unread run, bounded Mark read,
+host: a complete 65-message unread run, bounded Mark read,
 refusal/relaunch/retry with attachments, historical send prevention, and recovery
-sender attribution. The existing offline simulator host also supports
+sender attribution. Its items carry the view's read boundary and current flag;
+only the events read reaches the stub. `NavigationViewTests` checks the queue
+itself against desktop's synthetic fixtures: canonical addresses with no fallback
+to a former owner, the oldest wait per Ticket card, exclusion of backlogged, done,
+settled-owner and agent-held asks, window order, and the native item identities.
+The offline simulator stub serves the same view snapshot. The existing offline simulator host also supports
 `PANELS_REVIEW_MESSAGES=1`. Its one connected test exercises SwiftUI card controls,
 reply refusal and relaunch, queued acceptance, a message arriving after display,
 Mark read, shared historical conversation navigation, Skip and revisit. Run it on an already
