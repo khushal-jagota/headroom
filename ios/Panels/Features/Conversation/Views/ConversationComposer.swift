@@ -324,11 +324,13 @@ struct ConversationAttachmentTile: View {
     }
 }
 
-/// Pastes images from the edit menu or Cmd-V. Text paste stays with the text field.
-/// The SwiftUI paste hook exists from iOS 27, so earlier systems keep picker and drag only.
+/// Pastes images from the edit menu. Text paste stays with the text field.
+/// The SwiftUI paste hook exists from iOS 27 and the Xcode 27 SDK (Swift 6.4). Earlier
+/// systems and older SDKs, such as CI's Xcode 26, keep picker and drag only.
 private struct ImagePaste: ViewModifier {
     let model: ConversationModel
     func body(content: Content) -> some View {
+        #if compiler(>=6.4)
         if #available(iOS 27.0, *) {
             content.pasteDestination(for: Data.self) { items in
                 for data in items {
@@ -337,5 +339,8 @@ private struct ImagePaste: ViewModifier {
                 }
             } validator: { items in items.filter { UIImage(data: $0) != nil } }
         } else { content }
+        #else
+        content
+        #endif
     }
 }
