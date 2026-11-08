@@ -62,7 +62,7 @@ def _ticket_records(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str,
     """Each Ticket's stored navigation facts, which every write keeps current."""
     if not ticket_ids:
         return {}
-    navigation_data.require_clean_read(conn)
+    navigation_data.require_records_current(conn)
     placeholders = ",".join("?" for _ in ticket_ids)
     rows = conn.execute(
         "SELECT id, json_extract(value, '$.ticket_status') AS ticket_status, "

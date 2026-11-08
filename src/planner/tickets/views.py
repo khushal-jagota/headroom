@@ -242,7 +242,7 @@ def list_ticket_summaries(
     project_id: str | None,
     manager_id: str | None,
 ) -> ListPage[JsonDict]:
-    navigation_data.require_clean_read(conn)
+    navigation_data.require_records_current(conn)
     clauses = ["r.kind = 'ticket'"]
     params: list[str] = []
     if filters.manager is not None:
