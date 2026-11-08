@@ -19,9 +19,11 @@ struct WorkspaceView: View {
     @State private var settledRequestedOffset = 0
     @State private var settledError: String?
     @State private var parentsPage: (anchor: String, direction: String)?
+    @State private var goals: GoalsResponse?
+    @State private var goalsError: String?
 
     private var hasContent: Bool { store.chief != nil || store.workspaceLoaded }
-    private var refreshError: String? { store.errors["Navigation"] ?? store.errors["Chief"] }
+    private var refreshError: String? { store.errors["Navigation"]?.message ?? store.errors["Chief"]?.message ?? goalsError }
     private var parentsWindow: ViewWindow? { store.view?.window("rail_parents") }
     /// The rail the web Workspace requests: active parents, Chief's and each card's tickets.
     private var workspaceWindows: [ViewWindowRequest] {
@@ -44,11 +46,11 @@ struct WorkspaceView: View {
                 if hasContent {
                     WorkspaceCard(title: store.chief?.label ?? "Chief of Staff", chief: true,
                                   route: .chief, signal: store.chiefSignal, groups: groups["chief"] ?? [],
-                                  hiddenCount: store.workspaceHidden["chief"] ?? 0, previewChanged: setPreviewOpen, open: open)
+                                  hiddenCount: store.workspaceHidden["chief"] ?? 0, goals: goals?.goals ?? [], previewChanged: setPreviewOpen, open: open)
                     ForEach(managers) { manager in
                         WorkspaceCard(title: manager.title, project: manager.project, route: .orchestrator(manager.id),
                                       signal: manager.conversationSignal, groups: groups[manager.id] ?? [],
-                                      hiddenCount: store.workspaceHidden[manager.id] ?? 0, previewChanged: setPreviewOpen, open: open)
+                                      hiddenCount: store.workspaceHidden[manager.id] ?? 0, goals: goals?.goals ?? [], previewChanged: setPreviewOpen, open: open)
                     }
                     if let window = parentsWindow, window.previous != nil || window.next != nil {
                         // The parent window holds at most 60 cards; pages replace it, as on the web.
@@ -89,12 +91,15 @@ struct WorkspaceView: View {
         .onChange(of: workspaceWindows) { _, windows in if visible { store.setNavigationDemand("workspace", windows) } }
         .onChange(of: store.view?.contentVersion) { _, _ in if visible { updateGroups() } }
         .onChange(of: store.baseURL) { _, _ in
-            groups = [:]; managers = []; settled = nil; parentsPage = nil
+            groups = [:]; managers = []; settled = nil; parentsPage = nil; goals = nil; goalsError = nil
             settledError = nil; settledOpen = false; settledRequestedOffset = 0
         }
         // Settled rows keep their paged list read, only while the section is open, and
         // read again when the view's settled count changes or the connection recovers.
         .task(id: "\(store.baseURL.absoluteString):\(store.counts?.settled ?? -1):\(store.connectionSession):\(visible):\(settledOpen)") { if visible && settledOpen { await refreshSupplementary() } }
+        // Goals are outside the navigation view, so they read again at each store revision.
+        .modifier(GoalBoundaryRefresh(at: goals?.nextRefreshAt) { await loadGoals(store.client) })
+        .task(id: "\(store.baseURL.absoluteString):\(store.revision):\(visible)") { if visible { await loadGoals(store.client) } }
         }
     }
 
@@ -200,6 +205,14 @@ struct WorkspaceView: View {
 
     private func refreshSupplementary() async {
         await loadSettled(store.client, through: settledRequestedOffset)
+    }
+
+    private func loadGoals(_ api: APIClient) async {
+        do {
+            let response = try await api.goals()
+            guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
+            goals = response; goalsError = nil
+        } catch { if !Task.isCancelled, api.baseURL == store.baseURL { goalsError = error.localizedDescription } }
     }
 
     private func loadSettled(_ api: APIClient, through offset: Int) async {
