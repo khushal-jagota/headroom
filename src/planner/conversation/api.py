@@ -874,7 +874,9 @@ async def put_model_enablement(
         raise HTTPException(status_code=404, detail="model is not in the backend catalogue")
     if runtime.backend_state is None:
         raise HTTPException(status_code=503, detail="backend state is unavailable")
-    runtime.backend_state.write_model_enablement(backend_key, model_id, body.enabled)
+    await run_on_worker_thread(
+        runtime.backend_state.write_model_enablement, backend_key, model_id, body.enabled
+    )
     return {"backend_key": str(backend_key), "model_id": model_id, "enabled": body.enabled}
 
 
