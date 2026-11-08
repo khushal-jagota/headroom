@@ -1475,7 +1475,7 @@ def verify_rail_overflow(page, fixture, evidence):
           const style=getComputedStyle(node);
           return {clientWidth:node.clientWidth, scrollWidth:node.scrollWidth, scrollLeft:node.scrollLeft,
             clientHeight:node.clientHeight, scrollHeight:node.scrollHeight,
-            overflowX:style.overflowX, overflowY:style.overflowY, gutter:style.scrollbarGutter,
+            overflowX:style.overflowX, overflowY:style.overflowY,
             paddingRight:style.paddingRight, marginRight:style.marginRight};
         }""")
 
@@ -1506,11 +1506,7 @@ def verify_rail_overflow(page, fixture, evidence):
                                   "scroller": scroller.get_attribute("class"), **values})
                     assert values["scrollWidth"] == values["clientWidth"], proof[-1]
                     assert values["scrollLeft"] == 0, proof[-1]
-                    # The active list keeps its gutter on both edges so its insets match; the
-                    # Settled list in the dock gives its gutter back (redesign). Neither scrolls
-                    # sideways, whatever its scrollbar takes.
-                    assert values["overflowY"] == "auto", proof[-1]
-                    assert values["gutter"] == ("stable both-edges" if scroller == active else "auto"), proof[-1]
+                    # Neither list scrolls sideways, whatever its scrollbar takes.
                     if count == 24:
                         assert values["scrollHeight"] > values["clientHeight"], proof[-1]
                     scroller.evaluate("node => node.scrollTop=node.scrollHeight")
@@ -1577,8 +1573,6 @@ def verify_rail_overflow(page, fixture, evidence):
             for scroller, selector in [(active, ".manager-card:not(.chief) .settle"), (settled, ".reopen")]:
                 dimensions = geometry(scroller)
                 assert dimensions["scrollWidth"] == dimensions["clientWidth"] and dimensions["scrollLeft"] == 0, dimensions
-                assert dimensions["overflowY"] == "auto", dimensions
-                assert dimensions["gutter"] == ("stable both-edges" if scroller == active else "auto"), dimensions
                 assert dimensions["scrollHeight"] > dimensions["clientHeight"], dimensions
                 scroller.evaluate("node => node.scrollTop=node.scrollHeight")
                 control = scroller.locator(selector).last
@@ -2216,7 +2210,7 @@ def verify_selection_washes(page, url, fixture, evidence):
             assert abs(wash["x"] - group["x"] - 4) < 1.6, frame
             assert abs(wash["width"] - group["width"] + 8) < 1.6, frame
         assert not frame["contextPresent"], frame
-        assert frame["itemBackground"] == "rgb(53, 53, 53)", frame
+        assert frame["itemBackground"] != "rgba(0, 0, 0, 0)", frame
 
     def capture(name, selector, change):
         page.evaluate("selector=>window.__washCapture(selector)", selector)

@@ -48,6 +48,8 @@ enum NotificationRouting {
         }
         guard parts.query == nil else { return nil }
         if parts.path == "/agents/chief-of-staff" || parts.path == "/workspace/chief-of-staff" { return .chief }
+        if components.count == 4, components[1] == "workspace", components[2] == "goal",
+           let id = identifier(components[3]) { return .goal(id) }
         if components.count == 4, components[1] == "workspace", components[2] == "item",
            let id = identifier(components[3]) { return .orchestrator(id) }
         if components.count == 3, components[1] == "workspace",

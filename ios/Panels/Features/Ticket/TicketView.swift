@@ -71,7 +71,7 @@ struct TicketView: View {
         .navigationDestination(item: $linkedArtifact) { RouteDestination(route: $0) }
         .environment(\.openURL, OpenURLAction { url in
             if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { linkedArtifact = route; return .handled }
-            return .systemAction
+            return ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) ? .discarded : .systemAction
         })
     }
 
@@ -100,7 +100,8 @@ struct TicketView: View {
                 }.disabled(busy || titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Cancel") { renaming = false }
             } else {
-                AgentPageTitle(title: detail.title, signal: store.presentation?.ticketsById[ticketID]?.signal.conversationSignal ?? detail.conversationSignal)
+                TicketMachineLabel(locale: detail.locale)
+                AgentPageTitle(title: detail.title, signal: TicketMachine.signal(store.presentation?.ticketsById[ticketID]?.signal.conversationSignal ?? detail.conversationSignal, locale: detail.locale, health: store.executorHealth, completed: presentation?.terminal == true))
                     .contextMenu { Button("Rename", systemImage: "pencil") { titleDraft = detail.title; renaming = true } }
             }
             Group {
@@ -146,7 +147,7 @@ struct TicketView: View {
                 TicketProposalCard(presentation: presentation, proposal: proposal) { await load(); await store.refresh() }
                     .id("\(proposal.field):\(proposal.revision)")
             } else {
-                Text(presentation.heading).font(PanelsTheme.TypeScale.heading)
+                Text(TicketMachine.activityUnknown(presentation.ticket.locale, health: store.executorHealth) ? "Current activity on Mac is unknown." : presentation.heading).font(PanelsTheme.TypeScale.heading)
                     .foregroundStyle(presentation.ticket.agentState == "errored" ? PanelsTheme.error : PanelsTheme.strong)
                     .accessibilityAddTraits(.isHeader)
                 if !presentation.terminal && presentation.ticket.stage != "needs_brief" {
@@ -215,7 +216,12 @@ struct TicketView: View {
             try Task.checkCancellation()
             guard generation == loadGeneration, client.baseURL == store.baseURL else { return }
             detail = result; manifest = type; error = nil
-        } catch { if !Task.isCancelled && generation == loadGeneration && client.baseURL == store.baseURL { self.error = error.localizedDescription } }
+        } catch {
+            if !Task.isCancelled && generation == loadGeneration && client.baseURL == store.baseURL {
+                self.error = error.localizedDescription
+                if error is APIError, error.localizedDescription.hasPrefix("Broken Ticket:") { detail = nil; manifest = nil }
+            }
+        }
     }
     private func loadArtifacts() async {
         let client = store.client

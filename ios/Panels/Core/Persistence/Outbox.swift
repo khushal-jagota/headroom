@@ -93,6 +93,10 @@ struct PendingWork: Codable, Identifiable, Sendable {
         for var work in entries(server) {
             guard !Task.isCancelled, !NativeBuildGate.requiresUpdate(api.baseURL) else { return }
             guard [.waiting, .sending, .uncertain, .serverQueued].contains(work.state) else { continue }
+            if case .goal = work.owner {
+                work.state = .changed; work.note = "Not sent · goal conversations are retired; open the goal to talk to its holder"
+                try? save(work, server: server); continue
+            }
             // Decisions have no server receipt. Never silently replay an ambiguous write.
             if work.kind != .message && work.kind != .voice && [.sending, .uncertain].contains(work.state) {
                 work.state = .uncertain; work.note = "Delivery uncertain · check the ticket"

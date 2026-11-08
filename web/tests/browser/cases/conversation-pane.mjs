@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -955,10 +955,6 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   );
 
 
-  // Match the app font even when this entry runs without the composer entry.
-  const fonts = await Promise.all(["InterVariable.woff2", "InterVariable-Italic.woff2"].map(async name => ({
-    path: `/assets/fonts/${name}`, contentType: "font/woff2", body: await readFile(join(repositoryRoot, "assets/fonts", name)),
-  })));
-  return {resources: [...fonts, {path:"/files/tickets/t_cardmotion/artifact.html",contentType:"text/html",body:
+  return {resources: [{path:"/files/tickets/t_cardmotion/artifact.html",contentType:"text/html",body:
     '<!doctype html><html><head><script>window.addEventListener("pointerdown",event=>{if(event.isPrimary&&event.button===0)parent.postMessage({cardTimingPress:performance.timeOrigin+performance.now()},"*")},true)</script></head><body><button id="artifact-button" onclick="document.body.dataset.clicked=String(true)">Artifact control</button></body></html>'}], inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./conversation-pane.py", import.meta.url))};
 }

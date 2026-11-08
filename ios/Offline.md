@@ -6,9 +6,11 @@ and Review restore from the last saved navigation view, and from the last one th
 carried Workspace, so a relaunch after Review still shows Workspace. Each view
 stream's first snapshot is what is saved; the stream then catches the screen up. A screen
 restores its saved response before starting a fresh read. New responses apply
-immediately, including changes that move rows. A failed refresh keeps the last
-successful response. A screen with no saved response shows still, rough blocks
-only after 300 milliseconds. The blocks never replace existing content.
+immediately, including changes that move rows. If the server cannot be reached,
+the app replaces the current screen with a Tailscale reminder and Try again,
+keeping saved responses and drafts on the phone. Retry or returning to the app
+reads again. Other failed refreshes keep the last successful response visible.
+A screen with no saved response shows still, rough blocks only after 300 milliseconds. The blocks never replace existing content.
 
 Successful cached reads are saved by a serial background writer before the read
 finishes. An identical response still refreshes its saved date, so it keeps its
@@ -101,3 +103,12 @@ the sender identity and attachments. Reconnect, queue acceptance and explicit re
 preserve that boundary. Review drafts are scoped to the conversation separately
 from the full conversation composer. The draft clears after accepted delivery; a
 refusal or uncertain response keeps it available.
+
+Goal pages retain accepted readings and unfinished text or manual commands while
+the app runs. These edits use the Goal and measure APIs directly, outside the
+message outbox. There is no automatic replay after reconnect or relaunch. A failed
+manual write keeps its exact request identity and payload for an explicit retry.
+Conflicts load the accepted reading and require discarding the old edit before a
+new write. A failed page edit keeps its captured revision; Retry save cannot
+overwrite a newer server page. Messages from goal pages use their holder’s durable message outbox. Retired
+goal-owned queued messages retain their words and never replay.
