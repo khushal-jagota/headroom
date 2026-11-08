@@ -31,7 +31,7 @@ Goal pages use a separate page kit for checklists, charts, tables, layouts, and 
 
 ## The conversation is the strictest screen
 
-Focus mode hides tool noise and Full shows the notebook. The toggle is a lens on one transcript, not two views. The composer is recessed and shows the model and effort actually in force. Other screens borrow its rules, which makes it the best place to see a violation.
+Focus mode hides tool noise and Full shows the notebook. The toggle is a lens on one transcript, not two views. Both lenses show "Working for" with a live count on every running turn, whoever started it. When a turn ends, Focus keeps its head only if the owner started the turn or the turn sent him a message. The composer is recessed and shows the model and effort actually in force. Other screens borrow its rules, which makes it the best place to see a violation.
 
 ## Decisions that shape it
 
