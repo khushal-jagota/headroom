@@ -579,14 +579,14 @@ def test_deleted_specialist_keeps_saved_guide_on_start_restart_and_continue(
         principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
-        worker_type="general",
+        worker_type="coding",
         employee_backend="codex",
         employee_launch_model="gpt-6.1-sol",
     )
     guide = render_workflow_guide(chosen.workflow)
     specialist = chosen.workflow.specialist_skill
     assert specialist is not None
-    delete_worker_type_definition(tmp_db, "general")
+    delete_worker_type_definition(tmp_db, "coding")
     delete_skill(tmp_db, specialist, database_parent=tmp_path)
     assert (
         tmp_db.execute("SELECT 1 FROM managed_skills WHERE skill_name=?", (specialist,)).fetchone()
