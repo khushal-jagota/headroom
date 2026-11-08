@@ -2,10 +2,21 @@ import Foundation
 
 /// The Review queue, derived from the navigation view's review window.
 struct ReviewResponse: Sendable {
-    let items: [ReviewItem]
+    let cards: [ReviewCard]
     let runningWorkerCount: Int
     /// Cards beyond the loaded review window still count toward the badge.
     var unloadedCount = 0
+    var items: [ReviewItem] { cards.flatMap(\.parts) }
+}
+
+/// One queue entry, shown as one page, as desktop shows one card. A Ticket card holds
+/// its proposal first, then each unread conversation; other owners' messages stand alone.
+struct ReviewCard: Identifiable, Sendable {
+    let id: String
+    /// Empty for a message that is not tied to a Ticket.
+    var ticketId = ""
+    let parts: [ReviewItem]
+    var title: String { parts.first?.title ?? "" }
 }
 
 /// One native card: a proposal, or one conversation's unread run. A Ticket card's
