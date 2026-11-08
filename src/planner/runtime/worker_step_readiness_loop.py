@@ -51,6 +51,7 @@ from planner.runtime.logic.worker_step_prompt import (
 )
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
+from planner.tickets.derivation import RESTS_PREDICATE
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
 
@@ -58,8 +59,16 @@ _log = logging.getLogger(__name__)
 
 LOOP_SENDER_LABEL: Final = "loop"
 
+# Only a Ticket that readiness could accept is read in full. Readiness refuses a
+# backlogged Ticket, one whose status is not `empty`, and one at a terminal Stage, so the
+# query drops those first. It leaves the blocker and every other check to readiness.
 _CANDIDATE_SQL = (
-    "SELECT t.id FROM tickets t WHERE integrity_error_reason IS NULL ORDER BY t.updated_at, t.id"
+    "SELECT t.id FROM tickets t WHERE t.integrity_error_reason IS NULL "
+    "AND t.is_backlogged = 0 AND " + RESTS_PREDICATE + " "
+    "AND NOT EXISTS (SELECT 1 FROM json_each(t.workflow_json, '$.stages') stage "
+    "WHERE json_extract(stage.value, '$.id') = t.stage "
+    "AND json_extract(stage.value, '$.is_terminal')) "
+    "ORDER BY t.updated_at, t.id"
 )
 
 

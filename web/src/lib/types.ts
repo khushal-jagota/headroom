@@ -316,14 +316,6 @@ export type ReviewResponse = {
   running_worker_count: number;
 };
 
-export type BoardResponse = {
-  columns: Array<{
-    stage: string;
-    cards: BoardCard[];
-  }>;
-  managers: BoardManager[];
-};
-
 // A Manager's own identity and its manager's conversation. No card answers for
 // the Item's own worker, so the mark on an Item title comes from here.
 export type BoardManager = {

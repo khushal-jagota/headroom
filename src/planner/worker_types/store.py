@@ -8,6 +8,7 @@ is not exactly the shape of a Worker type, and the registry's rules run on the r
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -18,7 +19,6 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.managed_skills import skill_names
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
-    BOARD_COLUMN_ORDER_WORKER_TYPE,
     FieldDefinition,
     StageDefinition,
     TicketWorkflowDefinition,
@@ -256,16 +256,11 @@ def write_definition(
 def delete_definition(conn: sqlite3.Connection, worker_type: str) -> None:
     """Remove a preset. Tickets made from it keep running on their own copy.
 
-    Two things still read the preset rather than a Ticket's copy: the board's column
-    order, and the launch setup of a Ticket that saved no model. Either refuses.
+    One thing still reads the preset rather than a Ticket's copy: the launch setup of
+    a Ticket that saved no model. It refuses.
     """
     with definition_transaction(conn):
         read_definition(conn, worker_type)
-        if worker_type == BOARD_COLUMN_ORDER_WORKER_TYPE:
-            raise _fail(
-                "the board's columns follow this Worker type, so it cannot be removed",
-                {"worker_type": worker_type},
-            )
         without_model = [
             str(row["id"])
             for row in conn.execute(
@@ -337,6 +332,9 @@ def custom_workflow_from_dict(raw: object) -> TicketWorkflowDefinition:
     return _workflow_from_dict(raw, saved=False)
 
 
+# Many Tickets share one workflow text, and a definition is immutable, so a read over
+# every Ticket parses each distinct text once.
+@functools.lru_cache(maxsize=256)
 def workflow_from_json(raw: str) -> TicketWorkflowDefinition:
     try:
         payload = json.loads(raw)

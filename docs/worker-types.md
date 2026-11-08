@@ -36,7 +36,7 @@ The database rows are the registry. A file shipped with the code seeds an empty 
 
 A preset edit changes future Tickets. Existing Tickets keep their stages, fields, ownership, approvals, guidance, and current position. Their Workers follow the Ticket's own guide, not the type's current skill.
 
-Removing a type stops new Tickets of it. Existing Tickets keep running on their own copy, and its specialist skill stays until no unfinished Ticket names it. Coding cannot be removed, because the board lays out its columns in Coding's order. Neither can a type with an unfinished Ticket that saved no model, because that Ticket launches from the type's defaults.
+Removing a type stops new Tickets of it. Existing Tickets keep running on their own copy, and its specialist skill stays until no unfinished Ticket names it. A type with an unfinished Ticket that saved no model cannot be removed, because that Ticket launches from the type's defaults.
 
 Preset instructions sit beside their stages as structured data. Panels assembles that record into the specialist skill, so the stage editor and skill share one source. Instructions remain ordinary prose, with room for guidance across the workflow.
 

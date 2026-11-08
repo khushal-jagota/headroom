@@ -57,7 +57,7 @@ def install() -> None:
         route = scope.get("path", "")
         owner_read = (route.startswith("/api/conversation/conversations/dot-")
                       and route.endswith("/owner-read"))
-        if not owner_read and route not in ("/api/board", "/api/changes"):
+        if not owner_read and route != "/api/changes":
             await original_call(self, scope, receive, send)
             return
         selected_scope = current_scope()

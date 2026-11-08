@@ -553,9 +553,6 @@ def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
     for path in ("/api/worker-types/research", "/api/worker-types/coding"):
         response = test_client.delete(path, headers={"X-Plan-Actor": "worker"})
         assert response.json()["error"]["code"] == "agent_forbidden", response.text
-    refused = test_client.delete("/api/worker-types/coding")
-    assert refused.status_code == 400, refused.text
-    assert "board" in refused.json()["error"]["message"]
     refused = test_client.delete("/api/worker-types/research")
     assert refused.status_code == 400, refused.text
     assert refused.json()["error"]["detail"]["ticket_ids"] == [running.id]
