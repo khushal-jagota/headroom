@@ -174,27 +174,34 @@ import XCTest
             var item = Self.item(id, kind: "agent_message", text: text); item["order"] = ["sequence": sequence, "slot": 0]; return item
         }
         var parser = ConversationTailParser()
-        func frame(_ event: String, _ value: [String: Any]) throws -> ConversationTailFrame {
-            XCTAssertNil(try parser.consume(": heartbeat"))
-            XCTAssertNil(try parser.consume("event: \(event)"))
-            let data = try JSONSerialization.data(withJSONObject: value)
-            return try XCTUnwrap(try parser.consume("data: " + String(decoding: data, as: UTF8.self)))
+        // Bytes as the server writes them: CRLF line ends and U+2028 left unescaped in text.
+        func frame(_ event: String, _ value: [String: Any]) async throws -> ConversationTailFrame {
+            let json = String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self).replacingOccurrences(of: "\\u2028", with: "\u{2028}")
+            let bytes = AsyncStream<UInt8> { continuation in
+                for byte in Data(": heartbeat\r\n\r\nevent: \(event)\r\ndata: \(json)\r\n\r\n".utf8) { continuation.yield(byte) }
+                continuation.finish()
+            }
+            var frames: [ConversationTailFrame] = []
+            for try await line in ServerSentLines(bytes) { if let frame = try parser.consume(line) { frames.append(frame) } }
+            XCTAssertEqual(frames.count, 1)
+            return try XCTUnwrap(frames.first)
         }
         var snapshot = try JSONSerialization.jsonObject(with: Data(Self.snapshot([ordered("a", 1, "First"), ordered("b", 2, "Second")]).utf8)) as! [String: Any]
         snapshot["coverage"] = ["through_sequence": 2]
         model.beginTail()
-        let applied = await model.applyTail(try frame("snapshot", snapshot), using: service)
+        let applied = await model.applyTail(try await frame("snapshot", snapshot), using: service)
         XCTAssertTrue(applied)
         XCTAssertEqual(model.latestLine, "Second")
         let status = snapshot["status"]!
         let changes: [String: Any] = ["kind": "changes", "lens": "focus", "from_sequence": 2, "coverage": ["through_sequence": 4],
-            "upserts": [ordered("b", 2, "Second, edited"), ordered("c", 4, "Third")],
+            "upserts": [ordered("b", 2, "Second,\u{2028}edited"), ordered("c", 4, "Third")],
             "scope_changes": [["scope": ["kind": "timeline", "key": NSNull()], "item_keys": ["b", "c"], "removed_keys": []]],
-            "removed_keys": ["a"], "invalidated_scopes": [], "status": status]
-        let changed = await model.applyTail(try frame("changes", changes), using: service)
-        XCTAssertTrue(changed)
+            // The server marks the window invalidated with every removed row.
+            "removed_keys": ["a"], "invalidated_scopes": [["kind": "timeline", "key": NSNull()]], "status": status]
+        let changed = await model.applyTail(try await frame("changes", changes), using: service)
+        XCTAssertTrue(changed, "A removed row applies without reopening the stream")
         XCTAssertEqual(model.items.map(\.key), ["b", "c"])
-        XCTAssertEqual(model.rows.map(\.text), ["Second, edited", "Third"])
+        XCTAssertEqual(model.rows.map(\.text), ["Second,\u{2028}edited", "Third"])
         let reads = await service.requestedLenses
         XCTAssertTrue(reads.isEmpty, "A tail frame never reads the transcript again")
     }

@@ -236,6 +236,8 @@ import Observation
     /// changed live-output reference or unsettled outgoing messages read anything.
     /// Returns false when the stream must be reopened for a fresh snapshot: a reset, a
     /// gap, an invalidated window, or a changed runtime epoch or stop, as on the web.
+    /// The server marks the window invalidated with every removed row; that removal is
+    /// applied here, as the web applies it, and the stream stays open.
     func applyTail(_ frame: ConversationTailFrame, using service: any ConversationServing) async -> Bool {
         guard let id = conversationID else { return false }
         let requestedLens = lens
@@ -252,7 +254,7 @@ import Observation
             } catch { if !Task.isCancelled { self.error = error.localizedDescription }; return false }
         case .changes(let changes):
             guard let coverage = tailCoverage, changes.fromSequence == coverage, changes.lens == requestedLens.rawValue,
-                  !changes.invalidatedScopes.contains(where: { $0.kind == "timeline" }),
+                  changes.removedKeys.count > 0 || !changes.invalidatedScopes.contains(where: { $0.kind == "timeline" }),
                   changes.status.stoppedWithoutEnding == status?.stoppedWithoutEnding,
                   changes.status.runtimeEpoch == status?.runtimeEpoch else { return false }
             do {

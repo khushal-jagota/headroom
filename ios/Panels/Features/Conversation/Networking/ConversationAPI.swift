@@ -82,7 +82,7 @@ extension APIClient {
                     let (bytes, response) = try await session.bytes(for: request)
                     try Self.validate(response)
                     var parser = ConversationTailParser()
-                    for try await line in bytes.lines {
+                    for try await line in ServerSentLines(bytes) {
                         try Task.checkCancellation()
                         if let frame = try parser.consume(line) { continuation.yield(frame) }
                     }

@@ -59,6 +59,7 @@ import XCTest
         XCTAssertEqual(store.presentation?.ticketsById["A"]?.signal.working, true, "The patch applied without a read")
         XCTAssertEqual(store.ticketStamp("A"), stamp("A", in: original), "A conversation mark does not reload A's page")
         XCTAssertNotEqual(store.ticketStamp("B"), stamp("B", in: original), "B's own change reloads B's page")
+        XCTAssertEqual(store.presentation?.ticketsById["B"]?.title, "B\u{2028}two", "A line separator inside a frame does not split it")
         XCTAssertNotNil(store.managerStamp("m"))
         // The gap opens stream 2, whose first frame is a fresh snapshot.
         try await until { store.view?.contentVersion == "7" }
@@ -152,7 +153,8 @@ private struct RefreshFixture {
 
     static func recordValues(working: Bool, ticketBUpdated: Double) -> [[String: Any]] {
         func ticket(_ id: String, updated: Double, conversation: String) -> [String: Any] {
-            ["kind": "ticket", "id": id, "value": ["title": id, "recap": "", "recap_preview": "", "worker_type": "coding", "stage": "plan", "ticket_status": "empty",
+            // The server leaves U+2028 unescaped in its JSON; the changed B title carries one.
+            ["kind": "ticket", "id": id, "value": ["title": id == "B" && updated == 2 ? "B\u{2028}two" : id, "recap": "", "recap_preview": "", "worker_type": "coding", "stage": "plan", "ticket_status": "empty",
                                                     "is_backlogged": false, "created_at": 1, "updated_at": updated, "project_id": NSNull(), "manager_kind": "manager",
                                                     "manager_id": "m", "conversation_id": conversation, "blocked": false, "terminal": false] as [String: Any]]
         }
@@ -176,7 +178,9 @@ private struct RefreshFixture {
         }
     }
     static func frame(_ value: [String: Any]) throws -> Data {
-        Data("event: \(value["event"]!)\ndata: ".utf8) + (try JSONSerialization.data(withJSONObject: value)) + Data("\n\n".utf8)
+        // Written raw, as the server's json.dumps(ensure_ascii=False) writes it.
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self).replacingOccurrences(of: "\\u2028", with: "\u{2028}")
+        return Data("event: \(value["event"]!)\r\ndata: \(json)\r\n\r\n".utf8)
     }
 
     /// Stream 1: snapshot, patch, gap. Stream 2: a fresh snapshot, delayed so stream 1's

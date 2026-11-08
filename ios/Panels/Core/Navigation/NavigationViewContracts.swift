@@ -374,7 +374,7 @@ extension APIClient {
                     let (bytes, response) = try await session.bytes(for: urlRequest)
                     try Self.validate(response)
                     let decoder = Self.decoder()
-                    for try await line in bytes.lines {
+                    for try await line in ServerSentLines(bytes) {
                         try Task.checkCancellation()
                         guard let payload = NavigationViewEventParser.data(line) else { continue }
                         let data = Data(payload.utf8)
