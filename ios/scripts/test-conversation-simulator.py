@@ -145,7 +145,8 @@ def main() -> int:
             ]
         )
     # A task may bring its own simulator: name the device as the lane and pass its UDID.
-    assert LANE in {"PanelsLaneA", "PanelsLaneB", "PanelsLaneC"} or "PANELS_CONVERSATION_DEVICE" in os.environ, (
+    assigned_lane = LANE in {"PanelsLaneA", "PanelsLaneB", "PanelsLaneC"}
+    assert assigned_lane or "PANELS_CONVERSATION_DEVICE" in os.environ, (
         "Use an assigned Panels lane or your own named simulator"
     )
     assert BUNDLE.startswith("app.panels.ios.pios-"), "Use a separate task bundle"

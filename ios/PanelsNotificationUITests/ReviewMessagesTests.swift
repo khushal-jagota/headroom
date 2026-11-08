@@ -148,6 +148,71 @@ final class ReviewMessagesTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode([String].self, from: after), ["approve", "approve", "approve"])
     }
 
+    /// A Ticket with a proposal and an unread message is one page: the proposal above
+    /// the message, one Skip for both, and the page stays until both are handled. Only
+    /// the real SwiftUI host proves that one part's exit leaves the other on screen.
+    /// Its writes change the shared fixture, so it runs alone on a fresh stub.
+    @MainActor func testStackedTicketCard() async throws {
+        guard ProcessInfo.processInfo.environment["PANELS_REVIEW_STACKED"] == "1" else {
+            throw XCTSkip("Run alone with the stacked fixture")
+        }
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        _ = try await URLSession.shared.data(from: URL(string: base + "/proof/review-owner/ticket-stacked")!)
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        XCTAssertTrue(app.tabBars.buttons["Review"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Review"].tap()
+        let message = app.staticTexts["First unread message"]
+        let approve = app.buttons["review.approve"]
+        XCTAssertTrue(message.waitForExistence(timeout: 12))
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+        XCTAssertEqual(app.buttons.matching(identifier: "review.openTicket").count, 1)
+        XCTAssertTrue(app.buttons["review.openTicket"].label.contains("Approve offline"))
+        XCTAssertFalse(app.buttons["Ticket review"].exists)
+        XCTAssertLessThan(approve.frame.minY, message.frame.minY)
+        XCTAssertTrue(app.buttons["review.markRead"].exists)
+        capture("stacked-ticket-card")
+        app.swipeUp()
+        capture("stacked-ticket-card-scrolled")
+        // Skip takes the whole Ticket; the next card is the separate Chief message.
+        app.buttons["review.skip"].tap()
+        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 8))
+        XCTAssertFalse(approve.exists)
+        XCTAssertFalse(message.exists)
+        app.buttons["review.skip"].tap()
+        let revisit = app.buttons["review.revisitSkipped"]
+        XCTAssertTrue(revisit.waitForExistence(timeout: 8))
+        XCTAssertEqual(revisit.label, "Revisit 2 skipped items")
+        revisit.tap()
+        // Approving the proposal keeps the message on the same page.
+        XCTAssertTrue(approve.waitForExistence(timeout: 10))
+        approve.tap()
+        let confirm = app.buttons["review.confirmApproval"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        XCTAssertTrue(approve.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(message.exists)
+        XCTAssertTrue(app.buttons["review.openTicket"].label.contains("Approve offline"))
+        capture("stacked-ticket-after-approve")
+        // Marking the message read handles the last part, and the page leaves.
+        app.buttons["review.markRead"].tap()
+        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["review.openTicket"].exists)
+        capture("stacked-ticket-done")
+        let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
+        let writes = try JSONSerialization.jsonObject(with: data) as! [Any]
+        XCTAssertEqual(writes.first as? String, "approve")
+        XCTAssertEqual(writes.compactMap { ($0 as? [String: Any])?["through_sequence"] as? Int }, [3])
+    }
+
     @MainActor func testLiveReadOnlyWorkspaceAndReview() throws {
         guard ProcessInfo.processInfo.environment["PANELS_LIVE_READ_ONLY"] == "1" else { throw XCTSkip("Explicit read-only live pass only") }
         continueAfterFailure = false
