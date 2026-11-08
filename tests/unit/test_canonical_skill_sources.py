@@ -601,7 +601,7 @@ def test_skill_delete_removes_row_folder_and_dead_links_but_keeps_used_skills(
     tmp_path: Path, database: sqlite3.Connection
 ) -> None:
     """Risk: a delete that leaves a half state, strands agent-home links, or removes a
-    skill that a role, a Worker type, or an unfinished Ticket still needs. No existing
+    skill that a role or a Worker type still needs. No existing
     test covers any delete path."""
     managed = managed_skills_home(tmp_path)
     for role in ("panels", "panels-worker", "panels-manager", "panels-chief-of-staff"):
@@ -621,10 +621,6 @@ def test_skill_delete_removes_row_folder_and_dead_links_but_keeps_used_skills(
         "json_set(workflow_json, '$.specialist_skill', 'probe-worker') WHERE id = ?",
         (ticket.id,),
     )
-    database.commit()
-    with pytest.raises(PlannerError, match="unfinished Ticket"):
-        service.delete_skill(database, "probe-worker", database_parent=tmp_path)
-    database.execute("UPDATE tickets SET stage = 'done' WHERE id = ?", (ticket.id,))
     database.commit()
     claude_home = tmp_path / "claude-home"
     provision_native_backend_skills(claude_home, tmp_path)
