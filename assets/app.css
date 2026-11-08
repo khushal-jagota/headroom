@@ -3855,31 +3855,30 @@ select {
  * the measurement it takes is the same number of lines. */
 .ticket-recap {
   display: block;
-  max-width: var(--page-prose-measure);
+  max-width: 62ch;
   margin-top: var(--space-2);
-  color: var(--tone-primary);
+  color: var(--text-muted);
   font-family: var(--font-ui);
-  font-size: var(--type-body);
-  font-weight: var(--weight-body);
-  line-height: var(--leading-body);
+  font-size: var(--type-prose-lg);
+  line-height: 1.6;
   cursor: text;
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
 .ticket-recap:hover {
-  color: var(--tone-primary);
+  color: var(--text-default);
 }
 
 .ticket-recap:focus-within {
-  color: var(--tone-primary);
+  color: var(--text-default);
 }
 
 /* Three lines by default, and whatever `--clamp-lines` says when a screen wants a taller
  * reading window — the Sprint's bet asks for four and a half. The line is the type's own
- * (font-size × the line-height above), so the number here is the number of lines the
+ * (font-size × the 1.6 line-height above), so the number here is the number of lines the
  * component measures against. */
 .ticket-recap--clamped {
-  max-height: calc(var(--type-body) * var(--leading-body) * var(--clamp-lines, 3));
+  max-height: calc(var(--type-prose-lg) * 1.6 * var(--clamp-lines, 3));
   overflow: hidden;
 }
 
@@ -5065,8 +5064,19 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* As staging, a Manager's title carries its conversation marks (working, unread) after its words. */
 .manager-page .manager-column .manager-workspace-head .manager-workspace-title { display: flex; align-items: center; gap: var(--space-3); }
 
-/* THE RECAP — body text in the primary tone, never wider than the prose measure
- * (.ticket-recap, above). */
+/* THE RECAP — body text in the primary tone, never wider than the prose measure. */
+.ticket-recap {
+  max-width: var(--page-prose-measure);
+  color: var(--tone-primary);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
+  line-height: var(--leading-body);
+}
+.ticket-recap:hover,
+.ticket-recap:focus-within { color: var(--tone-primary); }
+.ticket-recap--clamped {
+  max-height: calc(var(--type-body) * var(--leading-body) * var(--clamp-lines, 3));
+}
 .manager-page .manager-column .manager-workspace-head [data-recap-slot] { margin-top: var(--space-2); }
 .manager-page .manager-column .manager-workspace-head .manager-workspace-recap {
   max-width: var(--page-prose-measure);
