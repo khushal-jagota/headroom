@@ -1208,7 +1208,7 @@ def verify_conversation_overlay(browser, url):
         page.route("**/api/**", respond)
         page.add_init_script("""(() => {
           const viewport = new EventTarget();
-          Object.assign(viewport,{offsetTop:0,offsetLeft:0,width:innerWidth,height:innerHeight,scale:1});
+          Object.assign(viewport,{offsetTop:0,offsetLeft:0,width:innerWidth,height:innerHeight,scale:1});Object.defineProperties(viewport,{pageTop:{get(){return scrollY+this.offsetTop;}},pageLeft:{get(){return scrollX+this.offsetLeft;}}});
           Object.defineProperty(window,'visualViewport',{value:viewport,configurable:true});
           window.__keyboardViewport=(top,height)=>{Object.assign(viewport,{offsetTop:top,height});viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));};
         })();""")

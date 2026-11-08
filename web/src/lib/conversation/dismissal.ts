@@ -1,5 +1,6 @@
 import { MANAGED_ARTIFACT_PRIMARY_PRESS, type RegisterManagedArtifactFrame } from "../managedArtifactPress";
 import { COMPACT_LAYOUT_MEDIA_QUERY } from "../compactLayout";
+import { visualViewportClientRect } from "../keyboardViewport";
 
 /** Dismiss on the press origin so a selection may finish outside the card. On a wide
  *  screen a press beside the pane is outside it. In the phone layout the pane fills the
@@ -18,11 +19,10 @@ function visibleArtifactFrame(frame: HTMLIFrameElement, host: HTMLElement): bool
   if (document.visibilityState === "hidden" || !frame.isConnected || !host.contains(frame) || frame.closest("[inert], [data-conversation-pane]")) return false;
   if (!frame.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
   const rect = frame.getBoundingClientRect();
-  const viewport = window.visualViewport;
-  const viewportLeft = viewport?.offsetLeft ?? 0, viewportTop = viewport?.offsetTop ?? 0;
-  let left = Math.max(viewportLeft, rect.left), top = Math.max(viewportTop, rect.top);
-  let right = Math.min(viewportLeft + (viewport?.width ?? window.innerWidth), rect.right);
-  let bottom = Math.min(viewportTop + (viewport?.height ?? window.innerHeight), rect.bottom);
+  const viewport = visualViewportClientRect() ?? { top: 0, left: 0, width: window.innerWidth, height: window.innerHeight };
+  let left = Math.max(viewport.left, rect.left), top = Math.max(viewport.top, rect.top);
+  let right = Math.min(viewport.left + viewport.width, rect.right);
+  let bottom = Math.min(viewport.top + viewport.height, rect.bottom);
   for (let parent = frame.parentElement; parent; parent = parent.parentElement) {
     const style = getComputedStyle(parent);
     const bounds = parent.getBoundingClientRect();
