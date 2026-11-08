@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mimetypes
 import re
+from contextlib import closing
 from email.utils import formatdate
 from pathlib import Path
 from typing import Any
@@ -167,7 +168,7 @@ async def get_goal_file(
 
 
 def _require_goal(request: Request, goal_id: str) -> None:
-    with connect(request.app.state.config.db_path) as conn:
+    with closing(connect(request.app.state.config.db_path)) as conn:
         goal_files.require_goal(conn, request_context(request).principal, goal_id)
 
 
