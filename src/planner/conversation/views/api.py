@@ -261,8 +261,9 @@ def _changes(
         "WHERE conversation_id=? AND changed_sequence>? "
         + ("AND focus_visible=1 " if lens == "focus" else "")
         + "UNION ALL SELECT 'turn',source_sequence,turn_key,0,1 FROM conversation_view_turns "
+        # Every changed turn, in both lenses. A turn that ends without leaving anything
+        # in Focus loses its Focus head, and scope membership reports that removal.
         "WHERE conversation_id=? AND changed_sequence>? "
-        + ("AND focus_head=1 " if lens == "focus" else "")
     )
     params: list[object] = [conversation_id, after, conversation_id, after]
     if lens == "full":

@@ -415,7 +415,9 @@ def _layout_row(
                 sequence,
                 created_at,
                 sent_at_milliseconds(payload, created_at),
-                int(focus_visible),
+                # Focus shows every running turn's head, whoever sent the prompt that
+                # opened it. The turn's ending settles whether the head stays.
+                1,
                 changed_sequence,
             ),
         )
@@ -439,8 +441,14 @@ def _layout_row(
             (sequence, conversation_id),
         )
         if turn_key is not None:
+            # An ended turn keeps its Focus head when its opening prompt is in Focus or
+            # it sent the owner a message. Any other ended turn left nothing in Focus.
             conn.execute(
                 "UPDATE conversation_view_turns SET ending_sequence=?,ending=?,ended_at=?,"
+                "focus_head=(focus_message_count>0 OR EXISTS(SELECT 1 FROM "
+                "conversation_view_rows r WHERE r.conversation_id=conversation_view_turns."
+                "conversation_id AND r.sequence=conversation_view_turns.source_sequence "
+                "AND r.focus_visible=1 AND r.removed=0)),"
                 "changed_sequence=? WHERE conversation_id=? AND turn_key=?",
                 (
                     sequence,
