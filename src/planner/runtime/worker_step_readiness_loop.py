@@ -28,8 +28,6 @@ from dataclasses import dataclass
 from time import monotonic as _monotonic
 from typing import Any, Final, Literal
 
-from fastapi.concurrency import run_in_threadpool
-
 from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryFate,
@@ -46,6 +44,7 @@ from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.runtime import conversation_start, worker_memory, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     compose_worker_step_prompt,
@@ -151,7 +150,7 @@ async def _admitted_start_ready_worker_step(
     the busy check, and the send stay on the loop, and the claim is still taken and given
     back under the link lock.
     """
-    conn = await run_in_threadpool(connect_database)
+    conn = await run_on_worker_thread(connect_database)
     link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
     link_acquired = False
     try:
@@ -171,7 +170,7 @@ async def _admitted_start_ready_worker_step(
             worker_type_definition=worker_type_definition,
         ):
             return WorkerStepStartResult(started=False)
-        claimed = await run_in_threadpool(
+        claimed = await run_on_worker_thread(
             tickets_data.claim_ticket_for_worker_step,
             conn,
             ticket_id,
@@ -207,7 +206,7 @@ async def _admitted_start_ready_worker_step(
                 )
 
         async def give_the_claim_back(*, opener_succeeded: bool = False) -> None:
-            await run_in_threadpool(
+            await run_on_worker_thread(
                 release_the_claim, opener_succeeded=opener_succeeded, released_at=now()
             )
 
@@ -266,7 +265,7 @@ async def _admitted_start_ready_worker_step(
                 not paired_opener
                 and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
             ):
-                await run_in_threadpool(
+                await run_on_worker_thread(
                     tickets_data.mark_worker_step_claim_errored,
                     conn,
                     ticket_id,
@@ -288,7 +287,7 @@ async def _admitted_start_ready_worker_step(
             # permit an unsafe automatic replay. Keep it visible for the supervisor's
             # explicit restart route instead. A stale result must not replace a newer
             # claim that moved while the delivery was in flight.
-            marked_errored = await run_in_threadpool(
+            marked_errored = await run_on_worker_thread(
                 tickets_data.mark_worker_step_claim_errored,
                 conn,
                 ticket_id,
@@ -310,7 +309,7 @@ async def _admitted_start_ready_worker_step(
 
         if pending_revision_feedback is not None:
             try:
-                await run_in_threadpool(
+                await run_on_worker_thread(
                     revision_feedback.acknowledge,
                     conn,
                     ticket_id,
@@ -327,7 +326,7 @@ async def _admitted_start_ready_worker_step(
     finally:
         if link_acquired:
             link_lock.release()
-        await run_in_threadpool(conn.close)
+        await run_on_worker_thread(conn.close)
 
 
 async def tell_a_worker_it_lost_its_memory(

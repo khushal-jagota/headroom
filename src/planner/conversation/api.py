@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -132,6 +131,7 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.response_compression import answers_uncompressed
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
+from planner.core.task_settlement import run_on_worker_thread
 from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.runtime import conversation_start
 
@@ -1140,7 +1140,7 @@ class VideoSendAdmission:
     async def preflight(self, current_conversation_id: str | None) -> MessageDeliveryResult | None:
         upload = next(piece for piece in self.sent if isinstance(piece, SentVideoUploadPiece))
         try:
-            self.checked = await run_in_threadpool(
+            self.checked = await run_on_worker_thread(
                 self.service.preflight,
                 upload.upload_id,
                 self.destination.model_copy(
@@ -1178,7 +1178,7 @@ class VideoSendAdmission:
                 fate = PromptDeliveryRefused(
                     payload.refusal_reason,
                 )
-        await run_in_threadpool(self.finish, fate)
+        await run_on_worker_thread(self.finish, fate)
         assert self.recipient is not None
         return MessageDeliveryResult(self.recipient, prior, fate)
 
@@ -1342,7 +1342,7 @@ async def conversation_message_content(
                 )
             case SentVideoUploadPiece():
                 assert video_admission is not None
-                pieces.append(await run_in_threadpool(video_admission.adopt, conversation_id))
+                pieces.append(await run_on_worker_thread(video_admission.adopt, conversation_id))
             case SentFilePiece():
                 contents, media_type = validated_files[file_index]
                 file_index += 1

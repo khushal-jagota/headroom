@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 
-from fastapi.concurrency import run_in_threadpool
-
 from planner.conversation.contracts import ConversationSystem
 from planner.core.contracts import Principal
+from planner.core.task_settlement import run_on_worker_thread
 from planner.files.lifecycle import (
     QuarantinedManagerFiles,
     purge_quarantined_manager_files,
@@ -44,18 +43,20 @@ async def delete_manager(
     """
     async with manager_lifecycle_lock(item_id):
         while True:
-            item, conversation_id = await run_in_threadpool(
+            item, conversation_id = await run_on_worker_thread(
                 _deletable_manager_and_its_conversation, conn, item_id
             )
             if conversation_id is not None:
                 await system.kill(conversation_id)
-                await run_in_threadpool(
+                await run_on_worker_thread(
                     _unlink_killed_conversation, conn, item.manager_agent_key, conversation_id
                 )
-            outcome = await run_in_threadpool(_delete_manager_with_no_conversation, conn, item_id)
+            outcome = await run_on_worker_thread(
+                _delete_manager_with_no_conversation, conn, item_id
+            )
             if outcome is not None:
                 deleted, quarantined = outcome
-                await run_in_threadpool(purge_quarantined_manager_files, quarantined)
+                await run_on_worker_thread(purge_quarantined_manager_files, quarantined)
                 return deleted
 
 

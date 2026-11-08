@@ -24,7 +24,6 @@ from functools import partial
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import PlainTextResponse
 
 from planner.conversation.api import (
@@ -56,6 +55,7 @@ from planner.core.contracts import (
 )
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
 from planner.list_reads.detail import (
@@ -140,16 +140,16 @@ async def connection_off_the_loop(request: Request) -> AsyncIterator[sqlite3.Con
 
     Such a route awaits the conversation system between its database steps, so it cannot
     be a plain function. It opens its connection here instead of taking ``DbConn``, and
-    runs each database step it owns with ``run_in_threadpool``. Only one step at a time
+    runs each database step it owns with ``run_on_worker_thread``. Only one step at a time
     uses the connection, and the connection is opened and closed on a worker thread too.
     """
-    conn = await run_in_threadpool(
+    conn = await run_on_worker_thread(
         cast(Callable[[], sqlite3.Connection], request.app.state.conn_factory)
     )
     try:
         yield conn
     finally:
-        await run_in_threadpool(conn.close)
+        await run_on_worker_thread(conn.close)
 
 
 def get_conversation_system(request: Request) -> ConversationSystem:
@@ -211,7 +211,7 @@ async def reject_while_the_conversation_is_running(
     is the honest cost of keeping the writers pure database transactions.
     """
     conversation_id = (
-        await run_in_threadpool(tickets_data.read_ticket, conn, ticket_id)
+        await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
     ).conversation_id
     if conversation_id is None:
         return
@@ -239,7 +239,7 @@ async def silence_the_worker_before_deleting(
     idle conversation, or none at all, means there is nothing to kill.
     """
     conversation_id = (
-        await run_in_threadpool(tickets_data.read_ticket, conn, ticket_id)
+        await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
     ).conversation_id
     if conversation_id is None:
         return
@@ -866,7 +866,7 @@ async def restart_ticket_worker(
     async with connection_off_the_loop(request) as conn:
         write_configuration: Callable[[sqlite3.Connection, int], None] | None = None
         if backend is not None and model is not None:
-            resolved = await run_in_threadpool(
+            resolved = await run_on_worker_thread(
                 resolve_employee_configuration,
                 request,
                 conn,
@@ -908,7 +908,7 @@ async def delete_ticket(
             await silence_the_worker_before_deleting(conn, conversations, ticket_id)
         else:
             await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-        deleted = await run_in_threadpool(
+        deleted = await run_on_worker_thread(
             tickets_data.delete_ticket,
             conn,
             ticket_id,
@@ -1001,7 +1001,7 @@ async def patch_ticket(
 ) -> JsonDict:
     notices: list[ReviewTransferNotice] = []
     async with connection_off_the_loop(request) as conn:
-        result = await run_in_threadpool(
+        result = await run_on_worker_thread(
             write_patch_ticket, ticket_id, body, conn, ctx, clk, review_transfer_notices=notices
         )
         await notify_review_transfers(conversations, conn, notices, now=clk.now_unix())
@@ -1298,7 +1298,7 @@ async def reset_ticket_conversation(
     now = clk.now_unix()
     async with connection_off_the_loop(request) as conn:
         await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
-        ticket = await run_in_threadpool(tickets_data.read_ticket, conn, ticket_id)
+        ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -1320,13 +1320,13 @@ async def complete_user_owned_gate(
     """
     body = GateCompletionBody(body=body_str(raw, "body"))
     async with connection_off_the_loop(request) as conn:
-        _ticket, worker_type_definition = await run_in_threadpool(
+        _ticket, worker_type_definition = await run_on_worker_thread(
             _ticket_and_worker_type_definition, conn, ticket_id
         )
         _validate_field(worker_type_definition, field)
         await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
         now = clk.now_unix()
-        ticket = await run_in_threadpool(
+        ticket = await run_on_worker_thread(
             tickets_data.complete_user_owned_gate,
             conn,
             ticket_id,
@@ -1353,7 +1353,7 @@ async def request_help(
     if not message.strip():
         raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
     async with connection_off_the_loop(request) as conn:
-        ticket = await run_in_threadpool(tickets_data.read_ticket, conn, ticket_id)
+        ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
         named = _parse_principal(body.get("recipient"), "recipient", allow_ticket=True)
         recipient = named or ticket.ceiling_holder
         delivered = await message_delivery_service.send_message(

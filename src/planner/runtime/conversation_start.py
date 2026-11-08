@@ -19,7 +19,7 @@ already knows how to answer.
 Nothing here makes a conversation on its own. One made and not spoken into is one nobody
 can see and nobody can send from, which is what a separate start door left behind.
 
-Every write here runs on a worker thread through ``run_in_threadpool``, because a write
+Every write here runs on a worker thread through ``run_on_worker_thread``, because a write
 can wait out the SQLite busy timeout and the event loop is every request's thread. The
 link locks, the kills, and every call into the conversation system stay on the loop, and
 a step that ran under a link lock still runs under it. The plain reads between them stay
@@ -37,8 +37,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 from uuid import uuid4
 from weakref import WeakValueDictionary
-
-from fastapi.concurrency import run_in_threadpool
 
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import (
@@ -61,6 +59,7 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.storage import ensure_started_conversation_record
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.files.lifecycle import database_path
 from planner.files.logic.paths import chief_files_root, manager_files_root
 from planner.projects import data as projects_data
@@ -349,7 +348,7 @@ async def start_ticket_conversation(
     )
     await system.start_conversation(request)
     try:
-        linked = await run_in_threadpool(
+        linked = await run_on_worker_thread(
             _record_and_link_ticket_conversation, conn, ticket.id, request, values, now
         )
     except BaseException as start_error:
@@ -583,7 +582,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
         or runs_under.reasoning_effort is not None
         or runs_under.reasoning_effort_is_set
     ):
-        await run_in_threadpool(
+        await run_on_worker_thread(
             _record_the_change_a_started_message_carried,
             conn,
             ticket_id,
@@ -707,7 +706,7 @@ async def _make_a_conversation_and_send_into_it(
             recording_receipt=recording_receipt,
         )
         if isinstance(fate, PromptDeliveryStarted):
-            await run_in_threadpool(
+            await run_on_worker_thread(
                 tickets_data.write_ticket_last_chosen_configuration,
                 conn,
                 ticket.id,
@@ -758,7 +757,7 @@ async def _let_go_of_a_conversation_that_was_never_spoken_in(
 ) -> None:
     """Undo a conversation whose first message did not land, and only that one."""
     await system.kill(conversation_id)
-    await run_in_threadpool(
+    await run_on_worker_thread(
         tickets_data.remove_ticket_conversation_start,
         conn,
         ticket_id,
@@ -877,7 +876,7 @@ async def start_agent_conversation(
             access=values.access,
         )
     )
-    now_in = await run_in_threadpool(
+    now_in = await run_on_worker_thread(
         _link_agent_conversation, conn, agent_key, conversation_id, required_manager_id
     )
     if now_in is None:
@@ -1061,7 +1060,7 @@ async def _let_go_of_an_agent_conversation(
     that is pointing at somebody else's — the race went the other way — is left alone.
     """
     await system.kill(conversation_id)
-    await run_in_threadpool(_unlink_agent_conversation, conn, agent_key, conversation_id)
+    await run_on_worker_thread(_unlink_agent_conversation, conn, agent_key, conversation_id)
 
 
 def _unlink_agent_conversation(
@@ -1099,7 +1098,7 @@ async def reset_agent_conversation(
         if conversation_id is None:
             return
         await system.kill(conversation_id)
-        await run_in_threadpool(_unlink_agent_conversation, conn, agent_key, conversation_id)
+        await run_on_worker_thread(_unlink_agent_conversation, conn, agent_key, conversation_id)
 
 
 async def reset_ticket_conversation(
@@ -1133,7 +1132,7 @@ async def reset_ticket_conversation(
         if conversation_id is None:
             return
         await system.kill(conversation_id)
-        await run_in_threadpool(
+        await run_on_worker_thread(
             tickets_data.clear_ticket_conversation_link,
             conn,
             ticket_id,

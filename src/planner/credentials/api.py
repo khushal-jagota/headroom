@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.concurrency import run_in_threadpool
 
 from planner.core.contracts import JsonDict
+from planner.core.task_settlement import run_on_worker_thread
 from planner.credentials import actions, data
 from planner.credentials import configuration as limits
 from planner.credentials.contracts import (
@@ -46,7 +46,7 @@ async def _on_request_database[T](request: Request, work: Callable[[sqlite3.Conn
     every request.
     """
     async with connection_off_the_loop(request) as conn:
-        return await run_in_threadpool(work, conn)
+        return await run_on_worker_thread(work, conn)
 
 
 def _secret(value: object, kind: CredentialAuthKind) -> CredentialSecret:

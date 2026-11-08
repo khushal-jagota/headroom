@@ -7,7 +7,6 @@ from functools import partial
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, Response
-from fastapi.concurrency import run_in_threadpool
 
 from planner.conversation.api import (
     OwnerSendBody,
@@ -21,6 +20,7 @@ from planner.core.authctx import require_owner_or_chief
 from planner.core.clock import Clock
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.files import manager_files
 from planner.goals.views import calendar_now
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
@@ -119,7 +119,7 @@ async def put_manager_launch_configuration(
         connection_off_the_loop(request) as conn,
         managers_service.manager_lifecycle_lock(item_id),
     ):
-        saved = await run_in_threadpool(
+        saved = await run_on_worker_thread(
             _save_manager_launch_configuration, conn, item_id, configuration, ctx.principal, clk
         )
     return launch_configuration_json(saved.manager_launch_configuration)
@@ -159,9 +159,9 @@ async def create_manager(
     """Save the Manager on a worker thread, then send its goal on the event loop."""
     body = _marshal_create_manager(raw)
     async with connection_off_the_loop(request) as conn:
-        item = await run_in_threadpool(_create_manager_rows, conn, body, clk)
+        item = await run_on_worker_thread(_create_manager_rows, conn, body, clk)
         startup = await managers_startup.start_created_manager(conversations, conn, clk, ctx, item)
-        detail = await run_in_threadpool(managers_views.manager_detail, conn, item.id)
+        detail = await run_on_worker_thread(managers_views.manager_detail, conn, item.id)
     return {**detail, "startup": startup}
 
 
@@ -337,7 +337,7 @@ async def _send_to_manager(
     message_files: MessageFiles,
     clk: Clk,
 ) -> JsonDict:
-    item, current = await run_in_threadpool(_manager_and_its_conversation, conn, item_id)
+    item, current = await run_on_worker_thread(_manager_and_its_conversation, conn, item_id)
     created_conversation_id = conversation_start.new_conversation_id()
     overrides = ConversationStartOverrides(
         backend_key=(
@@ -402,7 +402,7 @@ async def reset_item_conversation(
         connection_off_the_loop(request) as conn,
         managers_service.manager_lifecycle_lock(item_id),
     ):
-        item = (await run_in_threadpool(managers_data.read_manager, conn, item_id)).item
+        item = (await run_on_worker_thread(managers_data.read_manager, conn, item_id)).item
         await conversation_start.reset_agent_conversation(
             conversations, conn, item.manager_agent_key
         )

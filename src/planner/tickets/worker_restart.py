@@ -11,11 +11,10 @@ import sqlite3
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from fastapi.concurrency import run_in_threadpool
-
 from planner.conversation.contracts import ConversationSystem
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
@@ -118,7 +117,7 @@ async def restart_worker(
     )
     # Start obtains fresh read ownership, after mutation ownership ends.
     start_result = await start_worker_step()
-    return await run_in_threadpool(
+    return await run_on_worker_thread(
         _restart_result,
         conn,
         ticket_id,
@@ -137,7 +136,7 @@ async def _prepare_worker_restart(
     write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
     now: Callable[[], int],
 ) -> tuple[str | None, bool]:
-    ticket = await run_in_threadpool(require_restartable, conn, principal, ticket_id)
+    ticket = await run_on_worker_thread(require_restartable, conn, principal, ticket_id)
     rearming_idle_revision = (
         ticket.worker_step_claim is WorkerStepClaim.none and ticket.conversation_id is not None
     )
@@ -150,7 +149,7 @@ async def _prepare_worker_restart(
     killed_conversation_id = ticket.conversation_id
     killed_conversation_looked_running = False
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        ticket = await run_in_threadpool(require_restartable, conn, principal, ticket_id)
+        ticket = await run_on_worker_thread(require_restartable, conn, principal, ticket_id)
         killed_conversation_id = ticket.conversation_id
         if killed_conversation_id is not None:
             killed_conversation_looked_running = await conversations.is_running(
@@ -178,7 +177,7 @@ async def _prepare_worker_restart(
                     },
                 )
         try:
-            await run_in_threadpool(
+            await run_on_worker_thread(
                 _give_the_claim_back_and_write_configuration,
                 conn,
                 principal,
