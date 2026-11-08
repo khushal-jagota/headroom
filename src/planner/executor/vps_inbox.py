@@ -402,7 +402,7 @@ class MacInbox:
                         ErrorCode.retry_later,
                         "An earlier attempt at this conversation's item is still settling",
                     )
-                del self._still_settling[conversation_id]
+                self._still_settling.pop(conversation_id, None)
             task = asyncio.create_task(work())
             task.add_done_callback(_observe_outcome)
             try:
@@ -415,6 +415,11 @@ class MacInbox:
                 raise
             if not task.done():
                 self._still_settling[conversation_id] = task
+                task.add_done_callback(
+                    lambda done: self._still_settling.pop(conversation_id, None)
+                    if self._still_settling.get(conversation_id) is done
+                    else None
+                )
                 raise PlannerError(
                     ErrorCode.retry_later, "This item is still being saved; send it again"
                 )
@@ -512,7 +517,8 @@ class MacInbox:
             # It would fail the same way every time. Retrying a poison item forever
             # holds its whole conversation, so it is refused, and the refusal says why.
             LOGGER.error(
-                "Mac item refused because saving it failed: conversation=%s sender=%s "
+                "Saving a Mac item failed, so it is refused unless already recorded: "
+                "conversation=%s sender=%s "
                 "sequence=%d submission=%s kind=%s: %r",
                 envelope.conversation_id,
                 envelope.sender_id,

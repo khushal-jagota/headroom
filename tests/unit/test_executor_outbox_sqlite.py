@@ -339,9 +339,10 @@ def test_failing_conversation_backs_off_alone_and_keeps_the_link(
             # The failing head was retried in place, never skipped, then the next sent.
             names = [name for name, _ in attempts]
             assert names[-1] == "bad_1" and set(names[:-1]) == {"bad_0"}
-            # Each retry waited its back-off (0.01 s, then the 0.02 s cap); no busy loop.
+            # Each retry waited the first delay; no busy loop. "Retry later" does not grow
+            # the delay, because the VPS already took its own time limit to answer.
             gaps = [b - a for (_, a), (_, b) in zip(attempts[:-2], attempts[1:-1], strict=True)]
-            assert gaps[0] >= 0.009 and all(gap >= 0.019 for gap in gaps[1:])
+            assert all(gap >= 0.009 for gap in gaps)
             failures = [r.getMessage() for r in caplog.records if "outbox send failed" in r.message]
             assert len(failures) == len(names) - 2
             assert "conversation=c_bad" in failures[0]

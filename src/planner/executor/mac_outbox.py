@@ -601,7 +601,12 @@ class MacOutbox:
                     failure_name(error),
                 )
                 await asyncio.sleep(delay)
-                delay = min(delay * 2, OUTBOX_RETRY_MAX_SECONDS)
+                if isinstance(error, PeerErrorReply) and error.code == ErrorCode.retry_later:
+                    # The VPS took its own time limit to answer, so the resend need not
+                    # wait longer each time.
+                    delay = OUTBOX_RETRY_INITIAL_SECONDS
+                else:
+                    delay = min(delay * 2, OUTBOX_RETRY_MAX_SECONDS)
             else:
                 delay, attempt = OUTBOX_RETRY_INITIAL_SECONDS, 0
 
