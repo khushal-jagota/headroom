@@ -38,7 +38,7 @@ async def list_datasets(
 
 
 @router.post("/datasets/read")
-async def read_values(body: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+def read_values(body: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
     if set(body) - {"dataset_ids", "first_date", "last_date", "limit"}:
         raise invalid("invalid dataset read")
     identifiers = body.get("dataset_ids")
@@ -67,7 +67,7 @@ async def read_dataset(dataset_id: str, conn: DbConn) -> JsonDict:
 
 
 @router.post("/datasets")
-async def create_dataset(body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+def create_dataset(body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     if set(body) != {"project_id", "source_id", "name", "timezone", "dimensions", "fields"}:
         raise invalid("invalid dataset request")
     request = CreateDatasetBody(
@@ -84,7 +84,7 @@ async def create_dataset(body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk)
 
 
 @router.patch("/datasets/{dataset_id}")
-async def update_dataset(
+def update_dataset(
     dataset_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     if set(body) - {"expected_revision", "name", "timezone", "dimensions", "fields"}:

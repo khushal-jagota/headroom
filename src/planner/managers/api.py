@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import sqlite3
 from functools import partial
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 
 from planner.conversation.api import (
     OwnerSendBody,
@@ -16,6 +18,7 @@ from planner.conversation.api import (
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.conversation.video_uploads.contracts import UploadDestination
 from planner.core.authctx import require_owner_or_chief
+from planner.core.clock import Clock
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import manager_files
@@ -34,6 +37,8 @@ from planner.managers import startup as managers_startup
 from planner.managers import views as managers_views
 from planner.managers.contracts import (
     CreateManagerBody,
+    Manager,
+    ManagerLaunchConfiguration,
     ManagerWorkspaceContent,
 )
 from planner.managers.launch_settings import (
@@ -55,6 +60,7 @@ from planner.tickets.api import (
     MessageFiles,
     body_opt_str,
     body_str,
+    connection_off_the_loop,
 )
 from planner.work_attention import add_work_attention
 
@@ -87,7 +93,7 @@ async def get_manager_launch_defaults(conn: DbConn, ctx: Ctx) -> JsonDict:
 
 
 @router.put("/managers/launch-defaults")
-async def put_manager_launch_defaults(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDict:
+def put_manager_launch_defaults(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDict:
     require_owner_or_chief(ctx)
     configuration = parse_launch_configuration(raw)
     validate_launch_configuration(conn, configuration)
@@ -105,45 +111,74 @@ async def get_manager_launch_configuration(item_id: str, conn: DbConn, ctx: Ctx)
 
 @router.put("/managers/{item_id}/launch-defaults")
 async def put_manager_launch_configuration(
-    item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+    item_id: str, raw: dict[str, Any], request: Request, ctx: Ctx, clk: Clk
 ) -> JsonDict:
+    """Save one Manager's launch choice under its lifecycle lock, an asyncio lock."""
     configuration = parse_launch_configuration(raw)
-    async with managers_service.manager_lifecycle_lock(item_id):
-        validate_launch_configuration(conn, configuration)
-        item = managers_data.read_manager(conn, item_id).item
-        current = conversation_start.read_agent_conversation(conn, item.manager_agent_key)
-        if current is not None and (
-            configuration.employee_backend != item.manager_launch_configuration.employee_backend
-        ):
-            raise PlannerError(
-                ErrorCode.validation,
-                "An existing Manager conversation cannot change backend. "
-                "Start a new conversation before you choose another backend.",
-            )
-        saved = managers_data.update_manager_launch_configuration(
-            conn, item_id, configuration, principal=ctx.principal, clock=clk, explicit_choice=True
+    async with (
+        connection_off_the_loop(request) as conn,
+        managers_service.manager_lifecycle_lock(item_id),
+    ):
+        saved = await run_in_threadpool(
+            _save_manager_launch_configuration, conn, item_id, configuration, ctx.principal, clk
         )
     return launch_configuration_json(saved.manager_launch_configuration)
 
 
+def _save_manager_launch_configuration(
+    conn: sqlite3.Connection,
+    item_id: str,
+    configuration: ManagerLaunchConfiguration,
+    principal: Principal,
+    clock: Clock,
+) -> Manager:
+    validate_launch_configuration(conn, configuration)
+    item = managers_data.read_manager(conn, item_id).item
+    current = conversation_start.read_agent_conversation(conn, item.manager_agent_key)
+    if current is not None and (
+        configuration.employee_backend != item.manager_launch_configuration.employee_backend
+    ):
+        raise PlannerError(
+            ErrorCode.validation,
+            "An existing Manager conversation cannot change backend. "
+            "Start a new conversation before you choose another backend.",
+        )
+    return managers_data.update_manager_launch_configuration(
+        conn, item_id, configuration, principal=principal, clock=clock, explicit_choice=True
+    )
+
+
 @router.post("/managers")
 async def create_manager(
-    raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx, conversations: Conversations
+    raw: dict[str, Any],
+    request: Request,
+    clk: Clk,
+    ctx: Ctx,
+    conversations: Conversations,
 ) -> JsonDict:
+    """Save the Manager on a worker thread, then send its goal on the event loop."""
     body = _marshal_create_manager(raw)
+    async with connection_off_the_loop(request) as conn:
+        item = await run_in_threadpool(_create_manager_rows, conn, body, clk)
+        startup = await managers_startup.start_created_manager(conversations, conn, clk, ctx, item)
+        detail = await run_in_threadpool(managers_views.manager_detail, conn, item.id)
+    return {**detail, "startup": startup}
+
+
+def _create_manager_rows(
+    conn: sqlite3.Connection, body: CreateManagerBody, clock: Clock
+) -> Manager:
     project = projects_data.resolve_project(
         conn, project_id=body["project_id"], project_name=body["project"], required=True
     )
     assert project is not None
-    item = managers_data.create_manager(
+    return managers_data.create_manager(
         conn,
         title=body["title"],
         project_id=project.id,
         goal=body["goal"],
-        clock=clk,
+        clock=clock,
     )
-    startup = await managers_startup.start_created_manager(conversations, conn, clk, ctx, item)
-    return {**managers_views.manager_detail(conn, item.id), "startup": startup}
 
 
 @router.get("/managers")
@@ -268,7 +303,6 @@ async def send_to_item_conversation(
     item_id: str,
     body: OwnerSendBody,
     request: Request,
-    conn: DbConn,
     ctx: Ctx,
     conversations: Conversations,
     message_files: MessageFiles,
@@ -280,22 +314,30 @@ async def send_to_item_conversation(
     a principal. This is the door a person types at: it carries the browser's own message
     name, the files attached to it, and what the conversation is to run on.
     """
-    return await _send_to_manager(
-        item_id, body, request, conn, ctx, conversations, message_files, clk
-    )
+    async with connection_off_the_loop(request) as conn:
+        return await _send_to_manager(
+            item_id, body, request, conn, ctx, conversations, message_files, clk
+        )
+
+
+def _manager_and_its_conversation(
+    conn: sqlite3.Connection, item_id: str
+) -> tuple[Manager, str | None]:
+    item = managers_data.read_manager(conn, item_id).item
+    return item, conversation_start.read_agent_conversation(conn, item.manager_agent_key)
 
 
 async def _send_to_manager(
     item_id: str,
     body: OwnerSendBody,
     request: Request,
-    conn: DbConn,
+    conn: sqlite3.Connection,
     ctx: Ctx,
     conversations: Conversations,
     message_files: MessageFiles,
     clk: Clk,
 ) -> JsonDict:
-    item = managers_data.read_manager(conn, item_id).item
+    item, current = await run_in_threadpool(_manager_and_its_conversation, conn, item_id)
     created_conversation_id = conversation_start.new_conversation_id()
     overrides = ConversationStartOverrides(
         backend_key=(
@@ -305,7 +347,6 @@ async def _send_to_manager(
         reasoning_effort=body.reasoning_effort,
         reasoning_effort_is_set="reasoning_effort" in body.model_fields_set,
     )
-    current = conversation_start.read_agent_conversation(conn, item.manager_agent_key)
     if (
         current is not None
         and overrides.backend_key is not None
@@ -354,11 +395,14 @@ async def _send_to_manager(
 
 @router.post("/managers/{item_id}/conversation/reset")
 async def reset_item_conversation(
-    item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
+    item_id: str, request: Request, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     """Cut this Manager's agent loose from its conversation. This is what New does."""
-    async with managers_service.manager_lifecycle_lock(item_id):
-        item = managers_data.read_manager(conn, item_id).item
+    async with (
+        connection_off_the_loop(request) as conn,
+        managers_service.manager_lifecycle_lock(item_id),
+    ):
+        item = (await run_in_threadpool(managers_data.read_manager, conn, item_id)).item
         await conversation_start.reset_agent_conversation(
             conversations, conn, item.manager_agent_key
         )
@@ -367,11 +411,12 @@ async def reset_item_conversation(
 
 @router.delete("/managers/{item_id}")
 async def delete_manager(
-    item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
+    item_id: str, request: Request, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
-    deleted = await managers_service.delete_manager(
-        conversations, conn, item_id, principal=ctx.principal
-    )
+    async with connection_off_the_loop(request) as conn:
+        deleted = await managers_service.delete_manager(
+            conversations, conn, item_id, principal=ctx.principal
+        )
     return {
         "ok": True,
         "manager_id": deleted.manager_id,
@@ -380,9 +425,7 @@ async def delete_manager(
 
 
 @router.patch("/managers/{item_id}")
-async def patch_item(
-    item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
+def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     recognized = set(_ITEM_PLAIN_FIELDS) | {"project"}
     for key in body:
         if key not in recognized:
@@ -424,9 +467,7 @@ async def patch_item(
 
 
 @router.patch("/managers/{item_id}/settled")
-async def settle_item(
-    item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
+def settle_item(item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     if set(raw) != {"settled"} or not isinstance(raw.get("settled"), bool):
         raise PlannerError(ErrorCode.validation, "settled must be a boolean")
     managers_data.set_manager_settled(
@@ -443,14 +484,14 @@ async def get_chief_page(conn: DbConn) -> Any:
 
 
 @router.patch("/chief/page")
-async def patch_chief_page(body: dict[str, Any], conn: DbConn, ctx: Ctx) -> Any:
+def patch_chief_page(body: dict[str, Any], conn: DbConn, ctx: Ctx) -> Any:
     from planner.managers.pages import write_page
 
     return write_page(conn, None, body, principal=ctx.principal)
 
 
 @router.patch("/managers/{item_id}/page")
-async def patch_manager_page(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx) -> Any:
+def patch_manager_page(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx) -> Any:
     from planner.managers.pages import write_page
 
     return write_page(conn, item_id, body, principal=ctx.principal)

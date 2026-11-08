@@ -1,9 +1,12 @@
 """Private secret entry and public names-only credential routes."""
 
+import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.concurrency import run_in_threadpool
 
 from planner.core.contracts import JsonDict
 from planner.credentials import actions, data
@@ -12,6 +15,7 @@ from planner.credentials.contracts import (
     BasicSecret,
     BearerSecret,
     CredentialAuthKind,
+    CredentialMetadata,
     CredentialReference,
     CredentialScheme,
     CredentialSecret,
@@ -19,7 +23,7 @@ from planner.credentials.contracts import (
     HeaderSecret,
 )
 from planner.credentials.logic.validation import invalid, text
-from planner.tickets.api import Cfg, Clk, Ctx, DbConn
+from planner.tickets.api import Cfg, Clk, Ctx, DbConn, connection_off_the_loop
 
 router = APIRouter()
 
@@ -32,6 +36,17 @@ async def _private_body(request: Request) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise invalid()
     return body
+
+
+async def _on_request_database[T](request: Request, work: Callable[[sqlite3.Connection], T]) -> T:
+    """Run a handler's database steps on a worker thread.
+
+    The secret body is read on the event loop, so these handlers stay ``async``; their
+    database work must not, because a write that waits on the SQLite lock would hold up
+    every request.
+    """
+    async with connection_off_the_loop(request) as conn:
+        return await run_in_threadpool(work, conn)
 
 
 def _secret(value: object, kind: CredentialAuthKind) -> CredentialSecret:
@@ -72,9 +87,7 @@ async def list_credentials(
 
 
 @router.post("/credentials")
-async def create_credential(
-    request: Request, conn: DbConn, ctx: Ctx, clk: Clk, cfg: Cfg
-) -> JsonDict:
+async def create_credential(request: Request, ctx: Ctx, clk: Clk, cfg: Cfg) -> JsonDict:
     actions.require_plaintext_owner(ctx.principal)
     body = await _private_body(request)
     if set(body) != {
@@ -93,58 +106,69 @@ async def create_credential(
         kind,
         _secret(body["secret"], kind),
     )
-    result = actions.create_credential(
-        conn,
-        write,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        key_path=Path(cfg.credential_key_path),
+    result = await _on_request_database(
+        request,
+        lambda conn: actions.create_credential(
+            conn,
+            write,
+            principal=ctx.principal,
+            now=clk.now_unix(),
+            key_path=Path(cfg.credential_key_path),
+        ),
     )
     return data.metadata_json(result)
 
 
 @router.put("/credentials/{credential_id}/secret")
 async def replace_credential(
-    credential_id: str, request: Request, conn: DbConn, ctx: Ctx, clk: Clk, cfg: Cfg
+    credential_id: str, request: Request, ctx: Ctx, clk: Clk, cfg: Cfg
 ) -> JsonDict:
     actions.require_plaintext_owner(ctx.principal)
     body = await _private_body(request)
     if set(body) != {"expected_revision", "secret"}:
         raise invalid()
-    metadata = data.read_metadata(conn, credential_id)
-    result = actions.replace_credential(
-        conn,
-        credential_id,
-        _secret(body["secret"], metadata.auth_kind),
-        expected_revision=_revision(body["expected_revision"]),
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        key_path=Path(cfg.credential_key_path),
-    )
-    return data.metadata_json(result)
+
+    def replace_secret(conn: sqlite3.Connection) -> CredentialMetadata:
+        metadata = data.read_metadata(conn, credential_id)
+        return actions.replace_credential(
+            conn,
+            credential_id,
+            _secret(body["secret"], metadata.auth_kind),
+            expected_revision=_revision(body["expected_revision"]),
+            principal=ctx.principal,
+            now=clk.now_unix(),
+            key_path=Path(cfg.credential_key_path),
+        )
+
+    return data.metadata_json(await _on_request_database(request, replace_secret))
 
 
 @router.delete("/credentials/{credential_id}")
-async def delete_credential(credential_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+def delete_credential(credential_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
     actions.delete_credential(conn, credential_id, principal=ctx.principal)
     return {"deleted": True}
 
 
 @router.patch("/credentials/{credential_id}")
 async def rename_credential(
-    credential_id: str, request: Request, conn: DbConn, ctx: Ctx, clk: Clk, cfg: Cfg
+    credential_id: str, request: Request, ctx: Ctx, clk: Clk, cfg: Cfg
 ) -> JsonDict:
     actions.require_plaintext_owner(ctx.principal)
     body = await _private_body(request)
     if set(body) != {"name", "expected_revision"}:
         raise invalid()
-    result = actions.rename_credential(
-        conn,
-        credential_id,
-        text(body["name"], maximum=limits.MAX_NAME_LENGTH),
-        expected_revision=_revision(body["expected_revision"]),
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        key_path=Path(cfg.credential_key_path),
+    name = text(body["name"], maximum=limits.MAX_NAME_LENGTH)
+    expected_revision = _revision(body["expected_revision"])
+    result = await _on_request_database(
+        request,
+        lambda conn: actions.rename_credential(
+            conn,
+            credential_id,
+            name,
+            expected_revision=expected_revision,
+            principal=ctx.principal,
+            now=clk.now_unix(),
+            key_path=Path(cfg.credential_key_path),
+        ),
     )
     return data.metadata_json(result)

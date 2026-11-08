@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 
 from planner.conversation.api import Runtime
+from planner.conversation.runtime_composition import ConversationRuntime
 from planner.core.authctx import require_owner
 from planner.credentials.api import _private_body
 from planner.credentials.logic.validation import invalid
@@ -13,6 +14,13 @@ from planner.credentials.requests.contracts import CredentialRequestRowBody
 from planner.tickets.api import Cfg, Clk, Ctx, DbConn
 
 router = APIRouter()
+
+
+async def _origin_conversation_id(runtime: ConversationRuntime, request_id: str) -> str:
+    """The conversation the request came from, read on the runtime's reader threads."""
+    return await runtime.reads.run(
+        lambda conn: str(data.row_for(conn, request_id)["conversation_id"])
+    )
 
 
 @router.post("/credentials/requests")
@@ -51,13 +59,13 @@ async def read_request(request_id: str, conn: DbConn) -> CredentialRequestRowBod
 
 @router.post("/credentials/requests/{request_id}/save")
 async def save_request(
-    request_id: str, request: Request, runtime: Runtime, ctx: Ctx, clk: Clk, cfg: Cfg, conn: DbConn
+    request_id: str, request: Request, runtime: Runtime, ctx: Ctx, clk: Clk, cfg: Cfg
 ) -> CredentialRequestRowBody:
     require_owner(ctx)
     raw = await _private_body(request)
     if set(raw) != {"name", "value", "expected_revision"}:
         raise invalid()
-    origin = str(data.row_for(conn, request_id)["conversation_id"])
+    origin = await _origin_conversation_id(runtime, request_id)
 
     async def operation() -> CredentialRequestRowBody:
         body, attempt = await runtime.system.record_events_transaction(
@@ -80,10 +88,10 @@ async def save_request(
 
 @router.post("/credentials/requests/{request_id}/reject")
 async def reject_request(
-    request_id: str, runtime: Runtime, ctx: Ctx, clk: Clk, conn: DbConn
+    request_id: str, runtime: Runtime, ctx: Ctx, clk: Clk
 ) -> CredentialRequestRowBody:
     require_owner(ctx)
-    origin = str(data.row_for(conn, request_id)["conversation_id"])
+    origin = await _origin_conversation_id(runtime, request_id)
 
     async def operation() -> CredentialRequestRowBody:
         body, attempt = await runtime.system.record_events_transaction(
@@ -97,10 +105,10 @@ async def reject_request(
 
 @router.post("/credentials/requests/{request_id}/review")
 async def review_request(
-    request_id: str, runtime: Runtime, ctx: Ctx, clk: Clk, conn: DbConn
+    request_id: str, runtime: Runtime, ctx: Ctx, clk: Clk
 ) -> CredentialRequestRowBody:
     require_owner(ctx)
-    origin = str(data.row_for(conn, request_id)["conversation_id"])
+    origin = await _origin_conversation_id(runtime, request_id)
     return await service.shield_operation(
         runtime,
         runtime.system.record_events_transaction(
@@ -112,10 +120,10 @@ async def review_request(
 
 @router.post("/credentials/requests/{request_id}/retry-delivery")
 async def retry_delivery(
-    request_id: str, runtime: Runtime, ctx: Ctx, clk: Clk, conn: DbConn
+    request_id: str, runtime: Runtime, ctx: Ctx, clk: Clk
 ) -> CredentialRequestRowBody:
     require_owner(ctx)
-    origin = str(data.row_for(conn, request_id)["conversation_id"])
+    origin = await _origin_conversation_id(runtime, request_id)
 
     async def operation() -> CredentialRequestRowBody:
         body, attempt = await runtime.system.record_events_transaction(

@@ -86,7 +86,7 @@ async def list_sources(
 
 
 @router.post("/measure-sources")
-async def create_source(
+def create_source(
     body: Annotated[
         dict[str, Any],
         CREATE,
@@ -118,13 +118,13 @@ async def get_status(source_id: str, conn: DbConn, clk: Clk) -> JsonDict:
 
 
 @router.delete("/measure-sources/{source_id}")
-async def delete_source(source_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+def delete_source(source_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
     actions.delete_source(conn, source_id, principal=ctx.principal)
     return {"deleted": True}
 
 
 @router.put("/measure-sources/{source_id}/schedule")
-async def set_schedule(
+def set_schedule(
     source_id: str,
     body: dict[str, Any],
     conn: DbConn,
@@ -147,7 +147,7 @@ async def set_schedule(
 
 
 @router.put("/measure-sources/{source_id}/responsible")
-async def set_responsible(
+def set_responsible(
     source_id: str,
     body: dict[str, Any],
     conn: DbConn,
@@ -168,7 +168,7 @@ async def set_responsible(
 
 
 @router.put("/measure-sources/{source_id}/script")
-async def submit_script(
+def submit_script(
     source_id: str,
     body: Annotated[
         dict[str, Any],
@@ -201,7 +201,7 @@ async def list_runs(
 
 
 @router.post("/measure-sources/{source_id}/runs")
-async def request_run(
+def request_run(
     source_id: str,
     body: Annotated[
         dict[str, Any],

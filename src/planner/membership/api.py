@@ -6,11 +6,14 @@ hand the work to the code that owns that collection.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import sqlite3
+
+from fastapi import APIRouter, Request
+from fastapi.concurrency import run_in_threadpool
 
 from planner.membership.collections import ENTRIES, CollectionEntry, MembershipWrite
 from planner.membership.contracts import Collection, MembershipAnswer
-from planner.tickets.api import Cfg, Clk, Conversations, Ctx, DbConn, parse_enum
+from planner.tickets.api import Cfg, Clk, Conversations, Ctx, connection_off_the_loop, parse_enum
 from planner.tickets.review_transfer import notify_review_transfers
 
 router = APIRouter()
@@ -22,7 +25,7 @@ def _prepare(
     collection: str,
     container_id: str,
     member_id: str,
-    conn: DbConn,
+    conn: sqlite3.Connection,
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
@@ -54,15 +57,18 @@ async def add_member(
     collection: str,
     container_id: str,
     member_id: str,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
 ) -> MembershipAnswer:
-    entry, write = _prepare(collection, container_id, member_id, conn, ctx, cfg, clk)
-    entry.add(write)
-    await notify_review_transfers(conversations, conn, write.review_transfer_notices, now=write.now)
+    async with connection_off_the_loop(request) as conn:
+        entry, write = _prepare(collection, container_id, member_id, conn, ctx, cfg, clk)
+        await run_in_threadpool(entry.add, write)
+        await notify_review_transfers(
+            conversations, conn, write.review_transfer_notices, now=write.now
+        )
     return _answer(collection, write)
 
 
@@ -71,13 +77,16 @@ async def remove_member(
     collection: str,
     container_id: str,
     member_id: str,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
 ) -> MembershipAnswer:
-    entry, write = _prepare(collection, container_id, member_id, conn, ctx, cfg, clk)
-    entry.remove(write)
-    await notify_review_transfers(conversations, conn, write.review_transfer_notices, now=write.now)
+    async with connection_off_the_loop(request) as conn:
+        entry, write = _prepare(collection, container_id, member_id, conn, ctx, cfg, clk)
+        await run_in_threadpool(entry.remove, write)
+        await notify_review_transfers(
+            conversations, conn, write.review_transfer_notices, now=write.now
+        )
     return _answer(collection, write)

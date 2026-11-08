@@ -16,14 +16,15 @@ validation envelope rather than FastAPI's 422, so the CLI and UI see one error s
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import PlainTextResponse
 
 from planner.conversation.api import (
@@ -133,6 +134,24 @@ def db_conn(request: Request) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+@asynccontextmanager
+async def connection_off_the_loop(request: Request) -> AsyncIterator[sqlite3.Connection]:
+    """The request connection for a write route that must stay ``async def``.
+
+    Such a route awaits the conversation system between its database steps, so it cannot
+    be a plain function. It opens its connection here instead of taking ``DbConn``, and
+    runs each database step it owns with ``run_in_threadpool``. Only one step at a time
+    uses the connection, and the connection is opened and closed on a worker thread too.
+    """
+    conn = await run_in_threadpool(
+        cast(Callable[[], sqlite3.Connection], request.app.state.conn_factory)
+    )
+    try:
+        yield conn
+    finally:
+        await run_in_threadpool(conn.close)
+
+
 def get_conversation_system(request: Request) -> ConversationSystem:
     return cast(ConversationSystem, request.app.state.conversation_system)
 
@@ -191,7 +210,9 @@ async def reject_while_the_conversation_is_running(
     here and writing after is racy by nature; for one person driving one workspace that
     is the honest cost of keeping the writers pure database transactions.
     """
-    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
+    conversation_id = (
+        await run_in_threadpool(tickets_data.read_ticket, conn, ticket_id)
+    ).conversation_id
     if conversation_id is None:
         return
     if await conversation_system.is_running(conversation_id):
@@ -217,7 +238,9 @@ async def silence_the_worker_before_deleting(
     The conversation record and its history survive, as they do for every deletion. An
     idle conversation, or none at all, means there is nothing to kill.
     """
-    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
+    conversation_id = (
+        await run_in_threadpool(tickets_data.read_ticket, conn, ticket_id)
+    ).conversation_id
     if conversation_id is None:
         return
     await conversation_system.kill(conversation_id)
@@ -394,9 +417,7 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
     )
 
 
-def _parse_principal(
-    raw: object, field: str, *, allow_ticket: bool = False
-) -> Principal | None:
+def _parse_principal(raw: object, field: str, *, allow_ticket: bool = False) -> Principal | None:
     if raw is None:
         return None
     if not isinstance(raw, dict) or set(raw) != {"kind", "id"}:
@@ -529,7 +550,7 @@ def write_create_ticket(
 
 
 @router.post("/tickets")
-async def create_ticket(
+def create_ticket(
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
@@ -696,7 +717,7 @@ class ResolvedEmployeeConfiguration:
     employee_launch_reasoning_effort: str | None
 
 
-async def resolve_employee_configuration(
+def resolve_employee_configuration(
     request: Request,
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -764,7 +785,7 @@ async def get_worker_self_ticket(
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")
-async def put_ticket_employee_configuration(
+def put_ticket_employee_configuration(
     ticket_id: str,
     raw: dict[str, Any],
     request: Request,
@@ -790,7 +811,7 @@ async def put_ticket_employee_configuration(
         employee_launch_model=body_str(raw, "employee_launch_model"),
         employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
     )
-    resolved = await resolve_employee_configuration(
+    resolved = resolve_employee_configuration(
         request,
         conn,
         ticket_id,
@@ -807,7 +828,6 @@ async def restart_ticket_worker(
     ticket_id: str,
     raw: dict[str, Any],
     request: Request,
-    conn: DbConn,
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
@@ -832,19 +852,7 @@ async def restart_ticket_worker(
             "a launch configuration needs both a backend and a model",
             {},
         )
-    write_configuration: Callable[[sqlite3.Connection, int], None] | None = None
-    if backend is not None and model is not None:
-        resolved = await resolve_employee_configuration(
-            request,
-            conn,
-            ticket_id,
-            employee_backend=backend,
-            employee_launch_model=model,
-            employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
-        )
-
-        def write_configuration(open_conn: sqlite3.Connection, now: int) -> None:
-            write_resolved_employee_configuration(open_conn, ticket_id, resolved, now=now)
+    reasoning_effort = body_opt_str(raw, "employee_launch_reasoning_effort")
 
     async def start_worker_step() -> WorkerStepStartResult:
         return await start_ready_worker_step(
@@ -855,21 +863,37 @@ async def restart_ticket_worker(
             now=clk.now_unix,
         )
 
-    return await worker_restart.restart_worker(
-        conversations,
-        conn,
-        ctx.principal,
-        ticket_id,
-        write_employee_configuration=write_configuration,
-        start_worker_step=start_worker_step,
-        now=clk.now_unix,
-    )
+    async with connection_off_the_loop(request) as conn:
+        write_configuration: Callable[[sqlite3.Connection, int], None] | None = None
+        if backend is not None and model is not None:
+            resolved = await run_in_threadpool(
+                resolve_employee_configuration,
+                request,
+                conn,
+                ticket_id,
+                employee_backend=backend,
+                employee_launch_model=model,
+                employee_launch_reasoning_effort=reasoning_effort,
+            )
+
+            def write_configuration(open_conn: sqlite3.Connection, now: int) -> None:
+                write_resolved_employee_configuration(open_conn, ticket_id, resolved, now=now)
+
+        return await worker_restart.restart_worker(
+            conversations,
+            conn,
+            ctx.principal,
+            ticket_id,
+            write_employee_configuration=write_configuration,
+            start_worker_step=start_worker_step,
+            now=clk.now_unix,
+        )
 
 
 @router.delete("/tickets/{ticket_id}")
 async def delete_ticket(
     ticket_id: str,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -879,17 +903,19 @@ async def delete_ticket(
     # the same place. Both walk past the running guards, so the Ticket's turn is killed
     # here instead: a Worker must never outlive the Ticket it belongs to.
     even_while_running = force or ctx.principal.kind is PrincipalKind.manager
-    if even_while_running:
-        await silence_the_worker_before_deleting(conn, conversations, ticket_id)
-    else:
-        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-    deleted = tickets_data.delete_ticket(
-        conn,
-        ticket_id,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        even_while_running=even_while_running,
-    )
+    async with connection_off_the_loop(request) as conn:
+        if even_while_running:
+            await silence_the_worker_before_deleting(conn, conversations, ticket_id)
+        else:
+            await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
+        deleted = await run_in_threadpool(
+            tickets_data.delete_ticket,
+            conn,
+            ticket_id,
+            principal=ctx.principal,
+            now=clk.now_unix(),
+            even_while_running=even_while_running,
+        )
     return {
         "ok": True,
         "ticket_id": deleted.ticket_id,
@@ -967,20 +993,23 @@ def write_patch_ticket(
 async def patch_ticket(
     ticket_id: str,
     body: dict[str, Any],
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
     notices: list[ReviewTransferNotice] = []
-    result = write_patch_ticket(ticket_id, body, conn, ctx, clk, review_transfer_notices=notices)
-    await notify_review_transfers(conversations, conn, notices, now=clk.now_unix())
+    async with connection_off_the_loop(request) as conn:
+        result = await run_in_threadpool(
+            write_patch_ticket, ticket_id, body, conn, ctx, clk, review_transfer_notices=notices
+        )
+        await notify_review_transfers(conversations, conn, notices, now=clk.now_unix())
     return result
 
 
 @router.post("/tickets/{ticket_id}/propose")
-async def propose_current_field(
+def propose_current_field(
     ticket_id: str,
     raw: dict[str, Any],
     conn: DbConn,
@@ -1005,7 +1034,7 @@ async def propose_current_field(
 
 
 @router.post("/tickets/{ticket_id}/accept/{field}")
-async def accept_field(
+def accept_field(
     ticket_id: str,
     field: str,
     raw: dict[str, Any],
@@ -1033,7 +1062,7 @@ async def accept_field(
 
 
 @router.post("/tickets/{ticket_id}/reject")
-async def reject_ticket_proposal(
+def reject_ticket_proposal(
     ticket_id: str,
     raw: dict[str, Any],
     conn: DbConn,
@@ -1117,7 +1146,6 @@ async def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
 async def send_to_chief_conversation(
     body: OwnerSendBody,
     request: Request,
-    conn: DbConn,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1144,37 +1172,39 @@ async def send_to_chief_conversation(
         CHIEF_PRINCIPAL,
         ctx.principal,
     )
-    delivered = await message_delivery_service.send_message(
-        conversations,
-        conn,
-        clk,
-        ctx,
-        CHIEF_PRINCIPAL,
-        admission
-        or partial(
-            conversation_message_content,
-            message_files,
-            sent=body.content,
+    async with connection_off_the_loop(request) as conn:
+        delivered = await message_delivery_service.send_message(
+            conversations,
+            conn,
+            clk,
+            ctx,
+            CHIEF_PRINCIPAL,
+            admission
+            or partial(
+                conversation_message_content,
+                message_files,
+                sent=body.content,
+                sender_message_id=body.sender_message_id,
+            ),
+            admission=admission,
+            conversation_id=body.conversation_id,
+            created_conversation_id=created_conversation_id,
+            runs_under=runs_under,
+            mode=body.mode,
+            owner_read_through_sequence=body.owner_read_through_sequence,
             sender_message_id=body.sender_message_id,
-        ),
-        admission=admission,
-        conversation_id=body.conversation_id,
-        created_conversation_id=created_conversation_id,
-        runs_under=runs_under,
-        mode=body.mode,
-        owner_read_through_sequence=body.owner_read_through_sequence,
-        sender_message_id=body.sender_message_id,
-        sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
-    )
+            sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
+        )
     return _delivered_message_json(delivered)
 
 
 @router.post("/chief/conversation/reset")
 async def reset_chief_conversation(
-    conn: DbConn, ctx: Ctx, conversations: Conversations
+    request: Request, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     """Cut the Chief loose from its conversation. This is what New does."""
-    await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
+    async with connection_off_the_loop(request) as conn:
+        await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
     return {"conversation_id": None}
 
 
@@ -1196,7 +1226,6 @@ async def send_to_ticket_conversation(
     ticket_id: str,
     body: OwnerSendBody,
     request: Request,
-    conn: DbConn,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1225,35 +1254,36 @@ async def send_to_ticket_conversation(
         Principal(PrincipalKind.ticket, ticket_id),
         ctx.principal,
     )
-    delivered = await message_delivery_service.send_message(
-        conversations,
-        conn,
-        clk,
-        ctx,
-        Principal(PrincipalKind.ticket, ticket_id),
-        admission
-        or partial(
-            conversation_message_content,
-            message_files,
-            sent=body.content,
+    async with connection_off_the_loop(request) as conn:
+        delivered = await message_delivery_service.send_message(
+            conversations,
+            conn,
+            clk,
+            ctx,
+            Principal(PrincipalKind.ticket, ticket_id),
+            admission
+            or partial(
+                conversation_message_content,
+                message_files,
+                sent=body.content,
+                sender_message_id=body.sender_message_id,
+            ),
+            admission=admission,
+            conversation_id=body.conversation_id,
+            created_conversation_id=created_conversation_id,
+            runs_under=_what_this_message_runs_under(body),
+            mode=body.mode,
+            owner_read_through_sequence=body.owner_read_through_sequence,
             sender_message_id=body.sender_message_id,
-        ),
-        admission=admission,
-        conversation_id=body.conversation_id,
-        created_conversation_id=created_conversation_id,
-        runs_under=_what_this_message_runs_under(body),
-        mode=body.mode,
-        owner_read_through_sequence=body.owner_read_through_sequence,
-        sender_message_id=body.sender_message_id,
-        sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
-    )
+            sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
+        )
     return _delivered_message_json(delivered)
 
 
 @router.post("/tickets/{ticket_id}/conversation/reset")
 async def reset_ticket_conversation(
     ticket_id: str,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1266,8 +1296,10 @@ async def reset_ticket_conversation(
     above already knows how to answer.
     """
     now = clk.now_unix()
-    await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
-    return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
+    async with connection_off_the_loop(request) as conn:
+        await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
+        ticket = await run_in_threadpool(tickets_data.read_ticket, conn, ticket_id)
+    return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/complete/{field}")
@@ -1275,7 +1307,7 @@ async def complete_user_owned_gate(
     ticket_id: str,
     field: str,
     raw: dict[str, Any],
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1287,18 +1319,22 @@ async def complete_user_owned_gate(
     approval otherwise has.
     """
     body = GateCompletionBody(body=body_str(raw, "body"))
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
-    _validate_field(worker_type_definition, field)
-    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-    now = clk.now_unix()
-    ticket = tickets_data.complete_user_owned_gate(
-        conn,
-        ticket_id,
-        field=field,
-        new_body=body["body"],
-        principal=ctx.principal,
-        now=now,
-    )
+    async with connection_off_the_loop(request) as conn:
+        _ticket, worker_type_definition = await run_in_threadpool(
+            _ticket_and_worker_type_definition, conn, ticket_id
+        )
+        _validate_field(worker_type_definition, field)
+        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
+        now = clk.now_unix()
+        ticket = await run_in_threadpool(
+            tickets_data.complete_user_owned_gate,
+            conn,
+            ticket_id,
+            field=field,
+            new_body=body["body"],
+            principal=ctx.principal,
+            now=now,
+        )
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -1306,7 +1342,7 @@ async def complete_user_owned_gate(
 async def request_help(
     ticket_id: str,
     body: JsonDict,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1316,12 +1352,13 @@ async def request_help(
     message = body_str(body, "message")
     if not message.strip():
         raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    named = _parse_principal(body.get("recipient"), "recipient", allow_ticket=True)
-    recipient = named or ticket.ceiling_holder
-    delivered = await message_delivery_service.send_message(
-        conversations, conn, clk, ctx, recipient, message
-    )
+    async with connection_off_the_loop(request) as conn:
+        ticket = await run_in_threadpool(tickets_data.read_ticket, conn, ticket_id)
+        named = _parse_principal(body.get("recipient"), "recipient", allow_ticket=True)
+        recipient = named or ticket.ceiling_holder
+        delivered = await message_delivery_service.send_message(
+            conversations, conn, clk, ctx, recipient, message
+        )
     fate = (
         {"fate": "recorded"}
         if isinstance(delivered.fate, MessageRecordedToOwner)
@@ -1390,7 +1427,7 @@ async def review(
 
 
 @router.post("/tickets/{ticket_id}/backlog")
-async def backlog_ticket(
+def backlog_ticket(
     ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     tickets_data.set_ticket_backlog(
@@ -1404,7 +1441,7 @@ async def backlog_ticket(
 
 
 @router.post("/tickets/{ticket_id}/resume")
-async def resume_ticket(
+def resume_ticket(
     ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     tickets_data.set_ticket_backlog(

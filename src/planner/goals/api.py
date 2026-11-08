@@ -19,7 +19,7 @@ async def list_goals(
 
 
 @router.post("/goals")
-async def create_goal(
+def create_goal(
     body: Annotated[
         dict[str, Any],
         CREATE,
@@ -42,7 +42,7 @@ async def read_goal(goal_id: str, conn: DbConn, clk: Clk) -> Any:
 
 
 @router.patch("/goals/{goal_id}")
-async def update_goal(
+def update_goal(
     goal_id: str,
     body: Annotated[
         dict[str, Any],
@@ -74,7 +74,7 @@ async def readings(
 
 
 @router.post("/goals/{goal_id}/make-manager")
-async def make_manager(goal_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
+def make_manager(goal_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
     manager_id, goal = actions.make_manager(
         conn,
         goal_id,

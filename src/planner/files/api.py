@@ -31,7 +31,7 @@ from planner.files.logic.reuse import (
     is_played_with_ranges,
     read_representation_within_bound,
 )
-from planner.tickets.api import body_str
+from planner.tickets.api import DbConn, body_str
 
 router = APIRouter()
 
@@ -224,72 +224,70 @@ async def _reusable(
 
 @router.put("/files/sprint-items/{manager_id}/{file_path:path}", include_in_schema=False)
 @router.put("/files/managers/{manager_id}/{file_path:path}")
-async def write_manager_file(
-    request: Request, manager_id: str, file_path: str, raw: dict[str, Any]
+def write_manager_file(
+    request: Request, manager_id: str, file_path: str, raw: dict[str, Any], conn: DbConn
 ) -> JsonDict:
     """Write one of this Manager's managed files, at the path that reads it back.
 
     The same address as the GET above, so a caller writes the string it will later read.
     """
     _reject_raw_encoded_unsafe_path(request, "Manager file not found")
-    db_path = request.app.state.config.db_path
-    with connect(db_path) as conn:
-        return manager_files.write_file(
-            conn,
-            request_context(request).principal,
-            manager_id,
-            db_path,
-            file_path,
-            body_str(raw, "content"),
-        )
+    return manager_files.write_file(
+        conn,
+        request_context(request).principal,
+        manager_id,
+        request.app.state.config.db_path,
+        file_path,
+        body_str(raw, "content"),
+    )
 
 
 @router.delete("/files/sprint-items/{manager_id}/{file_path:path}", include_in_schema=False)
 @router.delete("/files/managers/{manager_id}/{file_path:path}")
-async def delete_manager_file(
-    request: Request, manager_id: str, file_path: str
+def delete_manager_file(
+    request: Request, manager_id: str, file_path: str, conn: DbConn
 ) -> JsonDict:
     """Remove one of this Manager's managed files."""
     _reject_raw_encoded_unsafe_path(request, "Manager file not found")
-    db_path = request.app.state.config.db_path
-    with connect(db_path) as conn:
-        return manager_files.delete_file(
-            conn, request_context(request).principal, manager_id, db_path, file_path
-        )
+    return manager_files.delete_file(
+        conn,
+        request_context(request).principal,
+        manager_id,
+        request.app.state.config.db_path,
+        file_path,
+    )
 
 
 @router.put("/files/goals/{goal_id}/{file_path:path}")
-async def write_goal_file(
-    request: Request, goal_id: str, file_path: str, raw: dict[str, Any]
+def write_goal_file(
+    request: Request, goal_id: str, file_path: str, raw: dict[str, Any], conn: DbConn
 ) -> JsonDict:
     """Write one of this goal's managed files, at the path that reads it back.
 
     The same address as the GET above, so a caller writes the string it will later read.
     """
     _reject_raw_encoded_unsafe_path(request, "goal file not found")
-    db_path = request.app.state.config.db_path
-    with connect(db_path) as conn:
-        return goal_files.write_file(
-            conn,
-            request_context(request).principal,
-            goal_id,
-            db_path,
-            file_path,
-            body_str(raw, "content"),
-        )
+    return goal_files.write_file(
+        conn,
+        request_context(request).principal,
+        goal_id,
+        request.app.state.config.db_path,
+        file_path,
+        body_str(raw, "content"),
+    )
 
 
 @router.delete("/files/goals/{goal_id}/{file_path:path}")
-async def delete_goal_file(
-    request: Request, goal_id: str, file_path: str
-) -> JsonDict:
+def delete_goal_file(request: Request, goal_id: str, file_path: str, conn: DbConn) -> JsonDict:
     """Remove one of this goal's managed files."""
     _reject_raw_encoded_unsafe_path(request, "goal file not found")
-    db_path = request.app.state.config.db_path
-    with connect(db_path) as conn:
-        return goal_files.delete_file(
-            conn, request_context(request).principal, goal_id, db_path, file_path
-        )
+    return goal_files.delete_file(
+        conn,
+        request_context(request).principal,
+        goal_id,
+        request.app.state.config.db_path,
+        file_path,
+    )
 
 
 def _reject_raw_encoded_unsafe_path(

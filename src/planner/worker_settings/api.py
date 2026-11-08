@@ -107,9 +107,7 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
     }
 
 
-async def _resolve_launch_defaults(
-    conn: sqlite3.Connection, raw: dict[str, Any]
-) -> dict[str, Any]:
+def _resolve_launch_defaults(conn: sqlite3.Connection, raw: dict[str, Any]) -> dict[str, Any]:
     defaults = service.validate_launch_defaults(raw)
     backend_key = require_conversation_backend_key(defaults.employee_backend)
     require_enabled_model(conn, backend_key, defaults.employee_launch_model)
@@ -223,9 +221,7 @@ async def list_skills(conn: DbConn) -> JsonDict:
 
 
 @router.post("/skills/apply")
-async def apply_skills(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
-) -> JsonDict:
+def apply_skills(raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk) -> JsonDict:
     applied = service.apply_skills(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -238,7 +234,7 @@ async def get_skill(skill_name: str, conn: DbConn) -> JsonDict:
 
 
 @router.patch("/skills/{skill_name}")
-async def patch_skill(
+def patch_skill(
     skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
     skill = service.save_skill(
@@ -252,18 +248,16 @@ async def patch_skill(
 
 
 @router.delete("/skills/{skill_name}")
-async def delete_skill(skill_name: str, conn: DbConn, ctx: Ctx, config: Cfg) -> JsonDict:
+def delete_skill(skill_name: str, conn: DbConn, ctx: Ctx, config: Cfg) -> JsonDict:
     service.delete_skill(conn, skill_name, database_parent=_database_parent(config))
     return {"name": skill_name, "deleted": True}
 
 
 @router.put("/skills/{skill_name}/files")
-async def put_skill_file(
+def put_skill_file(
     skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
 ) -> JsonDict:
-    path = service.write_skill_file(
-        conn, skill_name, raw, database_parent=_database_parent(config)
-    )
+    path = service.write_skill_file(conn, skill_name, raw, database_parent=_database_parent(config))
     return {"name": skill_name, "path": path}
 
 
@@ -273,24 +267,20 @@ async def get_chief_settings(conn: DbConn) -> JsonDict:
 
 
 @router.put("/workers/chief-of-staff/recap")
-async def put_chief_recap(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDict:
+def put_chief_recap(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDict:
     require_owner_or_chief(ctx)
     return _chief_json(service.update_chief_recap(conn, raw))
 
 
 @router.put("/workers/chief-of-staff/launch-defaults")
-async def put_chief_launch_defaults(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
-) -> JsonDict:
+def put_chief_launch_defaults(raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg) -> JsonDict:
     del config
-    raw = await _resolve_launch_defaults(conn, raw)
+    raw = _resolve_launch_defaults(conn, raw)
     return _chief_json(service.update_chief_launch_defaults(conn, raw))
 
 
 @router.put("/workers/chief-of-staff/skill")
-async def put_chief_skill(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
-) -> JsonDict:
+def put_chief_skill(raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk) -> JsonDict:
     settings = service.save_chief_skill(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -298,7 +288,7 @@ async def put_chief_skill(
 
 
 @router.patch("/workers/chief-of-staff/skill")
-async def patch_chief_skill(
+def patch_chief_skill(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
     settings = service.save_chief_skill(
@@ -308,18 +298,15 @@ async def patch_chief_skill(
 
 
 @router.put("/workers/{worker_type}/launch-defaults")
-async def put_worker_launch_defaults(
+def put_worker_launch_defaults(
     worker_type: str,
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    raw = await _resolve_launch_defaults(conn, raw)
-    registry = configured_worker_runtime_definitions().worker_type_registry
-    settings = service.update_worker_launch_defaults(
-        conn, registry, worker_type, raw, now=clk.now_unix()
-    )
+    raw = _resolve_launch_defaults(conn, raw)
+    settings = service.update_worker_launch_defaults(conn, worker_type, raw, now=clk.now_unix())
     return _settings_json(settings)
 
 
@@ -330,7 +317,7 @@ async def get_worker(worker_type: str, conn: DbConn) -> JsonDict:
 
 
 @router.put("/workers/{worker_type}/skill")
-async def put_worker_skill(
+def put_worker_skill(
     worker_type: str,
     raw: dict[str, Any],
     conn: DbConn,
@@ -351,7 +338,7 @@ async def put_worker_skill(
 
 
 @router.patch("/workers/{worker_type}/skill")
-async def patch_worker_skill(
+def patch_worker_skill(
     worker_type: str,
     raw: dict[str, Any],
     conn: DbConn,
@@ -380,7 +367,7 @@ async def get_worker_type(worker_type: str, conn: DbConn) -> JsonDict:
 
 
 @router.post("/worker-types")
-async def post_worker_type(
+def post_worker_type(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
     """Declare a Worker type, or replace the one with this id.
@@ -403,7 +390,7 @@ async def post_worker_type(
 
 
 @router.delete("/worker-types/{worker_type}")
-async def delete_worker_type(worker_type: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+def delete_worker_type(worker_type: str, conn: DbConn, ctx: Ctx) -> JsonDict:
     """Remove a Worker type. Its Tickets keep their own workflow; new ones are refused."""
     service.delete_worker_type_definition(conn, worker_type)
     return {"worker_type": worker_type, "deleted": True}

@@ -317,7 +317,7 @@ def test_write_detail_list_and_readings_project_the_same_completion(tmp_db: Conn
 
     async def responses(completed: bool) -> None:
         data.read_goal(tmp_db, goal.id)
-        write = await api.update_goal(
+        write = api.update_goal(
             goal.id,
             {"completed": completed},
             tmp_db,

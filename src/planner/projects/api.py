@@ -84,7 +84,7 @@ async def read_projects(
 
 
 @router.post("/projects")
-async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     body = _marshal_create_project(raw)
     project = projects_data.create_project(
         conn,
@@ -97,7 +97,7 @@ async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) 
 
 
 @router.patch("/projects/{project_id}")
-async def update_project(
+def update_project(
     project_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     body = _marshal_update_project(raw)

@@ -53,6 +53,7 @@ from planner.worker_types.registry import WorkerTypeRegistry
 from planner.worker_types.store import (
     definition_transaction,
     delete_definition,
+    read_definition,
     write_definition,
 )
 
@@ -468,15 +469,17 @@ def _with_launch_defaults(
 
 def update_worker_launch_defaults(
     conn: sqlite3.Connection,
-    registry: WorkerTypeRegistry,
     worker_type: str,
     payload: dict[str, Any],
     *,
     now: int,
 ) -> ManagedWorkerSettings:
-    definition = registry.require(worker_type)
     launch_defaults = validate_launch_defaults(payload)
     with _one_writer(conn):
+        # The stored record, read under the write lock, not the registry in force: a
+        # declaration committed on another thread is in the row before it is in the
+        # registry, and rewriting the registry's copy would undo it.
+        definition = read_definition(conn, worker_type)
         write_definition(conn, _with_launch_defaults(definition, launch_defaults), now=now)
     load_worker_runtime_definitions(conn)
     return ManagedWorkerSettings(

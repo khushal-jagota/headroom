@@ -11,6 +11,8 @@ import sqlite3
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from fastapi.concurrency import run_in_threadpool
+
 from planner.conversation.contracts import ConversationSystem
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
@@ -98,6 +100,10 @@ async def restart_worker(
     the backend name and disabled-model policy before anything was killed, so a
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
     after it, because the launch values unfreeze only once the claim is back.
+
+    Every database step runs on a worker thread, one at a time on the caller's
+    connection. The link lock, the kill and the start are the conversation system's and
+    stay on the event loop.
     """
     (
         killed_conversation_id,
@@ -112,11 +118,10 @@ async def restart_worker(
     )
     # Start obtains fresh read ownership, after mutation ownership ends.
     start_result = await start_worker_step()
-    restarted = tickets_data.read_ticket(conn, ticket_id)
-    return _restart_result(
+    return await run_in_threadpool(
+        _restart_result,
         conn,
         ticket_id,
-        restarted,
         start_result,
         killed_conversation_id,
         killed_conversation_looked_running,
@@ -132,7 +137,7 @@ async def _prepare_worker_restart(
     write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
     now: Callable[[], int],
 ) -> tuple[str | None, bool]:
-    ticket = require_restartable(conn, principal, ticket_id)
+    ticket = await run_in_threadpool(require_restartable, conn, principal, ticket_id)
     rearming_idle_revision = (
         ticket.worker_step_claim is WorkerStepClaim.none and ticket.conversation_id is not None
     )
@@ -145,7 +150,7 @@ async def _prepare_worker_restart(
     killed_conversation_id = ticket.conversation_id
     killed_conversation_looked_running = False
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        ticket = require_restartable(conn, principal, ticket_id)
+        ticket = await run_in_threadpool(require_restartable, conn, principal, ticket_id)
         killed_conversation_id = ticket.conversation_id
         if killed_conversation_id is not None:
             killed_conversation_looked_running = await conversations.is_running(
@@ -173,35 +178,14 @@ async def _prepare_worker_restart(
                     },
                 )
         try:
-            write_now = now()
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                ticket = require_restartable(conn, principal, ticket_id)
-                if ticket.worker_step_claim in {
-                    WorkerStepClaim.out,
-                    WorkerStepClaim.errored,
-                }:
-                    tickets_data.release_worker_step_claim(
-                        conn,
-                        ticket_id,
-                        expected_claim=ticket.worker_step_claim,
-                        expected_claim_revision=ticket.worker_step_claim_revision,
-                        now=write_now,
-                    )
-                    if ticket.conversation_id is not None:
-                        tickets_data.clear_ticket_conversation_link(
-                            conn,
-                            ticket_id,
-                            expected_conversation_id=ticket.conversation_id,
-                            now=write_now,
-                        )
-                if write_employee_configuration is not None:
-                    write_employee_configuration(conn, write_now)
-                conn.execute("COMMIT")
-            except BaseException:
-                if conn.in_transaction:
-                    conn.execute("ROLLBACK")
-                raise
+            await run_in_threadpool(
+                _give_the_claim_back_and_write_configuration,
+                conn,
+                principal,
+                ticket_id,
+                write_employee_configuration=write_employee_configuration,
+                now=now(),
+            )
         except PlannerError as error:
             raise PlannerError(
                 error.code,
@@ -215,14 +199,53 @@ async def _prepare_worker_restart(
     return killed_conversation_id, killed_conversation_looked_running
 
 
+def _give_the_claim_back_and_write_configuration(
+    conn: sqlite3.Connection,
+    principal: Principal,
+    ticket_id: str,
+    *,
+    write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
+    now: int,
+) -> None:
+    """Give the claim back and write the configuration, as one transaction."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        ticket = require_restartable(conn, principal, ticket_id)
+        if ticket.worker_step_claim in {
+            WorkerStepClaim.out,
+            WorkerStepClaim.errored,
+        }:
+            tickets_data.release_worker_step_claim(
+                conn,
+                ticket_id,
+                expected_claim=ticket.worker_step_claim,
+                expected_claim_revision=ticket.worker_step_claim_revision,
+                now=now,
+            )
+            if ticket.conversation_id is not None:
+                tickets_data.clear_ticket_conversation_link(
+                    conn,
+                    ticket_id,
+                    expected_conversation_id=ticket.conversation_id,
+                    now=now,
+                )
+        if write_employee_configuration is not None:
+            write_employee_configuration(conn, now)
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
 def _restart_result(
     conn: sqlite3.Connection,
     ticket_id: str,
-    restarted: Ticket,
     start_result: WorkerStepStartResult,
     killed_conversation_id: str | None,
     killed_conversation_looked_running: bool,
 ) -> dict[str, object]:
+    restarted = tickets_data.read_ticket(conn, ticket_id)
     return {
         "ticket_id": ticket_id,
         "killed_conversation_id": killed_conversation_id,

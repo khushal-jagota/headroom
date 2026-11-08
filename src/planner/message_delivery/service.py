@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from fastapi.concurrency import run_in_threadpool
+
 from planner.conversation.contracts import (
     ConversationMessageContent,
     ConversationSystem,
@@ -104,7 +106,10 @@ async def send_message(
     """
     caller = ctx.principal
     message_kinds = {
-        PrincipalKind.owner, PrincipalKind.chief, PrincipalKind.manager, PrincipalKind.ticket
+        PrincipalKind.owner,
+        PrincipalKind.chief,
+        PrincipalKind.manager,
+        PrincipalKind.ticket,
     }
     if caller.kind not in message_kinds or recipient.kind not in message_kinds:
         raise PlannerError(ErrorCode.validation, "unsupported message principal kind", {})
@@ -292,7 +297,9 @@ async def send_message(
                             and explicit_choice
                         )
                     ):
-                        managers_data.update_manager_launch_configuration(
+                        # A write, so it waits on the SQLite lock on a worker thread.
+                        await run_in_threadpool(
+                            managers_data.update_manager_launch_configuration,
                             conn,
                             item_id,
                             item.manager_launch_configuration.__class__(

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from fastapi.concurrency import run_in_threadpool
+
 from planner.conversation.contracts import ConversationSystem
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
@@ -60,7 +62,8 @@ async def request_recap(
             "a recap can be asked of a ticket, a Manager, or the Chief",
             {"kind": recipient.kind.value},
         )
-    _clear_recap(conn, clock, ctx, recipient)
+    # The clear is a write, so it waits on the SQLite lock on a worker thread.
+    await run_in_threadpool(_clear_recap, conn, clock, ctx, recipient)
     return await service.send_message(
         conversations,
         conn,
