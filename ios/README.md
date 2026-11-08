@@ -107,7 +107,7 @@ the inline renderer accepts the shared font so its body default cannot mask it.
 
 Use Xcode 16 or newer with an installed iOS 18+ simulator runtime. The committed
 Xcode project builds without XcodeGen. If adding source files, install XcodeGen
-(`brew install xcodegen`) and run `xcodegen generate --spec ios/project.yml`.
+(`brew install xcodegen`) and run `ios/scripts/generate-project.sh`.
 Run these commands from the repository root:
 
 ```sh
@@ -119,11 +119,11 @@ xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
   -destination "platform=iOS Simulator,id=$PANELS_DEVICE" \
   -derivedDataPath "$PANELS_PROOF/DerivedData" clean build
 xcrun simctl install "$PANELS_DEVICE" "$PANELS_PROOF/DerivedData/Build/Products/Debug-iphonesimulator/Panels.app"
-xcrun simctl launch "$PANELS_DEVICE" app.panels.ios
+xcrun simctl launch "$PANELS_DEVICE" com.khushaljagota.panels
 xcrun simctl io "$PANELS_DEVICE" screenshot "$PANELS_PROOF/workspace.png"
 xcrun simctl io "$PANELS_DEVICE" recordVideo "$PANELS_PROOF/walkthrough.mp4"
 # Stop recordVideo with Ctrl-C, which finalizes the video.
-xcrun simctl terminate "$PANELS_DEVICE" app.panels.ios
+xcrun simctl terminate "$PANELS_DEVICE" com.khushaljagota.panels
 ```
 
 Do not open Simulator.app or take over the user's screen. If the assigned simulator
@@ -143,6 +143,31 @@ shut down **only your assigned device**, run `xcrun simctl erase "$PANELS_DEVICE
 then boot it headless again. Never create or delete devices per run, never use the
 ambiguous `booted` selector, and never touch another worker's lane. The foundation
 uses Lane A and leaves all three lanes available for the parallel screen workers.
+
+## TestFlight signing
+
+Panels uses Blue Door Labs team `FB99BBDJBA` and bundle ID
+`com.khushaljagota.panels`. Version 0.1 started at build 1. Release builds for
+physical iOS use automatic signing and the Push Notifications capability, with
+`aps-environment=production`. Push registration remains disabled. The app declares all four interface
+orientations for its existing iPhone and iPad device families.
+
+Debug and simulator builds remain unsigned. Generic iOS compile checks can
+continue to pass `CODE_SIGNING_ALLOWED=NO` explicitly. Generate the project after
+changing signing settings in `project.yml`, using
+`ios/scripts/generate-project.sh`. The wrapper corrects XcodeGen 2.46’s nested
+capability serialization bug so the committed Push capability remains a dictionary.
+
+Archive with the authorized App Store Connect API key and
+`-allowProvisioningUpdates`; pass `-authenticationKeyPath`,
+`-authenticationKeyID` and `-authenticationKeyIssuerID` from private inputs.
+Export with automatic signing and `method=app-store-connect`. Before upload,
+inspect both the archive and exported IPA with `codesign -d --entitlements :-`:
+the distribution app and embedded profile must contain production APNs and the
+expected application/team identifiers. Verify the exported signature and version
+and build number, then upload. App Store Connect processing and internal tester access
+must be confirmed separately; signing configuration alone does not establish
+TestFlight availability.
 
 ## Small verification target
 
