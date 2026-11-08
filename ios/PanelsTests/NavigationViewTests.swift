@@ -123,6 +123,13 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertEqual(queue.items[0].owner, .manager("parent"))
         XCTAssertEqual(queue.unloadedCount, 1)
         XCTAssertEqual(queue.runningWorkerCount, 1)
+
+        // A decided proposal clears its card from the badge only when no message waits on it.
+        let withMessage = NavigationPresentation(try snapshot(source).content.records)
+        XCTAssertEqual(withMessage.reviewBadge(count: 2, pendingDecisionTickets: ["a"]), 2, "The Ticket card still holds a message")
+        XCTAssertEqual(withMessage.reviewBadge(count: 2, pendingDecisionTickets: ["outside"]), 1, "A card outside the view clears")
+        let proposalOnly = NavigationPresentation(try snapshot([pending, parentManager(), project("p", "Project")]).content.records)
+        XCTAssertEqual(proposalOnly.reviewBadge(count: 1, pendingDecisionTickets: ["a"]), 0)
     }
 
     func testReviewOrderExcludesBackloggedAndAgentHeldProposals() throws {

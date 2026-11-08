@@ -117,6 +117,20 @@ enum NavigationReviewCard: Equatable, Sendable {
     }
 }
 
+extension NavigationPresentation {
+    /// The Review badge: the view's card count, less the cards that a decision not yet
+    /// sent will clear. A Ticket card that also holds a message stays in Review after its
+    /// proposal is decided, so it stays counted. A card outside the view is not known to
+    /// hold a message, so its decision clears it.
+    func reviewBadge(count: Int, pendingDecisionTickets: Set<String>) -> Int {
+        let staying = Set(review.compactMap { card -> String? in
+            if case .ticket(let id, _, _, _, let messages) = card, !messages.isEmpty { return id }
+            return nil
+        })
+        return max(0, count - pendingDecisionTickets.subtracting(staying).count)
+    }
+}
+
 /// Port of web/src/lib/navigation/presentation.ts navigationWorkspacePresentation for
 /// the facts the phone shows. One coherent view in, derived rows out; no reads.
 struct NavigationPresentation: Sendable {
