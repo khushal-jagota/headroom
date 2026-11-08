@@ -57,3 +57,24 @@ def test_reopen_preserves_installed_retired_definitions_and_owner_specialists(
         )
     finally:
         conn.close()
+
+
+def test_fresh_seed_and_reopen_do_not_restore_general(tmp_path: Path) -> None:
+    """Risk: a seed restores the removed preset or bundles its specialist again."""
+    path = str(tmp_path / "fresh.db")
+    for _ in range(2):
+        conn = connect(path)
+        try:
+            create_schema(conn)
+            assert (
+                conn.execute("SELECT 1 FROM worker_types WHERE worker_type='general'").fetchone()
+                is None
+            )
+            assert (
+                conn.execute(
+                    "SELECT 1 FROM managed_skills WHERE skill_name='panels-worker-general'"
+                ).fetchone()
+                is None
+            )
+        finally:
+            conn.close()

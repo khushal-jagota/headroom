@@ -60,6 +60,18 @@ export function workspaceRailWash(root: HTMLElement) {
       hosts.delete(node);
     }
   }
+  /* A group of Tickets slides in and out with its height clipped, so its rows keep their full
+   * boxes while only part of them shows. The fill is cut to the group's edge, so it travels and
+   * shrinks with its row instead of hanging over the card below. */
+  function visibleRect(node: HTMLElement): DOMRect {
+    const rect = node.getBoundingClientRect();
+    const clip = node.closest<HTMLElement>('.workspace-ticket-bucket');
+    // Only the slide clips a group. A row that travels by transform may sit outside its group's box.
+    if (!clip || getComputedStyle(clip).overflowY === 'visible') return rect;
+    const group = clip.getBoundingClientRect();
+    const top = Math.max(rect.top, group.top), bottom = Math.max(top, Math.min(rect.bottom, group.bottom));
+    return new DOMRect(rect.left, top, rect.width, bottom - top);
+  }
   function geometry(node: HTMLElement): Target | null {
     const hostNode = node.closest<HTMLElement>('.active-work-scroll, .settled-body, .rail-utilities');
     const host = hostNode && hosts.get(hostNode);
@@ -71,7 +83,7 @@ export function workspaceRailWash(root: HTMLElement) {
     // Every fill is its row's own box with the row's own radius. The node is the row itself,
     // the same element that owns its hover, click and preview: a Manager's header is its
     // project eyebrow, its name and a sole goal's line together, as one block.
-    const itemBox: Box = {...local(node.getBoundingClientRect()), radius:getComputedStyle(node).borderRadius};
+    const itemBox: Box = {...local(visibleRect(node)), radius:getComputedStyle(node).borderRadius};
     return {node,host,group,itemBox};
   }
   const style = (box: Box) => Object.fromEntries(properties.map(key=>[key,`${box[key]}px`]));
@@ -190,7 +202,8 @@ export function workspaceRailWash(root: HTMLElement) {
     if(records.some(record=>!(record.target instanceof Element && record.target.closest('.rail-wash'))))update();
   });
   observer.observe(root,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['aria-current','class','style','data-rail-motion-busy']});
-  const resize=new ResizeObserver(update);resize.observe(root);
+  // A resize is placed in the frame that caused it. Waiting for the next frame left a sliding group's fill one frame behind its row.
+  const resize=new ResizeObserver(()=>{if(disposed)return;discover();decorate();update();});resize.observe(root);
   root.addEventListener('pointerover',pointer);root.addEventListener('pointerdown',pointer);
   root.addEventListener('pointerleave',leave);root.addEventListener('focusin',update);root.addEventListener('focusout',update);
   root.addEventListener('scroll',update,true);window.addEventListener('resize',update);media.addEventListener('change',preferenceChanged);

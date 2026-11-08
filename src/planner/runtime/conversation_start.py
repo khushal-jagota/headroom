@@ -18,6 +18,12 @@ already knows how to answer.
 
 Nothing here makes a conversation on its own. One made and not spoken into is one nobody
 can see and nobody can send from, which is what a separate start door left behind.
+
+Every write here runs on a worker thread through ``run_on_worker_thread``, because a write
+can wait out the SQLite busy timeout and the event loop is every request's thread. The
+link locks, the kills, and every call into the conversation system stay on the loop, and
+a step that ran under a link lock still runs under it. The plain reads between them stay
+on the loop too: under WAL a read never waits for the write lock.
 """
 
 from __future__ import annotations
@@ -53,6 +59,7 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.storage import ensure_started_conversation_record
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.files.lifecycle import database_path
 from planner.files.logic.paths import chief_files_root, manager_files_root
 from planner.projects import data as projects_data
@@ -341,25 +348,8 @@ async def start_ticket_conversation(
     )
     await system.start_conversation(request)
     try:
-        ensure_started_conversation_record(
-            conn, resolve_conversation_start_request(request), created_at=now
-        )
-        actual_start = conn.execute(
-            "SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?",
-            (conversation_id,),
-        ).fetchone()
-        linked = tickets_data.write_ticket_conversation_start(
-            conn,
-            ticket.id,
-            conversation_id=conversation_id,
-            backend=values.backend_key.value,
-            model=values.model if actual_start is None else actual_start["model"],
-            reasoning_effort=(
-                values.reasoning_effort
-                if actual_start is None
-                else actual_start["reasoning_effort"]
-            ),
-            now=now,
+        linked = await run_on_worker_thread(
+            _record_and_link_ticket_conversation, conn, ticket.id, request, values, now
         )
     except BaseException as start_error:
         try:
@@ -373,6 +363,34 @@ async def start_ticket_conversation(
     # conversation, and that is the one the caller has to send into.
     now_in = linked.conversation_id or conversation_id
     return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
+
+
+def _record_and_link_ticket_conversation(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    request: ConversationStartRequest,
+    values: ConversationStartValues,
+    now: int,
+) -> Ticket:
+    """Fill in the started conversation's durable row, then point the Ticket at it."""
+    ensure_started_conversation_record(
+        conn, resolve_conversation_start_request(request), created_at=now
+    )
+    actual_start = conn.execute(
+        "SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?",
+        (request.conversation_id,),
+    ).fetchone()
+    return tickets_data.write_ticket_conversation_start(
+        conn,
+        ticket_id,
+        conversation_id=request.conversation_id,
+        backend=values.backend_key.value,
+        model=values.model if actual_start is None else actual_start["model"],
+        reasoning_effort=(
+            values.reasoning_effort if actual_start is None else actual_start["reasoning_effort"]
+        ),
+        now=now,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -564,22 +582,39 @@ async def _send_into_the_conversation_the_ticket_is_in(
         or runs_under.reasoning_effort is not None
         or runs_under.reasoning_effort_is_set
     ):
-        current = tickets_data.read_ticket(conn, ticket_id)
-        tickets_data.write_ticket_last_chosen_configuration(
+        await run_on_worker_thread(
+            _record_the_change_a_started_message_carried,
             conn,
             ticket_id,
-            expected_conversation_id=sending_into,
-            model=current.employee_launch_model if runs_under.model is None else runs_under.model,
-            reasoning_effort=(
-                current.employee_launch_reasoning_effort
-                if runs_under.reasoning_effort is None and not runs_under.reasoning_effort_is_set
-                else runs_under.reasoning_effort
-            ),
-            now=now,
+            sending_into,
+            runs_under,
+            now,
         )
     return DeliveredMessage(
         conversation_id=sending_into,
         fate=fate,
+    )
+
+
+def _record_the_change_a_started_message_carried(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    sending_into: str,
+    runs_under: ConversationStartOverrides,
+    now: int,
+) -> None:
+    current = tickets_data.read_ticket(conn, ticket_id)
+    tickets_data.write_ticket_last_chosen_configuration(
+        conn,
+        ticket_id,
+        expected_conversation_id=sending_into,
+        model=current.employee_launch_model if runs_under.model is None else runs_under.model,
+        reasoning_effort=(
+            current.employee_launch_reasoning_effort
+            if runs_under.reasoning_effort is None and not runs_under.reasoning_effort_is_set
+            else runs_under.reasoning_effort
+        ),
+        now=now,
     )
 
 
@@ -671,7 +706,8 @@ async def _make_a_conversation_and_send_into_it(
             recording_receipt=recording_receipt,
         )
         if isinstance(fate, PromptDeliveryStarted):
-            tickets_data.write_ticket_last_chosen_configuration(
+            await run_on_worker_thread(
+                tickets_data.write_ticket_last_chosen_configuration,
                 conn,
                 ticket.id,
                 expected_conversation_id=making,
@@ -721,8 +757,12 @@ async def _let_go_of_a_conversation_that_was_never_spoken_in(
 ) -> None:
     """Undo a conversation whose first message did not land, and only that one."""
     await system.kill(conversation_id)
-    tickets_data.remove_ticket_conversation_start(
-        conn, ticket_id, conversation_id=conversation_id, now=now
+    await run_on_worker_thread(
+        tickets_data.remove_ticket_conversation_start,
+        conn,
+        ticket_id,
+        conversation_id=conversation_id,
+        now=now,
     )
 
 
@@ -784,10 +824,7 @@ def read_manager_conversation_history(
             for pair in identity
             if isinstance(pair, list) and len(pair) == 2
         }
-        if (
-            values.get("PLAN_ACTOR") != "manager"
-            or values.get("PLAN_MANAGER_ID") != manager_id
-        ):
+        if values.get("PLAN_ACTOR") != "manager" or values.get("PLAN_MANAGER_ID") != manager_id:
             continue
         history.append(
             {
@@ -839,7 +876,29 @@ async def start_agent_conversation(
             access=values.access,
         )
     )
-    missing_supervisor = False
+    now_in = await run_on_worker_thread(
+        _link_agent_conversation, conn, agent_key, conversation_id, required_manager_id
+    )
+    if now_in is None:
+        await system.kill(conversation_id)
+        raise PlannerError(
+            ErrorCode.not_found,
+            "Manager no longer exists",
+            {"manager_id": required_manager_id},
+        )
+    return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
+
+
+def _link_agent_conversation(
+    conn: sqlite3.Connection,
+    agent_key: str,
+    conversation_id: str,
+    required_manager_id: str | None,
+) -> str | None:
+    """Point an agent with no conversation at this one. Returns the one it is now in.
+
+    None means the link was for a Manager that no longer exists, so the agent is in none.
+    """
     with conn:
         if required_manager_id is None:
             conn.execute(
@@ -856,18 +915,9 @@ async def start_agent_conversation(
                 "AND 'manager_' || id=agents.agent_key)",
                 (conversation_id, agent_key, required_manager_id),
             )
-            missing_supervisor = (
-                linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None
-            )
-    if missing_supervisor:
-        await system.kill(conversation_id)
-        raise PlannerError(
-            ErrorCode.not_found,
-            "Manager no longer exists",
-            {"manager_id": required_manager_id},
-        )
-    now_in = read_agent_conversation(conn, agent_key) or conversation_id
-    return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
+            if linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None:
+                return None
+    return read_agent_conversation(conn, agent_key) or conversation_id
 
 
 async def send_to_agent_conversation(
@@ -1010,6 +1060,13 @@ async def _let_go_of_an_agent_conversation(
     that is pointing at somebody else's — the race went the other way — is left alone.
     """
     await system.kill(conversation_id)
+    await run_on_worker_thread(_unlink_agent_conversation, conn, agent_key, conversation_id)
+
+
+def _unlink_agent_conversation(
+    conn: sqlite3.Connection, agent_key: str, conversation_id: str
+) -> None:
+    """Cut the agent loose from this conversation, and only while it still names it."""
     with conn:
         conn.execute(
             "UPDATE agents SET conversation_id = NULL WHERE agent_key = ? AND conversation_id = ?",
@@ -1041,12 +1098,7 @@ async def reset_agent_conversation(
         if conversation_id is None:
             return
         await system.kill(conversation_id)
-        with conn:
-            conn.execute(
-                "UPDATE agents SET conversation_id = NULL "
-                "WHERE agent_key = ? AND conversation_id = ?",
-                (agent_key, conversation_id),
-            )
+        await run_on_worker_thread(_unlink_agent_conversation, conn, agent_key, conversation_id)
 
 
 async def reset_ticket_conversation(
@@ -1080,7 +1132,8 @@ async def reset_ticket_conversation(
         if conversation_id is None:
             return
         await system.kill(conversation_id)
-        tickets_data.clear_ticket_conversation_link(
+        await run_on_worker_thread(
+            tickets_data.clear_ticket_conversation_link,
             conn,
             ticket_id,
             expected_conversation_id=conversation_id,

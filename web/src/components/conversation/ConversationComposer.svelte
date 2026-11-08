@@ -753,9 +753,15 @@
     } else entry.error = "Your newer draft is kept. Finish it, then return this message to the composer.";
     videoChanged();
   }
+  /** Shows the first frame of a video still held in memory; the browser draws it, nothing is uploaded. */
+  function localFrame(node: HTMLVideoElement, file: File) {
+    const url = URL.createObjectURL(file);
+    node.src = `${url}#t=0.1`;
+    return { destroy: () => URL.revokeObjectURL(url) };
+  }
   function videoProgress(video: PendingVideo): string {
     return video.phase === "uploading" ? `Uploading ${Math.floor(video.receivedBytes / video.byteCount * 100)}%`
-      : video.phase === "validating" ? "Checking video…" : video.phase === "ready" ? "Ready"
+      : video.phase === "validating" ? "Checking video…" : video.phase === "ready" ? attachmentByteLabel(video.byteCount)
       : video.error || "Select the video again.";
   }
 
@@ -1264,7 +1270,8 @@
             <div
               class="chat-att"
               class:img={attachment.kind === "image"}
-              class:file={attachment.kind === "file"}
+              class:file={attachment.kind === "file" || attachment.kind === "video"}
+              class:video={attachment.kind === "video"}
               data-chat-image-preview={attachment.kind === "image" ? "" : undefined}
               data-chat-image-name={attachment.kind === "image" ? item.fileName : undefined}
               data-chat-file-preview={attachment.kind === "file" ? "" : undefined}
@@ -1274,7 +1281,10 @@
               {#if attachment.kind === "image"}
                 <img src={attachment.value.previewUrl} alt="" />
               {:else if attachment.kind === "video"}
-                <span class="chat-att-kind" aria-hidden="true">VIDEO</span>
+                <span class="chat-att-thumb" aria-hidden="true">
+                  {#if attachment.value.file}<video use:localFrame={attachment.value.file} muted playsinline preload="metadata" tabindex="-1"></video>{/if}
+                  <svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z" /></svg>
+                </span>
                 <span class="chat-att-words"><span class="chat-att-name">{item.fileName}</span>
                   <span class="chat-att-meta" role="status">{videoProgress(attachment.value)}</span>
                 </span>

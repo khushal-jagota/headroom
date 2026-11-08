@@ -131,6 +131,7 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.response_compression import answers_uncompressed
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
+from planner.core.task_settlement import run_on_worker_thread
 from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.runtime import conversation_start
 
@@ -873,7 +874,9 @@ async def put_model_enablement(
         raise HTTPException(status_code=404, detail="model is not in the backend catalogue")
     if runtime.backend_state is None:
         raise HTTPException(status_code=503, detail="backend state is unavailable")
-    runtime.backend_state.write_model_enablement(backend_key, model_id, body.enabled)
+    await run_on_worker_thread(
+        runtime.backend_state.write_model_enablement, backend_key, model_id, body.enabled
+    )
     return {"backend_key": str(backend_key), "model_id": model_id, "enabled": body.enabled}
 
 
@@ -1110,7 +1113,11 @@ async def _pending_user_input(
 
 
 class VideoSendAdmission:
-    """Bind one upload before conversation creation and adopt it before dispatch."""
+    """Bind one upload before conversation creation and adopt it before dispatch.
+
+    Every step writes the upload's row in its own ``BEGIN IMMEDIATE`` transaction, so each
+    runs on a worker thread: the send that holds this admission is on the event loop.
+    """
 
     def __init__(
         self,
@@ -1135,7 +1142,8 @@ class VideoSendAdmission:
     async def preflight(self, current_conversation_id: str | None) -> MessageDeliveryResult | None:
         upload = next(piece for piece in self.sent if isinstance(piece, SentVideoUploadPiece))
         try:
-            self.checked = self.service.preflight(
+            self.checked = await run_on_worker_thread(
+                self.service.preflight,
                 upload.upload_id,
                 self.destination.model_copy(
                     update={"expected_conversation_id": current_conversation_id}
@@ -1172,7 +1180,7 @@ class VideoSendAdmission:
                 fate = PromptDeliveryRefused(
                     payload.refusal_reason,
                 )
-        self.finish(fate)
+        await run_on_worker_thread(self.finish, fate)
         assert self.recipient is not None
         return MessageDeliveryResult(self.recipient, prior, fate)
 
@@ -1336,7 +1344,7 @@ async def conversation_message_content(
                 )
             case SentVideoUploadPiece():
                 assert video_admission is not None
-                pieces.append(video_admission.adopt(conversation_id))
+                pieces.append(await run_on_worker_thread(video_admission.adopt, conversation_id))
             case SentFilePiece():
                 contents, media_type = validated_files[file_index]
                 file_index += 1

@@ -1386,11 +1386,22 @@ def run(browser, urls):
     page.locator('[data-ticket-id="t_with_session"]').wait_for()
     expect(page.locator("[data-send-back]")).to_be_enabled()
     expect(page.locator("[data-return-unavailable]")).to_have_count(0)
-    page.locator("[data-send-back]").click()
+    if shots := os.environ.get("PANELS_PROPOSAL_SCREENSHOTS"):
+        Path(shots).mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(Path(shots) / "ticket-after.png"), full_page=True, animations="disabled")
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(page.locator("[data-revision-note]")).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(Path(shots) / "ticket-narrow-after.png"), full_page=True, animations="disabled")
+        page.set_viewport_size({"width": 1280, "height": 900})
     expect(page.locator("[data-revision-note]")).to_be_visible()
+    expect(page.locator("[data-accept]")).to_be_visible()
+    expect(page.locator("[data-send-back]")).to_have_count(1)
+    page.locator("[data-send-back]").click()
+    expect(page.locator("[data-revision-note]")).to_be_focused()
     exact_revision = "Keep the agreed scope.\nPreserve the attributed details."
     page.locator("[data-revision-note]").fill(exact_revision)
-    page.locator("[data-revision-send]").click()
+    page.locator("[data-send-back]").click()
     wait_for_write(lambda: revisions)
     assert revisions == [{"message": exact_revision}]
     drive("window.__batch()")
@@ -1425,6 +1436,13 @@ def run(browser, urls):
         page.screenshot(
             path=os.environ["PANELS_REVIEW_SCREENSHOT"], full_page=True, animations="disabled"
         )
+    if shots := os.environ.get("PANELS_PROPOSAL_SCREENSHOTS"):
+        page.screenshot(path=str(Path(shots) / "review-after.png"), full_page=True, animations="disabled")
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(page.locator("[data-review-revision-input]")).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(Path(shots) / "review-narrow-after.png"), full_page=True, animations="disabled")
+        page.set_viewport_size({"width": 1280, "height": 900})
     # Review shows what the author wrote. The edit on the Ticket page was never saved
     # over it, because an edited proposal is approved as the edit or it is nothing.
     expect(page.locator('[data-approval-block][data-field="success_condition"]')).to_contain_text(
@@ -1479,11 +1497,14 @@ def run(browser, urls):
     note_input.fill("")
     retry_note(4)
     expect(review).to_contain_text(original_note)
+    # The Ticket page must recover the same receipt and block approval too.
     page.evaluate("window.__showTicket('t_review')")
     expect(page.locator("[data-review-card]")).to_have_count(0)
+    expect(page.locator("[data-revision-note]")).to_have_value(original_note)
+    expect(page.locator("[data-send-back]")).to_have_count(1)
+    retry_note(5)
     page.evaluate("window.__showReview()")
     expect(review).to_be_visible()
-    retry_note(5)
     page.reload()
     page.evaluate("window.__showReview()")
     expect(review).to_be_visible()
@@ -1761,6 +1782,30 @@ def run(browser, urls):
     expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
     expect(page.locator("[data-conversation-rest-bar]")).to_be_visible()
     document_box = page.locator(".ticket-doc")
+    # The attribute and the bar report the state before the layout follows it: for a few
+    # frames after the resize the document is still sized for the old window and the dock
+    # is still shrinking. Wait until the document fits the window and its geometry holds
+    # still for several frames, or the position measured below comes from a stale range.
+    page.evaluate(
+        """() => new Promise((resolve, reject) => {
+            const document_box = document.querySelector(".ticket-doc");
+            const geometry = () => [
+                document_box.clientHeight,
+                document_box.scrollHeight,
+                document.querySelector("[data-conversation-pane]").getBoundingClientRect().height,
+            ].join();
+            let previous = "", still = 0, frames = 0;
+            const check = () => {
+                still = document_box.clientHeight <= innerHeight && geometry() === previous
+                    ? still + 1 : 0;
+                previous = geometry();
+                if (still >= 5) resolve();
+                else if (++frames > 300) reject(new Error("Layout did not settle: " + previous));
+                else requestAnimationFrame(check);
+            };
+            requestAnimationFrame(check);
+        })"""
+    )
     reading_range = document_box.evaluate(
         "(element) => element.scrollHeight - element.clientHeight"
     )

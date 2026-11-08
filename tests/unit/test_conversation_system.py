@@ -2888,9 +2888,7 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
 def test_review_reply_reads_only_displayed_run_on_queue_admission_and_later_delivery(
     harness: _Harness,
 ) -> None:
-    from contextlib import closing
-
-    from fastapi import Request
+    from fastapi import FastAPI, Request
 
     from planner.conversation.api import OwnerSendBody, SentTextPiece
     from planner.core.authctx import RequestContext
@@ -2917,23 +2915,23 @@ def test_review_reply_reads_only_displayed_run_on_queue_admission_and_later_deli
             sender=worker,
             recipient=OWNER_PRINCIPAL,
         )
-        with closing(connect(str(harness.db_path))) as conn:
-            response = await send_to_ticket_conversation(
-                worker.id,
-                OwnerSendBody(
-                    conversation_id="c",
-                    sender_label="owner",
-                    content=[SentTextPiece(piece="text", text="reply")],
-                    sender_message_id="bounded-queued",
-                    owner_read_through_sequence=displayed,
-                ),
-                Request({"type": "http"}),
-                conn,
-                RequestContext(OWNER_PRINCIPAL),
-                RealClock(),
-                harness.system,
-                harness.message_files,
-            )
+        app = FastAPI()
+        app.state.conn_factory = lambda: connect(str(harness.db_path))
+        response = await send_to_ticket_conversation(
+            worker.id,
+            OwnerSendBody(
+                conversation_id="c",
+                sender_label="owner",
+                content=[SentTextPiece(piece="text", text="reply")],
+                sender_message_id="bounded-queued",
+                owner_read_through_sequence=displayed,
+            ),
+            Request({"type": "http", "app": app}),
+            RequestContext(OWNER_PRINCIPAL),
+            RealClock(),
+            harness.system,
+            harness.message_files,
+        )
         assert response["fate"] == "queued"
         record = await harness.store.read_conversation("c")
         assert record is not None and record.owner_read_through_sequence == displayed

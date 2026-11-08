@@ -72,61 +72,6 @@
         "label": "Brief"
       },
       {
-        "id": "work_done",
-        "label": "Work Done"
-      },
-      {
-        "id": "consequences",
-        "label": "Consequences"
-      }
-    ],
-    "label": "General",
-    "profile": {
-      "default_backend": "codex",
-      "default_model": "gpt-6.1-sol",
-      "default_reasoning_effort": "medium",
-      "specialist_skill": "panels-worker-general",
-      "toolset_profile": "default"
-    },
-    "stages": [
-      {
-        "gating_field": "brief",
-        "id": "needs_brief",
-        "is_terminal": false,
-        "label": "Brief",
-        "ownership_mode": "worker"
-      },
-      {
-        "gating_field": "work_done",
-        "id": "needs_work_done",
-        "is_terminal": false,
-        "label": "Work Done",
-        "ownership_mode": "worker"
-      },
-      {
-        "gating_field": "consequences",
-        "id": "needs_consequences",
-        "is_terminal": false,
-        "label": "Consequences",
-        "ownership_mode": "worker"
-      },
-      {
-        "gating_field": null,
-        "id": "done",
-        "is_terminal": true,
-        "label": "Done",
-        "ownership_mode": null
-      }
-    ],
-    "worker_type": "general"
-  },
-  {
-    "fields": [
-      {
-        "id": "brief",
-        "label": "Brief"
-      },
-      {
         "id": "problem_understanding",
         "label": "Problem Understanding"
       },

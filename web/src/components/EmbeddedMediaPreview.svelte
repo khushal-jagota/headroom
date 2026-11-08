@@ -78,7 +78,11 @@
         aria-label={label} onerror={failed} onloadedmetadata={update} ontimeupdate={update}
         onplay={update} onpause={update} onended={update}></video>
     {:else}
-      <div class="file-preview-video-plane">{@render playButton()}</div>
+      <div class="file-preview-video-plane">
+        <!-- The browser draws the first frame as a poster; the full video loads only when played. -->
+        <video class="file-preview-video-poster" src={`${href}#t=0.1`} preload="metadata" muted playsinline tabindex="-1" aria-hidden="true"></video>
+        {@render playButton()}
+      </div>
     {/if}
   {:else}
     <div class="file-preview-transport">

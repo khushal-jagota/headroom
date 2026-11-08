@@ -18,6 +18,7 @@ from planner.core import authority
 from planner.core.authctx import request_context
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 
 
 def admit_message(conn: sqlite3.Connection, caller: Principal, recipient: Principal) -> None:
@@ -258,6 +259,11 @@ async def request_admission(connection: HTTPConnection) -> None:
 
     if not isinstance(body, dict):
         body = {}
+    # The authority reads block on SQLite, so they run on a worker thread like the route.
+    await run_on_worker_thread(_admit, request, route, body)
+
+
+def _admit(request: Request, route: str, body: dict[str, Any]) -> None:
     with closing(request.app.state.conn_factory()) as conn:
         principal = request_context(request).principal
         if route in ('/api/resource-body', '/api/resource-versions'):

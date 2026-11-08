@@ -16,11 +16,18 @@ Successful cached reads are saved by a serial background writer before the read
 finishes. An identical response still refreshes its saved date, so it keeps its
 place in eviction order. Cache reads use a fresh database context to see the
 latest completed save. Drafts and outgoing messages keep their separate main-thread
-writer and observation signal.
+writer. Outgoing work raises the saved-work observation signal. A plain draft save
+does not, because each key press saves the draft. A draft saved together with
+outgoing work, such as a voice transcript, still raises it.
 
 Responses are bounded to 96 entries and 16 MiB across servers. A response larger
 than the budget is not cached. Drafts and outgoing work are separate records and
-are never removed by this eviction. Everything is partitioned by server origin;
+are never removed by this eviction. Every screen that shows outgoing work reads the
+whole list, so each send pass first clears finished work, before it checks the
+network. The foreground loop runs a pass when it starts and every 3 seconds. Sent and changed work is removed
+24 hours after it finished, and uncertain work after 7 days. Failed work stays
+until the user retries it. Waiting, sending, recording and server-queued work stays.
+Everything is partitioned by server origin;
 changing the server address cannot send one server's work to another server.
 
 Conversation text, Review edits, send-back guidance and Ideas text are saved as
@@ -37,9 +44,15 @@ recovery and the foreground retry loop prompt a drain. URLSession and the existi
 change, navigation view and conversation streams remain the network interfaces. A network path is
 only a reason to try; request results determine delivery.
 
-For an existing conversation, the drainer asks the receipt endpoint about the exact
-sender identity before replaying a request. A receipt settles the local message
-even when it is outside the visible transcript. A timeout or interrupted response
+A message in “Waiting” goes straight to the send POST without receipt or
+held-message reads. The drainer saves “Sending” before the POST. Responses that confirm
+started or injected delivery mark the message “Sent” as before.
+
+For an existing conversation, work in “Sending”, “Uncertain” or “Queued on server”
+keeps receipt reconciliation before replay. If no receipt exists, a message with
+a saved read boundary also checks held messages before replay. Work already
+marked “Queued on server” only checks receipts and never replays automatically.
+A receipt settles the local message even when it is outside the visible transcript. A timeout or interrupted response
 retains the message for reconciliation. A confirmed refusal says “Not sent · tap
 to retry”; the explicit retry creates a new server identity because the refused
 identity already has a final receipt. The old payload is retained until its

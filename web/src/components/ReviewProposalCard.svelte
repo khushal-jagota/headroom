@@ -28,7 +28,7 @@
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
-  import { deliverReviewNote, forgetReviewNote, recallReviewNote, reviewNoteText, type ReviewNoteDelivery } from "../lib/review/noteDelivery";
+  import type { ReviewNoteDelivery } from "../lib/review/noteDelivery";
   import type { DeliveredMessage } from "../lib/conversation/wire";
   import {
     createVoiceCapture,
@@ -78,8 +78,6 @@
   } = $props();
 
   let revisionDraft = $state("");
-  let noteDelivery = $state<ReviewNoteDelivery | null>(null);
-  let noteRecoveryError = $state<unknown>(null);
   let decisionKey = $state<string | null>(null);
 
   let resolvedAnnounced = false;
@@ -169,14 +167,6 @@
     if (currentKey !== decisionKey) {
       revisionDraft = decisionKey === null ? initialRevisionDraft : "";
       decisionKey = currentKey;
-      noteRecoveryError = null;
-      try {
-        noteDelivery = recallReviewNote(currentKey);
-        if (noteDelivery?.status === "pending" && !revisionDraft.trim()) revisionDraft = reviewNoteText(noteDelivery);
-      } catch (error) {
-        noteDelivery = null;
-        noteRecoveryError = error;
-      }
 
       resolvedAnnounced = false;
       // The box — and anything being spoken into it — belongs to one proposal.
@@ -205,45 +195,26 @@
     if (!acceptField) throw new Error("Review decision is not a Ticket field");
     requireVisibleProposal();
     const proposalKey = currentKey;
-    const acceptingTicketId = ticketId;
-    const acceptingField = acceptField;
-    const note = revisionDraft.trim();
-    await deliverReviewNote({
-      identity: proposalKey,
-      conversationId: healthyDetail?.conversation_id ?? null,
-      text: note,
-      onChange: (delivery) => {
-        if (currentKey === proposalKey) noteDelivery = delivery;
-      },
-      send: (delivery) => {
-        requireVisibleProposal();
-        if (currentKey !== proposalKey) throw new Error("the visible proposal changed; read it again before accepting");
-        return mutateJson<DeliveredMessage>(`/api/tickets/${acceptingTicketId}/conversation/send`, {
-          method: "POST",
-          body: {
-            conversation_id: delivery.conversationId,
-            content: delivery.message.content,
-            sender_label: delivery.message.senderLabel,
-            mode: delivery.message.mode,
-            sender_message_id: delivery.message.messageId,
-            sent_at_unix_milliseconds: delivery.message.sentAtUnixMilliseconds
-          }
-        });
+    const result = await write(`/api/tickets/${ticketId}/accept/${acceptField}`, {
+      method: "POST", body: payload
+    });
+    if (currentKey === proposalKey) announceResolved();
+    return result;
+  }
+
+  function sendNote(delivery: ReviewNoteDelivery): Promise<DeliveredMessage> {
+    requireVisibleProposal();
+    return mutateJson<DeliveredMessage>(`/api/tickets/${ticketId}/conversation/send`, {
+      method: "POST",
+      body: {
+        conversation_id: delivery.conversationId,
+        content: delivery.message.content,
+        sender_label: delivery.message.senderLabel,
+        mode: delivery.message.mode,
+        sender_message_id: delivery.message.messageId,
+        sent_at_unix_milliseconds: delivery.message.sentAtUnixMilliseconds
       }
     });
-    requireVisibleProposal();
-    if (currentKey !== proposalKey) throw new Error("the visible proposal changed; read it again before accepting");
-    // An edit during delivery remains a draft for the reviewer to check.
-    if (revisionDraft.trim() !== note) throw new Error("The note changed. Check it before approval.");
-    revisionDraft = "";
-    const result = await write(`/api/tickets/${acceptingTicketId}/accept/${acceptingField}`, {
-      method: "POST",
-      body: payload
-    });
-    forgetReviewNote(proposalKey);
-    if (currentKey !== proposalKey) return result;
-    announceResolved();
-    return result;
   }
 
   function saveTitle(raw: string): Promise<unknown> {
@@ -256,10 +227,8 @@
   async function returnProposal(message: string): Promise<void> {
     const proposalKey = currentKey;
     await write(`/api/tickets/${ticketId}/reject`, { method: "POST", body: { message } });
-    forgetReviewNote(proposalKey);
     if (currentKey !== proposalKey) return;
     revisionDraft = "";
-    noteDelivery = null;
     announceResolved();
   }
 
@@ -328,13 +297,13 @@
         {#if acceptField}
           {#if lc && ticketDetail.pending_proposal}
             {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
-            <WorkerProposalCard proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
+            <WorkerProposalCard {ticketId} conversationId={ticketDetail.conversation_id} onSendNote={sendNote} proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
               ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} manager={reviewManager}
               {initialEditedBody} {onEditedBodyChange} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
               onReturn={returnProposal}
-              {revisionEditor} revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
+              {revisionEditor} bind:revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
             {/key}
           {:else if decisionActions}{@render decisionActions()}
           {/if}
@@ -348,16 +317,6 @@
              Worker and then approves. It is the composer's field (ComposerField); speaking
              with words already in the line appends to them. -->
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
-          {#if noteRecoveryError}
-            <ErrorLine error={noteRecoveryError} />
-          {:else if noteDelivery?.status === "pending"}
-            <div data-review-note-pending>
-              <ErrorLine error={{ code: "not_approved", message: "The note delivery is unconfirmed. Approve checks it again before approval." }} />
-              {#if revisionDraft.trim() !== reviewNoteText(noteDelivery)}
-                <MarkdownBlock text={reviewNoteText(noteDelivery)} />
-              {/if}
-            </div>
-          {/if}
           <ComposerField
             bind:value={revisionDraft}
             placeholder="Add a note for the worker…"

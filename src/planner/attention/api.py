@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 @router.get("/attention/summary")
-async def summary(
+def summary(
     conn: DbConn,
     clk: Clk,
     first_date: date | None = None,

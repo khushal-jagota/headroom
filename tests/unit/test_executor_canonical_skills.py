@@ -279,7 +279,7 @@ def test_required_skills_follow_saved_ticket_workflow(tmp_path: Path) -> None:
             "panels-worker",
         )
         replacement = (
-            configured_worker_type_registry().require("general").worker_profile.specialist_skill
+            configured_worker_type_registry().require("research").worker_profile.specialist_skill
         )
         write_definition(
             conn,
