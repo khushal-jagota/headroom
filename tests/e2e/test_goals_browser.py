@@ -820,9 +820,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     api.direct_post(server, f"/api/test/signals/{holder_conversation_id}/finish", {})
     # A browser message beside either goal reuses the holder's existing conversation.
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
-    type_instead = page.get_by_role("button", name="Type instead", exact=True)
-    if type_instead.is_visible():
-        type_instead.click(timeout=WAIT_MS)
     page.locator("[data-conversation-input]").fill("Help with this goal", timeout=WAIT_MS)
     with page.expect_response(
         lambda response: response.url.endswith("/api/chief/conversation/send"), timeout=WAIT_MS

@@ -2433,15 +2433,20 @@ def _bounded_reader(browser, url):
     page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
     print(f"LATEST_DELAYED_FOCUS_PROOF composer focus preserved after controlled admission ({time.perf_counter()-focus_started:.3f}s)", flush=True)
     page.evaluate("window.__retainedThread=document.querySelector('[data-conversation-thread]')")
+    # The dock keeps a transcript already read, within the same bound: opening it again
+    # opens no new tail and reads no page, so nothing is redrawn.
+    calls_before_rest = page.evaluate("window.__viewCalls.length")
+    held_rows = page.locator('[data-conversation-view-key]').count()
     page.evaluate("() => window.__readerState('rest')")
     page.locator('[data-conversation-thread]').wait_for(state='hidden')
     expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
-    assert page.locator('[data-conversation-view-key]').count() == 0
+    assert page.locator('[data-conversation-view-key]').count() == held_rows > 0
     page.evaluate("() => window.__readerState('opened')")
     page.wait_for_selector('[data-conversation-thread]')
     assert page.evaluate("window.__retainedThread===document.querySelector('[data-conversation-thread]')")
     expect(page.locator("[data-conversation-interruption]")).to_have_count(0)
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-row=agent_message]').length > 0")
+    assert page.evaluate("window.__viewCalls.length") == calls_before_rest, page.evaluate("window.__viewCalls.slice(-4)")
     assert page.locator('[data-conversation-view-key]').count() <= 300
     # Persisted projected prompts must retain the same bubble layout as outgoing
     # prompts. Class-only assertions miss a virtualization wrapper breaking flex.
@@ -3964,6 +3969,35 @@ def _card_state_motion(browser, url):
     ):
         context = browser.new_context(viewport={"width": width, "height": 900}, has_touch=touch,
             reduced_motion="reduce" if reduced else "no-preference")
+        if touch:
+            # A phone keyboard, as iPhone Safari reports one: the visual viewport loses its
+            # height while a text field has focus.
+            context.add_init_script("""(() => {
+              const viewport = new EventTarget();
+              let keyboard = 0;
+              Object.assign(viewport, {offsetTop: 0, offsetLeft: 0, width: innerWidth, height: innerHeight, scale: 1});
+              Object.defineProperty(window, 'visualViewport', {value: viewport, configurable: true});
+              const update = () => {
+                const active = document.activeElement;
+                const up = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement;
+                const height = innerHeight - (up ? keyboard : 0);
+                if (viewport.height === height) return;
+                Object.assign(viewport, {width: innerWidth, height});
+                viewport.dispatchEvent(new Event('resize'));
+              };
+              document.addEventListener('focusin', update);
+              document.addEventListener('focusout', () => queueMicrotask(update));
+              window.__phoneKeyboard = height => { keyboard = height; update(); };
+              // The phone shell around the page: its bottom bar under the conversation.
+              addEventListener('DOMContentLoaded', () => {
+                const app = document.getElementById('app');
+                const bar = document.createElement('nav');
+                bar.className = 'compact-bar';
+                bar.style.height = 'var(--shell-nav-height)';
+                app.classList.add('shell');
+                app.append(bar);
+              });
+            })()""")
         page = context.new_page()
         page.set_default_timeout(5000)
         dock_rest.clear()
@@ -3972,10 +4006,13 @@ def _card_state_motion(browser, url):
             pane = page.locator('[data-conversation-pane]')
             expect(pane).to_have_attribute('data-conversation-state', 'rest')
             input_box = page.locator('[data-conversation-input]')
-            if page.locator('[data-voice-keyboard]').is_visible():
-                page.locator('[data-voice-keyboard]').click()
-            input_box.fill('A retained draft')
-            input_box.click()
+            if touch:
+                # On a phone, focus in the field opens the conversation. The dock's own
+                # proofs below need the draft without that focus.
+                input_box.evaluate("e=>{e.value='A retained draft';e.dispatchEvent(new Event('input',{bubbles:true}))}")
+            else:
+                input_box.fill('A retained draft')
+                input_box.click()
             expect(pane).to_have_attribute('data-conversation-state', 'rest')
             expect(page.locator('[data-conversation-rest-line]')).to_have_text('Worker idle')
             # The field looks the same after the reader opens and closes (checked below).
@@ -4136,6 +4173,54 @@ def _card_state_motion(browser, url):
                 expect(input_box).to_be_focused()
                 dock_treatment(page, False)
                 expect(pane).to_have_attribute('data-conversation-state', 'rest')
+
+            if touch:
+                # On a phone the owner types in the open conversation, above the keyboard. A tap
+                # on the resting composer's top band opens it with the field focused. A send and
+                # the reply after it leave it open and focused, the composer still above the
+                # keyboard and the reply in view.
+                page.evaluate("window.__phoneKeyboard(300)")
+                bar = page.locator('.compact-bar')
+                expect(bar).to_be_visible()
+                page.evaluate("""() => { window.__openFrames = []; const layer = document.querySelector('.conversation-layer');
+                  const sample = () => { window.__openFrames.push({moving: !!document.querySelector('[data-conversation-dock-transition]'),
+                    height: layer.getBoundingClientRect().height}); if (window.__openFrames.length < 90) requestAnimationFrame(sample); };
+                  requestAnimationFrame(sample); }""")
+                box = page.locator('[data-conversation-box]').bounding_box()
+                page.touchscreen.tap(box['x'] + box['width'] / 2, box['y'] + 8)
+                expect(pane).to_have_attribute('data-conversation-state', 'opened')
+                expect(input_box).to_be_focused()
+                # The bar leaves while the owner writes, and the open motion ends where the
+                # layer settles, measured after the bar has gone.
+                expect(bar).to_be_hidden()
+                _settle_conversation_layout(page)
+                settled = page.locator('.conversation-layer').evaluate('node=>node.getBoundingClientRect().height')
+                moving = [frame for frame in page.evaluate('window.__openFrames') if frame['moving']]
+                assert reduced or (moving and settled - moving[-1]['height'] <= 20), (settled, moving[-3:])
+                # A finger beside the composer lands on the layer: the conversation stays open.
+                layer_box = page.locator('.conversation-layer').bounding_box()
+                box = page.locator('[data-conversation-box]').bounding_box()
+                assert box['x'] - layer_box['x'] >= 12, (layer_box, box)
+                page.touchscreen.tap(layer_box['x'] + 4, box['y'] + box['height'] / 2)
+                expect(pane).to_have_attribute('data-conversation-state', 'opened')
+                input_box.tap()
+                expect(input_box).to_be_focused()
+                input_box.fill('Is staging green?')
+                page.locator('[data-conversation-send]').tap()
+                page.wait_for_function("window.__sentRuns?.length === 1")
+                page.evaluate("window.__appendConversationLine()")
+                _settle_conversation_layout(page)
+                expect(pane).to_have_attribute('data-conversation-state', 'opened')
+                expect(input_box).to_be_focused()
+                fit = page.evaluate("""()=>{const box=document.querySelector('[data-conversation-box]').getBoundingClientRect();
+                  const thread=document.querySelector('[data-conversation-thread]').getBoundingClientRect();
+                  const reply=[...document.querySelectorAll('[data-conversation-thread] [data-conversation-row]')].at(-1);
+                  const line=reply.getBoundingClientRect();
+                  return {keyboardTop:visualViewport.offsetTop+visualViewport.height,boxTop:box.top,boxBottom:box.bottom,
+                    threadTop:thread.top,threadBottom:thread.bottom,replyTop:line.top,replyBottom:line.bottom,reply:reply.textContent.trim()}}""")
+                assert fit['keyboardTop'] == 600 and 0 <= fit['keyboardTop'] - fit['boxBottom'] <= 40, fit
+                expect(bar).to_be_hidden()
+                assert fit['reply'] == 'Newest appended line 28' and fit['threadTop'] - 1 <= fit['replyTop'] and fit['replyBottom'] <= fit['threadBottom'] + 1, fit
 
             page.goto(url + ('?ticket=1&card-artifact=1' if host == 'ticket' else '?card-artifact=1'))
             frame = page.frame_locator('iframe[data-file-preview-html]')
