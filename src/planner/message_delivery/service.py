@@ -29,6 +29,7 @@ from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
     ConversationStartOverrides,
+    overrides_for_existing_conversation,
 )
 from planner.tickets import data as tickets_data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
@@ -104,7 +105,10 @@ async def send_message(
     """
     caller = ctx.principal
     message_kinds = {
-        PrincipalKind.owner, PrincipalKind.chief, PrincipalKind.manager, PrincipalKind.ticket
+        PrincipalKind.owner,
+        PrincipalKind.chief,
+        PrincipalKind.manager,
+        PrincipalKind.ticket,
     }
     if caller.kind not in message_kinds or recipient.kind not in message_kinds:
         raise PlannerError(ErrorCode.validation, "unsupported message principal kind", {})
@@ -197,21 +201,32 @@ async def send_message(
                     )
                     if prior is not None:
                         return prior
+                current = conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
+                target = (
+                    conversation_id
+                    if conversation_id is not None and caller.kind is PrincipalKind.owner
+                    else current
+                )
+                # Startup settings belong to a new conversation. A message into one that
+                # exists, or into a named one that does not, needs them only for a model.
+                choice = (
+                    runs_under
+                    if target is None
+                    else overrides_for_existing_conversation(runs_under)
+                )
                 delivered = await conversation_start.send_to_agent_conversation(
                     conversations,
                     conn,
                     CHIEF_SETTINGS_KEY,
                     content,
                     (
-                        conversation_start.agent_resolve(conn)
-                        if runs_under is NO_CONVERSATION_START_OVERRIDES
-                        else conversation_start.agent_resolve(conn, runs_under)
+                        None
+                        if target is not None and choice.model is None
+                        else conversation_start.agent_resolve(conn)
+                        if choice == NO_CONVERSATION_START_OVERRIDES
+                        else conversation_start.agent_resolve(conn, choice)
                     ),
-                    conversation_id=(
-                        conversation_id
-                        if conversation_id is not None and caller.kind is PrincipalKind.owner
-                        else conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
-                    ),
+                    conversation_id=target,
                     created_conversation_id=created_conversation_id
                     or conversation_start.new_conversation_id(),
                     runs_under=runs_under,
@@ -238,16 +253,28 @@ async def send_message(
                         prior = await admission.preflight(current)
                         if prior is not None:
                             return prior
+                    target = (
+                        conversation_id
+                        if conversation_id is not None and caller.kind is PrincipalKind.owner
+                        else current
+                    )
+                    # A message into an existing conversation changes nothing by naming
+                    # its backend, so only a start reads that backend as a choice.
+                    choice = (
+                        runs_under
+                        if target is None
+                        else overrides_for_existing_conversation(runs_under)
+                    )
                     resolved = (
                         conversation_start.manager_resolve(conn, item)
-                        if runs_under is NO_CONVERSATION_START_OVERRIDES
-                        else conversation_start.manager_resolve(conn, item, runs_under)
+                        if choice == NO_CONVERSATION_START_OVERRIDES
+                        else conversation_start.manager_resolve(conn, item, choice)
                     )
                     explicit_choice = (
-                        runs_under.backend_key is not None
-                        or runs_under.model is not None
-                        or runs_under.reasoning_effort is not None
-                        or runs_under.reasoning_effort_is_set
+                        choice.backend_key is not None
+                        or choice.model is not None
+                        or choice.reasoning_effort is not None
+                        or choice.reasoning_effort_is_set
                     )
                     if explicit_choice:
                         from planner.managers.launch_settings import validate_launch_configuration
@@ -264,11 +291,7 @@ async def send_message(
                         item.manager_agent_key,
                         content,
                         resolved,
-                        conversation_id=(
-                            conversation_id
-                            if conversation_id is not None and caller.kind is PrincipalKind.owner
-                            else current
-                        ),
+                        conversation_id=target,
                         created_conversation_id=created_conversation_id
                         or conversation_start.new_conversation_id(),
                         runs_under=runs_under,
