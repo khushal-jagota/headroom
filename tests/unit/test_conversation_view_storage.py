@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -37,7 +38,7 @@ from planner.conversation.views.storage import (
     read_page,
     read_turn,
 )
-from planner.conversation.views.writer import append_projection, rebuild_projection
+from planner.conversation.views.writer import append_projection, rebuild_conversation_view
 from planner.core.errors import ErrorCode, PlannerError
 
 
@@ -145,10 +146,20 @@ def test_oversized_body_chunks_preserve_unicode_and_one_logical_markdown_documen
             read_body_chunk(conn, "fixture", reference, 0)
 
 
+def whole_view_projection(conn: sqlite3.Connection) -> dict[str, list[tuple[Any, ...]]]:
+    return {
+        table: sorted(
+            tuple(row) for row in conn.execute(f"SELECT * FROM conversation_view_{table}")
+        )
+        for table in ("state", "rows", "turns", "groups", "lookups")
+    }
+
+
 def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental() -> None:
     with database(FIXTURES[0]["events"]) as conn:
         conn.commit()
         before = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
+        incremental = whole_view_projection(conn)
         encoded = json.dumps({"text": "Must roll back"})
         with pytest.raises(RuntimeError), conn:
             conn.execute(
@@ -186,7 +197,7 @@ def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental
         conn.commit()
         stale = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
         with pytest.raises(RuntimeError, match="migration rollback"), conn:
-            rebuild_projection(conn)
+            rebuild_conversation_view(conn, "fixture")
             assert (
                 conn.execute("SELECT projection_version FROM conversation_view_state").fetchone()[0]
                 == VIEW_PROJECTION_VERSION
@@ -199,12 +210,13 @@ def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental
         assert list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence")) == stale
         original_factory = conn.row_factory
         conn.row_factory = None
-        rebuild_projection(conn)
+        rebuild_conversation_view(conn, "fixture")
         assert conn.row_factory is None
         conn.row_factory = original_factory
         assert (
             list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence")) == before
         )
+        assert whole_view_projection(conn) == incremental
 
 
 def test_tail_names_scope_membership_and_removes_children_from_the_timeline() -> None:

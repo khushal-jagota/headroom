@@ -17,11 +17,11 @@ from planner.core.contracts import JsonDict
 from planner.core.db import connect, create_schema
 from planner.database_modules import attach
 from planner.managers import data as managers_data
+from planner.managers.views import manager_workspace
 from planner.tickets import data as tickets_data
-from planner.tickets.api import add_conversation_row_signals
 from planner.tickets.contracts import TITLE_MAX_CHARS, PendingTicketProposal
 from planner.tickets.logic.fields_codec import proposal_to_json
-from planner.tickets.views import board_view
+from planner.work_attention import add_work_attention
 
 
 class _ConversationFacts:
@@ -39,8 +39,8 @@ class _ConversationFacts:
         return False
 
 
-def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path: Path) -> None:
-    db_path = tmp_path / "complete_board.db"
+def test_manager_children_carry_the_complete_attention_queue(tmp_path: Path) -> None:
+    db_path = tmp_path / "complete_children.db"
     conn = connect(str(db_path))
     create_schema(conn)
 
@@ -100,23 +100,20 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
         (item.manager_agent_key,),
     )
     conn.commit()
-    board = board_view(conn)
+    item_row = manager_workspace(conn, item.id)
     record = ConversationStore(str(db_path))
-    # Board cards and duplicate nested child rows share one conversation projection.
+    # Every child row and the Manager share one conversation projection.
     with patch.object(record, "attention_facts", wraps=record.attention_facts) as attention:
         asyncio.run(
-            add_conversation_row_signals(
+            add_work_attention(
                 conn,
-                board,
                 cast(ConversationSystem, _ConversationFacts(running_ids={"c_off_today_child"})),
                 record,
+                tickets=item_row["tickets"],
+                managers=(item_row,),
             )
         )
     attention.assert_awaited_once_with({"c_off_today_child", "c_quiet_supervisor"})
-    assert {card["id"] for column in board["columns"] for card in column["cards"]} == {
-        row.id for row in rows
-    }
-    [item_row] = board["managers"]
     assert item_row["title"] == "Complete approval queue"
     assert "priority" not in item_row
     children = {row["id"]: row for row in item_row["tickets"]}

@@ -35,7 +35,6 @@ def test_startup_keeps_broken_ticket_visible_and_healthy_ticket_usable(tmp_path:
         for path in (
             "/api/tickets?detail=full",
             "/api/tickets?detail=summary",
-            "/api/board",
             "/api/review",
             f"/api/tickets/{broken_id}/workspace",
             f"/api/tickets/{healthy_id}/workspace",

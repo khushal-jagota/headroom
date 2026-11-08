@@ -54,6 +54,8 @@ Moving a Ticket to another Manager can make the old holder illegal. Then the hol
 
 A Ticket stores one control fact, the worker-step claim: at rest, out, or errored. [Worker steps](worker-steps.md) owns it. Everything a person calls status is derived on read, in this order: errored, awaiting approval, agent (a step is out), blocked (at rest behind an unfinished blocker), and empty (ready for the next step). Whether the agent is working right now is a separate question, answered by the conversation.
 
+The navigation index stores each Ticket's derived status with its other facts, in the same transaction as each write. Ticket and Manager list reads take status from there instead of deriving it again for every Ticket. See [Live screens](live-updates.md).
+
 An errored claim stops automatic progress. Restarting the Worker is the explicit repair.
 
 ## Backlog and delete
