@@ -92,8 +92,28 @@ import XCTest
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.count }, 4)
     }
 
-    private func until(_ condition: @MainActor () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(10)
+    /// SwiftUI starts the next run before the cancelled one unwinds, as when the server
+    /// address changes. The old run's exit must not stop the new run from opening streams.
+    func testCancelledRunUnwindingAfterNewRunKeepsItFollowing() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture() }
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let old = Task { await store.run() }
+        // Stream 1 ends at its gap; the old run then waits a second before it reconnects.
+        try await until { store.view?.contentVersion == "2" }
+        let new = Task { await store.run() }
+        defer { new.cancel() }
+        try await until { RefreshProtocol.state.withLock { $0.events.count } == 2 }
+        old.cancel()
+        await old.value
+        // The new scope opens its stream at once, not when stream 2's first frame arrives 1 s later.
+        store.setNavigationDemand("ticket:Z", selected: ViewOwner(kind: "ticket", id: "Z"))
+        try await until(within: .milliseconds(500)) { RefreshProtocol.state.withLock { $0.events.count } == 3 }
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.events.last?.selected }, "ticket:Z")
+        XCTAssertNotEqual(store.view?.contentVersion, "7")
+    }
+
+    private func until(within limit: Duration = .seconds(10), _ condition: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now + limit
         while !condition() {
             guard ContinuousClock.now < deadline else { return XCTFail("Timed out") }
             try await Task.sleep(for: .milliseconds(10))

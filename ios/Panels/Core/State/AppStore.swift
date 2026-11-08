@@ -39,6 +39,7 @@ import Observation
     /// Detail screens that named a selected owner, most recent last.
     private var selections: [(name: String, owner: ViewOwner)] = []
     private var running = false
+    private var runGeneration = 0
     private var viewConsumer: Task<ViewStreamEnd, Never>?
     /// The scope the running stream follows, which may be wider than `viewRequest`.
     private var streamRequest: ViewRequest?
@@ -198,11 +199,17 @@ import Observation
 
     /// Owned by the foreground shell task. SwiftUI cancels it on background or URL change,
     /// which closes both streams; the next foreground entry starts with fresh snapshots.
+    /// SwiftUI starts the next run without waiting for the cancelled one to unwind, so
+    /// a run clears the shared stream state only while it is still the newest run.
     func run() async {
+        runGeneration += 1
+        let generation = runGeneration
         running = true
         if hasRun { connectionSession += 1 }
         hasRun = true
-        defer { running = false; viewConsumer = nil; streamRequest = nil }
+        defer {
+            if runGeneration == generation { running = false; viewConsumer = nil; streamRequest = nil }
+        }
         async let settings: () = followSettings()
         await followView()
         await settings
@@ -223,7 +230,7 @@ import Observation
             let consumer = Task { await self.consume(request, api: api) }
             viewConsumer = consumer
             let end = await withTaskCancellationHandler { await consumer.value } onCancel: { consumer.cancel() }
-            viewConsumer = nil
+            if viewConsumer == consumer { viewConsumer = nil }
             if Task.isCancelled { return }
             switch end {
             case .cancelled: continue // A new or widened scope: open its stream at once.
