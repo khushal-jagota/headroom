@@ -1,11 +1,14 @@
 # Review on iOS
 
 Review shows proposals and unread conversations in one queue, ordered by waiting
-time. Each conversation has one card containing its complete unread message run.
+time. Like desktop, a Ticket is one card on one page: its title and recap once, its
+proposal first, then each of its conversations with its complete unread message run.
+A Chief or Manager conversation is a card of its own. There is no picker between parts.
 The queue and badge come from the navigation view's review window, which the phone
-follows over the view's events stream; desktop builds its queue from the same window. Skip keeps an item out of this visit's queue without
-changing it on the server. When every remaining item was skipped, Revisit skipped
-items brings them back. A new proposal on the same ticket appears again.
+follows over the view's events stream; desktop builds its queue from the same window. Skip keeps a card out of this visit's queue without
+changing it on the server. A decision on one part leaves the others on the page;
+the page leaves when every part is handled. When every remaining card was skipped,
+Revisit skipped items brings them back, counted per card. A new proposal or message on the same ticket brings its card back.
 
 The finished screen says “You’re caught up.” and “All done for now.” in the
 center. It has no agent progress indicator. A quiet rounded button at the bottom
@@ -183,3 +186,17 @@ that the model tests cannot prove. The one added connected case took 135.9 secon
 on the temporary iPhone 17 Pro simulator; it reuses the existing server and test
 host. Speech silence is a debug fixture, not microphone or provider evidence.
 Before and after captures remain outside the source worktree.
+
+Stacked Ticket card verification. `ReviewDecisionTests/testTicketCardSkipsAndResolvesAsOneEntry`
+checks the queue model: Skip takes the whole card and counts once, deciding one part
+keeps the card current, and a new part brings a skipped card back. The existing
+`NavigationViewTests` case now checks that a Ticket card stays one entry with the
+proposal first. One connected case, `ReviewMessagesTests/testStackedTicketCard`,
+proves what the model tests cannot: on the real SwiftUI host, the proposal shows above
+the message under one title, Skip and Revisit act on the card, the message stays on
+screen after approval, and Mark read takes the page away. Its writes change the shared
+fixture, so it runs alone on a fresh stub with `PANELS_REVIEW_MESSAGES=1`,
+`PANELS_REVIEW_STACKED=1` and
+`PANELS_OFFLINE_TEST=ReviewMessagesTests/testStackedTicketCard`. It reuses the
+offline stub, whose `ticket-stacked` owner keeps the proposal on the message's Ticket,
+and it took 22.5 seconds on a task simulator.

@@ -115,11 +115,12 @@ final class NavigationViewTests: XCTestCase {
         guard case .ticket(_, _, _, let proposal, let only) = try XCTUnwrap(messageOnly.first) else { return XCTFail("Expected a Ticket card") }
         XCTAssertNil(proposal); XCTAssertEqual(only.map(\.conversationId), ["a-conversation"])
 
-        // Server window order wins; each card flattens to proposal then messages, keeping
-        // the native identities that skip, resolve and saved decisions use.
+        // Server window order wins; a Ticket card stays one entry, proposal then messages,
+        // and each part keeps the native identity that resolve and saved decisions use.
         let window = viewWindow("review", members: [["kind": "address", "id": "current-manager"], ["kind": "ticket", "id": "a"]], total: 3)
         let queue = NavigationPresentation(try snapshot(source).content.records).reviewQueue(in: try snapshot(source, windows: [window]))
-        XCTAssertEqual(queue.items.map(\.id), ["message:historical:2.0", "a:plan:2.0", "message:a-conversation:1.0"])
+        XCTAssertEqual(queue.cards.map(\.id), ["message:historical:2.0", "ticket:a"])
+        XCTAssertEqual(queue.cards.map { $0.parts.map(\.id) }, [["message:historical:2.0"], ["a:plan:2.0", "message:a-conversation:1.0"]])
         XCTAssertEqual(queue.items[0].owner, .manager("parent"))
         XCTAssertEqual(queue.unloadedCount, 1)
         XCTAssertEqual(queue.runningWorkerCount, 1)
