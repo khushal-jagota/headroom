@@ -67,8 +67,8 @@ async def rebuild_out_of_date_views(
     """Rebuild every out-of-date view off the event loop, then end.
 
     After each conversation the rebuild waits as long as that write took, so live writes
-    get at least half of the time. Each conversation is one admitted operation, so an
-    update can still find the server idle between two of them.
+    get at least half of the time. The rebuild is not work an update waits for, so it
+    never makes the server look busy. It stops once an update closes the workspace.
     """
     conversation_ids = await asyncio.to_thread(
         out_of_date_conversation_ids, db_path, busy_timeout_ms
@@ -78,19 +78,17 @@ async def rebuild_out_of_date_views(
     logger.info("Rebuilding %d out-of-date conversation views", len(conversation_ids))
     failed = 0
     for conversation_id in conversation_ids:
-        with admission.operation() as admitted:
-            if not admitted:
-                return
-            started = time.monotonic()
-            try:
-                await asyncio.to_thread(
-                    rebuild_one_conversation_view, db_path, busy_timeout_ms, conversation_id
-                )
-            except Exception:
-                failed += 1
-                logger.exception("Conversation view rebuild failed for %s", conversation_id)
-            took = time.monotonic() - started
-        await asyncio.sleep(took)
+        if admission.closed:
+            return
+        started = time.monotonic()
+        try:
+            await asyncio.to_thread(
+                rebuild_one_conversation_view, db_path, busy_timeout_ms, conversation_id
+            )
+        except Exception:
+            failed += 1
+            logger.exception("Conversation view rebuild failed for %s", conversation_id)
+        await asyncio.sleep(time.monotonic() - started)
     logger.info(
         "Rebuilt out-of-date conversation views: %d rebuilt, %d failed",
         len(conversation_ids) - failed,
