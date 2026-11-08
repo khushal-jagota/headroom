@@ -152,9 +152,37 @@ import XCTest
     }
     override func tearDown() async throws { try? FileManager.default.removeItem(at: directory) }
     /// Recent creation times, ordered by `at`. Older uncertain work is past its cleanup window.
-    private func message(_ id: String, at: TimeInterval = 1) -> PendingWork {
+    private func message(_ id: String, at: TimeInterval = 1, readThrough: Int? = nil) -> PendingWork {
         PendingWork(id: id, created: Date(timeIntervalSinceNow: at - 60), kind: .message, owner: .ticket("ticket"),
-            message: ConversationSend(conversationId: "conversation", content: [.init(text: id)], senderMessageId: id, sentAtUnixMilliseconds: Int64(at * 1000)))
+            message: ConversationSend(conversationId: "conversation", content: [.init(text: id)], senderMessageId: id, sentAtUnixMilliseconds: Int64(at * 1000), ownerReadThroughSequence: readThrough))
+    }
+    func testWaitingMessagePostsWithoutReceiptOrHeldMessageReads() async throws {
+        let outbox = Outbox(store: store)
+        try outbox.save(message("new", readThrough: 12), server: server)
+
+        await outbox.drain(api: api)
+
+        XCTAssertEqual(OfflineProtocol.state.requests, ["POST /api/tickets/ticket/conversation/send"])
+        XCTAssertEqual(outbox.entries(server).first?.state, .sent)
+    }
+    func testSendingMessageChecksReceiptThenHeldMessageAndDoesNotReadmitServerQueue() async throws {
+        let outbox = Outbox(store: store)
+        var work = message("held", readThrough: 12)
+        work.state = .sending
+        try outbox.save(work, server: server)
+        OfflineProtocol.state.heldMessageID = "held"
+
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.entries(server).first?.state, .serverQueued)
+        await outbox.drain(api: api)
+
+        XCTAssertEqual(OfflineProtocol.state.requests, [
+            "GET /api/conversation/conversations/conversation/view/receipts",
+            "GET /api/conversation/conversations/conversation",
+            "GET /api/conversation/conversations/conversation/view/receipts"
+        ])
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
+        XCTAssertEqual(outbox.entries(server).first?.state, .serverQueued)
     }
     func testOfflineRelaunchDrainsInOrderOnceAndPreservesIdentity() async throws {
         let outbox = Outbox(store: store)
@@ -178,6 +206,10 @@ import XCTest
         XCTAssertEqual(outbox.entries(server).first?.state, .uncertain)
         let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
         await reopened.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.requests, [
+            "POST /api/tickets/ticket/conversation/send",
+            "GET /api/conversation/conversations/conversation/view/receipts"
+        ])
         XCTAssertEqual(OfflineProtocol.state.writes, ["lost"])
         XCTAssertEqual(reopened.entries(server).first?.state, .sent)
     }
@@ -229,12 +261,16 @@ private final class OfflineState: @unchecked Sendable {
     private var _loseResponse = false
     private var _ticket = Data()
     private var _writes: [String] = []
+    private var _requests: [String] = []
+    private var _heldMessageID: String?
     private var receipts: Set<String> = []
     var offline: Bool { get { lock.withLock { _offline } } set { lock.withLock { _offline = newValue } } }
     var loseResponse: Bool { get { lock.withLock { _loseResponse } } set { lock.withLock { _loseResponse = newValue } } }
+    var heldMessageID: String? { get { lock.withLock { _heldMessageID } } set { lock.withLock { _heldMessageID = newValue } } }
+    var requests: [String] { lock.withLock { _requests } }
     var ticket: Data { lock.withLock { _ticket } }
     var writes: [String] { lock.withLock { _writes } }
-    func reset(ticket: Data) { lock.withLock { _ticket = ticket; _offline = false; _loseResponse = false; _writes = []; receipts = [] } }
+    func reset(ticket: Data) { lock.withLock { _ticket = ticket; _offline = false; _loseResponse = false; _writes = []; _requests = []; _heldMessageID = nil; receipts = [] } }
     func bumpRevision() {
         lock.withLock {
             var value = try! JSONSerialization.jsonObject(with: _ticket) as! [String: Any]
@@ -246,10 +282,16 @@ private final class OfflineState: @unchecked Sendable {
     }
     func response(_ request: URLRequest) throws -> Data {
         try lock.withLock {
-            if _offline { throw URLError(.notConnectedToInternet) }
             let path = request.url!.path
+            _requests.append("\(request.httpMethod ?? "GET") \(path)")
+            if _offline { throw URLError(.notConnectedToInternet) }
             if path.hasSuffix("/receipts") {
                 return try JSONSerialization.data(withJSONObject: ["receipts": receipts.map { ["sender_message_id": $0, "fate": "prompt"] }])
+            }
+            if path == "/api/conversation/conversations/conversation", let id = _heldMessageID {
+                return try JSONSerialization.data(withJSONObject: ["backend_key": "codex", "held_prompts": [
+                    ["held_prompt_id": "held-1", "sender_message_id": id, "content": [["piece": "text", "text": "Held"]]]
+                ]])
             }
             if request.httpMethod != "POST" { return _ticket }
             var data = request.httpBody ?? Data()

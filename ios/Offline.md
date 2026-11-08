@@ -44,9 +44,15 @@ recovery and the foreground retry loop prompt a drain. URLSession and the existi
 change, navigation view and conversation streams remain the network interfaces. A network path is
 only a reason to try; request results determine delivery.
 
-For an existing conversation, the drainer asks the receipt endpoint about the exact
-sender identity before replaying a request. A receipt settles the local message
-even when it is outside the visible transcript. A timeout or interrupted response
+A message in “Waiting” goes straight to the send POST without receipt or
+held-message reads. The drainer saves “Sending” before the POST. Responses that confirm
+started or injected delivery mark the message “Sent” as before.
+
+For an existing conversation, work in “Sending”, “Uncertain” or “Queued on server”
+keeps receipt reconciliation before replay. If no receipt exists, a message with
+a saved read boundary also checks held messages before replay. Work already
+marked “Queued on server” only checks receipts and never replays automatically.
+A receipt settles the local message even when it is outside the visible transcript. A timeout or interrupted response
 retains the message for reconciliation. A confirmed refusal says “Not sent · tap
 to retry”; the explicit retry creates a new server identity because the refused
 identity already has a final receipt. The old payload is retained until its

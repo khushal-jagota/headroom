@@ -130,7 +130,8 @@ struct PendingWork: Codable, Identifiable, Sendable {
             var writeStarted = false
             do {
                 if work.kind == .message, let message = work.message, let owner = work.owner {
-                    if let id = message.conversationId {
+                    // Waiting work can post without receipt or held-message reads.
+                    if let id = message.conversationId, work.state != .waiting {
                         if let receipt = try await api.conversationReceipts(id, messageIDs: [work.id]).first(where: { $0.senderMessageId == work.id }) {
                             switch receipt.fate {
                             case "prompt": work.state = .sent; work.note = "Sent"
