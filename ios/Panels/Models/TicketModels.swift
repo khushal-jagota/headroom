@@ -1,6 +1,7 @@
 import Foundation
 
 struct TicketDetail: Codable, Identifiable, Sendable {
+    var locale: String? = nil
     let id: String
     let title: String
     let workerType: String?
@@ -40,3 +41,38 @@ struct FieldSummary: Codable, Sendable { let byteCount: Int; let revision: Strin
 struct FieldApproval: Codable, Sendable { let method: String; let principal: Principal?; let displayLabel: String }
 struct TicketProposal: Codable, Sendable { let field: String; let body: String; let proposedBy: String; let createdAt: Double; let revision: Int }
 struct TicketFieldBody: Codable, Sendable { let ticketId: String; let field: String; let value: String; let revision: String }
+
+struct TicketBackendCatalog: Decodable, Sendable {
+    let backends: [TicketBackend]
+}
+struct TicketBackend: Decodable, Identifiable, Sendable {
+    struct Model: Decodable, Identifiable, Sendable {
+        let modelId: String
+        let displayName: String?
+        let enabled: Bool
+        let reasoningEffortOptions: [String]?
+        var id: String { modelId }
+    }
+    let backendKey: String
+    let installed: Bool
+    let availableModels: [Model]
+    let reasoningEffortOptions: [String]
+    let defaultModelId: String?
+    let defaultReasoningEffort: String?
+    var id: String { backendKey }
+}
+
+
+struct TicketIntegrityIssue: Codable, Sendable { let reason: String }
+// A broken Ticket has only diagnostic fields, never valid lifecycle controls.
+struct TicketRead: Decodable, Sendable {
+    let detail: TicketDetail
+    enum CodingKeys: String, CodingKey { case integrityError }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let issue = try c.decodeIfPresent(TicketIntegrityIssue.self, forKey: .integrityError) {
+            throw APIError(status: 0, message: "Broken Ticket: " + issue.reason)
+        }
+        detail = try TicketDetail(from: decoder)
+    }
+}

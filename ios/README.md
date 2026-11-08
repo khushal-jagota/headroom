@@ -21,7 +21,9 @@ every destination has a separate source file.
 The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
 `/api/tickets/{id}/workspace` endpoint returned HTTP 500 for the sampled tickets;
 `/api/tickets?detail=full&id=…` succeeded. This adapter deliberately uses that
-working endpoint rather than inventing a new backend route.
+working endpoint rather than inventing a new backend route. Its saved `workflow`
+supplies Ticket and Review controls, stage names and approval gates. The nullable
+`worker_type` identifies the creation preset and never supplies those controls.
 
 ## Refresh work
 
@@ -80,6 +82,12 @@ their own detail reads, which also supply goals, recaps and artifacts. Settled
 keeps its paged list read, and reads only while open; its count comes from the
 view.
 
+The full conversation acknowledges remote rows only after they enter its visible
+scroll area. Polls, stream progress, the dock, hidden screens and inactive scenes
+earn no read credit. A deferred message earns credit only after its body is loaded
+and visible. The request carries that row's exact conversation and sequence;
+confirmed read positions never move backwards when an older configuration arrives.
+A failed acknowledgment leaves the messages unread.
 Overlapping refresh requests share a following read instead of being dropped.
 The transcript projection is retained until its message, expanded body, outgoing
 receipt, live text or ordering changes. An unchanged live-output reference reuses
@@ -179,8 +187,9 @@ xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
 ```
 
 `PanelsNotificationUITests` holds the notification and opt-in conversation UI
-scenarios. `PanelsTests/Fixtures` contains unmodified responses
-captured with read-only GETs on 2026-10-22. Tests protect two previously uncovered
+scenarios. `PanelsTests/Fixtures` contains response samples from read-only GETs on
+2026-10-22; the full Ticket sample includes the current saved workflow controls.
+Tests protect two previously uncovered
 wire-contract risks: snake-case/nullable/grouping and page decoding; and the
 review/detail/artifact response shapes. One tiny parser test protects heartbeat
 comments being mistaken for changes. Setup is one fixture loader, with no backend
@@ -357,7 +366,7 @@ the loaded window. Surviving rows retain order, and section changes fade instead
 Regrouping waits during scrolling and context previews; titles and marks stay live.
 Reduce Motion removes layout animation.
 
-Long press previews the full title, recap and manifest-derived stage sentence.
+Long press previews the full title, recap and saved-workflow stage sentence.
 Its menu opens the page, requests a recap, backlogs/resumes a ticket, or settles an
 orchestrator. These use existing endpoints. Failed or uncertain actions show an
 error; confirmed actions give success haptics. Pushes use the owner-approved light feedback; the Settled toggle gives
@@ -705,3 +714,85 @@ Goal-owned messages use the existing shared conversation view.
 The `Native iOS` workflow runs the existing Swift host suites and an unsigned iOS
 Simulator build on macOS. A signed device check remains necessary for TestFlight,
 Tailscale identity, microphone permissions, and actual APNs delivery.
+
+## Mac execution release compatibility
+
+Ticket detail and Review identify the Ticket's machine. Workspace rows and their
+long-press previews omit machine labels. The server's
+executor health decides whether a Mac working mark is current. A disconnected or
+reconciling Mac retains unread messages but shows activity as unknown. The full
+conversation and Settings show the last measured contact, rather than treating a
+saved running state as proof the Mac is still working. Ticket setup and conversation
+model pickers read the Ticket-scoped catalogue, including the server's last offline
+copy; Chief and Manager model pickers continue to read the VPS catalogue.
+
+Sends, approval, send-back, queue changes, stopping and read acknowledgments keep
+the same Ticket and conversation identities on either machine. Permission and input
+requests still direct the reader to the web to answer. The transcript distinguishes
+an answer saved on VPS, applied on Mac, and application left unconfirmed. Creating
+Tickets or selecting/moving their machine has no native flow yet. Machine installation,
+updates and executor administration remain on the web. Existing scheduled-task detail
+shows the schedule's machine when one is saved.
+
+Usage reads the current date-range summary and refreshes pricing through the rates
+endpoint before rescanning. Source failures, unpriced records and cached/unavailable
+pricing stay visible. These figures describe the server's recorded CLI sources;
+they do not establish a combined Mac/VPS usage total.
+Broken Ticket records stay diagnostic rather than preventing the whole list from
+loading. A diagnostic detail never offers lifecycle writes.
+A Ticket's existing Goal reviewer is retained when editing approval limits.
+
+Push registration remains disabled. Dock previews and inline attachment parity
+remain separate work. The compatibility checks use Foundation host tests, in-memory
+HTTP stubs, backend checks and one unsigned generic iOS compile. They do not prove
+physical-device behavior or a live Mac/VPS round trip from the iPhone.
+
+## Goals
+
+Active goals sit inside their Chief or Manager holder's card in Workspace. A tap
+opens the goal; a long press shows its main display and an Open action. A binary goal without a checklist
+also offers Mark done or Mark not done. Manual charts offer their configured
+increments, such as Add 100 words. Chief and Managers show their own goals with
+working checklists and manual charts. A Manager with one goal displays that goal
+under the Manager's name; multiple goals use cards. Holder documents use the same
+native page renderer, including Tickets blocks; when none is authored the page
+keeps its own paged Tickets list. All goals includes inactive goals and column filters.
+Goal screens share a full project catalogue read for labels, filters and editing.
+
+A goal page opens its holder's conversation. Previous goal transcripts use the
+existing historical reader and remain read only. Retired goal file links cannot
+open; old queued goal sends keep their words without replay.
+Ordinary Ticket and Manager files still use the native reader.
+Project, deadline, state, title and explanation can be edited in place. Saved page
+text can be edited too; Markdown keeps its links and offers Edit on a long press.
+Tables sort without changing the stored row order. Grids stack on the phone.
+
+Charts have two sizes. Main charts use the web's small presentation. Supporting
+charts and extra checklists fold in place; each chart remembers its range and
+open state while the app runs. A line follows a finger and clears inspection on
+release. Bars and rings retain the selected reading. Missing readings stay
+missing, and comparisons use the server's supplied summary where one exists.
+The server calendar controls deadline colours. Chart, number and checklist motion
+uses the web's own springs and curves. When the range changes, a line reshapes
+from what is on screen while its scale moves on the same spring. Numbers turn
+digit by digit in the direction they changed. Reduce Motion makes every change
+instant, as on the web.
+
+Tapping a manual reading turns the number into a field with the whole reading
+selected. Cancel and Done sit above the keyboard, no copy menu covers the
+number, and a whole reading shows without a decimal.
+
+Goal edits do not enter the offline message outbox. Failed edits keep their draft
+and offer Retry save and Discard edit. A stale revision cannot replace a newer
+page. Manual retries preserve the original request identity, date and value;
+the app never retries a measurement write by itself. There is no Saved toast.
+
+Run `ios/scripts/test-offline.sh` for the Foundation checks. That host evaluates
+the current web chart catalogue and curve functions as an independent comparison
+for the native presentation code; it requires this worktree's web dependencies.
+The Goals request test also checks that the project read supplies `detail=full`.
+The existing simulator fixture host supports `PANELS_GOALS_SMOKE=1` and
+`PANELS_OFFLINE_TEST=GoalFlowTests`. Supply an already booted assigned simulator,
+a separate task bundle ID, lane lock name and output directory through its
+`PANELS_OFFLINE_DEVICE`, `PANELS_OFFLINE_BUNDLE`, `PANELS_OFFLINE_LANE` and
+`PANELS_OFFLINE_OUTPUT` settings. It uses loopback data and no live writes.

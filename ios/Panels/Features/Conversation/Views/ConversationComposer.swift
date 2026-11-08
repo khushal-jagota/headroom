@@ -24,13 +24,14 @@ struct ConversationComposer: View {
     @State private var picture: PhotosPickerItem?
     @State private var camera = false
     @FocusState private var focused: Bool
+    // Unknown Mac activity changes the indicator; Stop still targets the saved turn, as on the web.
     private var stopsTurn: Bool { !reviewReply && model.status?.turnRunning == true && model.draft.isEmpty && model.attachments.isEmpty && !speech.recording }
     private var card: Bool { (!model.draft.isEmpty || !model.attachments.isEmpty) && !speech.recording && !speech.transcribing }
     private var capturingSpeech: Bool { speech.recording || speech.transcribing || speech.starting }
 
     var body: some View {
         composer
-        .sheet(isPresented: $modelSheet) { ConversationModelSheet(model: model) }
+        .sheet(isPresented: $modelSheet) { ConversationModelSheet(model: model, owner: owner) }
         .photosPicker(isPresented: $pickPicture, selection: $picture, matching: .images)
         .onChange(of: picture) { _, selected in
             guard let selected else { return }

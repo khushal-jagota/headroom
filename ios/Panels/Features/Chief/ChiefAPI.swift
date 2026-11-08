@@ -14,8 +14,8 @@ extension APIClient {
 
     /// Keep the loaded Chief history window across changes; never substitute the
     /// app-wide active window, which may omit this Chief's workers entirely.
-    func chiefWorkers(filter: TicketFilter, through lastOffset: Int = 0) async throws -> TicketsResponse {
-        let principal = Principal(kind: "chief", id: "chief")
+    func holderTickets(_ holder: GoalHolder, filter: TicketFilter, through lastOffset: Int = 0) async throws -> TicketsResponse {
+        let principal = Principal(kind: holder.kind.rawValue, id: holder.id ?? "chief")
         var page = try await tickets(manager: principal, filter: filter)
         var rows = page.tickets
         while let offset = page.page.nextOffset, offset <= lastOffset {
