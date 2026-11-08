@@ -94,6 +94,21 @@ async def _runtime_facts(
     return running, permissions, inputs
 
 
+class ConversationViewUpgrading(Exception):
+    """The stored view is not at the current projection version yet.
+
+    The server rebuilds it in the background after startup (``views/rebuild.py``), so the
+    read answers 409 and the reader retries.
+    """
+
+
+VIEW_UPGRADING_DETAIL = "Conversation view is upgrading"
+
+
+def _upgrading() -> HTTPException:
+    return HTTPException(status_code=409, detail=VIEW_UPGRADING_DETAIL)
+
+
 def _coverage(conn: sqlite3.Connection, conversation_id: str) -> int:
     row = conn.execute(
         "SELECT latest_sequence FROM conversations WHERE conversation_id=?", (conversation_id,)
@@ -105,10 +120,10 @@ def _coverage(conn: sqlite3.Connection, conversation_id: str) -> int:
         "WHERE conversation_id=?",
         (conversation_id,),
     ).fetchone()
-    if row[0] and (
-        projected is None or projected[0] != row[0] or projected[1] != VIEW_PROJECTION_VERSION
-    ):
-        raise ValueError("Conversation projection requires an upgrade")
+    if row[0] and (projected is None or projected[1] != VIEW_PROJECTION_VERSION):
+        raise ConversationViewUpgrading
+    if row[0] and projected[0] != row[0]:
+        raise ValueError("Conversation projection is behind its events")
     return int(row[0])
 
 
@@ -132,6 +147,7 @@ async def _snapshot(
     running, permissions, inputs = await _runtime_facts(runtime, conversation_id)
 
     def snapshot(conn: sqlite3.Connection) -> ConversationViewSnapshot:
+        coverage = _coverage(conn, conversation_id)
         status = read_status(
             conn,
             conversation_id,
@@ -148,11 +164,14 @@ async def _snapshot(
         )
         return {
             "page": page,
-            "coverage": {"through_sequence": _coverage(conn, conversation_id)},
+            "coverage": {"through_sequence": coverage},
             "status": status,
         }
 
-    return await _read(runtime, snapshot)
+    try:
+        return await _read(runtime, snapshot)
+    except ConversationViewUpgrading as error:
+        raise _upgrading() from error
 
 
 @router.get("/conversations/{conversation_id}/view")
@@ -370,6 +389,11 @@ async def conversation_view_tail(
         raise HTTPException(status_code=422, detail="invalid retained ranges") from error
     if len(held) > 20:
         raise HTTPException(status_code=422, detail="too many retained ranges")
+    # A stream answers 200 when it opens, so an out-of-date view is refused before that.
+    try:
+        await _read(runtime, lambda conn: _coverage(conn, conversation_id))
+    except ConversationViewUpgrading as error:
+        raise _upgrading() from error
     return StreamingResponse(
         _tail(runtime, conversation_id, lens, transcript, after, held),
         media_type="text/event-stream",
@@ -519,7 +543,10 @@ async def conversation_view_receipts(
             "receipts": receipts,
         }
 
-    return await _read(runtime, read)
+    try:
+        return await _read(runtime, read)
+    except ConversationViewUpgrading as error:
+        raise _upgrading() from error
 
 
 @router.get("/conversations/{conversation_id}/view/body/content")

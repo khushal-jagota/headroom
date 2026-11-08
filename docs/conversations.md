@@ -87,6 +87,8 @@ The notebook feeds attention: messages to the owner, open asks, and failures bec
 
 After each application save, Headroom updates changed conversation statuses and sends them to the browser. Server startup recalculates every status from conversation records and current runtime state. Plain SQLite edits remain possible.
 
+The pane reads a stored view that is built from the notebook. When a change alters the format of that view, nothing more is needed: after the server starts, it rebuilds each old view from its notebook in the background, one conversation at a time. Until its view is rebuilt, a pane is told that the view is upgrading and tries again.
+
 ## Decisions that shape it
 
 - One input path, so whatever an agent knows from Headroom can be read in its notebook.
@@ -95,7 +97,7 @@ After each application save, Headroom updates changed conversation statuses and 
 
 ## Code
 
-- `src/planner/conversation/`: the contract (`contracts.py`), the core (`system.py`), the notebook store, the live tail, attachments and video uploads, deploy recovery, and one adapter per backend under `backends/`.
+- `src/planner/conversation/`: the contract (`contracts.py`), the core (`system.py`), the notebook store, the stored views and their rebuild (`views/rebuild.py`), the live tail, attachments and video uploads, deploy recovery, and one adapter per backend under `backends/`.
 - `src/planner/message_delivery/`: Send Message.
 - `src/planner/runtime/conversation_start.py` and `runtime/workspaces.py`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
