@@ -1,14 +1,20 @@
 <script lang="ts">
   import Button from "./Button.svelte";
-  import { tick, type Snippet } from "svelte";
+  import { onDestroy, type Snippet } from "svelte";
   import CeilingPicker from "./CeilingPicker.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
+  import { deliverReviewNote, forgetReviewNote, recallReviewNote, reviewNoteText, type ReviewNoteDelivery } from "../lib/review/noteDelivery";
+  import type { DeliveredMessage } from "../lib/conversation/wire";
+  import MarkdownBlock from "./MarkdownBlock.svelte";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
-  let { proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = "", holdDecisions = false, initialReturnOpen = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions }: {
+  let { ticketId, conversationId, onSendNote, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions }: {
+    ticketId: string;
+    conversationId: string | null;
+    onSendNote: (delivery: ReviewNoteDelivery) => Promise<DeliveredMessage>;
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
     manager: { id: string; title: string } | null;
     onAccept: (body: Record<string, unknown>) => Promise<unknown>;
@@ -16,14 +22,13 @@
     onReturn: (message: string) => Promise<unknown>;
     canReturn?: boolean;
     disabled?: boolean;
-    /** The Review screen's own line for the Worker, always on the card above its actions.
-     *  What is written there goes with Send it back, and with Approve (ReviewProposalCard). */
+    /** The Review screen's voice-enabled note field beside the decision controls.
+     *  What is written there goes with Send it back, and with Approve. */
     revisionEditor?: Snippet;
     /** What is written in that line now. */
     revisionText?: string;
     /** The line is being spoken into: Send it back and Approve wait for its words to land. */
     holdDecisions?: boolean;
-    initialReturnOpen?: boolean;
     initialEditedBody?: string;
     onEditedBodyChange?: (text: string) => void;
     returnUnavailableReason?: string;
@@ -34,8 +39,10 @@
   } = $props();
   let scopePicker = $state<{openApproval: (anchor?: HTMLElement) => void; openReviewer: (anchor?: HTMLElement) => void; readonly expanded: boolean; readonly controls: string | undefined} | undefined>();
   let draft = $state("");
-  let note = $state("");
-  let returning = $state(false);
+  let noteDelivery = $state<ReviewNoteDelivery | null>(null);
+  let noteRecoveryError = $state<unknown>(null);
+  let mounted = true;
+  onDestroy(() => { mounted = false; });
   let busy = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
@@ -43,14 +50,23 @@
   let newStage = $derived(advanceTargetFor(lifecycle, stage, ""));
   let nextCeiling = $derived(preferredScopeCeilingFor(lifecycle, newStage));
   let finalApproval = $derived(newStage !== null && lifecycle.stageIsTerminal[newStage] === true);
-  let identity = $derived([proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, finalApproval, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), manager?.id || ""].join("|"));
+  let identity = $derived([ticketId, proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, finalApproval, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), manager?.id || ""].join("|"));
+  // Match Review identity so a route switch retains the same message receipt.
+  let noteKey = $derived(JSON.stringify([ticketId, proposal.field, proposal.field, proposal.created_at, proposal.revision]));
   $effect(() => {
     if (identity === lastKey) return;
     const first = lastKey === null;
     lastKey = identity;
     draft = first ? initialEditedBody ?? proposal.body : proposal.body;
-    note = "";
-    returning = first && initialReturnOpen;
+    if (!first) revisionText = "";
+    noteRecoveryError = null;
+    try {
+      noteDelivery = recallReviewNote(noteKey);
+      if (noteDelivery?.status === "pending" && !revisionText.trim()) revisionText = reviewNoteText(noteDelivery);
+    } catch (error) {
+      noteDelivery = null;
+      noteRecoveryError = error;
+    }
     resolved = false;
     error = null;
   });
@@ -58,15 +74,31 @@
     return value.kind === "owner" ? "User" : value.kind === "chief" ? "Chief" : value.kind === "ticket" ? "Worker" : "Manager";
   }
   async function completeScope(change: { ceiling?: string; holder: Principal | null; approval?: boolean }): Promise<void> {
-    if (!change.holder || disabled || busy || resolved) return;
+    if (!change.holder || disabled || busy || resolved || (change.approval && holdDecisions)) return;
     // Capture the exact proposal displayed for this gesture before awaiting any write.
     const revision = proposal.revision;
     const editedBody = draft;
+    const key = noteKey;
+    const text = revisionText.trim();
+    const send = onSendNote;
     busy = true; error = null;
     try {
       if (change.approval && change.ceiling) {
+        await deliverReviewNote({
+          identity: key, conversationId, text,
+          onChange: (delivery) => { if (mounted && noteKey === key) noteDelivery = delivery; },
+          send: (delivery) => {
+            if (!mounted || noteKey !== key) throw new Error("the visible proposal changed; read it again before accepting");
+            return send(delivery);
+          }
+        });
+        if (!mounted || noteKey !== key) throw new Error("the visible proposal changed; read it again before accepting");
+        if (holdDecisions || revisionText.trim() !== text) throw new Error("The note changed. Check it before approval.");
         await onAccept({ next_ceiling:change.ceiling, next_holder:change.holder, expected_proposal_revision:revision,
           ...(editedBody !== proposal.body ? { edited_body:editedBody } : {}) });
+        forgetReviewNote(key);
+        if (!mounted || noteKey !== key) return;
+        revisionText = "";
         resolved = true;
       } else {
         await onScope({ ...(change.ceiling === undefined ? {} : { ceiling:change.ceiling }), ceiling_holder:change.holder });
@@ -75,38 +107,30 @@
     finally { busy = false; }
   }
   async function sendBack(message: string): Promise<void> {
-    if (proposal.field === "brief" || disabled || !canReturn || busy || resolved || !message) return;
+    if (proposal.field === "brief" || disabled || !canReturn || busy || resolved || holdDecisions || !message) return;
     busy = true; error = null;
-    try { await onReturn(message); resolved = true; }
+    const key = noteKey;
+    try {
+      await onReturn(message);
+      forgetReviewNote(key);
+      if (!mounted || noteKey !== key) return;
+      revisionText = "";
+      resolved = true;
+    }
     catch (err) { error = err; }
     finally { busy = false; }
   }
-  let section = $state<HTMLElement | null>(null);
   let revisionSlot = $state<HTMLElement | null>(null);
-  /** Send it back. With the Review screen's line on the card, it sends what is written there,
-   *  or, with nothing written yet, takes the person to the line. Without it (the Ticket page)
-   *  the return form takes the action row's place until it is sent or cancelled, so only one
-   *  send-back control is ever on screen. */
-  async function sendItBack(): Promise<void> {
-    if (!canReturn) return;
-    if (revisionEditor) {
-      const message = revisionText.trim();
-      if (message) void sendBack(message);
-      else revisionSlot?.querySelector<HTMLElement>("textarea")?.focus();
-      return;
-    }
-    returning = true;
-    await tick();
-    section?.querySelector<HTMLTextAreaElement>("[data-revision-note]")?.focus();
+  function sendItBack(): void {
+    if (!canReturn || holdDecisions) return;
+    const message = revisionText.trim();
+    if (message) void sendBack(message);
+    else revisionSlot?.querySelector<HTMLElement>("textarea")?.focus();
   }
-  async function cancelReturn(): Promise<void> {
-    returning = false;
-    await tick();
-    section?.querySelector<HTMLButtonElement>("[data-send-back]")?.focus();
-  }
+
 </script>
 
-<section bind:this={section} inert={disabled || busy || resolved} class="worker-proposal" data-approval-block data-mode="pending" data-field={proposal.field}>
+<section inert={disabled || busy || resolved} class="worker-proposal" data-approval-block data-mode="pending" data-field={proposal.field}>
   <!-- The stage and who decides are small print over the card. The proposal's own first line
        is the card's title: the thing being decided, not the stage's generic name. -->
   <div class="proposal-line">
@@ -123,17 +147,27 @@
     <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; onEditedBodyChange?.(raw); }} onCancel={() => proposal.body} />
   </div>
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
-  <!-- The Review screen's line for the Worker sits over the actions, always there: one line
-       that both decisions can carry. -->
-  {#if revisionEditor && canReturn}<div class="revision" bind:this={revisionSlot}>{@render revisionEditor()}</div>{/if}
-  {#if !revisionEditor && proposal.field !== "brief" && canReturn && returning}
-    <!-- The return form stands where the action row was; Cancel or Escape puts the row back. -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="return-note" onkeydown={(event) => { if (event.key === "Escape") { event.preventDefault(); void cancelReturn(); } }}>
-      <label>What needs changing<ComposerField bind:value={note} placeholder="What to do differently" disabled={busy || resolved} inputAttributes={{ "data-revision-note": "" }} /></label>
-      <div class="actions return-actions"><Button variant="ghost" onclick={() => void cancelReturn()}>Cancel</Button><Button variant="primary" data-revision-send disabled={busy || resolved || !note.trim()} onclick={() => void sendBack(note.trim())}>Send it back</Button></div>
-    </div>
-  {:else}
+  <div class="revision" bind:this={revisionSlot}>
+    {#if noteRecoveryError}
+      <ErrorLine error={noteRecoveryError} />
+    {:else if noteDelivery?.status === "pending"}
+      <div data-review-note-pending>
+        <ErrorLine error={{ code: "not_approved", message: "The note delivery is unconfirmed. Approve checks it again before approval." }} />
+        {#if revisionText.trim() !== reviewNoteText(noteDelivery)}
+          <MarkdownBlock text={reviewNoteText(noteDelivery)} />
+        {/if}
+      </div>
+    {/if}
+    {#if revisionEditor}{@render revisionEditor()}{:else}
+      <ComposerField bind:value={revisionText} placeholder="Add a note for the worker…"
+        inputAttributes={{ "data-revision-note": "" }}
+        onkeydown={(event) => {
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.repeat) {
+            event.preventDefault(); sendItBack();
+          }
+        }} />
+    {/if}
+  </div>
   <!-- Every button row sits at the right, the most important action furthest right, as in a
        macOS dialog: the actions about the queue (Skip, Open ticket), 16px, then the decision
        group, Send it back and Approve last. -->
@@ -150,7 +184,6 @@
         onclick={(event) => finalApproval ? void completeScope({ approval:true, ceiling:"none", holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
     </div>
   </div>
-  {/if}
   <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {manager} below pendingStage={stage}
     approvalCeiling={nextCeiling} bind:controller={scopePicker}
     holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void completeScope(change)} />
@@ -182,20 +215,13 @@
   .reviewer-chevron { width:12px; height:12px; flex:none; fill:none; stroke:var(--tone-tertiary); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .reviewer:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   .return-unavailable { color:var(--tone-tertiary); font-size:var(--type-small); margin:var(--space-2) 0 0; }
-  .return-note { margin-top:var(--space-5); }
-  label { display:block; font-size:var(--type-small); color:var(--tone-tertiary); }
-  /* The return form's field is the composer's (ComposerField), under its label. */
-  .return-note :global(.composer-field) { margin-top:var(--space-2); }
-  .return-actions { margin-top:var(--space-3); }
-  /* The line for the Worker comes after the proposal; the actions follow it closely. */
-  .revision { margin-top:var(--space-5); }
-  .revision + .actions { margin-top:var(--space-3); }
+  .revision { margin-top:var(--space-5); min-width:0; }
   /* The decision's own buttons are never smaller than staging's (37px tall, 18px either side). */
-  .decision :global(.button), .return-actions :global(.button) { height:var(--decision-button-height); padding-inline:18px; }
+  .decision :global(.button) { height:var(--decision-button-height); padding-inline:18px; }
   .context { margin-top:var(--space-4); }
   .utilities { display:flex; align-items:center; gap:var(--space-2); margin-right:calc(var(--space-4) - var(--space-2)); }
   .decision { display:flex; align-items:center; gap:var(--space-2); }
-  /* On the Review screen (where the card carries the line for the Worker) the card ends in one
+  /* On both proposal screens the card ends in one
      row: the note, then Send it back and Approve; Skip and Open ticket stand in the page's top
      band, as staging (owner's choice). On a phone the decisions go under the note. */
   .worker-proposal:has(> .revision) { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:var(--space-2); align-items:end; }
