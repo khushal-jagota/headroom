@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "./Button.svelte";
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount, onDestroy } from "svelte";
@@ -34,6 +35,7 @@
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
   import ManagerHeader from "./ManagerHeader.svelte";
+  import RequestRecapAction from "./RequestRecapAction.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import ArtifactsBand from "./ArtifactsBand.svelte";
   import type {ManagedFileTarget} from "../lib/filePreview";
@@ -169,6 +171,9 @@
 
   let settleBusy = $state(false);
   let settleError = $state("");
+  let recapNote = $state<string | null>(null);
+  // A note belongs to the Manager it was asked of.
+  $effect(() => { void itemId; recapNote = null; });
   async function setSettled(settled: boolean): Promise<void> {
     settleBusy = true;
     settleError = "";
@@ -214,39 +219,39 @@
           <div bind:this={headerElement}>
           {#snippet managerTitle()}<InlineEdit value={item.title} placeholder="(untitled Manager)" ariaLabel="Manager name" onSave={(value)=>saveItem("title",value)}/>{/snippet}
           {#snippet settleButton()}
-            <button type="button" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}>
-              <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{item.settled?'Reopen':'Settle'}
-            </button>
+            <Button variant="ghost" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{item.settled?'Reopen':'Settle'}</Button>
           {/snippet}
           {#snippet goalHeading()}
             {#if soleGoal}<GoalHeader goal={soleGoal}>
-              {#snippet title()}{@render managerTitle()}<ConversationSignalMark signal={item.conversation_signal} conversationId={item.conversation_id}/>{/snippet}
-              {#snippet mark()}{@render settleButton()}{/snippet}
+              {#snippet title()}{@render managerTitle()}<ConversationSignalMark signal={item.conversation_signal && {...item.conversation_signal, working:false}} conversationId={item.conversation_id}/>{/snippet}
+              {#snippet mark()}<span class="goal-head-actions">{@render settleButton()}<RequestRecapAction kind="manager" id={item.id} bind:note={recapNote} noteInline={false} /></span>{/snippet}
             </GoalHeader>{/if}
           {/snippet}
-          <ManagerHeader heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
+          <ManagerHeader bind:recapNote heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
             recap={item.recap} onSaveRecap={(value)=>saveItem("recap",value)} recapTarget={{kind:"manager",id:item.id}}>
-            {#snippet eyebrow()}<div class="page-eyebrow"><span>{item.project}</span>
-              {#if backHref!==null}<span aria-hidden="true">/</span><a href={backHref} aria-label={`Back to ${workspaceName}`}>↖</a>{/if}
-              {@render settleButton()}
-            </div>{/snippet}
+            {#snippet eyebrow()}<div class="page-eyebrow"><span>{item.project}</span>{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`} title={`Back to ${workspaceName}`}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11 11 5 5M5 10V5h5"/></svg></a>{/if}</div>{/snippet}
+            {#snippet actions()}{@render settleButton()}{/snippet}
             {#snippet title()}{@render managerTitle()}{/snippet}
           </ManagerHeader>
           {#if settleError}<p role="alert">{settleError}</p>{/if}
           </div>
 
+          {#snippet tickets()}
+            {#if !hasTickets(soleGoal?soleGoal.page:holderPage.data?.page)}<section class="manager-workers" aria-label="Workers">
+              <PageTickets principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication}
+                onHover={(element, id, immediate) => {
+                  const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
+                  if (ticket) hoverRow(element, ticket, immediate);
+                }} onLeave={() => hover.leave()} />
+            </section>{/if}
+          {/snippet}
+          <!-- A Manager exists for its goals, so they lead its page; its tickets follow. -->
           {#if soleGoal}<GoalContent goal={soleGoal}/>
           {:else}
             {#if held.held.length>1}<GoalsOverview goals={item.goals} holderKind="manager" holderId={itemId}/>{/if}
             {#if holderPage.data?.page}<HolderDocument holder={{kind:"manager",id:itemId}}/>{/if}
           {/if}
-          {#if !hasTickets(soleGoal?soleGoal.page:holderPage.data?.page)}<section class="manager-workers" aria-label="Workers">
-            <PageTickets principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication}
-              onHover={(element, id, immediate) => {
-                const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
-                if (ticket) hoverRow(element, ticket, immediate);
-              }} onLeave={() => hover.leave()} />
-          </section>{/if}
+          {@render tickets()}
           <div class="manager-bands disclosure-bands">
             <details class="disclosure-band goal-band" data-goal-band>
               <summary>Goal<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
@@ -288,18 +293,23 @@
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Manager"} worker={hoverWorker} cards={[]} rail={hoverTarget} recapTarget={hoverWorker ? { kind: "ticket", id: hoverWorker.id } : null} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
 <style>
-  .page-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
-  .page-eyebrow a { color:inherit; text-decoration:none; }
-  .page-eyebrow a:hover { color:var(--text-strong); }
-  .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; margin-right:-8px; border:0; border-radius:var(--radius-sm); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
-  .page-settle svg { width:13px; height:13px; }
-  :global(.manager-doc):hover .page-settle, .page-settle:focus-visible { opacity:1; }
-  .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .manager-workers { margin-top:var(--space-5); }
-  .manager-bands { margin-top:var(--space-5); }
-  .manager-goal { font-size:var(--type-md); line-height:1.6; color:var(--text-faint); max-width:66ch; }
-  .goal-chevron { font-size:var(--type-md); line-height:1; }
+  /* A sole goal's header keeps the page's utilities at the right end of its line, as every
+     other page does: Settle (shown on hover), then Ask for a recap at the edge. */
+  .goal-head-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--space-2); }
+  /* As staging: the project, then the way back to the Workspace (an up-left arrow), at every
+     width. It is drawn as an icon button, not a glyph after a slash, so it reads as a control
+     and not as a missing crumb: 24px target, no fill until pointed at. */
+  .page-back { display:inline-grid; place-items:center; width:24px; height:24px; margin-left:var(--space-1); border-radius:var(--radius-sm); color:var(--tone-tertiary); }
+  .page-back:hover { background:var(--wash-hover); color:var(--tone-strong); }
+  .page-back svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+  /* Settle shows while the pointer is on the page or focus is on it, as staging. */
+  :global(.page-settle.button) { opacity:0; transition:opacity var(--motion-fast) var(--motion-ease); }
+  :global(.manager-doc:hover .page-settle.button), :global(.page-settle.button:focus-visible) { opacity:1; }
+  .manager-workers { margin-top:var(--page-section-gap); }
+  .manager-bands { margin-top:var(--page-section-gap); }
+  .manager-goal { font-size:var(--type-body); line-height:var(--leading-body); color:var(--tone-primary); max-width:var(--page-prose-measure); }
+  .goal-chevron { font-size:var(--type-body); line-height:1; }
   .goal-chevron::before { content:"\203A"; }
   .goal-band[open] > summary .goal-chevron::before { content:"\2304"; }
-  a:focus-visible, button:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+  a:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 </style>

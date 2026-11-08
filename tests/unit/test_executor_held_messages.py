@@ -292,10 +292,12 @@ def test_lost_first_receipt_keeps_operation_binding_and_never_repeats_held_send(
                 raise InjectedCrash("first receipt interrupted")
 
             monkeypatch.setattr(service, "send_message", crash)
-            with pytest.raises(InjectedCrash, match="first receipt interrupted"):
-                await fixture.deliver(envelope)
+            # A failure that would repeat is answered, not raised: the answer is the
+            # durable reservation, uncertain, so the Mac never sends the message again.
+            first = await fixture.deliver(envelope)
             saved = lookup_receipt(fixture.store, envelope.sender_id, envelope.submission_id)
             assert saved is not None and saved.result["fate"] == "uncertain"
+            assert first == saved
             before = list(fixture.native.commands)
             fresh = await fixture.new_core()
             monkeypatch.setattr(service, "send_message", send)

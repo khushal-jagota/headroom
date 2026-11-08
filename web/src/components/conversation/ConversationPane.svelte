@@ -312,7 +312,11 @@
       return;
     }
     // Escape returns full conversation to the dock. A full-container pane stays open.
-    if (conversationState === "opened") { event.preventDefault(); conversationState = "rest"; }
+    if (conversationState === "opened") {
+      event.preventDefault();
+      conversationState = "rest";
+      void tick().then(() => paneElement?.querySelector<HTMLButtonElement>("[data-conversation-state-control]")?.focus({ preventScroll: true }));
+    }
   }
 
   /** Preview and Return share one action and restore focus to the corresponding control. */

@@ -2,6 +2,14 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ConversationTests: XCTestCase {
+    func testRemoteAnswerEvidenceDoesNotClaimApplicationWhilePending() throws {
+        for (fate, text) in [("saved", "delivery to Mac is pending"), ("applied", "applied on Mac"), ("unconfirmed", "Application is unconfirmed")] {
+            let json = "{\"kind\":\"permission_ask\",\"title\":\"Approve command\",\"state\":\"answered\",\"answer_fate\":\"\(fate)\"}"
+            let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(json.utf8))
+            XCTAssertTrue(body.answerSentence?.contains(text) == true)
+        }
+    }
+
     func testLatestRequiresDistanceAndDoesNotFlickerAtThreshold() {
         var policy = ConversationScrollPolicy()
         policy.beginGesture()
@@ -166,6 +174,75 @@ import XCTest
         XCTAssertEqual(lenses.suffix(2), [.full, .focus])
         XCTAssertEqual(lenses.count, beforeOverlap + 2)
     }
+    // The bar follows its open tail: frames change the window without another transcript read.
+    func testTailFramesUpdateWindowWithoutReadingTranscript() async throws {
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let service = ConversationStub(fate: "started")
+        func ordered(_ id: String, _ sequence: Int, _ text: String) -> [String: Any] {
+            var item = Self.item(id, kind: "agent_message", text: text); item["order"] = ["sequence": sequence, "slot": 0]; return item
+        }
+        var parser = ConversationTailParser()
+        // Bytes as the server writes them: CRLF line ends and U+2028 left unescaped in text.
+        func frame(_ event: String, _ value: [String: Any]) async throws -> ConversationTailFrame {
+            let json = String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self).replacingOccurrences(of: "\\u2028", with: "\u{2028}")
+            let bytes = AsyncStream<UInt8> { continuation in
+                for byte in Data(": heartbeat\r\n\r\nevent: \(event)\r\ndata: \(json)\r\n\r\n".utf8) { continuation.yield(byte) }
+                continuation.finish()
+            }
+            var frames: [ConversationTailFrame] = []
+            for try await line in ServerSentLines(bytes) { if let frame = try parser.consume(line) { frames.append(frame) } }
+            XCTAssertEqual(frames.count, 1)
+            return try XCTUnwrap(frames.first)
+        }
+        var snapshot = try JSONSerialization.jsonObject(with: Data(Self.snapshot([ordered("a", 1, "First"), ordered("b", 2, "Second")]).utf8)) as! [String: Any]
+        snapshot["coverage"] = ["through_sequence": 2]
+        model.beginTail()
+        let applied = await model.applyTail(try await frame("snapshot", snapshot), using: service)
+        XCTAssertTrue(applied)
+        XCTAssertEqual(model.latestLine, "Second")
+        let status = snapshot["status"]!
+        let changes: [String: Any] = ["kind": "changes", "lens": "focus", "from_sequence": 2, "coverage": ["through_sequence": 4],
+            "upserts": [ordered("b", 2, "Second,\u{2028}edited"), ordered("c", 4, "Third")],
+            "scope_changes": [["scope": ["kind": "timeline", "key": NSNull()], "item_keys": ["b", "c"], "removed_keys": []]],
+            // The server marks the window invalidated with every removed row.
+            "removed_keys": ["a"], "invalidated_scopes": [["kind": "timeline", "key": NSNull()]], "status": status]
+        let changed = await model.applyTail(try await frame("changes", changes), using: service)
+        XCTAssertTrue(changed, "A removed row applies without reopening the stream")
+        XCTAssertEqual(model.items.map(\.key), ["b", "c"])
+        XCTAssertEqual(model.rows.map(\.text), ["Second,\u{2028}edited", "Third"])
+        let reads = await service.requestedLenses
+        XCTAssertTrue(reads.isEmpty, "A tail frame never reads the transcript again")
+    }
+    func testTailGapResetOrChangedEpochNeedsFreshSnapshot() async throws {
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let service = ConversationStub(fate: "started")
+        let snapshotJSON = try JSONSerialization.jsonObject(with: Data(Self.snapshot([]).utf8)) as! [String: Any]
+        var withCoverage = snapshotJSON; withCoverage["coverage"] = ["through_sequence": 5]
+        func decode(_ value: [String: Any]) throws -> ConversationTailChanges {
+            try APIClient.decoder().decode(ConversationTailChanges.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+        func changes(from: Int, status: Any? = nil, invalidated: [[String: Any]] = []) throws -> ConversationTailFrame {
+            .changes(try decode(["lens": "focus", "from_sequence": from, "coverage": ["through_sequence": from + 1], "upserts": [], "scope_changes": [],
+                                  "removed_keys": [], "invalidated_scopes": invalidated, "status": status ?? snapshotJSON["status"]!]))
+        }
+        model.beginTail()
+        let beforeSnapshot = await model.applyTail(try changes(from: 0), using: service)
+        XCTAssertFalse(beforeSnapshot, "Changes need the stream's own snapshot first")
+        let snapshot = try APIClient.decoder().decode(ConversationSnapshot.self, from: JSONSerialization.data(withJSONObject: withCoverage))
+        let admitted = await model.applyTail(.snapshot(snapshot), using: service)
+        XCTAssertTrue(admitted)
+        let gap = await model.applyTail(try changes(from: 4), using: service)
+        XCTAssertFalse(gap)
+        let invalidated = await model.applyTail(try changes(from: 5, invalidated: [["kind": "timeline", "key": NSNull()]]), using: service)
+        XCTAssertFalse(invalidated)
+        var restarted = snapshotJSON["status"] as! [String: Any]; restarted["runtime_epoch"] = "later"
+        let epoch = await model.applyTail(try changes(from: 5, status: restarted), using: service)
+        XCTAssertFalse(epoch)
+        let reset = await model.applyTail(.reset, using: service)
+        XCTAssertFalse(reset)
+        let continued = await model.applyTail(try changes(from: 5), using: service)
+        XCTAssertTrue(continued)
+    }
     func testSendKeepsUncertainMessageAndDoesNotRetry() async {
         let model = ConversationModel()
         let service = ConversationStub(fate: "uncertain")
@@ -287,6 +364,37 @@ import XCTest
         model.selectedModel = "user-selection"
         model.applyConfiguration(configuration)
         XCTAssertEqual(model.selectedModel, "user-selection")
+        let held = json.replacingOccurrences(of: #""held_prompt_id""#, with: #""queue_reason":"attachment","held_prompt_id""#)
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(held.utf8)))
+        XCTAssertEqual(model.latestLine, "You: Waiting · Queued · attachments wait for the turn to end")
+    }
+
+    // The server holds any message that names a model until a new turn, so an unchanged
+    // selection must not ride along or a steer becomes a wait for the turn to end.
+    func testSendCarriesOnlyARealModelChange() async throws {
+        func configuration(_ model: String) throws -> ConversationConfiguration {
+            try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(#"{"backend_key":"claude","model":"MODEL","reasoning_effort":"medium"}"#.replacingOccurrences(of: "MODEL", with: model).utf8))
+        }
+        let model = ConversationModel()
+        let service = ConversationStub(fate: "injected")
+        model.conversationID = "conv_1"
+        model.applyConfiguration(try configuration("opus"))
+        model.applyConfiguration(try configuration("opus-next"))
+        XCTAssertEqual(model.selectedModel, "opus-next")
+        model.draft = "Steer this"
+        _ = await model.send(to: .chief, using: service)
+        let first = await service.lastMessage
+        var message = try XCTUnwrap(first)
+        XCTAssertEqual(message.mode, "steer")
+        XCTAssertNil(message.model)
+        XCTAssertNil(message.reasoningEffort)
+        model.selectedModel = "sonnet"
+        model.draft = "Switch"
+        _ = await model.send(to: .chief, using: service)
+        let second = await service.lastMessage
+        message = try XCTUnwrap(second)
+        XCTAssertEqual(message.model, "sonnet")
+        XCTAssertNil(message.reasoningEffort)
     }
 
     func testRetryKeepsAttachmentBytesWithoutDuplicatingFilenameInText() async throws {
@@ -371,6 +479,73 @@ import XCTest
         XCTAssertFalse(model.hasUnread)
     }
 
+    func testReadCreditRequiresVisibleDecodedRowsInTheActiveConversation() async throws {
+        let service = ConversationStub(fate: "started")
+        var shown = Self.item("shown", kind: "agent_message", text: "On screen")
+        shown["source_sequence"] = 8
+        var hidden = Self.item("hidden", kind: "agent_message", text: "Not on screen")
+        hidden["source_sequence"] = 12
+        await service.setSnapshot(Self.snapshot([shown, hidden], ownerSequence: 12))
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        await model.refresh(using: service, transcript: true)
+        let config = #"{"backend_key":"codex","owner_read_through_sequence":0}"#
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(config.utf8)))
+        let afterPoll = await service.readRequests
+        XCTAssertTrue(afterPoll.isEmpty)
+        await model.acknowledgeVisibleRows(["shown"], active: false, using: service)
+        await model.acknowledgeVisibleRows([], active: true, using: service)
+        let whileHidden = await service.readRequests
+        XCTAssertTrue(whileHidden.isEmpty, "Hidden/background and dock views have no visible rows")
+        await model.acknowledgeVisibleRows(["shown"], active: true, using: service)
+        let visible = await service.readRequests
+        XCTAssertEqual(visible.map(\.throughSequence), [8], "The hidden latest row/status must not earn credit")
+        XCTAssertTrue(model.hasUnread)
+        // An older in-flight configuration response cannot undo a confirmed read.
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(config.utf8)))
+        await model.acknowledgeVisibleRows(["shown"], active: true, using: service)
+        let repeated = await service.readRequests
+        XCTAssertEqual(repeated.count, 1)
+        await model.acknowledgeVisibleRows(["hidden"], active: true, using: service)
+        XCTAssertFalse(model.hasUnread)
+        model.conversationID = "another"
+        XCTAssertNil(model.visibleReadBoundary(rowIDs: ["hidden"], active: true), "Rows belong to the conversation they were loaded from")
+    }
+
+    func testDeferredAndFailedReadAcknowledgmentKeepUnreadState() async throws {
+        let service = ConversationStub(fate: "started", failure: .networkConnectionLost)
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let deferred: [String: Any] = ["kind": "row", "key": "long", "source_sequence": 8,
+            "body": ["kind": "deferred", "reference": ["body_id": "long", "version": "v", "byte_count": 10, "media_type": "application/json"]]]
+        await service.setSnapshot(Self.snapshot([deferred], ownerSequence: 8))
+        await model.refresh(using: service, transcript: true)
+        model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(#"{"backend_key":"codex","owner_read_through_sequence":0}"#.utf8)))
+        await model.acknowledgeVisibleRows(["long"], active: true, using: service)
+        let beforeBody = await service.readRequests
+        XCTAssertTrue(beforeBody.isEmpty)
+        model.expandedBodies["long"] = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"agent_message","content":[{"piece":"text","text":"Decoded visible body"}]}"#.utf8))
+        await model.acknowledgeVisibleRows(["long"], active: true, using: service)
+        let failed = await service.readRequests
+        XCTAssertEqual(failed.map(\.throughSequence), [8])
+        XCTAssertTrue(model.hasUnread, "An unconfirmed acknowledgment cannot clear unread state")
+    }
+
+    func testReadAcknowledgmentAdapterUsesExactConversationAndBoundary() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ConversationRequestStub.self]
+        let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!, session: URLSession(configuration: configuration))
+        let confirmed = try await api.markConversationRead("historical", through: 8)
+        XCTAssertEqual(confirmed, 8)
+        let request = try XCTUnwrap(ConversationRequestStub.request)
+        XCTAssertEqual(request.url?.path, "/api/conversation/conversations/historical/owner-read")
+        XCTAssertEqual(request.httpMethod, "POST")
+        let stream = try XCTUnwrap(request.httpBodyStream)
+        stream.open(); defer { stream.close() }
+        var bytes = [UInt8](repeating: 0, count: 4096)
+        let count = stream.read(&bytes, maxLength: bytes.count)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(bytes.prefix(count))) as? [String: Int])
+        XCTAssertEqual(body, ["through_sequence": 8])
+    }
+
     func testRefusalReasonUsesReadableCopy() {
         XCTAssertEqual(ConversationDelivery.refusalText("backend_did_not_start"), "agent could not start")
         XCTAssertEqual(ConversationDelivery.refusalText("backend_cannot_steer"), "try Queue instead")
@@ -415,6 +590,12 @@ import XCTest
 }
 
 private actor ConversationStub: ConversationServing {
+    var readRequests: [ConversationReadBoundary] = []
+    func markConversationRead(_ id: String, through: Int) async throws -> Int {
+        readRequests.append(.init(conversationID: id, throughSequence: through))
+        if let failure { throw URLError(failure) }
+        return through
+    }
     var fate: String
     let failure: URLError.Code?
     var lastMessage: ConversationSend?
@@ -456,7 +637,8 @@ private final class ConversationRequestStub: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         Self.request = request
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(#"{"conversation_id":"conv_1","fate":"queued","queue_position":1}"#.utf8))
+        let body = request.url?.path.hasSuffix("/owner-read") == true ? #"{"owner_read_through_sequence":8}"# : #"{"conversation_id":"conv_1","fate":"queued","queue_position":1}"#
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}

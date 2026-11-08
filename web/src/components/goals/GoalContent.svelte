@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '../Button.svelte';
  import {setContext} from 'svelte';
  import {createQuery} from '@tanstack/svelte-query';
  import {goalQueries} from '../../lib/goals/queries';
@@ -51,16 +52,19 @@
 <div class="goal-content" bind:clientWidth={width} data-goal-content={id}>
  {#if error}<ErrorLine {error}/>{/if}
  {#if checklist}<section class="checklist-panel" aria-label="Completion checklist">{#key `${goal.id}:${checklist.id}`}<PageChecklist block={checklist} presentation="normal"/>{/key}</section>{/if}
- {#if primary}<section class="measure-panel" aria-label="Current reading"><PageChart block={primary} integrated/>
-  {#if goal.kind==='binary'}<div class="panel-actions"><button class="completion-action" onclick={()=>change({completed:!goal.completed})}>{goal.completed?'Mark not done':'Mark done'}</button></div>{/if}
+ {#if primary}<section class="measure-panel" aria-label="Current reading"><PageChart block={primary} integrated wide/>
+  {#if goal.kind==='binary'}<div class="panel-actions"><Button variant="secondary" class="completion-action" onclick={()=>change({completed:!goal.completed})}>{goal.completed?'Mark not done':'Mark done'}</Button></div>{/if}
  </section>{/if}
  {#if readings.error}<ErrorLine error={readings.error}/>{/if}
  {#each readings.data?.sources.filter(s=>s.health!=='healthy')??[] as source(source.source_id)}<p class="source-warning">{source.source_name}: {source.health}</p>{/each}
  <!-- The saved page is the goal's content. It carries its own authored headings; the page
       renderer adds none, and nothing here wraps it in a section of our own naming. -->
- <div class="goal-page">{#key goal.id}<PageDocument document={renderedPage} showHeader={false} supplementary/>{/key}</div>
+ {#if renderedPage.blocks.length}<div class="goal-page">{#key goal.id}<PageDocument document={renderedPage} showHeader={false} supplementary/>{/key}</div>{/if}
 </div>
 <style>
 .goal-content{container-type:inline-size}/* The approved card: the chart sits inside it without a second frame. */
-.measure-panel{margin-top:28px;padding:28px;border:1px solid var(--chart-card-border);border-radius:28px;background:var(--chart-surface)}.measure-panel :global(.completion-card){min-height:124px}.panel-actions{display:flex;justify-content:flex-end;margin-top:20px}.completion-action{border:1px solid var(--border-color);border-radius:var(--radius-md);background:none;padding:8px 14px;color:var(--text-muted);font:inherit;font-size:13px;cursor:pointer}.completion-action:hover{color:var(--text-strong)}.goal-page{margin-top:40px}.source-warning{font-size:12px;color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}
+.measure-panel{margin-top:0;padding:var(--page-card-pad);border:var(--border-hairline) solid var(--page-card-edge);border-radius:var(--page-card-radius);background:var(--page-card-fill)}.panel-actions{display:flex;justify-content:flex-end;margin-top:var(--space-4)}
+/* A yes-or-no goal's card hugs its reading: the state at the left, Mark done at the right on
+   the state's own line, the context line under the state. */
+.measure-panel:has(> .panel-actions){display:flex;align-items:flex-start;gap:var(--space-4)}.measure-panel:has(> .panel-actions) > :global(.goal-chart-host){flex:1;min-width:0}.measure-panel > .panel-actions{flex:none;align-items:center;min-height:var(--space-6);margin-top:calc((var(--space-6) - var(--button-main-height)) / 2)}.panel-actions :global(.completion-action.button){height:var(--button-main-height)}.goal-page{margin-top:var(--page-block-gap)}.source-warning{font-size:var(--type-small);color:var(--accent-attention,#d4ab6c)}@container (max-width:640px){.measure-panel{padding:24px 20px}}
 </style>

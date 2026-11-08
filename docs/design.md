@@ -23,17 +23,19 @@ Screens are assembled from a small shared kit rather than a new layout per featu
 - chips and pills that name a Project, a count, or a state;
 - a stage mark that carries Ticket and conversation state.
 
+Settings, VPS, Ideas, All goals, and Usage share the core page measure and title band. Their controls use the shared button and segmented styles. Notifications keeps native checkbox behavior with custom visuals. VPS exists within Settings. The old `#/vps` address resolves to that same section. Its compact dashboard uses two equal columns on desktop and one on phones. Short plots retain labeled axes and explicit freshness states. Wide tables scroll within their column on phones; controls and details remain available.
+
 Some screens add layout rules in `assets/app.css`, keyed by a `data-screen` name. Most screens rely on the kit alone.
 
 Goal pages use a separate page kit for checklists, charts, tables, layouts, and text. It is owned by [Goals](goals.md).
 
 ## The conversation is the strictest screen
 
-Focus mode hides tool noise and Full shows the notebook. The toggle is a lens on one transcript, not two views. The composer is recessed and shows the model and effort actually in force. Other screens borrow its rules, which makes it the best place to see a violation.
+Focus mode hides tool noise and Full shows the notebook. The toggle is a lens on one transcript, not two views. Both lenses show "Working for" with a live count on every running turn, whoever started it. When a turn ends, Focus keeps its head only if the owner started the turn or the turn sent him a message. The composer is recessed and shows the model and effort actually in force. Other screens borrow its rules, which makes it the best place to see a violation.
 
 ## Decisions that shape it
 
-- Token edits retune the whole app, and kit edits retune every screen that uses them. A new screen that adds a second accent, a border on every card, or a caption on an obvious control has left the system.
+- Token edits retune the whole app, and kit edits retune every screen that uses them. A new screen that adds a second accent, a heavy border on every card, or a caption on an obvious control has left the system.
 
 ## Code
 

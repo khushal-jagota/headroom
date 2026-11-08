@@ -45,6 +45,10 @@ Ticket artifacts go to a folder on the Mac. The Mac copies changed files to the 
 
 The Mac saves each piece of output before it sends it. The VPS applies it and records a receipt in one step, so a resend after a lost reply returns the first result instead of applying the work twice.
 
+The VPS judges each item by the Mac process that sent it, never by the connection that carried it. Only an item from a replaced Mac process is refused. A connection that drops during a save does not fail the save. The VPS answers every item within a time limit: accepted, refused, or "retry later". Its locks then release.
+
+Each conversation sends by itself, one item at a time and in order. If one conversation's item fails, only that conversation waits and resends, and the others keep sending. Files keep their own limit on how many move at once.
+
 A file reaches the VPS before any message that refers to it is accepted. A link in a Ticket field therefore never points at a file that has not arrived.
 
 Live text, thinking, and tool progress skip the outbox. They show in the conversation while the connection is up and are lost during an outage. Finished messages and all other recorded events are saved and resent.
@@ -55,6 +59,7 @@ A lost connection supplies no answer. Panels never guesses an outcome.
 
 - **A short outage** leaves the Mac's agent processes running. On reconnect the VPS checks which processes, turns, and open questions still exist, and the Mac resends what it saved.
 - **A VPS or Mac service restart** ends every Mac run that was live before it. The next send starts a fresh process that resumes the provider session. An uncertain provider call stays uncertain and is not repeated.
+- **Every close** writes one log line on each side, with the time and the reason.
 - **A Worker's `panels` write** that cannot be confirmed says so. It stays in the outbox, and the Worker must not repeat it.
 
 Answers to permission and question requests can be saved while the Mac is offline. A saved answer counts as applied only when the Mac confirms that the original request received it.
@@ -121,4 +126,4 @@ These still need confirming on a real Mac:
 - `src/planner/environments/mac_executor.py` and `src/planner/environments/mac_app/`: the LaunchAgent and the signed app.
 - `src/planner/executor/runtime_bootstrap.py`, `mac_updates.py`, and `src/planner/environments/mac_updates.py`: the fixed supervisor, update client, retained target, and progress.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-08._

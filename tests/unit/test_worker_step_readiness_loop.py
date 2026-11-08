@@ -845,7 +845,7 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
         replace(
             workflow_from_preset(configured_worker_type_registry().require("coding")),
             specialist_skill=None,
-            guidance="CUSTOM RECOVERY GUIDE",
+            guidance="TICKET RECOVERY GUIDE",
         )
         if custom
         else None
@@ -853,6 +853,15 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
     ticket_id = world.ready_ticket(
         title="Ship it", conversation_id="conv-mid-step", workflow=workflow
     )
+    if not custom:
+        # A preset Ticket keeps its specialist reference, and must still get its own guide.
+        with world.connect() as conn:
+            conn.execute(
+                "UPDATE tickets SET workflow_json=json_set(workflow_json, '$.guidance', ?) "
+                "WHERE id=?",
+                ("TICKET RECOVERY GUIDE", ticket_id),
+            )
+            conn.commit()
     world.start_conversation("conv-mid-step")
     assert world.start_step(ticket_id).started is True
     assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
@@ -878,7 +887,7 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
     notice = world.conversations.backend_prompt_writes("conv-mid-step")[1]
     assert MEMORY_LOSS_NOTICE in notice.text
     assert "Re-read your Ticket with panels worker my-ticket brief" in notice.text
-    assert ("CUSTOM RECOVERY GUIDE" in notice.text) is custom
+    assert "TICKET RECOVERY GUIDE" in notice.text
     assert f"part-way through a step on ticket {ticket_id}" in notice.text
     assert notice.mode is PromptDeliveryMode.queue
     # The step keeps its claim: the worker was never sent away, only told.
@@ -1040,8 +1049,13 @@ def test_memory_loss_notice_cannot_start_a_worker_on_the_wrong_machine(world: _W
 @pytest.mark.parametrize("locale", ["vps", "macos"])
 def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: str) -> None:
     ticket_id = world.ready_ticket(title="Locale start")
+    own_guidance = "Guidance this Ticket copied, which its Worker type no longer holds."
     with world.connect() as conn:
-        conn.execute("UPDATE tickets SET locale=? WHERE id=?", (locale, ticket_id))
+        conn.execute(
+            "UPDATE tickets SET locale=?, workflow_json=json_set(workflow_json, '$.guidance', ?) "
+            "WHERE id=?",
+            (locale, own_guidance, ticket_id),
+        )
         conn.commit()
     started = world.start_step(ticket_id)
     ticket = world.ticket(ticket_id)
@@ -1051,9 +1065,10 @@ def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: s
         assert ticket.conversation_id is not None
         writes = world.conversations.backend_prompt_writes(ticket.conversation_id)
         assert len(writes) == 1
-        skill_path = Path(world.db_path).parent / "skills/panels-worker-coding/SKILL.md"
-        assert f"Read your assigned Worker skill at {skill_path}." in writes[0].text
-        assert skill_path.is_file()
+        # Risk: a preset Ticket's Worker reads the type's current skill, not its own copy.
+        assert own_guidance in writes[0].text
+        assert "Follow this Ticket’s workflow guide." in writes[0].text
+        assert "SKILL.md" not in writes[0].text
     else:
         assert not started.started
         assert ticket.worker_step_claim is WorkerStepClaim.none

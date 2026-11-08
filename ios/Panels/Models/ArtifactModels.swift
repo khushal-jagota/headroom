@@ -17,3 +17,12 @@ struct ArtifactEntry: Codable, Identifiable, Sendable {
     let childCount: Int
     var id: String { key }
 }
+
+extension ArtifactOwner {
+    var conversationOwner: ConversationOwner {
+        switch kind { case .ticket: .ticket(id); case .manager: .manager(id) }
+    }
+    var collection: String {
+        switch kind { case .ticket: "tickets"; case .manager: "managers" }
+    }
+}

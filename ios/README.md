@@ -21,21 +21,73 @@ every destination has a separate source file.
 The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
 `/api/tickets/{id}/workspace` endpoint returned HTTP 500 for the sampled tickets;
 `/api/tickets?detail=full&id=…` succeeded. This adapter deliberately uses that
-working endpoint rather than inventing a new backend route.
+working endpoint rather than inventing a new backend route. Its saved `workflow`
+supplies Ticket and Review controls, stage names and approval gates. The nullable
+`worker_type` identifies the creation preset and never supplies those controls.
 
 ## Refresh work
 
-A global change still refreshes Review for its tab badge and tells selected pages
-to refresh. The overview's manager and ticket windows refresh while Workspace is
-visible; returning to Workspace reads its loaded window again. Hidden Workspace
-supplementary reads pause too. Chief settings and deployment use the existing
-resource-version API: unchanged versions need no body read. A body is accepted
-with the version from the same server snapshot. A failed or unknown version check
-keeps a full refresh, and servers without that API keep ordinary reads. Manual
-refresh and reconnect always read again. Manager, ticket and Review list versions
-are not registered by the server, so visible lists still use ordinary reads.
+While the app is in the foreground it follows one navigation view stream for
+what is on screen, as desktop does: a snapshot first, then patches. Review is
+always in that scope, for its badge. Workspace adds its rail windows while it is
+visible: active orchestrators, Chief's tickets and each card's tickets. A detail
+page adds its own record (and, for Chief and orchestrators, a children window). A
+new demand opens a stream for the new scope while the last view stays on screen,
+unless the running stream already carries it, as for a Ticket opened from
+Workspace or Review; leaving a screen only narrows the next stream. One coherent view replaces the
+earlier Review, manager and ticket list reads; the phone no longer reads
+`/api/review`. A launch shows the last saved view at once. A return to the
+foreground, a dropped connection, a gap, a reset or a closed stream all start a
+fresh stream, whose first frame is a fresh snapshot. A stream that was current
+reconnects after one second, as the web does; failures retry after 1, 2, 4 and
+then 8 seconds and show Reconnecting. Then saved work drains, as before.
 
-Conversation polling retains its 700 ms interval and its tail subscription.
+Chief settings and deployment status are outside the view, and deployment status
+is not a navigation change at all, so those two keep the payload-free change
+stream and the resource-version API: a wake probes both versions, at most once a
+second, and unchanged versions need no body read. A body is accepted with the
+version from the same server snapshot. A failed or unknown version check keeps a
+full read, and servers without that API keep ordinary reads. Manual refresh reads
+both again and reconnects a view stream that is not current.
+
+A detail page reads its own detail when it opens, after a return to the
+foreground or a recovered connection, and otherwise only when its own records in
+the view change or leave it: a Ticket and its step pages on the Ticket record;
+an orchestrator on its record and its children window; Chief on its record, its
+active children and its settings. Working and unread marks on those pages come
+from the view, so a mark change needs no detail read. A Review proposal reloads
+when its Ticket's record changes. Settled reads again when the settled count
+changes. An inline artifact list reads on expansion and when its owner's file
+count changes. Settings, Usage, Feedback and Ideas read when opened, on return
+to the foreground, after a recovered connection and on pull-to-refresh.
+
+`ResourceRefreshTests` adds one host test for the stream, which no earlier test
+reached: a patch applies without a read, a gap opens a fresh stream, a new detail
+scope opens its own stream, a withdrawal opens none, and a record's reload stamp
+moves only with that record. It reuses the existing URLProtocol fixture in the
+offline host package. The offline simulator stub serves the events stream as a
+snapshot frame each second.
+
+The view code lives in `Core/Navigation`. The wire subset is hand-written Codable,
+pinned to projection 7 and wire 3, and ignores fields the server adds. Ticket,
+orchestrator and Review facts are derived from view records the way desktop's
+`presentation.ts` derives them, then mapped into the existing native models.
+Frame application (snapshot, checkpoint, patch, reset; a gap needs a fresh
+snapshot) is a pure unit that each stream applies to its own snapshot.
+The server bounds a view to 256 rows and 60 per window. Mounted screens share
+that budget the way the web owner shares it. Workspace asks for every card's tickets in one
+scope, so with many cards each loads fewer rows; a card cut short ends with
+“+N more”, which opens its page. Orchestrator and Chief pages keep
+their own detail reads, which also supply goals, recaps and artifacts. Settled
+keeps its paged list read, and reads only while open; its count comes from the
+view.
+
+The full conversation acknowledges remote rows only after they enter its visible
+scroll area. Polls, stream progress, the dock, hidden screens and inactive scenes
+earn no read credit. A deferred message earns credit only after its body is loaded
+and visible. The request carries that row's exact conversation and sequence;
+confirmed read positions never move backwards when an older configuration arrives.
+A failed acknowledgment leaves the messages unread.
 Overlapping refresh requests share a following read instead of being dropped.
 The transcript projection is retained until its message, expanded body, outgoing
 receipt, live text or ordering changes. An unchanged live-output reference reuses
@@ -63,7 +115,7 @@ the inline renderer accepts the shared font so its body default cannot mask it.
 
 Use Xcode 16 or newer with an installed iOS 18+ simulator runtime. The committed
 Xcode project builds without XcodeGen. If adding source files, install XcodeGen
-(`brew install xcodegen`) and run `xcodegen generate --spec ios/project.yml`.
+(`brew install xcodegen`) and run `ios/scripts/generate-project.sh`.
 Run these commands from the repository root:
 
 ```sh
@@ -75,11 +127,11 @@ xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
   -destination "platform=iOS Simulator,id=$PANELS_DEVICE" \
   -derivedDataPath "$PANELS_PROOF/DerivedData" clean build
 xcrun simctl install "$PANELS_DEVICE" "$PANELS_PROOF/DerivedData/Build/Products/Debug-iphonesimulator/Panels.app"
-xcrun simctl launch "$PANELS_DEVICE" app.panels.ios
+xcrun simctl launch "$PANELS_DEVICE" com.khushaljagota.panels
 xcrun simctl io "$PANELS_DEVICE" screenshot "$PANELS_PROOF/workspace.png"
 xcrun simctl io "$PANELS_DEVICE" recordVideo "$PANELS_PROOF/walkthrough.mp4"
 # Stop recordVideo with Ctrl-C, which finalizes the video.
-xcrun simctl terminate "$PANELS_DEVICE" app.panels.ios
+xcrun simctl terminate "$PANELS_DEVICE" com.khushaljagota.panels
 ```
 
 Do not open Simulator.app or take over the user's screen. If the assigned simulator
@@ -100,6 +152,31 @@ then boot it headless again. Never create or delete devices per run, never use t
 ambiguous `booted` selector, and never touch another worker's lane. The foundation
 uses Lane A and leaves all three lanes available for the parallel screen workers.
 
+## TestFlight signing
+
+Panels uses Blue Door Labs team `FB99BBDJBA` and bundle ID
+`com.khushaljagota.panels`. Version 0.1 started at build 1. Release builds for
+physical iOS use automatic signing and the Push Notifications capability, with
+`aps-environment=production`. Push registration remains disabled. The app declares all four interface
+orientations for its existing iPhone and iPad device families.
+
+Debug and simulator builds remain unsigned. Generic iOS compile checks can
+continue to pass `CODE_SIGNING_ALLOWED=NO` explicitly. Generate the project after
+changing signing settings in `project.yml`, using
+`ios/scripts/generate-project.sh`. The wrapper corrects XcodeGen 2.46’s nested
+capability serialization bug so the committed Push capability remains a dictionary.
+
+Archive with the authorized App Store Connect API key and
+`-allowProvisioningUpdates`; pass `-authenticationKeyPath`,
+`-authenticationKeyID` and `-authenticationKeyIssuerID` from private inputs.
+Export with automatic signing and `method=app-store-connect`. Before upload,
+inspect both the archive and exported IPA with `codesign -d --entitlements :-`:
+the distribution app and embedded profile must contain production APNs and the
+expected application/team identifiers. Verify the exported signature and version
+and build number, then upload. App Store Connect processing and internal tester access
+must be confirmed separately; signing configuration alone does not establish
+TestFlight availability.
+
 ## Small verification target
 
 ```sh
@@ -110,8 +187,9 @@ xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
 ```
 
 `PanelsNotificationUITests` holds the notification and opt-in conversation UI
-scenarios. `PanelsTests/Fixtures` contains unmodified responses
-captured with read-only GETs on 2026-10-22. Tests protect two previously uncovered
+scenarios. `PanelsTests/Fixtures` contains response samples from read-only GETs on
+2026-10-22; the full Ticket sample includes the current saved workflow controls.
+Tests protect two previously uncovered
 wire-contract risks: snake-case/nullable/grouping and page decoding; and the
 review/detail/artifact response shapes. One tiny parser test protects heartbeat
 comments being mistaken for changes. Setup is one fixture loader, with no backend
@@ -139,24 +217,24 @@ do not prove physical-device haptics, frame rate, or every navigation flow.
 | `project.yml`, `Panels.xcodeproj` | Integration owner; regenerate once after combining added files |
 
 Inject `AppStore` through SwiftUI's environment. Use `store.client` for detail
-reads. The shell owns the sole `/api/changes` connection, cancels it in background,
-reconnects after disconnect, and coalesces pending refresh signals into one slot.
-`store.revision` lets mounted detail screens refresh after an overview update.
-The app uses the server's general change stream and REST reads, not a duplicate of
-the web navigation replica protocol. Overview reads run concurrently and retain
-previous data with an explicit error on failure. Active manager and ticket lists
-use bounded pages; Load more preserves the loaded window across refreshes. A
-manager's detail supplies its complete grouped tickets. Workspace shows Chief tickets and the loaded unsettled orchestrators. Tickets whose
-parent is settled stay inside Settled; loading more orchestrators reveals their
-children without inventing a second active card for a settled parent.
+reads. The shell owns `store.run()`, which follows the view stream and the change
+stream, cancels both in background and reconnects after disconnect. Screens state
+their windows with `store.setNavigationDemand`; detail pages use `.navigationDemand`
+and key reloads with `.reload(onChangeOf:)` on `store.ticketStamp`,
+`managerStamp` or `chiefStamp`. Overview reads run
+concurrently and retain previous data with an explicit error on failure. Workspace
+shows Chief tickets and up to 60 active orchestrators; Previous and Next replace
+that page when there are more, as the web's window pages do. A manager's detail
+supplies its complete grouped tickets. Tickets whose parent is settled stay inside
+Settled, so a settled parent never gets a second active card.
 Artifact directories refresh on selection and pull-to-refresh because filesystem
 writes need not emit a database change.
 
 `ConversationNavigation` supplies the shared composer and conversation page on Chief,
 Orchestrator and Ticket, described below. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
 screens. Feedback implements the Open/Handled inbox, grouped Ticket links, page
-context links and Dismiss/Reopen actions through its API adapter. It follows
-foreground change revisions and supports pull-to-refresh. Its empty state omits
+context links and Dismiss/Reopen actions through its API adapter. It reads when opened,
+on return to the foreground, after a recovered connection and on pull-to-refresh. Its empty state omits
 the web's capture button instruction because native global feedback capture is
 not yet implemented. Feedback writes are exercised only with an injected stub
 or URLProtocol interception.
@@ -276,7 +354,7 @@ rebase checks.
 Workspace follows the web rail's section precedence and visibility: approval,
 answer, Yours, errors, Agent, Consequences, agent approval, then Other. Backlogged,
 blocked and completed tickets leave this rail. Unread dots and working spinners
-are independent. Chief activity comes from the read-only workers index.
+are independent. Chief activity comes from the navigation view's Chief record.
 
 The approved mobile design keeps hairline cards, full-width 32pt group bars with
 sentence-case labels on the cards’ 16pt inner line, one-line
@@ -288,7 +366,7 @@ the loaded window. Surviving rows retain order, and section changes fade instead
 Regrouping waits during scrolling and context previews; titles and marks stay live.
 Reduce Motion removes layout animation.
 
-Long press previews the full title, recap and manifest-derived stage sentence.
+Long press previews the full title, recap and saved-workflow stage sentence.
 Its menu opens the page, requests a recap, backlogs/resumes a ticket, or settles an
 orchestrator. These use existing endpoints. Failed or uncertain actions show an
 error; confirmed actions give success haptics. Pushes use the owner-approved light feedback; the Settled toggle gives
@@ -309,7 +387,7 @@ it is absent at zero. Chief has no artifact catalog. Folders expand in place too
 `AppRoute.artifact(owner:path:title:)` opens a specific managed file. Catalog links
 retain their actual file owner, including links to files on another ticket.
 
-The inline list reads on expansion and page refresh, with paging and a search
+The inline list reads on expansion and when the owner's file count changes, with paging and a search
 field for larger catalogs. HTML runs
 inside a sandboxed frame in a nonpersistent WKWebView, with relative file assets
 and native navigation for managed links. HTML previews offer Phone width and Fit
@@ -360,7 +438,11 @@ model and delivery choices stack above the action row, and icon sizes stay withi
 their tap targets. Labels can grow with the text size. The bottom uses the
 system safe area plus one point, matching the 35-point reference on the target
 phone. The model sheet reads the backend catalog and applies the selected model
-and reasoning to the next message. An existing conversation keeps its backend.
+and reasoning to the next message. A message names a model or reasoning only when
+the pick differs from what the conversation runs on. The server holds a message
+that names a model until a new turn, so an unchanged pick would turn every steer
+into a wait. The selection follows the conversation until the owner picks another
+value. An existing conversation keeps its backend.
 The plus menu accepts files, library pictures, camera photos and a slash command. Steer, Queue and Send now
 use the existing delivery modes. Stop interrupts the running turn. The separate
 microphone remains available while working or editing a draft.
@@ -370,7 +452,8 @@ Successfully delivered messages have no delivery label in the thread.
 The local message and its server row share one visual identity and position.
 Confirmed refusal and connection failures offer Retry in place. A timeout or lost
 response remains uncertain and cannot be retried blindly. Suppressed delivery
-says why the message was not delivered. Held messages are recovered from the
+says why the message was not delivered. A held message shows the server's reason,
+such as attachments or a model change waiting for the turn to end. Held messages are recovered from the
 conversation detail. Its held-prompt records make Steer in and removal available,
 including after relaunch, independently of delivery-note wording; receipts settle delivery
 even when the corresponding row falls outside the loaded window.
@@ -391,8 +474,12 @@ keeps the keyboard and draft, and resumes following through streamed completion.
 The return uses the shared entrance motion; Reduce Motion makes it immediate.
 See [the Latest review](ConversationLatest.md) for the diagnosis and focused proof.
 
-The foreground surface subscribes to the existing Focus/Full tail and reads a
-coherent projection when it changes, with a 700ms refresh fallback. Full subscribes
+The foreground surface subscribes to the existing Focus/Full tail and applies its
+snapshot and change frames directly, without re-reading the transcript. A frame
+reads only changed live text and receipts for unsent messages; the configuration
+is read once per connection and again when the owner's latest message or the
+turn's running state changes. A gap or reset reopens the tail for a fresh
+snapshot. Full subscribes
 to live output and reads its versioned text body. Streaming and recorded replies
 share a visual identity. Focus follows the server's reply-only contract. Earlier
 pages and deferred bodies load on demand. Opening finds the first unread owner
@@ -421,8 +508,8 @@ It locks PanelsLaneA, uses the
 separate task bundle, and does not boot, shut down or erase a simulator. Set
 `PANELS_CONVERSATION_OUTPUT` to an external evidence directory. The optional
 `PANELS_CONVERSATION_LANE`, `PANELS_CONVERSATION_DEVICE`, and
-`PANELS_CONVERSATION_BUNDLE` select another assigned, already-booted lane and
-separate task bundle. `PANELS_CONVERSATION_TEST=ConversationLatestTests` selects
+`PANELS_CONVERSATION_BUNDLE` select another assigned, already-booted lane, or a
+task's own booted simulator named as the lane, and a separate task bundle. `PANELS_CONVERSATION_TEST=ConversationLatestTests` selects
 the focused Latest scenario in the same host. Debug smoke mode
 is restricted to loopback; without a valid stub URL it uses a closed loopback port.
 The voice scenario injects recognition output: it does not prove microphone capture
@@ -532,8 +619,7 @@ usable and in the future, with a connected stream.
 
 Dependency-blocked workers take precedence over Agent and Errored on complete
 worker pages; Workspace continues to exclude blocked work. Loaded settled rows
-sort by newest update, with identifier ties. The existing REST pagination remains:
-unloaded managers are not globally reordered by the native client. Unread remains
+sort by newest update, with identifier ties. Unread remains
 a row mark, without a Messages group. Desktop rail geometry and browser bundle
 reload prompts have no native counterpart. The shared conversation still uses
 native scrolling; Latest returns to the newest loaded message, and opening
@@ -620,10 +706,93 @@ A different server or a new installed build has a separate compatibility state.
 Connection failures do not set this state.
 
 The app reads each ticket’s saved workflow for its fields, stages, and approval
-choices. The server groups Review items by ticket. The native decoder retains each
-nested proposal and message as a native card with its own identity and timestamp.
+choices. Review cards come from the view's review window, grouped by ticket as on
+desktop. Each card's proposal and messages stay separate native cards, each with
+its own identity and timestamp.
 Goal-owned messages use the existing shared conversation view.
 
 The `Native iOS` workflow runs the existing Swift host suites and an unsigned iOS
 Simulator build on macOS. A signed device check remains necessary for TestFlight,
 Tailscale identity, microphone permissions, and actual APNs delivery.
+
+## Mac execution release compatibility
+
+Ticket detail and Review identify the Ticket's machine. Workspace rows and their
+long-press previews omit machine labels. The server's
+executor health decides whether a Mac working mark is current. A disconnected or
+reconciling Mac retains unread messages but shows activity as unknown. The full
+conversation and Settings show the last measured contact, rather than treating a
+saved running state as proof the Mac is still working. Ticket setup and conversation
+model pickers read the Ticket-scoped catalogue, including the server's last offline
+copy; Chief and Manager model pickers continue to read the VPS catalogue.
+
+Sends, approval, send-back, queue changes, stopping and read acknowledgments keep
+the same Ticket and conversation identities on either machine. Permission and input
+requests still direct the reader to the web to answer. The transcript distinguishes
+an answer saved on VPS, applied on Mac, and application left unconfirmed. Creating
+Tickets or selecting/moving their machine has no native flow yet. Machine installation,
+updates and executor administration remain on the web. Existing scheduled-task detail
+shows the schedule's machine when one is saved.
+
+Usage reads the current date-range summary and refreshes pricing through the rates
+endpoint before rescanning. Source failures, unpriced records and cached/unavailable
+pricing stay visible. These figures describe the server's recorded CLI sources;
+they do not establish a combined Mac/VPS usage total.
+Broken Ticket records stay diagnostic rather than preventing the whole list from
+loading. A diagnostic detail never offers lifecycle writes.
+A Ticket's existing Goal reviewer is retained when editing approval limits.
+
+Push registration remains disabled. Dock previews and inline attachment parity
+remain separate work. The compatibility checks use Foundation host tests, in-memory
+HTTP stubs, backend checks and one unsigned generic iOS compile. They do not prove
+physical-device behavior or a live Mac/VPS round trip from the iPhone.
+
+## Goals
+
+Active goals sit inside their Chief or Manager holder's card in Workspace. A tap
+opens the goal; a long press shows its main display and an Open action. A binary goal without a checklist
+also offers Mark done or Mark not done. Manual charts offer their configured
+increments, such as Add 100 words. Chief and Managers show their own goals with
+working checklists and manual charts. A Manager with one goal displays that goal
+under the Manager's name; multiple goals use cards. Holder documents use the same
+native page renderer, including Tickets blocks; when none is authored the page
+keeps its own paged Tickets list. All goals includes inactive goals and column filters.
+Goal screens share a full project catalogue read for labels, filters and editing.
+
+A goal page opens its holder's conversation. Previous goal transcripts use the
+existing historical reader and remain read only. Retired goal file links cannot
+open; old queued goal sends keep their words without replay.
+Ordinary Ticket and Manager files still use the native reader.
+Project, deadline, state, title and explanation can be edited in place. Saved page
+text can be edited too; Markdown keeps its links and offers Edit on a long press.
+Tables sort without changing the stored row order. Grids stack on the phone.
+
+Charts have two sizes. Main charts use the web's small presentation. Supporting
+charts and extra checklists fold in place; each chart remembers its range and
+open state while the app runs. A line follows a finger and clears inspection on
+release. Bars and rings retain the selected reading. Missing readings stay
+missing, and comparisons use the server's supplied summary where one exists.
+The server calendar controls deadline colours. Chart, number and checklist motion
+uses the web's own springs and curves. When the range changes, a line reshapes
+from what is on screen while its scale moves on the same spring. Numbers turn
+digit by digit in the direction they changed. Reduce Motion makes every change
+instant, as on the web.
+
+Tapping a manual reading turns the number into a field with the whole reading
+selected. Cancel and Done sit above the keyboard, no copy menu covers the
+number, and a whole reading shows without a decimal.
+
+Goal edits do not enter the offline message outbox. Failed edits keep their draft
+and offer Retry save and Discard edit. A stale revision cannot replace a newer
+page. Manual retries preserve the original request identity, date and value;
+the app never retries a measurement write by itself. There is no Saved toast.
+
+Run `ios/scripts/test-offline.sh` for the Foundation checks. That host evaluates
+the current web chart catalogue and curve functions as an independent comparison
+for the native presentation code; it requires this worktree's web dependencies.
+The Goals request test also checks that the project read supplies `detail=full`.
+The existing simulator fixture host supports `PANELS_GOALS_SMOKE=1` and
+`PANELS_OFFLINE_TEST=GoalFlowTests`. Supply an already booted assigned simulator,
+a separate task bundle ID, lane lock name and output directory through its
+`PANELS_OFFLINE_DEVICE`, `PANELS_OFFLINE_BUNDLE`, `PANELS_OFFLINE_LANE` and
+`PANELS_OFFLINE_OUTPUT` settings. It uses loopback data and no live writes.

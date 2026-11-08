@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -119,7 +118,6 @@ async def _resolve_launch_defaults(
         "employee_launch_model": defaults.employee_launch_model,
         "employee_launch_reasoning_effort": defaults.employee_launch_reasoning_effort,
     }
-
 
 
 async def add_agent_conversation_signals(
@@ -253,6 +251,22 @@ async def patch_skill(
     return _skill_json(skill)
 
 
+@router.delete("/skills/{skill_name}")
+async def delete_skill(skill_name: str, conn: DbConn, ctx: Ctx, config: Cfg) -> JsonDict:
+    service.delete_skill(conn, skill_name, database_parent=_database_parent(config))
+    return {"name": skill_name, "deleted": True}
+
+
+@router.put("/skills/{skill_name}/files")
+async def put_skill_file(
+    skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
+) -> JsonDict:
+    path = service.write_skill_file(
+        conn, skill_name, raw, database_parent=_database_parent(config)
+    )
+    return {"name": skill_name, "path": path}
+
+
 @router.get("/workers/chief-of-staff/settings")
 async def get_chief_settings(conn: DbConn) -> JsonDict:
     return _chief_json(service.read_chief_settings(conn))
@@ -373,7 +387,7 @@ async def post_worker_type(
 
     This is the whole record: a Worker type is only coherent as a whole, so it is not
     edited a piece at a time. What is stored has passed the same rules the registry
-    applies, and has been shown not to strand a Ticket in flight. An optional ``skill``
+    applies. Tickets already made from it keep their own copy. An optional ``skill``
     block carries the specialist skill, so declaring a new Worker and declaring the skill
     it names are one act.
     """
@@ -382,9 +396,14 @@ async def post_worker_type(
     definition = store.definition_from_json(json.dumps(record))
     if skill is not None and not isinstance(skill, dict):
         raise PlannerError(ErrorCode.validation, "skill must be an object", {})
-    migrations = service.save_worker_type_definition(
+    service.save_worker_type_definition(
         conn, definition, skill, now=clk.now_unix(), database_parent=_database_parent(config)
     )
-    result = cast(JsonDict, json.loads(store.definition_to_json(definition)))
-    result["migrations"] = [asdict(migration) for migration in migrations]
-    return result
+    return cast(JsonDict, json.loads(store.definition_to_json(definition)))
+
+
+@router.delete("/worker-types/{worker_type}")
+async def delete_worker_type(worker_type: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+    """Remove a Worker type. Its Tickets keep their own workflow; new ones are refused."""
+    service.delete_worker_type_definition(conn, worker_type)
+    return {"worker_type": worker_type, "deleted": True}

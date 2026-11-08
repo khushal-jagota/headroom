@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import re
 import sqlite3
+from collections.abc import Callable, Coroutine
 from functools import partial
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from planner.conversation.backend_event_contracts import (
     AcceptedEvent,
@@ -18,7 +20,9 @@ from planner.conversation.backend_event_contracts import (
 )
 from planner.conversation.backends.contracts import BackendEventValue, TurnToken
 from planner.core.clock import Clock
+from planner.core.config import MAC_ITEM_RETRY_LATER_SECONDS
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
+from planner.core.task_settlement import wait_for_settlement
 from planner.execution_identity import AskKind, AskReference, ChildReference, ExecutorIdentity
 from planner.executor.clock import now_ms
 from planner.executor.files import (
@@ -61,6 +65,7 @@ class MacInboxConversations(Protocol):
         *,
         in_commit: CommitParticipant,
         conversation_id: str | None = None,
+        retry_later_at: float | None = None,
     ) -> AcceptedEvent: ...
 
     async def take_answer_application(
@@ -70,6 +75,8 @@ class MacInboxConversations(Protocol):
         provider_id: str,
         kind: str,
         in_commit: CommitParticipant,
+        *,
+        retry_later_at: float | None = None,
     ) -> AcceptedEvent: ...
 
 
@@ -83,6 +90,15 @@ class TransactionalWriter(Protocol):
         back without receipt. Async/native effects use their separate command fate.
         """
         ...
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _observe_outcome(task: asyncio.Task[AcceptanceReceipt]) -> None:
+    """Its caller may have answered retry later and gone; the next one reads its receipt."""
+    if not task.cancelled():
+        task.exception()
 
 
 class MissingFiles(Exception):
@@ -242,7 +258,12 @@ class InboxStore(VpsDatabase):
     def _prior_receipt(
         self, connection: sqlite3.Connection, envelope: QueuedEnvelope, identity: ExecutorIdentity
     ) -> AcceptanceReceipt | None:
-        self.runs._connected(connection, identity)
+        """Look up the sender's position. Nothing here reads the link.
+
+        The sender was fenced by its process before this transaction began
+        (ExecutorStore.require_current_incarnation). A link that drops, or a newer
+        connection of the same process, must not fail a save already under way.
+        """
         previous = connection.execute(
             "SELECT * FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?",
             (envelope.sender_id, envelope.conversation_id),
@@ -303,6 +324,9 @@ class MacInbox:
         self.conversations: MacInboxConversations
         self.agent_writes = AgentWrites(self.store, clock, runs)
         self._conversation_locks: dict[str, asyncio.Lock] = {}
+        # An item whose answer ran out of time while its work could not stop part-way:
+        # a message being delivered, or a write under way. By conversation.
+        self._still_settling: dict[str, asyncio.Task[AcceptanceReceipt]] = {}
 
     def authorize_upload(self, upload: FileUploadRequest) -> None:
         principal = self.runs.authority(upload.child)
@@ -331,13 +355,84 @@ class MacInbox:
     async def accept(
         self, envelope: QueuedEnvelope, identity: ExecutorIdentity
     ) -> AcceptanceReceipt:
-        lock = self._conversation_locks.setdefault(envelope.conversation_id, asyncio.Lock())
-        async with lock:
-            receipt = await self._accept_envelope(
-                envelope,
-                identity,
-            )
-            return receipt
+        """Answer accepted, refused, or retry later, within MAC_ITEM_RETRY_LATER_SECONDS.
+
+        Retry later is a PlannerError with ErrorCode.retry_later: no receipt and no
+        position are written, so the Mac's outbox still holds the item and sends it
+        again. It sends one item at a time per conversation, so the order holds.
+        """
+        retry_later_at = asyncio.get_running_loop().time() + MAC_ITEM_RETRY_LATER_SECONDS
+        return await self._answer_by(
+            envelope.conversation_id,
+            retry_later_at,
+            partial(self._accept_envelope, envelope, identity, retry_later_at),
+        )
+
+    async def _answer_by(
+        self,
+        conversation_id: str,
+        retry_later_at: float,
+        work: Callable[[], Coroutine[Any, Any, AcceptanceReceipt]],
+    ) -> AcceptanceReceipt:
+        """Do one item of this conversation, answering it by the loop time retry_later_at.
+
+        The inbox lock lets one item of a conversation in at a time. The work runs as
+        its own task, because some of it cannot stop part-way: a message delivered to
+        another conversation, a write already under way. Past the limit the answer is
+        retry later and that task goes on. Until it ends, every next item of this
+        conversation, its own resend included, is answered retry later too, so nothing
+        overtakes it and nothing runs twice. Once it ends, the resend finds its receipt.
+        """
+        loop = asyncio.get_running_loop()
+        lock = self._conversation_locks.setdefault(conversation_id, asyncio.Lock())
+        try:
+            async with asyncio.timeout_at(retry_later_at):
+                await lock.acquire()
+        except TimeoutError as error:
+            raise PlannerError(
+                ErrorCode.retry_later,
+                "An earlier item of this conversation is still being saved",
+            ) from error
+        try:
+            earlier = self._still_settling.get(conversation_id)
+            if earlier is not None:
+                await asyncio.wait({earlier}, timeout=max(retry_later_at - loop.time(), 0))
+                if not earlier.done():
+                    raise PlannerError(
+                        ErrorCode.retry_later,
+                        "An earlier attempt at this conversation's item is still settling",
+                    )
+                self._still_settling.pop(conversation_id, None)
+            task = asyncio.create_task(work())
+            task.add_done_callback(_observe_outcome)
+            try:
+                await asyncio.wait({task}, timeout=max(retry_later_at - loop.time(), 0))
+            except asyncio.CancelledError:
+                # A caller that is cancelled (a closing link, shutdown) cancels the work
+                # and keeps this conversation until its blocking units settle, as before.
+                task.cancel()
+                await wait_for_settlement(task)
+                raise
+            if not task.done():
+                self._still_settling[conversation_id] = task
+                task.add_done_callback(
+                    lambda done: self._still_settling.pop(conversation_id, None)
+                    if self._still_settling.get(conversation_id) is done
+                    else None
+                )
+                raise PlannerError(
+                    ErrorCode.retry_later, "This item is still being saved; send it again"
+                )
+            try:
+                return task.result()
+            except (sqlite3.OperationalError, OSError) as error:
+                # Busy or failing storage outside the conversation's own write: nothing
+                # was saved, so the same item is simply sent again.
+                raise PlannerError(
+                    ErrorCode.retry_later, f"The VPS could not save this item yet: {error}"
+                ) from error
+        finally:
+            lock.release()
 
     async def refuse_item(
         self,
@@ -368,15 +463,25 @@ class MacInbox:
                     raise ValueError("upload refusal does not belong to this item")
                 transfers.uploads.pop(transfer_id)
                 transfers.release(transfer_id)
-        lock = self._conversation_locks.setdefault(envelope.conversation_id, asyncio.Lock())
-        async with lock:
+
+        async def refuse() -> AcceptanceReceipt:
+            await settled_io(self.store.runs.require_current_incarnation, identity)
             return await self._record_refusal(
                 envelope, identity, PlannerError(ErrorCode.validation, rejected.error_message)
             )
 
+        return await self._answer_by(
+            envelope.conversation_id,
+            asyncio.get_running_loop().time() + MAC_ITEM_RETRY_LATER_SECONDS,
+            refuse,
+        )
+
     async def _accept_envelope(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, retry_later_at: float
     ) -> AcceptanceReceipt:
+        # The one sender check, before any write starts. A replaced process is answered
+        # with an error and never a receipt: its successor still holds the same item.
+        await settled_io(self.store.runs.require_current_incarnation, identity)
         try:
             previous = await settled_io(partial(self.store.preflight, envelope, identity=identity))
             if previous is not None:
@@ -390,17 +495,42 @@ class MacInbox:
                         previous,
                     )
                 return previous
+            if envelope.kind is EnvelopeKind.backend_event:
+                return await self._apply_event(envelope, identity, retry_later_at)
+            if envelope.kind is EnvelopeKind.answer_application:
+                return await self._apply_answer(envelope, identity, retry_later_at)
             handler = {
-                EnvelopeKind.backend_event: self._apply_event,
                 EnvelopeKind.cli_write: self.agent_writes.accept,
                 EnvelopeKind.child_stopped: self._apply_stop,
-                EnvelopeKind.answer_application: self._apply_answer,
             }[envelope.kind]
             return await handler(envelope, identity)
         except PlannerError as error:
+            if error.code is ErrorCode.retry_later:
+                # Not a refusal: a refusal receipt would drop the item for good.
+                raise
             refusal = error
         except (ValueError, KeyError, TypeError) as error:
             refusal = PlannerError(ErrorCode.validation, str(error))
+        except (MissingFiles, sqlite3.OperationalError, OSError):
+            raise  # The sender uploads, or sends the same item again.
+        except Exception as error:
+            # It would fail the same way every time. Retrying a poison item forever
+            # holds its whole conversation, so it is refused, and the refusal says why.
+            LOGGER.error(
+                "Saving a Mac item failed, so it is refused unless already recorded: "
+                "conversation=%s sender=%s "
+                "sequence=%d submission=%s kind=%s: %r",
+                envelope.conversation_id,
+                envelope.sender_id,
+                envelope.sequence,
+                envelope.submission_id,
+                envelope.kind.value,
+                error,
+                exc_info=True,
+            )
+            refusal = PlannerError(
+                ErrorCode.save_failed, f"The VPS could not save this item: {error!r}"
+            )
         return await self._record_refusal(envelope, identity, refusal)
 
     async def _record_refusal(
@@ -432,7 +562,7 @@ class MacInbox:
         return AcceptedEvent(as_object(receipt), taken)
 
     async def _apply_event(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, retry_later_at: float
     ) -> AcceptanceReceipt:
         event = type_adapter(BackendEvent).validate_python(envelope.payload)
         await settled_io(self.runs.authority, event.child)
@@ -445,6 +575,7 @@ class MacInbox:
             decoded,
             in_commit=partial(self._record_event, envelope, identity),
             conversation_id=event.child.conversation_id,
+            retry_later_at=retry_later_at,
         )
         proxy = self.runs.children.get(event.child.child_id)
         if result.taken and proxy is not None and event.turn is not None:
@@ -490,7 +621,7 @@ class MacInbox:
         return receipt
 
     async def _apply_answer(
-        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity, retry_later_at: float
     ) -> AcceptanceReceipt:
         application = type_adapter(AnswerApplication).validate_python(envelope.payload)
         await settled_io(
@@ -507,6 +638,7 @@ class MacInbox:
                     application.ask.ask_id,
                     application.ask.kind.value,
                     partial(self._record_event, envelope, identity),
+                    retry_later_at=retry_later_at,
                 )
             ).result
         )

@@ -34,7 +34,7 @@ struct SettingsView: View {
             }.listRowBackground(PanelsTheme.raised)
         }
         .panelsNavigationTitle("Settings").panelsScreen()
-        .task(id: "\(store.baseURL):\(section):\(store.revision)") { await load() }
+        .task(id: "\(store.baseURL):\(section):\(store.connectionSession)") { await load() }
         .panelsRefreshable { await load() }
         .onChange(of: section) { _, _ in Haptics.selection() }
         .sheet(isPresented: $showingServer) {
@@ -47,6 +47,11 @@ struct SettingsView: View {
     private var configuration: some View {
         Group {
             if let workers {
+                Section {
+                    LabeledContent("Mac executor", value: store.executorHealth?.activityKnown == true ? "Connected" : "Activity unknown")
+                    Text(store.executorHealth?.contactSentence ?? "Last contact: unknown.")
+                        .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
+                }.listRowBackground(PanelsTheme.raised)
                 Section {
                     NavigationLink {
                         SettingsAgentDetail(title: workers.chiefOfStaff.label, configuration: workers.chiefOfStaff.launchDefaults, skill: workers.chiefOfStaff.skill)
@@ -80,6 +85,7 @@ struct SettingsView: View {
                         NavigationLink {
                             List {
                                 Section {
+                                    TicketMachineLabel(locale: schedule.locale)
                                     LabeledContent("Status", value: schedule.enabled ? "Enabled" : "Disabled")
                                     LabeledContent("Time", value: schedule.localTime)
                                     LabeledContent("Cadence", value: schedule.cadence.replacingOccurrences(of: "_", with: " ").capitalized)

@@ -2,6 +2,7 @@
 """One local HTTP stub and the existing UI test host; never operates simulator lifecycle."""
 
 import copy
+import hashlib
 import http.server
 import json
 import os
@@ -17,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 REVIEW_COMPLETION = os.environ.get("PANELS_REVIEW_COMPLETION") == "1"
+REACHABILITY_SMOKE = os.environ.get("PANELS_REACHABILITY_SMOKE") == "1"
 DEVICE = os.environ.get("PANELS_OFFLINE_DEVICE") or (
     "566D051B-B6BB-4046-9038-66C05CCC2B96"
     if REVIEW_COMPLETION
@@ -28,7 +30,8 @@ LANE_LOCK = (
     + ".lock"
 )
 BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
-REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1"
+GOALS_SMOKE = os.environ.get("PANELS_GOALS_SMOKE") == "1"
+REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE
 
 
 def main() -> int:
@@ -74,9 +77,185 @@ def main() -> int:
             }
         ]
     }
+    # Goals reuse this host and the exact authored chart catalogue from the web.
+    catalogue_source = (ROOT / "ios/scripts/goal-component-examples.ts").read_text()
+    catalogue = (
+        json.loads(
+            catalogue_source.split(
+                "export const goalComponentExamples: GoalComponentExample[] = ", 1
+            )[1]
+            .strip()
+            .removesuffix(";")
+        )
+        if GOALS_SMOKE
+        else []
+    )
+    words_chart = dict(
+        type="chart",
+        id="words",
+        placement="primary",
+        kind="bar",
+        title="Words written",
+        unit="words",
+        measure_id="words",
+        target=1000,
+        manual=dict(model="daily_quota", increments=[100, 250]),
+    )
+    checklist = dict(
+        type="checklist",
+        id="release-checklist",
+        title="Before release",
+        items=[
+            dict(
+                id="first",
+                label="Check the build",
+                state="open",
+                detail="Read the evidence before release.",
+                action="Checked",
+                deadline="2026-11-04",
+            ),
+            dict(
+                id="next",
+                label="Prepare release notes",
+                state="blocked",
+                detail="Explain the change.",
+            ),
+        ],
+    )
+
+    def goal_record(
+        key: str,
+        title: str,
+        kind: str,
+        primary: object = None,
+        blocks: object = None,
+        selected: object = None,
+    ) -> dict[str, Any]:
+        return dict(
+            id=key,
+            project_id="project_personal",
+            title=title,
+            why="Keep the next step clear.",
+            kind=kind,
+            active=True,
+            completed=False,
+            primary_chart=primary,
+            primary_checklist_block_id=selected,
+            deadline="2026-11-04",
+            page=dict(
+                kind="headroom.page", version=1, title=title, summary="", blocks=blocks or []
+            ),
+            revision=1,
+            created_at=1,
+            updated_at=1,
+            employee_backend="codex",
+            employee_launch_model="sol",
+            employee_launch_reasoning_effort=None,
+            holder_kind="chief",
+            holder_id=None,
+            status="attention",
+            status_date="2026-11-04",
+            next_refresh_at=time.time() + 3600,
+        )
+
+    kit_blocks = [copy.deepcopy(item["samples"][0]["block"]) for item in catalogue]
+    kit_blocks += [
+        dict(
+            type="text", id="prose", text="Read the [release evidence](/files/goals/kit/proof.md)."
+        ),
+        dict(
+            type="grid",
+            id="grid",
+            blocks=[
+                dict(
+                    type="metrics",
+                    id="metric",
+                    items=[dict(label="Activation", value="35%", change="+2 pp", tone="good")],
+                ),
+                dict(
+                    type="properties", id="properties", items=[dict(label="Owner", value="Chief")]
+                ),
+            ],
+        ),
+        dict(
+            type="section",
+            id="section",
+            title="Next steps",
+            summary="Use the same page kit.",
+            blocks=[
+                dict(
+                    type="callout",
+                    id="callout",
+                    tone="attention",
+                    title="Check the evidence",
+                    text="Source history is partial.",
+                )
+            ],
+        ),
+        dict(
+            type="segmented",
+            id="views",
+            views=[
+                dict(
+                    id="plan",
+                    label="Plan",
+                    blocks=[
+                        dict(
+                            type="rows",
+                            id="rows",
+                            items=[
+                                dict(
+                                    title="Investigate",
+                                    detail="Read the report",
+                                    status="In progress",
+                                    tone="attention",
+                                    meta="Today",
+                                )
+                            ],
+                        )
+                    ],
+                ),
+                dict(
+                    id="status",
+                    label="Status",
+                    blocks=[dict(type="status", id="status", label="Ready", tone="good")],
+                ),
+            ],
+        ),
+        dict(
+            type="chart",
+            id="number",
+            kind="number",
+            placement="primary",
+            title="Reading only",
+            target=10,
+            series=[dict(name="Current", points=[dict(label="Today", value=8)])],
+        ),
+    ]
+    goals = {
+        g["id"]: g
+        for g in [
+            goal_record("words", "Write 1,000 words", "quantitative", words_chart),
+            goal_record(
+                "release", "Release the app", "binary", blocks=[checklist], selected=checklist["id"]
+            ),
+            goal_record("kit", "Explore the page kit", "binary", blocks=kit_blocks),
+        ]
+    }
+    manual: dict[str, Any] = dict(
+        measure_id="words",
+        definition_revision=1,
+        write_revision=1,
+        timezone="UTC",
+        current_date="2026-11-04",
+        date="2026-11-04",
+        observation=dict(value=400),
+        latest_observation=dict(value=400),
+    )
+    manual_receipts: dict[str, Any] = {}
     state: dict[str, Any] = {
         "offline": False,
-        "slow": not REVIEW_COMPLETION,
+        "slow": not REVIEW_COMPLETION and not GOALS_SMOKE and not REACHABILITY_SMOKE,
         "writes": [],
         "messages": [],
         "recording": None,
@@ -101,6 +280,211 @@ def main() -> int:
             recording.communicate(timeout=15)
             state["recording"] = None
 
+    def ticket_record(ticket: dict[str, Any], proposal: dict[str, Any] | None) -> dict[str, Any]:
+        return {
+            "kind": "ticket",
+            "id": ticket["id"],
+            "value": {
+                "title": ticket["title"],
+                "recap": ticket["recap"],
+                "recap_preview": ticket["recap"],
+                "recap_reference": None,
+                "worker_type": ticket["worker_type"],
+                "stage_label": "Current",
+                "workflow_label": "Product design",
+                "stage": ticket["stage"],
+                "ticket_status": "awaiting_approval" if proposal else "empty",
+                "blocked": False,
+                "created_at": 1,
+                "updated_at": 1,
+                "worker_step_claim_out": False,
+                "deadline": None,
+                "project_id": None,
+                "manager_kind": "chief",
+                "manager_id": None,
+                "conversation_id": ticket["conversation_id"],
+                "is_backlogged": False,
+                "ceiling": ticket["stage"],
+                "ceiling_holder": {"kind": "owner", "id": "owner"},
+                "gating_field": "wireframe",
+                "proposal_field": "wireframe" if proposal else None,
+                "proposal_revision": proposal["revision"] if proposal else 0,
+                "proposal_created_at": proposal["created_at"] if proposal else None,
+                "stage_ownership": "worker",
+                "terminal": False,
+                "locale": "vps",
+            },
+        }
+
+    def conversation_record(identity: str, read: int, unread_at: int | None) -> dict[str, Any]:
+        unread = unread_at is not None
+        return {
+            "kind": "conversation",
+            "id": identity,
+            "value": {
+                "first_unread_owner_message_at": unread_at,
+                "owner_read_through_sequence": read,
+                "error_acknowledged_through_sequence": 0,
+                "attention": {
+                    "current": {
+                        "signal": {"working": False, "message_for_owner": unread},
+                        "awaiting_answer": False,
+                        "last_turn_failed": False,
+                    },
+                    "durable": {"message_for_owner": unread, "last_turn_failed": False},
+                },
+            },
+        }
+
+    def view_snapshot(request: dict[str, Any]) -> dict[str, Any]:
+        """The server's scoped view for this fixture: Review cards, owners, counts."""
+        records = {
+            ("chief", "chief"): {
+                "kind": "chief",
+                "id": "chief",
+                "value": {"label": "Chief of Staff", "conversation_id": "stub"},
+            }
+        }
+        cards: dict[tuple[str, str], int] = {}
+        owner = state["review_owner"] if REVIEW_MESSAGES else None
+        for ticket in tickets.values():
+            # A Ticket that owns the unread conversation is a message-only card here,
+            # so its conversation link opens first, as the connected case expects.
+            # "ticket-stacked" keeps its proposal: one card with a proposal and a message.
+            message_owner = owner == "ticket" and ticket["id"] == "offline-1"
+            proposal = None if message_owner else ticket["pending_proposal"]
+            records[("ticket", ticket["id"])] = ticket_record(ticket, proposal)
+            # The Goals smoke reaches Review for its message card only.
+            if proposal and not GOALS_SMOKE:
+                cards[("ticket", ticket["id"])] = proposal["created_at"]
+        conversations = [("stub", state["read_through"], None)]
+        if REVIEW_MESSAGES:
+            unread = state["read_through"] < (4 if state["new_message"] else 3)
+            stub_owner = {"chief": "chief", "ticket": "offline-1", "ticket-stacked": "offline-1", "manager": "review-manager"}
+            addresses = [
+                (
+                    "chief",
+                    "ticket" if owner == "ticket-stacked" else owner,
+                    stub_owner[owner],
+                    "stub",
+                    True,
+                    (1 if state["read_through"] < 3 else 3) if unread else None,
+                ),
+                (
+                    "chief-history",
+                    "chief",
+                    "chief",
+                    "history",
+                    False,
+                    None if state["historical_read"] else 5,
+                ),
+            ]
+            conversations = [
+                ("stub", state["read_through"], addresses[0][5]),
+                ("history", 0, addresses[1][5]),
+            ]
+            if owner == "manager":
+                records[("project", "review")] = {
+                    "kind": "project",
+                    "id": "review",
+                    "value": {"name": "Review"},
+                }
+                records[("manager", "review-manager")] = {
+                    "kind": "manager",
+                    "id": "review-manager",
+                    "value": {
+                        "title": "Review orchestrator",
+                        "recap": "",
+                        "recap_preview": "",
+                        "recap_reference": None,
+                        "created_at": 1,
+                        "updated_at": 1,
+                        "project_id": "review",
+                        "settled": False,
+                        "conversation_id": "stub",
+                    },
+                }
+            for address_id, kind, identity, conversation, current, waiting in addresses:
+                records[("address", address_id)] = {
+                    "kind": "address",
+                    "id": address_id,
+                    "value": {
+                        "owner_kind": kind,
+                        "owner_id": identity,
+                        "conversation_id": conversation,
+                        "current": current,
+                        "parent_kind": "chief" if kind == "ticket" else None,
+                        "parent_id": "chief" if kind == "ticket" else None,
+                    },
+                }
+                if waiting is None:
+                    continue
+                key = ("ticket", identity) if kind == "ticket" else ("address", address_id)
+                cards[key] = min(cards.get(key, waiting), waiting)
+        for identity, read, unread_at in conversations:
+            records[("conversation", identity)] = conversation_record(identity, read, unread_at)
+        order = sorted(
+            cards,
+            key=lambda key: (cards[key], "message" if key[0] == "address" else "ticket", key[1]),
+        )
+        windows = []
+        for window in request["windows"]:
+            members = order[: window["limit"]] if window["section"] == "review" else []
+            windows.append(
+                {
+                    "window_id": json.dumps([window["section"], window["owner"]]),
+                    "request": window,
+                    "members": [{"kind": kind, "id": identity} for kind, identity in members],
+                    "total": len(order) if window["section"] == "review" else 0,
+                    "previous": None,
+                    "next": None,
+                    "forward_overlap": None,
+                    "backward_overlap": None,
+                }
+            )
+        content = {
+            "records": list(records.values()),
+            "windows": windows,
+            "counts": {
+                "running_conversations": 7 if REVIEW_COMPLETION else 0,
+                "out_claims": 0,
+                "review": len(order),
+                "unread": 0,
+                "settled": 0,
+            },
+            "review_context": [],
+            "review_summary": {"skipped": 0, "new": len(order)},
+        }
+        version = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+        return {
+            "event": "snapshot",
+            "wire_version": 3,
+            "projection_version": 7,
+            "view_id": "fixture",
+            "scope_generation": request["scope_generation"],
+            "ordering_generation": "fixture",
+            "coverage": {
+                "scope": "fixture",
+                "schema_version": 10,
+                "semantics": "attention-knowledge-v10-ticket-workflows",
+                "epoch": "fixture",
+                "revision": "1",
+            },
+            "content_version": version,
+            "mode": "current",
+            "authority": {
+                "delivery_session_id": "fixture",
+                "availability": {"state": "current", "generation": "1", "reason": None},
+                "permit": {
+                    "scope": "fixture",
+                    "runtime_epoch": "fixture",
+                    "installation_id": "fixture",
+                    "generation": "1",
+                },
+            },
+            "content": content,
+        }
+
     def row(message: dict[str, Any]) -> dict[str, Any]:
         return {
             "kind": "row",
@@ -108,6 +492,32 @@ def main() -> int:
             "sender_message_id": message["sender_message_id"],
             "body": {"kind": "inline", "value": {"kind": "prompt", "content": message["content"]}},
         }
+
+    def conversation_view(path: str) -> dict[str, Any]:
+        value: dict[str, Any] = {
+            "page": {"items": [row(m) for m in state["messages"]], "older": None},
+            "coverage": {"through_sequence": len(state["messages"])},
+            "status": {
+                "authority": "current",
+                "turn_running": False,
+                "rest": {"plan_progress": {}},
+            },
+        }
+        if REVIEW_MESSAGES and "/conversations/history/" in path:
+            value["page"]["items"] = [
+                {
+                    "kind": "row",
+                    "key": "history",
+                    "body": {
+                        "kind": "inline",
+                        "value": {
+                            "kind": "agent_message",
+                            "content": [{"piece": "text", "text": "Historical transcript"}],
+                        },
+                    },
+                }
+            ]
+        return value
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
@@ -181,13 +591,33 @@ def main() -> int:
                 return
             if self.disconnected():
                 return
-            if path == "/api/changes" or path.endswith("/view/tail"):
+            if state.get("request_failed"):
+                self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
+                return
+            if path in ("/api/changes", "/api/navigation/view/events") or path.endswith("/view/tail"):
+                # The navigation view and conversation tail send a fresh snapshot frame each
+                # second, so the app follows fixture changes without a change-driven read.
+                view = json.loads(query["view"][0]) if "view" in query else None
+                # A cold slow load holds the view's first frame as it held the snapshot read.
+                while view is not None and state["slow"]:
+                    time.sleep(0.1)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
                 try:
                     while not state["offline"]:
-                        self.wfile.write(b"data: change\n\n")
+                        with lock:
+                            if path == "/api/changes":
+                                frame = b"data: change\n\n"
+                            elif view is not None:
+                                frame = b"event: snapshot\ndata: " + json.dumps(view_snapshot(view)).encode() + b"\n\n"
+                            else:
+                                frame = (
+                                    b"event: snapshot\ndata: "
+                                    + json.dumps(conversation_view(path.removesuffix("/tail"))).encode()
+                                    + b"\n\n"
+                                )
+                        self.wfile.write(frame)
                         self.wfile.flush()
                         time.sleep(1)
                 except (BrokenPipeError, ConnectionResetError):
@@ -198,6 +628,63 @@ def main() -> int:
             page = dict(
                 match_count=0, return_count=0, limit=30, offset=0, complete=True, next_offset=None
             )
+            if GOALS_SMOKE and path == "/api/goals":
+                self.respond(
+                    dict(
+                        goals=list(goals.values()),
+                        status_date="2026-11-04",
+                        next_refresh_at=time.time() + 3600,
+                    )
+                )
+                return
+            if GOALS_SMOKE and path.startswith("/api/goals/"):
+                key = path.split("/")[3]
+                if path.endswith("/readings"):
+                    values = (
+                        [
+                            dict(
+                                measure_id="words",
+                                date=f"2026-11-{day:02d}",
+                                status="value",
+                                value=manual["observation"]["value"] if day == 4 else day * 100,
+                            )
+                            for day in range(1, 5)
+                        ]
+                        if key == "words"
+                        else []
+                    )
+                    self.respond(
+                        dict(
+                            goal_id=key,
+                            revision=goals[key]["revision"],
+                            status=goals[key]["status"],
+                            status_date="2026-11-04",
+                            next_refresh_at=time.time() + 3600,
+                            values=values,
+                            sources=[],
+                            charts={},
+                        )
+                    )
+                    return
+                if key in goals and len(path.split("/")) == 4:
+                    self.respond(goals[key])
+                    return
+            if GOALS_SMOKE and path == "/api/measures/words/manual-state":
+                response = copy.deepcopy(manual)
+                response["date"] = query.get("date", [manual["date"]])[0]
+                self.respond(response)
+                return
+            if GOALS_SMOKE and path == "/api/projects":
+                self.respond(dict(projects=[dict(id="project_personal", name="Personal")]))
+                return
+            if GOALS_SMOKE and path == "/files/goals/kit/proof.md":
+                content = b"# Release evidence\nNative goal artifact."
+                self.send_response(200)
+                self.send_header("Content-Type", "text/markdown")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
             if path == "/api/managers":
                 value = {"managers": [], "page": page}
             elif path == "/api/tickets":
@@ -232,52 +719,8 @@ def main() -> int:
                         for seq, text in entries
                     ]
                 }
-            elif path == "/api/review":
-                value = {
-                    "items": [
-                        {
-                            "review_item_type": "proposal",
-                            "ticket_id": t["id"],
-                            "field": "wireframe",
-                            "title": t["title"],
-                            "waiting_since": t["pending_proposal"]["created_at"],
-                        }
-                        for t in tickets.values()
-                        if t["pending_proposal"]
-                    ],
-                    "running_worker_count": 7 if REVIEW_COMPLETION else 0,
-                }
-                if REVIEW_MESSAGES:
-                    unread = state["read_through"] < (4 if state["new_message"] else 3)
-                    if unread:
-                        value["items"].append(
-                            {
-                                "review_item_type": "message",
-                                "conversation_id": "stub",
-                                "address_id": "chief",
-                                "owner_kind": state["review_owner"],
-                                "owner_id": {
-                                    "chief": "chief",
-                                    "ticket": "offline-1",
-                                    "manager": "review-manager",
-                                }[state["review_owner"]],
-                                "title": "Unread conversation",
-                                "waiting_since": 1 if state["read_through"] < 3 else 3,
-                            }
-                        )
-                    if not state["historical_read"]:
-                        value["items"].append(
-                            {
-                                "review_item_type": "message",
-                                "conversation_id": "history",
-                                "address_id": "chief-history",
-                                "owner_kind": "chief",
-                                "owner_id": "chief",
-                                "title": "Earlier conversation",
-                                "waiting_since": 5,
-                            }
-                        )
-                    value["items"].sort(key=lambda item: item["waiting_since"])
+            elif path == "/api/navigation/view/snapshot":
+                value = view_snapshot(json.loads(query["view"][0]))
             elif path == "/api/workers/chief-of-staff/settings":
                 value = {
                     "employee_id": "chief",
@@ -316,28 +759,7 @@ def main() -> int:
                     ]
                 }
             elif path.endswith("/view"):
-                value = {
-                    "page": {"items": [row(m) for m in state["messages"]], "older": None},
-                    "status": {
-                        "authority": "current",
-                        "turn_running": False,
-                        "rest": {"plan_progress": {}},
-                    },
-                }
-                if REVIEW_MESSAGES and "/conversations/history/" in path:
-                    value["page"]["items"] = [
-                        {
-                            "kind": "row",
-                            "key": "history",
-                            "body": {
-                                "kind": "inline",
-                                "value": {
-                                    "kind": "agent_message",
-                                    "content": [{"piece": "text", "text": "Historical transcript"}],
-                                },
-                            },
-                        }
-                    ]
+                value = conversation_view(path)
             elif (
                 path.endswith("/conversations/stub")
                 or path.endswith("/conversations/history")
@@ -358,6 +780,28 @@ def main() -> int:
                 return
             self.respond(value)
 
+        def do_PATCH(self) -> None:
+            path = urlparse(self.path).path
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
+            if not GOALS_SMOKE or not path.startswith("/api/goals/"):
+                self.respond({}, 404)
+                return
+            with lock:
+                goal = goals[path.split("/")[3]]
+                if body.pop("expected_revision") != goal["revision"]:
+                    self.respond(dict(error=dict(message="This goal changed.")), 409)
+                    return
+                goal.update(body)
+                goal["revision"] += 1
+                if goal["primary_checklist_block_id"]:
+                    items = goal["page"]["blocks"][0]["items"]
+                    goal["completed"] = bool(items) and all(
+                        item["state"] == "done" for item in items
+                    )
+                state["writes"].append(dict(path=path, body=body))
+                (output / "operations.json").write_text(json.dumps(state["writes"]))
+                self.respond(goal)
+
         def do_POST(self) -> None:
             value: dict[str, Any]
             if self.disconnected():
@@ -365,7 +809,36 @@ def main() -> int:
             path = urlparse(self.path).path
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
             with lock:
-                if REVIEW_MESSAGES and path.endswith("/owner-read"):
+                if GOALS_SMOKE and path == "/api/measures/words/manual-writes":
+                    identity = body["request_id"]
+                    if identity in manual_receipts:
+                        self.respond(manual_receipts[identity])
+                        return
+                    if (
+                        body["operation"] == "replace"
+                        and body["expected_write_revision"] != manual["write_revision"]
+                    ):
+                        self.respond(dict(error=dict(message="This reading changed.")), 409)
+                        return
+                    value_number = (
+                        body["value"]
+                        if body["operation"] == "replace"
+                        else manual["observation"]["value"] + body["delta"]
+                    )
+                    manual.update(
+                        date=body["date"],
+                        observation=dict(value=value_number),
+                        latest_observation=dict(value=value_number),
+                        write_revision=manual["write_revision"] + 1,
+                    )
+                    value = dict(
+                        receipt=dict(request_id=identity, date=body["date"]),
+                        state=copy.deepcopy(manual),
+                        replayed=False,
+                    )
+                    manual_receipts[identity] = value
+                    state["writes"].append(dict(path=path, body=body))
+                elif REVIEW_MESSAGES and path.endswith("/owner-read"):
                     state["writes"].append(body)
                     if "/history/" in path:
                         state["historical_read"] = True
@@ -420,6 +893,37 @@ def main() -> int:
     env = os.environ.copy()
     env["TEST_RUNNER_PANELS_OFFLINE_STUB_URL"] = url
     env["TEST_RUNNER_PANELS_REVIEW_COMPLETION"] = "1" if REVIEW_COMPLETION else "0"
+    env["TEST_RUNNER_PANELS_REVIEW_STACKED"] = os.environ.get("PANELS_REVIEW_STACKED", "0")
+    control = None
+    if REACHABILITY_SMOKE:
+        port = server.server_port
+
+        class ConnectionControl(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                nonlocal server
+                action = self.path.removeprefix("/")
+                if action == "offline" and not state["offline"]:
+                    state["offline"] = True
+                    server.shutdown()
+                    server.server_close()
+                elif action == "online":
+                    state["request_failed"] = False
+                    if state["offline"]:
+                        state["offline"] = False
+                        server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+                        threading.Thread(target=server.serve_forever, daemon=True).start()
+                elif action == "request-failed":
+                    state["request_failed"] = True
+                else:
+                    self.send_error(400)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        control = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ConnectionControl)
+        threading.Thread(target=control.serve_forever, daemon=True).start()
+        env["TEST_RUNNER_PANELS_REACHABILITY_CONTROL_URL"] = f"http://127.0.0.1:{control.server_port}"
     try:
         return subprocess.call(
             [
@@ -471,6 +975,9 @@ def main() -> int:
         subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
         server.shutdown()
         server.server_close()
+        if control:
+            control.shutdown()
+            control.server_close()
 
 
 if __name__ == "__main__":

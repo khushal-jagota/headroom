@@ -4,7 +4,7 @@
   /** One waiting proposal, as a card.
    *
    * This is the ask itself — the Ticket's title, its recap,
-   * the approval control, and the send-back box — and nothing about a queue. It is
+   * the approval control, and the line for the Worker — and nothing about a queue. It is
    * named by the shared queue's exact proposal identity, and it fetches its detail and the
    * Worker-type manifest itself, so a caller only has to know which decision it
    * wants shown. Everything about *which* decision is current — walking, skipping,
@@ -27,9 +27,11 @@
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
+  import ComposerField from "./conversation/ComposerField.svelte";
+  import { deliverReviewNote, forgetReviewNote, recallReviewNote, reviewNoteText, type ReviewNoteDelivery } from "../lib/review/noteDelivery";
+  import type { DeliveredMessage } from "../lib/conversation/wire";
   import {
     createVoiceCapture,
-    formatVoiceTime,
     voiceCaptureAvailable,
     voiceCaptureSupported,
     type VoiceCapture,
@@ -44,6 +46,7 @@
     onSkip,
     onResolved,
     footer,
+    decisionActions,
     embedded = false,
     initialRevisionDraft = "",
     onRevisionDraftChange,
@@ -70,11 +73,13 @@
     onResolved?: () => void;
     /** Rendered under the card, only once the ask itself is on screen. */
     footer?: Snippet;
+    /** The queue's own Skip / Open ticket, placed in the decision card's action row. */
+    decisionActions?: Snippet;
   } = $props();
 
   let revisionDraft = $state("");
-  let revisionError = $state<unknown>(null);
-  let revisionBusy = $state(false);
+  let noteDelivery = $state<ReviewNoteDelivery | null>(null);
+  let noteRecoveryError = $state<unknown>(null);
   let decisionKey = $state<string | null>(null);
 
   let resolvedAnnounced = false;
@@ -144,8 +149,12 @@
     return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => item.review_item_type === 'ticket' && item.proposal !== null && reviewProposalIdentity(item.proposal) === currentKey));
   }
 
-  async function write(path: string, options: Parameters<typeof mutateJson>[1]): Promise<unknown> {
+  function requireVisibleProposal(): void {
     if (!currentIdentity() || !healthyDetail || isStale(healthyDetail)) throw new Error("the visible proposal changed; read it again before accepting");
+  }
+
+  async function write(path: string, options: Parameters<typeof mutateJson>[1]): Promise<unknown> {
+    requireVisibleProposal();
     return mutateJson(path,{...options});
   }
 
@@ -160,8 +169,14 @@
     if (currentKey !== decisionKey) {
       revisionDraft = decisionKey === null ? initialRevisionDraft : "";
       decisionKey = currentKey;
-      revisionError = null;
-      revisionBusy = false;
+      noteRecoveryError = null;
+      try {
+        noteDelivery = recallReviewNote(currentKey);
+        if (noteDelivery?.status === "pending" && !revisionDraft.trim()) revisionDraft = reviewNoteText(noteDelivery);
+      } catch (error) {
+        noteDelivery = null;
+        noteRecoveryError = error;
+      }
 
       resolvedAnnounced = false;
       // The box — and anything being spoken into it — belongs to one proposal.
@@ -188,10 +203,45 @@
 
   async function accept(payload: Record<string, unknown>): Promise<unknown> {
     if (!acceptField) throw new Error("Review decision is not a Ticket field");
-    const result = await write(`/api/tickets/${ticketId}/accept/${acceptField}`, {
+    requireVisibleProposal();
+    const proposalKey = currentKey;
+    const acceptingTicketId = ticketId;
+    const acceptingField = acceptField;
+    const note = revisionDraft.trim();
+    await deliverReviewNote({
+      identity: proposalKey,
+      conversationId: healthyDetail?.conversation_id ?? null,
+      text: note,
+      onChange: (delivery) => {
+        if (currentKey === proposalKey) noteDelivery = delivery;
+      },
+      send: (delivery) => {
+        requireVisibleProposal();
+        if (currentKey !== proposalKey) throw new Error("the visible proposal changed; read it again before accepting");
+        return mutateJson<DeliveredMessage>(`/api/tickets/${acceptingTicketId}/conversation/send`, {
+          method: "POST",
+          body: {
+            conversation_id: delivery.conversationId,
+            content: delivery.message.content,
+            sender_label: delivery.message.senderLabel,
+            mode: delivery.message.mode,
+            sender_message_id: delivery.message.messageId,
+            sent_at_unix_milliseconds: delivery.message.sentAtUnixMilliseconds
+          }
+        });
+      }
+    });
+    requireVisibleProposal();
+    if (currentKey !== proposalKey) throw new Error("the visible proposal changed; read it again before accepting");
+    // An edit during delivery remains a draft for the reviewer to check.
+    if (revisionDraft.trim() !== note) throw new Error("The note changed. Check it before approval.");
+    revisionDraft = "";
+    const result = await write(`/api/tickets/${acceptingTicketId}/accept/${acceptingField}`, {
       method: "POST",
       body: payload
     });
+    forgetReviewNote(proposalKey);
+    if (currentKey !== proposalKey) return result;
     announceResolved();
     return result;
   }
@@ -203,37 +253,34 @@
     });
   }
 
-  async function returnForRevision(): Promise<void> {
-    const message = revisionDraft.trim();
-    if (!message || revisionBusy) return;
-    revisionError = null;
-    revisionBusy = true;
-    try {
-      await write(`/api/tickets/${ticketId}/reject`, {
-        method: "POST",
-        body: { message }
-      });
-      revisionDraft = "";
-      announceResolved();
-    } catch (err) {
-      revisionError = err;
-    } finally {
-      revisionBusy = false;
-    }
+  async function returnProposal(message: string): Promise<void> {
+    const proposalKey = currentKey;
+    await write(`/api/tickets/${ticketId}/reject`, { method: "POST", body: { message } });
+    forgetReviewNote(proposalKey);
+    if (currentKey !== proposalKey) return;
+    revisionDraft = "";
+    noteDelivery = null;
+    announceResolved();
   }
+
 </script>
+
+<!-- The queue's own actions about this item: Skip (when the queue gives it) and Open ticket. -->
+{#snippet queueActions()}
+  {#if onSkip}
+    <Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>
+  {/if}
+  <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
+{/snippet}
 
 <SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !healthyDetail) || Boolean(healthyDetail && !manifestMissingWorkerType && isStale(healthyDetail)))} loadingText="Loading approval...">
 {#if detail.error}
   <div>
     <ErrorLine error={detail.error} />
     {#if title !== null}<div class="quiet-line">{title}</div>{/if}
-    <div class="review-card-actions">
-      {#if onSkip}
-        <Button variant="quiet" data-skip="" onclick={onSkip}>Skip</Button>
-      {/if}
-      <a data-open-ticket href={ticketHref}>open ticket</a>
-    </div>
+    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}
+    <div class="review-card-actions">{@render queueActions()}</div>
+    {/if}
   </div>
 {:else if healthyDetail && manifestMissingWorkerType}
   {@const ticketDetail = healthyDetail}
@@ -241,12 +288,9 @@
     <ErrorLine
       error={{ code: "invalid_workflow", message: "The Ticket workflow is unavailable." }}
     />
-    <div class="review-card-actions">
-      {#if onSkip}
-        <Button variant="quiet" data-skip="" onclick={onSkip}>Skip</Button>
-      {/if}
-      <a data-open-ticket href={ticketHref}>open ticket</a>
-    </div>
+    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}
+    <div class="review-card-actions">{@render queueActions()}</div>
+    {/if}
   </div>
 {:else if healthyDetail}
   {@const ticketDetail = healthyDetail}
@@ -260,12 +304,7 @@
       data-field={field}
     >
       {#if !embedded}
-      <div class="review-ticket-decision-line review-arrive review-arrive--1">
-        {#if onSkip}
-          <button data-skip="" onclick={onSkip}>Skip &rsaquo;</button>
-        {/if}
-        <a data-open-ticket href={ticketHref}>Open ticket &rsaquo;</a>
-      </div>
+      <div class="review-ticket-decision-line review-arrive review-arrive--1">{@render queueActions()}</div>
 
       <div class="review-ticket-heading review-arrive review-arrive--2">
         <div class="review-ticket-heading-main">
@@ -291,109 +330,59 @@
             {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
             <WorkerProposalCard proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
               ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} manager={reviewManager}
-              disabled={revisionBusy} {initialEditedBody} {onEditedBodyChange} initialReturnOpen={Boolean(initialRevisionDraft)} canReturn={Boolean(ticketDetail.conversation_id)}
+              {initialEditedBody} {onEditedBodyChange} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
-              onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}
-              {revisionEditor} />
+              onReturn={returnProposal}
+              {revisionEditor} revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
             {/key}
+          {:else if decisionActions}{@render decisionActions()}
           {/if}
+        {:else if decisionActions}{@render decisionActions()}
         {/if}
       </div>
 
       {#snippet revisionEditor()}
+        <!-- One line for the Worker, always on the card: Send it back (or Cmd/Ctrl+Enter here,
+             as on staging) sends it as the return's guidance, and Approve delivers it to the
+             Worker and then approves. It is the composer's field (ComposerField); speaking
+             with words already in the line appends to them. -->
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
-          <div class="review-revision-box" data-review-voice={voiceState.phase}>
-            {#if voiceState.phase !== "idle"}
-              <!-- The same voice language as the composer: the centred shimmered
-                   word where the words would go, actions where "Send back" sits. -->
-              <div class="chat-voice-mid review-voice-mid">
-                {#if voiceState.phase === "recording"}
-                  <span class="live-text-shimmer">recording</span>
-                  <span class="chat-voice-time">{formatVoiceTime(voiceState.elapsedMs)}</span>
-                {:else if voiceState.phase === "transcribing"}
-                  <span class="live-text-shimmer">transcribing</span>
-                {:else}
-                  <span class="chat-voice-fail">
-                    transcription failed · kept
-                    <span class="chat-voice-time">{formatVoiceTime(voiceState.keptMs)}</span>
-                  </span>
-                {/if}
-              </div>
-              <button
-                type="button"
-                class="chat-voice-cancel review-voice-action"
-                data-voice-cancel
-                aria-label={voiceState.phase === "recording"
-                  ? "Cancel recording"
-                  : voiceState.phase === "transcribing"
-                    ? "Cancel transcription"
-                    : "Discard recording"}
-                onclick={() => voice?.cancel()}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
-              </button>
-              {#if voiceState.phase === "recording"}
-                <button
-                  type="button"
-                  class="chat-voice-stop review-voice-action"
-                  data-voice-stop
-                  aria-label="Stop recording and transcribe"
-                  onclick={() => voice?.stopRecording()}
-                ><span class="chat-voice-square"></span></button>
-              {:else if voiceState.phase === "failed"}
-                <button
-                  type="button"
-                  class="chat-voice-retry review-voice-action"
-                  data-voice-retry
-                  onclick={() => voice?.retry()}
-                >retry</button>
+          {#if noteRecoveryError}
+            <ErrorLine error={noteRecoveryError} />
+          {:else if noteDelivery?.status === "pending"}
+            <div data-review-note-pending>
+              <ErrorLine error={{ code: "not_approved", message: "The note delivery is unconfirmed. Approve checks it again before approval." }} />
+              {#if revisionDraft.trim() !== reviewNoteText(noteDelivery)}
+                <MarkdownBlock text={reviewNoteText(noteDelivery)} />
               {/if}
-            {:else}
-              <textarea
-                class="review-revision-input"
-                data-review-revision-input
-                rows="1"
-                placeholder="Or tell the worker what to change..."
-                bind:value={revisionDraft}
-                disabled={revisionBusy}
-                onkeydown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                    event.preventDefault();
-                    void returnForRevision();
-                  }
-                }}
-              ></textarea>
-              {#if voiceAvailable}
-                <!-- Speaking with words already in the box appends to them. -->
-                <button
-                  type="button"
-                  class="review-voice-mic"
-                  data-voice-record
-                  aria-label="Speak a revision"
-                  title="Speak a revision"
-                  disabled={revisionBusy}
-                  onclick={() => void voice?.startRecording()}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <rect x="9" y="3" width="6" height="11" rx="3" />
-                    <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-                  </svg>
-                </button>
-              {/if}
-              <Button
-                variant="quiet"
-                data-review-revision-send=""
-                disabled={revisionBusy || !revisionDraft.trim()}
-                onclick={() => void returnForRevision()}
-              >
-                Send back
-              </Button>
-            {/if}
-          </div>
-          {#if revisionError}
-            <ErrorLine error={revisionError} />
+            </div>
           {/if}
+          <ComposerField
+            bind:value={revisionDraft}
+            placeholder="Add a note for the worker…"
+            inputAttributes={{ "data-review-revision-input": "" }}
+            onkeydown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.repeat) {
+                event.preventDefault();
+                event.currentTarget.closest("[data-approval-block]")
+                  ?.querySelector<HTMLButtonElement>("[data-send-back]")?.click();
+              }
+            }}
+            record={voiceAvailable
+              ? {
+                  label: "Speak a revision",
+                  onclick: () => void voice?.startRecording(),
+                  attributes: { "data-voice-record": "", title: "Speak a revision" }
+                }
+              : undefined}
+            voice={{
+              state: voiceState,
+              cancel: () => voice?.cancel(),
+              stop: () => voice?.stopRecording(),
+              retry: () => voice?.retry()
+            }}
+          />
         </div>
       {/snippet}
     </div>
@@ -403,3 +392,15 @@
 {/if}
 
 </SkeletonRegion>
+<!-- While the approval loads or is being refreshed, the queue's own actions (Skip, Open ticket)
+     stay at hand at the right: they never wait on the proposal. -->
+{#if !detail.error && (!healthyDetail || (!manifestMissingWorkerType && isStale(healthyDetail)))}
+  <div class="review-card-actions">
+    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}{@render queueActions()}{/if}
+  </div>
+{/if}
+
+<style>
+  /* An error state's actions about the queue sit at the right, like every button row. */
+  .review-card-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2); margin-top:var(--space-3); }
+</style>

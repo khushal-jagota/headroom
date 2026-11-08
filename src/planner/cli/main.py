@@ -12,6 +12,7 @@ only the five actor-neutral roots used for Panels work.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
@@ -234,8 +235,6 @@ def _ticket_record(
         "id",
         "title",
         "worker_type",
-        "worker",
-        "worker_skill_path",
         "locale",
         "employee_backend",
         "employee_launch_model",
@@ -549,6 +548,57 @@ def restart() -> None:
     click.echo("Panels restart accepted.")
 
 
+@main.command("server-event-loop-tasks", hidden=True)
+@json_option
+def server_event_loop_tasks(as_json: bool) -> None:
+    """List what the running server waits on: every asyncio task on its event loop.
+
+    Each task shows its name, coroutine, the line it is awaiting, and its age, oldest
+    first. Reads only: no task is cancelled, woken, or changed.
+    """
+    from planner.cli.errors import exit_with_human_error
+    from planner.core.config import load_config
+    from planner.server_lifecycle.contracts import (
+        EventLoopTasksConnectionError,
+        EventLoopTasksError,
+        EventLoopTasksTimeoutError,
+    )
+    from planner.server_lifecycle.control import (
+        request_event_loop_tasks,
+        resolve_event_loop_tasks_socket_path,
+        resolve_server_control_socket_path,
+    )
+    from planner.server_lifecycle.logic.event_loop_tasks_text import render_event_loop_tasks
+    from planner.server_lifecycle.supervisor import resolve_planner_launch_root
+
+    launch_root = resolve_planner_launch_root()
+    config = load_config(os.environ.get("PLAN_CONFIG_PATH", str(launch_root / "config.yaml")))
+    tasks_socket_path = resolve_event_loop_tasks_socket_path(
+        resolve_server_control_socket_path(config.port, os.environ, launch_root)
+    )
+    try:
+        response = request_event_loop_tasks(tasks_socket_path)
+    except EventLoopTasksError as exc:
+        if isinstance(exc, EventLoopTasksConnectionError):
+            code, exit_code = "connection", http.EXIT_CONNECTION
+            no_route = "Only a Panels application started by `panels serve` answers it."
+        elif isinstance(exc, EventLoopTasksTimeoutError):
+            code, exit_code = "timeout", http.EXIT_CONNECTION
+            no_route = "Asking again will not help while the loop is blocked."
+        else:
+            code, exit_code = "protocol", http.EXIT_ERROR
+            no_route = "This command and the running server may be from different releases."
+        if as_json:
+            error = {"error": {"code": code, "message": str(exc), "detail": {}}}
+            print(json.dumps(error), file=sys.stderr)
+            raise SystemExit(exit_code) from exc
+        exit_with_human_error(str(exc), exit_code=exit_code, no_route=no_route)
+    if as_json:
+        click.echo(json.dumps(dataclasses.asdict(response)))
+    else:
+        click.echo(render_event_loop_tasks(response))
+
+
 # --- worker types -------------------------------------------------------------
 
 
@@ -598,13 +648,20 @@ def worker_type_save(as_json: bool) -> None:
         json_body=record,
         as_json=as_json,
     )
-    lines = [f"{data['worker_type']} saved"]
-    for migration in data.get("migrations", []):
-        lines.append(
-            f"{migration['title']}: Stage {migration['old_stage']} -> {migration['new_stage']}; "
-            f"ceiling {migration['old_ceiling']} -> {migration['new_ceiling']}"
-        )
-    http.emit(data, as_json, "\n".join(lines))
+    http.emit(data, as_json, f"{data['worker_type']} saved")
+
+
+@worker_type_group.command("delete")
+@click.argument("worker_type")
+@json_option
+def worker_type_delete(worker_type: str, as_json: bool) -> None:
+    """Remove a Worker type. Its Tickets keep their own workflow and skill."""
+    data = http.send(
+        "DELETE",
+        f"/api/worker-types/{quote(worker_type, safe='')}",
+        as_json=as_json,
+    )
+    http.emit(data, as_json, f"{worker_type} deleted")
 
 
 @worker_type_group.command("skill")
@@ -704,6 +761,36 @@ def skill_apply(input_json: str, as_json: bool) -> None:
         http.fail_validation("manifest must contain a JSON object", as_json)
     data = http.send("POST", "/api/skills/apply", as_json=as_json, json_body=manifest)
     http.emit(data, as_json, f"applied {len(data['skills'])} skills")
+
+
+@skill_group.command("delete")
+@click.argument("name")
+@json_option
+def skill_delete(name: str, as_json: bool) -> None:
+    """Delete a skill and its whole folder. Refuses a skill a Worker type uses."""
+    data = http.send("DELETE", f"/api/skills/{quote(name, safe='')}", as_json=as_json)
+    http.emit(data, as_json, f"{data['name']} deleted")
+
+
+@skill_group.command("write-file")
+@click.argument("name")
+@click.argument("path")
+@json_option
+def skill_write_file(name: str, path: str, as_json: bool) -> None:
+    """Write a file at PATH inside a skill's folder. File text on redirected stdin.
+
+    The skill's own SKILL.md is not writable here; use `panels skill edit`.
+    """
+    content = "" if sys.stdin.isatty() else sys.stdin.read()
+    if not content.strip():
+        http.fail_validation("supply the file text on redirected stdin", as_json)
+    data = http.send(
+        "PUT",
+        f"/api/skills/{quote(name, safe='')}/files",
+        as_json=as_json,
+        json_body={"path": path, "content": content},
+    )
+    http.emit(data, as_json, f"{data['name']}/{data['path']} written")
 
 
 @skill_group.command("check")
@@ -1672,9 +1759,6 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
         as_json=as_json,
     )
     header, parts = _ticket_record(data, part_names, as_json=as_json)
-    native_skills = os.environ.get("PLAN_NATIVE_SKILLS_DIR")
-    if native_skills and "worker" in data:
-        header["worker_skill_path"] = str(Path(native_skills) / data["worker"] / "SKILL.md")
     _emit_record(header, parts, part_names, as_json)
 
 
@@ -1994,7 +2078,6 @@ def manager_settle(item_id: str, active: bool, as_json: bool) -> None:
 
 
 _set_public_command_help()
-
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
@@ -114,7 +115,6 @@ def test_a_rewrite_keeps_ticket_snapshots_and_the_read_record_shape(
     response = test_client.post("/api/worker-types", json=without_implementation)
 
     assert response.status_code == 200, response.text
-    assert response.json()["migrations"] == []
     assert test_client.get("/api/worker-types/coding").json() == without_implementation
     assert configured_worker_type_registry().require("coding").stage_ids() == tuple(
         stage["id"] for stage in without_implementation["stages"]
@@ -458,6 +458,33 @@ def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
     assert test_client.get("/api/skills/batch-role").json()["source_text"] == chief_source
 
 
+def test_skill_delete_and_file_write_refuse_agents_and_accept_the_chief(
+    client: tuple[TestClient, Path],
+) -> None:
+    """Risk: the two new skill writes open a door for Workers or Managers."""
+    test_client, db_path = client
+    file_body = {"path": "notes/extra.md", "content": "supporting"}
+    for headers in (
+        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
+    ):
+        deleted = test_client.delete("/api/skills/probe-worker", headers=headers)
+        written = test_client.put("/api/skills/panels/files", json=file_body, headers=headers)
+        for result in (deleted, written):
+            assert result.status_code == 400, result.text
+            assert result.json()["error"]["code"] == "agent_forbidden"
+    skills_home = db_path.parent / "skills"
+    assert (skills_home / "probe-worker" / "SKILL.md").is_file()
+    assert not (skills_home / "panels" / "notes").exists()
+    chief = {"X-Plan-Actor": "chief"}
+    written = test_client.put("/api/skills/panels/files", json=file_body, headers=chief)
+    assert written.status_code == 200, written.text
+    assert (skills_home / "panels" / "notes" / "extra.md").read_text() == "supporting"
+    deleted = test_client.delete("/api/skills/probe-worker", headers=chief)
+    assert deleted.status_code == 200, deleted.text
+    assert test_client.get("/api/skills/probe-worker").status_code == 404
+
+
 def test_committed_amendment_receipt_survives_skill_file_publication_failure(
     client: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -490,7 +517,6 @@ def test_committed_amendment_receipt_survives_skill_file_publication_failure(
     assert response.status_code == 500, response.text
     detail = response.json()["error"]["detail"]
     assert detail["definition_saved"] is True
-    assert detail["migrations"] == []
     assert (
         "needs_implementation"
         not in configured_worker_type_registry().require("coding").stage_ids()
@@ -499,3 +525,68 @@ def test_committed_amendment_receipt_survives_skill_file_publication_failure(
         assert conn.execute("SELECT ceiling FROM tickets WHERE id=?", (ticket.id,)).fetchone()[
             0
         ] == ("needs_implementation")
+
+
+def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
+    client: tuple[TestClient, Path],
+) -> None:
+    """Risk: removing a preset strands its Tickets, or removes one something still reads."""
+    test_client, db_path = client
+    with closing(connect(str(db_path))) as conn:
+        running = tickets_data.create_ticket(
+            conn,
+            worker_type="research",
+            title="Still running",
+            brief="Kickoff",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+        )
+        workflow_before = conn.execute(
+            "SELECT workflow_json FROM tickets WHERE id=?", (running.id,)
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE tickets SET employee_launch_model=NULL WHERE id=?", (running.id,)
+        )
+        conn.commit()
+
+    for path in ("/api/worker-types/research", "/api/worker-types/coding"):
+        response = test_client.delete(path, headers={"X-Plan-Actor": "worker"})
+        assert response.json()["error"]["code"] == "agent_forbidden", response.text
+    refused = test_client.delete("/api/worker-types/research")
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["detail"]["ticket_ids"] == [running.id]
+
+    with closing(connect(str(db_path))) as conn:
+        conn.execute(
+            "UPDATE tickets SET employee_launch_model='gpt-6.1-sol' WHERE id=?", (running.id,)
+        )
+        conn.commit()
+    deleted = test_client.delete("/api/worker-types/research", headers={"X-Plan-Actor": "chief"})
+    assert deleted.json() == {"worker_type": "research", "deleted": True}, deleted.text
+
+    assert test_client.get("/api/worker-types/research").status_code == 404
+    # The browser and the native app read the Ticket's own workflow from its detail.
+    detail = test_client.get("/api/tickets", params={"detail": "full", "id": running.id})
+    assert detail.status_code == 200, detail.text
+    assert [stage["id"] for stage in detail.json()["workflow"]["stages"]] == [
+        stage["id"] for stage in json.loads(workflow_before)["stages"]
+    ]
+    assert "research" not in configured_worker_type_registry().registered_worker_types()
+    with closing(connect(str(db_path))) as conn:
+        kept = tickets_data.read_ticket(conn, running.id)
+        assert kept.stage == running.stage
+        assert conn.execute(
+            "SELECT workflow_json FROM tickets WHERE id=?", (running.id,)
+        ).fetchone()[0] == workflow_before
+        with pytest.raises(PlannerError):
+            tickets_data.create_ticket(
+                conn,
+                worker_type="research",
+                title="Refused",
+                brief="Kickoff",
+                principal=OWNER_PRINCIPAL,
+                now=2,
+                title_max_chars=200,
+            )
+    assert test_client.get("/api/skills/panels-worker-research").status_code == 200

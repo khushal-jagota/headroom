@@ -4,12 +4,13 @@
   import { createMetricsController } from '../../lib/vpsMetrics/controller';
   import { metricsConfig } from '../../lib/vpsMetrics/config';
   import { freshness, instruments, machineDescription, processRows, serviceRows } from '../../lib/vpsMetrics/presentation';
+  import SegmentedControl from '../SegmentedControl.svelte';
   import VpsInstrument from './VpsInstrument.svelte';
   import VpsWorkloadRows from './VpsWorkloadRows.svelte';
   import VpsSkeleton from './VpsSkeleton.svelte';
   import './vps.css';
 
-  let { visible = true }: { visible?: boolean } = $props();
+  let { visible = true, embedded = false }: { visible?: boolean; embedded?: boolean } = $props();
   let metricsState = $state.raw<VpsMetricsState | null>(null);
   let controller = $state.raw<MetricsController | null>(null);
   let browserVisible = $state(true);
@@ -22,7 +23,9 @@
     { id: 'cpu', title: 'CPU' }, { id: 'memory', title: 'Memory' }, { id: 'load', title: 'Load' },
     { id: 'io', title: 'Disk I/O' }, { id: 'network', title: 'Network' }, { id: 'disk', title: 'Disk' }
   ];
-  const windows = Object.entries(metricsConfig.windows) as [WindowId, (typeof metricsConfig.windows)[WindowId]][];
+  const windows = Object.entries(metricsConfig.windows).map(([value, window]) => ({ value, label: window.label }));
+  let selectedWindow = $state<string | null>('5m');
+  $effect(() => { if (controller && selectedWindow && selectedWindow !== metricsState?.window) controller.setWindow(selectedWindow as WindowId); });
   $effect(() => { controller?.setVisible(visible && browserVisible); });
   onMount(() => {
     const runtime = createMetricsController();
@@ -40,21 +43,17 @@
 </script>
 
 <div class="vps-container">
-  <div class="screen" data-screen="vps" data-current={loading ? undefined : !current.stale} aria-busy={loading}>
+  <div class="screen" class:embedded data-screen="vps" data-current={loading ? undefined : !current.stale} aria-busy={loading}>
     <header class="screen-header">
       <div class="screen-header-row">
-        <div class="screen-header-title"><h1 class="screen-header-title">VPS</h1>
+        <div class="screen-header-title">{#if !embedded}<h1 class="screen-header-title">VPS</h1>{/if}
           {#if loading}<div class="machine"><VpsSkeleton shape="detail" /></div>{:else if sample}<p class="machine">{machineDescription(sample)}</p>{/if}
         </div>
         <div class="screen-header-meta">
           <p class="asof" data-current={loading ? undefined : !current.stale} role="status" aria-live="polite">
             {#if loading}<VpsSkeleton />{:else}<span class="asof-mark" aria-hidden="true"></span><span>{current.label}</span>{/if}
           </p>
-          <div class="seg" role="group" aria-label="Window">
-            {#each windows as [id, window]}
-              <button type="button" class="opt" data-vps-window={id} aria-pressed={(metricsState?.window ?? '5m') === id} onclick={() => controller?.setWindow(id)}>{window.label}</button>
-            {/each}
-          </div>
+          <SegmentedControl name="vps-window" label="Window" options={windows} bind:value={selectedWindow} optionAttributes={option => ({ 'data-vps-window': option.value ?? undefined })} />
         </div>
       </div>
     </header>

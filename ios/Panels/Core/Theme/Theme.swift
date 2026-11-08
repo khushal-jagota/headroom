@@ -37,7 +37,6 @@ enum PanelsTheme {
         static let reviewAction = Font.body.weight(.medium)
         static let sectionLabel = Font.footnote.weight(.semibold)
         static let reviewEyebrow = Font.caption2.weight(.semibold)
-        static let savedDecisionTitle = Font.subheadline.weight(.semibold)
         static let latestAction = Font.footnote.weight(.semibold)
         static let artifactTitle = Font.subheadline
         static let artifactLink = Font.subheadline.weight(.semibold)
@@ -187,5 +186,87 @@ extension View {
 
     func panelsNavigationTitle(_ title: String, role: PanelsTheme.TypeScale.NavigationTitleRole = .page) -> some View {
         navigationTitle(title).background(PanelsNavigationTypography(role: role))
+    }
+}
+
+// Goal kit matches assets/tokens.css and charts/lib/{motion-tokens,chart-motion}.
+extension PanelsTheme {
+    enum Goal {
+        static let attention = Color(hex: 0xd4ab6c)
+        static let faint = Color(hex: 0xa6a6a6)
+        static let recessed = Color(hex: 0x0d0d0d)
+        static let surface = Color(hex: 0x1a1a1a)
+        static let raised = Color(hex: 0x252525)
+        static let mutedSurface = Color(hex: 0x212121)
+        static let border = Color.white.opacity(0.055)
+        static let grid = Color.white.opacity(0.047)
+        static let reference = Color(hex: 0x777777)
+        static let range = Color(hex: 0x232323)
+        static let selectedRange = Color(hex: 0x191919)
+        static let meter = Color(hex: 0x2a2a2a)
+        static let budget = Color(hex: 0x424242)
+        static let remaining = Color(hex: 0x676767)
+        static let palette = [Color(hex: 0x9aadd2), Color(hex: 0x647998), Color(hex: 0x414f65)]
+        static let activePalette = [Color(hex: 0xbccceb), Color(hex: 0x839bbd), Color(hex: 0x667d9e)]
+        static let composition = [Color(hex: 0x9aadd2), Color(hex: 0x646f87), Color(hex: 0x474b55)]
+        static func seriesColor(_ name: String?, index: Int, composed: Bool = false, active: Bool = false) -> Color {
+            let slot = name == "blue" ? 0 : name == "blue-muted" ? 1 : name == "blue-dark" ? 2 : index % 3
+            return (composed ? composition : active ? activePalette : palette)[slot]
+        }
+        static let reading: CGFloat = 40
+        static let compactReading: CGFloat = 32
+        static let completionReading: CGFloat = 36
+        static let plotHeight: CGFloat = 176
+        static let cardRadius: CGFloat = 24
+        static let panelRadius: CGFloat = 28
+        static let ringWidth: CGFloat = 12
+        static let activeRingWidth: CGFloat = 16
+        static let ringSize: CGFloat = 200
+        static let barDuration = 0.6
+        static let gaugeReveal = 0.768
+        static let lineReveal = 0.84
+        static let standardDuration = 0.24
+        static let instantDuration = 0.12
+        static let delay = 0.08
+        static let checkedHold = 0.72
+        static let itemCollapse = 0.28
+        static let panelCollapse = 0.26
+        static let bodyCollapse = 0.32
+        static let completedCollapse = 0.24
+        static let summaryEnterDuration = 0.22
+        static let headingExitDuration = 0.15
+        static let countExitDuration = 0.14
+        static let chevronDuration = 0.15
+        static let smoothDuration = 0.4
+        static let pressDuration = 0.11
+        static let tickDelay = 0.05
+        static let tickDuration = 0.15
+        /// Motion's `visualDuration` springs, written as the stiffness and damping Motion derives
+        /// from them (`motion-dom` spring generator): root = 2π / (visualDuration × 1.2).
+        static func visualSpring(_ visualDuration: Double, bounce: Double = 0) -> Animation {
+            let root = 2 * Double.pi / (visualDuration * 1.2)
+            return .interpolatingSpring(mass: 1, stiffness: root * root, damping: 2 * (1 - bounce) * root)
+        }
+        static let snappy = visualSpring(0.26)
+        static let smooth = visualSpring(smoothDuration)
+        static let morph = visualSpring(0.42)
+        /// A gauge's first fill: the smooth spring stretched to the reveal duration.
+        static let gaugeRevealSpring = visualSpring(gaugeReveal)
+        static let disclosure = Animation.interpolatingSpring(mass: 1, stiffness: 280, damping: 34)
+        static let standard = Animation.timingCurve(0.22, 1, 0.36, 1, duration: standardDuration)
+        /// Motion's tween default when a transition names only a duration.
+        static func easeInOut(_ duration: Double) -> Animation { .timingCurve(0.42, 0, 0.58, 1, duration: duration) }
+        static func standardEase(_ duration: Double) -> Animation { .timingCurve(0.22, 1, 0.36, 1, duration: duration) }
+        static func enter(_ duration: Double) -> Animation { .timingCurve(0.16, 1, 0.3, 1, duration: duration) }
+        /// The app curve in assets/tokens.css (`--motion-ease`).
+        static func appEase(_ duration: Double) -> Animation { .timingCurve(0.2, 0.7, 0.3, 1, duration: duration) }
+        /// Svelte's `cubicOut`, used by the checklist's grow and fly transitions.
+        static func cubicOut(_ duration: Double) -> Animation { Animation(GoalCubicOut(duration: duration)) }
+        /// Chart.js `easeInOutCubic`, the read-only bar chart's 0.6 s update.
+        static let bars = Animation(GoalCubicInOut(duration: barDuration))
+        static let reveal = Animation.timingCurve(0.65, 0, 0.35, 1, duration: lineReveal)
+        static func tone(_ name: String) -> Color {
+            switch name { case "good": PanelsTheme.success; case "bad": PanelsTheme.error; case "attention": attention; case "info": PanelsTheme.accent; default: PanelsTheme.muted }
+        }
     }
 }

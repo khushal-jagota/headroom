@@ -234,12 +234,12 @@
   .navigation-health[data-state="changing"] .status-mark { background: var(--accent-bright); animation: status-pulse 1.6s var(--motion-ease) infinite; }
   .status-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status-sentence { min-width: 0; }
-  .status-action { flex: none; margin-left: auto; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+  .status-action { flex: none; margin-left: auto; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 660; cursor: pointer; }
   .status-action:hover { text-decoration: underline; }
   .status-info { flex: none; width: 16px; height: 16px; margin-left: var(--space-1); padding: 0; border: var(--border-hairline) solid currentColor; border-radius: var(--radius-pill); background: transparent; color: inherit; font: 600 10px/14px var(--font-ui); opacity: .75; cursor: pointer; }
   .status-info--alone { margin-left: auto; }
   .status-info:hover { opacity: 1; }
-  .status-action:focus-visible, .status-info:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: 2px; }
+  .status-action:focus-visible, .status-info:focus-visible { outline: var(--focus-width) solid var(--focus-ring); outline-offset: 2px; }
   @keyframes status-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   @media (max-width: 720px) {
     .status-card { margin: 0; border-radius: 0; padding: var(--space-3); }

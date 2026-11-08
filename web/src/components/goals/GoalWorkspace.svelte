@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '../Button.svelte';
  import GoalContent from './GoalContent.svelte';
  import {workspaceAddress} from '../../lib/workspaceAddress';
  import {createQuery} from '@tanstack/svelte-query';
@@ -48,7 +49,7 @@
 <ManagerFrame class="goal-workspace" bind:conversationState {openedFile} {onOpenFile}>
  <div class="goal-content" data-goal-page={id}>
  {#if goal}
- <GoalHeader {goal}>{#snippet mark()}{#if goal.holder_kind==='chief'}<button class="make-manager" disabled={promoting} aria-busy={promoting} onclick={makeManager}>{promoting?'Making Manager…':'Make it a Manager'}</button>{/if}{/snippet}</GoalHeader>
+ <GoalHeader {goal}>{#snippet mark()}{#if goal.holder_kind==='chief'}<Button variant="ghost" class="make-manager" disabled={promoting} aria-busy={promoting} onclick={makeManager}>{promoting?'Making Manager…':'Make it a Manager'}</Button>{/if}{/snippet}</GoalHeader>
  {#if error}<ErrorLine {error}/>{/if}
  <GoalContent {goal}/>
  {:else if detail.error}<ErrorLine error={detail.error}/>{:else}<p>Loading goal…</p>{/if}
@@ -56,5 +57,5 @@
  {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:${holder.kind}:${holder.id}`} label={holderLabel} composerPlaceholder={holder.kind==='manager'?'Message this manager…':'Message the Chief…'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={holder.kind==='manager'?holder:undefined} uploadOwner={holder}/>{/snippet}
 </ManagerFrame>
 <style>
-.goal-content{container-type:inline-size;max-width:900px;margin:0 auto;padding-top:32px}.make-manager{border:0;background:none;color:var(--text-muted);font:inherit;font-size:12px;padding:0;cursor:pointer}.make-manager:hover{color:var(--text-strong)}@media(max-width:760px){.goal-content{padding-top:24px}}
+.goal-content{container-type:inline-size;max-width:var(--page-measure);margin:0 auto}
 </style>

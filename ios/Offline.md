@@ -1,11 +1,16 @@
 # Saved data and interrupted connections
 
 The phone keeps recently read Workspace, Review, ticket, orchestrator, Chief and
-conversation responses in one SwiftData database in Application Support. A screen
+conversation responses in one SwiftData database in Application Support. Workspace
+and Review restore from the last saved navigation view, and from the last one that
+carried Workspace, so a relaunch after Review still shows Workspace. Each view
+stream's first snapshot is what is saved; the stream then catches the screen up. A screen
 restores its saved response before starting a fresh read. New responses apply
-immediately, including changes that move rows. A failed refresh keeps the last
-successful response. A screen with no saved response shows still, rough blocks
-only after 300 milliseconds. The blocks never replace existing content.
+immediately, including changes that move rows. If the server cannot be reached,
+the app replaces the current screen with a Tailscale reminder and Try again,
+keeping saved responses and drafts on the phone. Retry or returning to the app
+reads again. Other failed refreshes keep the last successful response visible.
+A screen with no saved response shows still, rough blocks only after 300 milliseconds. The blocks never replace existing content.
 
 Successful cached reads are saved by a serial background writer before the read
 finishes. An identical response still refreshes its saved date, so it keeps its
@@ -29,7 +34,7 @@ Messages appear immediately with a clock and “Waiting for connection”. They 
 their original sender identity, timestamp, owner, conversation and attachment
 bytes. The outbox processes work oldest first. Foreground entry, network-path
 recovery and the foreground retry loop prompt a drain. URLSession and the existing
-change and conversation streams remain the network interfaces. A network path is
+change, navigation view and conversation streams remain the network interfaces. A network path is
 only a reason to try; request results determine delivery.
 
 For an existing conversation, the drainer asks the receipt endpoint about the exact
@@ -50,12 +55,12 @@ crash or across an unknown newly created conversation.
 
 ## Decisions and recordings
 
-Approval and send-back first enter the local outbox. The ask leaves Review and a
-pending row shows its state. Approvals send the original expected proposal
+Approval and send-back first enter the local outbox. The ask leaves Review, and
+Review shows no row for the saved decision. Approvals send the original expected proposal
 revision. Send-backs also send the saved proposal revision. Both fetch the proposal
 immediately before posting and compare field, creation time and revision.
-A mismatch or a server refusal of the revision becomes “This changed,
-review again”; saved words remain readable and selectable in the pending row.
+A mismatch or a server refusal of the revision marks the decision as changed,
+and the ask returns to the queue.
 
 The server checks the expected revision in the same transaction as either decision,
 so a change between the final read and the POST is refused. Neither decision endpoint
@@ -98,3 +103,12 @@ the sender identity and attachments. Reconnect, queue acceptance and explicit re
 preserve that boundary. Review drafts are scoped to the conversation separately
 from the full conversation composer. The draft clears after accepted delivery; a
 refusal or uncertain response keeps it available.
+
+Goal pages retain accepted readings and unfinished text or manual commands while
+the app runs. These edits use the Goal and measure APIs directly, outside the
+message outbox. There is no automatic replay after reconnect or relaunch. A failed
+manual write keeps its exact request identity and payload for an explicit retry.
+Conflicts load the accepted reading and require discarding the old edit before a
+new write. A failed page edit keeps its captured revision; Retry save cannot
+overwrite a newer server page. Messages from goal pages use their holder’s durable message outbox. Retired
+goal-owned queued messages retain their words and never replay.

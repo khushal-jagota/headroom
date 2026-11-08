@@ -4,13 +4,13 @@
   import { queries } from "../lib/queryCatalogue";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
+  import ComposerField from "../components/conversation/ComposerField.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import ListRow from "../components/ListRow.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
-  import Pill from "../components/Pill.svelte";
   import ResourceState from "../components/ResourceState.svelte";
-  import ScreenHeader from "../components/ScreenHeader.svelte";
+  import ManagerHeader from "../components/ManagerHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
@@ -50,35 +50,40 @@
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void capture();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
     }
   }
+
+  // The title was a one-line text input, which drops line breaks from whatever is pasted.
+  $effect(() => {
+    if (/[\r\n]/.test(title)) title = title.replace(/[\r\n]+/g, "");
+  });
 </script>
 
 <section class="ideas-screen" data-screen="ideas">
   <div class="doc">
-    <ScreenHeader title="Ideas">
-      {#snippet meta()}
-        <Pill>{ideas.data?.ideas?.length || 0}</Pill>
-      {/snippet}
-    </ScreenHeader>
+    <ManagerHeader>
+      {#snippet title()}Ideas{/snippet}
+      {#snippet actions()}<span class="idea-count">{ideas.data?.ideas?.length || 0} captured</span>{/snippet}
+    </ManagerHeader>
     <div class="col">
       <section class="capture" data-create="idea">
         {#if createError}<ErrorLine error={createError} />{/if}
-        <input
-          class="in title-in"
-          type="text"
-          placeholder="Capture an idea..."
-          data-input="title"
+        <!-- The composer's field (ComposerField), twice: the idea, which stays one line of words
+             as the text input it was (Enter captures; a line break never lands in it), and its
+             detail. -->
+        <ComposerField
           bind:value={title}
+          placeholder="Capture an idea..."
+          inputAttributes={{ "data-input": "title" }}
           onkeydown={keydown}
         />
-        <textarea
-          class="in detail-in"
-          rows="2"
-          placeholder="Add detail — optional"
-          data-input="body"
+        <ComposerField
           bind:value={detail}
-        ></textarea>
+          placeholder="Add detail — optional"
+          inputAttributes={{ "data-input": "body" }}
+        />
         <div class="foot">
           <SegmentedControl name="project" options={projectOptions} bind:value={project} />
           <div class="spacer"></div>
@@ -124,3 +129,8 @@
     </div>
   </div>
 </section>
+
+<style>
+  .ideas-screen { padding-top:var(--page-top); width:100%; max-width:var(--page-measure); margin-inline:auto; }
+  .idea-count { color:var(--tone-tertiary); font-size:var(--type-small); }
+</style>

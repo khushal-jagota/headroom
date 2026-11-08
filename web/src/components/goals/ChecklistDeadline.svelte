@@ -104,6 +104,11 @@
     editing = false;
     save();
   }
+  function openPickerFromField(event: MouseEvent) {
+    // Focus expands the input before pointerup. Its click can land on this wrapper.
+    if (event.target instanceof Element && event.target.closest('button')) return;
+    if (input) openPicker(input);
+  }
   function openPicker(node: HTMLInputElement) {
     if (pending || failed) return;
     if (typeof node.showPicker === 'function') try { node.showPicker(); } catch { /* Native keyboard entry remains available. */ }
@@ -112,14 +117,16 @@
 
 {#if editable || item.deadline}
   <div class="deadline" class:editing class:undated={!item.deadline} bind:this={root} data-item-deadline={item.id} data-tone={tone} style:--deadline-color={deadlineColor(tone)} onfocusin={begin} onfocusout={focusout}>
-    <div class="field">
+    <div class="field" role="presentation" onclick={openPickerFromField}>
       {#if editable}
         <span class="date-face" aria-hidden="true">
           {#if item.deadline}{goalDateText(item.deadline)}{:else}<svg viewBox="0 0 20 20"><rect x="3.5" y="5" width="13" height="11.5" rx="2"/><path d="M6.5 3.5v3M13.5 3.5v3M3.5 9h13"/></svg>{/if}
         </span>
-        <input bind:this={input} type="date" aria-label={`Deadline for ${item.label}`} aria-describedby={`${uid}-status${error ? ` ${uid}-error` : ''}`} aria-invalid={Boolean(error)} value={value} disabled={pending} readonly={failed} oninput={event => change(event.currentTarget)} onclick={event => openPicker(event.currentTarget)} onkeydown={keydown}/>
+        <input bind:this={input} type="date" aria-label={`Deadline for ${item.label}`} aria-describedby={`${uid}-status${error ? ` ${uid}-error` : ''}`} aria-invalid={Boolean(error)} value={value} disabled={pending} readonly={failed} oninput={event => change(event.currentTarget)} onkeydown={keydown}/>
         {#if editing && (value || draft?.error) && !failed}
-          <button class="clear" type="button" aria-label={`Clear deadline for ${item.label}`} disabled={pending} onclick={clear}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 5 6 6M11 5l-6 6"/></svg></button>
+          <!-- Pressing Clear keeps focus in the date field, so the field does not collapse and move Clear
+             from under the pointer before release (the left-aligned field shifts; its click would miss). -->
+          <button class="clear" type="button" aria-label={`Clear deadline for ${item.label}`} disabled={pending} onmousedown={event => event.preventDefault()} onclick={clear}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 5 6 6M11 5l-6 6"/></svg></button>
         {/if}
       {:else}
         <time datetime={item.deadline ?? undefined} aria-describedby={`${uid}-status`}>{goalDateText(item.deadline)}</time>
@@ -139,20 +146,24 @@
 {/if}
 
 <style>
-  .deadline { display: grid; flex: 0 0 auto; justify-items: end; align-self: start; max-width: 100%; color: var(--deadline-color); font-size: var(--type-xs); font-weight: 400; }
+  .deadline { display: grid; flex: 0 0 auto; justify-items: start; align-self: start; max-width: 100%; color: var(--deadline-color); font-size: var(--type-small); font-weight: var(--weight-small); font-variant-numeric: tabular-nums; }
   .field { position: relative; display: flex; align-items: center; min-height: 44px; }
-  .date-face { display: flex; align-items: center; justify-content: center; min-width: 44px; padding-inline: var(--space-1); white-space: nowrap; pointer-events: none; }
+  .date-face { display: flex; align-items: center; justify-content: flex-start; min-width: 44px; padding-inline: 0; white-space: nowrap; pointer-events: none; }
   svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
+  /* An undated step's way to set a date: a 14px mark in the tertiary tone drawn at the checks'
+     1.5px, 8px after the step's name; its target runs on past the mark. */
+  .date-face svg { width: 14px; height: 14px; color: var(--tone-tertiary); stroke-width: calc(1.5 * 20 / 14); }
   input { position: absolute; inset: 0; width: 100%; min-width: 0; margin: 0; padding: var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; opacity: 0; cursor: pointer; }
-  input:focus { position: relative; width: 112px; opacity: 1; cursor: text; outline: var(--border-strong) solid var(--accent-bright); outline-offset: -2px; }
+  input:focus { position: relative; width: 112px; opacity: 1; cursor: text; outline: var(--focus-width) solid var(--focus-ring); outline-offset: -2px; }
   .field:has(input:focus) .date-face { display: none; }
   input::-webkit-calendar-picker-indicator { display: none; }
   input:disabled { cursor: wait; }
   .clear { position: relative; z-index: 1; display: grid; width: 44px; min-height: 44px; place-items: center; margin: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; }
-  .clear:focus-visible, .error button:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: -2px; }
-  time { padding-inline: var(--space-1); white-space: nowrap; }
+  .clear:focus-visible, .error button:focus-visible { outline: var(--focus-width) solid var(--focus-ring); outline-offset: -2px; }
+  time { padding-inline: 0 var(--space-1); white-space: nowrap; }
   .error { width: min(24ch, 100%); padding-bottom: var(--space-2); color: var(--accent-error); font-size: var(--type-xs); overflow-wrap: anywhere; }
   .error-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .error button { min-height: 44px; margin: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text-muted); font: inherit; cursor: pointer; }
   .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0; }
+
 </style>

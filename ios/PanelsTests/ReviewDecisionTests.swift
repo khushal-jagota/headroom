@@ -203,20 +203,50 @@ import XCTest
     }
 
     func testSkipIsLocalAndNewProposalIdentityReturns() {
+        func card(_ parts: ReviewItem...) -> ReviewCard { ReviewCard(id: "ticket:a", ticketId: "a", parts: parts) }
         let old = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "brief", title: "First", waitingSince: 1)
         let new = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "brief", title: "First", waitingSince: 2)
         var queue = ReviewQueue()
-        queue.skip(old)
-        XCTAssertNil(queue.current(in: [old]))
-        XCTAssertEqual(queue.skippedCount(in: [old]), 1)
-        XCTAssertEqual(queue.skippedCount(in: [new]), 0, "A removed or replaced ask cannot be revisited")
-        XCTAssertEqual(queue.current(in: [new])?.id, new.id)
+        queue.skip(card(old))
+        XCTAssertNil(queue.current(in: [card(old)]))
+        XCTAssertEqual(queue.skippedCount(in: [card(old)]), 1)
+        XCTAssertEqual(queue.skippedCount(in: [card(new)]), 0, "A removed or replaced ask cannot be revisited")
+        XCTAssertEqual(queue.current(in: [card(new)])?.id, "ticket:a")
         queue.revisit()
-        XCTAssertEqual(queue.current(in: [old])?.id, old.id)
-        XCTAssertEqual(queue.skippedCount(in: [old]), 0)
-        queue.skip(old)
+        XCTAssertEqual(queue.current(in: [card(old)])?.id, "ticket:a")
+        XCTAssertEqual(queue.skippedCount(in: [card(old)]), 0)
+        queue.skip(card(old))
         queue.resolve(old)
-        XCTAssertEqual(queue.skippedCount(in: [old]), 0, "An ask resolved during refresh cannot be revisited")
+        XCTAssertEqual(queue.skippedCount(in: [card(old)]), 0, "An ask resolved during refresh cannot be revisited")
+    }
+
+    /// One Ticket card holds a proposal and a message. Skip takes the whole card and
+    /// counts once; deciding one part leaves the card current until the other is handled.
+    func testTicketCardSkipsAndResolvesAsOneEntry() {
+        let proposal = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "plan", title: "A", waitingSince: 2)
+        let message = ReviewItem(reviewItemType: "message", title: "A", waitingSince: 1, conversationId: "c", ownerKind: "ticket", ownerId: "a")
+        let ticket = ReviewCard(id: "ticket:a", ticketId: "a", parts: [proposal, message])
+        let chief = ReviewItem(reviewItemType: "message", title: "Chief", waitingSince: 3, conversationId: "chief", ownerKind: "chief")
+        let lone = ReviewCard(id: chief.id, parts: [chief])
+        var queue = ReviewQueue()
+        queue.skip(ticket)
+        XCTAssertEqual(queue.current(in: [ticket, lone])?.id, lone.id)
+        XCTAssertEqual(queue.skippedCount(in: [ticket, lone]), 1)
+        XCTAssertEqual(queue.skippedCardCount, 1)
+        queue.revisit()
+        queue.resolve(proposal)
+        XCTAssertEqual(queue.current(in: [ticket, lone])?.id, ticket.id)
+        XCTAssertEqual(queue.pending(ticket).map(\.id), [message.id])
+        queue.resolve(message)
+        XCTAssertEqual(queue.current(in: [ticket, lone])?.id, lone.id)
+        // A new part on a skipped card brings the card back with every waiting part.
+        let later = ReviewItem(reviewItemType: "message", title: "A", waitingSince: 4, conversationId: "d", ownerKind: "ticket", ownerId: "a")
+        let first = ReviewCard(id: "ticket:b", ticketId: "b", parts: [proposal])
+        var skipped = ReviewQueue()
+        skipped.skip(first)
+        let grown = ReviewCard(id: "ticket:b", ticketId: "b", parts: [proposal, later])
+        XCTAssertEqual(skipped.current(in: [grown])?.id, grown.id)
+        XCTAssertEqual(skipped.pending(grown).count, 2)
     }
 }
 

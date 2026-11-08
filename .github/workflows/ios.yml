@@ -19,6 +19,15 @@ jobs:
         suite: [system-models, offline]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        if: matrix.suite == 'offline'
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web presentation oracle dependencies
+        if: matrix.suite == 'offline'
+        run: scripts/dev npm --prefix web ci
       - name: Toolchain
         run: swift --version
       - name: Host tests

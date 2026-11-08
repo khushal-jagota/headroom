@@ -6,15 +6,12 @@
   let { instrument, id, title, trend, loading = false }: {
     instrument?: Instrument; id: InstrumentId; title: string; trend?: Trend; loading?: boolean;
   } = $props();
-  let wide = $derived(id === 'cpu' || id === 'memory');
   let primary = $derived(instrument ? formatReading(instrument.primary, id === 'cpu' || id === 'disk' ? 0 : id === 'load' ? 1 : undefined) : null);
   let secondary = $derived(instrument?.secondary ? formatReading(instrument.secondary) : null);
   let unit = $derived(id === 'io' ? `${primary?.unit ?? ''} written` : id === 'network' ? `${primary?.unit ?? ''} in` : id === 'disk' ? '% full' : primary?.unit ?? '');
 </script>
 
-<article class="instrument" class:instrument--wide={wide} class:instrument--small={!wide} data-state={instrument?.severity ?? 'normal'} data-vps-metric={id} aria-label={title}>
-  {#if loading}<div class="trend"><VpsSkeleton shape="trend" /></div>
-  {:else if instrument?.primary.value != null && trend}<VpsTrend {trend} ceiling={instrument.ceiling ?? null} />{/if}
+<article class="instrument" data-state={instrument?.severity ?? 'normal'} data-vps-metric={id} aria-label={title}>
   <div class="instrument-body">
     <div class="instrument-top">
       <h2 class="instrument-name">{#if loading}<VpsSkeleton />{:else}{title}{/if}</h2>
@@ -38,4 +35,6 @@
       </p>
     {/if}
   </div>
+  {#if loading}<div class="trend-loading"><VpsSkeleton shape="trend" /></div>
+  {:else if instrument?.primary.value != null && trend}<VpsTrend {trend} ceiling={instrument.ceiling ?? null} readingUnit={instrument.primary.unit} primaryLabel={id === 'io' ? 'Written' : id === 'network' ? 'In' : title} secondaryLabel={id === 'io' ? 'Read' : 'Out'} />{/if}
 </article>

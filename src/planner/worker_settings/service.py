@@ -8,11 +8,12 @@ them. Nothing here reconciles two sources, because there is only one.
 from __future__ import annotations
 
 import re
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, replace
-from pathlib import Path
+from dataclasses import replace
+from pathlib import Path, PurePosixPath
 from typing import Any, Final
 
 from planner.conversation.contracts import require_conversation_backend_key
@@ -20,6 +21,7 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.managed_skills import (
     SKILL_FILE_NAME,
     atomic_replace_text,
+    delete_skill_source,
     frontmatter_bounds,
     has_skill,
     read_all_skill_sources,
@@ -45,10 +47,14 @@ from planner.worker_settings.contracts import (
 )
 from planner.worker_settings.logic.skill_edits import normalize_skill_patch
 from planner.worker_types.configuration import load_worker_runtime_definitions
-from planner.worker_types.contracts import TicketTypeMigration, WorkerProfile, WorkerTypeDefinition
+from planner.worker_types.contracts import WorkerProfile, WorkerTypeDefinition
 from planner.worker_types.guidance import render_workflow_guide
 from planner.worker_types.registry import WorkerTypeRegistry
-from planner.worker_types.store import definition_transaction, write_definition
+from planner.worker_types.store import (
+    definition_transaction,
+    delete_definition,
+    write_definition,
+)
 
 CHIEF_SETTINGS_KEY: Final = "chief_of_staff"
 CHIEF_LABEL: Final = "Chief of Staff"
@@ -241,6 +247,72 @@ def save_skill(
     )
 
 
+def delete_skill(conn: sqlite3.Connection, skill_name: str, *, database_parent: Path | str) -> None:
+    """Remove a skill's row and its whole published folder.
+
+    The folder goes before the row commits. If the folder cannot go, the row stays, and
+    the next database open writes its file back, so the row remains the authority.
+    """
+    if conn.in_transaction:
+        raise RuntimeError("delete_skill requires a connection with no active transaction")
+    with skill_publication_lock(database_parent) as skills_home:
+        with _one_writer(conn):
+            delete_skill_source(conn, skill_name)
+            if PurePosixPath(skill_name).parts != (skill_name,) or skill_name in {".", ".."}:
+                raise PlannerError(
+                    ErrorCode.validation, "skill name is invalid", {"skill_name": skill_name}
+                )
+            folder = skills_home / skill_name
+            if folder.is_symlink() or folder.is_file():
+                folder.unlink()
+            elif folder.exists():
+                shutil.rmtree(folder)
+
+
+def write_skill_file(
+    conn: sqlite3.Connection,
+    skill_name: str,
+    payload: dict[str, Any],
+    *,
+    database_parent: Path | str,
+) -> str:
+    """Write one supporting file inside an existing skill's folder, and return its path.
+
+    The file lives only on disk: no row holds it, and republication never overwrites it.
+    The skill's own SKILL.md is the row's copy, so only the skill editor writes it.
+    """
+    if set(payload) != {"path", "content"}:
+        raise PlannerError(ErrorCode.validation, "send exactly path and content", {})
+    relative, content = payload["path"], payload["content"]
+    if not isinstance(content, str) or not content.strip():
+        raise PlannerError(ErrorCode.validation, "content must not be blank", {})
+    parts = PurePosixPath(relative).parts if isinstance(relative, str) else ()
+    if (
+        not parts
+        or relative.startswith("/")
+        or "\\" in relative
+        or any(part in {".", ".."} for part in parts)
+    ):
+        raise PlannerError(
+            ErrorCode.validation, "path must be relative and inside the skill folder", {}
+        )
+    if parts == (SKILL_FILE_NAME,):
+        raise PlannerError(
+            ErrorCode.validation, "edit SKILL.md through panels skill edit", {"path": relative}
+        )
+    with skill_publication_lock(database_parent) as skills_home:
+        read_skill_source(conn, skill_name)
+        folder = (skills_home / skill_name).resolve()
+        target = folder.joinpath(*parts)
+        resolved = target.resolve()
+        if not resolved.is_relative_to(folder) or resolved == folder / SKILL_FILE_NAME:
+            raise PlannerError(
+                ErrorCode.validation, "path must be relative and inside the skill folder", {}
+            )
+        atomic_replace_text(target, content)
+    return "/".join(parts)
+
+
 def save_worker_type_skill(
     conn: sqlite3.Connection,
     skill_name: str,
@@ -262,7 +334,7 @@ def save_worker_type_definition(
     *,
     now: int,
     database_parent: Path | str,
-) -> tuple[TicketTypeMigration, ...]:
+) -> None:
     """Commit a bundled declaration before publishing its registry or skill files."""
     if conn.in_transaction:
         raise RuntimeError("Worker type API save requires its own outer transaction")
@@ -300,7 +372,7 @@ def save_worker_type_definition(
             )
             parse_skill(rendered, name)
             write_skill_source(conn, name, rendered, now=now, generated_from_workflow=True)
-            migrations = write_definition(conn, definition, now=now)
+            write_definition(conn, definition, now=now)
         load_worker_runtime_definitions(conn)
         if rendered is not None:
             try:
@@ -310,14 +382,21 @@ def save_worker_type_definition(
             except PlannerError as exc:
                 if exc.code is ErrorCode.skill_save_incomplete:
                     detail = dict(exc.detail or {})
-                    detail.update(
-                        worker_type=definition.worker_type,
-                        definition_saved=True,
-                        migrations=[asdict(migration) for migration in migrations],
-                    )
+                    detail.update(worker_type=definition.worker_type, definition_saved=True)
                     raise PlannerError(exc.code, exc.message, detail) from exc
                 raise
-    return migrations
+
+
+def delete_worker_type_definition(conn: sqlite3.Connection, worker_type: str) -> None:
+    """Remove a preset and stop offering it, in one act.
+
+    Its specialist skill stays: `panels skill delete` refuses it while an unfinished
+    Ticket's workflow still names it.
+    """
+    if conn.in_transaction:
+        raise RuntimeError("Worker type delete requires its own outer transaction")
+    delete_definition(conn, worker_type)
+    load_worker_runtime_definitions(conn)
 
 
 # --- Worker types -------------------------------------------------------------

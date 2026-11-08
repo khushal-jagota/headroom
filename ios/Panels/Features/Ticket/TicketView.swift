@@ -47,7 +47,9 @@ struct TicketView: View {
         .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .panelsRefreshable { await load(); await loadArtifacts() }
         .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
-        .task(id: "\(store.baseURL.absoluteString):\(store.revision)") { await load() }
+        .task(id: "\(store.baseURL.absoluteString)|\(store.connectionSession)") { await load() }
+        .reload(onChangeOf: store.ticketStamp(ticketID)) { await load() }
+        .navigationDemand("ticket:\(ticketID)", selected: ViewOwner(kind: "ticket", id: ticketID))
         .task(id: store.baseURL.absoluteString) { await loadArtifacts() }
         .sheet(isPresented: $scopeOpen) {
             if let presentation {
@@ -69,7 +71,7 @@ struct TicketView: View {
         .navigationDestination(item: $linkedArtifact) { RouteDestination(route: $0) }
         .environment(\.openURL, OpenURLAction { url in
             if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { linkedArtifact = route; return .handled }
-            return .systemAction
+            return ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) ? .discarded : .systemAction
         })
     }
 
@@ -98,7 +100,8 @@ struct TicketView: View {
                 }.disabled(busy || titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Cancel") { renaming = false }
             } else {
-                AgentPageTitle(title: detail.title, signal: detail.conversationSignal)
+                TicketMachineLabel(locale: detail.locale)
+                AgentPageTitle(title: detail.title, signal: TicketMachine.signal(store.presentation?.ticketsById[ticketID]?.signal.conversationSignal ?? detail.conversationSignal, locale: detail.locale, health: store.executorHealth, completed: presentation?.terminal == true))
                     .contextMenu { Button("Rename", systemImage: "pencil") { titleDraft = detail.title; renaming = true } }
             }
             Group {
@@ -144,7 +147,7 @@ struct TicketView: View {
                 TicketProposalCard(presentation: presentation, proposal: proposal) { await load(); await store.refresh() }
                     .id("\(proposal.field):\(proposal.revision)")
             } else {
-                Text(presentation.heading).font(PanelsTheme.TypeScale.heading)
+                Text(TicketMachine.activityUnknown(presentation.ticket.locale, health: store.executorHealth) ? "Current activity on Mac is unknown." : presentation.heading).font(PanelsTheme.TypeScale.heading)
                     .foregroundStyle(presentation.ticket.agentState == "errored" ? PanelsTheme.error : PanelsTheme.strong)
                     .accessibilityAddTraits(.isHeader)
                 if !presentation.terminal && presentation.ticket.stage != "needs_brief" {
@@ -213,7 +216,12 @@ struct TicketView: View {
             try Task.checkCancellation()
             guard generation == loadGeneration, client.baseURL == store.baseURL else { return }
             detail = result; manifest = type; error = nil
-        } catch { if !Task.isCancelled && generation == loadGeneration && client.baseURL == store.baseURL { self.error = error.localizedDescription } }
+        } catch {
+            if !Task.isCancelled && generation == loadGeneration && client.baseURL == store.baseURL {
+                self.error = error.localizedDescription
+                if error is APIError, error.localizedDescription.hasPrefix("Broken Ticket:") { detail = nil; manifest = nil }
+            }
+        }
     }
     private func loadArtifacts() async {
         let client = store.client

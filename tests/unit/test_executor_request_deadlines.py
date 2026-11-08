@@ -31,7 +31,9 @@ def peer() -> Any:
 
 
 @pytest.mark.parametrize("blocked", ["response", "drain", "lock"])
-def test_absolute_request_deadline_covers_send_and_response(blocked: str) -> None:
+def test_absolute_request_deadline_covers_send_and_response(
+    blocked: str, caplog: pytest.LogCaptureFixture
+) -> None:
     async def run() -> None:
         writer = peer()
         link = message_link(writer, IDENTITY)
@@ -52,6 +54,11 @@ def test_absolute_request_deadline_covers_send_and_response(blocked: str) -> Non
             assert isinstance(cast_reader, MessageStream)
             cast_reader.feed_eof()
             await link.wait_closed()
+        # The timeout's reason is logged once; the reader ending after it adds no line.
+        closes = [r.getMessage() for r in caplog.records if "executor link closed" in r.message]
+        assert len(closes) == 1
+        assert " generation=1 " in closes[0]
+        assert closes[0].endswith(" reason=request timeout on envelope after 0.02s")
 
     asyncio.run(run())
 

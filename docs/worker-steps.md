@@ -9,7 +9,7 @@ That narrowness is the design. A Worker can run for a long time, a person can ta
 - **The readiness decision.** A read-only check of one Ticket that answers "may a step start now?" or names the reason it may not.
 - **The worker-step claim.** The only control fact a Ticket stores about automatic work: at rest, out, or errored. See [Ticket lifecycle](tickets.md#how-status-is-read).
 - **The opener fact.** On a stage the person shares with the Worker, a record that this entry onto the stage has had its opening turn.
-- **The loop.** A background pass over ordinary Tickets, least recently updated first, that runs readiness, takes the claim, and sends.
+- **The loop.** A background pass over the Tickets that could start, least recently updated first, that runs readiness, takes the claim, and sends. It skips backlogged Tickets, Tickets at a final Stage, and Tickets whose step is out, failed, or waiting on a proposal before it reads them.
 
 ```
  change signal or timer
@@ -54,7 +54,7 @@ One guarded write takes the claim, re-running every readiness check inside it, s
 
 On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A turn that merely ends does not give it back. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot.
 
-A preset Ticket reads its saved specialist skill reference as usual. A custom Ticket receives the complete workflow guide at kickoff. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step.
+Every Ticket receives its complete workflow guide at kickoff, from its own copy, so a later edit to its Worker type does not change what it reads. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step.
 
 ## Where it shows up
 

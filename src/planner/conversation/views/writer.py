@@ -415,7 +415,9 @@ def _layout_row(
                 sequence,
                 created_at,
                 sent_at_milliseconds(payload, created_at),
-                int(focus_visible),
+                # Focus shows every running turn's head, whoever sent the prompt that
+                # opened it. The turn's ending settles whether the head stays.
+                1,
                 changed_sequence,
             ),
         )
@@ -439,8 +441,14 @@ def _layout_row(
             (sequence, conversation_id),
         )
         if turn_key is not None:
+            # An ended turn keeps its Focus head when its opening prompt is in Focus or
+            # it sent the owner a message. Any other ended turn left nothing in Focus.
             conn.execute(
                 "UPDATE conversation_view_turns SET ending_sequence=?,ending=?,ended_at=?,"
+                "focus_head=(focus_message_count>0 OR EXISTS(SELECT 1 FROM "
+                "conversation_view_rows r WHERE r.conversation_id=conversation_view_turns."
+                "conversation_id AND r.sequence=conversation_view_turns.source_sequence "
+                "AND r.focus_visible=1 AND r.removed=0)),"
                 "changed_sequence=? WHERE conversation_id=? AND turn_key=?",
                 (
                     sequence,
@@ -543,46 +551,37 @@ def _repair_removed_boundaries(
         )
 
 
-def rebuild_projection(conn: sqlite3.Connection) -> None:
-    """Replace derived rows in the caller's migration transaction."""
+def rebuild_conversation_view(conn: sqlite3.Connection, conversation_id: str) -> None:
+    """Replace one conversation's derived rows from its events, in the caller's transaction.
+
+    The rows are written at the current ``VIEW_PROJECTION_VERSION``. Source bodies are
+    held in batches, never a full conversation.
+    """
     for table in ("lookups", "groups", "turns", "rows", "state"):
-        conn.execute(f"DELETE FROM conversation_view_{table}")
-    backfill_projection(conn)
+        conn.execute(
+            f"DELETE FROM conversation_view_{table} WHERE conversation_id=?", (conversation_id,)
+        )
+    append_events_after(conn, conversation_id, 0)
 
 
-def backfill_projection(conn: sqlite3.Connection) -> None:
-    """One upgrade pass. Source bodies are held in batches, never a full conversation."""
-    conversation_after = ""
-    while True:
-        conversation = conn.execute(
-            "SELECT conversation_id FROM conversations WHERE conversation_id>? "
-            "ORDER BY conversation_id LIMIT 1",
-            (conversation_after,),
-        ).fetchone()
-        if conversation is None:
-            break
-        conversation_id = conversation[0]
-        after = 0
-        while True:
-            rows = conn.execute(
-                "SELECT sequence,created_at,kind,payload FROM conversation_events "
-                "WHERE conversation_id=? AND sequence>? ORDER BY sequence LIMIT ?",
-                (conversation_id, after, PROJECTION_BACKFILL_BATCH),
-            ).fetchall()
-            if not rows:
-                break
-            for sequence, created_at, kind, encoded in rows:
-                _append(
-                    conn,
-                    conversation_id,
-                    sequence,
-                    created_at,
-                    event.conversation_event_payload_from_canonical_json(
-                        event.ConversationEventKind(kind), encoded
-                    ),
-                )
-                after = sequence
-        conversation_after = conversation_id
+def append_events_after(conn: sqlite3.Connection, conversation_id: str, after: int) -> None:
+    """Append one conversation's events after ``after`` to its view, in order."""
+    while rows := conn.execute(
+        "SELECT sequence,created_at,kind,payload FROM conversation_events "
+        "WHERE conversation_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+        (conversation_id, after, PROJECTION_BACKFILL_BATCH),
+    ).fetchall():
+        for sequence, created_at, kind, encoded in rows:
+            _append(
+                conn,
+                conversation_id,
+                sequence,
+                created_at,
+                event.conversation_event_payload_from_canonical_json(
+                    event.ConversationEventKind(kind), encoded
+                ),
+            )
+            after = sequence
 
 
 def repair_rest_line_after_deleting_rows(conn: sqlite3.Connection, conversation_id: str) -> None:

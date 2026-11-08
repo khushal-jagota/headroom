@@ -73,6 +73,7 @@
   let observedOpen = $derived(filter === "active" ? groupOpen : {[filter === "backlogged" ? "backlog" : "done"]:sectionOpen});
 
   let count = $derived(scopedWindow?.total);
+  let placeholderHeight = $derived(count === undefined ? undefined : `${Math.min(count, principal.kind === 'chief' ? 30 : 60) * 28 + 2}px`);
   let label = $derived(filter === "backlogged" ? "Backlogged" : "Done");
   $effect.pre(() => {
     groups;
@@ -87,21 +88,22 @@
 
 </script>
 
-<div bind:this={root} data-worker-section={filter} use:navigationScrollWindow={{window:principal.kind==='chief'||scopedGroups||(filter!=='active'&&!sectionOpen)?undefined:scopedWindow,activate:()=>navigation?.owner.prioritizeWindow(scopedWindow?.request),selector:'[data-worker-ticket-id]',key:node=>node.dataset.workerTicketId ?? '',move:(next,nextDirection)=>{anchor=next;direction=nextDirection;}}}>
-  {#snippet ticketRows(items: readonly WorkItemTicketFacts[])}
+<div bind:this={root} data-worker-section={filter} data-empty={filter !== "active" && count === 0 ? "true" : undefined} use:navigationScrollWindow={{window:principal.kind==='chief'||scopedGroups||(filter!=='active'&&!sectionOpen)?undefined:scopedWindow,activate:()=>navigation?.owner.prioritizeWindow(scopedWindow?.request),selector:'[data-worker-ticket-id]',key:node=>node.dataset.workerTicketId ?? '',move:(next,nextDirection)=>{anchor=next;direction=nextDirection;}}}>
+  {#snippet ticketRows(items: readonly WorkItemTicketFacts[], groupKey: string | null = null)}
     <div class="manager-workspace-status-body">
       {#each items as ticket (ticket.id)}
         <div use:railPreview={onHover ? {show:(element, immediate) => onHover?.(element, ticket.id, immediate), leave:onLeave} : null}>
-          <WorkerRow locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
+          <WorkerRow approval={groupKey === "awaiting_approval" ? "owner" : groupKey === "status_awaiting_approval" ? "agent" : null} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
             quiet={ticket.stage === "done"}
             href={workspaceAddress(principal.kind === "manager"
               ? { kind: "ticket", id: ticket.id, openedFromManagerId: principal.id } : { kind: "ticket", id: ticket.id })}
-            data-worker-ticket-id={ticket.id} />
+            data-worker-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} />
         </div>
       {/each}
     </div>
   {/snippet}
   {#snippet contents()}
+    <div class:known-child-count={filter !== 'active' && count !== undefined} style:--child-placeholder-height={placeholderHeight}>
     <ResourceState shape="rows" loading={!ready} hasData={ready} loadingText={`Loading ${filter === "active" ? "Workers" : label}…`}>
       {#if filter === "active"}
         {#each groups as group (group.key)}
@@ -112,7 +114,7 @@
               <span class="manager-workspace-status-label">{group.label}</span>
               <span class="manager-workspace-count" data-group-count>{group.count}</span>
             {/snippet}
-            {#if groupOpen[group.key] ?? true}{@render ticketRows(group.tickets)}{/if}
+            {#if groupOpen[group.key] ?? true}{@render ticketRows(group.tickets, group.key)}{/if}
           </Disclosure>
           </div>
         {/each}
@@ -124,6 +126,7 @@
         <NavigationWindowPages window={scopedWindow} label={filter==='active'?'Active Workers':label} onPage={(next,nextDirection)=>{anchor=next;direction=nextDirection;}} />
       {/if}
     </ResourceState>
+    </div>
   {/snippet}
   {#if filter === "active"}
     {@render contents()}
@@ -138,3 +141,16 @@
     </Disclosure>
   {/if}
 </div>
+
+<style>
+  /* A folded section already knows its count. Reserve its compact rows, not a full list. */
+  .known-child-count :global(.skeleton-region[data-active]) {
+    height:var(--child-placeholder-height);
+    min-height:var(--child-placeholder-height);
+    overflow:hidden;
+  }
+  .known-child-count :global(.skeleton-rows) { padding:0; }
+  .known-child-count :global(.skeleton-rows-head) { display:none; }
+  .known-child-count :global(.skeleton-rows-body) { padding:2px 0 0; }
+  .known-child-count :global(.skeleton-list-row) { height:28px; padding:2px var(--space-3); }
+</style>

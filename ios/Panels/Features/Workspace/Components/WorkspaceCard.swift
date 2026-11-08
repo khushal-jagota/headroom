@@ -18,8 +18,12 @@ struct WorkspaceCard: View {
     let route: AppRoute
     let signal: ConversationSignal?
     let groups: [WorkspaceTicketGroup]
+    /// Active tickets beyond the rows this card loaded; the page shows them all.
+    var hiddenCount = 0
+    var goals: [GoalRecord] = []
     let previewChanged: (Bool) -> Void
     let open: (AppRoute) -> Void
+    @Environment(AppStore.self) private var store
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private static let chiefPortrait: UIImage? = Bundle.main.url(forResource: "workspace-chief", withExtension: "png")
@@ -64,6 +68,8 @@ struct WorkspaceCard: View {
             .accessibilityIdentifier(chief ? "workspace-chief" : "workspace-orchestrator")
             .modifier(WorkspaceContextMenu(route: route, title: title, parent: project, ticket: nil,
                                            signal: signal, previewChanged: previewChanged, open: open))
+            if chief { WorkspaceGoals(holder: .chief, goals: goals, open: open).padding(.top, 12) }
+            else if case .orchestrator(let id) = route { WorkspaceGoals(holder: .manager(id), goals: goals, open: open).padding(.top, 12) }
             ForEach(rows) { row in
                 switch row {
                 case .heading(let section):
@@ -87,17 +93,25 @@ struct WorkspaceCard: View {
                                 .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            ConversationSignalMark(signal: ticket.conversationSignal)
+                            TicketActivityMark(locale: ticket.locale, signal: ticket.conversationSignal, completed: ticket.stage == "done" || ticket.stage == "cancelled")
                         }.frame(minHeight: 44).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("workspace-ticket-\(ticket.id)")
-                    .conversationAccessibility(label: ticket.title, signal: ticket.conversationSignal)
+                    .conversationAccessibility(label: ticket.title, signal: TicketMachine.signal(ticket.conversationSignal, locale: ticket.locale, health: store.executorHealth, completed: ticket.stage == "done" || ticket.stage == "cancelled"))
                     .modifier(WorkspaceContextMenu(route: .ticket(ticket.id), title: ticket.title,
                                                    parent: title, ticket: ticket, signal: ticket.conversationSignal,
                                                    previewChanged: previewChanged, open: open))
                     .transition(.opacity)
                 }
+            }
+            if hiddenCount > 0 {
+                NavigationLink(value: route) {
+                    Text("+\(hiddenCount) more").panelsScaledFont(size: 16).foregroundStyle(PanelsTheme.faint)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("workspace-more")
             }
         }
         .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, groups.isEmpty ? 16 : 2)

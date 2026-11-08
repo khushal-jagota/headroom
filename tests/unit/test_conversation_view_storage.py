@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -37,7 +38,7 @@ from planner.conversation.views.storage import (
     read_page,
     read_turn,
 )
-from planner.conversation.views.writer import append_projection, rebuild_projection
+from planner.conversation.views.writer import append_projection, rebuild_conversation_view
 from planner.core.errors import ErrorCode, PlannerError
 
 
@@ -145,10 +146,20 @@ def test_oversized_body_chunks_preserve_unicode_and_one_logical_markdown_documen
             read_body_chunk(conn, "fixture", reference, 0)
 
 
+def whole_view_projection(conn: sqlite3.Connection) -> dict[str, list[tuple[Any, ...]]]:
+    return {
+        table: sorted(
+            tuple(row) for row in conn.execute(f"SELECT * FROM conversation_view_{table}")
+        )
+        for table in ("state", "rows", "turns", "groups", "lookups")
+    }
+
+
 def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental() -> None:
     with database(FIXTURES[0]["events"]) as conn:
         conn.commit()
         before = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
+        incremental = whole_view_projection(conn)
         encoded = json.dumps({"text": "Must roll back"})
         with pytest.raises(RuntimeError), conn:
             conn.execute(
@@ -186,7 +197,7 @@ def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental
         conn.commit()
         stale = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
         with pytest.raises(RuntimeError, match="migration rollback"), conn:
-            rebuild_projection(conn)
+            rebuild_conversation_view(conn, "fixture")
             assert (
                 conn.execute("SELECT projection_version FROM conversation_view_state").fetchone()[0]
                 == VIEW_PROJECTION_VERSION
@@ -199,12 +210,13 @@ def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental
         assert list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence")) == stale
         original_factory = conn.row_factory
         conn.row_factory = None
-        rebuild_projection(conn)
+        rebuild_conversation_view(conn, "fixture")
         assert conn.row_factory is None
         conn.row_factory = original_factory
         assert (
             list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence")) == before
         )
+        assert whole_view_projection(conn) == incremental
 
 
 def test_tail_names_scope_membership_and_removes_children_from_the_timeline() -> None:
@@ -690,3 +702,75 @@ def test_owner_preview_is_null_without_a_reply_and_private_in_latest_rest_event(
         }
         assert rest["latest_owner_message_preview"] == "Answer\n\nDetail"
         assert '"_owner_message_preview"' not in json.dumps(rest)
+
+
+def test_focus_shows_every_running_turn_head_and_keeps_only_heads_that_left_something() -> None:
+    """Focus heads follow the turn, not the visibility of the prompt that opened it.
+
+    The risk is the counter missing in Focus for turns the Chief or automation started,
+    and an ended turn's head lingering on an open pane after it loses its Focus place.
+    """
+
+    def chief_prompt(sequence: int) -> dict[str, Any]:
+        return event(
+            sequence,
+            "prompt",
+            {
+                "sender_label": "Chief",
+                "sender": {"kind": "chief", "id": "chief"},
+                "recipient": {"kind": "ticket", "id": "worker"},
+                "mode": "queue",
+                "text": "Next step",
+            },
+        )
+
+    ended = {"ending": "completed", "error_summary": None}
+    owner = {
+        "sender": {"kind": "ticket", "id": "worker"},
+        "recipient": {"kind": "owner", "id": "owner"},
+        "sender_label": "worker",
+    }
+    rows = [
+        chief_prompt(1),
+        event(2, "turn_ended", ended),
+        chief_prompt(3),
+        event(4, "message_to_owner", {**owner, "text": "Please decide"}),
+        event(5, "turn_ended", ended),
+        chief_prompt(6),
+    ]
+    timeline: ViewHistoryScope = {"kind": "timeline", "key": None}
+    with database(rows) as conn:
+        conn.execute("ALTER TABLE conversations ADD COLUMN latest_sequence INTEGER DEFAULT 6")
+        heads = [
+            item["key"]
+            for item in read_page(conn, "fixture", "focus")["items"]
+            if item["kind"] == "turn"
+        ]
+        assert heads == ["turn:e3", "turn:e6"]
+        running = read_turn(conn, "fixture", "turn:e6", "focus")
+        assert not running["settled"] and running["started_at_unix_milliseconds"] == 6_000
+        live = ConversationViewLiveOutput()
+        try:
+            status = read_status(conn, "fixture", "focus", live, running=True)
+            latest_turn = status["rest"]["latest_turn"]
+            assert latest_turn is not None and latest_turn["key"] == "turn:e6"
+            changes = _changes(
+                conn,
+                "fixture",
+                "focus",
+                0,
+                [
+                    {
+                        "scope": timeline,
+                        "first": {"sequence": 1, "slot": 1},
+                        "last": {"sequence": 6, "slot": 1},
+                    }
+                ],
+                status,
+            )
+            assert changes is not None
+            (main,) = changes["scope_changes"]
+            assert "turn:e1" in main["removed_keys"]
+            assert {"turn:e3", "turn:e6"} <= set(main["item_keys"])
+        finally:
+            live.close()

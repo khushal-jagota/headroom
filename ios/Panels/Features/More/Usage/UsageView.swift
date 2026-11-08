@@ -28,7 +28,7 @@ struct UsageView: View {
             if let error { Section { LoadErrorView(message: error) { await refresh() } } }
         }
         .panelsNavigationTitle("Usage", role: .usage).panelsScreen()
-        .task(id: "\(store.baseURL):\(metric):\(days):\(store.revision)") { await load() }
+        .task(id: "\(store.baseURL):\(metric):\(days):\(store.connectionSession)") { await load() }
         .panelsRefreshable { await refresh() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -111,7 +111,8 @@ struct UsageView: View {
                         LabeledContent("Estimated", value: UsagePresentation.cost(totals.estimatedCostUsd))
                         LabeledContent("Provider reported", value: UsagePresentation.cost(totals.providerReportedCostUsd))
                         if totals.unknownCostRecords > 0 { Text("\(totals.unknownCostRecords) records have unknown cost").foregroundStyle(PanelsTheme.muted) }
-                        Text("Recorded local CLI use. Estimates are not a bill.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
+                        if let note = summary?.pricingNote { Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint) }
+                        Text("Recorded server CLI use. Estimates are not a bill.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     } else {
                         LabeledContent("Input", value: UsagePresentation.number(totals.inputTokens))
                         LabeledContent("Cache read", value: UsagePresentation.number(totals.cachedInputTokens))
@@ -122,9 +123,9 @@ struct UsageView: View {
             }
             if let summary {
                 Section {
-                    ForEach(summary.sources.filter { provider == "All" || $0.provider == provider.lowercased() }, id: \.provider) { source in
+                    ForEach(summary.sources.filter { provider == "All" || $0.provider == provider.lowercased() }, id: \.id) { source in
                         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-                            LabeledContent(source.provider.capitalized, value: source.state.capitalized)
+                            LabeledContent("\(source.provider.capitalized) · \(source.host)", value: source.state.capitalized)
                             ForEach(source.issues, id: \.self) { Text($0).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted) }
                         }
                     }
@@ -159,6 +160,8 @@ struct UsageView: View {
         } catch { failures.append(error.localizedDescription) }
         do {
             try await recordedRead
+        } catch { failures.append(error.localizedDescription) }
+        do {
             let result = try await client.usage(days: requestedDays)
             guard store.baseURL == client.baseURL else { return }
             if days == requestedDays { summary = result }

@@ -77,7 +77,7 @@
   dialog[open] { animation: dialog-in var(--motion-slow) var(--motion-ease); }
   dialog::backdrop { background: var(--scrim); }
   .dlg { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); }
-  h2 { font-size: var(--type-md); font-weight: 600; color: var(--text-strong); margin: 0; }
+  h2 { font-size: var(--type-page-section); font-weight: var(--weight-title); color: var(--text-strong); margin: 0; }
   p { color: var(--text-muted); line-height: 1.45; margin: 0; }
   p[role="alert"] { color: var(--accent-error); }
   .note { display: flex; gap: var(--space-2); align-items: baseline; color: var(--accent-attention); }
@@ -86,12 +86,12 @@
   .facts dt { color: var(--text-faint); }
   .facts dd { margin: 0; color: var(--text-default); }
   footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); }
-  .pill { cursor: pointer; font: inherit; border: 0; border-radius: var(--radius-pill); padding: 6px 14px; font-weight: 500; transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
+  .pill { cursor: pointer; font: inherit; border: 0; border-radius: var(--radius-pill); padding: 6px 14px; font-weight: var(--weight-small); transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease); }
   .pill--primary { background: var(--accent-bright); color: var(--surface-ink); }
   .pill--ghost { background: transparent; color: var(--text-faint); }
   .pill:hover { background-image: var(--interaction-hover); }
   .pill--ghost:hover { color: var(--text-strong); }
-  .pill:focus-visible { outline: var(--border-strong) solid var(--accent-bright); outline-offset: 2px; }
+  .pill:focus-visible { outline: var(--focus-width) solid var(--focus-ring); outline-offset: 2px; }
   @keyframes dialog-in { from { opacity: 0; transform: translateY(var(--space-1)); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } .pill { transition: none; } }
 </style>

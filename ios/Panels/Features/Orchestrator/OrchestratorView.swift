@@ -9,6 +9,7 @@ struct OrchestratorView: View {
     @State private var actions = AgentPageActions()
 
     private var summary: ManagerSummary? { store.managers.first { $0.id == managerID } }
+    private var liveSignal: ConversationSignal? { store.presentation?.managersById[managerID]?.signal.conversationSignal }
 
     var body: some View {
         ScrollView {
@@ -17,26 +18,15 @@ struct OrchestratorView: View {
                     AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
                 }
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                    AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator", signal: detail?.conversationSignal ?? summary?.conversationSignal)
+                    AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator", signal: liveSignal ?? detail?.conversationSignal ?? summary?.conversationSignal)
                     if let detail {
                         AgentRecap(recap: detail.recap, target: Principal(kind: "manager", id: managerID), refresh: { await store.refresh() }, actions: actions)
                     }
                 }
                 if let detail {
-                    if detail.tickets.isEmpty {
-                        Text("No workers yet").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                    }
-                    WorkerSections(tickets: detail.tickets)
+                    HolderContent(holder: .manager(managerID))
                     VStack(spacing: 0) {
                         Divider().overlay(PanelsTheme.border)
-                        NavigationLink {
-                            AgentReadingPage(title: "Goal", originalText: detail.goal) { text in
-                                try await store.client.saveManagerGoal(managerID, goal: text)
-                                await store.refresh()
-                            }
-                        } label: {
-                            Text("Goal").frame(maxWidth: .infinity, minHeight: 50, alignment: .leading).contentShape(Rectangle())
-                        }.buttonStyle(.plain).accessibilityIdentifier("manager-goal")
                         ArtifactsRow(owner: ArtifactOwner(kind: .manager, id: managerID), count: detail.artifacts.count)
                     }.font(PanelsTheme.TypeScale.body)
                 }
@@ -45,7 +35,9 @@ struct OrchestratorView: View {
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
         .conversationNavigation(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", openConversationID: openConversationID, refreshError: error, retry: { await load() })
-        .task(id: store.revision) { await load() }
+        .task(id: "\(store.baseURL.absoluteString)|\(store.connectionSession)") { await load() }
+        .reload(onChangeOf: store.managerStamp(managerID)) { await load() }
+        .navigationDemand("manager:\(managerID)", selected: .manager(managerID), windows: [NavigationScope.children(of: .manager(managerID))])
         .panelsRefreshable { await load() }
         .screenLoadState("orchestrator", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
         .accessibilityIdentifier("orchestrator-screen")
@@ -84,11 +76,12 @@ enum AgentPageLayout {
 /// Page controls belong to the scrolling content, with no bar or duplicate title.
 struct AgentPageControls<Actions: View>: View {
     @Environment(\.dismiss) private var dismiss
+    var beforeBack: (() -> Void)? = nil
     @ViewBuilder let actions: () -> Actions
 
     var body: some View {
         HStack {
-            Button { dismiss() } label: {
+            Button { beforeBack?(); dismiss() } label: {
                 Image(systemName: "chevron.left")
                     .frame(width: 44, height: 44, alignment: .leading)
                     .contentShape(Rectangle())

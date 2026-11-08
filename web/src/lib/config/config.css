@@ -1,31 +1,30 @@
 /* Config owns its content presentation inside the shared Settings shell. */
 [data-screen="config"] .agents-page {
   width: 100%;
-  max-width: calc(var(--measure-index) + var(--space-7) + var(--space-7));
+  max-width: var(--page-measure);
   margin: 0 auto;
-  padding: var(--space-6) var(--page-gutter) var(--space-page-tail);
+  padding: var(--page-block-gap) 0 var(--space-page-tail);
 }
 
-[data-screen="config"] .agents-page-head {
-  margin-bottom: var(--space-6);
-}
-
-[data-screen="config"] :is(.agents-page-head, .agents-detail-head) h1 {
+[data-screen="config"] .agents-detail-head h1 {
   font-family: var(--font-ui);
-  font-size: var(--type-display);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
+  font-size: var(--page-reading);
+  font-weight: var(--weight-page-title);
+  letter-spacing: var(--tracking-page-title);
   line-height: 1.2;
 }
 
 [data-screen="config"] .agents-section-title {
   margin-bottom: var(--space-2);
-  color: var(--text-faint);
-  font-weight: 500;
+  color: var(--tone-tertiary);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 [data-screen="config"] .agents-index-section + .agents-index-section {
-  margin-top: var(--space-6);
+  margin-top: var(--page-block-gap);
 }
 
 [data-screen="config"] .agents-destination-list {
@@ -38,9 +37,9 @@
 }
 
 [data-screen="config"] .agents-destination {
-  padding: var(--space-4) var(--space-3);
+  padding: var(--space-3) var(--space-2);
   border-bottom: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }
 
 [data-screen="config"] .agents-destination + .agents-destination {
@@ -48,12 +47,13 @@
 }
 
 [data-screen="config"] .agents-destination-name {
-  color: var(--text-strong);
-  font-weight: 400;
+  color: var(--tone-primary);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
 }
 
 [data-screen="config"] .agents-destination-description {
-  font-size: var(--type-xs);
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 
@@ -68,7 +68,7 @@
 
 [data-screen="config"] .agents-back {
   margin-bottom: var(--space-5);
-  font-size: var(--type-xs);
+  font-size: var(--type-small);
 }
 
 [data-screen="config"] .agents-detail-head {
@@ -100,8 +100,8 @@
 [data-screen="config"] .worker-skill-head h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: var(--type-md);
-  font-weight: 500;
+  font-size: var(--type-page-section);
+  font-weight: var(--weight-page-section);
   line-height: 1.5;
 }
 
@@ -114,7 +114,7 @@
 }
 
 [data-screen="config"] .worker-stage-table-shell {
-  margin-top: var(--space-6);
+  margin-top: var(--page-block-gap);
 }
 
 [data-screen="config"] .worker-stages-head {
@@ -132,7 +132,7 @@
 }
 
 [data-screen="config"] .worker-stage-table th {
-  font-weight: 400;
+  font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
 }
@@ -147,12 +147,12 @@
 }
 
 [data-screen="config"] .worker-stage-name {
-  font-weight: 400;
+  font-weight: 500;
 }
 
 [data-screen="config"] .worker-stage-gated-field {
   color: var(--text-faint);
-  font-size: var(--type-xs);
+  font-size: var(--type-small);
 }
 
 [data-screen="config"] .worker-owner-select {
@@ -162,11 +162,11 @@
 }
 
 [data-screen="config"] .worker-readonly-owner {
-  font-size: var(--type-xs);
+  font-size: var(--type-small);
 }
 
 [data-screen="config"] .worker-skill {
-  margin-top: var(--space-6);
+  margin-top: var(--page-block-gap);
 }
 
 [data-screen="config"] .worker-skill-head {
@@ -190,7 +190,7 @@
 
 [data-screen="config"] .worker-skill-meta dt,
 [data-screen="config"] .worker-skill-field > span {
-  font-weight: 400;
+  font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
 }
@@ -202,8 +202,8 @@
 
 [data-screen="config"] .worker-skill-inline {
   min-height: 0;
-  font-size: var(--type-input);
-  line-height: 1.7;
+  font-size: var(--type-body);
+  line-height: 1.55;
 }
 
 [data-screen="config"] .worker-skill-field {
@@ -211,19 +211,18 @@
 }
 
 [data-screen="config"] .worker-skill-body {
-  padding: var(--space-4);
+  padding: var(--page-card-pad);
+  background: var(--page-card-fill);
+  border: 0;
+  border-radius: var(--page-card-radius);
 }
 
 [data-screen="config"] .worker-skill-body-editable {
-  font-size: var(--type-input);
-  line-height: 1.7;
+  font-size: var(--type-body);
+  line-height: 1.55;
 }
 
 @media (max-width: 720px) {
-  [data-screen="config"] .agents-page {
-    padding-inline: 0;
-  }
-
   [data-screen="config"] [data-workers-list] {
     grid-template-columns: minmax(0, 1fr);
   }

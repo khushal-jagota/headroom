@@ -31,7 +31,11 @@ export type ModelPickerView = Readonly<{
   modelValue: string;
   modelName: string;
   reasoningEffort: string;
+  /** The closed control's words, as staging: the model, then the effort (also given apart,
+   *  so the effort can be drawn as a quieter word). */
   face: string;
+  modelFace: string;
+  effortFace: string;
   backends: readonly ModelPickerBackend[];
   models: readonly ModelPickerChoice[];
   olderModels: readonly ModelPickerChoice[];
@@ -115,6 +119,8 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
     modelName,
     reasoningEffort,
     face: [modelFace, reasoningEffort].filter(Boolean).join(" "),
+    modelFace,
+    effortFace: reasoningEffort,
     backends: MODEL_PICKER_BACKEND_KEYS.map((key) => {
       const candidate = input.backends.find((item) => item.backend_key === key);
       const lockedReason = input.backendLocked && key !== input.backendKey

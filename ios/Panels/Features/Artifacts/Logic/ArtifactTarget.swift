@@ -13,6 +13,14 @@ struct ArtifactTarget: Hashable, Identifiable, Sendable {
         !path.split(separator: "/", omittingEmptySubsequences: false).contains { $0.isEmpty || $0 == "." || $0 == ".." }
     }
 
+    static func isRetiredGoalURL(_ url: URL, baseURL: URL) -> Bool {
+        guard url.scheme == baseURL.scheme, url.host == baseURL.host, url.port == baseURL.port else { return false }
+        if url.path.hasPrefix("/files/goals/") { return true }
+        guard let fragment = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedFragment,
+              let preview = URLComponents(string: fragment), preview.path == "/preview" else { return false }
+        return preview.queryItems?.contains { $0.name == "source" && $0.value == "goal" } == true
+    }
+
     static func from(_ url: URL, baseURL: URL, title: String? = nil) -> Self? {
         guard url.scheme == baseURL.scheme, url.host == baseURL.host, url.port == baseURL.port else { return nil }
         if let fragment = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedFragment,
@@ -48,7 +56,7 @@ struct ArtifactTarget: Hashable, Identifiable, Sendable {
         var preview = URLComponents()
         preview.path = "/preview"
         preview.queryItems = [URLQueryItem(name: "source", value: owner.kind.rawValue),
-                              URLQueryItem(name: owner.kind == .ticket ? "ticket" : "manager", value: owner.id),
+                              URLQueryItem(name: owner.kind.rawValue, value: owner.id),
                               URLQueryItem(name: "path", value: path)]
         var result = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         result.percentEncodedFragment = preview.string

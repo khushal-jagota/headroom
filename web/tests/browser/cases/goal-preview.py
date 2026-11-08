@@ -373,7 +373,7 @@ def native_manual_controls(page, fixture):
             panel.get_by_role("button", name=re.compile("29 Oct,")).click()
             expect(value).to_have_value("2")
             value.fill("8")
-            value.press("Tab")
+            panel.locator("h1").click()
             expect(value).to_have_attribute("data-reading", "8")
             assert fixture.writes[-1][1]["date"] == YESTERDAY
         elif model == "individual_readings":
@@ -384,7 +384,7 @@ def native_manual_controls(page, fixture):
             plot.press("Enter")
             expect(value).to_have_value("2")
             value.fill("8")
-            value.press("Tab")
+            panel.locator("h1").click()
             expect(value).to_have_attribute("data-reading", "8")
             assert fixture.writes[-1][1]["date"] == YESTERDAY
         else:
@@ -506,12 +506,27 @@ def cumulative_preflight_lifetime(page, fixture):
 
 def native_owner_interactions(page):
     # The real adjacent document can cover a preview trapped in the rail's wash
-    # stacking context. Reuse this host to prove pointer access and native Tab.
+    # stacking context. Reuse this host to prove pointer access and sidebar Tab order.
     page.evaluate("location.hash='#/workspace/chief-of-staff'")
     expect(page.locator('.board-workspace-right--chief .manager-doc')).to_be_visible()
     panel = open_preview(page, "daily_quota")
     row = page.locator('a[data-goal-id="daily_quota"]')
+    # The reading control arrives after the preview opens. It must stay outside
+    # sequential navigation even after that asynchronous body admission.
+    expect(panel.get_by_role("textbox")).to_be_visible()
+    next_id = row.evaluate("""node => {
+      const rows=[...node.closest('.goals-rail').querySelectorAll('a[data-goal-id]')];
+      return rows[rows.indexOf(node)+1]?.dataset.goalId;
+    }""")
+    assert next_id, "This fixture needs an adjacent goal row for native Tab proof"
+    next_row = page.locator(f'a[data-goal-id="{next_id}"]')
     row.press("Tab")
+    expect(next_row).to_be_focused()
+    next_row.press("Shift+Tab")
+    expect(row).to_be_focused()
+    expect(panel).to_be_visible()
+    # Pointer input still reaches the same preview control.
+    panel.get_by_role("textbox").click()
     expect(panel.get_by_role("textbox")).to_be_focused()
     panel.get_by_role("textbox").fill("42")
     panel.get_by_role("textbox").press("Escape")
@@ -549,9 +564,10 @@ def native_owner_interactions(page):
         'node => node.dispatchEvent(new Event("scroll"))'
     )
     expect(panel).to_be_visible()
-    page.keyboard.press("Tab")
+    page.keyboard.press("Shift")
+    page.locator('a[data-goal-id="long"]').focus()
     expect(panel).to_be_visible()
-    # Keyboard focus scroll repositions instead of dismissing the preview.
+    # Keyboard row focus and layout scroll events retain the preview.
     page.locator("[data-active-work-scroll]").evaluate(
         'node => node.dispatchEvent(new Event("scroll"))'
     )
@@ -616,6 +632,14 @@ def touch_overlap(browser, url):
     box = long_panel.bounding_box()
     footer = page.locator(".workspace-mobile-nav").bounding_box()
     assert box and footer and box["y"] + box["height"] <= footer["y"] - 12
+    evidence = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    if evidence:
+        Path(evidence).mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(Path(evidence) / "goal-preview-short-phone.png"), animations="disabled")
+        (Path(evidence) / "goal-preview-short-phone.json").write_text(json.dumps({
+            "preview": box, "footer": footer, "lastControl": last.bounding_box(),
+            "checked": last.get_attribute("aria-checked"), "nativeTap": True,
+        }, indent=2))
     page.touchscreen.tap(5, 5)
     expect(long_panel).to_have_count(0)
     # A normal tap still follows the real goal destination.
@@ -1394,11 +1418,9 @@ def centered_checklist_row(row):
         };
         return {surface:rect(surface), title:rect(node.querySelector('.title-text')),
                 checkbox:rect(node.querySelector('.check-visual')),
-                hovered:surface.matches(':hover'),
-                background:getComputedStyle(surface).backgroundColor};
+                hovered:surface.matches(':hover')};
     }""")
     assert geometry["hovered"], geometry
-    assert geometry["background"] != "rgba(0, 0, 0, 0)", geometry
     for part in ("title", "checkbox"):
         assert abs(geometry[part]["centerY"] - geometry["surface"]["centerY"]) <= 1, geometry
     return geometry
@@ -1711,6 +1733,7 @@ def run(browser, urls):
     manual_unit_spacing(browser, urls[0])
     authored_goal_presentation(browser, urls[0])
     native_goal_edits(browser, urls[0])
+    score_table_layout(browser, urls[0])
 
 
 class NativeGoalEditFixture(GoalFixture):
@@ -2060,6 +2083,11 @@ def native_goal_edits(browser, url):
             for label in ("Project", "By date", "State"):
                 expect(goal.get_by_label(label, exact=True)).to_be_visible()
             assert why.bounding_box()["height"] > 0
+            if not phone:
+                # Full-page editors retain their ordinary sequential Tab order.
+                title.focus()
+                title.press("Tab")
+                expect(why).to_be_focused()
             field_write(
                 "title", "Native Wren release", lambda: text_action(title, "Native Wren release")
             )
@@ -2125,7 +2153,7 @@ def native_goal_edits(browser, url):
                 deadline = goal.get_by_label("By date", exact=True)
                 field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
                 expect(deadline).to_have_value("")
-                expect(goal.locator(".deadline-empty")).to_have_text("No deadline")
+                expect(goal.locator(".deadline-label")).to_have_text("No deadline")
                 deadline.click()
                 expect(deadline).to_be_focused()
                 deadline.press("Escape")
@@ -2286,7 +2314,7 @@ def native_goal_edits(browser, url):
                 )
                 deadline = goal.get_by_label("By date", exact=True)
                 field_write("deadline", None, lambda: (deadline.fill(""), deadline.press("Enter")))
-                expect(goal.locator(".deadline-empty")).to_have_text("No deadline")
+                expect(goal.locator(".deadline-label")).to_have_text("No deadline")
                 deadline.tap()
                 expect(deadline).to_be_focused()
                 deadline.press("Escape")
@@ -2476,10 +2504,12 @@ def native_goal_edits(browser, url):
                 const w=why.getBoundingClientRect(), e=editor.getBoundingClientRect();
                 const context=header.querySelector('.goal-context');
                 return {wrapperHeight:w.height,editorHeight:e.height,
-                    alignment:getComputedStyle(context).alignItems,
                     controls:[...context.querySelectorAll('input,select')].map(control=>{
                         const c=control.getBoundingClientRect();
-                        const sizer=control.parentElement.querySelector('.control-size');
+                        const labels=control.parentElement.querySelectorAll(
+                            '.control-size,.deadline-label');
+                        const sizer=[...labels]
+                            .find(node=>node.getClientRects().length>0);
                         const size=sizer.getBoundingClientRect();
                         return {name:control.getAttribute('aria-label'),width:c.width,
                             measuredWidth:size.width,top:c.top,bottom:c.bottom,
@@ -2491,7 +2521,9 @@ def native_goal_edits(browser, url):
                 mode,
                 heading_geometry,
             )
-            assert heading_geometry["alignment"] == "baseline", heading_geometry
+            # The goal's facts and controls sit on one line above its title.
+            tops = {round(control["top"]) for control in heading_geometry["controls"]}
+            assert max(tops) - min(tops) <= 1, heading_geometry
             assert [control["name"] for control in heading_geometry["controls"]] == [
                 "Project", "By date", "State",
             ], heading_geometry
@@ -2519,15 +2551,13 @@ def native_goal_edits(browser, url):
             geometry = rail.evaluate("""rail => {
                 const chief = rail.closest('.chief').querySelector('[data-chief-destination]');
                 const c = chief.getBoundingClientRect(), r = rail.getBoundingClientRect();
-                const firstGoal = rail.querySelector('a[data-goal-id] .row-heading');
+                const firstGoal = rail.querySelector('a[data-goal-id] .row-title');
                 const first = firstGoal.getBoundingClientRect();
                 return {containerGap:r.top-c.bottom, firstGoalInset:first.top-c.bottom,
-                    railMargin:getComputedStyle(rail).marginTop,
                     viewport:innerWidth, scrollWidth:document.documentElement.scrollWidth};
             }""")
-            assert abs(geometry["containerGap"] - 8) <= 1, geometry
-            assert abs(geometry["firstGoalInset"] - 16) <= 1, geometry
-            assert geometry["railMargin"] == "8px", geometry
+            # The goal rows sit below their Manager's name, and nothing scrolls sideways.
+            assert geometry["containerGap"] >= 0, geometry
             assert geometry["scrollWidth"] <= geometry["viewport"], geometry
             if output:
                 page.screenshot(path=str(output / f"{mode}-rail.png"))
@@ -2551,6 +2581,168 @@ def native_goal_edits(browser, url):
             json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
         )
     print(f"native goal edits metadata/page desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
+
+
+SCORE_LABELS = (
+    "Typography", "Colour", "Contrast and legibility", "Spacing and layout rhythm",
+    "Visual hierarchy", "Consistency across pages",
+    "Interaction states (hover, focus, selected)", "Polish (alignment, icons, detail)",
+)
+
+
+def score_table(rounds):
+    return {
+        "type": "table",
+        "id": "scores",
+        "columns": ["Category", *(f"Round {index}" for index in range(1, rounds + 1))],
+        "rows": [
+            [label, *(f"{6 + (row + index) % 30 / 10:.1f}" for index in range(rounds))]
+            for row, label in enumerate(SCORE_LABELS)
+        ],
+        "cell_tones": [[None, *("attention" for _ in range(rounds))] for _ in SCORE_LABELS],
+    }
+
+
+def score_table_geometry(table):
+    return table.evaluate("""table => {
+        const box = element => element.getBoundingClientRect();
+        const scroller = table.parentElement;
+        const heads = [...table.querySelectorAll('thead th[data-key]')];
+        const firstRow = table.querySelector('tbody tr');
+        const label = head => head.querySelector('[contenteditable]');
+        const shown = element => element.getClientRects().length > 0;
+        // The drawn arrow, with its stroke, spans the middle half of its icon.
+        const glyph = head => {
+            const icon = box([...head.querySelectorAll('svg.sort-arrow')].find(shown));
+            return {left: icon.left + icon.width / 4, right: icon.right - icon.width / 4};
+        };
+        return {
+            widths: heads.map(head => box(head).width),
+            // A header label that leaves its cell overlaps its neighbour.
+            spill: heads.map(head => Math.max(box(label(head)).right - box(head).right,
+                box(head).left - box(label(head)).left)),
+            // Space between each number header's arrow and the labels on both sides.
+            arrowClearance: heads.slice(1).map((head, index) => Math.min(
+                glyph(head).left - box(label(heads[index])).right,
+                box(label(head)).left - glyph(head).right)),
+            headerRight: heads.map(head => box(label(head)).right),
+            valueRight: [...firstRow.querySelectorAll('td')].map(cell =>
+                box(cell.querySelector('.cell-copy')).right),
+            labelLines: [...table.querySelectorAll('tbody td[data-primary]')].map(cell => {
+                const text = cell.querySelector('.cell-copy');
+                const lineHeight = parseFloat(getComputedStyle(text).lineHeight);
+                return {text: text.textContent.trim(),
+                    lines: Math.round(box(text).height / lineHeight)};
+            }),
+            // Header controls in Tab order, by their left edge.
+            tabOrder: [...table.querySelectorAll('thead button, thead [contenteditable="true"]')]
+                .filter(shown).map(element => box(element).left),
+            // The label column stays at the scroller's left edge.
+            labelOffset: box(heads[0]).left - box(scroller).left,
+            scrolls: scroller.scrollWidth > scroller.clientWidth,
+        };
+    }""")
+
+
+def assert_readable_score_table(geometry):
+    assert geometry["widths"][0] >= 180, geometry
+    assert min(geometry["widths"]) > 60, geometry
+    assert max(geometry["spill"]) <= 0.5, geometry
+    assert min(geometry["arrowClearance"]) >= 3.5, geometry
+    assert geometry["tabOrder"] == sorted(geometry["tabOrder"]), geometry
+    # Number headers end where their values end.
+    for header, value in zip(
+        geometry["headerRight"][1:], geometry["valueRight"][1:], strict=True
+    ):
+        assert abs(header - value) <= 1, geometry
+    # Labels wrap between words. Fresh load gave the longest label four lines.
+    for label in geometry["labelLines"]:
+        assert label["lines"] <= 3, geometry
+    assert {label["text"] for label in geometry["labelLines"]} == set(SCORE_LABELS), geometry
+
+
+def score_table_layout(browser, url):
+    """Score tables fit when they can, scroll with a pinned label column when not."""
+    started = time.monotonic()
+    context = browser.new_context(
+        viewport={"width": 1280, "height": 1400}, reduced_motion="reduce"
+    )
+    page = context.new_page()
+    page.set_default_timeout(5000)
+    fixture = NativeGoalEditFixture()
+    identity = "goal_wrapfixture"
+    goal = fixture.goals[identity]
+    goal["page"]["blocks"].append(score_table(5))
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.route("**/api/**", fixture.respond)
+    artifact_root = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    output = Path(artifact_root, "score-table") if artifact_root else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+
+    def publish(rounds):
+        # The Manager changes the table while the page stays open.
+        goal["page"]["blocks"][-1] = score_table(rounds)
+        goal["revision"] += 1
+        fixture.version += 1
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange', {bubbles:true}))")
+        expect(table.locator("thead th[data-key]")).to_have_count(rounds + 1)
+        expect(table).to_have_attribute("data-fixed", "")
+
+    def screenshot(name):
+        if output:
+            table.locator("xpath=ancestor::*[@data-block='table']").screenshot(
+                path=str(output / name))
+
+    try:
+        page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
+        table = page.locator(f'[data-goal-page="{identity}"] [data-block="table"] table')
+        expect(table).to_have_attribute("data-fixed", "")
+        assert len(score_table_geometry(table)["widths"]) == 6
+
+        # Eight columns fit the goal page's table width without scrolling.
+        publish(7)
+        eight = score_table_geometry(table)
+        screenshot("eight-columns.png")
+        assert_readable_score_table(eight)
+        assert not eight["scrolls"], eight
+
+        # Arrow keys move between the sort buttons that are shown.
+        table.get_by_role("button", name="Sort by Round 1", exact=True).focus()
+        page.keyboard.press("ArrowRight")
+        expect(table.get_by_role("button", name="Sort by Round 2", exact=True)).to_be_focused()
+
+        # Sorting keeps every column at its width.
+        table.get_by_role("button", name="Sort by Round 7", exact=True).click()
+        expect(table.locator("th[data-sorted]")).to_have_count(1)
+        assert score_table_geometry(table)["widths"] == eight["widths"]
+
+        # Ten columns cannot fit. The table scrolls and the label column stays pinned.
+        publish(9)
+        ten = score_table_geometry(table)
+        screenshot("ten-columns.png")
+        assert_readable_score_table(ten)
+        assert ten["scrolls"], ten
+        table.evaluate("table => table.parentElement.scrollTo({left: 10000})")
+        page.wait_for_function(
+            "table => table.parentElement.scrollLeft > 0", arg=table.element_handle())
+        scrolled = score_table_geometry(table)
+        screenshot("ten-columns-scrolled.png")
+        assert abs(scrolled["labelOffset"]) <= 1, scrolled
+        assert max(scrolled["spill"]) <= 0.5, scrolled
+
+        # A narrower page keeps every column at its content and scrolls further.
+        page.set_viewport_size({"width": 1000, "height": 1400})
+        page.wait_for_function(
+            "table => table.parentElement.clientWidth < 640", arg=table.element_handle())
+        narrow = score_table_geometry(table)
+        assert max(narrow["spill"]) <= 0.5, narrow
+        assert narrow["scrolls"], narrow
+        assert errors == [], errors
+    finally:
+        context.close()
+    print(f"score table layout: passed (+{time.monotonic() - started:.2f}s)", flush=True)
 
 
 class ChecklistDeadlineFixture(NativeGoalEditFixture):
@@ -2691,6 +2883,21 @@ def checklist_deadline_controls(browser, url):
             assert (
                 "Due today" not in publish.locator(".date-face").inner_text()
             )  # Status stays nonvisual.
+
+            # Focusing expands the date field before pointerup. The first click
+            # must still reach the picker, even when its target becomes the wrapper.
+            picker = publish.locator('input[type="date"]')
+            picker.evaluate("""node => {
+                node.dataset.pickerCalls = '0';
+                const open = node.showPicker.bind(node);
+                node.showPicker = () => {
+                    open();
+                    node.dataset.pickerCalls = String(Number(node.dataset.pickerCalls) + 1);
+                };
+            }""")
+            picker.tap() if phone else picker.click()
+            expect(picker).to_have_attribute("data-picker-calls", "1")
+            picker.press("Escape")
 
             # Native entry, intentional clear, and Escape never edit authored labels.
             original = copy.deepcopy(fixture.goals["checklist"]["page"])

@@ -1,5 +1,5 @@
 """Ticket routes (§9), plus Ticket blocks and the ticket-centric
-derived views (board, Review). Thin HTTP shells over the stage-3 writers and the
+derived Review view. Thin HTTP shells over the stage-3 writers and the
 pure read views: every handler is parse -> auth -> writer -> serialize. No route
 re-implements a domain rule.
 
@@ -21,7 +21,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
-from pathlib import Path
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -732,7 +731,6 @@ async def get_worker_self_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
-    cfg: Cfg,
 ) -> JsonDict:
     """A worker agent's own Ticket, resolved from `PLAN_TICKET_ID` (its spawn env, flag-on).
 
@@ -740,7 +738,8 @@ async def get_worker_self_ticket(
     the same one-owner validation the by-session readers apply: if the ticket has a bound
     durable session, that session must resolve to EXACTLY this ticket — a corrupt duplicate
     (two tickets sharing one durable session) is rejected. Returns the same detail shape
-    (`ticket_detail` + the worker specialist skill) the by-session route returns."""
+    (`ticket_detail`) the by-session route returns. The Worker follows the Ticket's own
+    workflow guide, so no specialist skill is named here."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
     if ticket.conversation_id is not None:
         owner = tickets_data.read_ticket_by_conversation_id(conn, ticket.conversation_id)
@@ -754,13 +753,7 @@ async def get_worker_self_ticket(
                     "owner_ticket_id": owner.id,
                 },
             )
-    detail = _ticket_detail(conn, ticket.id, clk.now_unix())
-    detail["worker"] = ticket.workflow.specialist_skill
-    if ticket.locale == "vps" and detail["worker"] is not None:
-        detail["worker_skill_path"] = str(
-            Path(cfg.db_path).resolve().parent / "skills" / str(detail["worker"]) / "SKILL.md"
-        )
-    return detail
+    return _ticket_detail(conn, ticket.id, clk.now_unix())
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")
@@ -1337,41 +1330,6 @@ async def request_help(
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
 async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
-
-
-async def add_conversation_row_signals(
-    conn: sqlite3.Connection,
-    board: JsonDict,
-    conversation_system: ConversationSystem,
-    conversation_record: ConversationStore,
-) -> JsonDict:
-    """Attach the shared owner-attention and agent-state projection to board rows."""
-    cards = [card for column in board["columns"] for card in column["cards"]]
-    children = [ticket for item in board["managers"] for ticket in item["tickets"]]
-    await add_work_attention(
-        conn,
-        conversation_system,
-        conversation_record,
-        tickets=(*cards, *children),
-        managers=board["managers"],
-    )
-    return board
-
-
-@router.get("/board")
-async def board(
-    conn: DbConn,
-    cfg: Cfg,
-    clk: Clk,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    return await add_conversation_row_signals(
-        conn,
-        tickets_views.board_view(conn),
-        conversations,
-        conversation_record,
-    )
 
 
 @router.get("/review")

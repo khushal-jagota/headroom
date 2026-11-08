@@ -35,6 +35,7 @@ export function canonicalShellHash(hash: string): string {
     return canonicalShellHash(path + "?" + params);
   }
   if (/^#\/backlog(?:\/|$)/.test(path)) return "#/workspace";
+  if (path === "#/vps") return `#/settings/vps${query}`;
   if (path === "#/notifications") return `#/settings/notifications${query}`;
   if (/^#\/config(?:\/|$)/.test(path)) return path.replace("#/config", "#/settings/config") + query;
   if (path === "#/workers") return `#/settings/config${query}`;

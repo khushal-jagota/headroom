@@ -7,23 +7,54 @@
   box-sizing: border-box;
 }
 
+/* The base voice is the Body role: 14px, regular, primary tone, 1.55 leading. Everything
+ * that does not name a role reads as body text. */
 body {
   margin: 0;
   background: var(--surface-1);
-  color: var(--text-default);
+  color: var(--tone-primary);
   font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.5;
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+  font-weight: var(--weight-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 button,
-textarea {
+textarea,
+input,
+select {
   font: inherit;
 }
 
+/* Titles lead with the one title weight; bold inside text is the same semibold, never 700. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+b,
+strong {
+  font-weight: var(--weight-title);
+}
+
+/* THE focus ring (Direction v2, Outcome 6): one 1.5px accent line, 2px off every focusable
+ * control. The outline follows the control's radius, so the ring's radius is the control's
+ * radius + 2. Width, colour and offset are enforced here so no control can draw a second
+ * kind of ring; a control that delegates its ring (outline: none, with the ring drawn by
+ * its container) keeps doing so, because the line's style is not forced. */
 :focus-visible {
-  outline: var(--border-strong) solid var(--accent-bright);
-  outline-offset: var(--border-hairline);
+  outline: var(--focus-width) solid var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+:focus-visible {
+  outline-width: var(--focus-width) !important;
+  outline-color: var(--focus-ring) !important;
+  outline-offset: var(--focus-offset) !important;
 }
 
 .markdown pre,
@@ -179,24 +210,63 @@ textarea {
 /* --- Persistent rail and pane shell ------------------------------------- */
 .shell { position:relative; height:100dvh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .shell-content { flex:1; min-width:0; min-height:0; padding:0; }
-.rail-foot { position:relative; flex:none; padding-top:var(--space-2); }
+/* The foot as on staging: the icon row 8px under Settled and 12px off the rail's bottom (with
+   the rail's own 8px). Each destination is staging's 32px square; the first glyph (2px inside
+   its 18px box, 7px inside its button) stands on the names' text edge. */
+.rail-foot { position:relative; flex:none; container:rail-foot / inline-size; padding:var(--space-2) var(--rail-edge) var(--space-1) calc(var(--rail-edge) + var(--rail-pad) - 9px); }
+/* The destinations: one row of quiet icons. A destination's name floats 8px above its icon as a
+   tooltip the moment the pointer is on it, as on staging: centred, the first one's name starting
+   at its icon and the last one's ending at it, so no name runs out of the rail. */
 .rail-utilities { display:flex; align-items:center; gap:var(--space-1); }
-.utility { position:relative; display:flex; flex:0 1 32px; align-items:center; justify-content:center; min-width:28px; height:32px; padding:0; border:var(--border-hairline) solid transparent; border-radius:var(--radius-sm); background:transparent; color:var(--text-faintest); cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
-.utility:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-.utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:var(--accent-bright); color:var(--text-strong); }
-.utility:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+/* A destination's hit and hover shape: staging's 32px square around its 18px icon. */
+.utility { position:relative; display:flex; flex:0 1 32px; align-items:center; justify-content:center; gap:6px; min-width:28px; height:32px; padding:0; border:0; border-radius:var(--radius-md); background:transparent; color:var(--tone-secondary); text-decoration:none; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.utility:hover { background:var(--wash-hover); color:var(--tone-strong); }
+.utility[aria-current="page"],.utility[aria-expanded="true"] { border-color:transparent; background:var(--wash-selected); color:var(--tone-strong); }
+.utility:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:0; }
 .utility svg,.sheet-item svg { width:18px; height:18px; flex:none; }
-.count-badge { position:absolute; top:-2px; right:-2px; min-width:14px; height:14px; padding:0 3px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-1); font-size:10px; font-weight:600; line-height:14px; text-align:center; font-variant-numeric:tabular-nums; }
+.count-badge { position:absolute; top:-2px; right:-2px; min-width:18px; height:18px; padding:0 5px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); box-shadow:0 0 0 2px var(--surface-1); font-size:var(--type-small); font-weight:var(--weight-needs-you); line-height:18px; text-align:center; font-variant-numeric:tabular-nums; }
+/* On the rail the count sits beside its icon, never on top of it: the needs-you accent as
+   text on its own quiet slate. It is the rail's one badge. */
+.rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:none; padding:0 7px; }
+/* When something waits for review, the Review destination wears the accent (owner): the same
+   periwinkle as the Review mark on a Ticket that needs your approval. */
+.rail-utilities .utility[data-screen="review"]:has(> .count-badge:not(.hidden)) { color:var(--accent-bright); }
+.rail-utilities .utility[data-screen="review"]:has(> .count-badge:not(.hidden)):hover { color:var(--accent-text); }
+.rail-utilities .count-badge { position:static; min-width:20px; height:18px; padding:0 6px; border-radius:var(--radius-pill); background:var(--accent-badge); color:var(--accent-bright); box-shadow:none; font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
 .count-badge.hidden { display:none; }
-.utility-label { position:absolute; bottom:calc(100% + var(--space-2)); left:50%; z-index:6; padding:var(--space-1) var(--space-3); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-sm); background:var(--surface-2); color:var(--text-default); font-size:var(--type-sm); white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
+/* A narrow rail (the resizer allows 232px) has no room for the count beside its icon: the row
+   is staging's then (below 263px), six 32px squares that give a little (to 28px) where they must, the count
+   on the review icon's corner as on staging, so every icon fits whole at every rail width. */
+@container rail-foot (max-width: 237px) {
+  .rail-foot .rail-utilities { margin-left:-1px; }
+  .rail-utilities .utility:has(> .count-badge:not(.hidden)) { flex:0 1 32px; padding:0; }
+  /* A narrow sidebar shows no count over Review (owner): the icon's accent says reviews wait. */
+  .rail-utilities .count-badge { display:none; }
+}
+.utility-label { position:absolute; bottom:calc(100% + var(--space-2)); left:50%; z-index:6; padding:2px var(--space-2); border:0; border-radius:6px; background:var(--rail-float-surface); box-shadow:var(--rail-preview-shadow); color:var(--tone-primary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:16px; white-space:nowrap; pointer-events:none; opacity:0; transform:translateX(-50%); transition:opacity var(--motion-fast) var(--motion-ease); }
 .utility:nth-child(1 of .utility) .utility-label { left:0; transform:none; }
 .utility:nth-last-child(1 of .utility) .utility-label { left:auto; right:0; transform:none; }
 .utility:hover .utility-label,.utility:focus-visible .utility-label { opacity:1; }
+/* FOCUS (owner): a switch at the end of the dock's icon row. Off, a grey knob on a dark track;
+   on, the knob slides right and both take the accent. 44x32 target, 34x20 track. */
+.rail-foot { display:flex; align-items:center; gap:var(--space-2); }
+.rail-foot .rail-utilities { flex:1 1 auto; min-width:0; }
+.focus-switch { position:relative; flex:none; display:grid; place-items:center; width:44px; height:32px; margin:0 0 0 auto; padding:0; border:0; border-radius:var(--radius-md); background:none; cursor:pointer; }
+.focus-switch-track { position:relative; display:block; width:34px; height:20px; border-radius:var(--radius-pill); background:var(--surface-input); box-shadow:inset 0 0 0 1px rgb(255 255 255 / 8%); transition:background var(--motion-fast) var(--motion-ease); }
+.focus-switch-knob { position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%; background:var(--tone-secondary); transition:transform var(--motion-base) var(--motion-ease), background var(--motion-fast) var(--motion-ease); }
+/* It answers the pointer as the icons do (the hover fill) and names itself in the same centred
+   tooltip over it. */
+.focus-switch:hover { background:var(--wash-hover); }
+.focus-switch:hover .focus-switch-knob { background:var(--tone-strong); }
+.focus-switch[aria-checked="true"] .focus-switch-track { background:color-mix(in srgb, var(--accent-bright) 28%, var(--surface-input)); }
+.focus-switch[aria-checked="true"] .focus-switch-knob { transform:translateX(14px); background:var(--accent-bright); }
+.focus-switch:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
+.focus-switch:hover .utility-label, .focus-switch:focus-visible .utility-label { opacity:1; }
+@media (prefers-reduced-motion:reduce) { .focus-switch-knob, .focus-switch-track { transition:none; } }
 @keyframes shell-panel-in { from { opacity:0; transform:translateY(var(--space-2)); } to { opacity:1; transform:none; } }
 .compact-bar { display:none; }
 .destination-pane { display:flex; flex-direction:column; flex:1; width:100%; height:100%; min-width:0; min-height:0; overflow:auto; }
 .destination-pane--document { padding:var(--page-gutter); }
-.destination-pane--vps { padding:0; }
 .board-workspace-right.board-workspace-right--destination { padding:0; background:var(--surface-1); }
 .destination-pane > div:not(.quiet-line) { flex:1; min-height:0; }
 .sheet-grab { display:none; width:34px; height:4px; margin:var(--space-1) auto var(--space-2); border-radius:var(--radius-pill); background:var(--border-color); }
@@ -205,10 +275,10 @@ textarea {
   .compact-bar { position:relative; display:block; flex:none; z-index:12; background:var(--surface-2); border-top:var(--border-hairline) solid var(--border-color); padding-bottom:env(safe-area-inset-bottom); }
   .compact-bar-row { display:flex; align-items:stretch; }
   .bar-item { position:relative; flex:1; display:flex; align-items:center; justify-content:center; gap:var(--space-2); min-height:var(--shell-nav-height); padding:var(--space-3) var(--space-2); border:0; background:transparent; color:var(--text-faintest); font:inherit; font-size:var(--type-sm); cursor:pointer; text-decoration:none; }
-  .bar-item[aria-current="page"] { color:var(--text-strong); font-weight:600; }
-  .bar-item:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:-2px; }
+  .bar-item[aria-current="page"] { color:var(--text-strong); font-weight:var(--weight-title); }
+  .bar-item:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:-2px; }
   .bar-item .count-badge { position:static; box-shadow:none; }
-  .bar-caret { color:var(--text-faintest); font-size:10px; }
+  .bar-caret { color:var(--text-faintest); font-size:var(--type-small); }
   .destination-sheet { animation:shell-panel-in var(--motion-base) var(--motion-ease); position:absolute; z-index:14; inset:auto 0 100%; max-height:calc(100dvh - var(--shell-nav-height)); overflow:auto; padding:var(--space-2) var(--space-3) var(--space-5); border-top:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg) var(--radius-lg) 0 0; background:var(--surface-2); box-shadow:var(--shadow-float); }
   .sheet-grab { display:block; }
   .sheet-group { padding:var(--space-2) var(--space-2) var(--space-1); color:var(--text-faintest); font-size:var(--type-xs); letter-spacing:var(--tracking-label); text-transform:uppercase; }
@@ -246,12 +316,10 @@ textarea {
   max-width: calc(var(--measure-index) + var(--space-7) + var(--space-7));
 }
 
-.agents-page-head,
 .agents-detail-head {
   margin-bottom: var(--space-5);
 }
 
-.agents-page-head h1,
 .agents-detail-head h1 {
   margin: 0;
   color: var(--text-strong);
@@ -259,7 +327,6 @@ textarea {
   line-height: 1.2;
 }
 
-.agents-page-head p,
 .agents-detail-head p {
   margin: var(--space-2) 0 0;
   color: var(--text-faint);
@@ -270,7 +337,7 @@ textarea {
   margin: 0;
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -316,7 +383,7 @@ textarea {
 .agents-destination-name {
   color: var(--text-default);
   font-size: var(--type-md);
-  font-weight: 600;
+  font-weight: var(--weight-title);
 }
 
 .agents-destination-description {
@@ -342,7 +409,7 @@ textarea {
 }
 
 .agents-destination:focus-visible {
-  outline: 2px solid var(--accent-bright);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: var(--space-1);
 }
 
@@ -398,7 +465,7 @@ textarea {
 .worker-launch-defaults-controls label > span {
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -458,7 +525,7 @@ textarea {
 .worker-stage-table th {
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -466,7 +533,7 @@ textarea {
 .worker-stage-name {
   display: block;
   color: var(--text-default);
-  font-weight: 500;
+  font-weight: var(--weight-title);
 }
 
 .worker-stage-id {
@@ -533,7 +600,7 @@ textarea {
 .worker-skill-field > span {
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -571,7 +638,6 @@ textarea {
     padding: var(--space-4) 0 var(--space-page-tail);
   }
 
-  .agents-page-head,
   .agents-index-section,
   .agents-detail-head,
   .agents-back,
@@ -661,43 +727,43 @@ textarea {
   margin-bottom: 0;
 }
 
-.markdown h1 {
-  font-size: var(--type-lg);
-}
-
-.markdown h2 {
-  font-size: var(--type-md);
-  font-weight: 600;
-}
-
-.markdown h3 {
-  font-size: var(--type-sm);
-  font-weight: 600;
-}
-
+/* Headings inside a document use two roles only: the Section head for h1-h3, and Small
+ * (tertiary) for the label-like h4-h6. Hierarchy is tone and space, not a ladder of sizes. */
 .markdown h1,
 .markdown h2,
 .markdown h3,
 .markdown h4,
 .markdown h5,
 .markdown h6 {
-  color: var(--text-strong);
   margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--type-page-section);
+  font-weight: var(--weight-title);
+  line-height: 1.4;
+  color: var(--tone-primary);
 }
 
 .markdown h4,
 .markdown h5,
 .markdown h6 {
-  font-size: var(--type-sm);
-  font-weight: 600;
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  color: var(--tone-tertiary);
 }
 
+/* Inline code: Small mono on a 7% lift, radius 4, 1px 2px, on the text's own baseline and in
+ * the text's own tone. */
 .markdown code {
   font-family: var(--font-mono);
-  font-size: var(--type-sm);
-  background: var(--surface-recessed);
-  padding: 0 var(--space-1);
+  font-size: var(--type-code);
+  font-weight: var(--weight-body);
+  line-height: 1;
+  vertical-align: baseline;
+  background: var(--surface-code);
+  padding: var(--code-pad-y) var(--code-pad-x);
   border-radius: var(--radius-sm);
+  color: inherit;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 .markdown pre {
@@ -707,6 +773,8 @@ textarea {
   padding: var(--space-3);
   border-radius: var(--radius-md);
   overflow-x: auto;
+  font-size: var(--type-code);
+  line-height: var(--leading-body);
 }
 
 .chat-thread .markdown pre {
@@ -716,12 +784,21 @@ textarea {
 .markdown pre code {
   background: none;
   padding: 0;
+  line-height: inherit;
 }
 
 .markdown ul,
 .markdown ol {
   margin: 0 0 var(--space-3);
   padding-left: var(--space-5);
+}
+
+.markdown li + li {
+  margin-top: var(--space-1);
+}
+
+.markdown li::marker {
+  color: var(--tone-tertiary);
 }
 
 .markdown li > ul,
@@ -732,9 +809,10 @@ textarea {
 
 .markdown blockquote {
   margin: 0 0 var(--space-3);
-  padding-left: var(--space-3);
-  border-left: 2px solid var(--border-color);
-  color: var(--text-muted);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-code);
+  color: var(--tone-secondary);
 }
 
 .markdown hr {
@@ -749,7 +827,8 @@ textarea {
   width: 100%;
   margin: 0 0 var(--space-3);
   border-collapse: collapse;
-  font-size: var(--type-sm);
+  font-size: var(--type-body);
+  font-variant-numeric: tabular-nums;
   overflow-x: auto;
 }
 
@@ -782,9 +861,11 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Table heads, as staging: bold in the strong tone over a recessed band, at the table's
+ * own size. */
 .markdown th {
-  color: var(--text-strong);
-  font-weight: 600;
+  color: var(--tone-strong);
+  font-weight: var(--weight-title);
   background: var(--surface-recessed);
 }
 
@@ -799,8 +880,19 @@ textarea {
   vertical-align: middle;
 }
 
+/* A link is text in the strong tone with a quiet underline. The accent is kept for needs-you
+ * marks, so a link never borrows it. */
 .markdown a {
-  color: var(--accent-bright);
+  color: var(--tone-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--tone-faint);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color var(--motion-fast) var(--motion-ease);
+}
+
+.markdown a:hover {
+  text-decoration-color: var(--tone-secondary);
 }
 
 .chat-thread .markdown a {
@@ -828,11 +920,16 @@ textarea {
 }
 
 .file-preview-link {
-  color: var(--accent-bright);
-  font-size: var(--type-sm);
-  font-weight: 600;
-  text-decoration: none;
+  color: var(--tone-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--tone-faint);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
   overflow-wrap: anywhere;
+}
+
+.file-preview-link:hover {
+  text-decoration-color: var(--tone-secondary);
 }
 
 .file-preview-name-link {
@@ -950,19 +1047,19 @@ textarea {
 .file-preview--embedded .conversation-text-preview { margin:0; color:var(--text-default); font-family:var(--font-mono); font-size:var(--type-xs); white-space:pre-wrap; overflow-wrap:anywhere; }
 .file-preview-band { display:flex; align-items:center; gap:var(--space-4); padding:var(--space-5); background:var(--surface-2); }
 .file-preview-card:hover .file-preview-content, .file-preview-card:hover .file-preview-band { background-image:var(--interaction-hover); }
-.file-preview-card:focus-within { outline:var(--border-strong) solid var(--accent-bright); outline-offset:calc(var(--space-1) / 2); }
+.file-preview-card:focus-within { outline:var(--focus-width) solid var(--focus-ring); outline-offset:calc(var(--space-1) / 2); }
 .file-preview-card:has(.pv-act:focus-visible) { outline:0; }
 .file-preview-tile { display:grid; place-items:center; flex:none; width:var(--space-7); height:var(--space-7); border-radius:var(--radius-lg); background:var(--surface-recessed); color:var(--text-faint); }
 .file-preview-tile svg { width:calc(var(--space-5) - var(--border-strong)); height:calc(var(--space-5) - var(--border-strong)); }
 .file-preview-identity { flex:1; min-width:0; }
-.pv-name { display:block; color:var(--text-strong); font-size:var(--type-md); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:none; }
+.pv-name { display:block; color:var(--tone-primary); font-size:var(--type-page-section); font-weight:var(--weight-title); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:none; }
 a.pv-name::after { content:""; position:absolute; inset:0; }
 a.pv-name:focus-visible { outline:0; }
 .file-preview-card--live .file-preview-band { position:relative; }
-.file-preview-kind { display:block; color:var(--text-faintest); font-size:var(--type-sm); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.pv-act { position:relative; z-index:1; flex:none; color:var(--accent-bright); font-size:var(--type-sm); font-weight:600; white-space:nowrap; text-decoration:none; padding:var(--space-1) var(--space-2); border-radius:var(--radius-sm); }
-.pv-act:hover { background-image:var(--interaction-hover); }
-.pv-act:focus-visible, .file-preview-play:focus-visible, .file-preview-seek:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:calc(var(--space-1) / 2); }
+.file-preview-kind { display:block; color:var(--tone-tertiary); font-size:var(--type-small); font-weight:var(--weight-small); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pv-act { position:relative; z-index:1; flex:none; display:inline-flex; align-items:center; height:var(--button-height); color:var(--tone-secondary); font-size:var(--type-button); font-weight:var(--weight-button); white-space:nowrap; text-decoration:none; padding:0 var(--button-pad-x); border-radius:var(--button-radius); }
+.pv-act:hover { background:var(--button-ghost-fill-hover); color:var(--tone-strong); }
+.pv-act:focus-visible, .file-preview-play:focus-visible, .file-preview-seek:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:calc(var(--space-1) / 2); }
 .file-preview--embedded .file-preview-frame { background:var(--surface-recessed); border-radius:0; }
 .file-preview--embedded .file-preview-name-link { display:block; margin-block-end:var(--space-1); }
 .file-preview-media-download { display:inline-block; margin-block-end:var(--space-1); }
@@ -976,8 +1073,8 @@ a.pv-name:focus-visible { outline:0; }
 .file-preview-seek { display:flex; align-items:center; flex:1; min-width:var(--space-7); min-height:var(--space-7); cursor:pointer; }
 .file-preview-track { display:block; width:100%; height:var(--space-1); background:var(--surface-2); border-radius:var(--radius-pill); overflow:hidden; }
 .file-preview-progress { display:block; height:100%; background:var(--accent-bright); border-radius:var(--radius-pill); }
-.file-preview-time { flex:none; font-size:var(--type-sm); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
-.file-preview-failed-name { color:var(--text-strong); font-weight:600; }
+.file-preview-time { flex:none; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--tone-tertiary); font-variant-numeric:tabular-nums; }
+.file-preview-failed-name { color:var(--tone-strong); font-weight:var(--weight-title); }
 .chat-u .file-preview-card, .chat-u .file-preview-transport { border:var(--border-hairline) solid var(--border-color); }
 .file-preview-slot:has(> .file-preview--embedded .managed-html-fetch-notice), .file-preview--embedded:has(.managed-html-fetch-notice), .file-preview-card:has(.managed-html-fetch-notice), .file-preview-content:has(.managed-html-fetch-notice), .managed-html-document:has(> .managed-html-fetch-notice) { display:inline; margin:0; padding:0; border:0; border-radius:0; background:none; overflow:visible; }
 .file-preview-card:has(.managed-html-fetch-notice) > .file-preview-band { display:contents; }
@@ -992,69 +1089,148 @@ a.pv-name:focus-visible { outline:0; }
 
 /* --- Buttons (shared style class, not a component) ----------------------- */
 
-/* THE BUTTON — one base + three variants. Quiet = the neutral bordered chip (default);
- * primary = the accent surface; pill = the borderless inline pill. */
+/* THE BUTTON (Direction v2, Outcome 5): one component (Button.svelte), one class, four
+ * variants. 28px tall, radius 8, padding 0 12, label 13.5/450. A hover adds one step.
+ *   primary   — inverse: an 88% white fill with dark ink.
+ *   secondary — a 13% white fill, no border, a secondary-tone label.
+ *   outline   — a page header's own actions: no fill, a 1px edge at 10% white, a
+ *               secondary-tone label (so a card's decision leads); a hover adds a 4% fill.
+ *   ghost     — no fill and a secondary-tone label until hovered (6% fill).
+ * The older variant names map onto these: quiet = secondary, pill = ghost. */
 .button {
-  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--button-gap);
+  flex: none;
+  height: var(--button-height);
+  margin: 0;
+  padding: 0 var(--button-pad-x);
+  border: 0;
+  border-radius: var(--button-radius);
+  background: transparent;
+  color: var(--tone-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--type-button);
+  font-weight: var(--weight-button);
+  line-height: 1;
+  white-space: nowrap;
   text-decoration: none;
-  transition: background var(--motion-fast) var(--motion-ease),
-    border-color var(--motion-fast) var(--motion-ease),
-    color var(--motion-fast) var(--motion-ease),
-    filter var(--motion-fast) var(--motion-ease);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
 }
 
-.button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.button--quiet {
-  background: var(--surface-2);
-  color: var(--text-strong);
-  border: var(--border-hairline) solid var(--text-faint);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--type-sm);
+.button svg {
+  flex: none;
+  width: var(--button-icon);
+  height: var(--button-icon);
 }
 
 .button--primary {
-  background: var(--accent-surface);
-  color: var(--accent-text);
-  border: var(--border-hairline) solid var(--accent-bright);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--type-sm);
+  background: var(--button-primary-fill);
+  color: var(--button-primary-ink);
 }
 
+.button--primary:hover:not(:disabled) {
+  background: var(--button-primary-fill-hover);
+}
+
+/* No button wears an outline (owner): the outline variant is the secondary fill. */
+.button--secondary,
+.button--quiet,
+.button--outline {
+  background: var(--button-secondary-fill);
+  color: var(--tone-primary);
+}
+
+.button--secondary:hover:not(:disabled),
+.button--quiet:hover:not(:disabled),
+.button--outline:hover:not(:disabled) {
+  background: var(--button-secondary-fill-hover);
+  color: var(--tone-strong);
+}
+
+.button--ghost,
 .button--pill {
+  background: transparent;
+  color: var(--tone-secondary);
+}
+
+.button--ghost:hover:not(:disabled),
+.button--pill:hover:not(:disabled) {
+  background: var(--button-ghost-fill-hover);
+  color: var(--tone-strong);
+}
+
+.button:disabled {
+  color: var(--tone-faint);
+  cursor: default;
+}
+
+.button--primary:disabled {
+  background: var(--button-secondary-fill);
+}
+
+/* THE SEGMENTED CONTROL (Direction v2, Outcome 5): one component (SegmentedControl.svelte),
+ * one class. No track: each segment is a 28px, radius-8 button in the secondary tone; the
+ * selected segment carries the 12% selected fill and the strong tone; a hover adds one step. */
+.segmented {
   display: inline-flex;
   align-items: center;
-  font-size: var(--type-xs);
-  color: var(--text-muted);
-  background: var(--surface-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
-  white-space: nowrap;
+  gap: 2px;
+  /* A control that wraps its segments (the Ideas project picker) grows with its rows, so
+   * nothing under it can sit on its second row. */
+  min-height: var(--segment-height);
 }
 
-.button--pill:hover {
-  color: var(--text-strong);
+.segmented-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--segment-height);
+  margin: 0;
+  padding: 0 var(--button-pad-x);
+  border: 0;
+  border-radius: var(--segment-radius);
+  background: transparent;
+  color: var(--tone-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--type-button);
+  font-weight: var(--weight-button);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
+}
+
+.segmented-option:hover {
+  background: var(--segment-hover-fill);
+  color: var(--tone-strong);
+}
+
+.segmented-option[aria-pressed="true"],
+.segmented-option[aria-current="page"] {
+  background: var(--segment-selected-fill);
+  color: var(--tone-strong);
 }
 
 /* --- Chips --------------------------------------------------------------- */
 
+/* A chip is Small text on the code lift: a label, never a control. */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  font-size: var(--type-xs);
-  font-weight: 500;
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  font-variant-numeric: tabular-nums;
   padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
   border: var(--border-hairline) solid transparent;
-  background: var(--surface-2);
-  color: var(--text-default);
+  background: var(--surface-code);
+  color: var(--tone-secondary);
   white-space: nowrap;
   line-height: 1.6;
 }
@@ -1062,8 +1238,8 @@ a.pv-name:focus-visible { outline:0; }
 
 .chip--project {
   background: transparent;
-  color: var(--text-muted);
-  border-color: var(--text-faint);
+  color: var(--tone-secondary);
+  border-color: var(--border-hover);
 }
 
 
@@ -1132,35 +1308,40 @@ button.list-row:hover .list-row-title {
 
 /* --- Error line ---------------------------------------------------------- */
 
+/* An error stands in its own quiet tint, the fill that replaced the old left bar: the code
+ * chip and the sentence read as one marked line without a rule beside them. */
 .error-line {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
-  font-size: var(--type-sm);
-  border-left: var(--border-strong) solid var(--accent-bright);
-  padding-left: var(--space-2);
+  font-size: var(--type-body);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--error-surface);
 }
 
+/* The code is inline code: Small mono on the code lift, in the line's own tone. */
 .error-code {
   font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--accent-text);
-  background: var(--accent-surface);
-  padding: 0 var(--space-1);
+  font-size: var(--type-code);
+  color: var(--tone-primary);
+  background: var(--surface-code);
+  padding: var(--code-pad-y) var(--code-pad-x);
   border-radius: var(--radius-sm);
 }
 
 .error-message {
-  color: var(--text-default);
+  color: var(--tone-primary);
 }
 
 /* --- Quiet line (empty states, placeholders, unknown route) -------------- */
 
 /* A quiet line for empty/loading states. */
 .quiet-line {
-  color: var(--text-muted);
+  color: var(--tone-secondary);
   font-family: var(--font-ui);
-  font-size: var(--type-md);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
 }
 
 /* Wide step output (code wells, markdown pre) must scroll inside its own box, never
@@ -1462,7 +1643,7 @@ button.list-row:hover .list-row-title {
 }
 
 .chat-overflow-history select:focus-visible {
-  outline: var(--border-hairline) solid var(--accent-bright);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -1543,7 +1724,7 @@ button.list-row:hover .list-row-title {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: var(--type-xs);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   line-height: 1;
   padding: var(--space-2) var(--space-3);
   cursor: pointer;
@@ -1600,7 +1781,10 @@ button.list-row:hover .list-row-title {
 /* programmatic prompts = visible system context, never hidden or mistaken for user prose */
 .chat-system {
   align-self: stretch;
-  border-inline-start: var(--border-hairline) solid var(--text-faint);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  padding-block: var(--space-2);
+  padding-inline-end: var(--space-3);
   color: var(--text-faint);
   font-family: var(--font-ui);
   font-size: var(--type-md);
@@ -1609,17 +1793,23 @@ button.list-row:hover .list-row-title {
   overflow-wrap: anywhere;
 }
 
-/* The same rounded input stays distinct from the conversation in both states. */
+/* The same rounded input stays distinct from the conversation in both states: the
+ * reference composer's 10% surface, a 1px edge one step lighter, radius 12. */
 .chat-box {
   position: relative;   /* anchors the "/" command popover above it */
   flex: none;
-  background: var(--surface-input);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: var(--space-3) var(--space-4);
+  background: var(--composer-surface);
+  border: var(--border-hairline) solid var(--composer-edge);
+  border-radius: var(--composer-radius);
+  padding: var(--space-3) var(--space-3) var(--space-2) calc(var(--composer-inset) - var(--border-hairline));
+  transition: border-color var(--motion-fast) var(--motion-ease);
 }
+/* Focus: the composer's own 1px edge in the accent (--composer-focus-edge). Owner: the 2px accent
+ * ring was far too much, and staging's faint blend too quiet; one clear 1px accent edge. */
 .chat-box:focus-within {
-  border-color: color-mix(in srgb, var(--accent-bright) 40%, var(--border-color));
+  border-color: var(--composer-focus-edge);
+  box-shadow: none;
+  outline: none;
 }
 /* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
 .chat-box.drag {
@@ -1724,7 +1914,7 @@ button.list-row:hover .list-row-title {
 }
 .chat-att-words { min-width: 0; display: grid; gap: 1px; }
 .chat-att-name {
-  color: var(--text-strong); font-size: var(--type-xs); font-weight: 600;
+  color: var(--text-strong); font-size: var(--type-xs); font-weight: var(--weight-title);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .chat-att-meta {
@@ -1750,7 +1940,7 @@ button.list-row:hover .list-row-title {
   border-radius: var(--radius-md);
   background: var(--scrim);
   color: var(--text-strong);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   pointer-events: none;
   z-index: 15;
 }
@@ -1771,7 +1961,7 @@ button.list-row:hover .list-row-title {
   overflow-y: hidden;
   display: block;
 }
-.chat-ta::placeholder { color: var(--text-faintest); }
+.chat-ta::placeholder { color: var(--tone-tertiary); }
 /* The input actions use one row and one treatment at every width. */
 .chat-foot {
   display: flex;
@@ -1841,12 +2031,13 @@ button.list-row:hover .list-row-title {
   min-height: var(--composer-target);
   padding-block: 0;
   font-family: var(--font-ui);
-  font-size: var(--type-sm);
-  color: var(--text-faint);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  color: var(--tone-secondary);
   padding-inline: var(--space-3);
 }
 [data-conversation-composer] .chat-foot .listbox-picker-trigger:hover {
-  color: var(--text-strong);
+  color: var(--tone-strong);
 }
 [data-conversation-composer] .chat-foot .listbox-picker-chevron,
 [data-conversation-composer] .chat-foot .listbox-picker-chevron-drawn { display: none; }
@@ -2119,7 +2310,7 @@ select {
   gap: var(--space-2);
   color: var(--text-faint);
   font-size: var(--type-sm);
-  font-weight: 400;
+  font-weight: var(--weight-small);
 }
 
 .scope-word {
@@ -2143,7 +2334,7 @@ select {
   color: var(--text-strong);
   cursor: pointer;
   font: inherit;
-  font-weight: 500;
+  font-weight: var(--weight-title);
   outline: none;
   min-width: 0;
   max-width: 100%;
@@ -2167,8 +2358,7 @@ select {
   flex: 1;
   display: flex;
   flex-direction: column;
-  width: 100%;
-  max-width: calc(var(--space-7) * 13);
+  width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
   margin: 0 auto;
   padding: 0 0 var(--space-7);
 }
@@ -2177,35 +2367,32 @@ select {
  * outside-actions row moved up here, no queue position. */
 .review-ticket-decision-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: flex-end;
-  gap: var(--space-5);
-  padding: var(--space-6) 0 var(--space-2);
+  gap: var(--space-1);
+  padding: var(--space-5) 0 var(--space-4);
+  margin-right: calc(var(--space-3) * -1);
 }
 
-.review-ticket-decision-line button,
-.review-ticket-decision-line a {
-  background: none;
-  border: 0;
+/* Inside the decision card the line joins the card's own action row. */
+.review-ticket-decision-line--inline {
   padding: 0;
-  color: var(--text-faintest);
-  font-family: var(--font-ui);
-  font-size: var(--type-sm);
-  text-decoration: none;
-  cursor: pointer;
-  transition: color var(--motion-base) var(--motion-ease);
+  margin-right: 0;
+  gap: var(--space-2);
 }
 
-.review-ticket-decision-line button:hover,
-.review-ticket-decision-line a:hover {
-  color: var(--text-default);
+/* The review chamber's breadcrumb slot: the page band's height, the eyebrow's voice. */
+.review-eyebrow {
+  display: flex;
+  align-items: center;
+  min-height: var(--page-band-height);
 }
 
 /* The keyboard hint, centered and faint, at the foot of the chamber. */
 .review-keys {
   margin-top: auto;
-  padding-top: var(--space-7);
-  text-align: center;
+  padding-top: var(--space-5);
+  text-align: left;
   font-size: var(--type-xs);
   color: var(--text-faintest);
 }
@@ -2213,21 +2400,27 @@ select {
 /* The chamber fills the viewport so the key hints anchor to the bottom edge
  * (mockup: .keys { margin-top: auto }). */
 .review-keys kbd {
-  font-family: var(--font-mono);
+  display: inline-block;
+  min-width: 20px;
+  font-family: var(--font-ui);
   font-size: var(--type-xs);
-  color: var(--text-faint);
-  background: var(--surface-2);
+  line-height: 18px;
+  color: var(--text-muted);
+  /* A key cap is a fill alone (no edge), one clear step over the page. */
+  background: var(--wash-selected);
+  border: var(--border-hairline) solid transparent;
   border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
+  padding: 0 5px;
   margin-right: var(--space-1);
+  text-align: center;
 }
 
 /* Display title, brand-accent hover, still the ticket link. */
 .review-ticket-title {
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
+  font-weight: var(--weight-title);
+  letter-spacing: -0.02em;
   color: var(--text-strong);
   text-decoration: none;
   display: block;
@@ -2237,7 +2430,7 @@ select {
 }
 
 .review-ticket-title:hover {
-  color: var(--accent-bright);
+  color: var(--text-default);
 }
 
 .review-ticket-heading {
@@ -2257,12 +2450,14 @@ select {
 }
 
 .review-recap {
-  max-width: 60ch;
+  max-width: none;
   margin-top: var(--space-2);
-  color: var(--text-faint);
+  margin-bottom: var(--space-5);
+  color: var(--text-muted);
   font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.5;
+  font-size: var(--type-ui);
+  font-weight: var(--weight-small);
+  line-height: 22px;
 }
 
 .review-recap .markdown > :last-child {
@@ -2274,7 +2469,7 @@ select {
 [data-screen="review"] .disclosure--support > .disclosure-summary {
   font-family: var(--font-mono);
   font-size: var(--type-xs);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faint);
@@ -2286,72 +2481,162 @@ select {
   flex-direction: column;
 }
 
-.review-revision-box {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
-}
-
-.review-revision-input {
-  flex: 1;
-  min-height: 2.75rem;
-  resize: none;
-  border: 0;
-  outline: 0;
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-3);
-  background: var(--surface-recessed);
-  color: var(--text-strong);
-  caret-color: var(--accent-bright);
-  font-family: var(--font-ui);
-  font-size: var(--type-sm);
-  line-height: 1.5;
-}
-
-.review-revision-input::placeholder {
-  color: var(--text-faintest);
-}
-
-/* Send back — a quiet filled action beside the textarea, borderless per the
- * mockup, sized to sit level with the composer's top. */
-.review-revision-box .button {
-  flex: none;
-  border-color: transparent;
-  color: var(--text-muted);
-  padding: var(--space-3) var(--space-4);
-}
-
-.review-revision-box .button:hover:not(:disabled) {
-  color: var(--text-strong);
-}
-
-/* Voice on the revision box (t_0pgfmbsr): the mic is only an affordance beside the
- * textarea — Approve stays this screen's primary action. The live states reuse the
- * composer's .chat-voice-* language; these rules just seat them in this row. */
-.review-voice-mic {
-  flex: none;
-  align-self: center;
-  width: var(--space-5);
-  height: var(--space-5);
+/* THE COMPOSER FIELD (ComposerField.svelte): the conversation composer's box wherever else a
+ * person writes (a reply in Review, the line for the Worker, the return note, an idea). Every
+ * measure is the composer's own (.chat-box and THE COMPOSER ZONE): its fill alone at rest,
+ * radius 12, staging's quiet 1px focus edge; one 44px row with the + at the left and the voice
+ * and send controls at the right; and, once the draft nears the controls or holds a line
+ * break, the draft on a row of its own over them (the component decides with draftRows.ts and
+ * animates the move, 180ms). Attachments take a strip under the draft, over the controls, so
+ * attaching never moves the words. A voice take keeps the one row: its X where the + is, its
+ * line where the words are, its stop or retry where send is. */
+.composer-field {
+  position: relative;
   display: grid;
-  place-items: center;
-  padding: var(--space-1);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: end;
+  align-content: end;
+  column-gap: var(--space-1);
+  min-height: var(--composer-height);
+  padding: calc((var(--composer-height) - var(--composer-control)) / 2 - var(--border-hairline)) var(--space-2);
+  background: var(--composer-surface);
+  border: var(--border-hairline) solid var(--composer-edge);
+  border-radius: var(--composer-radius);
+  transition: border-color var(--motion-fast) var(--motion-ease);
+}
+/* Focus, as the composer's (.chat-box:focus-within): its 1px edge in the accent. */
+.composer-field:focus-within {
+  border-color: var(--composer-focus-edge);
+}
+.composer-field-leading { grid-column: 1; grid-row: 1; display: flex; }
+.composer-field-trailing { grid-column: 3; grid-row: 1; display: flex; align-items: center; gap: var(--space-3); }
+.composer-field-input {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 0 calc((var(--composer-control) - 24px) / 2) var(--space-1);
+  padding: 0;
   background: none;
   border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-faintest);
+  outline: none;
+  resize: none;
+  overflow-y: hidden;
+  color: var(--text-default);
+  font-family: var(--font-ui);
+  font-size: max(var(--type-md), var(--type-input));
+  line-height: 24px;
+}
+.composer-field-input[hidden] { display: none; }
+/* With nothing at a side, the words keep the composer's inset from that edge. */
+.composer-field:not(.has-leading) > .composer-field-input { margin-inline-start: calc(var(--composer-inset) - var(--space-2) - var(--border-hairline) - var(--space-1)); }
+.composer-field:not(.has-trailing) > .composer-field-input { margin-inline-end: calc(var(--composer-inset) - var(--space-2) - var(--border-hairline) - var(--space-1)); }
+.composer-field-input::placeholder { color: var(--tone-tertiary); }
+.composer-field-input:focus::placeholder { color: var(--tone-secondary); }
+/* The draft on its own row, the controls on the row under it, in the same columns. */
+.composer-field[data-composer-field-controls-below] > .composer-field-input {
+  grid-column: 1 / -1;
+  width: auto;
+  margin: calc((var(--composer-control) - 24px) / 2) calc(var(--composer-inset) - var(--space-2) - var(--border-hairline));
+}
+.composer-field[data-composer-field-controls-below] > :is(.composer-field-leading, .composer-field-trailing) { grid-row: 2; }
+.composer-field-attachments { grid-column: 1 / -1; grid-row: 2; min-width: 0; margin-inline: calc(var(--composer-inset) - var(--space-2) - var(--border-hairline) - var(--space-1)); }
+.composer-field.has-attachments > :is(.composer-field-leading, .composer-field-trailing) { grid-row: 3; }
+.composer-field.is-voice > :is(.composer-field-leading, .composer-field-voice, .composer-field-trailing) { grid-row: 1; }
+/* Held after a send: the words where they were, the controls at the foot. */
+.composer-field[data-composer-field-held] { align-content: stretch; }
+.composer-field[data-composer-field-held][data-composer-field-controls-below] { grid-template-rows: minmax(0, 1fr) auto; }
+.composer-field[data-composer-field-held].has-attachments { grid-template-rows: minmax(0, 1fr) auto auto; }
+.composer-field[data-composer-field-held] > .composer-field-input { align-self: start; }
+
+/* The composer's icons (its .chat-image): a 32px target, the 22px glyph in the secondary tone,
+ * lifting to the strong tone on hover. */
+.composer-field-tool {
+  width: var(--composer-control);
+  height: var(--composer-control);
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--tone-secondary);
   cursor: pointer;
 }
-.review-voice-mic:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
-.review-voice-mic:disabled { opacity: 0.5; cursor: default; }
-.review-voice-mic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; }
-/* The centred line stands where the textarea rests, at its height, so nothing jumps. */
-.review-voice-mid {
-  flex: 1;
-  min-height: 2.75rem;
+.composer-field-tool:hover:not(:disabled) { color: var(--tone-strong); background-image: var(--interaction-hover); }
+.composer-field-tool svg {
+  display: block;
+  width: var(--conversation-glyph, 22px);
+  height: var(--conversation-glyph, 22px);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.review-revision-box .review-voice-action { align-self: center; }
+/* The composer's send (.chat-send): a 28px round with the 14px arrow, lit when there is
+ * something to send. Its target stays 32px; the round is drawn inside it and the target
+ * reaches 2px past it on each side, so the round sits exactly where the composer's does. */
+.composer-field-send {
+  width: var(--composer-control);
+  height: var(--composer-control);
+  flex: none;
+  margin-inline: calc((28px - var(--composer-control)) / 2);
+  padding: calc((var(--composer-control) - 28px) / 2);
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-2);
+  background-clip: content-box;
+  color: var(--tone-secondary);
+  cursor: pointer;
+  line-height: 1;
+  transition: background-color var(--motion-base) var(--motion-ease), color var(--motion-base) var(--motion-ease);
+}
+.composer-field-send.on { background-color: var(--accent-bright); color: var(--surface-ink); }
+.composer-field-send:disabled { opacity: 0.5; cursor: default; }
+.composer-field-send svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.composer-field-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  animation: acp-spin var(--motion-loop-spin) linear infinite;
+}
+/* Voice, in the composer's own language (.chat-voice-*), at the composer's target size. */
+.composer-field-voice {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0 var(--space-2);
+  min-width: 0;
+  min-height: var(--composer-control);
+  font-size: var(--type-md);
+  text-align: center;
+}
+.composer-field :is(.chat-voice-cancel, .chat-voice-stop) { width: var(--composer-control); height: var(--composer-control); }
+.composer-field .chat-voice-retry { height: var(--composer-control); }
+.composer-field .chat-voice-cancel svg { width: var(--conversation-glyph, 22px); height: var(--conversation-glyph, 22px); stroke-width: 1.35; }
+.composer-field .chat-voice-square { width: calc(var(--conversation-glyph, 22px) / 2); height: calc(var(--conversation-glyph, 22px) / 2); }
 
 /* Entrance rhythm: each decision's parts fade up in a short stagger. Keyed to the
  * current entry in the markup so advancing to the next decision re-runs it. */
@@ -2416,11 +2701,10 @@ select {
  * same --board-workspace-rail-pad-x inner inset, so all rail text shares one left
  * edge. Vertical rhythm follows the mockup's roster: rows touch, groups separate. */
 .board-workspace-left {
-  background: var(--surface-recessed);
+  background: var(--surface-rail);
   min-width: 0;
   overflow: auto;
   padding: var(--space-4) var(--page-gutter) var(--space-7);
-  border-right: var(--border-hairline) solid var(--border-color);
   --board-workspace-rail-pad-x: var(--space-3);
 }
 
@@ -2450,7 +2734,7 @@ select {
 }
 
 .board-workspace-chief-row:focus-visible {
-  outline: 2px solid var(--accent-bright);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: var(--space-1);
 }
 
@@ -2471,7 +2755,7 @@ select {
   color: inherit;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 500;
+  font-weight: var(--weight-title);
   line-height: 1.2;
 }
 
@@ -2548,7 +2832,7 @@ select {
 
 .board-workspace-view[aria-selected="true"] {
   color: var(--text-strong);
-  font-weight: 500;
+  font-weight: var(--weight-title);
 }
 
 .board-workspace-view[aria-selected="true"]::after {
@@ -2599,7 +2883,7 @@ select {
   min-width: 0;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 500;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.2;
 }
@@ -2721,7 +3005,7 @@ select {
 }
 
 .board-workspace-item-head:focus-visible {
-  outline: var(--border-strong) solid var(--accent-bright);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: var(--space-1);
   border-radius: var(--radius-sm);
 }
@@ -2731,7 +3015,7 @@ select {
   min-width: 0;
   font-family: var(--font-ui);
   font-size: var(--type-lg);
-  font-weight: 500;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.2;
   color: var(--text-strong);
@@ -2740,7 +3024,7 @@ select {
 /* Rested: every Ticket on this Item is done and quiet. Same box, only the title dims. */
 .board-workspace-item-title--rested {
   color: var(--text-faint);
-  font-weight: 400;
+  font-weight: var(--weight-small);
 }
 
 /* The Item title owns every group under it, not just the first, so it must not bind to
@@ -2855,7 +3139,7 @@ select {
 }
 
 .ed:focus {
-  outline: var(--border-hairline) solid var(--accent-bright);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: var(--space-1);
 }
 
@@ -2924,7 +3208,7 @@ select {
 .disclosure--support > .disclosure-summary {
   color: var(--text-muted);
   font-size: var(--type-md);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   line-height: 1.3;
   transition: color var(--motion-fast) var(--motion-ease);
 }
@@ -2986,7 +3270,7 @@ select {
 }
 
 .employee-configuration-setup .pill:focus-within {
-  outline: var(--border-strong) solid var(--accent-bright);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: var(--border-hairline);
 }
 
@@ -3017,8 +3301,8 @@ select {
 
 .stage-mark {
   flex: none;
-  width: 0.7rem;
-  height: 0.7rem;
+  width: var(--space-2);
+  height: var(--space-2);
   border: var(--border-strong) solid var(--text-faintest);
   border-radius: var(--radius-pill);
   box-sizing: border-box;
@@ -3030,6 +3314,9 @@ select {
 }
 
 .stage-mark--current-running {
+  width: calc(var(--space-2) + var(--border-strong));
+  height: calc(var(--space-2) + var(--border-strong));
+  border-width: 1.5px;
   border-color: var(--accent-surface);
   border-right-color: var(--accent-bright);
   border-top-color: var(--accent-bright);
@@ -3092,7 +3379,7 @@ select {
 .disclosure--stage[data-stage-state="errored"] > .disclosure-summary .disclosure-stage-name,
 .disclosure--stage[data-stage-state="needs-me"] > .disclosure-summary .disclosure-stage-name {
   color: var(--text-strong);
-  font-weight: 600;
+  font-weight: var(--weight-title);
 }
 
 .disclosure--stage[data-stage-state="completed"] > .disclosure-summary .disclosure-stage-name {
@@ -3112,10 +3399,9 @@ select {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--text-faint);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
+  color: var(--tone-tertiary);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
 }
 
 .ticket-stage-run--attention {
@@ -3296,7 +3582,7 @@ select {
   padding: 0;
   color: var(--accent-bright);
   font-size: var(--type-sm);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   cursor: pointer;
 }
 
@@ -3333,21 +3619,25 @@ select {
   min-height: 0;
   max-width: 100%;
   max-height: var(--conversation-visible-height, 100%);
+  padding-top: var(--space-2);
   padding-bottom: var(--conversation-edge-gap);
   background: var(--surface-1);
 }
-/* The dock shares the page's plane. A hairline is its only edge; the open and
- * return motion fades it through --conversation-dock-line. */
+/* The composer zone is opaque on the page's own plane. The page scrolls under it, and a
+ * short gradient above the zone carries the page into it, so a line passing under is
+ * covered within a few pixels instead of being cut or left as a ghost. The gradient fades
+ * out as the conversation opens and back in on return (--conversation-dock-line). */
 .conversation-layer::before {
   content: "";
   position: absolute;
-  top: 0;
+  bottom: 100%;
   left: 0;
   right: 0;
-  height: var(--border-hairline);
-  background: var(--border-color);
+  height: var(--space-4);
+  background: linear-gradient(to bottom, transparent, var(--surface-1));
   opacity: var(--conversation-dock-line, 1);
   pointer-events: none;
+  display: none;
 }
 .conversation-column {
   display: flex;
@@ -3368,6 +3658,18 @@ select {
   height: var(--conversation-visible-height, 100%);
   --conversation-dock-line: 0;
 }
+/* While the dock moves, its content stands at the dock's foot. On return the pane is already
+ * at rest (status line and composer) while the dock is still shrinking from full height, so
+ * content laid out from the top would lift the composer to the top and ride it back down. */
+[data-conversation-dock-transition] > .conversation-layer .chat-panel {
+  justify-content: flex-end;
+}
+/* While it moves, the composer keeps its own height: the dock starts (or ends) at its resting
+ * height, and anything the moving content lacks room for comes out of the header or the
+ * transcript above, never out of the composer, so the composer does not dip. */
+[data-conversation-dock-transition] > .conversation-layer .chat-panel > .c2-composer {
+  flex-shrink: 0;
+}
 [data-conversation-dock-state="opened"] > .ticket-reading,
 [data-conversation-dock-state="opened"] > .manager-reading {
   pointer-events: none;
@@ -3381,9 +3683,17 @@ select {
   bottom: 0;
   left: 0;
   right: 0;
-  height: var(--space-5);
-  background: linear-gradient(transparent, var(--surface-1));
+  height: 0;
+  background: none;
   pointer-events: none;
+}
+/* The document's own bottom padding lets its last line scroll fully clear of the zone. */
+.conversation-layer > .conversation-column {
+  position: relative;
+}
+/* No hairline above the composer zone: the zone is the composer and its status line. */
+.conversation-layer > .conversation-column::before {
+  content: none;
 }
 .conversation-layer [data-conversation-pane] {
   padding-inline: 0;
@@ -3500,15 +3810,12 @@ select {
 .ticket-identity-fact:focus-within {
   color: var(--text-strong);
   border-bottom-color: var(--accent-bright);
-  outline: var(--border-hairline) solid var(--accent-bright);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 .ticket-identity-separator {
   color: var(--text-faintest);
-}
-
-.ticket-identity-separator {
   opacity: 0.5;
 }
 
@@ -3531,7 +3838,7 @@ select {
   max-width: 100%;
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 500;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
@@ -3550,16 +3857,16 @@ select {
   display: block;
   max-width: 62ch;
   margin-top: var(--space-2);
-  color: var(--text-faint);
+  color: var(--text-muted);
   font-family: var(--font-ui);
   font-size: var(--type-prose-lg);
-  line-height: 1.5;
+  line-height: 1.6;
   cursor: text;
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
 .ticket-recap:hover {
-  color: var(--text-muted);
+  color: var(--text-default);
 }
 
 .ticket-recap:focus-within {
@@ -3568,10 +3875,10 @@ select {
 
 /* Three lines by default, and whatever `--clamp-lines` says when a screen wants a taller
  * reading window — the Sprint's bet asks for four and a half. The line is the type's own
- * (font-size × the 1.5 line-height above), so the number here is the number of lines the
+ * (font-size × the 1.6 line-height above), so the number here is the number of lines the
  * component measures against. */
 .ticket-recap--clamped {
-  max-height: calc(var(--type-prose-lg) * 1.5 * var(--clamp-lines, 3));
+  max-height: calc(var(--type-prose-lg) * 1.6 * var(--clamp-lines, 3));
   overflow: hidden;
 }
 
@@ -3650,7 +3957,7 @@ select {
   flex: none;
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -3670,7 +3977,7 @@ select {
 .artifact-chip small {
   color: var(--text-faintest);
   font-size: var(--type-xs);
-  font-weight: 400;
+  font-weight: var(--weight-small);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
@@ -3740,7 +4047,7 @@ a.artifact-chip:hover,
 .ticket-col,
 .conversation-column,
 .manager-column {
-  width: min(var(--document-channel-measure), calc(100% - 2 * var(--space-5)));
+  width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
   margin-inline: auto;
   padding-inline: 0;
 }
@@ -3868,7 +4175,7 @@ a.artifact-chip:hover,
 
 .stage-fold-summary:focus-visible,
 .stage-fold-close:focus-visible {
-  outline: var(--border-hairline) solid var(--accent-bright);
+  outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: calc(-1 * var(--border-hairline));
 }
 
@@ -4018,7 +4325,7 @@ a.artifact-chip:hover,
 }
 
 .manager-column {
-  padding-bottom: var(--space-6);
+  padding-bottom: var(--space-7);
 }
 
 .manager-workspace-head {
@@ -4044,7 +4351,7 @@ a.artifact-chip:hover,
   color: var(--text-strong);
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 500;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
 }
@@ -4105,7 +4412,7 @@ a.artifact-chip:hover,
   flex: 1;
   font-family: var(--font-ui);
   font-size: var(--type-xs);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   line-height: 1.3;
   text-transform: uppercase;
@@ -4137,7 +4444,7 @@ a.artifact-chip:hover,
   color: var(--text-faint);
   font-family: var(--font-ui);
   font-size: var(--type-md);
-  font-weight: 500;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.3;
   transition: color var(--motion-fast) var(--motion-ease);
@@ -4191,7 +4498,7 @@ a.artifact-chip:hover,
   margin-left: auto;
   color: var(--text-faint);
   font-size: var(--type-sm);
-  font-weight: 400;
+  font-weight: var(--weight-small);
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -4202,7 +4509,7 @@ a.artifact-chip:hover,
 .manager-workspace-status > summary > .manager-workspace-count,
 .manager-workspace-section > summary > .manager-workspace-count {
   font-size: var(--type-sm);
-  font-weight: 400;
+  font-weight: var(--weight-small);
   color: var(--text-faintest);
 }
 
@@ -4324,7 +4631,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] .screen-header-title {
   font-family: var(--font-ui);
   font-size: var(--type-display);
-  font-weight: 500;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
@@ -4354,38 +4661,26 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 [data-screen="ideas"] .screen-header,
 [data-screen="ideas"] .col {
-  max-width: var(--measure-read);                 /* a tight read+capture measure (matches Day) */
+  max-width: var(--page-measure);
   margin: 0 auto;
 }
 
 [data-screen="ideas"] .screen-header {
-  padding: var(--space-5) var(--space-4) var(--space-4);
+  padding: 0 0 var(--space-4);
 }
 
 [data-screen="ideas"] .col {
-  padding: 0 var(--space-4) var(--space-page-tail);
+  padding: 0 0 var(--space-page-tail);
 }
 
 /* capture — the hero: always open, the Today focus-line treatment */
 [data-screen="ideas"] .capture {
   padding: var(--space-5) 0;
-  border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
-[data-screen="ideas"] .capture .title-in {
-  font-family: var(--font-ui);
-  font-size: var(--type-lg);
-  font-weight: 500;
-  line-height: 1.4;
-  color: var(--text-strong);
-}
-
-[data-screen="ideas"] .capture .detail-in {
+/* The idea and its detail are the composer's field (ComposerField), one under the other. */
+[data-screen="ideas"] .capture .composer-field + .composer-field {
   margin-top: var(--space-3);
-  font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.66;
-  color: var(--text-muted);
 }
 
 [data-screen="ideas"] .capture .foot {
@@ -4422,7 +4717,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] .list > .section-heading {
   padding: var(--space-1) 0 var(--space-2);
   font-size: var(--type-xs);
-  font-weight: 600;
+  font-weight: var(--weight-title);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
@@ -4465,7 +4760,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-screen="ideas"] .list-row--idea .list-row-title {
   flex: 1;
   font-size: var(--type-md);
-  font-weight: 500;
+  font-weight: var(--weight-title);
   color: var(--text-default);
   transition: color var(--motion-fast) var(--motion-ease);
 }
@@ -4488,29 +4783,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 
 /* --- shared compose surfaces (Backlog + Ideas) --------------------------- */
-/* The transparent inline-edit inputs (brand-accent caret) and the chip-toggle selectors and
-   grayscale commit — one look across both compose forms. */
-
-/* THE CAPTURE INPUT — one transparent inline field (brand-accent caret) shared by the
- * backlog and ideas compose forms. Per-screen .title-in/.detail-in sizes below are
- * genuine differences (backlog is compact; the ideas capture is the hero). */
-.in {
-  width: 100%;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  outline: none;
-  font-family: inherit;
-  line-height: 1.6;
-  color: var(--text-default);
-  caret-color: var(--accent-bright);
-  resize: none;
-}
-
-.in::placeholder {
-  color: var(--text-faintest);
-  font-style: italic;
-}
+/* The chip-toggle selectors and grayscale commit — one look across both compose forms. */
 
 /* the deadline is a fact, not prose — a small sans field in the foot row */
 
@@ -4521,161 +4794,27 @@ details:not([open]) > summary > .manager-workspace-chevron {
   flex-wrap: wrap;
 }
 
-[data-screen="ideas"] .opt {
-  padding: var(--space-1) var(--space-3);
-  font-family: inherit;
-  font-size: var(--type-xs);
-  color: var(--text-faint);
-  background: var(--surface-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: color var(--motion-fast) var(--motion-ease),
-    background var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="ideas"] .opt:hover {
-  color: var(--text-default);
-}
-
-[data-screen="ideas"] .opt[aria-pressed="true"] {
-  color: var(--text-strong);
-  background: var(--surface-recessed);
-}
-
-/* Commit — the one solid brand-accent action on the capture, the mockup's .commit. */
-[data-screen="ideas"] [data-commit].button {
-  background: var(--accent-bright);
-  color: var(--surface-ink);
-  border-color: var(--accent-bright);
-  font-weight: 600;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  transition: background var(--motion-base) var(--motion-ease);
-}
-
-[data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-
-/* Notifications — one quiet settings column; choices are content, not cards. */
-[data-screen="notifications"] {
-  width: min(100%, var(--measure-index));
-  margin: 0 auto;
-  padding: var(--space-7) var(--space-5) var(--space-page-tail);
-}
-
-.notifications-head .eyebrow,
-.notifications-section h2 {
-  font-family: var(--font-ui);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.notifications-head h1 {
-  margin: var(--space-2) 0 var(--space-7);
-  font-family: var(--font-ui);
-  font-size: var(--type-display);
-  font-weight: 500;
-  color: var(--text-strong);
-}
-
-.notifications-section {
-  margin-bottom: var(--space-7);
-}
-
-.notifications-section h2 {
-  margin: 0 0 var(--space-3);
-}
-
-.notification-subject + .notification-subject {
-  margin-top: var(--space-6);
-}
-
-.notification-subject h3 {
-  margin: 0;
-  font-family: var(--font-ui);
-  font-size: var(--type-lg);
-  font-weight: 500;
-  color: var(--text-strong);
-}
-
-.notification-option {
-  display: flex;
-  gap: var(--space-5);
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-4) 0;
-  border-bottom: var(--border-hairline) solid var(--border-color);
-  cursor: pointer;
-}
-
-.notification-option strong,
-.notification-option small {
-  display: block;
-}
-
-.notification-option strong {
-  font-family: var(--font-ui);
-  font-size: var(--type-prose-lg);
-  font-weight: 500;
-  color: var(--text-strong);
-}
-
-.notification-option small,
-.notifications-section p {
-  margin-top: var(--space-1);
-  font-family: var(--font-ui);
-  font-size: var(--type-md);
-  color: var(--text-muted);
-}
-
-.notification-option input {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  accent-color: var(--accent-bright);
-}
-
-.notification-action {
-  margin-top: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  font: inherit;
-  color: var(--text-default);
-  background: var(--surface-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.notification-action--primary {
-  color: var(--surface-ink);
-  background: var(--accent-bright);
-  font-weight: 600;
-}
-
-.notification-action:disabled {
-  opacity: 0.55;
-  cursor: wait;
-}
-
-@media (max-width: 720px) {
-  [data-screen="notifications"] {
-    padding: var(--space-5) 0 var(--space-page-tail);
-  }
-}
-
-/* Workspace ticket buckets share row geometry across buttons and message links. */
-.workspace-ticket-bucket { margin-top:var(--space-4); }
-.workspace-ticket-bucket .bucket-label { font-size:10.5px; line-height:normal; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint); padding-bottom:6px; margin-bottom:var(--space-1); border-bottom:var(--border-hairline) solid var(--border-color); }
-.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--space-2) * 2)); display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-sm); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:1.5; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+/* A Ticket group: a readable heading (12/600 at 64%, no count) 4px over its rows, the rows
+   tight under it with no gap, so the group reads as one list. The header unit (eyebrow, name
+   and goals) and every group stand 12px apart; all of it on the rail's 4px grid. */
+.workspace-ticket-bucket { display:flex; flex-direction:column; margin-top:var(--rail-group-gap); }
+.manager-card > :not(.workspace-ticket-bucket) + .workspace-ticket-bucket { margin-top:var(--rail-header-clear); }
+.workspace-ticket-bucket .bucket-label { box-sizing:border-box; display:block; min-height:var(--rail-heading-line); padding:0 var(--rail-pad); margin:0 0 var(--rail-heading-gap); position:relative; top:var(--rail-heading-nudge); border:0; font-size:var(--rail-heading-size); font-weight:var(--rail-heading-weight); letter-spacing:var(--rail-heading-tracking); text-transform:uppercase; line-height:var(--rail-heading-line); color:var(--rail-tone-heading); overflow-wrap:anywhere; }
+/* A Ticket row: 13.5/400 on a 20px line inside its 24px fill (padding 2/2), on the rail's one text edge,
+   the unread dot in a fixed column at the right. A row that needs the person is bright; every
+   other row rests dim (tone only). */
+.workspace-ticket-bucket .worker-row { box-sizing:border-box; position:relative; display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:start; column-gap:0; width:100%; min-height:var(--rail-row-height); padding:var(--rail-row-pad-top) var(--rail-pad) var(--rail-row-pad-bottom); margin:0; border:0; border-radius:var(--radius-md); background:none; text-align:left; color:var(--rail-tone-rest); font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:var(--rail-row-line); cursor:pointer; transition:color var(--motion-fast) var(--motion-ease); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
-.workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-.workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
-.workspace-ticket-bucket .ticket-row-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.workspace-ticket-bucket .worker-row .conversation-signal-marks { justify-self:end; }
+/* As staging: a Ticket's title stays on one line and ends in an ellipsis (CSS only); the full
+   title is in its hover preview and on its page. */
+.workspace-ticket-bucket .ticket-row-title { grid-column:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* Every mark in a row's mark column (the Review icon, the unread dot, the working mark) stands in
+   one 14px box, centred, so a dot and an icon share one centre line (owner). */
+.workspace-ticket-bucket .worker-row .conversation-signal-marks { grid-column:2; justify-self:end; align-self:start; height:var(--rail-row-line); width:14px; justify-content:center; }
+.workspace-ticket-bucket:is([data-bucket-key="awaiting_approval"], [data-bucket-key="awaiting_answer"], [data-bucket-key="errored"]) .worker-row,
+.workspace-ticket-bucket .worker-row[data-unread="true"] { color:var(--rail-tone-attention); }
+.workspace-ticket-bucket .worker-row:is(:hover, [aria-current="page"]) { color:var(--rail-tone-bright); }
+.workspace-ticket-bucket .worker-row:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 
 /* Approved skeleton system. */
 /* 1 — the region. Any element that can show a skeleton carries this. */
@@ -4788,15 +4927,15 @@ details:not([open]) > summary > .manager-workspace-chevron {
   margin-inline:calc(-1 * var(--space-2));
   border-radius:var(--radius-sm);
   font-size:var(--type-sm);
-  font-weight:600;
+  font-weight:var(--weight-title);
   color:var(--text-faint);
   cursor:pointer;
   list-style:none;
 }
 .disclosure-band > summary::-webkit-details-marker { display:none; }
 .disclosure-band > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-.disclosure-band > summary:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
-.disclosure-band-trailing { margin-left:auto; font-weight:400; color:var(--text-faintest); }
+.disclosure-band > summary:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
+.disclosure-band-trailing { margin-left:auto; font-weight:var(--weight-small); color:var(--text-faintest); }
 .disclosure-band-body { padding-bottom:var(--space-4); }
 
 .chat-thread[data-more-below="true"] {
@@ -4807,17 +4946,330 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* One moving decoration per scroller keeps selection distinct from the rail content. */
 .approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) { position:relative; isolation:isolate; }
+/* One quiet fill marks the open item and a fainter one follows the pointer, each on the row's
+   own box with the row's own radius. Nothing else is lit: the Manager you are inside has no
+   mark of its own (owner). */
 .rail-wash { position:absolute; pointer-events:none; z-index:0; border-radius:var(--radius-md); }
 .rail-wash[hidden] { display:none; }
-.rail-wash--group { background:var(--wash-context); border-radius:var(--radius-lg); z-index:-1; }
 .rail-wash--item { background:var(--wash-selected); }
-.rail-wash--hover { background-image:var(--interaction-hover); }
-.rail-wash--focus { z-index:4; box-shadow:0 0 0 var(--border-strong) var(--accent-bright); }
-.approved-rail .rail-utilities .rail-wash { border-radius:var(--radius-sm); }
+
+.rail-wash--hover { background:var(--wash-hover); }
+/* The one focus ring, drawn the way the composer's is (an outline, so the two render at one
+   weight): the accent line --focus-offset clear of the control, its radius the control's plus that. */
+.rail-wash--focus { z-index:4; outline:var(--focus-width) solid var(--focus-ring); outline-offset:var(--focus-offset); }
 .approved-rail :is(.settled-item, .utility) { position:relative; z-index:1; }
+/* The pointed-at destination lifts above its neighbours, so its tooltip is never under the next icon. */
+.approved-rail .utility:is(:hover, :focus-visible) { z-index:5; }
 .approved-rail :is(.utility:hover, .utility[aria-current="page"], .utility[aria-expanded="true"]) { border-color:transparent; background:none; }
 .approved-rail :is(.item-head, .worker-row, .goal, .settled-title, .utility):focus-visible { outline:none; }
 .approved-rail .workspace-ticket-bucket .worker-row { background:none; }
-.approved-rail .workspace-ticket-bucket .worker-row:hover { color:var(--text-strong); }
 .approved-rail .bucket-label { border-bottom:0; }
-.approved-rail .settled-row:hover .settled-title, .approved-rail .settled-title[aria-current="page"] { color:var(--text-strong); }
+.approved-rail .settled-row:hover .settled-title, .approved-rail .settled-title[aria-current="page"] { color:var(--rail-tone-bright); }
+
+/* === The main pane's page system ==========================================
+ * One column, one top band, one type ladder and one end at the composer, on every page
+ * (Chief, Manager, Ticket, goal, review). Values live in tokens.css. Component styles load
+ * after this file, so the rules that restyle another component's markup are written one
+ * step more specific than that component's own. */
+
+/* The top band: where the page lives on the left, the page's own utilities on the right.
+ * The same height on every page, so every title starts on the same line. */
+.page-band {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-3);
+  min-height: var(--page-band-height);
+}
+/* Where the line and the actions do not fit side by side, the actions wrap under the line,
+ * at the right, and wrap among themselves: no button ever leaves the window. */
+.page-band-place {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.page-band-place > * { min-width: 0; }
+
+/* THE EYEBROW — one pattern on every page that has one: Small words in the tertiary tone,
+ * joined by " · ". No icon except the machine marker, which leads the line. */
+.page-eyebrow,
+.manager-page .page-band-place .page-eyebrow,
+.ticket-screen .ticket-head .worker-eyebrow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+  min-width: 0;
+  min-height: 20px;
+  color: var(--tone-tertiary);
+  font-family: var(--font-ui);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  line-height: 18px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.page-eyebrow-sep {
+  flex: none;
+  padding-inline: 6px;
+  color: var(--tone-tertiary);
+}
+.page-eyebrow a { color: inherit; text-decoration: none; }
+.page-eyebrow a:hover { color: var(--tone-strong); }
+
+.page-band .page-band-actions,
+.page-band .ticket-lifecycle .actions {
+  flex: 0 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  margin-left: auto;
+}
+/* The band's actions are quiet text buttons (ghosts): the last one's label ends on the
+ * column's edge, its hover fill reaching past it. */
+.manager-page .page-band .page-band-actions { margin-right: calc(var(--button-pad-x) * -1); }
+.page-band .ticket-lifecycle {
+  flex: 0 1 auto;
+  max-width: 100%;
+  margin: 0 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.page-band .ticket-lifecycle .hint {
+  margin: 0;
+  font-size: var(--type-small);
+  color: var(--tone-tertiary);
+}
+/* The band's right end holds the page's own actions as secondary buttons, their fills ending
+ * on the column's edge. */
+
+/* THE PAGE TITLE — 26/600, the strong tone, one line height on every page. */
+.manager-page .manager-column .manager-workspace-head .manager-workspace-title,
+.page-title {
+  display: block;
+  margin: var(--space-1) 0 0;
+  color: var(--tone-strong);
+  font-family: var(--font-ui);
+  font-size: var(--type-page-title);
+  font-weight: var(--weight-page-title);
+  letter-spacing: var(--tracking-page-title);
+  line-height: 32px;
+  overflow-wrap: anywhere;
+}
+/* As staging, a Manager's title carries its conversation marks (working, unread) after its words. */
+.manager-page .manager-column .manager-workspace-head .manager-workspace-title { display: flex; align-items: center; gap: var(--space-3); }
+
+/* THE RECAP — body text in the primary tone, never wider than the prose measure. */
+.ticket-recap {
+  max-width: var(--page-prose-measure);
+  color: var(--tone-primary);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
+  line-height: var(--leading-body);
+}
+.ticket-recap:hover,
+.ticket-recap:focus-within { color: var(--tone-primary); }
+.ticket-recap--clamped {
+  max-height: calc(var(--type-body) * var(--leading-body) * var(--clamp-lines, 3));
+}
+.manager-page .manager-column .manager-workspace-head [data-recap-slot] { margin-top: var(--space-2); }
+.manager-page .manager-column .manager-workspace-head .manager-workspace-recap {
+  max-width: var(--page-prose-measure);
+  color: var(--tone-primary);
+  font-family: var(--font-ui);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
+  line-height: var(--leading-body);
+}
+.manager-page .manager-column .manager-workspace-head .manager-workspace-recap .ed { font: inherit; }
+
+/* THE SECTION — 40px before its head, the head in the section-head role, 14px to its
+ * content. Tickets and Goals are drawn the same way on every page. */
+.manager-page .manager-column .manager-workers,
+.manager-page .manager-column .goals-overview { margin-top: var(--page-section-gap); }
+.manager-page .manager-column .page-tickets > h2,
+.manager-page .manager-column .goals-overview > header > h2,
+.page-section-head {
+  margin: 0 0 var(--page-head-gap);
+  color: var(--tone-primary);
+  font-family: var(--font-ui);
+  font-size: var(--type-page-section);
+  font-weight: var(--weight-page-section);
+  letter-spacing: 0;
+  line-height: 20px;
+}
+.manager-page .manager-column .goals-overview > header { margin: 0; min-height: 0; }
+
+/* THE CARD — one fill, one radius, one inset (no edge). */
+.page-card {
+  border: var(--border-hairline) solid var(--page-card-edge);
+  border-radius: var(--page-card-radius);
+  background: var(--page-card-fill);
+  padding: var(--page-card-pad);
+}
+
+/* The review chamber's line above the title is the same band. */
+.review-eyebrow {
+  min-height: var(--page-band-height);
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.review-screen { padding-top: var(--page-top); }
+/* Every page header starts --page-top down the pane. */
+.manager-page .manager-column { padding-top: var(--page-top); }
+.review-screen .review-ticket-title {
+  margin: var(--space-1) 0 0;
+  color: var(--tone-strong);
+  font-size: var(--type-page-title);
+  font-weight: var(--weight-page-title);
+  letter-spacing: var(--tracking-page-title);
+  line-height: 32px;
+}
+.review-screen .review-recap {
+  max-width: var(--page-prose-measure);
+  margin-top: var(--space-2);
+  color: var(--tone-primary);
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
+  line-height: var(--leading-body);
+}
+
+/* THE COMPOSER ZONE — one compact floating zone: a single-line composer with its status line
+ * under it as its footer, like the reference composers. It floats over the page's last lines:
+ * the page runs the full height and scrolls normally under it. Above the composer the page
+ * fades out over --composer-fade (20px, staging's document edge), a fixed CSS gradient; from
+ * there down the zone stands on the page's own plane. Nothing is measured, and no content is
+ * hidden or shown by whether it fits. */
+/* The zone is opaque, so it takes its own pointer across its whole width, as staging's dock
+ * row did: a press on its background opens the conversation, and nothing hidden under it can
+ * be clicked through it. Only the fade above it lets the page show and take the pointer. */
+:is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]):not([data-conversation-dock-transition]) > .conversation-layer {
+  position: absolute;
+  left: var(--conversation-visible-left, 0px);
+  right: var(--conversation-visible-right, 0px);
+  bottom: var(--conversation-visible-bottom, 0px);
+  padding-top: var(--space-1);
+  background: var(--surface-1);
+}
+/* Version with the line (as staging): the zone is opaque from its top, and a hairline across the
+ * pane marks where the page ends and the zone begins, so content scrolls cleanly up to the line
+ * instead of fading out under the status line. The line fades out as the conversation opens and
+ * back in on return (--conversation-dock-line). */
+/* The moving dock keeps the resting zone's top padding, so its resting height still holds the
+ * status line and the composer at the start and end of the move. */
+:is(.manager-page, .ticket-page)[data-conversation-dock-transition] > .conversation-layer { padding-top: var(--space-1); }
+:is(.manager-page, .ticket-page) > .conversation-layer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--border-hairline);
+  background: var(--border-color);
+  opacity: var(--conversation-dock-line, 1);
+  pointer-events: none;
+}
+[data-conversation-dock-state="opened"] > .conversation-layer::after { opacity: 0; }
+/* Over the line the page's last 12px fade into the page, so a line of text passing under it is
+ * never cut hard against the line. Fixed CSS, nothing measured; it fades out as the
+ * conversation opens. */
+:is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) > .conversation-layer::before {
+  display: block;
+  height: var(--space-3);
+  background: linear-gradient(to bottom, transparent, var(--surface-1));
+  opacity: var(--conversation-dock-line, 1);
+}
+:is(.manager-page, .ticket-page) > .conversation-layer > .conversation-column { pointer-events: auto; }
+/* Anything scrolled into view (a focused row, a found word) stops clear of the zone, and the
+ * page keeps room under its last block to scroll fully clear of it: the zone's own height (the
+ * dock publishes it as --conversation-layer-height, with a draft or an excerpt in it) and 24px. */
+:is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) :is(.manager-doc, .ticket-doc) {
+  scroll-padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear));
+}
+/* An open artifact is a frame with its own scroll, so no room under it can bring its end clear
+ * of the zone: it ends where the zone begins, as staging's reader ended above the dock, and has
+ * no fade over its last lines. The height is the resting zone's, so opening the conversation
+ * over it leaves the frame as it is. */
+:is(.manager-page, .ticket-page) .ticket-artifact { bottom: var(--conversation-layer-height, var(--composer-clear)); }
+/* The covered document keeps its reading position through dock and preview layout changes. */
+:is(.manager-reading, .ticket-reading):has(.ticket-artifact) > :is(.manager-doc, .ticket-doc) { overflow-anchor: none; }
+:is(.manager-page, .ticket-page):has(.ticket-artifact) > .conversation-layer::before { display: none; }
+.manager-column { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear)); }
+.ticket-col { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear) - var(--space-7)); }
+
+/* The floating composer: one line, 44px; its + at the left, its model, delivery and voice
+ * controls at the right, all on the composer's own row. It grows with what is typed, and
+ * keeps its full layout whenever it holds anything but the line (attachments, an ask, a
+ * question, a voice take). */
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: end;
+  column-gap: var(--space-1);
+  min-height: var(--composer-height);
+  padding: calc((var(--composer-height) - var(--composer-control)) / 2 - var(--border-hairline)) var(--space-2);
+}
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-foot { display: contents; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-ta {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  margin: 0 0 calc((var(--composer-control) - 24px) / 2) var(--space-1);
+  line-height: 24px;
+}
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-add { grid-column: 1; grid-row: 1; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; }
+
+/* THE DRAFT ROW. A draft that comes within ~40px of the controls, or holds a line break, takes
+ * the full width on a row of its own, and the controls stay on the row under it
+ * (ConversationComposer sets data-composer-controls-below, and clears it once the draft fits
+ * with ~80px to spare or is emptied). Where the one row would leave the draft under 240px (a
+ * phone, a tablet, a narrow window) the draft has its own row at rest too. The columns are the same in both layouts, so no control
+ * moves: the draft rises into its row and the box grows over it, the component animating both
+ * (180ms, none under reduced motion). The rows sit at the box's foot, so while the height
+ * moves the controls stay put and the draft travels with the box's top edge. The draft's
+ * first line keeps its 10px from the top and its left edge is the composer's inset. */
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) { align-content: end; }
+.conversation-layer .chat-box[data-composer-controls-below]:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-ta {
+  grid-column: 1 / -1;
+  width: auto;
+  margin: calc((var(--composer-control) - 24px) / 2) calc(var(--composer-inset) - var(--space-2) - var(--border-hairline));
+}
+.conversation-layer .chat-box[data-composer-controls-below]:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) :is(.chat-add, [data-conversation-model-picker], .chat-submit) { grid-row: 2; }
+/* The model picker sits at the right in both layouts, so its panel opens from the composer's
+ * right edge, inside the composer's width (it used to open from the chip's left and run past
+ * the composer, off screen at 768px). It is placed against the box, 8px above it, like the
+ * command menu. */
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { position: static; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] > .listbox-picker-panel {
+  left: auto;
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+}
+
+/* The status line stands over the composer, where staging placed it (ConversationRestBar). */
+
+/* The run chips are small print: the model's name and its provider mark (drawn in the chip's
+ * own tone, ComposerRunControls) at 12.5px in the secondary tone, the reasoning effort a step
+ * quieter, the delivery chip the same. The placeholder is tertiary at rest and secondary once
+ * the composer has focus. */
+[data-conversation-composer] .chat-foot .model-picker-face { color: inherit; }
+[data-conversation-composer] .chat-foot .model-picker-effort { color: var(--composer-quiet-tone); }
+[data-conversation-composer] .chat-ta:focus::placeholder { color: var(--tone-secondary); }
+/* The composer's icons (add, voice, send at rest) stand in the secondary tone, one step above
+ * the placeholder, and lift to the strong tone on hover. */
+[data-conversation-composer] .chat-image:not(.on),
+[data-conversation-composer] .chat-send:not(.on) { color: var(--tone-secondary); }
+[data-conversation-composer] .chat-image:not(.on):hover:not(:disabled) { color: var(--tone-strong); }
+
+/* Short page summaries keep their final words together when space allows. */
+:is(.manager-workspace-recap, .ticket-recap, .review-recap, .recap-text, .screen-header-description, .page-kit .summary, [data-recap]) { text-wrap: pretty; }
+
+/* Steps and machine sections use the same sentence case as the other page bands. */
+[data-stage-fold-open] { text-transform:none; letter-spacing:normal; }

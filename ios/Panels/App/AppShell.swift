@@ -12,30 +12,12 @@ struct AppShell: View {
     @State private var morePath: [AppRoute] = []
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            NavigationStack(path: $reviewPath) {
-                ReviewView(openTicket: { id in
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        workspacePath.append(.ticket(id))
-                        selectedTab = .workspace
-                    }
-                })
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
+        Group {
+            if store.serverUnreachable {
+                ServerUnreachableView { await store.refresh() }
+            } else {
+                tabs
             }
-                .tabItem { Label("Review", systemImage: "checkmark.circle") }
-                .badge(max(0, (store.review?.items.count ?? 0) - pendingDecisionCount)).tag(AppTab.review)
-            NavigationStack(path: $workspacePath) {
-                WorkspaceView()
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
-            }
-                .tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
-            NavigationStack(path: $morePath) {
-                MoreView()
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
-            }
-                .tabItem { Label { Text("More") } icon: { Image(uiImage: moreTabImage) } }.tag(AppTab.more)
         }
         .task {
             while !Task.isCancelled {
@@ -86,8 +68,40 @@ struct AppShell: View {
         }
     }
 
-    private var pendingDecisionCount: Int {
-        Outbox.shared.entries(LocalStore.server(store.baseURL)).filter { ($0.kind == .approval || $0.kind == .sendBack) && [.waiting, .sending].contains($0.state) }.count
+    private var tabs: some View {
+        TabView(selection: $selectedTab) {
+            NavigationStack(path: $reviewPath) {
+                ReviewView(openTicket: { id in
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        workspacePath.append(.ticket(id))
+                        selectedTab = .workspace
+                    }
+                })
+                    .navigationDestination(for: AppRoute.self) { detail($0) }
+            }
+                .tabItem { Label("Review", systemImage: "checkmark.circle") }
+                .badge(reviewBadge).tag(AppTab.review)
+            NavigationStack(path: $workspacePath) {
+                WorkspaceView()
+                    .navigationDestination(for: AppRoute.self) { detail($0) }
+            }
+                .tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
+            NavigationStack(path: $morePath) {
+                MoreView()
+                    .navigationDestination(for: AppRoute.self) { detail($0) }
+            }
+                .tabItem { Label { Text("More") } icon: { Image(uiImage: moreTabImage) } }.tag(AppTab.more)
+        }
+    }
+
+    private var reviewBadge: Int {
+        let pending = Set(Outbox.shared.entries(LocalStore.server(store.baseURL)).filter {
+            ($0.kind == .approval || $0.kind == .sendBack) && [.waiting, .sending].contains($0.state)
+        }.compactMap(\.ticketID))
+        let count = store.counts?.review ?? 0
+        return store.presentation?.reviewBadge(count: count, pendingDecisionTickets: pending) ?? max(0, count - pending.count)
     }
 
     private var moreTabImage: UIImage {
@@ -113,6 +127,7 @@ struct AppShell: View {
             }
         case .ticket(let id): selectedTab = .workspace; workspacePath = [.ticket(id)]
         case .orchestrator(let id): selectedTab = .workspace; workspacePath = [.orchestrator(id)]
+        case .goal(let id): selectedTab = .workspace; workspacePath = [.goal(id)]
         case .chief: selectedTab = .workspace; workspacePath = [.chief]
         }
     }
