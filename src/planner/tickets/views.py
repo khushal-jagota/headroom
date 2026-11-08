@@ -42,6 +42,7 @@ from planner.tickets.logic.creation_receipt import supervision_receipt
 from planner.tickets.logic.recap import recap_preview
 from planner.tickets.logic.review import eligible_for_owner_review
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import BOARD_COLUMN_ORDER_WORKER_TYPE
 from planner.worker_types.registry import workflow_manifest
 from planner.worker_types.store import workflow_from_row
 
@@ -461,7 +462,9 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = managers.project_id ",
     ).fetchall()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
-    coding_order = configured_worker_type_registry().require("coding").stage_ids()
+    coding_order = (
+        configured_worker_type_registry().require(BOARD_COLUMN_ORDER_WORKER_TYPE).stage_ids()
+    )
     column_order: list[str] = list(coding_order)
     by_stage: dict[str, list[tuple[tuple[int, str, int], BoardCardSource]]] = {
         sid: [] for sid in column_order

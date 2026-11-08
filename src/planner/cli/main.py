@@ -234,8 +234,6 @@ def _ticket_record(
         "id",
         "title",
         "worker_type",
-        "worker",
-        "worker_skill_path",
         "locale",
         "employee_backend",
         "employee_launch_model",
@@ -598,13 +596,20 @@ def worker_type_save(as_json: bool) -> None:
         json_body=record,
         as_json=as_json,
     )
-    lines = [f"{data['worker_type']} saved"]
-    for migration in data.get("migrations", []):
-        lines.append(
-            f"{migration['title']}: Stage {migration['old_stage']} -> {migration['new_stage']}; "
-            f"ceiling {migration['old_ceiling']} -> {migration['new_ceiling']}"
-        )
-    http.emit(data, as_json, "\n".join(lines))
+    http.emit(data, as_json, f"{data['worker_type']} saved")
+
+
+@worker_type_group.command("delete")
+@click.argument("worker_type")
+@json_option
+def worker_type_delete(worker_type: str, as_json: bool) -> None:
+    """Remove a Worker type. Its Tickets keep their own workflow and skill."""
+    data = http.send(
+        "DELETE",
+        f"/api/worker-types/{quote(worker_type, safe='')}",
+        as_json=as_json,
+    )
+    http.emit(data, as_json, f"{worker_type} deleted")
 
 
 @worker_type_group.command("skill")
@@ -1702,9 +1707,6 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
         as_json=as_json,
     )
     header, parts = _ticket_record(data, part_names, as_json=as_json)
-    native_skills = os.environ.get("PLAN_NATIVE_SKILLS_DIR")
-    if native_skills and "worker" in data:
-        header["worker_skill_path"] = str(Path(native_skills) / data["worker"] / "SKILL.md")
     _emit_record(header, parts, part_names, as_json)
 
 
@@ -2024,7 +2026,6 @@ def manager_settle(item_id: str, active: bool, as_json: bool) -> None:
 
 
 _set_public_command_help()
-
 
 
 if __name__ == "__main__":

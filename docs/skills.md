@@ -21,7 +21,7 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 
 Khushal and the Chief stand above skills, so both may edit them. `panels skill delete` removes a skill's row and its whole folder, and refuses a role skill and any skill that a Worker type or an unfinished Ticket uses. The next server start removes the dead links that a deleted skill leaves in agent homes. `panels skill write-file` writes a supporting file inside a skill folder, and never the skill's own `SKILL.md`. A Worker or a Manager that wants a skill changed hands the exact text to the owner or the Chief. A reviewed batch applies in one transaction. Specialist guidance changes through its structured preset editor.
 
-The specialist reference saved on a Ticket decides which skill a preset Worker reads. A custom Ticket receives its assembled guide at kickoff. See [Worker types](worker-types.md). A saved skill reaches an agent the next time it loads the skill. A turn already running keeps what it read. Saving a skill sends no prompt, so the conversation notebook does not change.
+Every Worker follows its own Ticket's workflow guide, which it receives at kickoff. A specialist skill is the current guide of its preset, for reading and editing. It does not reach a Ticket made earlier. See [Worker types](worker-types.md). A saved skill reaches an agent the next time it loads the skill. A turn already running keeps what it read. Saving a skill sends no prompt, so the conversation notebook does not change.
 
 `panels skill check` reports a skill that names a command, stage, or skill this build lacks. It reports and does not rewrite.
 

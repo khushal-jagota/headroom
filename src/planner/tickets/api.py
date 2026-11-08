@@ -21,7 +21,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
-from pathlib import Path
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -732,7 +731,6 @@ async def get_worker_self_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
-    cfg: Cfg,
 ) -> JsonDict:
     """A worker agent's own Ticket, resolved from `PLAN_TICKET_ID` (its spawn env, flag-on).
 
@@ -740,7 +738,8 @@ async def get_worker_self_ticket(
     the same one-owner validation the by-session readers apply: if the ticket has a bound
     durable session, that session must resolve to EXACTLY this ticket — a corrupt duplicate
     (two tickets sharing one durable session) is rejected. Returns the same detail shape
-    (`ticket_detail` + the worker specialist skill) the by-session route returns."""
+    (`ticket_detail`) the by-session route returns. The Worker follows the Ticket's own
+    workflow guide, so no specialist skill is named here."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
     if ticket.conversation_id is not None:
         owner = tickets_data.read_ticket_by_conversation_id(conn, ticket.conversation_id)
@@ -754,13 +753,7 @@ async def get_worker_self_ticket(
                     "owner_ticket_id": owner.id,
                 },
             )
-    detail = _ticket_detail(conn, ticket.id, clk.now_unix())
-    detail["worker"] = ticket.workflow.specialist_skill
-    if ticket.locale == "vps" and detail["worker"] is not None:
-        detail["worker_skill_path"] = str(
-            Path(cfg.db_path).resolve().parent / "skills" / str(detail["worker"]) / "SKILL.md"
-        )
-    return detail
+    return _ticket_detail(conn, ticket.id, clk.now_unix())
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")
