@@ -169,7 +169,7 @@ def run(browser, urls):
     review_sibling_transferred = False
     review_message_sends = []
     review_note_sends = []
-    review_note_fate = "started"
+    review_note_fate = None
     review_held = []
     review_send_fate = "refused"
     review_message_mode = False
@@ -656,6 +656,8 @@ def run(browser, urls):
                     "pending_user_input": None,
                     "composer_catalog": [],
                 }
+        elif path == "tickets/t_review/conversation/send" and review_note_fate is None:
+            result = {"conversation_id": "ticket-delivered-local", "fate": "started"}
         elif path == "tickets/t_review/conversation/send":
             review_note_sends.append(route.request.post_data_json)
             if review_note_fate == "network":
@@ -1468,7 +1470,7 @@ def run(browser, urls):
         assert_original_note_identity()
 
     retry_note(1)
-    expect(page.locator(".error-message").first).to_be_visible()
+    expect(page.locator("[data-review-note-pending] .error-message")).to_be_visible()
     retry_note(2)
     if os.environ.get("PANELS_UNCERTAIN_NOTE_SCREENSHOT"):
         page.screenshot(path=os.environ["PANELS_UNCERTAIN_NOTE_SCREENSHOT"], full_page=True, animations="disabled")
