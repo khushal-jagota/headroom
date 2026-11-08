@@ -254,18 +254,21 @@
 
 </script>
 
+<!-- The queue's own actions about this item: Skip (when the queue gives it) and Open ticket. -->
+{#snippet queueActions()}
+  {#if onSkip}
+    <Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>
+  {/if}
+  <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
+{/snippet}
+
 <SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !healthyDetail) || Boolean(healthyDetail && !manifestMissingWorkerType && isStale(healthyDetail)))} loadingText="Loading approval...">
 {#if detail.error}
   <div>
     <ErrorLine error={detail.error} />
     {#if title !== null}<div class="quiet-line">{title}</div>{/if}
     {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}
-    <div class="review-card-actions">
-      {#if onSkip}
-        <Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>
-      {/if}
-      <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
-    </div>
+    <div class="review-card-actions">{@render queueActions()}</div>
     {/if}
   </div>
 {:else if healthyDetail && manifestMissingWorkerType}
@@ -275,12 +278,7 @@
       error={{ code: "invalid_workflow", message: "The Ticket workflow is unavailable." }}
     />
     {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}
-    <div class="review-card-actions">
-      {#if onSkip}
-        <Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>
-      {/if}
-      <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
-    </div>
+    <div class="review-card-actions">{@render queueActions()}</div>
     {/if}
   </div>
 {:else if healthyDetail}
@@ -295,12 +293,7 @@
       data-field={field}
     >
       {#if !embedded}
-      <div class="review-ticket-decision-line review-arrive review-arrive--1">
-        {#if onSkip}
-          <Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>
-        {/if}
-        <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
-      </div>
+      <div class="review-ticket-decision-line review-arrive review-arrive--1">{@render queueActions()}</div>
 
       <div class="review-ticket-heading review-arrive review-arrive--2">
         <div class="review-ticket-heading-main">
@@ -343,7 +336,7 @@
              as on staging) sends it as the return's guidance, and Approve delivers it to the
              Worker and then approves. It is the composer's field (ComposerField); speaking
              with words already in the line appends to them. -->
-        <div class="review-revise review-arrive review-arrive--4" data-review-revision data-review-voice={voiceState.phase}>
+        <div class="review-revise review-arrive review-arrive--4" data-review-revision>
           <ComposerField
             bind:value={revisionDraft}
             placeholder="Add a note for the worker…"
@@ -381,11 +374,8 @@
 <!-- While the approval loads or is being refreshed, the queue's own actions (Skip, Open ticket)
      stay at hand at the right: they never wait on the proposal. -->
 {#if !detail.error && (!healthyDetail || (!manifestMissingWorkerType && isStale(healthyDetail)))}
-  <div class="review-card-actions" data-review-pending-actions>
-    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}
-      {#if onSkip}<Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>{/if}
-      <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
-    {/if}
+  <div class="review-card-actions">
+    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}{@render queueActions()}{/if}
   </div>
 {/if}
 

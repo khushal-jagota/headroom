@@ -316,12 +316,10 @@ strong {
   max-width: calc(var(--measure-index) + var(--space-7) + var(--space-7));
 }
 
-.agents-page-head,
 .agents-detail-head {
   margin-bottom: var(--space-5);
 }
 
-.agents-page-head h1,
 .agents-detail-head h1 {
   margin: 0;
   color: var(--text-strong);
@@ -329,7 +327,6 @@ strong {
   line-height: 1.2;
 }
 
-.agents-page-head p,
 .agents-detail-head p {
   margin: var(--space-2) 0 0;
   color: var(--text-faint);
@@ -641,7 +638,6 @@ strong {
     padding: var(--space-4) 0 var(--space-page-tail);
   }
 
-  .agents-page-head,
   .agents-index-section,
   .agents-detail-head,
   .agents-back,
@@ -2035,12 +2031,13 @@ button.list-row:hover .list-row-title {
   min-height: var(--composer-target);
   padding-block: 0;
   font-family: var(--font-ui);
-  font-size: var(--type-sm);
-  color: var(--text-faint);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
+  color: var(--tone-secondary);
   padding-inline: var(--space-3);
 }
 [data-conversation-composer] .chat-foot .listbox-picker-trigger:hover {
-  color: var(--text-strong);
+  color: var(--tone-strong);
 }
 [data-conversation-composer] .chat-foot .listbox-picker-chevron,
 [data-conversation-composer] .chat-foot .listbox-picker-chevron-drawn { display: none; }
@@ -3640,6 +3637,7 @@ select {
   background: linear-gradient(to bottom, transparent, var(--surface-1));
   opacity: var(--conversation-dock-line, 1);
   pointer-events: none;
+  display: none;
 }
 .conversation-column {
   display: flex;
@@ -3818,9 +3816,6 @@ select {
 
 .ticket-identity-separator {
   color: var(--text-faintest);
-}
-
-.ticket-identity-separator {
   opacity: 0.5;
 }
 
@@ -3860,30 +3855,31 @@ select {
  * the measurement it takes is the same number of lines. */
 .ticket-recap {
   display: block;
-  max-width: 62ch;
+  max-width: var(--page-prose-measure);
   margin-top: var(--space-2);
-  color: var(--text-muted);
+  color: var(--tone-primary);
   font-family: var(--font-ui);
-  font-size: var(--type-prose-lg);
-  line-height: 1.6;
+  font-size: var(--type-body);
+  font-weight: var(--weight-body);
+  line-height: var(--leading-body);
   cursor: text;
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
 .ticket-recap:hover {
-  color: var(--text-default);
+  color: var(--tone-primary);
 }
 
 .ticket-recap:focus-within {
-  color: var(--text-default);
+  color: var(--tone-primary);
 }
 
 /* Three lines by default, and whatever `--clamp-lines` says when a screen wants a taller
  * reading window — the Sprint's bet asks for four and a half. The line is the type's own
- * (font-size × the 1.6 line-height above), so the number here is the number of lines the
+ * (font-size × the line-height above), so the number here is the number of lines the
  * component measures against. */
 .ticket-recap--clamped {
-  max-height: calc(var(--type-prose-lg) * 1.6 * var(--clamp-lines, 3));
+  max-height: calc(var(--type-body) * var(--leading-body) * var(--clamp-lines, 3));
   overflow: hidden;
 }
 
@@ -4959,12 +4955,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .rail-wash--item { background:var(--wash-selected); }
 
 .rail-wash--hover { background:var(--wash-hover); }
-/* The one focus ring: a fine accent line 2px clear of the control, its radius the control's plus 2. */
 /* The one focus ring, drawn the way the composer's is (an outline, so the two render at one
    weight): the accent line --focus-offset clear of the control, its radius the control's plus that. */
 .rail-wash--focus { z-index:4; outline:var(--focus-width) solid var(--focus-ring); outline-offset:var(--focus-offset); }
-.approved-rail .rail-utilities .rail-wash { border-radius:var(--radius-md); }
-.approved-rail :is(.active-work-scroll, .settled-body, .rail-utilities) .rail-wash--focus { border-radius:var(--radius-md); }
 .approved-rail :is(.settled-item, .utility) { position:relative; z-index:1; }
 /* The pointed-at destination lifts above its neighbours, so its tooltip is never under the next icon. */
 .approved-rail .utility:is(:hover, :focus-visible) { z-index:5; }
@@ -5072,19 +5065,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* As staging, a Manager's title carries its conversation marks (working, unread) after its words. */
 .manager-page .manager-column .manager-workspace-head .manager-workspace-title { display: flex; align-items: center; gap: var(--space-3); }
 
-/* THE RECAP — body text in the primary tone, never wider than the prose measure. */
-.ticket-recap {
-  max-width: var(--page-prose-measure);
-  color: var(--tone-primary);
-  font-size: var(--type-body);
-  font-weight: var(--weight-body);
-  line-height: var(--leading-body);
-}
-.ticket-recap:hover,
-.ticket-recap:focus-within { color: var(--tone-primary); }
-.ticket-recap--clamped {
-  max-height: calc(var(--type-body) * var(--leading-body) * var(--clamp-lines, 3));
-}
+/* THE RECAP — body text in the primary tone, never wider than the prose measure
+ * (.ticket-recap, above). */
 .manager-page .manager-column .manager-workspace-head [data-recap-slot] { margin-top: var(--space-2); }
 .manager-page .manager-column .manager-workspace-head .manager-workspace-recap {
   max-width: var(--page-prose-measure);
@@ -5153,9 +5135,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * fades out over --composer-fade (20px, staging's document edge), a fixed CSS gradient; from
  * there down the zone stands on the page's own plane. Nothing is measured, and no content is
  * hidden or shown by whether it fits. */
-.conversation-layer::before { display: none; }
-.ticket-reading:not(:has(.ticket-artifact))::after,
-.manager-reading:not(:has(.ticket-artifact))::after { height: 0; background: none; }
 /* The zone is opaque, so it takes its own pointer across its whole width, as staging's dock
  * row did: a press on its background opens the conversation, and nothing hidden under it can
  * be clicked through it. Only the fade above it lets the page show and take the pointer. */
@@ -5270,8 +5249,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * own tone, ComposerRunControls) at 12.5px in the secondary tone, the reasoning effort a step
  * quieter, the delivery chip the same. The placeholder is tertiary at rest and secondary once
  * the composer has focus. */
-[data-conversation-composer] .chat-foot .listbox-picker-trigger { font-size: var(--type-small); font-weight: var(--weight-small); color: var(--tone-secondary); }
-[data-conversation-composer] .chat-foot .listbox-picker-trigger:hover { color: var(--tone-strong); }
 [data-conversation-composer] .chat-foot .model-picker-face { color: inherit; }
 [data-conversation-composer] .chat-foot .model-picker-effort { color: var(--composer-quiet-tone); }
 [data-conversation-composer] .chat-ta:focus::placeholder { color: var(--tone-secondary); }
