@@ -1,5 +1,5 @@
 """Ticket routes (§9), plus Ticket blocks and the ticket-centric
-derived views (board, Review). Thin HTTP shells over the stage-3 writers and the
+derived Review view. Thin HTTP shells over the stage-3 writers and the
 pure read views: every handler is parse -> auth -> writer -> serialize. No route
 re-implements a domain rule.
 
@@ -1330,41 +1330,6 @@ async def request_help(
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
 async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
-
-
-async def add_conversation_row_signals(
-    conn: sqlite3.Connection,
-    board: JsonDict,
-    conversation_system: ConversationSystem,
-    conversation_record: ConversationStore,
-) -> JsonDict:
-    """Attach the shared owner-attention and agent-state projection to board rows."""
-    cards = [card for column in board["columns"] for card in column["cards"]]
-    children = [ticket for item in board["managers"] for ticket in item["tickets"]]
-    await add_work_attention(
-        conn,
-        conversation_system,
-        conversation_record,
-        tickets=(*cards, *children),
-        managers=board["managers"],
-    )
-    return board
-
-
-@router.get("/board")
-async def board(
-    conn: DbConn,
-    cfg: Cfg,
-    clk: Clk,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    return await add_conversation_row_signals(
-        conn,
-        tickets_views.board_view(conn),
-        conversations,
-        conversation_record,
-    )
 
 
 @router.get("/review")

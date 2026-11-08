@@ -10,16 +10,14 @@ from planner.conversation.contracts import ConversationAttention, ConversationSy
 from planner.conversation.logic.signals import conversation_signal
 from planner.conversation.signals import read_conversation_signals
 from planner.conversation.storage import ConversationStore
-from planner.core import ticket_blocks
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict
+from planner.navigation import data as navigation_data
 from planner.tickets import derivation
 from planner.tickets.contracts import StageOwnershipMode, TicketStatus, WorkAttention
-from planner.tickets.derivation import AgentState, TicketFacts
-from planner.tickets.integrity import issue_for_ticket
+from planner.tickets.derivation import AgentState
 from planner.tickets.logic import machine
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.contracts import WorkflowDefinition
-from planner.worker_types.store import workflow_from_row
 
 
 async def read_running_conversation_count(
@@ -60,15 +58,20 @@ def _empty_attention() -> WorkAttention:
     }
 
 
-def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sqlite3.Row]:
+def _ticket_records(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sqlite3.Row]:
+    """Each Ticket's stored navigation facts, which every write keeps current."""
     if not ticket_ids:
         return {}
+    navigation_data.require_clean_read(conn)
     placeholders = ",".join("?" for _ in ticket_ids)
     rows = conn.execute(
-        "SELECT id, stage, worker_type, workflow_json, worker_step_claim, "
-        "pending_proposal, ceiling_holder, "
-        "conversation_id "
-        f"FROM tickets WHERE id IN ({placeholders})",
+        "SELECT id, json_extract(value, '$.ticket_status') AS ticket_status, "
+        "json_extract(value, '$.stage') AS stage, "
+        "json_extract(value, '$.ceiling_holder') AS ceiling_holder, "
+        "json_extract(value, '$.stage_ownership') AS stage_ownership, "
+        "json_extract(value, '$.conversation_id') AS conversation_id, "
+        "json_type(value, '$.integrity_error') IS NOT NULL AS broken "
+        f"FROM navigation_records WHERE kind = 'ticket' AND id IN ({placeholders})",
         tuple(sorted(ticket_ids)),
     ).fetchall()
     return {str(row["id"]): row for row in rows}
@@ -77,15 +80,14 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
 def _ticket_attention(
     row: sqlite3.Row,
     conversation: ConversationAttention | None,
-    *,
-    facts: TicketFacts,
 ) -> WorkAttention:
     holder = json.loads(str(row["ceiling_holder"]))
     owner_holds_ceiling = holder == {
         "kind": OWNER_PRINCIPAL.kind.value,
         "id": OWNER_PRINCIPAL.id,
     }
-    parked = facts.ticket_status is TicketStatus.awaiting_approval
+    ticket_status = TicketStatus(str(row["ticket_status"]))
+    parked = ticket_status is TicketStatus.awaiting_approval
     awaiting_approval = parked and owner_holds_ceiling
     awaiting_agent_approval = parked and not owner_holds_ceiling
     signal = (
@@ -99,13 +101,10 @@ def _ticket_attention(
     awaiting_answer = conversation.awaiting_answer if conversation else False
     working = signal["working"]
     last_turn_failed = conversation.last_turn_failed if conversation else False
-    assigned = ticket_assignment_from_values(
-        stage=str(row["stage"]),
-        worker_type=row["worker_type"],
-        worker_type_definition=workflow_from_row(row),
-    )
+    ownership = row["stage_ownership"]
+    assigned = ticket_is_assigned(None if ownership is None else StageOwnershipMode(ownership))
     agent_state = derivation.agent_state(
-        facts.ticket_status,
+        ticket_status,
         stage=str(row["stage"]),
         agent_is_working=working,
         last_turn_failed=last_turn_failed,
@@ -186,7 +185,7 @@ async def add_work_attention(
     all_ticket_ids = direct_ticket_ids | {
         ticket_id for ticket_ids in child_ids_by_item.values() for ticket_id in ticket_ids
     }
-    stored_tickets = _ticket_rows(conn, all_ticket_ids)
+    stored_tickets = _ticket_records(conn, all_ticket_ids)
     item_conversations: dict[str, str] = {}
     if item_ids:
         placeholders = ",".join("?" for _ in item_ids)
@@ -209,11 +208,10 @@ async def add_work_attention(
     conversations = await read_conversation_signals(
         conversation_system, conversation_record, conversation_ids
     )
-    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     ticket_attention: dict[str, WorkAttention] = {}
     for ticket_id, row in stored_tickets.items():
         conversation = conversations.get(str(row["conversation_id"]))
-        if issue_for_ticket(conn, ticket_id) is not None:
+        if row["broken"]:
             ticket_attention[ticket_id] = {
                 **_empty_attention(),
                 "awaiting_reply": bool(conversation and conversation.signal["message_for_owner"]),
@@ -223,14 +221,7 @@ async def add_work_attention(
             continue
         ticket_attention[ticket_id] = _ticket_attention(
             row,
-            conversations.get(str(row["conversation_id"]))
-            if row["conversation_id"] is not None
-            else None,
-            facts=derivation.derive_ticket_facts(
-                derivation.stored_facts_from_row(
-                    row, has_live_blocker=ticket_id in blocked_ticket_ids
-                )
-            ),
+            conversation if row["conversation_id"] is not None else None,
         )
     for row in ticket_rows:
         row.update(ticket_attention.get(str(row["id"]), _empty_attention()))

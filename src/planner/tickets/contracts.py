@@ -7,8 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final, Literal, TypedDict
 
-from planner.conversation.contracts import ConversationSignal
-from planner.core.contracts import JsonDict, Principal
+from planner.core.contracts import Principal
 from planner.execution_identity import TicketLocale as TicketLocale
 
 if TYPE_CHECKING:
@@ -61,70 +60,6 @@ class WorkAttention(TypedDict):
     awaiting_agent_approval: bool
     assigned: bool
     agent_state: str
-
-
-class BoardCardSource(TypedDict):
-    """The stored Ticket projection before live work attention is attached."""
-
-    id: str
-    title: str
-    recap: str
-    recap_preview: str
-    deadline: str | None
-    project_id: str | None
-    project: str | None
-    group_project_id: str | None
-    group_project: str | None
-    activity_at: int
-    has_pending_proposal: bool
-    ticket_status: str
-    worker_type: str
-    employee_backend: str
-    locale: str
-    stage: str
-    stage_label: str
-    gating_field: str | None
-    gating_field_label: str | None
-    is_done: bool
-    is_backlogged: bool
-    blocked: bool
-    conversation_id: str | None
-    waiting_to_closeout: bool
-    manager_id: str | None
-    manager_title: str | None
-    manager: JsonDict
-
-
-class BoardCard(BoardCardSource, WorkAttention):
-    """The complete Ticket projection returned to the Workspace rail."""
-
-    conversation_signal: ConversationSignal
-
-
-class BoardManagerSource(TypedDict):
-    """A represented Manager and its complete children before live attention.
-
-    The shared attention projection adds each child's facts, the Item's own Manager
-    state, and a separate child rollup after this database read.
-    """
-
-    id: str
-    title: str
-    recap: str
-    recap_preview: str
-    project_id: str
-    project: str
-    created_at: int
-    conversation_id: str | None
-    tickets: list[JsonDict]
-    settled: bool
-
-
-class BoardManager(BoardManagerSource, WorkAttention):
-    """The complete Manager projection returned to the Workspace rail."""
-
-    conversation_signal: ConversationSignal
-    ticket_rollup: WorkAttention
 
 
 @dataclass(frozen=True, slots=True)

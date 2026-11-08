@@ -617,10 +617,11 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
         return sequence
 
     def unread_projection(expected: bool) -> None:
-        board = httpx.get(server.base + "/api/board", timeout=10).json()
-        card = next(
-            card for column in board["columns"] for card in column["cards"] if card["id"] == ticket
-        )
+        card = httpx.get(
+            server.base + "/api/tickets",
+            params={"detail": "full", "id": ticket},
+            timeout=10,
+        ).json()
         assert card["conversation_signal"]["message_for_owner"] is expected
         assert card["awaiting_reply"] is expected
         from tests.support.real_provider_application import navigation_query
