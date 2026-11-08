@@ -5195,7 +5195,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * question, a voice take). */
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  /* The model chip's column gives way first: on a phone, while a turn runs and a draft waits,
+   * delivery, voice, stop and send need the room, and the chip's name ends in an ellipsis. */
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto) auto;
   align-items: end;
   column-gap: var(--space-1);
   min-height: var(--composer-height);
@@ -5219,8 +5221,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
           mask-image: linear-gradient(to bottom, transparent var(--composer-field-reach), #000 var(--composer-field-reach));
 }
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-add { grid-column: 1; grid-row: 1; }
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; }
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; min-width: 0; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; min-width: max-content; }
 
 /* THE DRAFT ROW. A draft that comes within ~40px of the controls, or holds a line break, takes
  * the full width on a row of its own, and the controls stay on the row under it
