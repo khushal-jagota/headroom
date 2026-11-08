@@ -90,8 +90,13 @@
      keeps 6px more than the fills' 4px inset, and a header with a project eyebrow 3px more on
      top, where the eyebrow's small line sits higher than the Chief's name. */
   .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:var(--rail-bubble-pad) var(--rail-bubble-pad) calc(var(--rail-bubble-pad) + 6px); border:0; isolation:isolate; z-index:1; }
-  .manager-card:has(.identity :global(.manager-eyebrow)) { padding-top:calc(var(--rail-bubble-pad) + 3px); }
+  /* A header with nothing under it (the Chief with no goals or Tickets) ends at the same 4px as it begins. */
+  .manager-card:not(.has-tickets):not(:has(:global(.goals-rail))) { padding-bottom:var(--rail-bubble-pad); }
   .identity { box-sizing:border-box; display:flex; flex-direction:column; padding:var(--rail-head-pad) var(--rail-pad); border-radius:var(--radius-md); cursor:pointer; }
+  /* The eyebrow's small line sits higher than a name, so its 3px of room is inside the fill: the fill keeps 4px from the card's top and the words stay where they were. */
+  .identity:has(:global(.manager-eyebrow)) { padding-top:calc(var(--rail-head-pad) + 3px); }
+  /* The Chief's name alone: the 2px grid nudge puts capitals 11px under the fill's top and the baseline 7px over its bottom. With no nudge both are 9px. */
+  .manager-card.chief .item-head { top:0; }
   .item-head { position:relative; top:var(--rail-title-nudge); display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:start; width:100%; min-height:var(--rail-title-line); padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; align-self:start; height:var(--rail-title-line); }
   /* The name leads the block by size and weight (18/600 on a 24px line) and wraps in full.
