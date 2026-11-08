@@ -890,9 +890,11 @@ def run_reconnect(browser, urls):
                     page.evaluate("window.__setConversationState('rest')")
                 page.wait_for_function("window.__activeTails().length===1&&!window.__activeTails()[0].transcript")
                 reads = page.evaluate("window.__recordReads")
+                tails = page.evaluate("window.__tailOpened()")
                 sends = page.evaluate("window.__sends.length")
                 page.evaluate("window.__setServerReachable(false); window.__setServerReachable(true)")
                 page.wait_for_function("before=>window.__recordReads>before", arg=reads)
+                assert page.evaluate("window.__tailOpened()") == tails + 1
                 assert page.evaluate("window.__activeTails()") == [{"transcript": False, "lens": "focus"}]
                 assert page.evaluate("window.__sends.length") == sends
         page.close()
