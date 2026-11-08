@@ -8,6 +8,7 @@ is not exactly the shape of a Worker type, and the registry's rules run on the r
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -337,6 +338,9 @@ def custom_workflow_from_dict(raw: object) -> TicketWorkflowDefinition:
     return _workflow_from_dict(raw, saved=False)
 
 
+# Many Tickets share one workflow text, and a definition is immutable, so a read over
+# every Ticket parses each distinct text once.
+@functools.lru_cache(maxsize=256)
 def workflow_from_json(raw: str) -> TicketWorkflowDefinition:
     try:
         payload = json.loads(raw)
