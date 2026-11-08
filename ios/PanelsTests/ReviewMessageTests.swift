@@ -25,13 +25,19 @@ import XCTest
         let marked = await decision.markRead()
         XCTAssertTrue(marked)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.last?["through_sequence"] as? Int, 66)
-        // A read-ahead card reads again when shown only if its conversation moved in the
-        // view, so a reply or Mark read never stops at a run that has since grown.
+        // The view carries no sequence that moves when a message joins the run, so the
+        // read-ahead looks current. The shown card reads again, so a reply or Mark read
+        // never stops at a run that has since grown.
+        let reads = ReviewMessageProtocol.state.eventReads
         await decision.load(item: item(), api: api)
-        XCTAssertEqual(decision.through, 66, "Unchanged view facts read nothing")
-        var moved = item(); moved.latestSequence = 67
-        await decision.load(item: moved, api: api)
-        XCTAssertEqual(decision.through, 67)
+        XCTAssertEqual(decision.through, 66, "A read-ahead with unchanged view facts reads nothing")
+        XCTAssertEqual(ReviewMessageProtocol.state.eventReads, reads)
+        await decision.load(item: item(), api: api, shownAt: .now)
+        XCTAssertEqual(decision.through, 67, "The shown card reads the run again")
+        XCTAssertEqual(ReviewMessageProtocol.state.eventReads, reads + 1)
+        let marked2 = await decision.markRead()
+        XCTAssertTrue(marked2)
+        XCTAssertEqual(ReviewMessageProtocol.state.bodies.last?["through_sequence"] as? Int, 67)
     }
     func testRefusedReplyKeepsDraftAttachmentAndRetryBoundaryAcrossRecreation() async throws {
         let api = makeAPI()
@@ -127,12 +133,14 @@ private final class ReviewMessageState: @unchecked Sendable {
     private var _refuse = false
     private var _newMessage = false
     private var _loseResponse = false
+    private var _eventReads = 0
     private var held: Set<String> = []
     var loseResponse: Bool { get { lock.withLock { _loseResponse } } set { lock.withLock { _loseResponse = newValue } } }
     var bodies: [[String: Any]] { lock.withLock { _bodies } }
+    var eventReads: Int { lock.withLock { _eventReads } }
     var refuse: Bool { get { lock.withLock { _refuse } } set { lock.withLock { _refuse = newValue } } }
     var newMessage: Bool { get { lock.withLock { _newMessage } } set { lock.withLock { _newMessage = newValue } } }
-    func reset() { lock.withLock { _bodies = []; _refuse = false; _newMessage = false; _loseResponse = false; held = [] } }
+    func reset() { lock.withLock { _bodies = []; _refuse = false; _newMessage = false; _loseResponse = false; _eventReads = 0; held = [] } }
     func response(_ request: URLRequest) throws -> Data {
         try lock.withLock {
             let path = request.url!.path
@@ -151,6 +159,7 @@ private final class ReviewMessageState: @unchecked Sendable {
             }
             if path.hasSuffix("/receipts") { return Data(#"{"receipts":[]}"#.utf8) }
             if path.hasSuffix("/events") {
+                _eventReads += 1
                 var events: [[String: Any]] = (1...(_newMessage ? 67 : 66)).map { ["sequence": $0, "kind": "message_to_owner", "payload": ["text": "Message \($0)"]] }
                 events.append(["sequence": 90, "kind": "agent_message", "payload": ["text": "Internal output"]])
                 return try JSONSerialization.data(withJSONObject: ["events": events])

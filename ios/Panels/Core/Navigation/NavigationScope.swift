@@ -147,7 +147,6 @@ extension NavigationReviewMessage {
                               ownerKind: ownerKind, ownerId: ownerId, ownerReadThroughSequence: ownerReadThroughSequence, addressCurrent: addressCurrent)
         item.addressId = addressId
         item.recap = recap
-        item.latestSequence = latestSequence
         return item
     }
 }

@@ -18,8 +18,8 @@ struct ReviewMessageView: View {
     @State private var sendingPresentation = false
     @State private var outgoingAttempt: PendingWork?
     private var displayedAttempt: PendingWork? { sendingPresentation ? outgoingAttempt : decision.attempt }
-    /// The view's current facts for this card. A card read ahead before its conversation
-    /// moved reads its run again when shown, keeping the read-ahead run on screen meanwhile.
+    /// The view's current facts for this card. The card reads its run again when shown,
+    /// keeping the read-ahead run on screen meanwhile.
     private var live: ReviewItem { store.review?.items.first { $0.id == item.id } ?? item }
 
     var body: some View {
@@ -86,10 +86,10 @@ struct ReviewMessageView: View {
                 .scrollDisabled(sendingPresentation || leaving)
         }
         .toolbar { skipToolbar }
-        // Read again only as the card is shown: a message arriving while it is on screen
+        // Read again as the card is shown: a message arriving while it is on screen
         // stays outside the displayed run and returns to Review after a reply.
         .task {
-            await decision.load(item: live, api: store.client)
+            await decision.load(item: live, api: store.client, shownAt: .now)
             if decision.accepted { finishReply() }
             else if decision.loaded, decision.events.isEmpty, decision.composer.draft.isEmpty, decision.composer.attachments.isEmpty, decision.attempt == nil { leave(resolved: true) }
         }
