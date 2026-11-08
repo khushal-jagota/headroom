@@ -16,11 +16,18 @@ Successful cached reads are saved by a serial background writer before the read
 finishes. An identical response still refreshes its saved date, so it keeps its
 place in eviction order. Cache reads use a fresh database context to see the
 latest completed save. Drafts and outgoing messages keep their separate main-thread
-writer and observation signal.
+writer. Outgoing work raises the saved-work observation signal. A plain draft save
+does not, because each key press saves the draft. A draft saved together with
+outgoing work, such as a voice transcript, still raises it.
 
 Responses are bounded to 96 entries and 16 MiB across servers. A response larger
 than the budget is not cached. Drafts and outgoing work are separate records and
-are never removed by this eviction. Everything is partitioned by server origin;
+are never removed by this eviction. Every screen that shows outgoing work reads the
+whole list, so the foreground send loop clears finished work when it starts and on
+each 3-second tick, before it checks the network. Sent and changed work is removed
+24 hours after it finished, and uncertain work after 7 days. Failed work stays
+until the user retries it. Waiting, sending, recording and server-queued work stays.
+Everything is partitioned by server origin;
 changing the server address cannot send one server's work to another server.
 
 Conversation text, Review edits, send-back guidance and Ideas text are saved as
