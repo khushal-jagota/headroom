@@ -19,7 +19,7 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 
 ## How it works
 
-Khushal and the Chief stand above skills, so both may edit them. `panels skill delete` removes a skill's row and its whole folder, and refuses a role skill and any skill that a Worker type or an unfinished Ticket uses. The next server start removes the dead links that a deleted skill leaves in agent homes. `panels skill write-file` writes a supporting file inside a skill folder, and never the skill's own `SKILL.md`. A Worker or a Manager that wants a skill changed hands the exact text to the owner or the Chief. A reviewed batch applies in one transaction. Specialist guidance changes through its structured preset editor.
+Khushal and the Chief stand above skills, so both may edit them. `panels skill delete` removes a skill's row and its whole folder, and refuses a role skill and any skill that a Worker type uses. Tickets use their saved guide after their specialist skill is deleted. The next server start removes the dead links that a deleted skill leaves in agent homes. `panels skill write-file` writes a supporting file inside a skill folder, and never the skill's own `SKILL.md`. A Worker or a Manager that wants a skill changed hands the exact text to the owner or the Chief. A reviewed batch applies in one transaction. Specialist guidance changes through its structured preset editor.
 
 Every Worker follows its own Ticket's workflow guide, which it receives at kickoff. A specialist skill is the current guide of its preset, for reading and editing. It does not reach a Ticket made earlier. See [Worker types](worker-types.md). A saved skill reaches an agent the next time it loads the skill. A turn already running keeps what it read. Saving a skill sends no prompt, so the conversation notebook does not change.
 
@@ -38,4 +38,4 @@ Every Worker follows its own Ticket's workflow guide, which it receives at kicko
 - `src/planner/skills/`: the seed.
 - `web/src/components/RoleSkillEditor.svelte`: the editor.
 
-_Last verified: 2026-11-07._
+_Last verified: 2026-11-09._
