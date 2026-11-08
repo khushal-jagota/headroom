@@ -55,7 +55,7 @@ def _nullable_folder_path(raw: Any) -> str | None:
 
 
 @router.get("/projects")
-async def read_projects(
+def read_projects(
     conn: DbConn,
     detail: str | None = None,
     object_id: Annotated[str | None, Query(alias="id")] = None,

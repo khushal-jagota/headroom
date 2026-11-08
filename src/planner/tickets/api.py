@@ -16,7 +16,7 @@ validation envelope rather than FastAPI's 422, so the CLI and UI see one error s
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -563,7 +563,7 @@ def create_ticket(
 
 @router.get("/tickets")
 async def read_tickets(
-    conn: DbConn,
+    request: Request,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
@@ -586,120 +586,127 @@ async def read_tickets(
     offset: int | None = None,
 ) -> JsonDict:
     """Read Tickets at the level the caller asks for, or one Ticket by id."""
-    level = parse_read_detail(detail)
-    scope = {
-        "stage": stage,
-        "exclude_stage": exclude_stage,
-        "ticket_status": ticket_status,
-        "exclude_ticket_status": exclude_ticket_status,
-        "is_backlogged": is_backlogged,
-        "worker_type": worker_type,
-        "include_terminal": include_terminal or None,
-        "search": search,
-        "project": project,
-        "project_id": project_id,
-        "manager_id": manager_id,
-        "manager_kind": manager_kind,
-        "limit": limit,
-        "offset": offset,
-    }
-    if object_id is not None:
-        require_full_for_one(level)
-        reject_parameters("id", scope)
-        one = _ticket_detail(conn, object_id, clk.now_unix())
-        await add_work_attention(conn, conversations, conversation_record, tickets=(one,))
-        return one
 
-    # Stage is stored canonical data. Reading compares it directly and does not need
-    # to resolve or interpret the Ticket's Worker type.
-    resolved_project = projects_data.resolve_project(
-        conn, project_id=project_id, project_name=project
-    )
+    def read_rows(conn: sqlite3.Connection) -> tuple[JsonDict, Sequence[JsonDict]]:
+        """The response, and the Ticket rows in it that take work attention."""
+        level = parse_read_detail(detail)
+        scope = {
+            "stage": stage,
+            "exclude_stage": exclude_stage,
+            "ticket_status": ticket_status,
+            "exclude_ticket_status": exclude_ticket_status,
+            "is_backlogged": is_backlogged,
+            "worker_type": worker_type,
+            "include_terminal": include_terminal or None,
+            "search": search,
+            "project": project,
+            "project_id": project_id,
+            "manager_id": manager_id,
+            "manager_kind": manager_kind,
+            "limit": limit,
+            "offset": offset,
+        }
+        if object_id is not None:
+            require_full_for_one(level)
+            reject_parameters("id", scope)
+            one = _ticket_detail(conn, object_id, clk.now_unix())
+            return one, (one,)
 
-    if level is ReadDetail.full:
-        reject_parameters(
-            "detail=full",
-            {
-                "manager_kind": manager_kind,
-                "manager_id": manager_id,
-                "is_backlogged": is_backlogged,
-                "worker_type": worker_type,
-                "exclude_stage": exclude_stage,
-                "ticket_status": ticket_status,
-                "exclude_ticket_status": exclude_ticket_status,
-                "include_terminal": include_terminal or None,
-                "search": search,
-                "limit": limit,
-                "offset": offset,
-            },
+        # Stage is stored canonical data. Reading compares it directly and does not need
+        # to resolve or interpret the Ticket's Worker type.
+        resolved_project = projects_data.resolve_project(
+            conn, project_id=project_id, project_name=project
         )
-        if stage is not None and len(stage) > 1:
+
+        if level is ReadDetail.full:
+            reject_parameters(
+                "detail=full",
+                {
+                    "manager_kind": manager_kind,
+                    "manager_id": manager_id,
+                    "is_backlogged": is_backlogged,
+                    "worker_type": worker_type,
+                    "exclude_stage": exclude_stage,
+                    "ticket_status": ticket_status,
+                    "exclude_ticket_status": exclude_ticket_status,
+                    "include_terminal": include_terminal or None,
+                    "search": search,
+                    "limit": limit,
+                    "offset": offset,
+                },
+            )
+            if stage is not None and len(stage) > 1:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "detail=full takes at most one stage",
+                    {"stages": list(stage)},
+                )
+            rows = tickets_views.list_tickets(
+                conn,
+                clk.now_unix(),
+                stage=stage[0] if stage else None,
+                project_id=resolved_project.id if resolved_project is not None else None,
+                manager_id=manager_id,
+            )
+            return {"tickets": rows}, rows
+
+        manager = None
+        if manager_kind is not None or manager_id is not None:
+            manager = _parse_manager(
+                {
+                    "kind": manager_kind or "manager",
+                    "id": (
+                        "chief" if manager_kind == "chief" and manager_id is None else manager_id
+                    ),
+                }
+            )
+
+        included_stages = tuple(stage or ())
+        registry = configured_worker_type_registry()
+        terminal_stages = {
+            registry.require(worker_type).completed_stage()
+            for worker_type in registry.registered_worker_types()
+        }
+        requested_terminal = sorted(set(included_stages) & terminal_stages)
+        if requested_terminal and not include_terminal:
             raise PlannerError(
                 ErrorCode.validation,
-                "detail=full takes at most one stage",
-                {"stages": list(stage)},
+                "terminal stages require include_terminal",
+                {"stages": requested_terminal},
             )
-        rows = tickets_views.list_tickets(
+        statuses = tuple(
+            parse_enum(TicketStatus, value, "ticket_status") for value in (ticket_status or ())
+        )
+        excluded_statuses = tuple(
+            parse_enum(TicketStatus, value, "exclude_ticket_status")
+            for value in (exclude_ticket_status or ())
+        )
+        page = tickets_views.list_ticket_summaries(
             conn,
-            clk.now_unix(),
-            stage=stage[0] if stage else None,
+            page_request=ListPageRequest(
+                limit=DEFAULT_LIST_LIMIT if limit is None else limit,
+                offset=0 if offset is None else offset,
+            ),
+            filters=TicketListFilters(
+                manager=manager,
+                stages=included_stages,
+                excluded_stages=tuple(exclude_stage or ()),
+                ticket_statuses=statuses,
+                excluded_ticket_statuses=excluded_statuses,
+                is_backlogged=is_backlogged,
+                worker_types=tuple(worker_type or ()),
+                include_terminal=include_terminal,
+                search=search,
+            ),
             project_id=resolved_project.id if resolved_project is not None else None,
             manager_id=manager_id,
         )
+        return page.response("tickets"), page.rows
+
+    async with connection_off_the_loop(request) as conn:
+        response, rows = await run_on_worker_thread(read_rows, conn)
         await add_work_attention(conn, conversations, conversation_record, tickets=rows)
-        return {"tickets": rows}
-
-    manager = None
-    if manager_kind is not None or manager_id is not None:
-        manager = _parse_manager(
-            {
-                "kind": manager_kind or "manager",
-                "id": ("chief" if manager_kind == "chief" and manager_id is None else manager_id),
-            }
-        )
-
-    included_stages = tuple(stage or ())
-    registry = configured_worker_type_registry()
-    terminal_stages = {
-        registry.require(worker_type).completed_stage()
-        for worker_type in registry.registered_worker_types()
-    }
-    requested_terminal = sorted(set(included_stages) & terminal_stages)
-    if requested_terminal and not include_terminal:
-        raise PlannerError(
-            ErrorCode.validation,
-            "terminal stages require include_terminal",
-            {"stages": requested_terminal},
-        )
-    statuses = tuple(
-        parse_enum(TicketStatus, value, "ticket_status") for value in (ticket_status or ())
-    )
-    excluded_statuses = tuple(
-        parse_enum(TicketStatus, value, "exclude_ticket_status")
-        for value in (exclude_ticket_status or ())
-    )
-    page = tickets_views.list_ticket_summaries(
-        conn,
-        page_request=ListPageRequest(
-            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
-            offset=0 if offset is None else offset,
-        ),
-        filters=TicketListFilters(
-            manager=manager,
-            stages=included_stages,
-            excluded_stages=tuple(exclude_stage or ()),
-            ticket_statuses=statuses,
-            excluded_ticket_statuses=excluded_statuses,
-            is_backlogged=is_backlogged,
-            worker_types=tuple(worker_type or ()),
-            include_terminal=include_terminal,
-            search=search,
-        ),
-        project_id=resolved_project.id if resolved_project is not None else None,
-        manager_id=manager_id,
-    )
-    await add_work_attention(conn, conversations, conversation_record, tickets=page.rows)
-    return page.response("tickets")
+    return response
 
 
 @dataclass(frozen=True)
@@ -755,7 +762,7 @@ def write_resolved_employee_configuration(
 
 
 @router.get("/tickets/{ticket_id}/worker-self")
-async def get_worker_self_ticket(
+def get_worker_self_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
@@ -1125,13 +1132,13 @@ def _conversation_start_values_json(values: ConversationStartValues) -> JsonDict
 
 
 @router.get("/chief/conversation")
-async def read_chief_conversation(conn: DbConn) -> JsonDict:
+def read_chief_conversation(conn: DbConn) -> JsonDict:
     """Which conversation the Chief is currently talking in, or none."""
     return {"conversation_id": conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)}
 
 
 @router.get("/chief/conversation/start-values")
-async def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
+def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
     """What a conversation started for the Chief right now would run on.
 
     This is the question a panel with no conversation has to answer to show anything at
@@ -1209,7 +1216,7 @@ async def reset_chief_conversation(
 
 
 @router.get("/tickets/{ticket_id}/conversation/start-values")
-async def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) -> JsonDict:
+def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) -> JsonDict:
     """What a conversation started for this Ticket's worker right now would run on.
 
     The Chief's question, asked of a Ticket: the same resolve the send door runs, so the
@@ -1372,22 +1379,23 @@ async def request_help(
 
 
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
-async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
+def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
 
 
 @router.get("/review")
 async def review(
-    conn: DbConn,
+    request: Request,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    response = tickets_views.review_view(conn)
-    response["running_worker_count"] = await read_running_conversation_count(
-        conn, conversations, conversation_record
-    )
+    async with connection_off_the_loop(request) as conn:
+        response = await run_on_worker_thread(tickets_views.review_view, conn)
+        response["running_worker_count"] = await read_running_conversation_count(
+            conn, conversations, conversation_record
+        )
     return response
 
 

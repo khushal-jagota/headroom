@@ -19,6 +19,7 @@ from planner.core.authctx import request_context
 from planner.core.contracts import JsonDict
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.files import goal_files, manager_files
 from planner.files.logic.paths import (
     resolve_goal_file,
@@ -136,8 +137,7 @@ async def get_goal_file(
     request: Request, goal_id: str, file_path: str
 ) -> Response:
     _reject_raw_encoded_unsafe_path(request, "goal file not found")
-    with connect(request.app.state.config.db_path) as conn:
-        goal_files.require_goal(conn, request_context(request).principal, goal_id)
+    await run_on_worker_thread(_require_goal, request, goal_id)
     try:
         managed_file = (
             resolve_html_navigation(
@@ -164,6 +164,11 @@ async def get_goal_file(
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
     return await _reusable(request, response, managed_file, media_type)
+
+
+def _require_goal(request: Request, goal_id: str) -> None:
+    with connect(request.app.state.config.db_path) as conn:
+        goal_files.require_goal(conn, request_context(request).principal, goal_id)
 
 
 async def _reusable(

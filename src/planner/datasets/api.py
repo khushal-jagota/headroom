@@ -24,7 +24,7 @@ def _text(body: dict[str, Any], key: str) -> str:
 
 
 @router.get("/datasets")
-async def list_datasets(
+def list_datasets(
     conn: DbConn,
     project_id: str | None = None,
     source_id: str | None = None,
@@ -62,7 +62,7 @@ def read_values(body: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 
 
 @router.get("/datasets/{dataset_id}")
-async def read_dataset(dataset_id: str, conn: DbConn) -> JsonDict:
+def read_dataset(dataset_id: str, conn: DbConn) -> JsonDict:
     return asdict(data.read_dataset(conn, dataset_id))
 
 

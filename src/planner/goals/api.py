@@ -12,7 +12,7 @@ router = APIRouter()
 
 
 @router.get("/goals")
-async def list_goals(
+def list_goals(
     conn: DbConn, clk: Clk, active: bool | None = None, project_id: str | None = None
 ) -> Any:
     return views.list_json(conn, views.calendar_now(clk), active=active, project_id=project_id)
@@ -37,7 +37,7 @@ def create_goal(
 
 
 @router.get("/goals/{goal_id}")
-async def read_goal(goal_id: str, conn: DbConn, clk: Clk) -> Any:
+def read_goal(goal_id: str, conn: DbConn, clk: Clk) -> Any:
     return views.goal_json(conn, data.read_goal(conn, goal_id), views.calendar_now(clk))
 
 
@@ -61,7 +61,7 @@ def update_goal(
 
 
 @router.get("/goals/{goal_id}/readings")
-async def readings(
+def readings(
     goal_id: str,
     conn: DbConn,
     clk: Clk,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from functools import partial
 from typing import Annotated, Any
 
@@ -87,7 +88,7 @@ def _marshal_create_manager(raw: JsonDict) -> CreateManagerBody:
 
 
 @router.get("/managers/launch-defaults")
-async def get_manager_launch_defaults(conn: DbConn, ctx: Ctx) -> JsonDict:
+def get_manager_launch_defaults(conn: DbConn, ctx: Ctx) -> JsonDict:
     require_owner_or_chief(ctx)
     return launch_configuration_json(managers_data.read_launch_defaults(conn))
 
@@ -103,7 +104,7 @@ def put_manager_launch_defaults(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> 
 
 
 @router.get("/managers/{item_id}/launch-defaults")
-async def get_manager_launch_configuration(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+def get_manager_launch_configuration(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
     return launch_configuration_json(
         managers_data.read_manager(conn, item_id).item.manager_launch_configuration
     )
@@ -183,7 +184,7 @@ def _create_manager_rows(
 
 @router.get("/managers")
 async def read_managers(
-    conn: DbConn,
+    request: Request,
     conversations: Conversations,
     conversation_record: ConversationRecord,
     detail: str | None = None,
@@ -197,49 +198,55 @@ async def read_managers(
 ) -> JsonDict:
     """Read Managers at the level the caller asks for, or one Manager by id."""
     level = parse_read_detail(detail)
-    if object_id is not None:
-        require_full_for_one(level)
-        reject_parameters(
-            "id",
-            {
-                "search": search,
-                "settled": settled,
-                "project": project,
-                "project_id": project_id,
-                "limit": limit,
-                "offset": offset,
-            },
+
+    def read_rows(conn: sqlite3.Connection) -> tuple[JsonDict, Sequence[JsonDict]]:
+        """The response, and the Manager rows in it that take work attention."""
+        if object_id is not None:
+            require_full_for_one(level)
+            reject_parameters(
+                "id",
+                {
+                    "search": search,
+                    "settled": settled,
+                    "project": project,
+                    "project_id": project_id,
+                    "limit": limit,
+                    "offset": offset,
+                },
+            )
+            item = managers_views.manager_detail(conn, object_id)
+            return item, (item,)
+        resolved_project = projects_data.resolve_project(
+            conn, project_id=project_id, project_name=project
         )
-        item = managers_views.manager_detail(conn, object_id)
-        await add_work_attention(conn, conversations, conversation_record, managers=(item,))
-        return item
-    resolved_project = projects_data.resolve_project(
-        conn, project_id=project_id, project_name=project
-    )
-    resolved_project_id = resolved_project.id if resolved_project is not None else None
-    if level is ReadDetail.full:
-        reject_parameters(
-            "detail=full", {"search": search, "settled": settled, "limit": limit, "offset": offset}
+        resolved_project_id = resolved_project.id if resolved_project is not None else None
+        if level is ReadDetail.full:
+            reject_parameters(
+                "detail=full",
+                {"search": search, "settled": settled, "limit": limit, "offset": offset},
+            )
+            rows = managers_views.list_managers(conn, project_id=resolved_project_id)
+            return {"managers": rows}, rows
+        page = managers_views.list_manager_summaries(
+            conn,
+            page_request=ListPageRequest(
+                limit=DEFAULT_LIST_LIMIT if limit is None else limit,
+                offset=0 if offset is None else offset,
+            ),
+            project_id=resolved_project_id,
+            search=search,
+            settled=settled,
         )
-        rows = managers_views.list_managers(conn, project_id=resolved_project_id)
+        return page.response("managers"), page.rows
+
+    async with connection_off_the_loop(request) as conn:
+        response, rows = await run_on_worker_thread(read_rows, conn)
         await add_work_attention(conn, conversations, conversation_record, managers=rows)
-        return {"managers": rows}
-    page = managers_views.list_manager_summaries(
-        conn,
-        page_request=ListPageRequest(
-            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
-            offset=0 if offset is None else offset,
-        ),
-        project_id=resolved_project_id,
-        search=search,
-        settled=settled,
-    )
-    await add_work_attention(conn, conversations, conversation_record, managers=page.rows)
-    return page.response("managers")
+    return response
 
 
 @router.get("/managers/{item_id}/workspace-content")
-async def get_manager_workspace_content(
+def get_manager_workspace_content(
     item_id: str, conn: DbConn, ctx: Ctx, response: Response, clk: Clk
 ) -> ManagerWorkspaceContent:
     document = managers_views.manager_workspace_document(conn, item_id, calendar_now(clk))
@@ -251,7 +258,7 @@ async def get_manager_workspace_content(
 @router.get("/managers/{item_id}/workspace")
 async def get_manager_workspace(
     item_id: str,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
@@ -266,22 +273,23 @@ async def get_manager_workspace(
     know *which* agent holds one reads ``ceiling_holder`` on the row — the holder is an
     address, and this is the read of it.
     """
-    result = managers_views.manager_workspace(conn, item_id)
-    await add_work_attention(
-        conn,
-        conversations,
-        conversation_record,
-        tickets=result["tickets"],
-        managers=(result,),
-    )
-    result["artifacts"] = manager_files.list_artifact_entries(
-        conn, ctx.principal, item_id, cfg.db_path
-    )
+    async with connection_off_the_loop(request) as conn:
+        result = await run_on_worker_thread(managers_views.manager_workspace, conn, item_id)
+        await add_work_attention(
+            conn,
+            conversations,
+            conversation_record,
+            tickets=result["tickets"],
+            managers=(result,),
+        )
+        result["artifacts"] = await run_on_worker_thread(
+            manager_files.list_artifact_entries, conn, ctx.principal, item_id, cfg.db_path
+        )
     return result
 
 
 @router.get("/managers/{item_id}/conversation/start-values")
-async def get_item_conversation_start_values(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+def get_item_conversation_start_values(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
     """What a first message to this Manager's agent would start it on.
 
     The Manager's conversation door, beside the Ticket's and the Chief's. The prefix it
@@ -477,7 +485,7 @@ def settle_item(item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: 
 
 
 @router.get("/chief/page")
-async def get_chief_page(conn: DbConn) -> Any:
+def get_chief_page(conn: DbConn) -> Any:
     from planner.managers.pages import read_page
 
     return read_page(conn, None)
@@ -498,14 +506,14 @@ def patch_manager_page(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ct
 
 
 @router.get("/managers/{item_id}/page")
-async def get_manager_page(item_id: str, conn: DbConn, ctx: Ctx) -> Any:
+def get_manager_page(item_id: str, conn: DbConn, ctx: Ctx) -> Any:
     from planner.managers.pages import read_page
 
     return read_page(conn, item_id)
 
 
 @router.get("/chief/page/readings")
-async def get_chief_page_readings(conn: DbConn, clk: Clk) -> Any:
+def get_chief_page_readings(conn: DbConn, clk: Clk) -> Any:
     from planner.goals.views import calendar_now
     from planner.managers.pages import page_readings
 
@@ -513,7 +521,7 @@ async def get_chief_page_readings(conn: DbConn, clk: Clk) -> Any:
 
 
 @router.get("/managers/{item_id}/page/readings")
-async def get_manager_page_readings(item_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
+def get_manager_page_readings(item_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
     from planner.goals.views import calendar_now
     from planner.managers.pages import page_readings
 

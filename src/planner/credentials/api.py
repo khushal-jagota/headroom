@@ -74,7 +74,7 @@ def _revision(value: object) -> int:
 
 
 @router.get("/credentials")
-async def list_credentials(
+def list_credentials(
     conn: DbConn,
     limit: int = limits.DEFAULT_LIST_LIMIT,
     offset: int = 0,

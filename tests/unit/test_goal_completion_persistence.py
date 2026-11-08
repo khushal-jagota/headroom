@@ -1,6 +1,5 @@
 """Writer transitions preserve one binary input and project selected checklist completion."""
 
-import asyncio
 import json
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -315,7 +314,7 @@ def test_write_detail_list_and_readings_project_the_same_completion(tmp_db: Conn
     clock = FakeClock(datetime(2026, 10, 28, 12, tzinfo=UTC))
     context = RequestContext(OWNER_PRINCIPAL)
 
-    async def responses(completed: bool) -> None:
+    def responses(completed: bool) -> None:
         data.read_goal(tmp_db, goal.id)
         write = api.update_goal(
             goal.id,
@@ -324,20 +323,20 @@ def test_write_detail_list_and_readings_project_the_same_completion(tmp_db: Conn
             context,
             clock,
         )
-        detail = await api.read_goal(goal.id, tmp_db, clock)
-        listing = await api.list_goals(tmp_db, clock)
-        readings = await api.readings(goal.id, tmp_db, clock)
+        detail = api.read_goal(goal.id, tmp_db, clock)
+        listing = api.list_goals(tmp_db, clock)
+        readings = api.readings(goal.id, tmp_db, clock)
         assert write == detail == listing["goals"][0]
         assert detail["completed"] is completed
         assert "binary_checked" not in detail
         assert readings["status"] == detail["status"] == ("good" if completed else "bad")
         assert readings["charts"] == {} and readings["values"] == []
 
-    asyncio.run(responses(True))
+    responses(True)
     saved = data.read_goal(tmp_db, goal.id)
     document = deepcopy(saved.page)
     checklist = selected_checklist(document, "delivery")
     assert checklist is not None
     checklist["items"][0]["state"] = "open"
     edit(tmp_db, saved, page=document)
-    asyncio.run(responses(False))
+    responses(False)

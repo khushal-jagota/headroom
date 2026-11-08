@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import ConversationSystem, require_conversation_backend_key
@@ -22,6 +22,7 @@ from planner.core.authctx import (
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.runtime import conversation_start
 from planner.skill_staleness import stale_references
 from planner.tickets.api import (
@@ -29,6 +30,7 @@ from planner.tickets.api import (
     ConversationRecord,
     Conversations,
     DbConn,
+    connection_off_the_loop,
     get_config,
 )
 from planner.worker_settings import service
@@ -132,8 +134,10 @@ async def add_agent_conversation_signals(
     projection here also preserves the durable direct-message fact. A completed turn,
     running turn, or pending ask does not mean that the owner has a message.
     """
-    conversation_ids = conversation_start.read_agent_conversations(
-        conn, [str(agent["employee_id"]) for agent in agents]
+    conversation_ids = await run_on_worker_thread(
+        conversation_start.read_agent_conversations,
+        conn,
+        [str(agent["employee_id"]) for agent in agents],
     )
     latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
         conversation_ids.values()
@@ -179,30 +183,28 @@ def _detail_json(detail: WorkerManagementDetail) -> JsonDict:
 
 @router.get("/workers")
 async def list_workers(
-    config: Cfg,
-    conn: DbConn,
+    request: Request,
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    del config
     registry = configured_worker_runtime_definitions().worker_type_registry
-    agents = await add_agent_conversation_signals(
-        [_chief_json(service.read_chief_settings(conn))],
-        conn,
-        conversations,
-        conversation_record,
-    )
-    return {
-        "workers": [
+
+    def read_roster(conn: sqlite3.Connection) -> tuple[JsonDict, list[JsonDict]]:
+        return _chief_json(service.read_chief_settings(conn)), [
             _summary_json(summary)
             for summary in service.read_worker_management_index(conn, registry)
-        ],
-        "chief_of_staff": agents[0],
-    }
+        ]
+
+    async with connection_off_the_loop(request) as conn:
+        chief, workers = await run_on_worker_thread(read_roster, conn)
+        agents = await add_agent_conversation_signals(
+            [chief], conn, conversations, conversation_record
+        )
+    return {"workers": workers, "chief_of_staff": agents[0]}
 
 
 @router.get("/skills/stale")
-async def get_stale_skill_references(conn: DbConn) -> JsonDict:
+def get_stale_skill_references(conn: DbConn) -> JsonDict:
     """Every reference in a skill row that this build cannot resolve.
 
     Declared before ``/skills/{skill_name}``, which would otherwise match first and
@@ -216,7 +218,7 @@ async def get_stale_skill_references(conn: DbConn) -> JsonDict:
 
 
 @router.get("/skills")
-async def list_skills(conn: DbConn) -> JsonDict:
+def list_skills(conn: DbConn) -> JsonDict:
     return _skills_home_json(service.read_skills_home(conn))
 
 
@@ -229,7 +231,7 @@ def apply_skills(raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: 
 
 
 @router.get("/skills/{skill_name}")
-async def get_skill(skill_name: str, conn: DbConn) -> JsonDict:
+def get_skill(skill_name: str, conn: DbConn) -> JsonDict:
     return _skill_json(service.read_skill(conn, skill_name))
 
 
@@ -262,7 +264,7 @@ def put_skill_file(
 
 
 @router.get("/workers/chief-of-staff/settings")
-async def get_chief_settings(conn: DbConn) -> JsonDict:
+def get_chief_settings(conn: DbConn) -> JsonDict:
     return _chief_json(service.read_chief_settings(conn))
 
 
@@ -311,7 +313,7 @@ def put_worker_launch_defaults(
 
 
 @router.get("/workers/{worker_type}")
-async def get_worker(worker_type: str, conn: DbConn) -> JsonDict:
+def get_worker(worker_type: str, conn: DbConn) -> JsonDict:
     registry = configured_worker_runtime_definitions().worker_type_registry
     return _detail_json(service.read_worker_management_detail(conn, registry, worker_type))
 
@@ -359,7 +361,7 @@ def patch_worker_skill(
 
 
 @router.get("/worker-types/{worker_type}")
-async def get_worker_type(worker_type: str, conn: DbConn) -> JsonDict:
+def get_worker_type(worker_type: str, conn: DbConn) -> JsonDict:
     """The stored record for one Worker type, in the shape the write door takes back."""
     return cast(
         JsonDict, json.loads(store.definition_to_json(store.read_definition(conn, worker_type)))

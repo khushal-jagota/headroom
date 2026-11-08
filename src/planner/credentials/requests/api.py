@@ -53,7 +53,7 @@ async def create_request(
 
 
 @router.get("/credentials/requests/{request_id}")
-async def read_request(request_id: str, conn: DbConn) -> CredentialRequestRowBody:
+def read_request(request_id: str, conn: DbConn) -> CredentialRequestRowBody:
     return data.read(conn, request_id)
 
 

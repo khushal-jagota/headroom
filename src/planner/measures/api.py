@@ -46,7 +46,7 @@ def _period(value: object) -> CountPeriod | None:
 
 
 @router.get("/measures")
-async def list_measures(
+def list_measures(
     conn: DbConn,
     project_id: str | None = None,
     source_id: str | None = None,
@@ -77,7 +77,7 @@ def read_values(body: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 
 
 @router.get("/measures/{measure_id}")
-async def read_measure(measure_id: str, conn: DbConn) -> JsonDict:
+def read_measure(measure_id: str, conn: DbConn) -> JsonDict:
     return data.measure_json(data.read_measure(conn, measure_id))
 
 
@@ -163,9 +163,7 @@ def delete_measure(measure_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDic
 
 
 @router.get("/measures/{measure_id}/manual-state")
-async def manual_state(
-    measure_id: str, conn: DbConn, clk: Clk, date: str | None = None
-) -> JsonDict:
+def manual_state(measure_id: str, conn: DbConn, clk: Clk, date: str | None = None) -> JsonDict:
     return asdict(manual.read_state(conn, measure_id, date, now=clk.now_unix()))
 
 

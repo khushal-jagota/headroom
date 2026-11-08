@@ -40,9 +40,7 @@ def create_idea(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 
 
 @router.get("/ideas")
-async def list_ideas(
-    conn: DbConn, project: str | None = None, project_id: str | None = None
-) -> JsonDict:
+def list_ideas(conn: DbConn, project: str | None = None, project_id: str | None = None) -> JsonDict:
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )

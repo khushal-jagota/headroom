@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -53,7 +52,7 @@ def checked_key(key: str) -> str:
 
 
 @router.get("/resource-versions")
-async def resource_versions(keys: str, request: Request, conn: DbConn) -> ResourceVersionsResponse:
+def resource_versions(keys: str, request: Request, conn: DbConn) -> ResourceVersionsResponse:
     try:
         requested = json.loads(keys)
     except (ValueError, TypeError) as exc:
@@ -73,14 +72,12 @@ async def resource_versions(keys: str, request: Request, conn: DbConn) -> Resour
 
 
 @router.get("/resource-body")
-async def resource_body(key: str, request: Request, conn: DbConn) -> ResourceBodyResponse:
+def resource_body(key: str, request: Request, conn: DbConn) -> ResourceBodyResponse:
     with read_snapshot(conn):
         snapshot = capture(conn, request, checked_key(key))
         if snapshot is None:
             raise PlannerError(ErrorCode.not_found, "unregistered resource", {"key": key})
         body = snapshot.read()
-        if inspect.isawaitable(body):
-            body = await body
         return {
             "epoch": request.app.state.resource_version_epoch,
             "key": key,

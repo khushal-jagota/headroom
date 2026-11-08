@@ -72,7 +72,7 @@ def principal(value: object) -> Principal:
 
 
 @router.get("/measure-sources")
-async def list_sources(
+def list_sources(
     conn: DbConn,
     clk: Clk,
     project_id: str | None = None,
@@ -106,13 +106,13 @@ def create_source(
 
 
 @router.get("/measure-sources/{source_id}")
-async def get_source(source_id: str, conn: DbConn) -> JsonDict:
+def get_source(source_id: str, conn: DbConn) -> JsonDict:
     with read_transaction(conn, read_only=True):
         return asdict(data.read_source(conn, source_id))
 
 
 @router.get("/measure-sources/{source_id}/status")
-async def get_status(source_id: str, conn: DbConn, clk: Clk) -> JsonDict:
+def get_status(source_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     with read_transaction(conn, read_only=True):
         return asdict(views.status(conn, source_id, now=clk.now_unix()))
 
@@ -190,7 +190,7 @@ def submit_script(
 
 
 @router.get("/measure-sources/{source_id}/runs")
-async def list_runs(
+def list_runs(
     source_id: str,
     conn: DbConn,
     limit: int = DEFAULT_PAGE_LIMIT,
@@ -237,6 +237,6 @@ def request_run(
 
 
 @router.get("/measure-source-runs/{run_id}")
-async def get_run(run_id: str, conn: DbConn) -> JsonDict:
+def get_run(run_id: str, conn: DbConn) -> JsonDict:
     with read_transaction(conn, read_only=True):
         return asdict(data.read_run_detail(conn, run_id))
