@@ -394,6 +394,7 @@ def run(browser, urls):
     verify_settled_fold(page, url, fold, evidence)
     verify_rail_overflow(page, fold, evidence)
     verify_selection_washes(page, url, card_fixture, evidence)
+    verify_focus_slide_fill(page, url, card_fixture)
     capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
@@ -2133,6 +2134,46 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     print('RECAP_FLOOR_PROOF ' + json.dumps({"seconds": proof["seconds"], "sessions": proof["sessions"]}), flush=True)
 
 
+
+def verify_focus_slide_fill(page, url, fixture):
+    """Focus slides the selected row's group away with its height clipped. The selection fill
+    must be clipped with it, not hang below the group over the card beneath it."""
+    agent = {"id": "focus_agent", "title": "Selected row in a hidden group", "worker_type": "coding", "stage": "needs_implementation",
+             "ticket_status": "agent", "conversation_id": "conv_focus_agent"}
+    fixture.update(enabled=True, rail_only_tickets=["focus_agent"], board={"managers": [], "columns": [{"cards": [agent]}]},
+                   chief={"label": "Chief of Staff"}, goals=[])
+    page.emulate_media(reduced_motion="no-preference")
+    page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
+    page.reload(wait_until="domcontentloaded")
+    row = page.locator('.worker-row[data-ticket-id="focus_agent"]')
+    expect(row).to_be_visible()
+    row.click()
+    page.mouse.move(1300, 950)
+    expect(row).to_have_attribute("aria-current", "page")
+    wait_settled(page, ".worker-row", ".rail-wash")
+    switch = page.locator(".rail-foot").get_by_role("switch", name="Focus", exact=True)
+    for turn_on in (True, False):
+        page.evaluate("""() => {
+          window.__focusFill = {frames: [], done: false}; let count = 0;
+          const take = () => {
+            const fill = document.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
+            const group = document.querySelector('[data-bucket-key="agent"]');
+            if (fill && !fill.hidden && group) {
+              const box = fill.getBoundingClientRect();
+              // A fill with no height paints nothing, wherever it sits.
+              window.__focusFill.frames.push(box.height > .5 ? box.bottom - group.getBoundingClientRect().bottom : 0);
+            }
+            if (++count < 40) requestAnimationFrame(() => setTimeout(take, 0)); else window.__focusFill.done = true;
+          };
+          requestAnimationFrame(() => setTimeout(take, 0));
+        }""")
+        switch.click()
+        page.wait_for_function("window.__focusFill.done")
+        overhang = page.evaluate("window.__focusFill.frames")
+        assert overhang and max(overhang) <= 1, (turn_on, overhang)
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy], .rail-wash--leaving')")
+
+
 def verify_selection_washes(page, url, fixture, evidence):
     """Real layout/WAAPI is necessary to prove washes follow transformed rows.
 
@@ -2345,6 +2386,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     selection_settled('.worker-row[data-ticket-id="wash_two"]')
     aligned(sample('.worker-row[data-ticket-id="wash_two"]'))
     expect(page.locator('.rail-wash--leaving')).to_have_count(0)
+
     page.emulate_media(reduced_motion='reduce')
     row.evaluate('node=>node.click()')
     page.evaluate('() => new Promise(requestAnimationFrame)')

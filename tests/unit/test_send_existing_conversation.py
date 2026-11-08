@@ -17,6 +17,7 @@ from sqlite3 import Connection
 from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from starlette.requests import Request
 from tests.support.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
@@ -30,6 +31,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.managers import data
 from planner.managers.contracts import ManagerLaunchConfiguration
@@ -271,10 +273,13 @@ def test_the_reported_payload_decodes_and_reaches_the_chief_over_the_http_route(
             f'"backend_key":"claude","conversation_id":"{scene.conversation_id}",'
             '"sender_message_id":"retry-1"}'
         )
+        # The route opens its own connection off the loop, from the app's factory.
+        app = FastAPI()
+        database_path = tmp_db.execute("PRAGMA database_list").fetchone()[2]
+        app.state.conn_factory = lambda: connect(database_path)
         sent = await send_to_chief_conversation(
             payload,
-            cast(Request, None),
-            tmp_db,
+            Request({"type": "http", "app": app}),
             RequestContext(OWNER_PRINCIPAL),
             scene.clock,
             scene.system,

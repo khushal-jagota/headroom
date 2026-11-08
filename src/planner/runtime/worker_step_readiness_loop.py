@@ -44,6 +44,7 @@ from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.runtime import conversation_start, worker_memory, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     compose_worker_step_prompt,
@@ -151,8 +152,14 @@ async def _admitted_start_ready_worker_step(
     given back for other refusals, or when a failure occurred before a fate.
     A definite backend start failure stays errored for explicit recovery.
     An uncertain delivery stays visible as an errored claim for supervisor restart.
+
+    This runs on the server's event loop, whether the poll thread or a route set it going.
+    So the connection is opened and closed on a worker thread, and so is every write: the
+    claim, its release, the errored mark, and the feedback acknowledgement. The link lock,
+    the busy check, and the send stay on the loop, and the claim is still taken and given
+    back under the link lock.
     """
-    conn = connect_database()
+    conn = await run_on_worker_thread(connect_database)
     link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
     link_acquired = False
     try:
@@ -172,7 +179,8 @@ async def _admitted_start_ready_worker_step(
             worker_type_definition=worker_type_definition,
         ):
             return WorkerStepStartResult(started=False)
-        claimed = tickets_data.claim_ticket_for_worker_step(
+        claimed = await run_on_worker_thread(
+            tickets_data.claim_ticket_for_worker_step,
             conn,
             ticket_id,
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
@@ -191,13 +199,13 @@ async def _admitted_start_ready_worker_step(
         )
         sender_message_id = worker_memory.new_worker_step_message_id()
 
-        def give_the_claim_back(*, opener_succeeded: bool = False) -> None:
+        def release_the_claim(*, opener_succeeded: bool, released_at: int) -> None:
             released = tickets_data.release_worker_step_claim(
                 conn,
                 ticket_id,
                 expected_claim=taken_claim,
                 expected_claim_revision=taken_claim_revision,
-                now=now(),
+                now=released_at,
             )
             if released and paired_opener and not opener_succeeded:
                 tickets_data.forget_user_stage_opener(
@@ -205,6 +213,11 @@ async def _admitted_start_ready_worker_step(
                     ticket_id,
                     stage=claimed.stage,
                 )
+
+        async def give_the_claim_back(*, opener_succeeded: bool = False) -> None:
+            await run_on_worker_thread(
+                release_the_claim, opener_succeeded=opener_succeeded, released_at=now()
+            )
 
         try:
             # Inside the guard: a lookup that raises must give the claim back, or the
@@ -245,7 +258,7 @@ async def _admitted_start_ready_worker_step(
                 ticket_id,
                 conversation_id,
             )
-            give_the_claim_back()
+            await give_the_claim_back()
             return WorkerStepStartResult(started=False)
 
         if isinstance(fate, PromptDeliveryRefused):
@@ -261,7 +274,8 @@ async def _admitted_start_ready_worker_step(
                 not paired_opener
                 and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
             ):
-                tickets_data.mark_worker_step_claim_errored(
+                await run_on_worker_thread(
+                    tickets_data.mark_worker_step_claim_errored,
                     conn,
                     ticket_id,
                     expected_claim=taken_claim,
@@ -270,11 +284,11 @@ async def _admitted_start_ready_worker_step(
                     error_reason=f"could not start ({fate.refusal_reason.value})",
                 )
             else:
-                give_the_claim_back()
+                await give_the_claim_back()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
         if isinstance(fate, PromptDeliverySuppressed):
-            give_the_claim_back()
+            await give_the_claim_back()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
         if isinstance(fate, PromptDeliveryUncertain):
@@ -282,7 +296,8 @@ async def _admitted_start_ready_worker_step(
             # permit an unsafe automatic replay. Keep it visible for the supervisor's
             # explicit restart route instead. A stale result must not replace a newer
             # claim that moved while the delivery was in flight.
-            marked_errored = tickets_data.mark_worker_step_claim_errored(
+            marked_errored = await run_on_worker_thread(
+                tickets_data.mark_worker_step_claim_errored,
                 conn,
                 ticket_id,
                 expected_claim=taken_claim,
@@ -299,11 +314,12 @@ async def _admitted_start_ready_worker_step(
             return WorkerStepStartResult.from_delivery_fate(fate)
 
         if paired_opener:
-            give_the_claim_back(opener_succeeded=True)
+            await give_the_claim_back(opener_succeeded=True)
 
         if pending_revision_feedback is not None:
             try:
-                revision_feedback.acknowledge(
+                await run_on_worker_thread(
+                    revision_feedback.acknowledge,
                     conn,
                     ticket_id,
                     pending_revision_feedback.revision,
@@ -319,8 +335,7 @@ async def _admitted_start_ready_worker_step(
     finally:
         if link_acquired:
             link_lock.release()
-        if conn is not None:
-            conn.close()
+        await run_on_worker_thread(conn.close)
 
 
 async def tell_a_worker_it_lost_its_memory(
