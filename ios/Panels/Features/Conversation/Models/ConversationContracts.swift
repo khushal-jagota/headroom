@@ -113,7 +113,7 @@ struct ConversationSend: Codable, Sendable {
     let senderMessageId: String
     let sentAtUnixMilliseconds: Int64
     var ownerReadThroughSequence: Int? = nil
-    struct Piece: Codable, Sendable {
+    struct Piece: Codable, Equatable, Sendable {
         var piece = "text"
         var text: String? = nil
         var data: String? = nil
@@ -192,9 +192,11 @@ struct ConversationRow: Identifiable, Equatable {
     let own: Bool
     let note: String?
     var senderLabel: String? = nil
-    var previewText: String { (own ? "You: " : senderLabel.map { $0 + ": " } ?? "") + text }
+    var previewText: String { (own ? "You: " : senderLabel.map { $0 + ": " } ?? "") + (text.isEmpty ? attachments.compactMap(\.fileName).joined(separator: ", ") : text) }
     var retryID: String? = nil
     var item: ConversationItem? = nil
+    /// Attachments still on the phone, shown as previews until the server has the message.
+    var attachments: [ConversationSend.Piece] = []
 }
 
 struct ConversationReceipt: Decodable, Sendable {

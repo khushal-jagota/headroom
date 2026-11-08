@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UniformTypeIdentifiers
 
 @MainActor @Observable final class ConversationModel {
     var conversationID: String?
@@ -40,7 +41,8 @@ import Observation
         if conversationID == nil { conversationID = saved.last?.message?.conversationId }
         let received = Set(items.compactMap(\.senderMessageId))
         outgoing = saved.filter { !supersededIDs.contains($0.id) && (!received.contains($0.id) || $0.state != .sent) }.map {
-            Outgoing(id: $0.id, text: $0.displayText, note: $0.note, retryable: $0.state == .failed)
+            Outgoing(id: $0.id, text: $0.message?.content.compactMap(\.text).joined(separator: "\n") ?? $0.displayText, note: $0.note, retryable: $0.state == .failed,
+                     attachments: $0.message?.content.filter { $0.piece != "text" } ?? [])
         }
         rememberRows(saved.map { retryAliases[$0.id] ?? $0.id })
     }
@@ -61,6 +63,7 @@ import Observation
         let text: String
         var note: String?
         var retryable = false
+        var attachments: [ConversationSend.Piece] = []
     }
     var deliveryMode = "steer"
     var attachments: [ConversationSend.Piece] = [] {
@@ -69,6 +72,15 @@ import Observation
             do { try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey, data: JSONEncoder().encode(attachments)) }
             catch { self.error = "Attachments could not be saved: \(error.localizedDescription)" }
         }
+    }
+    /// The one way a picked, pasted, dragged or photographed file joins the message.
+    /// Images become image pieces; anything else is a file piece.
+    @discardableResult func attach(_ data: Data, type: UTType?, fileName: String) -> Bool {
+        guard data.count <= 20_000_000 else { error = "Choose a file smaller than 20 MB."; return false }
+        let image = type?.conforms(to: .image) == true
+        attachments.append(.init(piece: image ? "image" : "file", data: data.base64EncodedString(),
+            mediaType: type?.preferredMIMEType ?? (image ? "image/jpeg" : "application/octet-stream"), fileName: fileName))
+        return true
     }
     private var outgoingText: [String: String] = [:]
     private var outgoingAttachments: [String: [ConversationSend.Piece]] = [:]
@@ -132,7 +144,7 @@ import Observation
                                    retryID: local?.retryable == true ? local?.id : nil, item: item)
         }
         var combined = remote + outgoing.filter { !received.contains($0.id) }.map {
-            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: heldNote($0.id) ?? $0.note, retryID: $0.retryable ? $0.id : nil)
+            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: heldNote($0.id) ?? $0.note, retryID: $0.retryable ? $0.id : nil, attachments: $0.attachments)
         }
         if let liveRow, !liveRow.text.isEmpty { combined.append(liveRow) }
         let positions = Dictionary(uniqueKeysWithValues: rowOrder.enumerated().map { ($0.element, $0.offset) })
@@ -422,8 +434,7 @@ import Observation
             } catch { self.error = "Message is still in the composer: \(error.localizedDescription)"; return false }
         }
         let id = UUID().uuidString
-        let displayText = ([text] + attachments.compactMap(\.fileName)).filter { !$0.isEmpty }.joined(separator: "\n")
-        outgoing.append(Outgoing(id: id, text: displayText, note: "Sending…"))
+        outgoing.append(Outgoing(id: id, text: text, note: "Sending…", attachments: attachments))
         pinnedMessageIDs.insert(id)
         rememberRows([id])
         outgoingText[id] = text
@@ -445,7 +456,7 @@ import Observation
         outgoingText[next] = outgoingText.removeValue(forKey: id)
         outgoingAttachments[next] = outgoingAttachments.removeValue(forKey: id)
         items.removeAll { $0.senderMessageId == id }
-        outgoing[at] = Outgoing(id: next, text: old.text, note: "Sending…")
+        outgoing[at] = Outgoing(id: next, text: old.text, note: "Sending…", attachments: old.attachments)
         _ = await deliver(id: next, text: outgoingText[next] ?? old.text, to: owner, using: service)
     }
 
