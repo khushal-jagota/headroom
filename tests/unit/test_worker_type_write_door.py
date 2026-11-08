@@ -532,10 +532,16 @@ def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
 ) -> None:
     """Risk: removing a preset strands its Tickets, or removes one something still reads."""
     test_client, db_path = client
+    historical = json.loads(
+        (Path(__file__).parents[1] / "support" / "retired_general_worker_type.json").read_text()
+    )
+    historical["skill"] = {"description": "Historical General specialist"}
+    restored = test_client.post("/api/worker-types", json=historical)
+    assert restored.status_code == 200, restored.text
     with closing(connect(str(db_path))) as conn:
         running = tickets_data.create_ticket(
             conn,
-            worker_type="research",
+            worker_type="general",
             title="Still running",
             brief="Kickoff",
             principal=OWNER_PRINCIPAL,
@@ -545,15 +551,13 @@ def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
         workflow_before = conn.execute(
             "SELECT workflow_json FROM tickets WHERE id=?", (running.id,)
         ).fetchone()[0]
-        conn.execute(
-            "UPDATE tickets SET employee_launch_model=NULL WHERE id=?", (running.id,)
-        )
+        conn.execute("UPDATE tickets SET employee_launch_model=NULL WHERE id=?", (running.id,))
         conn.commit()
 
-    for path in ("/api/worker-types/research", "/api/worker-types/coding"):
+    for path in ("/api/worker-types/general", "/api/worker-types/coding"):
         response = test_client.delete(path, headers={"X-Plan-Actor": "worker"})
         assert response.json()["error"]["code"] == "agent_forbidden", response.text
-    refused = test_client.delete("/api/worker-types/research")
+    refused = test_client.delete("/api/worker-types/general")
     assert refused.status_code == 400, refused.text
     assert refused.json()["error"]["detail"]["ticket_ids"] == [running.id]
 
@@ -562,31 +566,53 @@ def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
             "UPDATE tickets SET employee_launch_model='gpt-6.1-sol' WHERE id=?", (running.id,)
         )
         conn.commit()
-    deleted = test_client.delete("/api/worker-types/research", headers={"X-Plan-Actor": "chief"})
-    assert deleted.json() == {"worker_type": "research", "deleted": True}, deleted.text
+    deleted = test_client.delete("/api/worker-types/general", headers={"X-Plan-Actor": "chief"})
+    assert deleted.json() == {"worker_type": "general", "deleted": True}, deleted.text
 
-    assert test_client.get("/api/worker-types/research").status_code == 404
+    assert test_client.get("/api/worker-types/general").status_code == 404
     # The browser and the native app read the Ticket's own workflow from its detail.
     detail = test_client.get("/api/tickets", params={"detail": "full", "id": running.id})
     assert detail.status_code == 200, detail.text
     assert [stage["id"] for stage in detail.json()["workflow"]["stages"]] == [
         stage["id"] for stage in json.loads(workflow_before)["stages"]
     ]
-    assert "research" not in configured_worker_type_registry().registered_worker_types()
+    assert "general" not in configured_worker_type_registry().registered_worker_types()
     with closing(connect(str(db_path))) as conn:
         kept = tickets_data.read_ticket(conn, running.id)
         assert kept.stage == running.stage
-        assert conn.execute(
-            "SELECT workflow_json FROM tickets WHERE id=?", (running.id,)
-        ).fetchone()[0] == workflow_before
+        assert (
+            conn.execute("SELECT workflow_json FROM tickets WHERE id=?", (running.id,)).fetchone()[
+                0
+            ]
+            == workflow_before
+        )
         with pytest.raises(PlannerError):
             tickets_data.create_ticket(
                 conn,
-                worker_type="research",
+                worker_type="general",
                 title="Refused",
                 brief="Kickoff",
                 principal=OWNER_PRINCIPAL,
                 now=2,
                 title_max_chars=200,
             )
-    assert test_client.get("/api/skills/panels-worker-research").status_code == 200
+    assert test_client.get("/api/skills/panels-worker-general").status_code == 200
+
+    assert running.pending_proposal is not None
+    accepted = test_client.post(
+        f"/api/tickets/{running.id}/accept/brief",
+        json={
+            "next_ceiling": "needs_work_done",
+            "next_holder": {"kind": "owner", "id": "owner"},
+            "expected_proposal_revision": running.pending_proposal_revision,
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["stage"] == "needs_work_done"
+    proposed = test_client.post(
+        f"/api/tickets/{running.id}/propose",
+        json={"body": "The historical work can continue."},
+        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": running.id},
+    )
+    assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["pending_proposal"]["field"] == "work_done"
