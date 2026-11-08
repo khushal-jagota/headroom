@@ -849,7 +849,8 @@ def run_reconnect(browser, urls):
         assert page.evaluate("window.__tailOpened()") == tails_before + 1
         page.screenshot(path=str(output / ("reconnect-full-container.png" if full_container else "reconnect-accepted-send.png")))
         proof.append({"fullContainer": full_container, "sends": sends_before, "recoveredTails": 1})
-        # Without outgoing uncertainty, rest and hidden readers demand no transcript.
+        # Without uncertainty, app recovery leaves both rest and hidden views alone.
+        # Rest can retain a previously loaded transcript for immediate reopening.
         for hidden in (False, True):
             if hidden:
                 page.evaluate("window.__setConversationState(" + ("null" if full_container else "'opened'") + ")")
@@ -858,9 +859,10 @@ def run_reconnect(browser, urls):
                   Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});
                   window.dispatchEvent(new Event('blur'));
                 }""")
+                page.wait_for_function("window.__activeTails().length===1&&!window.__activeTails()[0].transcript")
             else:
                 page.evaluate("window.__setConversationState('rest')")
-            page.wait_for_function("window.__activeTails().length===1&&!window.__activeTails()[0].transcript")
+                _frames(page, 3)
             tails = page.evaluate("window.__tailOpened()")
             page.evaluate("window.__setServerReachable(false); window.__setServerReachable(true)")
             _frames(page, 3)
@@ -887,7 +889,19 @@ def run_reconnect(browser, urls):
                       window.dispatchEvent(new Event('blur'));
                     }""")
                 else:
+                    # A hidden reader supplies the status-only rest baseline.
+                    # Enter rest before visibility returns so it retains that reader.
+                    page.evaluate("""() => {
+                      Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});
+                      window.dispatchEvent(new Event('blur'));
+                    }""")
+                    page.wait_for_function("window.__activeTails().length===1&&!window.__activeTails()[0].transcript")
                     page.evaluate("window.__setConversationState('rest')")
+                    _frames(page, 3)
+                    page.evaluate("""() => {
+                      Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'});
+                      window.dispatchEvent(new Event('focus'));
+                    }""")
                 page.wait_for_function("window.__activeTails().length===1&&!window.__activeTails()[0].transcript")
                 reads = page.evaluate("window.__recordReads")
                 tails = page.evaluate("window.__tailOpened()")
