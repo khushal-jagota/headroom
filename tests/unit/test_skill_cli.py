@@ -210,34 +210,33 @@ def test_skill_delete_and_write_file_send_one_request_each(
     assert skill_requests[1][2]["json"] == {"path": "notes/a.md", "content": "# Note\n"}
 
 
-def test_worker_type_save_exposes_stage_and_ceiling_receipts(
+def test_worker_type_save_and_delete_reach_their_doors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    receipt = {
-        "ticket_id": "t_example",
-        "title": "Review preserved",
-        "old_stage": "needs_what_changes",
-        "new_stage": "needs_what_changes",
-        "old_ceiling": "needs_plan",
-        "new_ceiling": "needs_what_changes",
-    }
+    """Risk: the delete command sends the wrong method or an unescaped Worker type."""
+    calls: list[tuple[str, str]] = []
 
     def request(method: str, url: str, **kwargs: Any) -> httpx.Response:
-        assert method == "POST" and httpx.URL(url).path == "/api/worker-types"
-        return httpx.Response(
-            200,
-            json={"worker_type": "coding", "migrations": [receipt]},
-            request=httpx.Request(method, url),
+        path = httpx.URL(url).raw_path.decode()
+        calls.append((method, path))
+        data = (
+            {"worker_type": "coding"}
+            if method == "POST"
+            else {"worker_type": "odd/type", "deleted": True}
         )
+        return httpx.Response(200, json=data, request=httpx.Request(method, url))
 
     monkeypatch.setattr(httpx, "request", request)
     runner = CliRunner()
-    result = runner.invoke(main, ["worker-type", "save"], input='{"worker_type":"coding"}')
-    assert result.exit_code == 0, result.output
-    assert "Review preserved: Stage needs_what_changes -> needs_what_changes" in result.stdout
-    assert "ceiling needs_plan -> needs_what_changes" in result.stdout
-    result_json = runner.invoke(
-        main, ["worker-type", "save", "--json"], input='{"worker_type":"coding"}'
-    )
-    assert result_json.exit_code == 0, result_json.output
-    assert json.loads(result_json.stdout)["migrations"] == [receipt]
+    saved = runner.invoke(main, ["worker-type", "save"], input='{"worker_type":"coding"}')
+    deleted = runner.invoke(main, ["worker-type", "delete", "odd/type"])
+    deleted_json = runner.invoke(main, ["worker-type", "delete", "odd/type", "--json"])
+    assert saved.exit_code == deleted.exit_code == deleted_json.exit_code == 0, deleted.output
+    assert saved.stdout == "coding saved\n"
+    assert deleted.stdout == "odd/type deleted\n"
+    assert json.loads(deleted_json.stdout) == {"worker_type": "odd/type", "deleted": True}
+    assert calls == [
+        ("POST", "/api/worker-types"),
+        ("DELETE", "/api/worker-types/odd%2Ftype"),
+        ("DELETE", "/api/worker-types/odd%2Ftype"),
+    ]

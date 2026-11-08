@@ -982,7 +982,9 @@
 						TestTargetID = 483F462F46F8347C2004F926;
 					};
 					483F462F46F8347C2004F926 = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = FB99BBDJBA;
+						ProvisioningStyle = Automatic;
+						SystemCapabilities = { com.apple.Push = { enabled = 1; }; };
 					};
 				};
 			};
@@ -1249,7 +1251,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -1284,11 +1286,15 @@
 		68A5EDEA5721D796CF14F23C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				APNS_ENVIRONMENT = development;
+				APNS_ENVIRONMENT = production;
 				APNS_REGISTRATION_ENABLED = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				"CODE_SIGNING_ALLOWED[sdk=iphoneos*]" = YES;
 				CODE_SIGN_ENTITLEMENTS = Panels/Panels.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = FB99BBDJBA;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Panels/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Panels;
@@ -1301,7 +1307,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PANELS_APP_BUNDLE_IDENTIFIER = app.panels.ios;
+				MARKETING_VERSION = 0.1;
+				PANELS_APP_BUNDLE_IDENTIFIER = com.khushaljagota.panels;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PANELS_APP_BUNDLE_IDENTIFIER)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1343,7 +1350,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -1412,6 +1419,9 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Panels/Panels.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = FB99BBDJBA;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Panels/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Panels;
@@ -1424,7 +1434,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PANELS_APP_BUNDLE_IDENTIFIER = app.panels.ios;
+				MARKETING_VERSION = 0.1;
+				PANELS_APP_BUNDLE_IDENTIFIER = com.khushaljagota.panels;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PANELS_APP_BUNDLE_IDENTIFIER)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";

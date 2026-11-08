@@ -12,7 +12,7 @@ import shutil
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, replace
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Final
 
@@ -47,10 +47,14 @@ from planner.worker_settings.contracts import (
 )
 from planner.worker_settings.logic.skill_edits import normalize_skill_patch
 from planner.worker_types.configuration import load_worker_runtime_definitions
-from planner.worker_types.contracts import TicketTypeMigration, WorkerProfile, WorkerTypeDefinition
+from planner.worker_types.contracts import WorkerProfile, WorkerTypeDefinition
 from planner.worker_types.guidance import render_workflow_guide
 from planner.worker_types.registry import WorkerTypeRegistry
-from planner.worker_types.store import definition_transaction, write_definition
+from planner.worker_types.store import (
+    definition_transaction,
+    delete_definition,
+    write_definition,
+)
 
 CHIEF_SETTINGS_KEY: Final = "chief_of_staff"
 CHIEF_LABEL: Final = "Chief of Staff"
@@ -330,7 +334,7 @@ def save_worker_type_definition(
     *,
     now: int,
     database_parent: Path | str,
-) -> tuple[TicketTypeMigration, ...]:
+) -> None:
     """Commit a bundled declaration before publishing its registry or skill files."""
     if conn.in_transaction:
         raise RuntimeError("Worker type API save requires its own outer transaction")
@@ -368,7 +372,7 @@ def save_worker_type_definition(
             )
             parse_skill(rendered, name)
             write_skill_source(conn, name, rendered, now=now, generated_from_workflow=True)
-            migrations = write_definition(conn, definition, now=now)
+            write_definition(conn, definition, now=now)
         load_worker_runtime_definitions(conn)
         if rendered is not None:
             try:
@@ -378,14 +382,21 @@ def save_worker_type_definition(
             except PlannerError as exc:
                 if exc.code is ErrorCode.skill_save_incomplete:
                     detail = dict(exc.detail or {})
-                    detail.update(
-                        worker_type=definition.worker_type,
-                        definition_saved=True,
-                        migrations=[asdict(migration) for migration in migrations],
-                    )
+                    detail.update(worker_type=definition.worker_type, definition_saved=True)
                     raise PlannerError(exc.code, exc.message, detail) from exc
                 raise
-    return migrations
+
+
+def delete_worker_type_definition(conn: sqlite3.Connection, worker_type: str) -> None:
+    """Remove a preset and stop offering it, in one act.
+
+    Its specialist skill stays: `panels skill delete` refuses it while an unfinished
+    Ticket's workflow still names it.
+    """
+    if conn.in_transaction:
+        raise RuntimeError("Worker type delete requires its own outer transaction")
+    delete_definition(conn, worker_type)
+    load_worker_runtime_definitions(conn)
 
 
 # --- Worker types -------------------------------------------------------------

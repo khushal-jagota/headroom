@@ -632,6 +632,14 @@ def touch_overlap(browser, url):
     box = long_panel.bounding_box()
     footer = page.locator(".workspace-mobile-nav").bounding_box()
     assert box and footer and box["y"] + box["height"] <= footer["y"] - 12
+    evidence = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    if evidence:
+        Path(evidence).mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(Path(evidence) / "goal-preview-short-phone.png"), animations="disabled")
+        (Path(evidence) / "goal-preview-short-phone.json").write_text(json.dumps({
+            "preview": box, "footer": footer, "lastControl": last.bounding_box(),
+            "checked": last.get_attribute("aria-checked"), "nativeTap": True,
+        }, indent=2))
     page.touchscreen.tap(5, 5)
     expect(long_panel).to_have_count(0)
     # A normal tap still follows the real goal destination.

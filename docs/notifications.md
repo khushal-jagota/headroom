@@ -58,6 +58,8 @@ The native app uses Apple Push Notification service (APNs). The browser keeps it
 existing Web Push path. Each path records delivery separately for the same attention
 edge and notification preference. Native retries stop after five minutes or five attempts.
 No Apple credentials means no native network calls and no claim of successful delivery.
+The native bundle `com.khushaljagota.panels` has Push Notifications enabled under
+Blue Door Labs. Release signing requests production APNs.
 
 Set these environment inputs on the server before the owner deploys this change:
 

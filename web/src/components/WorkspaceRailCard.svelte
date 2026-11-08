@@ -110,6 +110,9 @@
   :global(.approved-rail .manager-card.rail-moving:where(.selected)) { z-index:2; }
   :global(.approved-rail .rail-travelling) { z-index:2; }
   :global(.approved-rail .manager-card.rail-travelling-card) { z-index:3; }
+  /* A fixed goal preview stays inside this card's isolated layer. Raise its card above
+     the dock only while the preview is open, so native taps reach its controls. */
+  .manager-card:has(:global([data-goal-preview])) { z-index:5; }
   :global(.approved-rail .stage-mark.rail-moving) { background:transparent; outline:none; }
   @media (prefers-reduced-motion:reduce) { :global(.approved-rail *) { transition:none!important; animation:none!important; } }
   button:focus-visible { outline:none; }
