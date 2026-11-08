@@ -99,6 +99,10 @@ class ErrorCode(StrEnum):
     not_found = "not_found"
     validation = "validation"  # generic input validation
     skill_save_incomplete = "skill_save_incomplete"
+    # Nothing was saved and no receipt was written; the sender keeps the item and sends it again.
+    retry_later = "retry_later"
+    # The VPS could not save this item, and saving it again would fail the same way.
+    save_failed = "save_failed"
 
 
 class PlannerError(Exception):
