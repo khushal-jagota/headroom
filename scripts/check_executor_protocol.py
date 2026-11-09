@@ -54,7 +54,8 @@ def main() -> None:
     check_protocol_manifest(actual, recorded, previous)
     print(
         f"Executor protocol {actual['protocol_version']}, "
-        f"spool {actual['spool_format_version']}: OK"
+        f"spool {actual['spool_format_version']}, "
+        f"command journal {actual['command_journal_format_version']}: OK"
     )
 
 

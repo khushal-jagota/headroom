@@ -193,7 +193,8 @@ const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   running_turn_cannot_accept_steer: "the running turn cannot accept steering",
   message_cannot_be_steered: "this message content cannot be steered",
   backend_rejected_steer: "the backend rejected steering for this turn",
-  command_cannot_join_running_turn: "a command cannot join a turn that is already running"
+  command_cannot_join_running_turn: "a command cannot join a turn that is already running",
+  remote_steer_not_delivered: "the Mac did not take this steer in time"
 };
 
 export function refusalSentence(reason: PromptDeliveryRefusalReason, detail?: string | null): string {

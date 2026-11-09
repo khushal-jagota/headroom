@@ -34,6 +34,98 @@ OUTBOX_RETRY_MAX_SECONDS: Final = 60.0
 CONNECTION_FAILURE_LOG_INTERVAL_SECONDS: Final = 60.0
 LAUNCH_AGENT_RESTART_THROTTLE_SECONDS: Final = 10
 
+# Mailbox transport (protocol 22). "Server" limits bound the VPS's own work on a
+# request; "timeout" values bound the Mac client's whole request.
+# Presence: a lease every 10 s, judged by the VPS clock; away after 60 s without one.
+LEASE_INTERVAL_SECONDS: Final = 10.0
+LEASE_TIMEOUT_SECONDS: Final = 10.0
+LEASE_SERVER_LIMIT_SECONDS: Final = 5.0
+MAC_AWAY_AFTER_SECONDS: Final = 60.0
+# A lease more than this long after the previous accepted one restarts continuous
+# presence, which every Mac-dependent stall rule counts from.
+LEASE_CONTINUITY_SECONDS: Final = 25.0
+# The lease lists at most this many conversations with waiting outbox items.
+MAX_LEASE_WAITING_CONVERSATIONS: Final = 64
+# Contact without an accepted lease (refused leases, the old WebSocket stub, update
+# routes) is kept in memory and written at most this often, and only if it changed.
+CONTACT_FLUSH_INTERVAL_SECONDS: Final = 10.0
+# Body budgets. A sender fills a multi-value body (poll reply, outcome report, item
+# batch, live batch) value by value while the encoded body stays within its budget,
+# and always sends at least one value. A single value is bounded by MAX_ENVELOPE_BYTES
+# when it is created, so a one-value body always fits. Each route passes this limit to
+# protocol.encode_bounded and decode_bounded on both sides:
+#   1 lease: request and reply, MAX_ENVELOPE_BYTES (the default)
+#   2 commands poll: reply, MAX_MAILBOX_POLL_BYTES
+#   3 outcomes: report, MAX_COMMAND_OUTCOME_REPORT_BYTES; reply, MAX_ENVELOPE_BYTES
+#   4 items: batch and reply, MAX_ITEM_BATCH_BYTES
+#   5 upload: the X-Panels-File-Upload FileUploadRequest, MAX_ENVELOPE_BYTES
+#   7 reads: request and reply, MAX_ENVELOPE_BYTES
+#   8 live: batch, MAX_ENVELOPE_BYTES
+# Command mailbox: a long poll held for at most 50 s, answering at most 32 commands.
+COMMAND_POLL_HOLD_SECONDS: Final = 50.0
+COMMAND_POLL_TIMEOUT_SECONDS: Final = 60.0
+MAX_MAILBOX_POLL_COMMANDS: Final = 32
+MAX_MAILBOX_POLL_BYTES: Final = 4 * 1024 * 1024
+# Command results: at most 32 per report.
+MAX_COMMAND_OUTCOMES_PER_REPORT: Final = 32
+MAX_COMMAND_OUTCOME_REPORT_BYTES: Final = 4 * 1024 * 1024
+COMMAND_OUTCOME_SERVER_LIMIT_SECONDS: Final = 5.0
+COMMAND_OUTCOME_TIMEOUT_SECONDS: Final = 10.0
+# Per-kind command limits on the VPS (fetch-time expiry and the bounded waits).
+STEER_DELIVERY_LIMIT_SECONDS: Final = 10.0
+MODEL_LIST_LIMIT_SECONDS: Final = 35.0
+# Item batches: one conversation's items, at most 32 and 4 MiB of body. The VPS's one
+# budget for a whole batch is core.config.MAC_ITEM_RETRY_LATER_SECONDS (20 s).
+MAX_ITEM_BATCH_ITEMS: Final = 32
+MAX_ITEM_BATCH_BYTES: Final = 4 * 1024 * 1024
+ITEM_BATCH_TIMEOUT_SECONDS: Final = 30.0
+# Uploads and input downloads fail when no bytes move for this long, on both sides.
+FILE_TRANSFER_STALL_SECONDS: Final = 60.0
+# An input download that fails retries on monotonic time, doubling from 1 s to 30 s,
+# until route 6 answers 403, 404 or 409.
+INPUT_DOWNLOAD_RETRY_INITIAL_SECONDS: Final = 1.0
+INPUT_DOWNLOAD_RETRY_MAX_SECONDS: Final = 30.0
+# Agent reads: the VPS answers within 20 s, under the agent's 30 s IPC deadline.
+LIVE_READ_SERVER_LIMIT_SECONDS: Final = 20.0
+LIVE_READ_TIMEOUT_SECONDS: Final = 25.0
+# Live events: lossy, at most 64 per request, one request in flight per conversation.
+MAX_LIVE_EVENTS_PER_BATCH: Final = 64
+LIVE_EVENT_SERVER_LIMIT_SECONDS: Final = 5.0
+LIVE_EVENT_TIMEOUT_SECONDS: Final = 5.0
+# Agent children run at this nice value, so builds cannot starve the executor.
+AGENT_CHILD_NICE: Final = 10
+# A recorded orphan agent gets SIGTERM, then SIGKILL after this long.
+ORPHAN_AGENT_TERMINATION_GRACE_SECONDS: Final = 10.0
+
+
+@dataclass(frozen=True, slots=True)
+class MacHttpConnectorSettings:
+    """One aiohttp connector. Each Mac loop has its own, so no loop waits on another's
+    connection pool."""
+
+    limit: int
+    force_close: bool = False
+    keepalive_timeout: float | None = None
+
+
+MAC_LEASE_CONNECTOR: Final = MacHttpConnectorSettings(limit=1, force_close=True)
+MAC_POLL_CONNECTOR: Final = MacHttpConnectorSettings(limit=1, force_close=True)
+MAC_OUTCOME_CONNECTOR: Final = MacHttpConnectorSettings(limit=2, force_close=True)
+MAC_ITEMS_CONNECTOR: Final = MacHttpConnectorSettings(limit=16, keepalive_timeout=15.0)
+MAC_DOWNLOADS_CONNECTOR: Final = MacHttpConnectorSettings(limit=4, keepalive_timeout=15.0)
+MAC_READS_CONNECTOR: Final = MacHttpConnectorSettings(limit=4, keepalive_timeout=15.0)
+MAC_LIVE_CONNECTOR: Final = MacHttpConnectorSettings(limit=4, keepalive_timeout=5.0)
+
+# Executor routes (protocol 22). Path parameters are filled in by the caller.
+EXECUTOR_LEASE_PATH: Final = "/api/executor/lease"
+EXECUTOR_COMMANDS_PATH: Final = "/api/executor/commands"
+EXECUTOR_COMMAND_OUTCOMES_PATH: Final = "/api/executor/commands/outcomes"
+EXECUTOR_ITEMS_PATH: Final = "/api/executor/conversations/{conversation_id}/items"
+EXECUTOR_UPLOAD_PATH: Final = "/api/executor/uploads/{sha256}"
+EXECUTOR_COMMAND_FILE_PATH: Final = "/api/executor/commands/{command_id}/files/{stored_file_id}"
+EXECUTOR_READS_PATH: Final = "/api/executor/reads"
+EXECUTOR_LIVE_PATH: Final = "/api/executor/conversations/{conversation_id}/live"
+
 # Agent environment and transport identity.
 EXECUTOR_ROOT_ENV: Final = "PLAN_EXECUTOR_ROOT"
 EXECUTOR_CHILD_ID_ENV: Final = "PLAN_EXECUTOR_CHILD_ID"
@@ -42,6 +134,10 @@ NATIVE_SKILLS_DIR_ENV: Final = "PLAN_NATIVE_SKILLS_DIR"
 EXECUTOR_ID_HEADER: Final = "X-Panels-Executor-ID"
 EXECUTOR_INCARNATION_HEADER: Final = "X-Panels-Executor-Incarnation"
 EXECUTOR_GENERATION_HEADER: Final = "X-Panels-Executor-Generation"
+EXECUTOR_PROTOCOL_HEADER: Final = "X-Panels-Executor-Protocol"
+# Route 5: base64url of the JSON FileUploadRequest. Route 6: the served bytes' digest.
+EXECUTOR_FILE_UPLOAD_HEADER: Final = "X-Panels-File-Upload"
+EXECUTOR_FILE_SHA256_HEADER: Final = "X-Panels-File-Sha256"
 NATIVE_WORKER_CONTEXT: Final = (
     "For native execution, if PLAN_NATIVE_SKILLS_DIR exists, start with "
     "PLAN_NATIVE_SKILLS_DIR/panels/SKILL.md and read subsequent skill layers from "

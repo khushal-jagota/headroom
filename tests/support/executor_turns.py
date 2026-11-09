@@ -59,7 +59,9 @@ class MacRemoteChildFactory:
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
         return ExecutorStore(self.db_path).retained_runs()
 
-    def recover(self, reference: ChildReference) -> MacRemoteChild:
+    def recover(
+        self, reference: ChildReference, *, event_sink: BackendEventSink | None = None
+    ) -> MacRemoteChild:
         return self._child(reference, restored=True)
 
     def _child(self, reference: ChildReference, *, restored: bool = False) -> MacRemoteChild:

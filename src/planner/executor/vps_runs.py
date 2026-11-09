@@ -107,7 +107,10 @@ class MacRuns:
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
         return self.store.retained_runs()
 
-    def recover(self, reference: ChildReference) -> MacRemoteChild | None:
+    def recover(
+        self, reference: ChildReference, *, event_sink: BackendEventSink | None = None
+    ) -> MacRemoteChild | None:
+        del event_sink  # Adoption with a live sink arrives with the mailbox runs.
         if self.store.child_assignment(reference) is None:
             return None
         return self._make_child(reference)

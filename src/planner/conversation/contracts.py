@@ -474,6 +474,10 @@ class PromptDeliveryRefusalReason(StrEnum):
     runs every command as a turn of its own. The command is real and the backend takes it,
     but only as the next turn, so it cannot join the one that is already running.
 
+    ``remote_steer_not_delivered`` names a steer for a Mac turn that the Mac did not take:
+    the Mac was away, or did not fetch it within the steer delivery limit. Nothing reached
+    the agent, so the text can still go as the next message.
+
     Busyness is not on this list and never will be: a busy agent is a message the system
     can hold, and nothing the system can hold is refused.
     """
@@ -486,6 +490,7 @@ class PromptDeliveryRefusalReason(StrEnum):
     no_running_turn_to_steer_into = "no_running_turn_to_steer_into"
     backend_cannot_steer = "backend_cannot_steer"
     command_cannot_join_running_turn = "command_cannot_join_running_turn"
+    remote_steer_not_delivered = "remote_steer_not_delivered"
     running_turn_changed_before_steer = "running_turn_changed_before_steer"
     running_turn_cannot_accept_steer = "running_turn_cannot_accept_steer"
     message_cannot_be_steered = "message_cannot_be_steered"

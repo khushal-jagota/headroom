@@ -103,6 +103,10 @@ class ErrorCode(StrEnum):
     retry_later = "retry_later"
     # The VPS could not save this item, and saving it again would fail the same way.
     save_failed = "save_failed"
+    # The Mac's protocol or spool version is not the one this server speaks. Nothing applied.
+    executor_version_refused = "executor_version_refused"
+    # The sending Mac process is not the current executor incarnation. Nothing applied.
+    executor_incarnation_not_current = "executor_incarnation_not_current"
 
 
 class PlannerError(Exception):
