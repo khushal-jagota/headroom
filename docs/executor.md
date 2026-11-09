@@ -64,7 +64,7 @@ A file reaches the VPS before any item that refers to it, so a Ticket link never
 Nothing is guessed. An uncertain outcome stays uncertain, and no provider call is repeated.
 
 - **A VPS restart** keeps Mac work running. The VPS rebuilds its view from the database and the lease, and adopts each open Mac run live. Waiting commands keep waiting.
-- **A Mac process restart** shows as a new process identity in the lease. The VPS withdraws the old process's waiting commands. Fetched commands without a result become uncertain. Then, for each conversation separately, the VPS waits until the Mac has sent everything it held for it. Only then does the turn end interrupted. The conversation gets one recovery prompt, which resumes the saved session ([Conversations](conversations.md#lifecycle)).
+- **A Mac process restart** shows as a new process identity in the lease. The VPS withdraws the old process's waiting commands. Fetched commands without a result become uncertain. Then, for each conversation separately, the VPS waits until the Mac has sent everything it held for it. Only then does the turn end interrupted. The conversation gets one recovery prompt, which resumes the saved session ([Conversations](conversations.md#lifecycle)). A message waiting behind that turn waits until then too, even if the replay ends the turn normally, and then goes to the fresh agent.
 
 ## Health and alarms
 

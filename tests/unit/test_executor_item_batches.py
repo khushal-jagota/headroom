@@ -4,7 +4,8 @@ Risk: a batch that applies out of order, past its one budget, or past an item wh
 are missing; a lost reply whose resend reruns or misreports the item that mattered; a
 replaced process receipted (so its successor drops the item) or a dropped request that
 cancels a save; and, on a Mac process restart, the successor's replay of the old child's
-answer and CLI write refused, or the old run closed before that replay. Gap: the inbox
+answer and CLI write refused, the old run closed before that replay, or a replayed turn
+end handing the message held behind it to the old child, whose mailbox refuses it. Gap: the inbox
 tests apply single items (inbox.accept); nothing covered the batch rules, the fence inside
 the receipt transaction, or the drain with replayed items. Layer: unit, the real
 VpsExecutor's inbox over the real conversation core (the test_conversation_api harness and
@@ -32,10 +33,14 @@ from tests.unit.test_conversation_executor_publication import _envelope
 
 import planner.executor.vps_agent_writes as vps_agent_writes
 import planner.executor.vps_inbox as vps_inbox
-from planner.conversation.backends.contracts import BackendChild, TurnToken
-from planner.conversation.contracts import AnswerFate
-from planner.conversation.events import AnswerAppliedEventPayload, ConversationEventKind
-from planner.conversation.message_content import text_message_content
+from planner.conversation.backends.contracts import BackendChild, TurnEnded, TurnToken
+from planner.conversation.contracts import AnswerFate, PromptDeliveryQueued
+from planner.conversation.events import (
+    AnswerAppliedEventPayload,
+    ConversationEventKind,
+    ConversationTurnEnding,
+)
+from planner.conversation.message_content import message_content_text, text_message_content
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import ErrorCode, PlannerError
@@ -57,6 +62,7 @@ from planner.executor.protocol import (
     QueuedEnvelope,
     ReceiptDisposition,
     WaitingConversation,
+    encode_value,
 )
 from planner.executor.store import ExecutorStore
 from planner.executor.vps_transport import VpsExecutor
@@ -377,6 +383,10 @@ def test_a_new_process_replays_the_old_childs_answer_and_write_before_its_run_dr
     async def exercise() -> None:
         async with _case(tmp_path, monkeypatch) as case:
             application = await _saved_permission_answer(case)
+            queued = await case.harness.system.send(
+                "c", text_message_content("waited"), sender_label="owner"
+            )
+            assert isinstance(queued, PromptDeliveryQueued)
             successor = mac_identity()
             # The successor still holds c's items from its predecessor.
             await case.endpoint.lease(
@@ -391,6 +401,24 @@ def test_a_new_process_replays_the_old_childs_answer_and_write_before_its_run_dr
             written = await case.send(case.cli_write(2), identity=successor)
             assert written.receipts[0].disposition is ReceiptDisposition.accepted
             assert written.receipts[0].result == {"edited": "ticket-1"}
+            # The replay ends the old turn normally. The message held behind it waits for
+            # the fresh child, because the replaced process's mailbox would refuse it.
+            ended = BackendEvent(
+                case.child,
+                BackendEventMethod.turn_ended,
+                case.turn,
+                cast(JsonObject, encode_value(TurnEnded(ending=ConversationTurnEnding.completed))),
+            )
+            replayed = await case.send(
+                _envelope(3, EnvelopeKind.backend_event, ended), identity=successor
+            )
+            assert replayed.receipts[0].disposition is ReceiptDisposition.accepted
+            await case.settled()
+            state = case.harness.system._conversations["c"]
+            assert state.running_turn is None and state.child is None
+            assert [message_content_text(held.content) for held in state.held_prompts] == ["waited"]
+            events = await case.harness.store.read_events_after("c", 0)
+            assert ConversationEventKind.prompt_delivery_refused not in {row.kind for row in events}
             assert case.core.retired == []
 
             # The outbox is empty for c: the core closes the old run as it retires it.
@@ -401,7 +429,7 @@ def test_a_new_process_replays_the_old_childs_answer_and_write_before_its_run_dr
                 await asyncio.sleep(0.01)
             assert case.core.retired == [(case.child, successor.executor_incarnation)]
             # Now the old child has no authority.
-            late = await case.send(case.cli_write(3), identity=successor)
+            late = await case.send(case.cli_write(4), identity=successor)
             assert late.receipts[0].disposition is ReceiptDisposition.refused
             assert _error_code(late.receipts[0]) == ErrorCode.agent_forbidden.value
 
