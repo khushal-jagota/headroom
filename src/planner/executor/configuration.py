@@ -15,8 +15,6 @@ MAX_TOOL_DETAIL_CHARACTERS: Final = 64 * 1024
 FILE_MODIFIED_WINDOW_NS: Final = 2_000_000_000
 FILE_CHUNK_BYTES: Final = 256 * 1024
 TRANSFER_CHUNK_BYTES: Final = 64 * 1024
-# Concurrent file transfers on the Mac. Outbox items are not limited by this.
-MAX_FILE_TRANSFERS: Final = 4
 
 # Request and connection timing.
 CLI_RESULT_TIMEOUT_SECONDS: Final = 30.0
@@ -108,8 +106,11 @@ class MacHttpConnectorSettings:
 MAC_LEASE_CONNECTOR: Final = MacHttpConnectorSettings(limit=1, force_close=True)
 MAC_POLL_CONNECTOR: Final = MacHttpConnectorSettings(limit=1, force_close=True)
 MAC_OUTCOME_CONNECTOR: Final = MacHttpConnectorSettings(limit=2, force_close=True)
-MAC_ITEMS_CONNECTOR: Final = MacHttpConnectorSettings(limit=16, keepalive_timeout=15.0)
-MAC_DOWNLOADS_CONNECTOR: Final = MacHttpConnectorSettings(limit=4, keepalive_timeout=15.0)
+# No pool limit (0): each conversation keeps at most one item request or upload, and each
+# agent one input download, in flight, so a shared pool would only let one conversation's
+# slow files hold up another's.
+MAC_ITEMS_CONNECTOR: Final = MacHttpConnectorSettings(limit=0, keepalive_timeout=15.0)
+MAC_DOWNLOADS_CONNECTOR: Final = MacHttpConnectorSettings(limit=0, keepalive_timeout=15.0)
 MAC_READS_CONNECTOR: Final = MacHttpConnectorSettings(limit=4, keepalive_timeout=15.0)
 MAC_LIVE_CONNECTOR: Final = MacHttpConnectorSettings(limit=4, keepalive_timeout=5.0)
 

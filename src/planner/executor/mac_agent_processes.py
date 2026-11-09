@@ -1,12 +1,15 @@
 """The executor's agent processes: lower their priority, and end any a dead executor left.
 
-After each native start the executor records its direct child processes, each with its
-start time, in run/agent-processes.json, and lowers each to AGENT_CHILD_NICE so builds
-cannot starve the executor (builds the agents start inherit it). At the next executor
-start, before its first lease, every recorded process whose start time still matches
-gets SIGTERM, then SIGKILL after the grace period. The VPS treats a replaced executor's
-agents as gone; this makes that true even if launchd did not end them. Only processes
-in this file, and only while their start time matches, are ever signalled.
+After each native start, and every lease interval, the executor records every process descended
+from it (the agents and the tools they started), each with its start time, in
+run/agent-processes.json, and lowers each to AGENT_CHILD_NICE so builds cannot starve the
+executor. At the next executor start, before its first lease, every recorded process
+whose start time still matches, and every process now descended from one, gets SIGTERM,
+then SIGKILL after the grace period. The VPS treats a replaced executor's agents as gone;
+this makes that true even if launchd did not end them, and even for a tool whose agent
+has already exited. Only processes in this file, or below one of them, and only while
+their start time matches, are ever signalled. One `ps -A` snapshot gives the process
+tree; its columns are the same on macOS and Linux.
 """
 
 from __future__ import annotations
@@ -37,6 +40,12 @@ class AgentProcess:
     started: str  # `ps -o lstart=`; a reused PID has a different one.
 
 
+def _started(fields: str) -> tuple[str, str]:
+    """(state, start time) from `stat= lstart=` columns."""
+    state, _, started = fields.strip().partition(" ")
+    return state, started.strip()
+
+
 def process_start_time(process_id: int) -> str | None:
     """The start time of a live process, or None when it is gone or a zombie."""
     result = subprocess.run(
@@ -45,24 +54,75 @@ def process_start_time(process_id: int) -> str | None:
         text=True,
         check=False,
     )
-    state, _, started = result.stdout.strip().partition(" ")
+    state, started = _started(result.stdout)
     if result.returncode != 0 or not state or state.startswith("Z"):
         return None
-    return started.strip() or None
+    return started or None
 
 
-def _child_process_ids(parent_process_id: int) -> tuple[int, ...]:
-    result = subprocess.run(
-        ["/usr/bin/pgrep", "-P", str(parent_process_id)],
-        capture_output=True,
+@dataclass(frozen=True, slots=True)
+class _ProcessTable:
+    """Every live process: its parent, and its start time as `process_start_time` gives it."""
+
+    parents: dict[int, int]
+    started: dict[int, str]
+
+    def matches(self, process: AgentProcess) -> bool:
+        return self.started.get(process.process_id) == process.started
+
+    def descendants(self, roots: set[int]) -> list[AgentProcess]:
+        children: dict[int, list[int]] = {}
+        for process_id, parent in self.parents.items():
+            children.setdefault(parent, []).append(process_id)
+        found: list[AgentProcess] = []
+        waiting = [child for root in roots for child in children.get(root, ())]
+        while waiting:
+            process_id = waiting.pop()
+            if process_id in roots:
+                continue
+            found.append(AgentProcess(process_id, self.started[process_id]))
+            waiting.extend(children.get(process_id, ()))
+        return found
+
+
+def _process_table() -> _ProcessTable:
+    snapshot = subprocess.Popen(
+        ["/bin/ps", "-A", "-o", "pid=,ppid=,stat=,lstart="],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
-        check=False,
     )
-    return tuple(int(line) for line in result.stdout.split() if line.isdigit())
+    output, _ = snapshot.communicate()
+    parents: dict[int, int] = {}
+    started: dict[int, str] = {}
+    for line in output.splitlines():
+        process_id, _, rest = line.strip().partition(" ")
+        parent, _, rest = rest.strip().partition(" ")
+        state, start = _started(rest)
+        if (
+            not process_id.isdigit()
+            or not parent.isdigit()
+            or int(process_id) == snapshot.pid
+            or not state
+            or state.startswith("Z")
+            or not start
+        ):
+            continue
+        parents[int(process_id)] = int(parent)
+        started[int(process_id)] = start
+    return _ProcessTable(parents, started)
 
 
-def _matches(process: AgentProcess) -> bool:
-    return process_start_time(process.process_id) == process.started
+def _signal(process: AgentProcess, signum: int) -> None:
+    """A process that is gone, or that runs as another user (a tool's sudo), is left."""
+    try:
+        os.kill(process.process_id, signum)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        logging.getLogger(__name__).warning(
+            "agent process %s may not be signalled", process.process_id
+        )
 
 
 class AgentProcesses:
@@ -99,15 +159,14 @@ class AgentProcesses:
         )
 
     def record_children(self) -> None:
-        """Record new direct children, lower each once, and forget ones that ended."""
+        """Record new descendants, lower each once, and forget ones that ended. A tool
+        whose agent exited stays recorded while it runs."""
         with self._lock:
-            recorded = [process for process in self._read() if _matches(process)]
+            table = _process_table()
+            recorded = [process for process in self._read() if table.matches(process)]
             known = set(recorded)
-            for process_id in _child_process_ids(self.parent_process_id):
-                started = process_start_time(process_id)
-                if started is None:
-                    continue
-                process = AgentProcess(process_id, started)
+            for process in table.descendants({self.parent_process_id}):
+                process_id = process.process_id
                 if process not in known:
                     recorded.append(process)
                     known.add(process)
@@ -122,18 +181,28 @@ class AgentProcesses:
 
     def end_orphans(self) -> None:
         """SIGTERM, then SIGKILL after the grace period, each recorded process that still
-        matches. Runs at executor start, before anything new is recorded."""
+        matches and each process below one. Runs at executor start, before anything new
+        is recorded."""
         with self._lock:
-            remaining = [process for process in self._read() if _matches(process)]
-            for process in remaining:
-                with contextlib.suppress(ProcessLookupError):
-                    os.kill(process.process_id, signal.SIGTERM)
-            deadline = time.monotonic() + ORPHAN_AGENT_TERMINATION_GRACE_SECONDS
-            while remaining and time.monotonic() < deadline:
-                time.sleep(0.1)
-                remaining = [process for process in remaining if _matches(process)]
-            for process in remaining:
-                if _matches(process):
-                    with contextlib.suppress(ProcessLookupError):
-                        os.kill(process.process_id, signal.SIGKILL)
-            self._write([])
+            table = _process_table()
+            recorded = [process for process in self._read() if table.matches(process)]
+            # The tree is read before any signal, while an agent still parents its tools.
+            remaining = list(
+                dict.fromkeys(
+                    recorded + table.descendants({process.process_id for process in recorded})
+                )
+            )
+            try:
+                for process in remaining:
+                    _signal(process, signal.SIGTERM)
+                deadline = time.monotonic() + ORPHAN_AGENT_TERMINATION_GRACE_SECONDS
+                while remaining and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                    table = _process_table()
+                    remaining = [process for process in remaining if table.matches(process)]
+                table = _process_table()
+                for process in remaining:
+                    if table.matches(process):
+                        _signal(process, signal.SIGKILL)
+            finally:
+                self._write([])

@@ -151,9 +151,9 @@ def test_journal_records_once_and_its_cursor_follows_a_restored_mailbox(
     assert journal.unreported(32) == ()
     # The VPS database was restored: its mailbox ends at 2. The cursor falls to it, and
     # the rows stay, so a restored command already run is reported again, never rerun.
-    assert journal.lower_poll_cursor(2)
+    assert journal.lower_poll_cursor(2, cursor_at_lease=5)
     assert journal.poll_cursor() == 0
-    assert not journal.lower_poll_cursor(2)
+    assert not journal.lower_poll_cursor(2, cursor_at_lease=0)
     # A poll sent from the old cursor and answered after the lowering is dropped; the VPS
     # serves those commands again to the next poll.
     late = MailboxPollReply((mailbox(6, stop(child, "late")),))
@@ -337,7 +337,7 @@ def test_a_restored_command_matching_a_tombstone_is_re_answered_and_never_run_tw
             queues = MacCommandQueues(
                 fresh_runner, journal, MacCatalog(), result_finished=lambda: None
             )
-            assert journal.lower_poll_cursor(1)
+            assert journal.lower_poll_cursor(1, cursor_at_lease=3)
             served = MailboxPollReply((mailbox(2, delivered), mailbox(3, refused)))
             assert journal.record_poll_reply(served, incarnation, polled_after=0) == ()
             queues.republish()
@@ -389,23 +389,25 @@ def test_unsupported_journal_is_preserved_and_a_new_one_is_the_schema_verbatim(
     assert (spool / JOURNAL_NAME).read_bytes() == before
 
 
-def test_reporter_retries_until_recorded_and_a_rejected_result_never_blocks_it(
+def test_reporter_retries_and_neither_a_rejected_nor_a_failing_result_blocks_the_rest(
     journal: CommandJournal, child: ChildReference, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A report holding the result the VPS keeps failing on fails whole; the others are
+    still recorded, and that one is retried on its own."""
     monkeypatch.setattr("planner.executor.mac_mailbox.OUTBOX_RETRY_INITIAL_SECONDS", 0.01)
     reports: list[tuple[str, ...]] = []
 
     class Results:
         async def report_outcomes(self, report: CommandOutcomeReport) -> CommandOutcomeReply:
             reports.append(tuple(result.command_id for result in report.outcomes))
-            if len(reports) == 1:
-                raise ConnectionError("dropped before the VPS answered")
+            if "failing" in reports[-1]:
+                raise ConnectionError("the VPS answers 500 for this result")
             return CommandOutcomeReply(
                 ("kept",), (RejectedCommandResult("unknown", "unknown command"),)
             )
 
     async def run() -> None:
-        for sequence, command_id in ((1, "kept"), (2, "unknown")):
+        for sequence, command_id in ((1, "failing"), (2, "kept"), (3, "unknown")):
             command = stop(child, command_id)
             journal.record_poll_reply(
                 MailboxPollReply((mailbox(sequence, command),)), child.executor_incarnation
@@ -419,12 +421,23 @@ def test_reporter_retries_until_recorded_and_a_rejected_result_never_blocks_it(
             )
         reporter = MacResultReporter(cast(MacHttpClient, Results()), journal)
         task = asyncio.create_task(reporter.run())
-        try:
-            while journal.unreported(32):
+
+        async def settled() -> None:
+            while len(journal.unreported(32)) > 1 or len(reports) < 6:
                 await asyncio.sleep(0.01)
+
+        try:
+            await asyncio.wait_for(settled(), 10)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        assert reports == [("kept", "unknown"), ("kept", "unknown")]
+        assert [result.command_id for result in journal.unreported(32)] == ["failing"]
+        assert reports[:4] == [
+            ("failing", "kept", "unknown"),
+            ("failing",),
+            ("kept",),
+            ("unknown",),
+        ]
+        assert set(reports[4:]) == {("failing",)}
 
     asyncio.run(run())

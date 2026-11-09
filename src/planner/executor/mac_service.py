@@ -20,7 +20,11 @@ from uuid import uuid4
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.configuration import ExecutorPaths, validate_server_url
+from planner.executor.configuration import (
+    LEASE_INTERVAL_SECONDS,
+    ExecutorPaths,
+    validate_server_url,
+)
 from planner.executor.mac_agent_gateway import AgentGateway
 from planner.executor.mac_agent_processes import AgentProcesses
 from planner.executor.mac_catalog import MacCatalog
@@ -159,7 +163,10 @@ class MacService:
                 # Before the first lease, so the VPS's "process replaced, agents gone"
                 # holds even for agents launchd did not end.
                 await asyncio.to_thread(self.agent_processes.end_orphans)
-            self.queues.republish()
+            # What an earlier process owed goes into the outbox before the first lease
+            # reports the backlog and before any command can add behind it. A spool that
+            # keeps failing still lets the lease go out within one interval.
+            await asyncio.wait({self.queues.republish()}, timeout=LEASE_INTERVAL_SECONDS)
             async with self.gateway.serve(self.paths.ipc_socket):
                 loops = [
                     asyncio.create_task(self.lease.run()),

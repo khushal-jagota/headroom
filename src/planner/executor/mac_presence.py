@@ -15,6 +15,7 @@ import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
 from planner.core.contracts import ErrorCode
@@ -117,6 +118,12 @@ class MacLeaseLoop:
     async def lease_once(self) -> bool:
         """Send one lease. False when this process was replaced and must exit."""
         try:
+            # Read before the VPS reads its high sequence for the reply.
+            cursor: int | None = await asyncio.to_thread(self.journal.poll_cursor)
+        except Exception as error:  # Only the lowering is skipped.
+            _LOG.warning("command cursor was not read error=%s", failure_name(error))
+            cursor = None
+        try:
             request = await self._request()
             result = await self.client.lease(request)
         except Exception as error:
@@ -142,18 +149,30 @@ class MacLeaseLoop:
         self.presence.accepted()
         self.updates.offer(result.update)
         try:
-            if await asyncio.to_thread(
-                self.journal.lower_poll_cursor, result.mailbox_high_sequence
+            if cursor is not None and await asyncio.to_thread(
+                partial(
+                    self.journal.lower_poll_cursor,
+                    result.mailbox_high_sequence,
+                    cursor_at_lease=cursor,
+                )
             ):
                 _LOG.warning(
                     "command cursor was above the VPS mailbox (%s); lowered to it",
                     result.mailbox_high_sequence,
                 )
-            if self.agent_processes is not None:
-                await asyncio.to_thread(self.agent_processes.record_children)
         except Exception as error:  # Local work; the next lease tries again.
             _LOG.warning("lease follow-up failed error=%s", failure_name(error))
         return True
+
+    async def _record_agents(self) -> None:
+        """Record the agents' processes each lease interval, with or without the VPS, so
+        a start that hangs while the link is down is still ended after a crash."""
+        if self.agent_processes is None:
+            return
+        try:
+            await asyncio.to_thread(self.agent_processes.record_children)
+        except Exception as error:  # Priority and cleanup are best effort.
+            _LOG.warning("agent processes were not recorded error=%s", failure_name(error))
 
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
@@ -161,4 +180,5 @@ class MacLeaseLoop:
             started = loop.time()
             if not await self.lease_once():
                 return
+            await self._record_agents()
             await asyncio.sleep(max(0.0, started + LEASE_INTERVAL_SECONDS - loop.time()))

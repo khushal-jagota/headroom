@@ -166,7 +166,12 @@ class CommandJournal:
                 ).fetchone()[0]
             )
 
-    def lower_poll_cursor(self, mailbox_high_sequence: int) -> bool:
+    def lower_poll_cursor(self, mailbox_high_sequence: int, *, cursor_at_lease: int) -> bool:
+        """cursor_at_lease is the cursor read before the lease was sent. Only a cursor
+        that was already above the reply's high sequence shows a restored mailbox: a
+        command the poll recorded since may simply be newer than that reply."""
+        if cursor_at_lease <= mailbox_high_sequence:
+            return False
         with self._lock, self._db:
             cursor = self._db.execute(
                 "UPDATE commands SET command_sequence=0 WHERE command_sequence>?",
@@ -318,24 +323,34 @@ async def _retry_pause(delay: float) -> float:
 
 
 class MacResultReporter:
-    """Report finished results until the VPS records or rejects each one."""
+    """Report finished results until the VPS records or rejects each one.
+
+    After a failed report the next carries one result. A result whose own report failed
+    is held back behind the others; held-back results are retried in turn when nothing
+    else is left. So one result the VPS keeps failing on never holds up the rest."""
 
     def __init__(self, client: MacHttpClient, journal: CommandJournal) -> None:
         self.client, self.journal = client, journal
         self._wake = asyncio.Event()
         self._wake.set()  # Results left unreported by an earlier process go first.
+        self._one_at_a_time = False
+        self._held_back: dict[str, None] = {}  # In retry order.
 
     def wake(self) -> None:
         self._wake.set()
 
     def _report(self) -> tuple[CommandResult, ...]:
         """Fill one report within its byte budget, always with at least one result."""
-        results = self.journal.unreported(MAX_COMMAND_OUTCOMES_PER_REPORT)
+        unreported = self.journal.unreported(MAX_COMMAND_OUTCOMES_PER_REPORT + len(self._held_back))
+        results = [r for r in unreported if r.command_id not in self._held_back]
+        if not results:
+            held = {result.command_id: result for result in unreported}
+            results = [held[command_id] for command_id in self._held_back if command_id in held]
         chosen: list[CommandResult] = []
         size = len(b'{"outcomes":[]}')
-        for result in results:
+        for result in results[:MAX_COMMAND_OUTCOMES_PER_REPORT]:
             size += len(type_adapter(CommandResult).dump_json(result)) + 1
-            if chosen and size > MAX_COMMAND_OUTCOME_REPORT_BYTES:
+            if chosen and (size > MAX_COMMAND_OUTCOME_REPORT_BYTES or self._one_at_a_time):
                 break
             chosen.append(result)
         return tuple(chosen)
@@ -359,21 +374,33 @@ class MacResultReporter:
         """Send one report. False when nothing is left to report."""
         results = await asyncio.to_thread(self._report)
         if not results:
+            self._held_back.clear()
             return False
-        reply = await self.client.report_outcomes(CommandOutcomeReport(results))
-        for rejected in reply.rejected:
-            _LOG.warning(
-                "VPS rejected command result command=%s reason=%s",
-                rejected.command_id,
-                rejected.reason[:200],
+        try:
+            reply = await self.client.report_outcomes(CommandOutcomeReport(results))
+            for rejected in reply.rejected:
+                _LOG.warning(
+                    "VPS rejected command result command=%s reason=%s",
+                    rejected.command_id,
+                    rejected.reason[:200],
+                )
+            settled = set(reply.recorded) | {r.command_id for r in reply.rejected}
+            await asyncio.to_thread(
+                self.journal.mark_reported,
+                [result.command_id for result in results if result.command_id in settled],
             )
-        settled = set(reply.recorded) | {r.command_id for r in reply.rejected}
-        await asyncio.to_thread(
-            self.journal.mark_reported,
-            [result.command_id for result in results if result.command_id in settled],
-        )
-        if not settled.intersection(result.command_id for result in results):
-            raise ValueError("the VPS recorded none of the reported results")
+            if not settled.intersection(result.command_id for result in results):
+                raise ValueError("the VPS recorded none of the reported results")
+        except Exception:
+            if len(results) == 1:
+                # To the back of the held-back results.
+                self._held_back.pop(results[0].command_id, None)
+                self._held_back[results[0].command_id] = None
+            self._one_at_a_time = True
+            raise
+        self._one_at_a_time = False
+        for result in results:
+            self._held_back.pop(result.command_id, None)
         return True
 
 
@@ -409,10 +436,10 @@ class MacCommandQueues:
             self._queues[child_command.child.child_id] = deque((command,))
             self._start(self._child_queue(child_command.child.child_id))
 
-    def republish(self) -> None:
-        """Publish again what finished commands still owe: after a crash, or for a
-        repeated delivery of a finished command."""
-        self._start(self._republish())
+    def republish(self) -> asyncio.Task[None]:
+        """Publish, in the background, what finished commands still owe: after a crash,
+        or for a repeated delivery of a finished command."""
+        return self._start(self._republish())
 
     async def _republish(self) -> None:
         delay = OUTBOX_RETRY_INITIAL_SECONDS
@@ -427,10 +454,11 @@ class MacCommandQueues:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, OUTBOX_RETRY_MAX_SECONDS)
 
-    def _start(self, work: Coroutine[Any, Any, None]) -> None:
+    def _start(self, work: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
         task = asyncio.create_task(work)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
     async def _child_queue(self, child_id: str) -> None:
         queue = self._queues[child_id]
@@ -511,9 +539,9 @@ class MacPollLoop:
     async def run(self) -> None:
         delay = OUTBOX_RETRY_INITIAL_SECONDS
         while True:
-            # A planned handoff replays the previous runtime's output with admission
-            # stopped; commands wait in the mailbox until it is done, instead of being
-            # fetched and refused.
+            # After a planned handoff, commands wait in the mailbox until the update
+            # controller admits this runtime, instead of being fetched and refused. That
+            # needs only the lease (and any trial), never the old output's receipts.
             await self.queues.runner.planned_replay_finished()
             try:
                 cursor = await asyncio.to_thread(self.journal.poll_cursor)

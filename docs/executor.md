@@ -85,7 +85,7 @@ One installation lives in the owner's normal account:
 - **A LaunchAgent** starts at login and restarts the service after a crash.
 - **The data folder** holds the outbox, the command journal, Ticket files, skills, the workspace, and logs. Updates never replace it.
 
-Agent processes run at a lower priority than the service, so builds cannot starve it. At start, the service ends any agent processes its previous run left, so a replaced Mac process's agents are really gone.
+Agent processes run at a lower priority than the service, so builds cannot starve it. At start, the service ends any agent processes its previous run left, and the tools they started, so a replaced Mac process's agents are really gone.
 
 **Updates.** One press of Update covers both machines ([Deployment](deployment.md#the-card-and-the-mac)). If the new runtime does not lease in time, the supervisor reverts. The VPS accepts one protocol version; an older Mac is refused with "Mac needs update".
 

@@ -1,9 +1,11 @@
 """File transfers with the VPS: an item's uploads and a prompt's input downloads.
 
-At most MAX_FILE_TRANSFERS run at once across both directions. An upload the VPS refuses
-for good (403 or 400) is reported back on its item; anything else is retried with the
-item. An input download retries until route 6 answers 403, 404 or 409, which means the
-command is withdrawn, finished or fenced; the prompt is then refused.
+Transfers share no limit, so one conversation's slow files never hold up another's: a
+conversation uploads one file at a time, for its next item, and each agent downloads one
+input at a time, for its next command. An upload the VPS refuses for good (403 or 400)
+is reported back on its item; anything else is retried with the item. An input download
+retries until route 6 answers 403, 404 or 409, which means the command is withdrawn,
+finished or fenced; the prompt is then refused.
 """
 
 from __future__ import annotations
@@ -20,7 +22,6 @@ from planner.core.task_settlement import run_on_worker_thread
 from planner.executor.configuration import (
     INPUT_DOWNLOAD_RETRY_INITIAL_SECONDS,
     INPUT_DOWNLOAD_RETRY_MAX_SECONDS,
-    MAX_FILE_TRANSFERS,
     ExecutorPaths,
 )
 from planner.executor.files import contained_path, install_verified, safe_component
@@ -53,16 +54,14 @@ class InputDownloadRefused(Exception):
 class MacFiles:
     def __init__(self, client: MacHttpClient, paths: ExecutorPaths) -> None:
         self.client, self.paths = client, paths
-        self._transfers = asyncio.Semaphore(MAX_FILE_TRANSFERS)
 
     async def upload(self, upload: FileUploadRequest, source: Path) -> None:
-        async with self._transfers:
-            try:
-                await self.client.upload_file(upload, source)
-            except ExecutorHttpError as error:
-                if error.status in _PERMANENT_UPLOAD_STATUSES:
-                    raise UploadRefused(error.message or f"upload refused: {error.code}") from error
-                raise
+        try:
+            await self.client.upload_file(upload, source)
+        except ExecutorHttpError as error:
+            if error.status in _PERMANENT_UPLOAD_STATUSES:
+                raise UploadRefused(error.message or f"upload refused: {error.code}") from error
+            raise
 
     async def download_inputs(self, command: ChildCommand) -> None:
         args = command.arguments
@@ -112,10 +111,7 @@ class MacFiles:
         self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
         temporary = self.paths.run / (".input-" + uuid4().hex)
         try:
-            async with self._transfers:
-                digest = await self.client.download_command_file(
-                    command_id, stored_file_id, temporary
-                )
+            digest = await self.client.download_command_file(command_id, stored_file_id, temporary)
             manifest = FileManifest(
                 FileScope.conversation,
                 conversation_id,

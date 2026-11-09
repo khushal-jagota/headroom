@@ -231,7 +231,8 @@ def _error_outcome(command: ChildCommand, error: Exception) -> CommandOutcome:
         CommandDisposition.refused if refusal is not None else CommandDisposition.uncertain,
         {
             "error_type": refusal.__name__ if refusal is not None else type(error).__name__,
-            "error_message": str(error),
+            # Bounded, so one result can never outgrow a report.
+            "error_message": str(error)[:MAX_TOOL_DETAIL_CHARACTERS],
         },
     )
 
@@ -498,10 +499,6 @@ class MacRunner:
     async def _stop_exact_child(self, command: ChildCommand) -> CommandOutcome:
         reference = command.child
         child = self._children.get(reference.child_id)
-        if child is None and self.planned_update_replay:
-            # A restarted VPS can request retirement before FIFO replay starts.
-            # Preserve old write/file authority until the saved FIFO has receipts.
-            await self._planned_replay_finished.wait()
         current = asyncio.current_task()
         stop_owner = next(
             (
@@ -557,7 +554,10 @@ class MacRunner:
             return _outcome(
                 command,
                 CommandDisposition.uncertain,
-                {"error_type": type(error).__name__, "error_message": str(error)},
+                {
+                    "error_type": type(error).__name__,
+                    "error_message": str(error)[:MAX_TOOL_DETAIL_CHARACTERS],
+                },
             )
         self._retired_children.add(reference.child_id)
         if child is not None and self._children.get(reference.child_id) is child:
@@ -981,6 +981,8 @@ class MacRunner:
         self.admission_stopped = False
 
     def begin_planned_replay(self) -> None:
+        """A planned handoff: nothing is admitted until the update controller admits this
+        runtime. The previous runtime's saved output is sent meanwhile, and after."""
         self.planned_update_replay = True
         self._planned_replay_finished.clear()
         self.admission_stopped = True

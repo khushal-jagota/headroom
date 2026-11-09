@@ -3,8 +3,9 @@
 Risks: one child's slow command stalls another child, or the poll; a prompt runs before
 its child's start; a replaced process keeps working; the cursor stays above a restored
 mailbox; update work delays the lease; a transfer is accepted with the wrong bytes or
-retried forever. Layer: the real MacService (or the real HTTPS client) over TLS to an
-aiohttp stub in this process. Native agents are scripted; nothing else is started.
+retried forever, or waits behind another conversation's. Layer: the real MacService
+(or the real HTTPS client) over TLS to an aiohttp stub in this process. Native agents
+are scripted; nothing else is started.
 """
 
 from __future__ import annotations
@@ -143,6 +144,9 @@ class VpsStub:
     upload_status: int = 204
     files: dict[str, bytes] = field(default_factory=dict)
     file_failures: int = 0
+    # Transfers of files whose name starts with "slow" wait for this, counted in holding.
+    slow_release: asyncio.Event = field(default_factory=asyncio.Event)
+    holding: int = 0
     live: list[LiveEventBatch] = field(default_factory=list)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -222,6 +226,7 @@ class VpsStub:
         assert request.match_info["sha256"] == upload.manifest.sha256
         assert int(request.headers["Content-Length"]) == upload.manifest.byte_count == len(body)
         self.uploads.append((upload, body))
+        await self._slow(upload.manifest.relative_path)
         if self.upload_status != 204:
             error = {"error": {"code": "agent_forbidden", "message": "not yours", "detail": {}}}
             return web.json_response(error, status=self.upload_status)
@@ -235,11 +240,17 @@ class VpsStub:
         content = self.files.get(request.match_info["stored_file_id"])
         if content is None:
             return web.json_response({"error": {"code": "not_found"}}, status=404)
+        await self._slow(request.match_info["stored_file_id"])
         return web.Response(
             body=content,
             content_type="application/octet-stream",
             headers={EXECUTOR_FILE_SHA256_HEADER: hashlib.sha256(content).hexdigest()},
         )
+
+    async def _slow(self, name: str) -> None:
+        if name.startswith("slow"):
+            self.holding += 1
+            await self.slow_release.wait()
 
     async def post_live(self, request: web.Request) -> web.Response:
         self._check(request)
@@ -487,6 +498,107 @@ def test_cursor_falls_to_a_restored_mailbox_and_a_command_already_run_is_not_rer
     asyncio.run(run())
 
 
+def test_a_lease_reply_older_than_a_fetched_command_never_lowers_it(
+    tls: tuple[ssl.SSLContext, ssl.SSLContext],
+    paths: ExecutorPaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk: a lease reply whose high sequence was read before command S was put arrives
+    after the poll recorded S. Lowering S makes the VPS serve it again, and its owed
+    output is published again under new item numbers, which the VPS takes as new."""
+    monkeypatch.setattr("planner.executor.mac_presence.LEASE_INTERVAL_SECONDS", 0.05)
+
+    async def run() -> None:
+        stub = VpsStub()
+        reply_lease = stub.lease
+        raced = False
+
+        async def racing_lease(request: web.Request) -> web.Response:
+            nonlocal raced
+            if raced:
+                return await reply_lease(request)
+            raced = True
+            stub.high_sequence = 0  # Read before S existed.
+            stub.add(MailboxCommand(1, fetched.command_id, 1, child_command=fetched))
+            await until(lambda: 1 in stub.polls)  # The Mac recorded S and polls on.
+            try:
+                return await reply_lease(request)
+            finally:
+                stub.high_sequence = None
+
+        stub.lease = racing_lease  # type: ignore[method-assign]
+        async with serving(stub, tls[0]) as origin:
+            mac = service(paths, origin, tls[1])
+            child = ChildReference(mac.identity.executor_incarnation, str(uuid4()), "c_one")
+            fetched = ChildCommand(
+                "fetched_after_read", child, ChildOperation.stop, None, StopRun()
+            )
+            running = asyncio.create_task(mac.run())
+            try:
+                await until(lambda: fetched.command_id in stub.results and len(stub.leases) >= 3)
+                await until(lambda: len(stub.polls) >= stub.polls.index(1) + 3)
+                assert 0 not in stub.polls[stub.polls.index(1) :]
+                proofs = [
+                    item.envelope.submission_id
+                    for batch in stub.items
+                    for item in batch.items
+                    if item.envelope.kind is EnvelopeKind.child_stopped
+                ]
+                assert len(proofs) == 1
+            finally:
+                await stopped(mac, running)
+
+    asyncio.run(run())
+
+
+def test_output_an_earlier_process_owed_is_queued_before_the_first_lease(
+    tls: tuple[ssl.SSLContext, ssl.SSLContext],
+    paths: ExecutorPaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk: the first lease reports a conversation as empty before the owed R1 of a
+    command an earlier process finished is back in the outbox, so the VPS ends the old
+    run's drain and refuses that item when it arrives."""
+
+    async def run() -> None:
+        stub = VpsStub()
+        async with serving(stub, tls[0]) as origin:
+            mac = service(paths, origin, tls[1])
+            child = ChildReference(mac.identity.executor_incarnation, str(uuid4()), "c_one")
+            command = prompt_command(child)
+            mac.journal.record_poll_reply(
+                MailboxPollReply(
+                    (MailboxCommand(1, command.command_id, 1, child_command=command),)
+                ),
+                mac.identity.executor_incarnation,
+            )
+            refused = CommandOutcome(
+                command.command_id, child, CommandDisposition.refused, {"reason": "test"}
+            )
+            mac.journal.finish(
+                command.command_id,
+                CommandResult(command.command_id, child_outcome=refused),
+                outputs_owed=True,
+            )
+            publish = mac.runner.publish_owed_outputs
+
+            async def slow_publish(*args: object) -> None:
+                await asyncio.sleep(0.3)
+                await publish(*args)  # type: ignore[arg-type]
+
+            monkeypatch.setattr(mac.runner, "publish_owed_outputs", slow_publish)
+            running = asyncio.create_task(mac.run())
+            try:
+                await until(lambda: bool(stub.leases))
+                assert [w.conversation_id for w in stub.leases[0].waiting_conversations] == [
+                    "c_one"
+                ]
+            finally:
+                await stopped(mac, running)
+
+    asyncio.run(run())
+
+
 def test_lease_reports_the_backlog_and_update_work_never_holds_it(
     tls: tuple[ssl.SSLContext, ssl.SSLContext],
     paths: ExecutorPaths,
@@ -588,6 +700,61 @@ def test_transfers_send_described_bytes_and_inputs_retry_until_served_or_gone(
                     await files.download_inputs(prompt_command(child, files=("withdrawn",)))
                 assert not list(paths.run.glob(".input-*"))
             finally:
+                await client.close()
+
+    asyncio.run(run())
+
+
+def test_slow_transfers_of_other_conversations_never_hold_up_a_conversations_files(
+    tls: tuple[ssl.SSLContext, ssl.SSLContext],
+    tmp_path: Path,
+) -> None:
+    """Risk: a few slow uploads and downloads take every shared slot or connection, so
+    another conversation's artifact upload, and its whole outbox, or its prompt's input
+    waits behind them."""
+
+    async def run() -> None:
+        stub = VpsStub(files={"slow_input": b"slow", "quick_input": b"quick"})
+        async with serving(stub, tls[0]) as origin:
+            incarnation = str(uuid4())
+            client = MacHttpClient(
+                origin,
+                EXECUTOR_ID,
+                ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, incarnation),
+                ssl_context=tls[1],
+            )
+            files = MacFiles(client, ExecutorPaths(tmp_path / "executor"))
+            source = tmp_path / "artifact.md"
+            source.write_bytes(b"artifact bytes")
+            digest = hashlib.sha256(b"artifact bytes").hexdigest()
+
+            def upload(name: str, child: ChildReference) -> FileUploadRequest:
+                manifest = FileManifest(FileScope.ticket, "t_one", name, digest, 14)
+                return FileUploadRequest(manifest, child)
+
+            others = [ChildReference(incarnation, str(uuid4()), f"c_{n}") for n in range(8)]
+            slow = [
+                asyncio.create_task(files.upload(upload(f"slow_{n}.md", child), source))
+                for n, child in enumerate(others[:4])
+            ] + [
+                asyncio.create_task(
+                    files.download_inputs(prompt_command(child, files=("slow_input",)))
+                )
+                for child in others[4:]
+            ]
+            try:
+                await until(lambda: stub.holding == 8)
+                quick = ChildReference(incarnation, str(uuid4()), "c_quick")
+                await asyncio.wait_for(files.upload(upload("quick.md", quick), source), 5)
+                await asyncio.wait_for(
+                    files.download_inputs(prompt_command(quick, files=("quick_input",))), 5
+                )
+                assert not any(task.done() for task in slow)
+                stub.slow_release.set()
+                await asyncio.wait_for(asyncio.gather(*slow), 5)
+            finally:
+                stub.slow_release.set()
+                await asyncio.gather(*slow, return_exceptions=True)
                 await client.close()
 
     asyncio.run(run())

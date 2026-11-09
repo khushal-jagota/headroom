@@ -422,7 +422,7 @@ def test_fixed_supervisor_confirms_or_restores_without_touching_spool(
 
 
 @pytest.mark.parametrize("replay_pending", [True, False])
-def test_confirmed_selection_inherits_identity_only_until_old_receipts_arrive(
+def test_confirmed_selection_inherits_identity_only_while_replay_is_pending(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     replay_pending: bool,
@@ -841,10 +841,13 @@ def test_refused_work_protocol_recovers_through_actual_server_update_contract(
     asyncio.run(exercise())
 
 
-def test_next_update_does_not_join_retirement_until_saved_replay_releases_custody(
+def test_a_handoff_admits_work_at_its_lease_while_saved_output_still_waits(
     native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Risk: after a planned handoff, one conversation's saved item that never gets a
+    receipt keeps every conversation's commands, and the next update, waiting."""
+
     async def exercise() -> None:
         runner, spool, _, start = native_registry
         await runner.run(start)
@@ -860,19 +863,7 @@ def test_next_update_does_not_join_retirement_until_saved_replay_releases_custod
             },
         )
         monkeypatch.setenv(MAC_RUNTIME_HANDOFF_ENV, str(handoff))
-        presence = runner_presence(runner, leased=True)
-        stopping = asyncio.create_task(
-            runner.run(
-                ChildCommand(
-                    "restart_stop",
-                    start.child,
-                    ChildOperation.stop,
-                    None,
-                    StopRun(),
-                )
-            )
-        )
-        await asyncio.sleep(0)
+        presence = runner_presence(runner)
         controller = MacUpdateController(
             paths=runner.paths,
             runner=runner,
@@ -906,12 +897,24 @@ def test_next_update_does_not_join_retirement_until_saved_replay_releases_custod
             return {"confirmed": False}
 
         monkeypatch.setattr(controller, "_json", response)
-        await asyncio.wait_for(apply_offered(controller), 1)
-        assert phases == ["waiting"] and not stopping.done()
-        acknowledge_pending(spool)
-        await asyncio.wait_for(apply_offered(controller), 1)
+        polling = asyncio.create_task(runner.planned_replay_finished())
+        # Nothing is admitted before this runtime's first lease.
+        await apply_offered(controller)
+        assert phases == ["waiting"] and runner.admission_stopped and not polling.done()
+        saved = spool.pending()
+        assert saved and saved[-1].kind is EnvelopeKind.child_stopped
+        presence.accepted()
+        await apply_offered(controller)
+        # The saved stop proof never got its receipt, yet commands are fetched and run,
+        # and a restart from here is a new process.
+        await asyncio.wait_for(polling, 1)
         assert phases == ["waiting", "ready_to_restart"]
-        assert stopping.done()
+        assert spool.pending() == saved
         assert (read_record(handoff) or {})["replay_pending"] is False
+        stop = ChildCommand("restart_stop", start.child, ChildOperation.stop, None, StopRun())
+        outcome = await asyncio.wait_for(runner.run(stop), 1)
+        assert outcome.disposition.value == "succeeded"
+        # Its proof follows the saved output in the conversation's order.
+        assert spool.pending()[: len(saved)] == saved
 
     asyncio.run(exercise())

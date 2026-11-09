@@ -1466,11 +1466,15 @@ def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_re
 ) -> None:
     """Gap: a planned runtime swap hands the outbox to the next runtime under the same
     incarnation. Across a VPS restart and a reverted candidate, the saved write, reply
-    and update stop each apply once, and custody is released only after they do."""
+    and update stop each apply once. The unconfirmed candidate admits nothing and keeps
+    custody; the fallback releases it once admitted."""
     from planner.executor.mac_updates import handoff_record
     from planner.executor.protocol import CliWrite, as_object
     from planner.executor.runtime_bootstrap import atomic_record, read_record
-    from planner.executor.update_configuration import MAC_RUNTIME_HANDOFF_ENV
+    from planner.executor.update_configuration import (
+        MAC_RUNTIME_HANDOFF_ENV,
+        MAC_RUNTIME_READY_ENV,
+    )
 
     monkeypatch.setattr("planner.executor.mac_updates.MAC_UPDATE_POLL_SECONDS", 0.05)
 
@@ -1534,6 +1538,8 @@ def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_re
 
             monkeypatch.setattr(harness.endpoint.inbox, "accept", observe_accept)
             monkeypatch.setenv(MAC_RUNTIME_HANDOFF_ENV, str(handoff))
+            # The candidate runs on trial: the supervisor has not confirmed it.
+            monkeypatch.setenv(MAC_RUNTIME_READY_ENV, str(old.paths.root / "ready.json"))
 
             candidate = harness.new_mac("b" * 40)
             async with paused_outbox(candidate):
@@ -1548,6 +1554,8 @@ def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_re
                 # Model a failure and reversion after its lease but before saved receipts.
                 await harness.stop_mac()
             assert accepted == {}
+            assert (read_record(handoff) or {}).get("replay_pending") is True
+            monkeypatch.delenv(MAC_RUNTIME_READY_ENV)
             fallback = harness.new_mac("a" * 40)
             await harness.start_mac(fallback)
             await eventually(

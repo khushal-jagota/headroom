@@ -100,3 +100,62 @@ def test_cleanup_ends_recorded_agents_that_still_match_and_nothing_else(
             parent.wait()
         decoy.kill()
         decoy.wait()
+
+
+def test_cleanup_also_ends_the_tools_an_agent_started_before_and_after_the_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: only the agent CLI is ended, so the builds, servers and shells it started
+    keep running in the workspace after the VPS has treated that agent as gone."""
+    monkeypatch.setattr(
+        "planner.executor.mac_agent_processes.ORPHAN_AGENT_TERMINATION_GRACE_SECONDS", 1.0
+    )
+    agent_script = (
+        f"sleep 60 & echo $! > {tmp_path}/early; "
+        f"while [ ! -e {tmp_path}/go ]; do sleep 0.05; done; "
+        f"sleep 60 & echo $! > {tmp_path}/late; wait"
+    )
+    # The old executor's stand-in: it starts the agent and exits when told.
+    parent = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import subprocess, sys; agent = subprocess.Popen(['/bin/sh', '-c', sys.argv[1]]); "
+            "print(agent.pid, flush=True); sys.stdin.read()",
+            agent_script,
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    started_at: dict[int, str | None] = {}
+
+    def pid_in(name: str) -> int:
+        deadline = time.monotonic() + 10
+        while not (tmp_path / name).exists() or not (tmp_path / name).read_text().strip():
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        process_id = int((tmp_path / name).read_text())
+        started_at[process_id] = process_start_time(process_id)
+        return process_id
+
+    try:
+        assert parent.stdout is not None
+        agent = int(parent.stdout.readline())
+        started_at[agent] = process_start_time(agent)
+        early = pid_in("early")
+        AgentProcesses(tmp_path / "run", parent.pid).record_children()
+        (tmp_path / "go").touch()
+        late = pid_in("late")  # Started after the last record, while its agent runs.
+        assert parent.stdin is not None
+        parent.stdin.close()
+        parent.wait(timeout=10)
+        AgentProcesses(tmp_path / "run", os.getpid()).end_orphans()
+        assert all(wait_gone(pid) for pid in (agent, early, late))
+    finally:
+        for pid, started in started_at.items():  # Only what this test started.
+            if started is not None and process_start_time(pid) == started:
+                os.kill(pid, signal.SIGKILL)
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait()
