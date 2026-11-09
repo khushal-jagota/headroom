@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect
-from planner.core.server import create_app
+from planner.core.server import _with_native_build_1_fields, create_app
 
 
 @pytest.mark.parametrize("executor_id", [None, "owner-mac"])
@@ -38,7 +38,7 @@ def test_executor_health_uses_configured_id_without_a_mode_flag(
         health = client.get("/api/executor/health")
         assert health.status_code == 200
         if executor_id is None:
-            assert health.json() == {"mode": "local"}
+            assert health.json() == {"mode": "local", "connection_state": "disconnected"}
             return
         assert health.json() == {
             "mode": "remote",
@@ -50,4 +50,22 @@ def test_executor_health_uses_configured_id_without_a_mode_flag(
             "queue_depth": None,
             "oldest_item_age_ms": None,
             "admission_stopped": False,
+            "connection_state": "disconnected",
         }
+
+
+def test_present_mac_reads_as_known_activity_to_native_build_1() -> None:
+    # Native build 1 decodes connection_state as required, and shows the Mac's activity
+    # only when it is "ready" and connection_generation is above 0. Protocol 22 keeps
+    # the generation at 0, so without these fields every Mac Ticket reads "unknown".
+    identity = {"executor_incarnation": "mac-1", "connection_generation": 0}
+    present = _with_native_build_1_fields(
+        {"mode": "remote", "presence": "present", "identity": identity}
+    )
+    assert present["connection_state"] == "ready"
+    assert present["identity"] == {"executor_incarnation": "mac-1", "connection_generation": 1}
+    asleep = _with_native_build_1_fields(
+        {"mode": "remote", "presence": "asleep", "identity": identity}
+    )
+    assert asleep["connection_state"] == "disconnected"
+    assert asleep["identity"] == identity

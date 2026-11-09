@@ -184,6 +184,23 @@ async def _stop_runtime_with_deadline(runtime: Any, deadline: float) -> None:
     await runtime.stop(deadline=deadline)
 
 
+def _with_native_build_1_fields(health: dict[str, object]) -> dict[str, object]:
+    """Native build 1 (ios/Panels/Models/WorkspaceModels.swift, ExecutorHealth) requires
+    connection_state, and knows the Mac's activity only when it is "ready" and the
+    identity's connection_generation is above 0. Protocol 22 has neither, so both are
+    derived from presence here. Remove when the minimum native build reads presence."""
+    present = health.get("presence") == "present"
+    identity = health.get("identity")
+    if isinstance(identity, dict):
+        generation = identity.get("connection_generation", 0)
+        identity = {**identity, "connection_generation": max(int(generation), 1 if present else 0)}
+    return {
+        **health,
+        "identity": identity,
+        "connection_state": "ready" if present else "disconnected",
+    }
+
+
 def create_app(
     config: Config,
     clock: Clock,
@@ -628,8 +645,8 @@ def create_app(
     async def executor_health() -> dict[str, object]:
         endpoint = getattr(app.state, "executor_endpoint", None)
         if endpoint is None:
-            return {"mode": "local"}
-        return {"mode": "remote", **endpoint.health_payload()}
+            return {"mode": "local", "connection_state": "disconnected"}
+        return _with_native_build_1_fields({"mode": "remote", **endpoint.health_payload()})
 
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:
