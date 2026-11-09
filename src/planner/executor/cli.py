@@ -35,11 +35,18 @@ def run(executor_id: str, application_revision: str, panels_server_url: str) -> 
     if os.environ.get(MAC_RUNTIME_CHILD_ENV) != "1":
         from planner.executor.runtime_bootstrap import main as bootstrap_main
 
-        bootstrap_main([
-            "executor", "run", "--executor-id", executor_id,
-            "--application-revision", application_revision,
-            "--panels-server-url", panels_server_url,
-        ])
+        bootstrap_main(
+            [
+                "executor",
+                "run",
+                "--executor-id",
+                executor_id,
+                "--application-revision",
+                application_revision,
+                "--panels-server-url",
+                panels_server_url,
+            ]
+        )
     from planner.executor.mac_service import MacService
 
     asyncio.run(
@@ -73,10 +80,15 @@ def retry(submission_id: str, as_json: bool) -> None:
 
 @executor_group.command("health")
 def health() -> None:
-    response = request(IpcOperation.health, {})
-    if response.error is not None:
-        raise click.ClickException(str(response.error))
-    click.echo(json.dumps(response.result))
+    """Print this executor's identity, process, last accepted lease and any refusal."""
+    from planner.executor.ipc_client import local_status
+    from planner.executor.protocol import as_object
+
+    try:
+        status = local_status()
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(json.dumps(as_object(status)))
 
 
 @executor_group.command("quiesce")

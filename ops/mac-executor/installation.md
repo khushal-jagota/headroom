@@ -128,17 +128,22 @@ git -C "$REVIEWED_REPOSITORY" archive --format=tar "$CANDIDATE_SHA" > "$EVIDENCE
 CANDIDATE_SOURCE="$(mktemp -d)"
 tar -xf "$EVIDENCE/candidate-source.tar" -C "$CANDIDATE_SOURCE"
 PYTHONPATH="$CANDIDATE_SOURCE/src" "$NATIVE_PYTHON" - <<'PY'
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-print(PROTOCOL_VERSION, SPOOL_FORMAT_VERSION)
+from planner.execution_configuration import (
+    COMMAND_JOURNAL_FORMAT_VERSION, PROTOCOL_VERSION, SPOOL_FORMAT_VERSION,
+)
+print(PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, COMMAND_JOURNAL_FORMAT_VERSION)
 PY
 ```
 
 Check that the resolved commit equals the reviewed full SHA.
 Record the constants printed from the exact candidate source; they govern compatibility.
-At the time of writing the candidate uses wire protocol 21 and outbox format 5.
-Both Mac and VPS peers must match the candidate's wire protocol before work, and
-the existing journal must pass the candidate's SQLite version check below. Plan the
-VPS and Mac updates together when the protocol changes.
+At the time of writing the candidate uses wire protocol 22, outbox format 5 and
+command journal format 1. Both Mac and VPS must match the candidate's wire protocol
+before work, and the existing `spool/outbox.sqlite3` and `spool/commands.sqlite3` must
+pass the candidate's SQLite version checks below. A missing command journal is created
+at start; a previous runtime ignores it. Plan the VPS and Mac updates together when the
+protocol changes. Protocol 22 replaced the WebSocket of protocol 21: a protocol-21 Mac
+is refused with "Mac needs update" and can still update itself through the update route.
 
 Each new native Worker start installs the canonical database skills into the selected provider's normal skills home.
 It repairs canonical entries there and preserves unrelated account skills and credentials.
@@ -156,6 +161,8 @@ cp "$PLIST" "$EVIDENCE/prior.plist"
 Set `INSTALLED_PANELS` to the actual installed console before the first command.
 For later updates, it is `$VENV/bin/panels`.
 Read identity, revision, protocol, spool format, and PID from the results.
+Health also shows when the VPS last accepted a lease (Mac clock), the last lease
+failure, any version refusal, and whether admission has stopped.
 The health response carries no work counts. The quiescence receipt supplies those counts.
 An unavailable health result is unknown state, not proof of first installation.
 
@@ -171,12 +178,14 @@ PY
 
 Use the actual deployed package interpreter and working directory for that VPS layout.
 Record its exact app revision alongside the constants.
-`GET /api/executor/health` reports the connected Mac identity, connection state
-and last contact. A `ready` state means reconciliation has finished. It does not
-report the Mac process ID or independent VPS compatibility; use installed Mac
-health for process evidence.
+`GET /api/executor/health` reports the Mac's presence as the VPS judges it by its own
+clock (`present`, `asleep`, `not_heard_from`, `never` or `refused`) and since when, the
+leasing identity, last contact, any refusal, and the Mac's waiting output. `present`
+means a lease arrived within the last 60 seconds. It does not report the Mac process ID
+or independent VPS compatibility; use installed Mac health for process evidence.
 If either host's version evidence is absent or incompatible, defer installation.
-The handshake remains the final protocol guard.
+The lease remains the final protocol guard: the VPS refuses an incompatible Mac's lease,
+and that Mac takes no work.
 
 A genuine fresh installation has no existing executor, journal, service, or retained installation intent.
 Only that established case skips the installed-process shutdown steps.
@@ -278,12 +287,12 @@ This command preserves the source inputs, persistent data, and retained evidence
 Forced source replacement matters because successive revisions share project version `2.0.0`.
 No editable installation or source-path wrapper participates in runtime launch.
 
-Check the stopped persistent outbox version without opening it for writes:
+Check the stopped persistent outbox and command journal versions without opening them for writes:
 
 ```sh
 PLAN_EXECUTOR_ROOT="$EXECUTOR_ROOT" "$VENV/bin/python" - <<'PY'
 import sqlite3
-from planner.execution_configuration import SPOOL_FORMAT_VERSION
+from planner.execution_configuration import COMMAND_JOURNAL_FORMAT_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.configuration import executor_paths
 path = executor_paths().spool / "outbox.sqlite3"
 if path.exists():
@@ -291,7 +300,12 @@ if path.exists():
         assert database.execute("PRAGMA user_version").fetchone()[0] == SPOOL_FORMAT_VERSION
 else:
     assert not executor_paths().spool.exists() or not any(executor_paths().spool.iterdir())
-print("outbox version compatible")
+journal = executor_paths().spool / "commands.sqlite3"
+if journal.exists():
+    with sqlite3.connect(f"{journal.as_uri()}?mode=ro", uri=True) as database:
+        version = database.execute("PRAGMA user_version").fetchone()[0]
+        assert version == COMMAND_JOURNAL_FORMAT_VERSION
+print("outbox and command journal versions compatible")
 PY
 ```
 
@@ -385,8 +399,13 @@ Check that this executable and the reviewed provider commands exist.
 Check that the job label, app path, associated bundle identity, and embedded Python all match the selected installation.
 The noneditable Python installation cannot discover that source path itself.
 
-The selected GUI job uses RunAtLoad and `KeepAlive={SuccessfulExit:false}`.
+The selected GUI job uses RunAtLoad, `KeepAlive={SuccessfulExit:false}` and
+`ProcessType=Interactive`, so macOS schedules the executor as foreground work and its
+lease is not deferred. The executor lowers each agent it starts to nice 10, and builds
+those agents run inherit it.
 Abnormal exit requests restart. Successful maintenance exit stays stopped absent another demand.
+An executor whose process the VPS has already replaced exits with code 1 and is restarted
+with a fresh identity.
 The job retains a throttle and separate stdout/stderr files beneath the persistent `logs` directory.
 No daemon or extra demand trigger supplies reboot or pre-unlock operation.
 
@@ -402,7 +421,8 @@ launchctl print "$SERVICE" > "$EVIDENCE/candidate-service.txt"
 ```
 
 Check the expected revision, protocol, journal format, PID, and fresh identity locally.
-Check that VPS reconciliation reaches ready for that identity and revision.
+Check that VPS health reports `present` for that identity and revision, and that local
+health shows a recent accepted lease.
 Retain both observations before the operator declares success.
 Do not claim unattended restart, reboot, credentials, or physical outage behavior from these checks alone.
 
@@ -438,15 +458,19 @@ Use an isolated Ticket and compatible VPS package before approving ordinary work
 Check native commands, canonical skills, files in both directions, and the original
 permission and question callbacks. Check that an ordinary Worker reads canonical skills,
 writes an artifact through `PLAN_TICKET_FILES_DIR`, and that the served Ticket link opens it.
-Check a short link loss and a VPS restart against
-[the restart rules](../../docs/executor.md#when-the-connection-drops).
+Check a short network loss and a VPS restart against
+[the restart rules](../../docs/executor.md).
 A Mac service restart must also establish that launchd ends its provider processes;
-scripted tests cannot prove that host behavior. Mac application previews remain
+scripted tests cannot prove that host behavior. As a backstop, the executor records its
+agent processes in `$EXECUTOR_ROOT/run/agent-processes.json`; at its next start, before
+its first lease, it sends SIGTERM and then, after 10 seconds, SIGKILL to each recorded
+process whose start time still matches. Mac application previews remain
 unavailable. Retain evidence separately from production and preserve pending bytes.
 This runbook does not authorize changing application routes or account policy.
 
 Code paths: `src/planner/environments/mac_executor.py`, `src/planner/executor/cli.py`,
-`src/planner/executor/mac_outbox.py`, `requirements-build.txt`, `requirements-executor.txt`,
+`src/planner/executor/mac_outbox.py`, `src/planner/executor/mac_mailbox.py`,
+`src/planner/executor/mac_agent_processes.py`, `requirements-build.txt`, `requirements-executor.txt`,
 `agent_backends/package-lock.json`.
 
 ## Narrow permission setup and native evidence
