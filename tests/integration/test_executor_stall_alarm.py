@@ -1,8 +1,9 @@
 """Pass/fail condition 2: any stall raises an alarm within 5 minutes (contract §8.2).
 
 Risk: a conversation stuck for real is never reported, or reported without naming
-what is stuck, or reported on every watchdog run; or a Mac that is merely away (asleep,
-or its link gone) with output still waiting raises a false alarm.
+what is stuck, or reported on every watchdog run; or a stall already reported alarms
+again, or loses its start, once the Mac goes away (asleep, or its link gone) with the
+same output still waiting.
 Gap: test_stall_findings.py proves the rule and the 300 s arithmetic with production
 constants, test_stall_checker.py the checker over hand-written rows, and
 test_stall_watchdog.py the watchdog over hand-written findings. None of them starts
@@ -21,7 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import ANY
 
 import pytest
 from tests.integration.test_executor_end_to_end import (
@@ -46,7 +49,7 @@ from planner.stalls.watchdog import WatchdogRun, run_watchdog
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
 
 STALL_LIMIT_SECONDS = 2
-CONTINUITY_SECONDS = 1.0
+PRESENT_GAP_SECONDS = 1.0
 
 
 def leased_backlog(db_path: str) -> tuple[str, ...]:
@@ -96,17 +99,17 @@ def watch(
     )
 
 
-def test_a_stuck_conversation_alarms_once_and_an_away_mac_with_the_same_backlog_does_not(
+def test_a_stuck_conversation_alarms_once_even_after_the_mac_goes_away_with_its_backlog(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for name in ("MAC_ITEM_NO_PROGRESS_LIMIT_SECONDS", "MAC_ITEM_SETTLING_LIMIT_SECONDS"):
         monkeypatch.setattr(f"planner.stalls.configuration.{name}", STALL_LIMIT_SECONDS)
     # Leases every 0.2 s instead of 10 s, so the presence row follows the Mac closely.
     monkeypatch.setattr("planner.executor.mac_presence.LEASE_INTERVAL_SECONDS", 0.2)
-    # A gap of 1 s between leases (not 25 s) already breaks continuous presence.
-    monkeypatch.setattr(
-        "planner.executor.logic.presence.LEASE_CONTINUITY_SECONDS", CONTINUITY_SECONDS
-    )
+    # A gap of 1 s between leases (not 60 s) already ends the Mac's present time, and a
+    # stretch counts after 0.5 s (not 60 s).
+    monkeypatch.setattr("planner.stalls.configuration.MAC_PRESENT_GAP_SECONDS", PRESENT_GAP_SECONDS)
+    monkeypatch.setattr("planner.stalls.configuration.MAC_PRESENT_STRETCH_MIN_SECONDS", 0.5)
     monkeypatch.setattr("planner.executor.vps_inbox.MAC_ITEM_RETRY_LATER_SECONDS", 0.5)
 
     async def run() -> None:
@@ -162,6 +165,12 @@ def test_a_stuck_conversation_alarms_once_and_an_away_mac_with_the_same_backlog_
                 assert watch(harness, chief, web_push, now_ms()).raised == ()
                 assert len(web_push.sent) == len(chief.messages) == 1
 
+                (stuck_items,) = (
+                    finding
+                    for finding in findings
+                    if finding.kind is TrackedWaitKind.mac_items_not_moving
+                )
+
                 # Now the Mac goes away with the same backlog, and the VPS's save ends.
                 assert "c_scripted" in leased_backlog(db_path)
                 async with mac_unreachable(harness.proxy):
@@ -177,16 +186,22 @@ def test_a_stuck_conversation_alarms_once_and_an_away_mac_with_the_same_backlog_
                     )
                     assert harness.mac.outbox.pending()
                     assert "c_scripted" in leased_backlog(db_path)
-                    # No lease gets through. Once the gap passes the continuity limit
-                    # the Mac may be asleep, and the Mac-dependent rules pause.
+                    # No lease gets through, so the Mac may be asleep. The save's finding
+                    # clears; the backlog's stays open with its start, and nothing alarms
+                    # again.
                     await eventually(
                         lambda: (
-                            now_ms() - last_lease_at_ms(db_path) > (CONTINUITY_SECONDS + 0.5) * 1000
+                            now_ms() - last_lease_at_ms(db_path)
+                            > (PRESENT_GAP_SECONDS + 0.5) * 1000
                         ),
                         "a lease still got through",
                     )
-                    assert await checker.check_once() == ()
-                    assert watch(harness, chief, web_push, now_ms()).due == ()
+                    assert await checker.check_once() == (
+                        replace(stuck_items, last_seen_at_ms=ANY),
+                    )
+                    away = watch(harness, chief, web_push, now_ms())
+                    assert [alarm.alarm_key for alarm in away.due] == [stuck_items.finding_key]
+                    assert away.raised == ()
                     assert len(web_push.sent) == len(chief.messages) == 1
             # Back again, the resend finds its receipt: applied once.
             await harness.wait_settled("the backlog did not drain after the Mac returned")

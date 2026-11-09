@@ -70,11 +70,11 @@ Nothing is guessed. An uncertain outcome stays uncertain, and no provider call i
 
 Every wait has an owner, a start time, and a limit. The stall checker runs inside the server. It records each overdue wait as a finding that names the Ticket and conversation, and it writes a heartbeat. It watches items, commands, stops, drains, silent turns, failing leases, and retrying saves.
 
-The watchdog is its own unit. A timer runs it outside the server, so a stuck server can still raise an alarm. It alarms once on each new finding, and on a stale heartbeat. It pushes to Khushal, unless the "Stalled work" [notification](notifications.md) is off, and it messages the Chief. Both paths alarm within 5 minutes. The watchdog alarms only after Khushal installs its timer ([Deployment](deployment.md#the-switch-to-mailboxes)).
+The watchdog is its own unit. A timer runs it outside the server, so a stuck server can still raise an alarm. It alarms once on each new finding, and on a stale heartbeat. A finding stays open until its wait ends, so a sleep does not alarm on it again, and neither does a server restart while the wait is kept in the database. It pushes to Khushal, unless the "Stalled work" [notification](notifications.md) is off, and it messages the Chief. Both paths alarm within 5 minutes. The watchdog alarms only after Khushal installs its timer ([Deployment](deployment.md#the-switch-to-mailboxes)).
 
-A sleeping Mac raises no alarm. Stalls that depend on the Mac count only time while it is present.
+A sleeping Mac raises no alarm. Stalls that depend on the Mac count only the time it is present, added up across the times it is awake, so a lossy link or a Mac that is awake only now and then still alarms. A stretch shorter than a minute, such as a dark wake, does not count.
 
-Known gaps: a stuck executor that sends no leases looks the same as sleep. A model that thinks for a long time without live text can raise a false silent-turn alarm. An unfinished item stall counts again from zero after a VPS restart.
+Known gaps: a stuck executor that sends no leases looks the same as sleep. A model that thinks for a long time without live text can raise a false silent-turn alarm. A VPS restart forgets the present time counted before the Mac's current run of leases, and an item stall not yet reported counts again from the restart. Waits kept only in memory (silent turns, VPS retries) start again, and one already reported may alarm again. A dark wake longer than a minute counts as present time. An install that keeps the server stopped for more than about a minute and a half raises one "stall checker has not run" alarm.
 
 ## What runs on the Mac
 

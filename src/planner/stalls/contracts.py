@@ -37,12 +37,14 @@ class TrackedWaitKind(StrEnum):
     # while the Mac is away: retirement waits on the Mac's stop proof, which an asleep
     # Mac cannot send.
     mac_cancel_retirement = "mac_cancel_retirement"
+    # After a replaced process's drain, the VPS ending its turn interrupted and sending
+    # the recovery prompt. VPS work alone, so not paused.
+    vps_replacement_retiring = "vps_replacement_retiring"
 
 
-# These depend on the Mac. They count only continuous present time: their clock starts
-# at max(started_at_ms, the presence row's continuous_since_ms), and while the Mac is
-# not continuously present they are paused and report nothing. The others run on VPS
-# time alone (mac_lease_failing is not paused because sleep makes no contact).
+# These depend on the Mac. They count only the Mac's present time since they began
+# (stalls.logic.findings), so they pause while it is away. The others run on VPS time
+# alone (mac_lease_failing is not paused because sleep makes no contact).
 PAUSED_WHILE_MAC_AWAY: frozenset[TrackedWaitKind] = frozenset(
     (
         TrackedWaitKind.mac_items_not_moving,
@@ -76,7 +78,7 @@ class TrackedWait:
 
 @dataclass(frozen=True, slots=True)
 class StallFinding:
-    """One stall_findings row. stalled_since_ms is when the overdue wait began counting;
+    """One stall_findings row. stalled_since_ms is when the overdue wait began;
     cleared_at_ms is set once a check no longer reports it as overdue."""
 
     finding_key: str

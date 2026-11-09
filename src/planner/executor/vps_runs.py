@@ -460,7 +460,7 @@ class MacRuns:
                 # closed, the run no longer counts as pending in the rows, so the rest of
                 # the retirement (ending the turn, the recovery prompt) is tracked here.
                 with WAITS.track(
-                    TrackedWaitKind.mac_replacement_pending,
+                    TrackedWaitKind.vps_replacement_retiring,
                     reference.conversation_id,
                     detail="A replaced Mac process's turn is not yet interrupted and recovered",
                     conversation_id=reference.conversation_id,

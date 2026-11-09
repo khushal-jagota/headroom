@@ -1,9 +1,8 @@
 """The Mac's presence class, its continuous presence, and when a lease announces.
 
 Risk: a wrong class blocks Mac Tickets while the Mac leases ("Waiting for the Mac"),
-admits work for a Mac that has gone, alarms during sleep (stall rules count from the
-continuous start), or makes every 10 s lease refetch every screen. No test covers these
-rules; they are new. Layer: pure functions over PresenceRecord, VPS clock only.
+admits work for a Mac that has gone, or makes every 10 s lease refetch every screen.
+No test covers these rules; they are new. Layer: pure functions over PresenceRecord, VPS clock only.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ from planner.execution_identity import MAC_NEEDS_UPDATE, ExecutorIdentity
 from planner.executor.configuration import LEASE_CONTINUITY_SECONDS, MAC_AWAY_AFTER_SECONDS
 from planner.executor.contracts import PresenceRecord
 from planner.executor.logic.presence import (
-    continuous_presence_start,
     continuous_since_after_lease,
     judge_presence,
     lease_changes_presence_signal,
@@ -58,17 +56,6 @@ def test_presence_class_and_since(
 ) -> None:
     judgement = judge_presence(record, now_ms)
     assert (judgement.presence, judgement.since_ms) == (presence, since_ms)
-
-
-def test_continuous_presence_pauses_once_the_mac_goes_quiet_past_the_continuity_gap() -> None:
-    """Stall rules stop counting before the Mac is judged away, so a sleep raises nothing."""
-    assert continuous_presence_start(LEASED, 100_000 + CONTINUITY_MS) == 40_000
-    assert continuous_presence_start(LEASED, 100_000 + CONTINUITY_MS + 1) is None
-    assert judge_presence(LEASED, 100_000 + CONTINUITY_MS + 1).presence == "present"
-    assert continuous_presence_start(LEASED, 100_000 + AWAY_MS) is None
-    assert continuous_presence_start(replace(LEASED, going_to_sleep_at_ms=99_000), 100_001) is None
-    assert continuous_presence_start(replace(LEASED, refusal=REFUSAL), 100_001) is None
-    assert continuous_presence_start(None, 1) is None
 
 
 def test_only_a_present_mac_changes_class_by_time_alone() -> None:

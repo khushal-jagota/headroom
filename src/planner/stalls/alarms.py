@@ -53,6 +53,9 @@ KIND_SENTENCES: Final[dict[TrackedWaitKind, str]] = {
     TrackedWaitKind.mac_item_still_saving: "a Mac event is still saving",
     TrackedWaitKind.vps_save_retrying: "a conversation save keeps failing",
     TrackedWaitKind.mac_cancel_retirement: "retiring a Mac agent after a failed cancel is stuck",
+    TrackedWaitKind.vps_replacement_retiring: (
+        "ending the restarted Mac's interrupted turn and sending its recovery prompt is stuck"
+    ),
 }
 
 

@@ -31,23 +31,6 @@ def judge_presence(record: PresenceRecord | None, now_ms: int) -> PresenceJudgem
     return PresenceJudgement("not_heard_from", record.last_lease_at_ms)
 
 
-def continuous_presence_start(record: PresenceRecord | None, now_ms: int) -> int | None:
-    """When the Mac's current continuous presence began, or None while it is not present.
-
-    Every Mac-dependent stall rule counts from max(its own start, this), and is paused
-    while this is None: when the Mac is not present, and when its last lease is more than
-    LEASE_CONTINUITY_SECONDS old.
-    """
-    judgement = judge_presence(record, now_ms)
-    if judgement.presence != "present" or record is None or record.last_lease_at_ms is None:
-        return None
-    # Still "present" for up to MAC_AWAY_AFTER_SECONDS, but a Mac quiet for longer than
-    # the continuity gap may be asleep: its next lease starts a new stretch anyway.
-    if now_ms - record.last_lease_at_ms > LEASE_CONTINUITY_SECONDS * 1000:
-        return None
-    return judgement.since_ms
-
-
 def next_presence_change_ms(record: PresenceRecord | None) -> int | None:
     """When the presence class changes by time alone, with no new lease or refusal: a
     present Mac becomes not_heard_from MAC_AWAY_AFTER_SECONDS after its last lease. None
