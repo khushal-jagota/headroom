@@ -20,6 +20,9 @@ MAC_LEASE_FAILING_LIMIT_SECONDS: Final = 180
 # mac_lease_failing applies only while the Mac made contact this recently. Every lease
 # attempt makes contact, so a lost lease or two does not break the stretch.
 MAC_LEASE_FAILING_RECENT_CONTACT_SECONDS: Final = 60
+# ... and only while its latest contact came this long after its last accepted lease
+# (two lease intervals): an attempt failed, rather than the Mac slept.
+MAC_LEASE_FAILING_UNANSWERED_CONTACT_SECONDS: Final = 20
 MAC_CANCEL_RETIREMENT_LIMIT_SECONDS: Final = 180
 VPS_REPLACEMENT_RETIRING_LIMIT_SECONDS: Final = 180
 # The Mac's present time, which every Mac-dependent kind counts: runs of accepted leases

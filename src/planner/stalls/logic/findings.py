@@ -52,13 +52,16 @@ class PresenceObservation:
     items is by conversation_id. contact_since_ms is when the current stretch of recent
     contact began, None while there is none. present_stretches is the Mac's present
     time, oldest first: each is the first and last of a run of accepted leases no more
-    than MAC_PRESENT_GAP_SECONDS apart. open_findings maps the findings left open by
-    the last check to their stalled_since_ms.
+    than MAC_PRESENT_GAP_SECONDS apart. last_run_lease_ms is the last accepted lease
+    that was one of a run (its stretch holds more than one lease), which restarts the
+    lease-failing clock where a lone accepted lease does not. open_findings maps the
+    findings left open by the last check to their stalled_since_ms.
     """
 
     items: Mapping[str, ItemProgress] = field(default_factory=lambda: MappingProxyType({}))
     contact_since_ms: int | None = None
     present_stretches: tuple[tuple[int, int], ...] = ()
+    last_run_lease_ms: int | None = None
     open_findings: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
 
 
@@ -97,7 +100,7 @@ def observation_from_open_findings(findings: Iterable[StallFinding]) -> Presence
         elif finding.kind is TrackedWaitKind.mac_lease_failing:
             contact_since_ms = finding.stalled_since_ms
     return PresenceObservation(
-        MappingProxyType(items), contact_since_ms, (), MappingProxyType(open_findings)
+        MappingProxyType(items), contact_since_ms, (), None, MappingProxyType(open_findings)
     )
 
 
@@ -119,13 +122,19 @@ def presence_waits(
     ]
     contact_since_ms = _contact_since(record, now_ms, previous)
     stretches = _observe_present_time(record, previous.present_stretches)
-    if record is not None and contact_since_ms is not None:
+    last_run_lease_ms = previous.last_run_lease_ms
+    if stretches and stretches[-1][1] > stretches[-1][0]:
+        last_run_lease_ms = stretches[-1][1]
+    if (
+        record is not None
+        and contact_since_ms is not None
+        and (
+            _contact_unanswered(record) or _MAC_LEASE_FAILING_FINDING_KEY in previous.open_findings
+        )
+    ):
         detail = "The Mac keeps making contact, but its leases are not accepted"
         if record.refusal is not None:
             detail += f" ({record.refusal.reason})"
-        # Failing since the end of the Mac's last counted present time: a lone accepted
-        # lease, minutes apart from the next, keeps the Mac no more present than none.
-        present_until_ms = _counted_until_ms(stretches)
         waits.append(
             TrackedWait(
                 TrackedWaitKind.mac_lease_failing,
@@ -133,8 +142,8 @@ def presence_waits(
                 None,
                 detail,
                 contact_since_ms
-                if present_until_ms is None
-                else max(present_until_ms, contact_since_ms),
+                if last_run_lease_ms is None
+                else max(last_run_lease_ms, contact_since_ms),
             )
         )
     return tuple(waits), replace(
@@ -142,7 +151,20 @@ def presence_waits(
         items=MappingProxyType(items),
         contact_since_ms=contact_since_ms,
         present_stretches=stretches,
+        last_run_lease_ms=last_run_lease_ms,
     )
+
+
+def _contact_unanswered(record: PresenceRecord) -> bool:
+    """The Mac made contact after its last accepted lease by more than the leases' own
+    rhythm allows: an attempt failed. A Mac that sleeps between accepted leases makes no
+    such contact."""
+    if record.last_contact_at_ms is None:
+        return False
+    if record.last_lease_at_ms is None:
+        return True
+    unanswered_ms = configuration.MAC_LEASE_FAILING_UNANSWERED_CONTACT_SECONDS * 1000
+    return record.last_contact_at_ms - record.last_lease_at_ms > unanswered_ms
 
 
 def _observe_items(
@@ -223,28 +245,18 @@ def present_ms(stretches: Iterable[tuple[int, int]], since_ms: int) -> int:
     )
 
 
-def _counted_until_ms(stretches: tuple[tuple[int, int], ...]) -> int | None:
-    """The end of the last stretch that counts as present time."""
-    shortest_ms = configuration.MAC_PRESENT_STRETCH_MIN_SECONDS * 1000
-    for first, last in reversed(stretches):
-        if last - first >= shortest_ms:
-            return last
-    return None
-
-
 def forget_present_time_before(
     observation: PresenceObservation, waits: Iterable[TrackedWait]
 ) -> PresenceObservation:
     """Drop the stretches that ended before every Mac-dependent wait began. The last
-    stretch may still grow, and the one before it may be the last counted one (which
-    dates mac_lease_failing), so both are kept. Every earlier stretch counts."""
+    stretch may still grow, so it is always kept."""
     stretches = observation.present_stretches
-    starts = [wait.started_at_ms for wait in waits if wait.kind in PAUSED_WHILE_MAC_AWAY]
-    if len(stretches) <= 2:
+    if not stretches:
         return observation
+    starts = [wait.started_at_ms for wait in waits if wait.kind in PAUSED_WHILE_MAC_AWAY]
     earliest = min(starts, default=stretches[-1][1])
-    kept = tuple(stretch for stretch in stretches[:-2] if stretch[1] > earliest)
-    return replace(observation, present_stretches=(*kept, *stretches[-2:]))
+    kept = tuple(stretch for stretch in stretches[:-1] if stretch[1] > earliest)
+    return replace(observation, present_stretches=(*kept, stretches[-1]))
 
 
 def overdue_waits(

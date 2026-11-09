@@ -1422,7 +1422,7 @@ class SleepCycles:
             presence = self.endpoint.health().presence
             if not report.presence_while_frozen or report.presence_while_frozen[-1] != presence:
                 report.presence_while_frozen.append(presence)
-            if await asyncio.to_thread(self._stall_findings):
+            if await asyncio.to_thread(self._stall_findings, report.started_at_ms):
                 raise Violation("a stall finding appeared while the Mac was frozen")
             self._require_executor()
             await asyncio.sleep(min(1.0, left))
@@ -1720,8 +1720,15 @@ class SleepCycles:
             "WHERE r.stop_state<>'closed' AND r.executor_incarnation IS NOT p.executor_incarnation",
         )
 
-    def _stall_findings(self) -> list[tuple[Any, ...]]:
-        return _query(self.db_path, "SELECT kind,conversation_id,detail FROM stall_findings")
+    def _stall_findings(self, since_ms: int) -> list[tuple[Any, ...]]:
+        """Findings open now, or seen by a check since since_ms (this cycle's start): one
+        an earlier cycle already failed on does not fail every cycle after it."""
+        return _query(
+            self.db_path,
+            "SELECT kind,conversation_id,detail FROM stall_findings "
+            "WHERE cleared_at_ms IS NULL OR last_seen_at_ms>=?",
+            (since_ms,),
+        )
 
     # --- judging -------------------------------------------------------------------------
 
@@ -1777,7 +1784,7 @@ class SleepCycles:
     ) -> list[str]:
         violations: list[str] = []
         restart = "mac_restart" in report.kinds
-        findings = self._stall_findings()
+        findings = self._stall_findings(report.started_at_ms)
         if findings:
             violations.append(f"stall findings: {findings}")
         if presence != "present":
