@@ -29,6 +29,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
+from planner.worker_types.store import definition_from_json, workflow_from_preset, workflow_to_json
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -216,12 +217,20 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 f"{server_url}. While a proposal awaits approval, respond to messages only. "
                 "For proof messages, send each requested reply once with its nonce."
             )
+            historical = definition_from_json(
+                (ROOT / "tests/support/retired_general_worker_type.json").read_text()
+            )
+            workflow = json.loads(
+                workflow_to_json(workflow_from_preset(historical))
+            )
+            workflow.pop("specialist_skill")
             ticket = await post(
                 "create Worker",
                 "/api/tickets",
                 {
                     "title": "Luna ordinary lifecycle proof",
-                    "worker_type": "general",
+                    "worker_type": None,
+                    "workflow": workflow,
                     "employee_backend": "codex",
                     "employee_launch_model": "gpt-6-luna",
                     "brief": brief,

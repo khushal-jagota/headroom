@@ -1066,7 +1066,9 @@ a.pv-name:focus-visible { outline:0; }
 .file-preview--embedded .file-preview-frame { background:var(--surface-recessed); border-radius:0; }
 .file-preview--embedded .file-preview-name-link { display:block; margin-block-end:var(--space-1); }
 .file-preview-media-download { display:inline-block; margin-block-end:var(--space-1); }
-.file-preview-video-plane { display:grid; place-items:center; aspect-ratio:16 / 9; max-height:60vh; background:var(--surface-recessed); border-radius:var(--radius-xl); }
+.file-preview-video-plane { position:relative; overflow:hidden; display:grid; place-items:center; aspect-ratio:16 / 9; max-height:60vh; background:var(--surface-recessed); border-radius:var(--radius-xl); }
+.file-preview-video-poster { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:var(--surface-recessed); }
+.file-preview-video-plane .file-preview-play { position:relative; box-shadow:0 0 0 var(--space-1) color-mix(in srgb, var(--surface-ink) 45%, transparent); }
 .chat-thread .file-preview-video-plane { max-height:10rem; }
 .embedded-media .file-preview-video { border-radius:var(--radius-xl); }
 .file-preview-play { display:grid; place-items:center; flex:none; width:var(--space-7); height:var(--space-7); padding:0; border:0; border-radius:var(--radius-pill); background:var(--text-strong); color:var(--surface-ink); cursor:pointer; }
@@ -1909,6 +1911,16 @@ button.list-row:hover .list-row-title {
 .chat-att.file {
   display: flex; align-items: center; gap: var(--space-2); max-width: 190px;
   padding-inline: var(--space-2); background: var(--surface-recessed);
+}
+.chat-att.video { max-width: 230px; padding-inline-start: var(--space-1); }
+.chat-att-thumb {
+  position: relative; flex: none; display: grid; place-items: center; overflow: hidden;
+  width: 62px; height: 44px; border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.chat-att-thumb video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.chat-att-thumb svg {
+  position: relative; width: 20px; height: 20px; padding: 3px; fill: var(--surface-ink);
+  border-radius: var(--radius-pill); background: var(--text-strong);
 }
 .chat-att-kind {
   flex: none; display: grid; place-items: center; width: 26px; height: 26px;
@@ -5195,7 +5207,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * question, a voice take). */
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  /* The model chip's column gives way first: on a phone, while a turn runs and a draft waits,
+   * delivery, voice, stop and send need the room, and the chip's name ends in an ellipsis. */
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto) auto;
   align-items: end;
   column-gap: var(--space-1);
   min-height: var(--composer-height);
@@ -5219,8 +5233,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
           mask-image: linear-gradient(to bottom, transparent var(--composer-field-reach), #000 var(--composer-field-reach));
 }
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-add { grid-column: 1; grid-row: 1; }
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; }
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; min-width: 0; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; min-width: max-content; }
 
 /* THE DRAFT ROW. A draft that comes within ~40px of the controls, or holds a line break, takes
  * the full width on a row of its own, and the controls stay on the row under it

@@ -116,7 +116,9 @@ def test_rejected_parallel_hello_does_not_replace_live_health(endpoint: VpsExecu
         endpoint.runs.link = current
         endpoint.runs.ready = True
         assert (
-            endpoint._inspect_identity(replace(peer, protocol_version=PROTOCOL_VERSION - 2))
+            await endpoint._inspect_identity(
+                replace(peer, protocol_version=PROTOCOL_VERSION - 2)
+            )
             is not None
         )
         assert endpoint.health()["connection_state"] == "ready"
@@ -155,11 +157,15 @@ def test_received_contact_is_durable_before_link_closes(endpoint: VpsExecutor) -
         peer = identity()
         stream = MessageStream()
         link = Link(peer, stream)
-        link.received = endpoint.runs.store.contact
+        link.received = endpoint._record_contact
         stream.feed_data(encode_message(WireMessage(WireMessageKind.health, "contact", {})))
         reader = link._start()
-        await asyncio.sleep(0)
+        # The contact write runs on a worker thread, so give it a moment to land.
         restarted = VpsExecutor(endpoint.db_path, RealClock())
+        for _ in range(100):
+            if restarted.health()["last_contact_at_ms"] == link.last_received_at_ms:
+                break
+            await asyncio.sleep(0.01)
         assert restarted.health()["last_contact_at_ms"] == link.last_received_at_ms
         assert not link.is_closing()
         await link.wait_closed()

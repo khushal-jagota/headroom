@@ -2798,7 +2798,7 @@ def _overlay_menu_bounds(browser, url):
     # button closes it, so the simulated keyboard follows focus in the same way.
     page.add_init_script("""(() => {
       const viewport = new EventTarget();
-      Object.assign(viewport, {offsetTop:0,offsetLeft:0,width:1100,height:900});
+      Object.assign(viewport, {offsetTop:0,offsetLeft:0,width:1100,height:900});Object.defineProperties(viewport,{pageTop:{get(){return scrollY+this.offsetTop;}},pageLeft:{get(){return scrollX+this.offsetLeft;}}});
       Object.defineProperty(window,'visualViewport',{value:viewport,configurable:true});
       let keyboard={offsetTop:0,height:900};
       const update=()=>{
@@ -3975,7 +3975,7 @@ def _card_state_motion(browser, url):
             context.add_init_script("""(() => {
               const viewport = new EventTarget();
               let keyboard = 0;
-              Object.assign(viewport, {offsetTop: 0, offsetLeft: 0, width: innerWidth, height: innerHeight, scale: 1});
+              Object.assign(viewport, {offsetTop: 0, offsetLeft: 0, width: innerWidth, height: innerHeight, scale: 1});Object.defineProperties(viewport,{pageTop:{get(){return scrollY+this.offsetTop;}},pageLeft:{get(){return scrollX+this.offsetLeft;}}});
               Object.defineProperty(window, 'visualViewport', {value: viewport, configurable: true});
               const update = () => {
                 const active = document.activeElement;

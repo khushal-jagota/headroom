@@ -31,12 +31,9 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
             "CREATE TABLE resource_source_versions("
             "source_kind TEXT,source_id TEXT,revision INTEGER)"
         )
+        conn.execute("INSERT INTO resource_source_versions VALUES('workspace-manager','item',7)")
         conn.execute(
-            "INSERT INTO resource_source_versions VALUES('workspace-manager','item',7)"
-        )
-        conn.execute(
-            "CREATE TABLE managers(id TEXT PRIMARY KEY,goal TEXT NOT NULL,recap TEXT NOT NULL"
-            ")"
+            "CREATE TABLE managers(id TEXT PRIMARY KEY,goal TEXT NOT NULL,recap TEXT NOT NULL)"
         )
         conn.execute(
             "INSERT INTO managers(id,goal,recap) VALUES(?,?,?)",
@@ -46,9 +43,7 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
             "CREATE TABLE conversations(conversation_id TEXT PRIMARY KEY,"
             "identity_environment_variables TEXT,created_at INTEGER)"
         )
-        identity = json.dumps(
-            [["PLAN_ACTOR", "manager"], ["PLAN_MANAGER_ID", "item"]]
-        )
+        identity = json.dumps([["PLAN_ACTOR", "manager"], ["PLAN_MANAGER_ID", "item"]])
         conn.executemany(
             "INSERT INTO conversations VALUES(?,?,?)",
             [
@@ -77,7 +72,8 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
     reads: list[str] = []
 
     def connect() -> sqlite3.Connection:
-        conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+        # Like core.db.connect: the request connection opens on a worker thread.
+        conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only=ON")
         conn.set_trace_callback(reads.append)

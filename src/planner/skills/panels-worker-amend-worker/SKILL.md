@@ -78,7 +78,7 @@ The writes are not yours to make. Hand them up and verify the result.
    - For a removal, `panels worker-type delete <type>` instead.
 3. Give the sha256 of each artifact, so whoever runs it can confirm they ran what was approved, and so you can confirm it afterwards.
 4. Read it back yourself with `panels worker-type show <type>` and `panels skill show <skill>`. After a removal, `show` must return not found. Write Consequences from what the live store returns, never from what was sent.
-5. After a removal, the specialist skill stays. `panels skill delete <skill>` refuses it while an unfinished Ticket names it. Hand that delete up when those Tickets are done.
+5. After a removal, the specialist skill stays. `panels skill delete <skill>` can remove it after no Worker type uses it. Existing Tickets keep their saved guide. Hand that delete to the owner or Chief.
 6. Bring the repository in line through the ordinary branch and staging route. This has no effect on this Panels.
    - Update the entry for the type in `src/planner/worker_types/shipped_worker_types.json`, or remove it.
    - Update `src/planner/skills/panels-worker-<name>/SKILL.md`, or remove it. A fresh install converts it into the guidance and the Stage instructions, so keep one heading per Stage.

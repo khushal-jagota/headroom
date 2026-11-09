@@ -26,7 +26,7 @@ and one set of resolved values leaves.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
@@ -112,6 +112,19 @@ class ConversationStartOverrides:
 
 
 NO_CONVERSATION_START_OVERRIDES: Final = ConversationStartOverrides()
+
+
+def overrides_for_existing_conversation(
+    overrides: ConversationStartOverrides,
+) -> ConversationStartOverrides:
+    """What a message into a conversation that already exists asks to change.
+
+    A backend alone is the conversation's own backend restated, as a client does with every
+    message, so it is not a choice. Only a start needs a model to go with a backend.
+    """
+    if overrides.backend_key is not None and overrides.model is None:
+        return replace(overrides, backend_key=None)
+    return overrides
 
 
 @dataclass(frozen=True, slots=True)

@@ -23,13 +23,27 @@ function textEntryFocused(): boolean {
   return element instanceof HTMLElement && element.isContentEditable;
 }
 
-function readViewport(): ViewportReading {
+/**
+ * The visual viewport in the coordinates of `getBoundingClientRect`. Its `offsetTop` is
+ * measured from the layout viewport, and the two origins differ in iPhone Safari: there,
+ * element rectangles are measured from the page's scroll position, which follows the
+ * visual viewport. When Safari scrolls a focused field into view above the keyboard,
+ * `offsetTop` grows while the visible area starts at a rectangle top of 0. The page
+ * position of each origin is the same in every browser, so the difference is used.
+ */
+export function visualViewportClientRect(): LayoutRectangle | null {
   const visual = window.visualViewport;
+  if (!visual) return null;
+  const page = document.documentElement.getBoundingClientRect();
+  return { top: visual.pageTop + page.top, left: visual.pageLeft + page.left, width: visual.width, height: visual.height };
+}
+
+function readViewport(): ViewportReading {
   return {
     textEntryFocused: textEntryFocused(),
     layoutWidth: document.documentElement.clientWidth,
     layoutHeight: document.documentElement.clientHeight,
-    visual: visual ? { top: visual.offsetTop, left: visual.offsetLeft, width: visual.width, height: visual.height } : null,
+    visual: visualViewportClientRect(),
   };
 }
 
@@ -49,13 +63,6 @@ export function visibleViewport(menuOpen = false): LayoutRectangle {
   return visibleViewportFrom(readViewport(), menuOpen);
 }
 
-/** How far the keyboard reaches up from the bottom of the layout viewport. */
-export function keyboardInsetBottom(): number {
-  const reading = readViewport();
-  const visible = visibleViewportFrom(reading);
-  return Math.max(0, reading.layoutHeight - visible.top - visible.height);
-}
-
 /**
  * Call `listener` whenever the visible viewport can have changed: the keyboard opens or
  * closes, the phone rotates, or the app returns to the screen. The keyboard keeps moving
@@ -71,7 +78,7 @@ export function observeVisibleViewport(listener: () => void): () => void {
   function step(): void {
     frame = 0;
     const visual = window.visualViewport;
-    const key = `${visual?.offsetTop},${visual?.offsetLeft},${visual?.width},${visual?.height},${document.documentElement.clientWidth},${document.documentElement.clientHeight},${textEntryFocused()}`;
+    const key = `${visual?.pageTop},${visual?.pageLeft},${visual?.offsetTop},${visual?.offsetLeft},${visual?.width},${visual?.height},${document.documentElement.clientWidth},${document.documentElement.clientHeight},${textEntryFocused()}`;
     still = key === last ? still + 1 : 0;
     last = key;
     const root = document.scrollingElement ?? document.documentElement;
