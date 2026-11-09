@@ -112,7 +112,7 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
         assert outcome.disposition is CommandDisposition.refused
         assert native.starts == 0
         assert spool.pending() == ()
-        assert registry.ask((start.command_id,))[0].outcome == outcome
+        assert registry._commands[start.command_id].outcome == outcome
         assert await registry.run(start) == outcome
         # Its direct refusal grants no authority to publish fresh child output.
         bad_payloads = [

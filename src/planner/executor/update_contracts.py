@@ -1,7 +1,8 @@
 """Version-independent Mac update channel, separate from the work protocol.
 
-Targets come only from the owner's update attempt. A work-protocol refusal
-does not prevent an authenticated executor from obtaining its recovery target.
+Targets come only from the owner's update attempt. A protocol-22 Mac receives the check
+in each lease reply, a refused lease included; an older Mac polls the update route for
+the same shape. Reports and archives use the update routes for every Mac.
 Mac runtimes in the field read this shape: add only optional fields, which they ignore.
 """
 
@@ -86,5 +87,6 @@ class MacRuntimeSelection:
     previous_runtime_path: str | None
     previous_revision: str
     executor_incarnation: str
+    # Unread by protocol 22; carried unchanged so a reverted runtime can still read it.
     connection_generation: int
     archive_sha256: str

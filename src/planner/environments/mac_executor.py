@@ -100,6 +100,9 @@ def render_launch_agent(configuration: ServiceConfiguration) -> bytes:
             "LimitLoadToSessionType": "Aqua",
             "RunAtLoad": True,
             "KeepAlive": {"SuccessfulExit": False},
+            # Scheduled as foreground work, so App Nap and timer coalescing do not delay
+            # its lease, and builds started by its agents do not starve it.
+            "ProcessType": "Interactive",
             "ThrottleInterval": LAUNCH_AGENT_RESTART_THROTTLE_SECONDS,
             "EnvironmentVariables": {
                 "HOME": str(configuration.home),

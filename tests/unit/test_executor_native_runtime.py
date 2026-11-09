@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import threading
@@ -27,6 +28,7 @@ from planner.conversation.backends.contracts import (
     PromptWriteRefused,
     SessionLoadFailed,
     ToolCallFinished,
+    TurnEnded,
     TurnToken,
     VendorSessionCursorRebound,
 )
@@ -39,19 +41,18 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
     WorkspacePathPolicy,
 )
-from planner.conversation.events import ToolCallStatus
+from planner.conversation.events import ConversationTurnEnding, ToolCallStatus
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.mac_runner import MacRunner
 from planner.executor.mac_service import MacService
 from planner.executor.protocol import (
     AcceptanceReceipt,
     AnswerApplication,
+    BackendEvent,
     CanonicalSkillSnapshot,
     CanonicalSkillSource,
     ChildCommand,
@@ -68,7 +69,9 @@ from planner.executor.protocol import (
     StopRun,
     as_object,
     decode_command_arguments,
+    decode_event_arguments,
     encode_value,
+    type_adapter,
 )
 
 
@@ -156,11 +159,6 @@ def native_registry(
     registry = MacRunner(
         paths=ExecutorPaths(tmp_path / "executor"),
         incarnation=reference.executor_incarnation,
-        connection=MacConnection(
-            ExecutorIdentity(
-                PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
-            )
-        ),
         outbox=spool,
         factory=factory,
         message_files=ConversationMessageFiles(tmp_path / "unused"),
@@ -390,10 +388,25 @@ def test_native_typed_refusal_is_distinct_from_possible_emission(
         assert outcome.disposition is expected
         if isinstance(failure, _LocalSessionLoadRefused):
             assert outcome.result["error_type"] == "SessionLoadFailed"
-        assert spool.pending() == ()
-        assert registry.ask((command.command_id,))[0].outcome == outcome
+        assert registry._commands[command.command_id].outcome == outcome
         assert await registry.run(command) == outcome
         assert calls == 1
+        if operation is not ChildOperation.write_prompt:
+            assert spool.pending() == ()
+            return
+        # R1: a failed prompt ends its turn failed, once, under a fixed identity, so a
+        # repeated run publishes nothing new.
+        (failed,) = spool.pending()
+        assert failed.submission_id == (
+            "turn_failed_" + hashlib.sha256(command.command_id.encode()).hexdigest()
+        )
+        ending = decode_event_arguments(type_adapter(BackendEvent).validate_python(failed.payload))
+        assert isinstance(ending, TurnEnded) and ending.ending is ConversationTurnEnding.failed
+        assert str(ending.error_summary).startswith(
+            "The Mac could not deliver this message: "
+            if expected is CommandDisposition.refused
+            else "The Mac lost track of this message; it may have reached the agent: "
+        )
 
     asyncio.run(run())
 
@@ -424,7 +437,7 @@ def test_native_error_with_admission_text_stays_uncertain_after_confirmation_and
         assert spool.pending() == ()
 
         acknowledge_pending(spool)
-        assert registry.ask((start.command_id,))[0].outcome == outcome
+        assert registry._commands[start.command_id].outcome == outcome
         blocked = await registry.quiesce()
         assert blocked.active_turn_count == 0
         assert blocked.pending_callback_count == 0
@@ -679,7 +692,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
         await native.sink.report(
             turn, PermissionAskRaised(ask=BackendPermissionAsk("ask", "Allow?", None, ()))
         )
-        ask = registry.children()[0].pending_asks[0]
+        ask = next(iter(next(iter(registry._children.values())).asks.values()))
         answer = DurableAnswer("answer", ask, "allow", 1)
         original = spool.add
         failed = False
@@ -710,9 +723,9 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
         with pytest.raises(OSError, match="after callback"):
             await registry.run(outer)
         monkeypatch.setattr(spool, "add", original)
-        await registry.flush_command_output((answer.answer_id,))
+        await registry.run(outer)
         assert native.answers == [("ask", "allow")]
-        assert registry.children()[0].pending_asks == ()
+        assert next(iter(registry._children.values())).asks == {}
         assert not (await registry.quiesce()).ready
         outcome = await registry.run(outer)
         assert outcome.disposition == CommandDisposition.succeeded
@@ -872,15 +885,6 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
         registry = MacRunner(
             incarnation=reference.executor_incarnation,
-            connection=MacConnection(
-                ExecutorIdentity(
-                    PROTOCOL_VERSION,
-                    "a" * 40,
-                    SPOOL_FORMAT_VERSION,
-                    reference.executor_incarnation,
-                    1,
-                )
-            ),
             outbox=spool,
             factory=factory,
             paths=paths,
@@ -996,7 +1000,7 @@ def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
         assert outcome.disposition is CommandDisposition.refused
         assert outcome.result["error_type"] == "BackendSpawnFailed"
         assert native.starts == 0
-        assert registry.children() == ()
+        assert registry._children == {}
         assert not (registry.paths.workspace.parent / "escape").exists()
 
     asyncio.run(run())
@@ -1020,7 +1024,7 @@ def test_native_start_requires_ticket_identity(
         assert outcome.result["error_type"] == "BackendSpawnFailed"
         assert outcome.result["error_message"] == "Mac runs require a Ticket identity"
         assert native.starts == 0
-        assert registry.children() == ()
+        assert registry._children == {}
 
     asyncio.run(run())
 
@@ -1041,7 +1045,9 @@ def test_absent_stop_orders_proof_after_output_and_preserves_old_outcomes(
             ),
         )
         first = await registry.run(old)
-        assert first.disposition is CommandDisposition.uncertain
+        # This process never started the child, so nothing reached an agent.
+        assert first.disposition is CommandDisposition.refused
+        assert first.result["reason"] == "child_start_failed"
         earlier = spool.add(
             OutboxEntry(start.child.conversation_id, EnvelopeKind.backend_event, {})
         )

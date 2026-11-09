@@ -55,7 +55,6 @@ from planner.core.db import connect, create_schema
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.configuration import NATIVE_WORKER_CONTEXT, ExecutorPaths
-from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
@@ -181,15 +180,6 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "executor"),
             incarnation=reference.executor_incarnation,
-            connection=MacConnection(
-                ExecutorIdentity(
-                    PROTOCOL_VERSION,
-                    "a" * 40,
-                    SPOOL_FORMAT_VERSION,
-                    reference.executor_incarnation,
-                    1,
-                )
-            ),
             outbox=spool,
             factory=factory,
             message_files=ConversationMessageFiles(db_path),
@@ -322,8 +312,10 @@ def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
         cleanup_entered, release_cleanup = asyncio.Event(), asyncio.Event()
         executor_store = InboxStore(db_path)
         snapshot = CanonicalSkillSnapshot(
-            tuple(CanonicalSkillSource(name, f"---\nname: {name}\ndescription: test\n---\ntext")
-                  for name in ("panels", "panels-worker")),
+            tuple(
+                CanonicalSkillSource(name, f"---\nname: {name}\ndescription: test\n---\ntext")
+                for name in ("panels", "panels-worker")
+            ),
             ("panels", "panels-worker"),
         )
 
@@ -331,7 +323,9 @@ def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
             commands.append(command)
             if command.operation is ChildOperation.write_prompt and len(commands) == 2:
                 return CommandOutcome(
-                    command.command_id, command.child, CommandDisposition.refused,
+                    command.command_id,
+                    command.child,
+                    CommandDisposition.refused,
                     {"error_type": "NeedsRebind", "error_message": "model changed"},
                 )
             if command.operation is ChildOperation.stop and not cleanup_entered.is_set():
@@ -339,8 +333,12 @@ def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
                 await release_cleanup.wait()
                 if cleanup_fails:
                     raise RuntimeError("cleanup did not confirm exit")
-            return CommandOutcome(command.command_id, command.child, CommandDisposition.succeeded,
-                                  {"composed_content_delivered": True})
+            return CommandOutcome(
+                command.command_id,
+                command.child,
+                CommandDisposition.succeeded,
+                {"composed_content_delivered": True},
+            )
 
         def reference(start: ResolvedConversationStart, sink: Any) -> ChildReference:
             child = ChildReference("test-incarnation", str(uuid4()), "c")
@@ -349,7 +347,8 @@ def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
 
         remote = MacRemoteChildFactory(reference, dispatch, lambda start: snapshot, db_path=db_path)
         system = SqliteProcessConversationSystem(
-            store=ConversationStore(db_path), message_files=ConversationMessageFiles(db_path),
+            store=ConversationStore(db_path),
+            message_files=ConversationMessageFiles(db_path),
             backend_child_factories={key: remote for key in ConversationBackendKey},
         )
         try:
@@ -361,11 +360,14 @@ def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
             )
             await cleanup_entered.wait()
             assert not delivery.done()
-            assert isinstance(await system.send(
-                "c", text_message_content("queued bytes"), sender_label="Other"
-            ), PromptDeliveryQueued)
+            assert isinstance(
+                await system.send("c", text_message_content("queued bytes"), sender_label="Other"),
+                PromptDeliveryQueued,
+            )
             assert [c.operation for c in commands] == [
-                ChildOperation.start, ChildOperation.write_prompt, ChildOperation.stop,
+                ChildOperation.start,
+                ChildOperation.write_prompt,
+                ChildOperation.stop,
             ]
             release_cleanup.set()
             result = await delivery

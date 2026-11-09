@@ -35,7 +35,6 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.executor.configuration import ExecutorPaths
-from planner.executor.mac_connection import MacConnection
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
@@ -54,10 +53,17 @@ class _InterruptibleClaudeSdkClient(_ScriptedClaudeSdkClient):
     async def interrupt_and_cancel_queued(self) -> tuple[frozenset[str], frozenset[str]]:
         queued = await super().interrupt_and_cancel_queued()
         assert self.options.session_id is not None
-        self.say(ResultMessage(
-            subtype="success", duration_ms=0, duration_api_ms=0, is_error=False,
-            num_turns=1, session_id=self.options.session_id, terminal_reason="aborted_streaming",
-        ))
+        self.say(
+            ResultMessage(
+                subtype="success",
+                duration_ms=0,
+                duration_api_ms=0,
+                is_error=False,
+                num_turns=1,
+                session_id=self.options.session_id,
+                terminal_reason="aborted_streaming",
+            )
+        )
         return queued
 
 
@@ -80,7 +86,6 @@ def claude_registry(
 
     return MacRunner(
         incarnation=IDENTITY.executor_incarnation,
-        connection=MacConnection(IDENTITY),
         outbox=MacOutbox(tmp_path / "spool"),
         factory=factory,
         paths=ExecutorPaths(tmp_path / "executor"),
@@ -203,7 +208,7 @@ def test_claude_stop_result_controls_canonical_retirement(
                 fresh = replace(stop, command_id="explicit-cleanup-proof")
                 assert (await send(fresh)).disposition is CommandDisposition.succeeded
                 assert await registry.run(stop) == first
-                assert registry.ask((stop.command_id,))[0].outcome == first
+                assert registry._commands[stop.command_id].outcome == first
             else:
                 assert client.disconnected and native._client is None
                 assert reference.child_id not in registry._children

@@ -369,9 +369,9 @@ class CommandJournalApi(Protocol):
 
     def mark_reported(self, command_ids: Iterable[str]) -> None: ...
 
-    def prune(self) -> None:
-        """Delete finished, reported, published rows except the one with the highest
-        sequence, which keeps the cursor."""
+    def shrink_to_tombstones(self) -> None:
+        """Shrink finished, reported, published rows to tombstones (command_id, sequence,
+        incarnation, and the result that re-answers it). Rows are never deleted (M5)."""
         ...
 
     def close(self) -> None: ...
