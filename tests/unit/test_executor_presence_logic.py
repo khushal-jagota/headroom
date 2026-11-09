@@ -95,9 +95,7 @@ def test_only_what_a_screen_shows_announces_a_lease() -> None:
     later = replace(LEASED, last_lease_at_ms=110_000)
 
     def announces(previous: PresenceRecord | None, current: PresenceRecord, *, new: bool) -> bool:
-        return lease_changes_presence_signal(
-            previous, current, new_incarnation=new, now_ms=110_000
-        )
+        return lease_changes_presence_signal(previous, current, new_incarnation=new, now_ms=110_000)
 
     assert not announces(LEASED, later, new=False)
     assert announces(LEASED, later, new=True)
