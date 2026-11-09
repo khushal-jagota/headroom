@@ -6,6 +6,8 @@ import argparse
 import asyncio
 import contextlib
 import json
+import os
+import signal
 import socket
 import ssl
 import subprocess
@@ -44,11 +46,16 @@ class HttpsProxy:
         Requests in flight get no reply. Later requests connect again normally."""
         self._control("cut")
 
-    def blackhole(self, enabled: bool = True) -> None:
-        """While on, open connections are cut and new requests are held with no reply,
-        as when the network silently drops packets. Turning it off aborts the held
-        requests (their packets were lost); later requests pass normally."""
-        self._control("blackhole/on" if enabled else "blackhole/off")
+    def blackhole(self, enabled: bool = True, *, drop_held: bool = True) -> None:
+        """While on, the proxy stops reading and forwarding, as when the network silently
+        drops packets: every socket stays open, and no request in flight or new gets a
+        reply. Turning it off lets later requests pass. With drop_held the requests it
+        held are aborted; without it they stay dead, open and unanswered, until the
+        client gives up on its own timeout (a long poll on a socket that died in sleep)."""
+        if enabled:
+            self._control("blackhole/on")
+        else:
+            self._control("blackhole/off" if drop_held else "blackhole/off-keep-dead")
 
     def _control(self, action: str) -> None:
         if self.control is None:
@@ -116,6 +123,8 @@ def isolated_https_proxy(
                 str(ready),
                 "--login",
                 login,
+                "--parent",
+                str(os.getpid()),
             ],
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -167,7 +176,11 @@ async def serve_executor_app(app: FastAPI, root: Path) -> AsyncIterator[HttpsPro
     finally:
         server.should_exit = True
         try:
-            await asyncio.wait_for(task, 5)
+            done, _ = await asyncio.wait((task,), timeout=5)
+            if not done:
+                # A request still held (a long poll) must not hold the shutdown.
+                server.force_exit = True
+                await asyncio.wait_for(task, 5)
         finally:
             listener.close()
 
@@ -196,9 +209,11 @@ async def _serve(upstream: str, cert: Path, key: Path, ready: Path, login: str) 
         auto_decompress=False,
     )
 
-    blackholed = asyncio.Event()
-    released = asyncio.Event()
-    released.set()
+    # Each blackhole period has a number. A request that was in flight or arrived during
+    # one is dead: it is never answered, and its socket stays open until the period is
+    # dropped, the client gives up, or the request is very old.
+    blackhole = {"on": False, "period": 0}
+    drops: dict[int, asyncio.Event] = {}
     runner: web.AppRunner | None = None
 
     def cut() -> None:
@@ -208,32 +223,65 @@ async def _serve(upstream: str, cert: Path, key: Path, ready: Path, login: str) 
             if transport is not None:
                 transport.abort()
 
-    async def held_by_blackhole(request: web.Request) -> bool:
-        if not blackholed.is_set():
-            return False
-        await released.wait()
-        if request.transport is not None:
-            request.transport.abort()
-        return True
+    class Dead(Exception):
+        pass
+
+    class Life:
+        """When this request began, and so which blackhole period kills it."""
+
+        def __init__(self) -> None:
+            self.period = blackhole["period"]
+            self.began_dark = blackhole["on"]
+
+        def killer(self) -> int | None:
+            if self.began_dark:
+                return self.period
+            if blackhole["period"] != self.period:
+                return self.period + 1
+            return None
+
+        async def check(self, request: web.Request) -> None:
+            period = self.killer()
+            if period is None:
+                return
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(drops[period].wait(), 900)
+            if request.transport is not None:
+                request.transport.abort()
+            raise Dead
+
+    async def body(request: web.Request, life: Life) -> AsyncIterator[bytes]:
+        async for chunk in request.content.iter_chunked(256 * 1024):
+            await life.check(request)
+            yield chunk
 
     async def control(request: web.Request) -> web.Response:
         action = request.match_info["action"]
         if action == "cut":
             cut()
         elif action == "blackhole/on":
-            blackholed.set()
-            released.clear()
-            cut()
-        elif action == "blackhole/off":
-            blackholed.clear()
-            released.set()
+            if not blackhole["on"]:
+                blackhole["period"] += 1
+                drops[blackhole["period"]] = asyncio.Event()
+                blackhole["on"] = True
+        elif action in ("blackhole/off", "blackhole/off-keep-dead"):
+            if blackhole["on"]:
+                blackhole["on"] = False
+                if action == "blackhole/off":
+                    drops[blackhole["period"]].set()
         else:
             return web.Response(status=404)
         return web.Response(text="ok")
 
     async def proxy(request: web.Request) -> web.StreamResponse:
-        if await held_by_blackhole(request):
-            return web.Response(status=502)
+        life = Life()
+        try:
+            return await forward(request, life)
+        except Dead:
+            return web.Response(status=502)  # never reaches the aborted socket
+
+    async def forward(request: web.Request, life: Life) -> web.StreamResponse:
+        await life.check(request)
         connection_headers = {
             name.strip().lower() for name in request.headers.get("connection", "").split(",")
         }
@@ -291,9 +339,10 @@ async def _serve(upstream: str, cert: Path, key: Path, ready: Path, login: str) 
             request.method,
             url,
             headers=headers,
-            data=request.content.iter_chunked(256 * 1024) if request.can_read_body else None,
+            data=body(request, life) if request.can_read_body else None,
             allow_redirects=False,
         ) as remote:
+            await life.check(request)
             response = web.StreamResponse(
                 status=remote.status,
                 headers=[
@@ -304,7 +353,9 @@ async def _serve(upstream: str, cert: Path, key: Path, ready: Path, login: str) 
             )
             await response.prepare(request)
             async for chunk in remote.content.iter_chunked(256 * 1024):
+                await life.check(request)
                 await response.write(chunk)
+            await life.check(request)
             await response.write_eof()
             return response
 
@@ -353,5 +404,13 @@ if __name__ == "__main__":
     parser.add_argument("--key", type=Path, required=True)
     parser.add_argument("--ready", type=Path, required=True)
     parser.add_argument("--login", required=True)
+    parser.add_argument("--parent", type=int, required=True)
     args = parser.parse_args()
+    if sys.platform == "linux":
+        import ctypes
+
+        # The kernel ends this proxy with the process that started it.
+        ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0)  # PR_SET_PDEATHSIG
+    if os.getppid() != args.parent:
+        raise SystemExit(1)
     asyncio.run(_serve(args.upstream, args.cert, args.key, args.ready, args.login))
