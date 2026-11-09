@@ -80,6 +80,7 @@ class _Core:
     retired: list[tuple[ChildReference, str]] = field(default_factory=list)
     undelivered: list[object] = field(default_factory=list)
     resumed: list[tuple[ChildReference, object, bool]] = field(default_factory=list)
+    late_steers: list[tuple[str, int, object]] = field(default_factory=list)
     confirmed: list[ChildReference] = field(default_factory=list)
     stopped: list[ChildReference] = field(default_factory=list)
 
@@ -88,6 +89,11 @@ class _Core:
     ) -> None:
         if self.turn_live:
             await emit()
+
+    async def await_late_steer(
+        self, conversation_id: str, uncertain_sequence: int, not_delivered: object
+    ) -> None:
+        self.late_steers.append((conversation_id, uncertain_sequence, not_delivered))
 
     async def resume_undelivered_prompt(
         self, reference: ChildReference, prompt: object, *, start_needed: bool
@@ -543,6 +549,78 @@ def test_a_steer_waits_only_for_a_present_mac_and_only_for_its_limit(
             before = len(world.rows())
             assert await steer(world) == not_delivered
             assert len(world.rows()) == before
+
+    asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+@pytest.mark.parametrize("settled", [True, False])
+def test_a_restart_watches_again_the_steer_its_uncertain_row_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settled: bool
+) -> None:
+    """Risk: the VPS restarts while a steer it recorded uncertain (fetched, no result in
+    time) waits for its row, and the wait was memory: a row that then says the steer never
+    arrived loses it. Gap: the core test calls the restart step directly; this proves the
+    rows pair and route to it. The record does not name the steer's row, so an earlier
+    steer with the same words, answered in time, must not be taken for it."""
+    from planner.conversation.events import (
+        PromptDeliveryUncertainEventPayload,
+        conversation_event_payload_to_canonical_json,
+    )
+
+    monkeypatch.setattr(vps_runs, "STEER_DELIVERY_LIMIT_SECONDS", 0.3)
+    monkeypatch.setattr(vps_mailbox, "STEER_DELIVERY_LIMIT_SECONDS", 0.3)
+
+    async def steer(world: _World) -> Any:
+        return await world.proxy.steer(TURN, text_message_content("also"), sender_label="owner")
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            _running_turn(world.endpoint.db_path)
+            answered = asyncio.create_task(steer(world))
+            first = (await world.endpoint.poll(world.identity, 0, SETTLES)).commands[0]
+            await world.report(_succeeded(first.command_id, world.child, kind="steer_accepted"))
+            await answered
+            late = asyncio.create_task(steer(world))
+            command = (
+                await world.endpoint.poll(world.identity, first.command_sequence, SETTLES)
+            ).commands[0]
+            assert isinstance(await late, BackendSteerUncertain)
+            # The previous process's uncertain row for it.
+            connection = connect(world.endpoint.db_path)
+            try:
+                connection.execute(
+                    "INSERT INTO conversation_events "
+                    "VALUES ('c',7,'prompt_delivery_uncertain',?,1)",
+                    (
+                        conversation_event_payload_to_canonical_json(
+                            PromptDeliveryUncertainEventPayload(
+                                content=text_message_content("also"),
+                                sender_label="owner",
+                                mode=PromptDeliveryMode.steer,
+                                sender_message_id="steer-1",
+                            )
+                        ),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            refused = _succeeded(
+                command.command_id,
+                world.child,
+                kind="steer_refused",
+                refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into.value,
+            )
+            if settled:
+                await world.report(refused)
+            await world.endpoint.runs._watch_late_steers_again()
+            ((conversation, sequence, verdict),) = world.core.late_steers
+            assert (conversation, sequence) == ("c", 7)
+            assert isinstance(verdict, asyncio.Future)
+            if not settled:
+                assert not verdict.done()
+                await world.report(refused)
+            assert await asyncio.wait_for(verdict, SETTLES) is True
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
 

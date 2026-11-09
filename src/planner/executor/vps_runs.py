@@ -50,7 +50,7 @@ from planner.executor.protocol import (
 )
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore
-from planner.executor.vps_mailbox import SqliteCommandMailbox
+from planner.executor.vps_mailbox import SqliteCommandMailbox, steer_never_arrived
 from planner.executor.vps_presence import MacPresenceService
 from planner.executor.vps_remote_child import LateSteer, MacRemoteChild
 from planner.executor.worker_identity import ticket_id_of
@@ -230,25 +230,16 @@ class MacRuns:
             # Fetched, so it may have reached the turn; a result may also have just come.
             result = await self.mailbox.wait_result(command.command_id, 0)
             if result is None:
-                return LateSteer(self._own(self._steer_not_delivered(command)))
+                return LateSteer(self._own(self._steer_not_delivered(command.command_id)))
         outcome = result.child_outcome
         if outcome is None or _settled_by_mailbox(outcome):
             return None
         return outcome
 
-    async def _steer_not_delivered(self, command: ChildCommand) -> bool:
-        """Whether a late steer's row settled proving it never reached its turn: withdrawn
-        (its process was replaced before journaling it), refused, or refused by the agent
-        (its turn had ended)."""
-        result = await self.mailbox.wait_result(command.command_id)
-        outcome = None if result is None else result.child_outcome
-        return outcome is not None and (
-            outcome.disposition is CommandDisposition.refused
-            or (
-                outcome.disposition is CommandDisposition.succeeded
-                and outcome.result.get("kind") == "steer_refused"
-            )
-        )
+    async def _steer_not_delivered(self, command_id: str) -> bool:
+        """Whether a late steer's row settled proving it never reached its turn."""
+        result = await self.mailbox.wait_result(command_id)
+        return steer_never_arrived(None if result is None else result.child_outcome)
 
     async def stop(self, command: ChildCommand) -> CommandOutcome:
         """Wait for proof the agent stopped: its accepted child_stopped item, a result
@@ -442,13 +433,31 @@ class MacRuns:
             self._start_drain(reference, current)
 
     async def resume_replacement_drains(self) -> None:
-        """At startup: rebuild the drains from mac_runs compared with the presence row,
-        and finish writing again any never-ran prompt a VPS crash cut."""
+        """At startup: watch again the late steers the previous process was watching,
+        rebuild the drains from mac_runs compared with the presence row, and finish
+        writing again any never-ran prompt a VPS crash cut."""
+        await self._watch_late_steers_again()
         current = self.presence.current_identity()
         if current is None:
             return
         await self.incarnation_replaced("", current.executor_incarnation)
         await self._finish_prompts_written_again()
+
+    async def _watch_late_steers_again(self) -> None:
+        """A steer recorded uncertain whose row later proves it never arrived goes as the
+        next message. The watch is memory; its rows are not, so a restart picks it up."""
+        if not hasattr(self, "conversations"):
+            return
+        for conversation_id, sequence, command_id, never_arrived in await run_on_worker_thread(
+            self.mailbox.late_steers_left_by_a_restart
+        ):
+            verdict: asyncio.Future[bool]
+            if never_arrived is None:
+                verdict = self._own(self._steer_not_delivered(command_id))
+            else:
+                verdict = asyncio.get_running_loop().create_future()
+                verdict.set_result(never_arrived)
+            await self.conversations.await_late_steer(conversation_id, sequence, verdict)
 
     async def _close_interruptions_of_prompts_written_again(
         self, conversation_id: str | None = None
