@@ -11,7 +11,7 @@ import asyncio
 import logging
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime
@@ -56,6 +56,8 @@ from planner.worker_types.contracts import TicketWorkflowDefinition
 from planner.worker_types.store import workflow_from_preset
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
+# A read transaction's plain BEGIN never waits for the write lock, so it is not here.
+_WRITING_STATEMENTS = ("INSERT", "UPDATE", "DELETE", "REPLACE", "BEGIN IMMEDIATE")
 BOUNDARY_HOUR = 5
 TODAY_DAY_ID = "day_2026-07-06"
 
@@ -79,9 +81,25 @@ class _World:
             create_schema(conn)
         self.clock = TestClock(FIXED_NOW)
         self.conversations = InMemoryConversationSystem()
+        self.writes_on_the_event_loop: list[str] = []
 
     def connect(self) -> sqlite3.Connection:
-        return connect(self.db_path)
+        """A connection that notes every write it makes on the event loop.
+
+        A test standing in for another writer, such as a Worker filing mid-restart, opens
+        its own connection with ``connect`` instead.
+        """
+        conn = connect(self.db_path)
+        conn.set_trace_callback(self._note_a_write_on_the_event_loop)
+        return conn
+
+    def _note_a_write_on_the_event_loop(self, statement: str) -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if statement.lstrip().upper().startswith(_WRITING_STATEMENTS):
+            self.writes_on_the_event_loop.append(statement)
 
     def ready_ticket(
         self,
@@ -232,8 +250,11 @@ class _PauseKillConversationSystem(_RetirementDelegate):
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> _World:
-    return _World(tmp_path)
+def world(tmp_path: Path) -> Iterator[_World]:
+    world = _World(tmp_path)
+    yield world
+    # A write that waits on the SQLite lock on the event loop holds up every request.
+    assert world.writes_on_the_event_loop == []
 
 
 # --- the claim -----------------------------------------------------------------
@@ -398,7 +419,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
     assert world.start_step(ticket_id).started is True
 
     def complete_worker_step() -> None:
-        with world.connect() as other_conn:
+        with connect(world.db_path) as other_conn:
             tickets_data.file_current_proposal(
                 other_conn,
                 ticket_id,
@@ -454,7 +475,7 @@ def test_restart_uses_the_current_errored_claim_generation_after_kill(world: _Wo
     admitted = world.ticket(ticket_id)
 
     def replace_errored_generation() -> None:
-        with world.connect() as other_conn:
+        with connect(world.db_path) as other_conn:
             assert tickets_data.release_worker_step_claim(
                 other_conn,
                 ticket_id,
@@ -531,7 +552,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
             )
             await asyncio.wait_for(pausing.kill_started.wait(), timeout=1)
 
-            with world.connect() as worker_conn:
+            with connect(world.db_path) as worker_conn:
                 tickets_data.file_current_proposal(
                     worker_conn,
                     ticket_id,

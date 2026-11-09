@@ -12,14 +12,14 @@ router = APIRouter()
 
 
 @router.get("/goals")
-async def list_goals(
+def list_goals(
     conn: DbConn, clk: Clk, active: bool | None = None, project_id: str | None = None
 ) -> Any:
     return views.list_json(conn, views.calendar_now(clk), active=active, project_id=project_id)
 
 
 @router.post("/goals")
-async def create_goal(
+def create_goal(
     body: Annotated[
         dict[str, Any],
         CREATE,
@@ -37,12 +37,12 @@ async def create_goal(
 
 
 @router.get("/goals/{goal_id}")
-async def read_goal(goal_id: str, conn: DbConn, clk: Clk) -> Any:
+def read_goal(goal_id: str, conn: DbConn, clk: Clk) -> Any:
     return views.goal_json(conn, data.read_goal(conn, goal_id), views.calendar_now(clk))
 
 
 @router.patch("/goals/{goal_id}")
-async def update_goal(
+def update_goal(
     goal_id: str,
     body: Annotated[
         dict[str, Any],
@@ -61,7 +61,7 @@ async def update_goal(
 
 
 @router.get("/goals/{goal_id}/readings")
-async def readings(
+def readings(
     goal_id: str,
     conn: DbConn,
     clk: Clk,
@@ -74,7 +74,7 @@ async def readings(
 
 
 @router.post("/goals/{goal_id}/make-manager")
-async def make_manager(goal_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
+def make_manager(goal_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
     manager_id, goal = actions.make_manager(
         conn,
         goal_id,

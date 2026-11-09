@@ -26,6 +26,7 @@ from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.managers import data as managers_data
 from planner.message_delivery import service
 from planner.message_delivery.contracts import MessageDeliveryMode, MessageDeliveryResult
@@ -60,7 +61,8 @@ async def request_recap(
             "a recap can be asked of a ticket, a Manager, or the Chief",
             {"kind": recipient.kind.value},
         )
-    _clear_recap(conn, clock, ctx, recipient)
+    # The clear is a write, so it waits on the SQLite lock on a worker thread.
+    await run_on_worker_thread(_clear_recap, conn, clock, ctx, recipient)
     return await service.send_message(
         conversations,
         conn,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, TypedDict
 
@@ -32,7 +32,7 @@ class ResourceSnapshot:
     """Version and reader share one DB snapshot or captured immutable source."""
 
     revision: str
-    read: Callable[[], object | Awaitable[object]]
+    read: Callable[[], object]
 
 
 class ResourceProvider(Protocol):

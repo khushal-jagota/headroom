@@ -288,6 +288,9 @@ strong {
   .sheet-item svg { color:var(--text-faintest); }
   .sheet-divider { height:var(--border-hairline); margin:var(--space-2) var(--space-1); background:var(--border-color); }
   .compact-scrim { position:absolute; z-index:11; inset:0; width:100%; padding:0; border:0; background:var(--scrim); }
+  /* While the owner writes in the open conversation it fills the screen, so its composer
+     stands directly above the keyboard, never with the bar between them. */
+  .shell:has([data-conversation-dock-state="opened"] [data-conversation-input]:focus) .compact-bar { display:none; }
 }
 @media(prefers-reduced-motion:reduce) { .utility-label { transition-duration:1ms; transition-delay:0ms; } .fb-pop,.destination-sheet { animation:none; } }
 
@@ -1063,7 +1066,9 @@ a.pv-name:focus-visible { outline:0; }
 .file-preview--embedded .file-preview-frame { background:var(--surface-recessed); border-radius:0; }
 .file-preview--embedded .file-preview-name-link { display:block; margin-block-end:var(--space-1); }
 .file-preview-media-download { display:inline-block; margin-block-end:var(--space-1); }
-.file-preview-video-plane { display:grid; place-items:center; aspect-ratio:16 / 9; max-height:60vh; background:var(--surface-recessed); border-radius:var(--radius-xl); }
+.file-preview-video-plane { position:relative; overflow:hidden; display:grid; place-items:center; aspect-ratio:16 / 9; max-height:60vh; background:var(--surface-recessed); border-radius:var(--radius-xl); }
+.file-preview-video-poster { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:var(--surface-recessed); }
+.file-preview-video-plane .file-preview-play { position:relative; box-shadow:0 0 0 var(--space-1) color-mix(in srgb, var(--surface-ink) 45%, transparent); }
 .chat-thread .file-preview-video-plane { max-height:10rem; }
 .embedded-media .file-preview-video { border-radius:var(--radius-xl); }
 .file-preview-play { display:grid; place-items:center; flex:none; width:var(--space-7); height:var(--space-7); padding:0; border:0; border-radius:var(--radius-pill); background:var(--text-strong); color:var(--surface-ink); cursor:pointer; }
@@ -1907,6 +1912,16 @@ button.list-row:hover .list-row-title {
   display: flex; align-items: center; gap: var(--space-2); max-width: 190px;
   padding-inline: var(--space-2); background: var(--surface-recessed);
 }
+.chat-att.video { max-width: 230px; padding-inline-start: var(--space-1); }
+.chat-att-thumb {
+  position: relative; flex: none; display: grid; place-items: center; overflow: hidden;
+  width: 62px; height: 44px; border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.chat-att-thumb video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.chat-att-thumb svg {
+  position: relative; width: 20px; height: 20px; padding: 3px; fill: var(--surface-ink);
+  border-radius: var(--radius-pill); background: var(--text-strong);
+}
 .chat-att-kind {
   flex: none; display: grid; place-items: center; width: 26px; height: 26px;
   border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-faint);
@@ -2096,24 +2111,6 @@ button.list-row:hover .list-row-title {
 /* The textarea declares display: block, which beats the hidden attribute the
  * component sets while a voice face owns the main area. */
 .chat-ta[hidden] { display: none; }
-.chat-voice-idle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  width: 100%;
-  /* The same resting height the textarea has, so the well never jumps when a voice face
-     takes the main area. */
-  min-height: 44px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  color: var(--text-faint);
-}
-.chat-voice-idle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.2; }
-.chat-voice-idle span { font-size: var(--type-sm); color: var(--text-faintest); }
-.chat-voice-idle:disabled { opacity: 0.5; cursor: default; }
 .chat-voice-mid {
   display: flex;
   align-items: center;
@@ -2125,11 +2122,6 @@ button.list-row:hover .list-row-title {
 /* Inside the conversation the voice faces belong to the card, so they take its measures
  * with every other control. The Review screen draws the same faces and keeps its own. */
 [data-conversation-pane] .chat-voice-mid { min-height: 44px; }
-[data-conversation-pane] .chat-voice-idle svg {
-  width: var(--conversation-glyph);
-  height: var(--conversation-glyph);
-  stroke-width: 1.35;
-}
 [data-conversation-pane] .chat-voice-cancel,
 [data-conversation-pane] .chat-voice-stop {
   width: var(--conversation-target);
@@ -3657,6 +3649,13 @@ select {
 [data-conversation-dock-state="opened"] > .conversation-layer {
   height: var(--conversation-visible-height, 100%);
   --conversation-dock-line: 0;
+}
+/* Settled, the open layer is held by both visible edges rather than a measured height, so a
+ * change in the host's own size (a phone's bottom bar leaving or returning) resizes it in the
+ * same layout, never a frame later under a finger. */
+[data-conversation-dock-state="opened"]:not([data-conversation-dock-transition]) > .conversation-layer {
+  top: var(--conversation-visible-top, 0px);
+  height: auto;
 }
 /* While the dock moves, its content stands at the dock's foot. On return the pane is already
  * at rest (status line and composer) while the dock is still shrinking from full height, so
@@ -5208,23 +5207,34 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * question, a voice take). */
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  /* The model chip's column gives way first: on a phone, while a turn runs and a draft waits,
+   * delivery, voice, stop and send need the room, and the chip's name ends in an ellipsis. */
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto) auto;
   align-items: end;
   column-gap: var(--space-1);
   min-height: var(--composer-height);
   padding: calc((var(--composer-height) - var(--composer-control)) / 2 - var(--border-hairline)) var(--space-2);
+  /* From the box's top edge to the first line. The draft owns this band as its own padding,
+   * so a finger on the box's top edge lands in the field, not on the transcript or the
+   * status line just above it. The words stay where they were. */
+  --composer-field-reach: calc((var(--composer-height) - var(--composer-control)) / 2 - var(--border-hairline) + (var(--composer-control) - 24px) / 2);
 }
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-foot { display: contents; }
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-ta {
   grid-column: 2;
   grid-row: 1;
   align-self: end;
-  margin: 0 0 calc((var(--composer-control) - 24px) / 2) var(--space-1);
+  margin: calc(-1 * var(--composer-field-reach)) 0 calc((var(--composer-control) - 24px) / 2) var(--space-1);
+  padding-top: var(--composer-field-reach);
   line-height: 24px;
+  /* The band takes presses, never words: a scrolled draft ends cleanly where its first line
+   * begins. A mask leaves the band's hit area to the field. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent var(--composer-field-reach), #000 var(--composer-field-reach));
+          mask-image: linear-gradient(to bottom, transparent var(--composer-field-reach), #000 var(--composer-field-reach));
 }
 .conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-add { grid-column: 1; grid-row: 1; }
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; }
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; min-width: 0; }
+.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; min-width: max-content; }
 
 /* THE DRAFT ROW. A draft that comes within ~40px of the controls, or holds a line break, takes
  * the full width on a row of its own, and the controls stay on the row under it
@@ -5240,6 +5250,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   grid-column: 1 / -1;
   width: auto;
   margin: calc((var(--composer-control) - 24px) / 2) calc(var(--composer-inset) - var(--space-2) - var(--border-hairline));
+  margin-top: calc((var(--composer-control) - 24px) / 2 - var(--composer-field-reach));
 }
 .conversation-layer .chat-box[data-composer-controls-below]:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) :is(.chat-add, [data-conversation-model-picker], .chat-submit) { grid-row: 2; }
 /* The model picker sits at the right in both layouts, so its panel opens from the composer's

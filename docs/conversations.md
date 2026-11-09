@@ -9,7 +9,7 @@ A conversation is one agent, working in one folder, with a permanent record of w
 - **The conversation system.** One core that holds messages while the agent is busy, starts and stops the child process, writes the notebook, and decides each send's fate.
 - **Three backend adapters.** Hermes over ACP, Codex through its app server, and Claude through the Claude Agent SDK. The backends are a closed set, and one door turns an untrusted name into a member of it or refuses it.
 - **Send Message.** The door a person, the Chief, a Manager, or a Worker uses to address someone. It finds the recipient's current conversation and records who sent the message.
-- **The pane.** The same conversation dock on a Ticket, the Chief, and a Manager (a [goal](goals.md) shows its holder's), with a composer for text, images, files, a video, and voice. Voice is transcribed into the draft, so audio never enters the conversation. The dock keeps its menus within the visible screen.
+- **The pane.** The same conversation dock on a Ticket, the Chief, and a Manager (a [goal](goals.md) shows its holder's), with a composer for text, images, files, a video, and voice. Voice is transcribed into the draft, so audio never enters the conversation. The dock opens into the full conversation, and on a phone typing always happens there: the open conversation fills the screen above the keyboard. A transcript already read stays loaded at the dock, so opening it again draws it at once. The dock keeps its menus within the visible screen.
 
 ```
  person or agent             Worker step · Manager wake · recovery
@@ -71,7 +71,7 @@ The host must supply the Worker slice and its lower CPU weight before Linux Work
 
 ## Models and asks
 
-A model or reasoning change rides the next message that is actually delivered. Codex and Hermes switch in place. Claude starts a new child on the new model and carries the session across. The backend itself is fixed once the conversation exists. The picker reads the model list from the machine that runs the conversation and shows only the newest version of each Claude and Codex model. A model disabled in the [Usage](usage.md) catalog is refused when a Ticket is created or saved and when a message is dispatched, and a refused dispatch stays in the notebook with its reason. A Ticket's saved starting choice belongs to [Tickets](tickets.md).
+A model or reasoning change rides the next message that is actually delivered. Codex and Hermes switch in place. Claude starts a new child on the new model and carries the session across. The backend itself is fixed once the conversation exists, so a message to the Chief or a Manager that names only a backend, as the iOS app does with every message, is an ordinary message and is not checked against launch defaults. Only a message that starts a conversation resolves its launch settings, and a start on another backend must name that backend's model. The picker reads the model list from the machine that runs the conversation and shows only the newest version of each Claude and Codex model. A model disabled in the [Usage](usage.md) catalog is refused when a Ticket is created or saved and when a message is dispatched, and a refused dispatch stays in the notebook with its reason. A Ticket's saved starting choice belongs to [Tickets](tickets.md).
 
 Permission asks are always shown and always wait for an answer. Headroom does not auto-approve and does not remember a grant. Claude and Codex can also ask structured questions. Hermes has only the permission flow. Production agents run with full tool access, so an ask appears because the agent chose to ask.
 
@@ -87,7 +87,7 @@ The notebook feeds attention: messages to the owner, open asks, and failures bec
 
 After each application save, Headroom updates changed conversation statuses and sends them to the browser. Server startup recalculates every status from conversation records and current runtime state. Plain SQLite edits remain possible.
 
-The pane reads a stored view that is built from the notebook. When a change alters the format of that view, nothing more is needed: after the server starts, it rebuilds each old view from its notebook in the background, one conversation at a time. Until its view is rebuilt, a pane is told that the view is upgrading and tries again.
+The pane reads a stored view that is built from the notebook. When the app connection returns, an open, visible pane catches up from that record without another send. A hidden or collapsed pane still reconciles sends with unknown outcomes. When a change alters the format of that view, nothing more is needed: after the server starts, it rebuilds each old view from its notebook in the background, one conversation at a time. Until its view is rebuilt, a pane is told that the view is upgrading and tries again.
 
 ## Decisions that shape it
 

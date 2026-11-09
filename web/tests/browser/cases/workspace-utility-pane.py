@@ -394,6 +394,7 @@ def run(browser, urls):
     verify_settled_fold(page, url, fold, evidence)
     verify_rail_overflow(page, fold, evidence)
     verify_selection_washes(page, url, card_fixture, evidence)
+    verify_focus_slide_fill(page, url, card_fixture)
     capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
@@ -1208,7 +1209,7 @@ def verify_conversation_overlay(browser, url):
         page.route("**/api/**", respond)
         page.add_init_script("""(() => {
           const viewport = new EventTarget();
-          Object.assign(viewport,{offsetTop:0,offsetLeft:0,width:innerWidth,height:innerHeight,scale:1});
+          Object.assign(viewport,{offsetTop:0,offsetLeft:0,width:innerWidth,height:innerHeight,scale:1});Object.defineProperties(viewport,{pageTop:{get(){return scrollY+this.offsetTop;}},pageLeft:{get(){return scrollX+this.offsetLeft;}}});
           Object.defineProperty(window,'visualViewport',{value:viewport,configurable:true});
           window.__keyboardViewport=(top,height)=>{Object.assign(viewport,{offsetTop:top,height});viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));};
         })();""")
@@ -1240,10 +1241,16 @@ def verify_conversation_overlay(browser, url):
         # Initial selection stays product-owned. Choose dock state for this proof.
         if pane.get_attribute('data-conversation-state') == 'opened':
             page.locator('[data-conversation-collapse]').click()
-        # Open by the same controls as an owner. A viewport read follows each layout.
-        box.click()
-        expect(pane).to_have_attribute('data-conversation-state', 'rest')
-        box.fill("Draft keeps its place.\n" * 6)
+        # On a phone, focus in the field opens the conversation. The dock proofs here take
+        # the draft without that focus, and the keyboard proof below takes it on purpose.
+        phone = width <= 720
+        if phone:
+            box.evaluate("e=>{e.value='Draft keeps its place.\\n'.repeat(6);e.dispatchEvent(new Event('input',{bubbles:true}))}")
+        else:
+            # Open by the same controls as an owner. A viewport read follows each layout.
+            box.click()
+            expect(pane).to_have_attribute('data-conversation-state', 'rest')
+            box.fill("Draft keeps its place.\n" * 6)
         settle()
         doc_before = document.bounding_box()
         dock_before = page.locator('.conversation-layer').bounding_box()
@@ -1326,7 +1333,8 @@ def verify_conversation_overlay(browser, url):
         page.locator('[data-conversation-collapse]').click()
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         settle()
-        box.click()
+        if not phone:
+            box.click()
         expect(pane).to_have_attribute('data-conversation-state', 'rest')
         final = document.get_by_text(final_text, exact=True)
         document.evaluate('e=>e.scrollTop=e.scrollHeight')
@@ -1346,13 +1354,18 @@ def verify_conversation_overlay(browser, url):
         assert final_box['y'] + final_box['height'] <= card_peek['y'] + 1, (name, final_box, card_peek)
         page.screenshot(path=str(evidence / f'{name}-document-tail.png'), animations='disabled')
         # Simulated keyboard reduction plus displacement stays inside the host intersection.
+        # On a phone the keyboard comes with focus in the field, in the open conversation.
+        if phone:
+            box.focus()
+            expect(pane).to_have_attribute('data-conversation-state', 'opened')
         page.evaluate('window.__keyboardViewport(100, 420)')
         settle()
         card_keyboard = pane.bounding_box()
         assert card_keyboard['y'] >= max(host['y'], 100) - 1, (name, card_keyboard, host)
         assert card_keyboard['y'] + card_keyboard['height'] <= min(host['y'] + host['height'], 520) + 1, (name, card_keyboard, host)
         # Full conversation follows the displaced viewport without losing scrollback.
-        page.locator('[data-conversation-expand]').click()
+        if not phone:
+            page.locator('[data-conversation-expand]').click()
         expect(pane).to_have_attribute('data-conversation-state', 'opened')
         settle()
         assert_anchor('keyboard reduction and displacement')
@@ -2133,6 +2146,46 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     print('RECAP_FLOOR_PROOF ' + json.dumps({"seconds": proof["seconds"], "sessions": proof["sessions"]}), flush=True)
 
 
+
+def verify_focus_slide_fill(page, url, fixture):
+    """Focus slides the selected row's group away with its height clipped. The selection fill
+    must be clipped with it, not hang below the group over the card beneath it."""
+    agent = {"id": "focus_agent", "title": "Selected row in a hidden group", "worker_type": "coding", "stage": "needs_implementation",
+             "ticket_status": "agent", "conversation_id": "conv_focus_agent"}
+    fixture.update(enabled=True, rail_only_tickets=["focus_agent"], board={"managers": [], "columns": [{"cards": [agent]}]},
+                   chief={"label": "Chief of Staff"}, goals=[])
+    page.emulate_media(reduced_motion="no-preference")
+    page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
+    page.reload(wait_until="domcontentloaded")
+    row = page.locator('.worker-row[data-ticket-id="focus_agent"]')
+    expect(row).to_be_visible()
+    row.click()
+    page.mouse.move(1300, 950)
+    expect(row).to_have_attribute("aria-current", "page")
+    wait_settled(page, ".worker-row", ".rail-wash")
+    switch = page.locator(".rail-foot").get_by_role("switch", name="Focus", exact=True)
+    for turn_on in (True, False):
+        page.evaluate("""() => {
+          window.__focusFill = {frames: [], done: false}; let count = 0;
+          const take = () => {
+            const fill = document.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
+            const group = document.querySelector('[data-bucket-key="agent"]');
+            if (fill && !fill.hidden && group) {
+              const box = fill.getBoundingClientRect();
+              // A fill with no height paints nothing, wherever it sits.
+              window.__focusFill.frames.push(box.height > .5 ? box.bottom - group.getBoundingClientRect().bottom : 0);
+            }
+            if (++count < 40) requestAnimationFrame(() => setTimeout(take, 0)); else window.__focusFill.done = true;
+          };
+          requestAnimationFrame(() => setTimeout(take, 0));
+        }""")
+        switch.click()
+        page.wait_for_function("window.__focusFill.done")
+        overhang = page.evaluate("window.__focusFill.frames")
+        assert overhang and max(overhang) <= 1, (turn_on, overhang)
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy], .rail-wash--leaving')")
+
+
 def verify_selection_washes(page, url, fixture, evidence):
     """Real layout/WAAPI is necessary to prove washes follow transformed rows.
 
@@ -2345,6 +2398,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     selection_settled('.worker-row[data-ticket-id="wash_two"]')
     aligned(sample('.worker-row[data-ticket-id="wash_two"]'))
     expect(page.locator('.rail-wash--leaving')).to_have_count(0)
+
     page.emulate_media(reduced_motion='reduce')
     row.evaluate('node=>node.click()')
     page.evaluate('() => new Promise(requestAnimationFrame)')
