@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "./lib/queryCatalogue";
+  import { COMPACT_LAYOUT_MEDIA_QUERY } from "./lib/compactLayout";
   import LazyRegion from "./components/LazyRegion.svelte";
   import { cachedImport } from "./lib/lazyViews";
   import ErrorLine from "./components/ErrorLine.svelte";
@@ -116,7 +117,7 @@
   }
 
   onMount(() => {
-    const media = window.matchMedia("(max-width: 720px)");
+    const media = window.matchMedia(COMPACT_LAYOUT_MEDIA_QUERY);
     const syncCompact = () => {
       const activeElement = document.activeElement as HTMLElement | null;
       // Hiding a focused control can blur it before the media change is delivered.

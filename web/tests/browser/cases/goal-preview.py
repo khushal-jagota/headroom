@@ -1016,6 +1016,14 @@ def agent_unit_spacing(browser, url):
                 else:
                     target = probe.locator(".allocation-legend button").last
                 if phone:
+                    if not canvas:
+                        # Settle scrolling first, then move the touch pointer off the ring.
+                        # Clear retained inspection before the fresh legend gesture.
+                        target.tap(trial=True)
+                        page.touchscreen.tap(5, 5)
+                        target.press("Escape")
+                        page.keyboard.press("Tab")
+                        expect_inspection(page, probe, False)
                     inspections[identity] = touch_inspection(
                         page, session, probe, target, canvas=canvas,
                         contact=canvas, retained=identity != "allocation-events",

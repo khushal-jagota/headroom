@@ -777,7 +777,148 @@ def run_credentials(browser, urls):
     print("CREDENTIAL_CARD_PROOF " + json.dumps(receipt), flush=True)
 
 
+def run_reconnect(browser, urls):
+    """The app recovery signal must recover a silently stalled transcript."""
+    import json
+    import os
+    import time
+
+    from playwright.sync_api import expect
+
+    started = time.perf_counter()
+    output = Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp"))
+    output.mkdir(parents=True, exist_ok=True)
+    proof = []
+    for full_container in (False, True):
+        page = browser.new_page(viewport={"width": 1100, "height": 800})
+        page.set_default_timeout(5_000)
+        suffix = "?initial-connected"
+        if full_container:
+            suffix += "&full-container&hold-first-tail"
+        page.goto(urls[0] + suffix, wait_until="domcontentloaded")
+        page.wait_for_function("window.__tailOpened?.() === 1")
+        # Recovery during the initial snapshot shares that connection attempt.
+        if full_container:
+            page.evaluate("window.__setServerReachable(false); window.__setServerReachable(true)")
+            _frames(page, 3)
+            assert page.evaluate("window.__tailOpened()") == 1
+            page.evaluate("window.__releaseTailSnapshots()")
+        composer = page.locator("[data-conversation-input]")
+        composer.wait_for()
+        _frames(page, _SETTLED_FRAMES)
+        assert page.evaluate("window.__tailOpened()") == 1
+        if not full_container:
+            page.evaluate("window.__delivery='prompt'")
+            composer.fill("An ordinary accepted send")
+            composer.press("Enter")
+            page.wait_for_function("typeof window.__resolveDelivery === 'function'")
+            page.evaluate("window.__resolveDelivery()")
+            page.get_by_text("An ordinary accepted send", exact=True).wait_for()
+            _frames(page, _SETTLED_FRAMES)
+            # The response and admitted prompt establish a known successful send.
+            assert page.get_by_text("no answer came", exact=False).count() == 0
+        composer.fill("Draft that survives recovery")
+        composer.focus()
+        # A full-container transcript also recovers without window focus.
+        if full_container:
+            page.evaluate("document.hasFocus=()=>false; window.dispatchEvent(new Event('blur'))")
+        page.evaluate("""() => {
+          window.__visibilityEvents=0;
+          document.addEventListener('visibilitychange',()=>window.__visibilityEvents++);
+          window.__composerBeforeRecovery=document.querySelector('[data-conversation-input]');
+          window.__setServerReachable(false);
+          window.__stallCurrentTails();
+          window.__publishAnswer('Reply stored while the transcript silently stalls');
+        }""")
+        _frames(page, 3)
+        assert page.get_by_text("Reply stored while the transcript silently stalls", exact=True).count() == 0
+        tails_before = page.evaluate("window.__tailOpened()")
+        sends_before = page.evaluate("window.__sends?.length ?? 0")
+        page.evaluate("window.__setServerReachable(true)")
+        page.get_by_text("Reply stored while the transcript silently stalls", exact=True).wait_for()
+        _frames(page, _SETTLED_FRAMES)
+        assert page.evaluate("window.__tailOpened()") == tails_before + 1
+        assert page.evaluate("window.__activeTails()") == [{"transcript": True, "lens": "focus"}]
+        assert page.evaluate("window.__sends?.length ?? 0") == sends_before
+        assert page.evaluate("window.__visibilityEvents") == 0
+        expect(composer).to_have_value("Draft that survives recovery")
+        assert page.evaluate("window.__composerBeforeRecovery===document.activeElement")
+        # Repeated connected values are not another recovery transition.
+        page.evaluate("window.__setServerReachable(true)")
+        _frames(page, 3)
+        assert page.evaluate("window.__tailOpened()") == tails_before + 1
+        page.screenshot(path=str(output / ("reconnect-full-container.png" if full_container else "reconnect-accepted-send.png")))
+        proof.append({"fullContainer": full_container, "sends": sends_before, "recoveredTails": 1})
+        # Without uncertainty, app recovery leaves both rest and hidden views alone.
+        # Rest can retain a previously loaded transcript for immediate reopening.
+        for hidden in (False, True):
+            if hidden:
+                page.evaluate("window.__setConversationState(" + ("null" if full_container else "'opened'") + ")")
+                page.wait_for_function("window.__activeTails().length===1&&window.__activeTails()[0].transcript")
+                page.evaluate("""() => {
+                  Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});
+                  window.dispatchEvent(new Event('blur'));
+                }""")
+                page.wait_for_function("window.__activeTails().length===1&&!window.__activeTails()[0].transcript")
+            else:
+                page.evaluate("window.__setConversationState('rest')")
+                _frames(page, 3)
+            tails = page.evaluate("window.__tailOpened()")
+            page.evaluate("window.__setServerReachable(false); window.__setServerReachable(true)")
+            _frames(page, 3)
+            assert page.evaluate("window.__tailOpened()") == tails
+        if not full_container:
+            # Existing unknown-send recovery still runs for status-only readers.
+            page.evaluate("""() => {
+              Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'});
+              window.__setConversationState('opened');
+              window.dispatchEvent(new Event('focus'));
+              window.__delivery='unanswered';
+            }""")
+            page.wait_for_function("window.__activeTails().length===1&&window.__activeTails()[0].transcript")
+            composer.fill("Unknown send still needs receipts")
+            composer.press("Enter")
+            page.wait_for_function("window.__sends?.length === 2")
+            page.evaluate("window.__resolveDelivery()")
+            page.get_by_text("no answer came", exact=False).wait_for()
+            for hidden in (False, True):
+                if hidden:
+                    page.evaluate("""() => {
+                      window.__setConversationState('opened');
+                      Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});
+                      window.dispatchEvent(new Event('blur'));
+                    }""")
+                else:
+                    # A hidden reader supplies the status-only rest baseline.
+                    # Enter rest before visibility returns so it retains that reader.
+                    page.evaluate("""() => {
+                      Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});
+                      window.dispatchEvent(new Event('blur'));
+                    }""")
+                    page.wait_for_function("window.__activeTails().length===1&&!window.__activeTails()[0].transcript")
+                    page.evaluate("window.__setConversationState('rest')")
+                    _frames(page, 3)
+                    page.evaluate("""() => {
+                      Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'});
+                      window.dispatchEvent(new Event('focus'));
+                    }""")
+                page.wait_for_function("window.__activeTails().length===1&&!window.__activeTails()[0].transcript")
+                reads = page.evaluate("window.__recordReads")
+                tails = page.evaluate("window.__tailOpened()")
+                sends = page.evaluate("window.__sends.length")
+                page.evaluate("window.__setServerReachable(false); window.__setServerReachable(true)")
+                page.wait_for_function("before=>window.__recordReads>before", arg=reads)
+                assert page.evaluate("window.__tailOpened()") == tails + 1
+                assert page.evaluate("window.__activeTails()") == [{"transcript": False, "lens": "focus"}]
+                assert page.evaluate("window.__sends.length") == sends
+        page.close()
+    receipt = {"seconds": round(time.perf_counter() - started, 3), "newHosts": 0, "cases": proof}
+    (output / "reconnect-proof.json").write_text(json.dumps(receipt, indent=2))
+    print("RECONNECT_PROOF " + json.dumps(receipt), flush=True)
+
+
 def run(browser, urls):
+    run_reconnect(browser, urls)
     run_credentials(browser, urls)
     run_retirement(browser, urls)
 
