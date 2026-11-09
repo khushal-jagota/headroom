@@ -9,7 +9,7 @@ one another and to the conversation core.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Coroutine, Iterable
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -183,6 +183,13 @@ class MacRunConversations(Protocol):
     ) -> None:
         """At startup: give a fresh child the never-ran prompt a VPS crash kept it from
         getting (see retire_replaced_remote_child), starting it first if needed."""
+        ...
+
+    async def await_late_steer(
+        self, conversation_id: str, uncertain_sequence: int, not_delivered: Awaitable[bool]
+    ) -> None:
+        """After a VPS restart: watch a steer the previous process recorded uncertain at
+        that record row, so one that never arrived still goes as the next message."""
         ...
 
     async def confirm_remote_child_termination(self, reference: ChildReference) -> None: ...

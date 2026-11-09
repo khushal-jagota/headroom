@@ -40,6 +40,7 @@ from planner.executor.configuration import (
     LEASE_INTERVAL_SECONDS,
     MAX_MAILBOX_POLL_BYTES,
     MAX_MAILBOX_POLL_COMMANDS,
+    STEER_DELIVERY_LIMIT_SECONDS,
 )
 from planner.executor.contracts import CommandSettlementReason, MailboxCommandState
 from planner.executor.logic.command_expiry import expiry_reason
@@ -57,6 +58,7 @@ from planner.executor.protocol import (
     ModelListRequest,
     RejectedCommandResult,
     StartRun,
+    Steer,
     WritePrompt,
     as_object,
     encode_bounded,
@@ -108,6 +110,19 @@ def settlement_result(
         child_outcome=CommandOutcome(
             command.command_id, child_command.child, disposition, {"reason": reason.value}
         ),
+    )
+
+
+def steer_never_arrived(outcome: CommandOutcome | None) -> bool:
+    """Whether a steer's settled outcome proves it never reached its turn: refused
+    (withdrawn, expired, or refused by the Mac), or refused by the agent because its turn
+    had ended."""
+    return outcome is not None and (
+        outcome.disposition is CommandDisposition.refused
+        or (
+            outcome.disposition is CommandDisposition.succeeded
+            and outcome.result.get("kind") == "steer_refused"
+        )
     )
 
 
@@ -767,6 +782,93 @@ class SqliteCommandMailbox:
                         started is not None,
                     )
                 )
+            return tuple(found)
+        finally:
+            connection.close()
+
+    def late_steers_left_by_a_restart(
+        self,
+    ) -> tuple[tuple[str, int, str, bool | None], ...]:
+        """Steers the previous VPS process recorded uncertain because no result came in
+        time, whose message has no later outcome: (conversation, uncertain row sequence,
+        command_id, never arrived). Never arrived is None while the row is still open.
+        Blocking.
+
+        The record does not name the steer's row, so each uncertain row is paired, in
+        order, with a steer row of its conversation with the same text and sender that
+        was fetched and had no result within the delivery limit: the rows that make a
+        steer uncertain rather than accepted or refused at once.
+        """
+        from planner.conversation.events import (
+            ConversationEventKind,
+            conversation_event_payload_from_canonical_json,
+        )
+        from planner.conversation.message_content import message_content_text
+
+        limit_ms = int(STEER_DELIVERY_LIMIT_SECONDS * 1000)
+        connection = connect(self.db_path)
+        try:
+            uncertain = connection.execute(
+                "SELECT e.conversation_id,e.sequence,e.payload FROM conversation_events AS e "
+                "WHERE e.kind='prompt_delivery_uncertain' "
+                "AND json_extract(e.payload,'$.mode')='steer' "
+                "AND NOT EXISTS (SELECT 1 FROM conversation_events AS later "
+                "WHERE later.conversation_id=e.conversation_id AND later.sequence>e.sequence "
+                "AND later.kind IN ('prompt','prompt_delivery_refused',"
+                "'prompt_delivery_uncertain','prompt_discarded') "
+                "AND json_extract(later.payload,'$.sender_message_id')="
+                "json_extract(e.payload,'$.sender_message_id')) "
+                "ORDER BY e.conversation_id,e.sequence"
+            ).fetchall()
+            found: list[tuple[str, int, str, bool | None]] = []
+            used: set[str] = set()
+            for conversation_id, sequence, payload_json in uncertain:
+                payload = conversation_event_payload_from_canonical_json(
+                    ConversationEventKind.prompt_delivery_uncertain, str(payload_json)
+                )
+                text = message_content_text(getattr(payload, "content", ()))
+                label = getattr(payload, "sender_label", None)
+                for (
+                    command_id,
+                    command_json,
+                    state,
+                    outcome_json,
+                    created,
+                    finished,
+                ) in connection.execute(
+                    "SELECT command_id,command_json,state,outcome_json,created_at_ms,"
+                    "finished_at_ms FROM executor_commands WHERE conversation_id=? "
+                    "AND operation='steer' AND state<>'waiting' ORDER BY command_sequence",
+                    (conversation_id,),
+                ).fetchall():
+                    if command_id in used:
+                        continue
+                    late = state == MailboxCommandState.delivered.value or (
+                        finished is not None and finished - created >= limit_ms
+                    )
+                    child_command = _mailbox_command(command_json).child_command
+                    arguments = None if child_command is None else child_command.arguments
+                    if (
+                        not late
+                        or not isinstance(arguments, Steer)
+                        or arguments.sender_label != label
+                        or message_content_text(arguments.content) != text
+                    ):
+                        continue
+                    used.add(command_id)
+                    result = _result(outcome_json)
+                    outcome = None if result is None else result.child_outcome
+                    found.append(
+                        (
+                            str(conversation_id),
+                            int(sequence),
+                            str(command_id),
+                            None
+                            if state == MailboxCommandState.delivered.value
+                            else steer_never_arrived(outcome),
+                        )
+                    )
+                    break
             return tuple(found)
         finally:
             connection.close()

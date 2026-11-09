@@ -1517,6 +1517,7 @@ class SqliteProcessConversationSystem:
         steer_turn_token: TurnToken | None = None
         immediate_refusal: PromptDeliveryRefusalReason | None = None
         immediate_fate: HeldPromptPromotionFate | None = None
+        held_before: tuple[str, ...] = ()
         try:
             position = next(
                 (
@@ -1563,6 +1564,9 @@ class SqliteProcessConversationSystem:
                 ):
                     return PromptDeliveryQueued(queue_position=position + 1)
                 self._begin_held_deliveries(state, (held,))
+                held_before = tuple(
+                    candidate.held_prompt_id for candidate in list(state.held_prompts)[:position]
+                )
                 del state.held_prompts[position]
                 self._publish_held_prompts_changed(state)
                 if not backend_supports_steer(state.record.backend_key):
@@ -1719,6 +1723,7 @@ class SqliteProcessConversationSystem:
                 turn_token=steer_turn_token,
                 automatic_notice=automatic_notice,
                 message=held,
+                held_before=held_before,
             )
             self._settle_held_deliveries(state, (held,))
             state.steer_settlements.discard(barrier)
@@ -2130,6 +2135,7 @@ class SqliteProcessConversationSystem:
                 state.child_is_quarantined
                 or state.phase is not _ConversationPhase.idle
                 or state.held_prompts
+                or state.late_steers
             ):
                 return self._hold_prompt(state=state, queue_reason=queue_reason, message=message)
             if self._automatic_compaction_is_due(state):
@@ -2154,8 +2160,10 @@ class SqliteProcessConversationSystem:
         message: _Message,
         *,
         queue_reason: PromptQueueReason = PromptQueueReason.requested,
+        position: int | None = None,
     ) -> PromptDeliveryQueued:
-        """Put one admitted message at the tail. The conversation lock must be held."""
+        """Put one admitted message at the tail, or at ``position``. The conversation
+        lock must be held."""
         held = replace(
             message,
             held_prompt_id=f"held_{uuid4().hex}",
@@ -2166,9 +2174,13 @@ class SqliteProcessConversationSystem:
             ),
             queue_reason=queue_reason,
         )
-        state.held_prompts.append(held)
+        if position is None:
+            state.held_prompts.append(held)
+            position = len(state.held_prompts) - 1
+        else:
+            state.held_prompts.insert(position, held)
         self._publish_held_prompts_changed(state)
-        return PromptDeliveryQueued(queue_position=len(state.held_prompts))
+        return PromptDeliveryQueued(queue_position=position + 1)
 
     def _begin_held_deliveries(
         self, state: _ConversationState, held_prompts: tuple[_Message, ...]
@@ -2322,6 +2334,7 @@ class SqliteProcessConversationSystem:
                 not state.child_is_quarantined
                 and state.phase is _ConversationPhase.idle
                 and not state.held_prompts
+                and not state.late_steers
             ):
                 reservation = await self._reserve_turn(state)
             elif any(not isinstance(piece, MessageText) for piece in message.content):
@@ -2348,6 +2361,7 @@ class SqliteProcessConversationSystem:
                 )
             barrier: asyncio.Event | None = None
             automatic_notice = False
+            held_before = tuple(held.held_prompt_id for held in state.held_prompts)
             if reservation is None and queued is None:
                 automatic_notice = await self._persist(
                     state,
@@ -2418,6 +2432,7 @@ class SqliteProcessConversationSystem:
                 turn_token=running.token,
                 automatic_notice=automatic_notice,
                 message=message,
+                held_before=held_before,
             )
 
             assert barrier is not None
@@ -3372,6 +3387,8 @@ class SqliteProcessConversationSystem:
                 or state.phase is not _ConversationPhase.idle
                 or not state.held_prompts
                 or any(held.delivery_uncertain for held in state.held_prompts)
+                # A steer sent before these may still go first; its watch drains after.
+                or state.late_steers
             ):
                 return
             self._set_phase(state, _ConversationPhase.draining)
@@ -3529,8 +3546,10 @@ class SqliteProcessConversationSystem:
         turn_token: TurnToken | None,
         attempt: LifecycleFact | None = None,
         automatic_notice: bool = False,
+        held_before: tuple[str, ...] = (),
     ) -> PromptDeliveryInjected | PromptDeliveryRefused | PromptDeliveryUncertain:
-        """Record and map one steering outcome while the conversation lock is held."""
+        """Record and map one steering outcome while the conversation lock is held.
+        ``held_before`` names the messages that were waiting when the steer was sent."""
         fate: PromptDeliveryFate
         if isinstance(outcome, BackendSteerAccepted):
             fate = PromptDeliveryInjected()
@@ -3610,43 +3629,129 @@ class SqliteProcessConversationSystem:
                 state.running_turn.automatic_notice and automatic_notice
             )
         if outcome.not_delivered is not None:
-            late = asyncio.create_task(
-                self._queue_late_steer_if_not_delivered(state, outcome.not_delivered, message)
-            )
-            state.late_steers.add(late)
-            late.add_done_callback(state.late_steers.discard)
+            self._watch_late_steer(state, outcome.not_delivered, message, held_before)
         return PromptDeliveryUncertain()
 
-    async def _queue_late_steer_if_not_delivered(
-        self, state: _ConversationState, not_delivered: Awaitable[bool], message: _Message
+    def _watch_late_steer(
+        self,
+        state: _ConversationState,
+        not_delivered: Awaitable[bool],
+        message: _Message,
+        held_before: tuple[str, ...],
     ) -> None:
-        """A steer recorded uncertain that later proves it never reached its turn goes to
-        the line as the next message, as a steer the Mac did not take in time does. Its
-        uncertain row stays: it was true when written, and the delivery that follows is
-        the message's latest outcome."""
-        try:
-            if not await not_delivered or self._shutting_down:
-                return
-            # From here it is an ordinary send, owned as one: a kill no longer drops it.
+        """Wait for a steer recorded uncertain to say whether it never reached its turn.
+
+        Until it says, no held message starts a turn: one sent after the steer must not
+        run before it. A steer that never arrived goes back to the line where it would
+        have stood when it was sent, behind only the held messages sent before it
+        (``held_before``), as a steer the Mac did not take in time does. Its uncertain row
+        stays: it was true when written, and the delivery that follows is the message's
+        latest outcome. A kill drops the wait, as it drops the line.
+        """
+
+        async def watch() -> None:
+            try:
+                never_arrived = await not_delivered
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOGGER.exception(
+                    "conversation %s: a late steer's outcome could not be read",
+                    state.record.conversation_id,
+                )
+                never_arrived = False
             current = asyncio.current_task()
-            if current is not None:
+            if never_arrived and not self._shutting_down:
+                async with state.lock:
+                    already = message.sender_message_id is not None and any(
+                        held.sender_message_id == message.sender_message_id
+                        for held in state.held_prompts
+                    )
+                    if not already:
+                        position = max(
+                            (
+                                index + 1
+                                for index, held in enumerate(state.held_prompts)
+                                if held.held_prompt_id in held_before
+                            ),
+                            default=0,
+                        )
+                        self._hold_prompt(
+                            state=state,
+                            queue_reason=PromptQueueReason.steer_refused,
+                            # The executor-origin send's own record was written with the
+                            # uncertain row.
+                            message=replace(message, recording_receipt=None),
+                            position=position,
+                        )
+                    if current is not None:
+                        state.late_steers.discard(current)
+            elif current is not None:
                 state.late_steers.discard(current)
-            # The executor-origin send's own record was written with the uncertain row.
-            await self._own_settlement(
-                state,
-                self._queue(
-                    state=state,
-                    queue_reason=PromptQueueReason.steer_refused,
-                    message=replace(message, recording_receipt=None),
+            if not self._shutting_down:
+                await self._drain_held_prompts(state)
+
+        late = asyncio.create_task(watch())
+        state.late_steers.add(late)
+        late.add_done_callback(state.late_steers.discard)
+
+    async def await_late_steer(
+        self, conversation_id: str, uncertain_sequence: int, not_delivered: Awaitable[bool]
+    ) -> None:
+        """After a VPS restart: watch a steer whose uncertain row the previous process
+        wrote, as that process would have, so one that never arrived still goes as the
+        next message. Nothing is done if the row's message has a later outcome, or is
+        already in the line."""
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return
+        rows = await self._store.read_events_after(conversation_id, uncertain_sequence - 1)
+        row = next((event for event in rows if event.sequence == uncertain_sequence), None)
+        if row is None or not isinstance(row.payload, PromptDeliveryUncertainEventPayload):
+            return
+        payload = row.payload
+        if payload.mode is not PromptDeliveryMode.steer:
+            return
+        if any(
+            event.sequence > uncertain_sequence
+            and isinstance(
+                event.payload,
+                (
+                    PromptEventPayload,
+                    PromptDeliveryRefusedEventPayload,
+                    PromptDeliveryUncertainEventPayload,
+                    PromptDiscardedEventPayload,
                 ),
             )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            LOGGER.exception(
-                "conversation %s: a steer that never reached its turn was not queued",
-                state.record.conversation_id,
+            and (
+                event.payload.sender_message_id == payload.sender_message_id
+                if payload.sender_message_id is not None
+                # Without a sender id, the same words from the same sender delivered later.
+                else isinstance(event.payload, PromptEventPayload)
+                and event.payload.content == payload.content
+                and event.payload.sender_label == payload.sender_label
             )
+            for event in rows
+        ):
+            return
+        message = _Message(
+            held_prompt_id="",
+            content=payload.content,
+            sender_label=payload.sender_label,
+            model_change=None,
+            reasoning_effort_change=None,
+            sender_message_id=payload.sender_message_id,
+            sent_at_unix_milliseconds=payload.sent_at_unix_milliseconds,
+            snapshot_sent_at_unix_milliseconds=0,
+            sender=payload.sender,
+            recipient=payload.recipient,
+            queue_reason=PromptQueueReason.steer_refused,
+            owner_read_through_sequence=None,
+            recovery_references=payload.recovery_references,
+            system_generated=payload.sender is None,
+        )
+        # Sent before the restart, so ahead of anything held since.
+        self._watch_late_steer(state, not_delivered, message, ())
 
     # --- turns --------------------------------------------------------------------------
 

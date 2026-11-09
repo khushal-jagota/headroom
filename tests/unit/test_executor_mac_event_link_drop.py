@@ -122,6 +122,11 @@ class _Conversations:
     ) -> None:
         await self.system.stop_interrupted_remote_child(reference, child)
 
+    async def await_late_steer(
+        self, conversation_id: str, uncertain_sequence: int, not_delivered: object
+    ) -> None:
+        raise AssertionError("no late steer is watched again here")
+
     async def resume_undelivered_prompt(
         self, reference: ChildReference, prompt: object, *, start_needed: bool
     ) -> None:

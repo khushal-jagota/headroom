@@ -1984,8 +1984,9 @@ def test_an_uncertain_steer_that_later_proves_it_never_arrived_becomes_the_next_
 ) -> None:
     """Risk: a Mac steer recorded uncertain whose row later proves it never reached its
     turn (refused because the turn ended, or withdrawn when the Mac process was replaced)
-    is lost. It goes to the line as the next message; one that did arrive is not sent
-    again."""
+    is lost, or goes behind a message sent after it, because its turn ended first. It
+    goes to the line as the next message, ahead of what was sent after it, and until it
+    is known nothing sent after it starts. One that did arrive is not sent again."""
 
     async def exercise() -> None:
         monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
@@ -2001,17 +2002,71 @@ def test_an_uncertain_steer_that_later_proves_it_never_arrived_becomes_the_next_
             mode=PromptDeliveryMode.steer,
         )
         assert fate == PromptDeliveryUncertain()
-        assert await harness.system.held_prompts("c") == ()
+        await harness.system.send("c", text_message_content("next"), sender_label="owner")
+        # The turn ends before the steer's row says anything: "next" waits for it.
+        await harness.complete_turn("c")
+        assert [write.text for write in backend.writes if not write.steered] == ["incumbent"]
         verdict.set_result(never_arrived)
         await harness.settle()
-        held = await harness.system.held_prompts("c")
-        assert [message_content_text(message.content) for message in held] == (
-            ["late steer"] if never_arrived else []
+        # The steer goes first; the two may share the next turn.
+        assert [write.text for write in backend.writes if not write.steered][1:] == [
+            "late steer\n\nowner:\nnext" if never_arrived else "next"
+        ]
+        assert await harness.system.held_prompts("c") == ()
+
+    _run(exercise)
+
+
+def test_a_steer_left_uncertain_by_the_previous_process_goes_as_the_next_message_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: the VPS restarts while a Mac steer is recorded uncertain. The wait for its
+    row lived in memory, so a row that then proves the steer never arrived loses it.
+    Gap: the case above keeps one process. A restarted core watches it again from its
+    uncertain row, delivers it once, and a later restart does not send it again."""
+    monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+    db_path = tmp_path / "conversations.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    conn.close()
+
+    async def exercise() -> None:
+        first = _Harness(db_path)
+        await _start(first, "c")
+        await first.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        first.backend("c").steer_outcome = BackendSteerUncertain(
+            None, not_delivered=asyncio.get_running_loop().create_future()
         )
-        await harness.complete_turn("c")
-        assert [write.text for write in backend.writes if not write.steered][-1] == (
-            "late steer" if never_arrived else "incumbent"
+        await first.system.send(
+            "c",
+            text_message_content("late steer"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.steer,
+            sender_message_id="steer-1",
         )
+        await first.complete_turn("c")
+        (uncertain,) = [
+            event.sequence
+            for event in await first.events("c")
+            if event.kind is ConversationEventKind.prompt_delivery_uncertain
+        ]
+        await first.system.shutdown()
+
+        for _ in range(2):  # A second restart finds it delivered.
+            restarted = _Harness(db_path)
+            try:
+                arrived: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+                arrived.set_result(True)
+                await restarted.system.await_late_steer("c", uncertain, arrived)
+                await restarted.settle()
+            finally:
+                await restarted.system.shutdown()
+        prompts = [
+            message_content_text(event.payload.content)
+            for event in await _Harness(db_path).events("c")
+            if isinstance(event.payload, PromptEventPayload)
+        ]
+        assert prompts == ["incumbent", "late steer"]
 
     _run(exercise)
 
