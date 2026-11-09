@@ -60,6 +60,7 @@
       onclick={intents.stop}
     ><span class="chat-send-fill" aria-hidden="true"></span></button>
   {/if}
+  <!-- Sending leaves the cursor in the field, so a phone's keyboard stays up for the reply. -->
   {#if view.submit.active || view.submit.sending}
     <button
       type="button"
@@ -71,6 +72,7 @@
       disabled={view.submit.disabled}
       title={view.submit.title}
       aria-label={view.submit.ariaLabel}
+      onmousedown={(event) => event.preventDefault()}
       onclick={intents.send}
     ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
   {/if}
