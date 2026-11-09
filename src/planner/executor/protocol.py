@@ -23,7 +23,6 @@ from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
     AgentMessageDelta,
     BackendEventValue,
-    BackendPromptAccepted,
     BackendStreamEnded,
     BackgroundTaskEnded,
     BackgroundTaskStarted,
@@ -52,9 +51,9 @@ from planner.execution_identity import (
     ChildReference,
     ExecutorIdentity,
     ProtocolRefused,
-    supports_executor_versions,
 )
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
+from planner.executor.update_contracts import MacUpdateCheck
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -94,34 +93,6 @@ class CanonicalSkillSnapshot:
 
     sources: tuple[CanonicalSkillSource, ...]
     required_skill_names: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class FileTransfer:
-    """Generation reservation; publication authority stays with the original child."""
-
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
-
-    transfer_id: str
-    direction: Literal["upload", "download"]
-    manifest: FileManifest
-
-
-class ConnectionState(StrEnum):
-    disconnected = "disconnected"
-    reconciling = "reconciling"
-    ready = "ready"
-    refused = "refused"
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutorHealth:
-    identity: ExecutorIdentity
-    process_id: int
-    connection_state: ConnectionState
-    reconciliation_ready: bool
-    observed_at_ms: int
-    lost_at_ms: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,23 +138,6 @@ class FileUploadRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class WithdrawCommands:
-    child: ChildReference
-    command_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class WithdrawResult:
-    withdrawn: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class FileDownloadRequest:
-    command_id: str
-    stored_file_id: str
-
-
-@dataclass(frozen=True, slots=True)
 class FileSnapshot:
     manifest: FileManifest
     local_path: Path
@@ -213,14 +167,6 @@ class QueuedEnvelope:
     kind: EnvelopeKind
     payload: JsonObject
     file_dependencies: tuple[FileManifest, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class EnvelopeRefusal:
-    """A sender's permanent preparation failure, recorded as the item's receipt."""
-
-    envelope: QueuedEnvelope
-    error_message: str
 
 
 class ReceiptDisposition(StrEnum):
@@ -452,19 +398,6 @@ class ChildCommand:
                 raise ValueError("durable answer conflicts with command")
 
 
-def encode_command_for_peer(command: ChildCommand, protocol_version: int) -> JsonObject:
-    """Protocols 20 and 21 have identical commands, including nested start values.
-
-    Protocol 21 adds only a Mac-to-VPS event. Future command changes must supply an
-    explicit older-peer adaptation here, verified against its frozen schema.
-    """
-    from planner.execution_configuration import SPOOL_FORMAT_VERSION
-
-    if not supports_executor_versions(protocol_version, SPOOL_FORMAT_VERSION):
-        raise ProtocolRefused("unsupported command peer protocol")
-    return as_object(command)
-
-
 class CommandDisposition(StrEnum):
     succeeded = "succeeded"
     refused = "refused"
@@ -477,32 +410,6 @@ class CommandOutcome:
     child: ChildReference
     disposition: CommandDisposition
     result: JsonObject
-
-
-@dataclass(frozen=True, slots=True)
-class ChildInventory:
-    child: ChildReference
-    active_turn: TurnToken | None
-    pending_asks: tuple[AskReference, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class CommandState:
-    command_id: str
-    phase: Literal["unknown", "preparing", "invoking", "finished"]
-    outcome: CommandOutcome | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ReconnectAsk:
-    command_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ReconnectResult:
-    identity: ExecutorIdentity
-    commands: tuple[CommandState, ...]
-    children: tuple[ChildInventory, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,47 +433,6 @@ class Quiescence:
                 or self.unsent_entry_count
             )
         )
-
-
-class WireMessageKind(StrEnum):
-    hello = "hello"
-    hello_accepted = "hello_accepted"
-    protocol_refused = "protocol_refused"
-    reconnect_ask = "reconnect_ask"
-    reconnect_result = "reconnect_result"
-    reconciliation_ready = "reconciliation_ready"
-    live_backend_event = "live_backend_event"
-    envelope = "envelope"
-    refuse_envelope = "refuse_envelope"
-    receipt = "receipt"
-    missing_files = "missing_files"
-    put_file = "put_file"
-    withdraw = "withdraw"
-    withdraw_result = "withdraw_result"
-    get_file = "get_file"
-    file_transfer = "file_transfer"
-    command = "command"
-    command_outcome = "command_outcome"
-    read_request = "read_request"
-    read_response = "read_response"
-    catalog_request = "catalog_request"
-    catalog_response = "catalog_response"
-    health = "health"
-    error = "error"
-
-
-@dataclass(frozen=True, slots=True)
-class WireMessage:
-    """Frame body: {kind, request_id, payload}; kind selects the validated codec.
-
-    request_id correlates one exchange only. Domain retry identity always remains
-    submission_id or command_id in the payload. Never redispatch a
-    native command merely because a request_id response was lost.
-    """
-
-    kind: WireMessageKind
-    request_id: str
-    payload: JsonObject
 
 
 class IpcOperation(StrEnum):
@@ -645,6 +511,269 @@ class QuiescenceReceipt:
     exit_committed: bool
 
 
+# Protocol 22: the mailbox transport over HTTPS. Each route's body is one of these.
+# Unknown fields are ignored so the next protocol can add one without a lockstep
+# release; identity checks stay strict through parse_identity.
+_WIRE_CONFIG: ConfigDict = ConfigDict(extra="ignore")
+
+
+@dataclass(frozen=True, slots=True)
+class WaitingConversation:
+    """A conversation with outbox items the VPS has not receipted, named by its oldest."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    conversation_id: str
+    oldest_sequence: int
+
+
+@dataclass(frozen=True, slots=True)
+class WorkingTurn:
+    """A turn the Mac is still working on. tool_running: a tool call started and has
+    not finished, which exempts the turn from the silent-turn stall rule."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    child: ChildReference
+    turn: TurnToken
+    tool_running: bool
+
+
+@dataclass(frozen=True, slots=True)
+class LeaseRequest:
+    """Route 1, every LEASE_INTERVAL_SECONDS. The Mac's own clock is display only."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    identity: ExecutorIdentity
+    process_id: int
+    mac_wall_clock_ms: int
+    # Outbox items without a receipt, and the age of the oldest of them.
+    queue_depth: int
+    oldest_item_age_ms: int | None
+    # Oldest first, at most MAX_LEASE_WAITING_CONVERSATIONS. Truncated means more
+    # conversations are waiting than are listed, so no drain may finish on this lease.
+    waiting_conversations: tuple[WaitingConversation, ...]
+    waiting_conversations_truncated: bool
+    working_turns: tuple[WorkingTurn, ...]
+    admission_stopped: bool
+    going_to_sleep: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class LeaseReply:
+    """mailbox_high_sequence is the highest command_sequence the VPS holds, 0 if none.
+    A Mac whose poll cursor is above it lowers the cursor to it (a restored database)."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    accepted_at_vps_ms: int
+    away_after_seconds: float
+    update: MacUpdateCheck
+    mailbox_high_sequence: int
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutorRefusal:
+    """Why the VPS refused this Mac. reason is MAC_NEEDS_UPDATE or MAC_VERSION_INCOMPATIBLE
+    from execution_identity. peer_identity is None for an old WebSocket client."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    reason: str
+    peer_identity: ExecutorIdentity | None
+    server_identity: ExecutorIdentity
+    refused_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class LeaseRefused:
+    """Route 1's 409 body. error is PlannerError.to_payload()["error"]. refusal is set for
+    a version refusal; executor_incarnation_not_current means this process was replaced."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    error: JsonObject
+    refusal: ExecutorRefusal | None
+    update: MacUpdateCheck | None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelListRequest:
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    backend_key: str
+    refresh: bool
+
+
+class MailboxOperation(StrEnum):
+    """Every command kind the mailbox carries: the child operations, plus a model list."""
+
+    start = "start"
+    write_prompt = "write_prompt"
+    steer = "steer"
+    cancel_running_turn = "cancel_running_turn"
+    answer_permission_ask = "answer_permission_ask"
+    answer_user_input = "answer_user_input"
+    stop = "stop"
+    read_model_list = "read_model_list"
+
+
+@dataclass(frozen=True, slots=True)
+class MailboxCommand:
+    """One executor_commands row as the Mac receives it. Exactly one payload is set.
+
+    command_sequence is the mailbox cursor; command_id is the identity the Mac's
+    journal deduplicates by, so a redelivered or restored command never runs twice.
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    command_sequence: int
+    command_id: str
+    created_at_vps_ms: int
+    child_command: ChildCommand | None = None
+    model_list_request: ModelListRequest | None = None
+
+    def __post_init__(self) -> None:
+        if (self.child_command is None) == (self.model_list_request is None):
+            raise ValueError("a mailbox command carries exactly one payload")
+        if self.child_command is not None and self.child_command.command_id != self.command_id:
+            raise ValueError("mailbox command id conflicts with its child command")
+
+    @property
+    def operation(self) -> MailboxOperation:
+        if self.child_command is not None:
+            return MailboxOperation(self.child_command.operation.value)
+        return MailboxOperation.read_model_list
+
+
+@dataclass(frozen=True, slots=True)
+class MailboxPollReply:
+    """Route 2. Ascending command_sequence, at most MAX_MAILBOX_POLL_COMMANDS."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    commands: tuple[MailboxCommand, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CommandResult:
+    """A finished command's result. child_outcome for a child command; model_list (a
+    BackendSnapshot as JSON) for read_model_list."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    command_id: str
+    child_outcome: CommandOutcome | None = None
+    model_list: JsonObject | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CommandOutcomeReport:
+    """Route 3's request, at most MAX_COMMAND_OUTCOMES_PER_REPORT results."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    outcomes: tuple[CommandResult, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RejectedCommandResult:
+    """A result the VPS will never record (unknown id, other incarnation, malformed).
+    The Mac marks it reported and logs it, so it never blocks the reporter."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    command_id: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class CommandOutcomeReply:
+    """Route 3's 200 answer. recorded includes results the VPS already had (first wins)."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    recorded: tuple[str, ...]
+    rejected: tuple[RejectedCommandResult, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ItemSubmission:
+    """One outbox item. sender_refusal carries a permanent preparation failure (such as
+    an upload refused for good), which the VPS records as the item's refused receipt."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    envelope: QueuedEnvelope
+    sender_refusal: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ItemBatch:
+    """Route 4: one conversation's items in ascending sequence, at most
+    MAX_ITEM_BATCH_ITEMS and MAX_ITEM_BATCH_BYTES. A batch ends right after the first
+    item that is not a plain backend event (another kind, or any file dependencies)."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    sender_id: str
+    items: tuple[ItemSubmission, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ItemBatchStop:
+    """Where the VPS stopped: no receipt for this sequence or any later one."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    sequence: int
+    reason: Literal["retry_later", "missing_files"]
+    message: str
+    missing_files: tuple[FileManifest, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ItemBatchReply:
+    """Route 4's 200 answer: receipts for a prefix of the batch, in order, and where it
+    stopped if it did. Retry-later always comes back here, never as a 503."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    receipts: tuple[AcceptanceReceipt, ...]
+    stop: ItemBatchStop | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LiveEventBatch:
+    """Route 8: at most MAX_LIVE_EVENTS_PER_BATCH, methods in LIVE_BACKEND_EVENT_METHODS."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    events: tuple[BackendEvent, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MacLocalStatus:
+    """The executor's own health over local IPC. Times are the Mac's clock."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    identity: ExecutorIdentity
+    process_id: int
+    lease_accepted_at_mac_ms: int | None
+    last_lease_failure: str | None
+    refusal: ExecutorRefusal | None
+    admission_stopped: bool
+    going_to_sleep: bool
+
+
+def encode_bounded(value: object, *, limit: int = MAX_ENVELOPE_BYTES) -> bytes:
+    """Encode one protocol value as JSON, refusing an empty or oversized body.
+
+    The size check every sender makes before it stores or sends a value. An item batch
+    passes MAX_ITEM_BATCH_BYTES; everything else keeps the envelope limit.
+    """
+    body = type_adapter(type(value)).dump_json(value)
+    if not body or len(body) > limit:
+        raise ProtocolRefused("value exceeds its encoded size limit")
+    return body
+
+
+def decode_bounded[T](body: bytes, value_type: type[T], *, limit: int = MAX_ENVELOPE_BYTES) -> T:
+    """Decode one protocol value from a JSON body of at most limit bytes.
+
+    Lax, not strict: a ChildCommand decodes its arguments in a before-validator, which
+    strict mode would refuse. An identity inside the value is checked only by its shape
+    here; the receiver runs validate_identity on it before it trusts it.
+    """
+    if not body or len(body) > limit:
+        raise ProtocolRefused("body exceeds its size limit")
+    return type_adapter(value_type).validate_json(body)
+
+
 class FrameReader(Protocol):
     async def readexactly(self, n: int) -> bytes: ...
 
@@ -692,12 +821,6 @@ def decode_event_arguments(event: BackendEvent) -> BackendEventValue:
     return type_adapter(_BACKEND_EVENT_TYPES[event.method]).validate_python(event.arguments)
 
 
-def decode_prompt_result(result: JsonObject) -> BackendPromptAccepted:
-    return BackendPromptAccepted(
-        composed_content_delivered=bool(result["composed_content_delivered"]),
-    )
-
-
 def _encode_payload(value: object) -> bytes:
     body = type_adapter(type(value)).dump_json(value)
     if not body or len(body) > MAX_ENVELOPE_BYTES:
@@ -711,16 +834,6 @@ async def read_typed_frame[T](reader: FrameReader, value_type: type[T]) -> T:
     if not length or length > MAX_ENVELOPE_BYTES:
         raise ProtocolRefused("invalid frame length")
     return type_adapter(value_type).validate_json(await reader.readexactly(length), strict=True)
-
-
-def encode_message(message: WireMessage) -> bytes:
-    return _encode_payload(message)
-
-
-def decode_message(body: bytes) -> WireMessage:
-    if not body or len(body) > MAX_ENVELOPE_BYTES:
-        raise ProtocolRefused("message exceeds envelope limit")
-    return type_adapter(WireMessage).validate_json(body, strict=True)
 
 
 def encode_frame(value: object) -> bytes:

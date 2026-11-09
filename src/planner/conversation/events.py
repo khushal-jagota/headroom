@@ -268,7 +268,8 @@ class PromptDeliveryRefusedEventPayload:
 class PromptDeliveryUncertainEventPayload:
     """A prompt whose admission stayed unknown after possible transmission.
 
-    Panels does not retransmit it. A sender-id replay reads the latest explicit outcome.
+    Panels retransmits it only when its Mac command later proves it never arrived; it
+    then goes as the next message. A sender-id replay reads the latest explicit outcome.
     Reviewed provider evidence can append a later receipt that settles this row, while
     the original uncertainty remains in the append-only history.
     """

@@ -1722,7 +1722,7 @@ def verify_owner_updates(browser, url):
         capture("available")
 
         # The Mac's diagnostics are not a separate block in the shell.
-        backend.mac_details = {"identity": None, "connection_state": "disconnected", "last_contact_at_ms": 1000, "refusal": None, "update": None}
+        backend.mac_details = {"presence": "not_heard_from", "since_ms": 1000, "identity": None, "last_contact_at_ms": 1000, "refusal": None, "update": None}
         signal()
         expect(page.locator("[data-mac-status]")).to_have_count(0)
 
@@ -1797,7 +1797,7 @@ def verify_owner_updates(browser, url):
         no_restarting_text()
 
         # The Mac cannot be reached. This page is behind and cannot write, so it refreshes first.
-        backend.mac_details = {"identity": None, "connection_state": "disconnected", "last_contact_at_ms": int(time.time() * 1000) - 14 * 60_000,
+        backend.mac_details = {"presence": "not_heard_from", "since_ms": int(time.time() * 1000) - 14 * 60_000, "identity": None, "last_contact_at_ms": int(time.time() * 1000) - 14 * 60_000,
                                "refusal": None, "update": None}
         backend.mac_outcome("mac_unreachable")
         signal()

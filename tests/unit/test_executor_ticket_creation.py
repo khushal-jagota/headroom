@@ -15,12 +15,12 @@ from typing import Any, cast
 
 import pytest
 from tests.support.executor_inbox import lookup_receipt
+from tests.support.executor_presence import mac_identity, make_current
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.clock import RealClock
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.protocol import (
@@ -59,11 +59,10 @@ def _setup(
         "'codex','gpt-6-sol',1,1)"
     )
     conn.commit()
+    identity = mac_identity()
+    make_current(path, identity)
     endpoint = VpsExecutor(path, RealClock())
-    identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1)
-    endpoint.runs.store.begin_connection(identity)
-    endpoint.runs.store.mark_ready(identity)
-    child = ChildReference("incarnation", "child", "source-conversation")
+    child = ChildReference(identity.executor_incarnation, "child", "source-conversation")
     endpoint.runs.store.register_child(child, *child_actor, 1002)
     resolver = ScriptedPreparation()
     endpoint.bind_conversations(cast(Any, resolver))
@@ -195,7 +194,7 @@ def test_native_creation_source_closure_before_commit_is_a_durable_refusal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     endpoint, preparation, envelope, identity = _setup(tmp_db, tmp_path, monkeypatch)
-    original = ChildReference("incarnation", "child", "source-conversation")
+    original = ChildReference(identity.executor_incarnation, "child", "source-conversation")
     original_accept = endpoint.inbox.store.accept
 
     def close_before_accept(*args: Any, **kwargs: Any) -> Any:

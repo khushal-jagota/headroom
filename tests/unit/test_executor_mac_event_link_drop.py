@@ -1,17 +1,30 @@
-"""A dropped Mac link must never freeze a Mac event, wherever the event is waiting.
+"""A dropped Mac request must never freeze a Mac event, wherever the event is waiting.
 
 On 7 November 2026 a Mac backend event passed its first connection check, waited for
 the conversation lock, and then failed its write because the link had dropped in
 between. The store parked the write on an event nothing ever set, holding the
-conversation lock and the inbox lock forever. These tests drop the link (and also
-reconnect with a newer connection_generation) at each place a Mac event can wait on its
-way into the record, and hold some of those waits past the time limit.
+conversation lock and the inbox lock forever. The link is now HTTPS mailboxes: an item
+arrives in a route-4 batch (VpsExecutor.accept_items), and the Mac is present while its
+leases arrive. These tests drop the request (the client goes away, so the route call is
+cancelled) and let the lease lapse, and also lease again from the same process, at each
+place a Mac event can wait on its way into the record. They hold some of those waits past
+the time limit, and they let another process lease while the event waits.
 
 Rules proved here:
-- An event is judged by its sender's process (executor_incarnation), never by the link.
+- An event is judged by its sender's process (executor_incarnation), never by the
+  request or by presence: a cancelled route call does not cancel its save, because the
+  batch runs in a task VpsExecutor owns and awaits shielded.
+- The sender is fenced inside the receipt's transaction: once another process is
+  current, the waiting event of the old one gets no receipt and saves nothing, and the
+  new process's resend of it saves exactly once while the child's assignment is open.
 - A wait past MAC_ITEM_RETRY_LATER_SECONDS, or a failed write, answers "retry later":
   no receipt, nothing recorded, memory as it was, every lock let go, no task left behind.
+  Route 4 says it as ItemBatchReply.stop, never as an error status.
 - The resend gets one receipt and the event takes effect exactly once.
+
+Layer: the real conversation core, inbox and SQLite (the _case harness of
+test_executor_event_persistence), with VpsExecutor's typed route adapters in place of
+HTTP. Contract §8.4, as amended by §11.2 M7.
 """
 
 from __future__ import annotations
@@ -20,39 +33,47 @@ import asyncio
 import logging
 import sqlite3
 import threading
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from tests.support.executor_inbox import lookup_receipt
+from tests.support.executor_presence import lease_request, mac_identity
 from tests.unit.test_conversation_api import _Harness
 from tests.unit.test_conversation_executor_publication import _envelope
 from tests.unit.test_executor_event_persistence import _case
 
 import planner.executor.vps_inbox as vps_inbox
-from planner.conversation.backends.contracts import ToolCallStarted
+from planner.conversation.backends.contracts import BackendChild, ToolCallStarted, TurnToken
 from planner.conversation.events import ConversationEventKind
-from planner.conversation.system import _ConversationState, _ReservedTurn
+from planner.conversation.system import (
+    SqliteProcessConversationSystem,
+    _ConversationState,
+    _ReservedTurn,
+)
 from planner.core.clock import RealClock
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import ChangeSignallingConnection
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ExecutorIdentity
-from planner.executor.link import Link
+from planner.execution_configuration import PROTOCOL_VERSION
+from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.executor.clock import now_ms
+from planner.executor.configuration import MAC_AWAY_AFTER_SECONDS
 from planner.executor.protocol import (
     AcceptanceReceipt,
     BackendEvent,
     BackendEventMethod,
     EnvelopeKind,
+    ItemBatch,
+    ItemBatchReply,
+    ItemSubmission,
     JsonObject,
+    LeaseReply,
     QueuedEnvelope,
     ReceiptDisposition,
-    WireMessage,
-    WireMessageKind,
-    as_object,
+    WaitingConversation,
 )
 from planner.executor.vps_inbox import InboxStore
 from planner.executor.vps_transport import VpsExecutor
@@ -61,17 +82,6 @@ from planner.executor.vps_transport import VpsExecutor
 SETTLES_WITHIN_SECONDS = 5.0
 # Short enough to keep the suite fast; the production value is in core/config.py.
 TEST_RETRY_LATER_SECONDS = 0.3
-
-
-def _reconnected(identity: ExecutorIdentity) -> ExecutorIdentity:
-    """The same Mac process on its next link: same incarnation, newer generation."""
-    return ExecutorIdentity(
-        PROTOCOL_VERSION,
-        "a" * 40,
-        SPOOL_FORMAT_VERSION,
-        identity.executor_incarnation,
-        identity.connection_generation + 1,
-    )
 
 
 async def _until(condition: Callable[[], bool], what: str) -> None:
@@ -86,6 +96,52 @@ def _waiting_on(primitive: asyncio.Lock | asyncio.Event) -> bool:
     return bool(getattr(primitive, "_waiters", None))
 
 
+def _batch(envelope: QueuedEnvelope) -> ItemBatch:
+    return ItemBatch(envelope.sender_id, (ItemSubmission(envelope),))
+
+
+@dataclass
+class _Conversations:
+    """The conversation core as MacRuns sees it. retire_replaced_remote_child is only
+    recorded and closes nothing, as when the core no longer holds the child, so the drain
+    closes the run itself; the rest is the real system's."""
+
+    system: SqliteProcessConversationSystem
+    retired: list[tuple[ChildReference, str]] = field(default_factory=list)
+
+    async def emit_answer(
+        self, turn: TurnToken, emit: Callable[[], Coroutine[Any, Any, object]]
+    ) -> None:
+        await self.system.emit_answer(turn, emit)
+
+    async def confirm_remote_child_termination(self, reference: ChildReference) -> None:
+        await self.system.confirm_remote_child_termination(reference)
+
+    async def stop_interrupted_remote_child(
+        self, reference: ChildReference, child: BackendChild
+    ) -> None:
+        await self.system.stop_interrupted_remote_child(reference, child)
+
+    async def await_late_steer(
+        self, conversation_id: str, uncertain_sequence: int, not_delivered: object
+    ) -> None:
+        raise AssertionError("no late steer is watched again here")
+
+    async def resume_undelivered_prompt(
+        self, reference: ChildReference, prompt: object, *, start_needed: bool
+    ) -> None:
+        raise AssertionError("no prompt is written again here")
+
+    async def retire_replaced_remote_child(
+        self,
+        reference: ChildReference,
+        *,
+        replaced_by: str,
+        undelivered_prompt: object = None,
+    ) -> None:
+        self.retired.append((reference, replaced_by))
+
+
 @dataclass
 class _World:
     harness: _Harness
@@ -95,28 +151,53 @@ class _World:
     envelope: QueuedEnvelope
     endpoint: VpsExecutor
     state: _ConversationState
+    conversations: _Conversations
 
     @property
     def inbox_lock(self) -> asyncio.Lock:
         return self.endpoint.inbox._conversation_locks.setdefault("c", asyncio.Lock())
 
-    async def drop_link(self, link_event: str) -> ExecutorIdentity:
-        """What VpsExecutor.link_down writes, then optionally the Mac's reconnect."""
-        await asyncio.to_thread(self.store.runs.mark_lost, self.identity)
-        if link_event == "lost":
-            return self.identity
-        assert link_event == "reconnected"
-        return await self.reconnect()
+    def send(
+        self, envelope: QueuedEnvelope | None = None, identity: ExecutorIdentity | None = None
+    ) -> asyncio.Task[ItemBatchReply]:
+        """The Mac's route-4 request for one item, as a task the test may cancel."""
+        return asyncio.create_task(
+            self.endpoint.accept_items(
+                identity or self.identity, "c", _batch(envelope or self.envelope)
+            )
+        )
 
-    async def reconnect(self) -> ExecutorIdentity:
-        current = self.endpoint.runs.identity
-        assert current is not None
-        await asyncio.to_thread(self.store.runs.mark_lost, current)
-        following = _reconnected(current)
-        await asyncio.to_thread(self.store.runs.begin_connection, following)
-        await asyncio.to_thread(self.store.runs.mark_ready, following)
-        self.endpoint.runs.identity = following
-        return following
+    def owned_work(self) -> asyncio.Task[Any]:
+        """The batch's own task, which a cancelled route call leaves running."""
+        (work,) = tuple(self.endpoint._owned)
+        return work
+
+    async def drop_request(self, route: asyncio.Task[ItemBatchReply], link_event: str) -> None:
+        """The client goes away (its route call is cancelled), its leases stop until the
+        Mac is judged away, and with "reconnected" the same process leases again."""
+        route.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await route
+        self.lapse_lease()
+        if link_event == "reconnected":
+            await self.lease()
+        else:
+            assert link_event == "lost"
+
+    def lapse_lease(self) -> None:
+        """No lease for longer than MAC_AWAY_AFTER_SECONDS, by the VPS clock."""
+        skew_ms = int((MAC_AWAY_AFTER_SECONDS + 1) * 1000)
+        self.endpoint.presence._clock = lambda: now_ms() + skew_ms
+        assert self.endpoint.presence.judgement().presence == "not_heard_from"
+
+    async def lease(
+        self,
+        identity: ExecutorIdentity | None = None,
+        waiting: tuple[WaitingConversation, ...] = (),
+    ) -> None:
+        reply = await self.endpoint.lease(lease_request(identity or self.identity, waiting=waiting))
+        assert isinstance(reply, LeaseReply)
+        assert self.endpoint.presence.is_present()
 
     async def tool_rows(self) -> int:
         rows = await self.harness.store.read_events_after("c", 0)
@@ -130,6 +211,7 @@ class _World:
     async def no_task_left_behind(self) -> None:
         # A finished task leaves the set on the loop's next turn.
         await _until(lambda: not self.state.settlement_tasks, "no settlement task left")
+        await _until(lambda: not self.endpoint._owned, "no owned route task left")
 
 
 @asynccontextmanager
@@ -137,10 +219,16 @@ async def _world(root: Path) -> AsyncIterator[_World]:
     async with _case(root, True) as (harness, store, identity, event, envelope):
         state = harness.system._conversations["c"]
         await state.backend_event_queue.join()
+        # _case made identity's process current, so the endpoint starts with it present.
         endpoint = VpsExecutor(str(harness.db_path), RealClock())
         endpoint.bind_conversations(harness.system)
-        endpoint.runs.identity = identity
-        yield _World(harness, store, identity, event, envelope, endpoint, state)
+        endpoint.presence.returned = None  # no model-list rows on a lease
+        conversations = _Conversations(harness.system)
+        endpoint.runs.conversations = conversations
+        try:
+            yield _World(harness, store, identity, event, envelope, endpoint, state, conversations)
+        finally:
+            await endpoint.close()
 
 
 # --- where a Mac event can wait --------------------------------------------------------
@@ -236,7 +324,7 @@ def _holds(monkeypatch: pytest.MonkeyPatch) -> dict[str, _HoldFactory]:
 
     async def write(world: _World) -> _Hold:
         # Past every wait and holding the conversation lock, as its write begins: the
-        # in-transaction receipt lookup that refused on 7 November runs after this.
+        # in-transaction receipt lookup and sender fence run after this.
         entered, release = asyncio.Event(), asyncio.Event()
         original = world.harness.store.commit_backend_event
 
@@ -286,10 +374,16 @@ def _no_save_trouble(caplog: pytest.LogCaptureFixture) -> None:
     assert trouble == []
 
 
+def _only_receipt(reply: ItemBatchReply) -> AcceptanceReceipt:
+    assert reply.stop is None
+    (receipt,) = reply.receipts
+    return receipt
+
+
 @pytest.mark.parametrize(
     ("wait_point", "link_event"),
     [(point, event) for point in ALL_WAITS for event in ("lost", "reconnected")]
-    # The control: the same wait with the link left alone.
+    # The control: the same wait with the request and the lease left alone.
     + [("conversation_lock", "none")],
 )
 def test_a_link_drop_while_a_mac_event_waits_does_not_fail_its_save(
@@ -304,34 +398,32 @@ def test_a_link_drop_while_a_mac_event_waits_does_not_fail_its_save(
     async def exercise() -> None:
         async with _world(tmp_path) as world:
             reached, release = await _holds(monkeypatch)[wait_point](world)
-            accept = asyncio.create_task(
-                world.endpoint.inbox.accept(world.envelope, world.identity)
-            )
+            route = world.send()
             await reached()
+            work = world.owned_work()
             # A read of the conversation answers while the event waits, even when the
             # wait is the event's own write holding the conversation lock.
             assert await asyncio.wait_for(world.harness.system.held_prompts("c"), 1) == ()
             if link_event != "none":
-                await world.drop_link(link_event)
+                await world.drop_request(route, link_event)
+                # The client is gone; its batch is not.
+                assert not work.done()
             release()
 
-            receipt = await asyncio.wait_for(accept, SETTLES_WITHIN_SECONDS)
+            reply = await asyncio.wait_for(
+                route if link_event == "none" else work, SETTLES_WITHIN_SECONDS
+            )
+            receipt = _only_receipt(reply)
             assert receipt.disposition is ReceiptDisposition.accepted
             assert receipt.result == {"applied": True}
             assert await world.tool_rows() == 1
             await world.assert_nothing_held()
 
-            # The Mac reconnects (if it has not yet) and resends the same head item.
-            identity = (
-                world.endpoint.runs.identity
-                if link_event == "reconnected"
-                else await world.reconnect()
-            )
-            assert identity is not None
-            resend = await asyncio.wait_for(
-                world.endpoint.inbox.accept(world.envelope, identity), SETTLES_WITHIN_SECONDS
-            )
-            assert resend == receipt
+            # The Mac leases again (if it has not yet) and resends the same head item.
+            if link_event == "lost":
+                await world.lease()
+            resend = await asyncio.wait_for(world.send(), SETTLES_WITHIN_SECONDS)
+            assert _only_receipt(resend) == receipt
             assert (
                 lookup_receipt(world.store, world.envelope.sender_id, world.envelope.submission_id)
                 == receipt
@@ -343,14 +435,66 @@ def test_a_link_drop_while_a_mac_event_waits_does_not_fail_its_save(
     _no_save_trouble(caplog)
 
 
-class _WireStub:
-    """The transport's view of the current link: only its identity is read."""
+@pytest.mark.parametrize("wait_point", ALL_WAITS)
+def test_a_new_mac_process_leasing_while_an_event_waits_saves_its_resend_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_point: str
+) -> None:
+    """Contract §11.2 M7 (overriding §8.4's "the event still saves"): the binding fence
+    is in the event's write, so the old process's waiting event is refused without a
+    receipt. The new process holds the same outbox item and sends it again; the child is
+    of the old process, and its assignment stays open until the new process's lease
+    shows the conversation drained, so the resend saves exactly once. Then the run of
+    the replaced process is handed to the conversation core and closed."""
 
-    def __init__(self, identity: ExecutorIdentity) -> None:
-        self.identity = identity
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            running = world.state.running_turn
+            reached, release = await _holds(monkeypatch)[wait_point](world)
+            route = world.send()
+            await reached()
+            # The Mac process restarts: a new incarnation leases, its outbox still
+            # holding this conversation's item.
+            successor = mac_identity()
+            await world.lease(successor, (WaitingConversation("c", world.envelope.sequence),))
+            release()
 
-    def close(self, reason: str = "") -> None:
-        raise AssertionError(f"retry later must not close the link: {reason}")
+            with pytest.raises(PlannerError) as refused:
+                await asyncio.wait_for(route, SETTLES_WITHIN_SECONDS)
+            assert refused.value.code is ErrorCode.executor_incarnation_not_current
+            # No receipt: the item is not dropped for its sender's successor.
+            assert (
+                lookup_receipt(world.store, world.envelope.sender_id, world.envelope.submission_id)
+                is None
+            )
+            assert await world.tool_rows() == 0
+            assert world.state.running_turn is running
+            await world.assert_nothing_held()
+
+            # The drain waits: the successor's lease lists the conversation as waiting.
+            assert world.conversations.retired == []
+            assert world.endpoint.runs.store.child_assignment(world.event.child) is not None
+
+            resend = await asyncio.wait_for(world.send(identity=successor), SETTLES_WITHIN_SECONDS)
+            receipt = _only_receipt(resend)
+            assert receipt.disposition is ReceiptDisposition.accepted
+            assert receipt.result == {"applied": True}
+            again = await asyncio.wait_for(world.send(identity=successor), SETTLES_WITHIN_SECONDS)
+            assert _only_receipt(again) == receipt
+            assert await world.tool_rows() == 1
+            await world.assert_nothing_held()
+
+            # The successor's next lease shows nothing waiting: the old run goes to the
+            # conversation core, once, and closes.
+            await world.lease(successor)
+            await _until(lambda: bool(world.conversations.retired), "the end of its drain")
+            assert world.conversations.retired == [
+                (world.event.child, successor.executor_incarnation)
+            ]
+            store = world.endpoint.runs.store
+            await _until(lambda: store.has_closed_child_assignment(world.event.child), "a close")
+            assert store.unresolved_runs_of_replaced_incarnations() == ()
+
+    asyncio.run(asyncio.wait_for(exercise(), 20))
 
 
 @pytest.mark.parametrize("wait_point", LIMITED_WAITS)
@@ -361,18 +505,21 @@ def test_a_mac_event_held_past_the_limit_is_told_to_retry_later_and_applies_once
 
     async def exercise() -> None:
         async with _world(tmp_path) as world:
+
+            def told_to_retry_later(reply: ItemBatchReply) -> None:
+                assert reply.receipts == ()
+                assert reply.stop is not None and reply.stop.reason == "retry_later"
+                assert reply.stop.sequence == world.envelope.sequence
+
             running = world.state.running_turn
             assert running is not None
             reached, release = await _holds(monkeypatch)[wait_point](world)
-            accept = asyncio.create_task(
-                world.endpoint.inbox.accept(world.envelope, world.identity)
-            )
+            route = world.send()
             await reached()
-            await world.drop_link("lost")
+            world.lapse_lease()
 
-            with pytest.raises(PlannerError) as refused:
-                await asyncio.wait_for(accept, SETTLES_WITHIN_SECONDS)
-            assert refused.value.code is ErrorCode.retry_later
+            # Route 4 never answers an error for this: retry later is the reply's stop.
+            told_to_retry_later(await asyncio.wait_for(route, SETTLES_WITHIN_SECONDS))
             # Retry later is not a refusal: no receipt, no position, nothing recorded.
             assert (
                 lookup_receipt(world.store, world.envelope.sender_id, world.envelope.submission_id)
@@ -387,21 +534,17 @@ def test_a_mac_event_held_past_the_limit_is_told_to_retry_later_and_applies_once
             if wait_point != "conversation_lock":
                 assert not world.state.lock.locked()
 
-            # The reconnected Mac resends while the wait still holds. On the wire the
-            # answer is the transport's ordinary error reply, and no task piles up.
-            identity = await world.reconnect()
-            stub = _WireStub(identity)
-            world.endpoint.runs.link = cast(Link, stub)
-            reply = await asyncio.wait_for(
-                world.endpoint._handle(
-                    WireMessage(WireMessageKind.envelope, "resend-1", as_object(world.envelope)),
-                    cast(Link, stub),
-                    world.endpoint._envelope,
-                ),
-                SETTLES_WITHIN_SECONDS,
-            )
-            assert reply is not None and reply.kind is WireMessageKind.error
-            assert cast(dict[str, Any], reply.payload)["error"]["code"] == "retry_later"
+            # The Mac leases again and resends while the wait still holds: the same
+            # answer, and no task piles up. A single item accepted directly is told the
+            # same as a PlannerError.
+            await world.lease()
+            told_to_retry_later(await asyncio.wait_for(world.send(), SETTLES_WITHIN_SECONDS))
+            with pytest.raises(PlannerError) as refused:
+                await asyncio.wait_for(
+                    world.endpoint.inbox.accept(world.envelope, world.identity),
+                    SETTLES_WITHIN_SECONDS,
+                )
+            assert refused.value.code is ErrorCode.retry_later
             await world.no_task_left_behind()
             assert (
                 lookup_receipt(world.store, world.envelope.sender_id, world.envelope.submission_id)
@@ -409,12 +552,10 @@ def test_a_mac_event_held_past_the_limit_is_told_to_retry_later_and_applies_once
             )
 
             release()
-            receipt = await asyncio.wait_for(
-                world.endpoint.inbox.accept(world.envelope, identity), SETTLES_WITHIN_SECONDS
-            )
+            receipt = _only_receipt(await asyncio.wait_for(world.send(), SETTLES_WITHIN_SECONDS))
             assert receipt.disposition is ReceiptDisposition.accepted
             assert receipt.result == {"applied": True}
-            assert await world.endpoint.inbox.accept(world.envelope, identity) == receipt
+            assert _only_receipt(await world.send()) == receipt
             assert await world.tool_rows() == 1
             await world.assert_nothing_held()
 
@@ -530,9 +671,9 @@ def test_a_failed_mac_write_restores_memory_and_is_retried_or_refused_once(
             await world.assert_nothing_held()
 
             monkeypatch.setattr(store, "accept_in_transaction", original_accept)
-            identity = await world.reconnect()
+            await world.lease()
             receipt = await asyncio.wait_for(
-                world.endpoint.inbox.accept(envelope, identity), SETTLES_WITHIN_SECONDS
+                world.endpoint.inbox.accept(envelope, world.identity), SETTLES_WITHIN_SECONDS
             )
             if failure == "transient":
                 assert receipt.disposition is ReceiptDisposition.accepted
@@ -545,7 +686,7 @@ def test_a_failed_mac_write_restores_memory_and_is_retried_or_refused_once(
                 assert receipt == refusal
                 assert world.state.running_turn is running
                 assert await _recorded_endings(world) == 0
-            assert await world.endpoint.inbox.accept(envelope, identity) == receipt
+            assert await world.endpoint.inbox.accept(envelope, world.identity) == receipt
             assert await _recorded_endings(world) == (1 if failure == "transient" else 0)
             await world.harness.system.wait_until_quiescent()
 
@@ -610,29 +751,31 @@ def test_an_agent_write_past_the_limit_finishes_once_and_its_resend_gets_its_rec
 
 
 def test_an_event_from_a_replaced_mac_process_is_refused_before_its_write(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
+    """Its requests are refused at the header fence, from memory. One that got past it
+    just before the switch is refused by the binding fence, which runs inside the
+    receipt's transaction (InboxStore.accept_in_transaction): no receipt, nothing
+    recorded, memory as it was. Preflight and the authority check may run first; they
+    write nothing, and the child's assignment stays open for the successor's replay, so
+    the fence alone refuses here."""
+
     async def exercise() -> None:
         async with _world(tmp_path) as world:
-            preflights: list[object] = []
-            original = world.endpoint.inbox.store.preflight
-
-            def preflight(*args: Any, **kwargs: Any) -> Any:
-                preflights.append(args)
-                return original(*args, **kwargs)
-
-            monkeypatch.setattr(world.endpoint.inbox.store, "preflight", preflight)
             running = world.state.running_turn
-            # A new Mac process takes over: a new incarnation, not a newer generation.
-            replacement = ExecutorIdentity(
-                PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "replacement", 1
-            )
-            await asyncio.to_thread(world.store.runs.begin_connection, replacement)
+            # A new Mac process takes over, its outbox still holding this item.
+            successor = mac_identity()
+            await world.lease(successor, (WaitingConversation("c", world.envelope.sequence),))
 
-            with pytest.raises(PlannerError, match="incarnation has been replaced") as refused:
-                await world.endpoint.inbox.accept(world.envelope, world.identity)
-            assert refused.value.code is ErrorCode.validation
-            assert preflights == []
+            with pytest.raises(PlannerError) as fenced:
+                world.endpoint.require_current(
+                    incarnation_header=world.identity.executor_incarnation,
+                    protocol_header=str(PROTOCOL_VERSION),
+                )
+            assert fenced.value.code is ErrorCode.executor_incarnation_not_current
+            with pytest.raises(PlannerError) as refused:
+                await asyncio.wait_for(world.send(), SETTLES_WITHIN_SECONDS)
+            assert refused.value.code is ErrorCode.executor_incarnation_not_current
             # No refusal receipt either: the item is not dropped for its sender.
             assert (
                 lookup_receipt(world.store, world.envelope.sender_id, world.envelope.submission_id)
@@ -658,7 +801,7 @@ def test_the_vps_local_path_with_the_same_timing_is_unaffected(tmp_path: Path) -
                 ToolCallStarted(tool_call_id="tool", title="Work", tool_kind="other"),
             )
             await _until(lambda: _waiting_on(world.state.lock), "the conversation lock")
-            await world.drop_link("lost")
+            world.lapse_lease()
             world.state.lock.release()
             await asyncio.wait_for(world.state.backend_event_queue.join(), SETTLES_WITHIN_SECONDS)
             assert await world.tool_rows() == 1

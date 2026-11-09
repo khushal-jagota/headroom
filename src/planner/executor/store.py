@@ -1,4 +1,4 @@
-"""VPS run, connection and answer persistence, with shared transaction mechanics."""
+"""VPS run and child-assignment persistence, with shared transaction mechanics."""
 
 from __future__ import annotations
 
@@ -7,18 +7,22 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
-from typing import Any, cast
+from typing import Any
 
-from planner.conversation.backends.contracts import RetainedBackendRun, TurnToken
+from planner.conversation.backends.contracts import (
+    BackendSpawnFailed,
+    RetainedBackendRun,
+    TurnToken,
+)
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
-from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference, TicketLocale
 from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
     CommandOutcome,
-    ConnectionState,
 )
+from planner.executor.vps_presence_store import current_incarnation
 
 
 def _json(value: object) -> str:
@@ -52,49 +56,9 @@ class VpsDatabase:
 
 
 class ExecutorStore(VpsDatabase):
-    def contact(
-        self, at_ms: int, refusal: dict[str, Any] | None = None, *, clear: bool = False
-    ) -> None:
-        with self._transaction() as conn:
-            conn.execute(
-                "INSERT INTO mac_contact_status VALUES (1,?,?) "
-                "ON CONFLICT(singleton) DO UPDATE SET "
-                "last_contact_at_ms=MAX(last_contact_at_ms,excluded.last_contact_at_ms), "
-                "refusal_json=CASE WHEN ? THEN excluded.refusal_json ELSE refusal_json END",
-                (at_ms, None if refusal is None else _json(refusal), clear or refusal is not None),
-            )
-
-    def contact_status(self) -> tuple[int | None, dict[str, Any] | None]:
-        conn = connect(self.db_path)
-        try:
-            row = conn.execute(
-                "SELECT last_contact_at_ms,refusal_json FROM mac_contact_status WHERE singleton=1"
-            ).fetchone()
-            return (
-                (None, None)
-                if row is None
-                else (row[0], None if row[1] is None else json.loads(row[1]))
-            )
-        finally:
-            conn.close()
-
-    @staticmethod
-    def interrupt_after_restart(conn: sqlite3.Connection) -> None:
-        conn.execute(
-            "UPDATE executor_connections SET connection_state='disconnected' WHERE active=1"
-        )
-        conn.execute("UPDATE mac_runs SET stop_state='stopping' WHERE stop_state='open'")
-
-    @staticmethod
-    def status(conn: sqlite3.Connection) -> tuple[tuple[str, str], ...]:
-        return tuple(
-            (row[0], row[1])
-            for row in conn.execute(
-                "SELECT identity_json,connection_state FROM executor_connections WHERE active=1"
-            )
-        )
-
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
+        """Every run, with whether a stop is in the mailbox and whether its process is the
+        current one. Only an open run of the current incarnation is adopted live."""
         connection = connect(self.db_path)
         try:
             return tuple(
@@ -105,8 +69,30 @@ class ExecutorStore(VpsDatabase):
                     TurnToken(row["conversation_id"], row["turn_number"]),
                     bool(row["delivery_uncertain"]),
                     row["stop_state"] == "closed",
+                    stop_requested=row["stop_state"] == "stopping",
+                    incarnation_current=row["executor_incarnation"] == row["current_incarnation"],
                 )
-                for row in connection.execute("SELECT * FROM mac_runs")
+                for row in connection.execute(
+                    "SELECT r.*,p.executor_incarnation AS current_incarnation FROM mac_runs AS r "
+                    "LEFT JOIN mac_executor_presence AS p ON p.singleton=1"
+                )
+            )
+        finally:
+            connection.close()
+
+    def unresolved_runs_of_replaced_incarnations(self) -> tuple[ChildReference, ...]:
+        """Runs not closed whose process is no longer the current one: each waits for its
+        conversation's items to drain before it is closed."""
+        connection = connect(self.db_path)
+        try:
+            return tuple(
+                ChildReference(row[0], row[1], row[2])
+                for row in connection.execute(
+                    "SELECT r.executor_incarnation,r.child_id,r.conversation_id FROM mac_runs AS r "
+                    "LEFT JOIN mac_executor_presence AS p ON p.singleton=1 "
+                    "WHERE r.stop_state<>'closed' "
+                    "AND r.executor_incarnation IS NOT p.executor_incarnation"
+                )
             )
         finally:
             connection.close()
@@ -114,145 +100,83 @@ class ExecutorStore(VpsDatabase):
     def prepare_command(self, command: ChildCommand) -> None:
         """Commit uncertainty before transport. An old callback cannot reopen custody."""
         with self._transaction() as connection:
-            row = connection.execute(
-                "SELECT * FROM mac_runs WHERE conversation_id=? "
-                "AND executor_incarnation=? AND child_id=?",
+            self.prepare_command_in_transaction(connection, command)
+
+    @staticmethod
+    def prepare_command_in_transaction(
+        connection: sqlite3.Connection, command: ChildCommand
+    ) -> None:
+        """The mac_runs half of a mailbox put, in the put's own transaction."""
+        row = connection.execute(
+            "SELECT * FROM mac_runs WHERE conversation_id=? "
+            "AND executor_incarnation=? AND child_id=?",
+            (
+                command.child.conversation_id,
+                command.child.executor_incarnation,
+                command.child.child_id,
+            ),
+        ).fetchone()
+        if row is None or row["stop_state"] == "closed":
+            raise ValueError("Mac run no longer owns this conversation")
+        if command.operation in (ChildOperation.start, ChildOperation.write_prompt):
+            if row["stop_state"] != "open" or (
+                command.turn is not None and command.turn.turn_number < row["turn_number"]
+            ):
+                raise ValueError("Mac run cannot accept a stale or stopped delivery")
+            connection.execute(
+                "UPDATE mac_runs SET delivery_uncertain=1,turn_number=? WHERE conversation_id=?",
                 (
+                    row["turn_number"] if command.turn is None else command.turn.turn_number,
                     command.child.conversation_id,
-                    command.child.executor_incarnation,
-                    command.child.child_id,
                 ),
-            ).fetchone()
-            if row is None or row["stop_state"] == "closed":
-                raise ValueError("Mac run no longer owns this conversation")
-            if command.operation in (ChildOperation.start, ChildOperation.write_prompt):
-                if row["stop_state"] != "open" or (
-                    command.turn is not None and command.turn.turn_number < row["turn_number"]
-                ):
-                    raise ValueError("Mac run cannot accept a stale or stopped delivery")
-                connection.execute(
-                    "UPDATE mac_runs SET delivery_uncertain=1,turn_number=? "
-                    "WHERE conversation_id=?",
-                    (
-                        row["turn_number"] if command.turn is None else command.turn.turn_number,
-                        command.child.conversation_id,
-                    ),
-                )
-            elif command.operation is ChildOperation.stop:
-                connection.execute(
-                    "UPDATE mac_runs SET stop_state='stopping' WHERE conversation_id=? "
-                    "AND stop_state='open'",
-                    (command.child.conversation_id,),
-                )
+            )
+        elif command.operation is ChildOperation.stop:
+            connection.execute(
+                "UPDATE mac_runs SET stop_state='stopping' WHERE conversation_id=? "
+                "AND stop_state='open'",
+                (command.child.conversation_id,),
+            )
 
     def record_prompt_outcome(self, command: ChildCommand, outcome: CommandOutcome) -> None:
+        with self._transaction() as connection:
+            self.record_prompt_outcome_in_transaction(connection, command, outcome)
+
+    @staticmethod
+    def record_prompt_outcome_in_transaction(
+        connection: sqlite3.Connection, command: ChildCommand, outcome: CommandOutcome
+    ) -> None:
+        """A prompt the Mac answered for: its delivery is no longer uncertain."""
         if (
             command.operation is not ChildOperation.write_prompt
             or outcome.disposition.value == "uncertain"
         ):
             return
-        with self._transaction() as connection:
-            connection.execute(
-                "UPDATE mac_runs SET delivery_uncertain=0 WHERE conversation_id=? "
-                "AND executor_incarnation=? AND child_id=? AND turn_number=? AND stop_state='open'",
-                (
-                    command.child.conversation_id,
-                    command.child.executor_incarnation,
-                    command.child.child_id,
-                    command.turn.turn_number if command.turn is not None else 0,
-                ),
-            )
-
-    def begin_connection(self, identity: ExecutorIdentity) -> None:
-        with self._transaction() as connection:
-            current = connection.execute(
-                "SELECT * FROM executor_connections WHERE active=1"
-            ).fetchone()
-            seen = connection.execute(
-                "SELECT * FROM executor_connections WHERE executor_incarnation=?",
-                (identity.executor_incarnation,),
-            ).fetchone()
-            if seen is not None and (
-                not seen["active"]
-                or identity.connection_generation <= seen["connection_generation"]
-            ):
-                raise _invalid("Executor connection generation is stale")
-            if current is not None:
-                connection.execute("UPDATE executor_connections SET active=0 WHERE active=1")
-            connection.execute(
-                "INSERT INTO executor_connections VALUES (?,?,?,?,1) "
-                "ON CONFLICT(executor_incarnation) DO UPDATE SET "
-                "connection_generation=excluded.connection_generation, "
-                "identity_json=excluded.identity_json,connection_state=excluded.connection_state,active=1",
-                (
-                    identity.executor_incarnation,
-                    identity.connection_generation,
-                    _record(identity),
-                    ConnectionState.reconciling.value,
-                ),
-            )
-
-    def require_current_incarnation(self, identity: ExecutorIdentity) -> None:
-        """Fence a Mac item by the process that sent it, never by the state of its link.
-
-        A Mac process keeps its executor_incarnation across every reconnect, and a new
-        process takes a new one, like a Kafka producer epoch. So an item from a process
-        that has been replaced is refused here, before any write starts. A dropped link
-        or a newer connection_generation of the same process refuses nothing: the item
-        is the same item, and its sequence decides whether it is new.
-        """
-        connection = connect(self.db_path)
-        try:
-            row = connection.execute(
-                "SELECT executor_incarnation FROM executor_connections WHERE active=1"
-            ).fetchone()
-        finally:
-            connection.close()
-        if row is None or row[0] != identity.executor_incarnation:
-            raise _invalid("Executor incarnation has been replaced")
-
-    @staticmethod
-    def _current(connection: sqlite3.Connection, identity: ExecutorIdentity) -> sqlite3.Row:
-        current = connection.execute("SELECT * FROM executor_connections WHERE active=1").fetchone()
-        if current is None or current["identity_json"] != _record(identity):
-            raise _invalid("Executor connection generation is stale")
-        return cast(sqlite3.Row, current)
-
-    @classmethod
-    def _connected(cls, connection: sqlite3.Connection, identity: ExecutorIdentity) -> sqlite3.Row:
-        current = cls._current(connection, identity)
-        if current["connection_state"] not in (
-            ConnectionState.reconciling.value,
-            ConnectionState.ready.value,
-        ):
-            raise _invalid("Executor connection is unavailable")
-        return current
-
-    def mark_ready(self, identity: ExecutorIdentity) -> None:
-        with self._transaction() as connection:
-            self._connected(connection, identity)
-            connection.execute(
-                "UPDATE executor_connections SET connection_state=? WHERE active=1",
-                (ConnectionState.ready.value,),
-            )
-
-    def mark_lost(self, identity: ExecutorIdentity) -> None:
-        with self._transaction() as connection:
-            # A late close from an old socket cannot invalidate the replacement.
-            row = connection.execute(
-                "SELECT identity_json FROM executor_connections WHERE active=1"
-            ).fetchone()
-            if row is None or row[0] != _record(identity):
-                return
-            connection.execute(
-                "UPDATE executor_connections SET connection_state=? WHERE active=1",
-                (ConnectionState.disconnected.value,),
-            )
+        connection.execute(
+            "UPDATE mac_runs SET delivery_uncertain=0 WHERE conversation_id=? "
+            "AND executor_incarnation=? AND child_id=? AND turn_number=? AND stop_state='open'",
+            (
+                command.child.conversation_id,
+                command.child.executor_incarnation,
+                command.child.child_id,
+                command.turn.turn_number if command.turn is not None else 0,
+            ),
+        )
 
     def register_child(
         self, child: ChildReference, principal_kind: str, principal_id: str, now_ms: int
     ) -> None:
         with self._transaction() as connection:
+            # The binding fence: a child is assigned only under the current process, read
+            # in the same transaction that writes the assignment.
+            current = current_incarnation(connection)
+            if current != child.executor_incarnation:
+                from planner.tickets.locale_configuration import execution_unavailable_reason
+
+                raise BackendSpawnFailed(
+                    "The Mac executor process changed before this child was assigned"
+                    if current is not None
+                    else execution_unavailable_reason(connection, TicketLocale.macos)
+                )
             existing = connection.execute(
                 "SELECT * FROM executor_child_assignments "
                 "WHERE executor_incarnation=? AND child_id=?",
@@ -271,9 +195,12 @@ class ExecutorStore(VpsDatabase):
             ).fetchone()
             if retained is not None and retained["stop_state"] != "closed":
                 raise _invalid("An unresolved Mac run already owns this conversation")
+            # The last turn whose prompt committed, not the one being delivered now: its
+            # write_prompt raises turn_number when its row commits. A VPS crash between
+            # this assignment and that commit must not leave a turn that seems sent.
             turn = connection.execute(
-                "SELECT COALESCE(MAX(turn_number),0) FROM conversation_turn_occurrences "
-                "WHERE conversation_id=?",
+                "SELECT COALESCE(MAX(turn_number),0) FROM conversation_lifecycle_facts "
+                "WHERE conversation_id=? AND kind='turn' AND status<>'intent'",
                 (child.conversation_id,),
             ).fetchone()
             connection.execute(
@@ -339,20 +266,36 @@ class ExecutorStore(VpsDatabase):
 
     def close_child(self, child: ChildReference, now_ms: int) -> None:
         with self._transaction() as connection:
-            row = connection.execute(
-                "SELECT stop_state FROM mac_runs WHERE conversation_id=? "
-                "AND executor_incarnation=? AND child_id=?",
-                (child.conversation_id, child.executor_incarnation, child.child_id),
-            ).fetchone()
-            if row is None:
-                raise ValueError("Mac run does not match this child")
-            connection.execute(
-                "UPDATE mac_runs SET stop_state='closed' WHERE conversation_id=? "
-                "AND executor_incarnation=? AND child_id=?",
-                (child.conversation_id, child.executor_incarnation, child.child_id),
-            )
-            connection.execute(
-                "UPDATE executor_child_assignments SET closed_at_ms=? "
-                "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
-                (now_ms, child.executor_incarnation, child.child_id, child.conversation_id),
-            )
+            self.close_child_in_transaction(connection, child, now_ms)
+
+    @staticmethod
+    def close_child_in_transaction(
+        connection: sqlite3.Connection, child: ChildReference, now_ms: int
+    ) -> None:
+        """Close the run and its assignment in the caller's transaction.
+
+        A child already closed is left as it is, so closing twice keeps the first close
+        and never touches a later run of the same conversation."""
+        if connection.execute(
+            "SELECT 1 FROM executor_child_assignments WHERE executor_incarnation=? "
+            "AND child_id=? AND conversation_id=? AND closed_at_ms IS NOT NULL",
+            (child.executor_incarnation, child.child_id, child.conversation_id),
+        ).fetchone():
+            return
+        row = connection.execute(
+            "SELECT stop_state FROM mac_runs WHERE conversation_id=? "
+            "AND executor_incarnation=? AND child_id=?",
+            (child.conversation_id, child.executor_incarnation, child.child_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Mac run does not match this child")
+        connection.execute(
+            "UPDATE mac_runs SET stop_state='closed' WHERE conversation_id=? "
+            "AND executor_incarnation=? AND child_id=?",
+            (child.conversation_id, child.executor_incarnation, child.child_id),
+        )
+        connection.execute(
+            "UPDATE executor_child_assignments SET closed_at_ms=? "
+            "WHERE executor_incarnation=? AND child_id=? AND conversation_id=?",
+            (now_ms, child.executor_incarnation, child.child_id, child.conversation_id),
+        )

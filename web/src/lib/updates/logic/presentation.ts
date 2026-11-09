@@ -104,7 +104,7 @@ export function updateDetails(state: UpdateFailureState, status: UpdateStatus, n
     ["What happened", status.detail ?? fallback],
     ["Panels", `${short(status.app_sha)} (updated)`],
   ];
-  const refusal = mac?.connection_state === "disconnected" ? mac.refusal ?? null : null;
+  const refusal = mac?.presence === "refused" ? mac.refusal ?? null : null;
   const identity = mac?.identity ?? refusal?.peer_identity ?? null;
   if (identity) facts.push(["Mac", `${short(identity.application_revision)}${state === "mac_failed" ? " (previous)" : ""}`]);
   facts.push(["Last contact", lastContact(mac, now)]);

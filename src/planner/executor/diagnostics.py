@@ -1,4 +1,4 @@
-"""Fixed, rate-limited diagnostics at the existing connection retry boundary."""
+"""Fixed, rate-limited diagnostics for the Mac's request loops."""
 
 import logging
 import ssl
@@ -9,13 +9,16 @@ from enum import StrEnum
 import aiohttp
 
 from planner.executor.configuration import CONNECTION_FAILURE_LOG_INTERVAL_SECONDS
+from planner.executor.mac_http import ExecutorHttpError
 
 
 class ConnectionPhase(StrEnum):
-    app_connect = "app_connect"
-    hello = "hello"
-    reconnect_ask = "reconnect_ask"
-    steady_state = "steady_state"
+    """The Mac loop whose request failed."""
+
+    lease = "lease"
+    poll = "poll"
+    items = "items"
+    outcomes = "outcomes"
 
 
 class ConnectionFailureCategory(StrEnum):
@@ -32,7 +35,10 @@ def classify_connection_failure(error: Exception) -> ConnectionFailureCategory:
         return ConnectionFailureCategory.configuration
     if isinstance(error, (aiohttp.ClientSSLError, ssl.SSLError)):
         return ConnectionFailureCategory.tls
-    if isinstance(error, aiohttp.ClientResponseError) and error.status in (401, 403):
+    if isinstance(error, (aiohttp.ClientResponseError, ExecutorHttpError)) and error.status in (
+        401,
+        403,
+    ):
         return ConnectionFailureCategory.authentication
     if isinstance(error, TimeoutError):
         return ConnectionFailureCategory.timeout
@@ -43,7 +49,7 @@ def classify_connection_failure(error: Exception) -> ConnectionFailureCategory:
 
 class ConnectionDiagnostics:
     """Log every kind of failure when it first occurs, then repeats of that kind at most
-    once per interval with how many occurred, so a reconnect loop cannot flood the log."""
+    once per interval with how many occurred, so a retrying loop cannot flood the log."""
 
     def __init__(
         self,
@@ -62,7 +68,12 @@ class ConnectionDiagnostics:
 
     def report(self, error: Exception, *, phase: ConnectionPhase) -> None:
         category = classify_connection_failure(error)
-        kind = (category, phase, type(error).__name__)
+        name = (
+            f"HTTP {error.status} {error.code}"
+            if isinstance(error, ExecutorHttpError)
+            else type(error).__name__
+        )
+        kind = (category, phase, name)
         now = self._monotonic()
         last = self._last.get(kind)
         if last is not None and now - last[0] < self._interval_seconds:
@@ -72,7 +83,7 @@ class ConnectionDiagnostics:
         repeated = f" unlogged_repeats={last[1]}" if last is not None and last[1] else ""
         self._emit(
             f"executor connection failure: {category.value} phase={phase.value}"
-            f" exception={type(error).__name__}{repeated}"
+            f" exception={name}{repeated}"
         )
 
 

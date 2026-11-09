@@ -45,8 +45,10 @@ class UpdateAdmissionMiddleware:
         if (
             system is not None
             and request.method not in {"GET", "HEAD", "OPTIONS"}
-            # Update routes stay reachable while an update pauses work.
-            and not path.startswith("/api/updates")
+            # Update routes stay reachable while an update pauses work. So do the Mac
+            # executor's routes, whose saves the conversation core admits itself: a lease,
+            # a result or an item is not owner work, and must not hold an update back.
+            and not path.startswith(("/api/updates", "/api/executor/"))
         ):
             with ExitStack() as lease:
                 if not lease.enter_context(system.workspace_admission.operation()):

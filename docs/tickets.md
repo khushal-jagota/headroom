@@ -68,7 +68,7 @@ Delete removes the Ticket's record and leaves its files. It is available from th
 
 ## Where the Worker runs
 
-The locale is chosen at creation and does not change. A VPS Ticket's agent runs on the VPS. A Mac Ticket's agent runs on the Mac, and starts only while the Mac is connected and ready. Either way the VPS keeps the record and decides when to start. See [Mac execution](executor.md).
+The locale is chosen at creation and does not change. A VPS Ticket's agent runs on the VPS. A Mac Ticket's agent runs on the Mac, and starts only while the Mac is present (its lease is fresh). Either way the VPS keeps the record and decides when to start. See [Mac execution](executor.md).
 
 ## Where it shows up
 

@@ -53,13 +53,13 @@ What happens to a Worker step after each fate belongs to [Worker steps](worker-s
 
 ## Lifecycle
 
-A conversation has at most one child process. Nothing runs after a server restart until the next send. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused.
+A conversation has at most one child process. Nothing runs after a server restart until the next send, except a Mac agent: it keeps working, and the restarted server takes over its turn, open asks included. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused.
 
 A Claude agent can start a background task, such as a long test run, that keeps going after its turn ends. Claude reports its whole set of live tasks after every change, and Headroom keeps the conversation's record equal to that set, so a task whose end Claude never announced still leaves it. A ScheduleWakeup timer is not a task. While a task is live, the child is not idle, the sidebar shows the conversation as working, and the end of the conversation names each task. Stop and the composer still follow the turn alone. The idle clock starts again when a task ends. If the child goes away first, the task dies with it. Claude stops its tasks as it is terminated, so a task stopped just before the stream ends counts as lost too. The child may be stopped, its process may die, or the server may restart. Headroom then sends one prompt per lost task, from Panels, saying the task did not finish and asking the agent to read its output and restart it or report. The prompt waits behind a running turn and resumes the session like any send. A killed conversation drops its tasks without a prompt, because nothing runs in it until someone sends again. Headroom never puts a fresh agent behind an old transcript. A conversation that has gone quiet is compacted automatically while the backend's prompt cache is still warm.
 
 Held messages live in memory, so a restart loses anything not yet delivered.
 
-New conversation ends the running turn, discards held work, and links a fresh conversation. The old notebook stays as history, and only the active conversation accepts sends. After a deploy interrupts sessions, eligible conversations get one recovery prompt through the ordinary send path, and nothing is replayed. See [Deployment](deployment.md).
+New conversation ends the running turn, discards held work, and links a fresh conversation. The old notebook stays as history, and only the active conversation accepts sends. After a deploy interrupts sessions, eligible conversations get one recovery prompt through the ordinary send path, and nothing is replayed. See [Deployment](deployment.md). A restart of the Mac's executor process interrupts its turns the same way: once the Mac has sent everything it held for a conversation, that turn ends interrupted and gets the same one recovery prompt, which resumes the session in a fresh agent. A message the old process never fetched goes to the fresh agent instead, and nothing is interrupted. A steer the Mac does not take in time, or that later proves it never reached its turn, waits in the queue as the next message.
 
 ## Worker resources on Linux
 
@@ -102,4 +102,4 @@ The pane reads a stored view that is built from the notebook. When the app conne
 - `src/planner/runtime/conversation_start.py` and `runtime/workspaces.py`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-09._

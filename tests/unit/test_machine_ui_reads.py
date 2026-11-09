@@ -1,136 +1,77 @@
-"""The machine UI reads expose canonical decisions and measured receipt evidence."""
+"""The Mac page's read (health_payload) shows measured contact and the stored refusal.
+
+Contact is presence memory, flushed to mac_executor_presence at most every interval; a
+refusal is an ExecutorRefusal in the presence row. Requests the VPS refuses still prove
+the Mac made contact, and the last contact outlives the VPS process that measured it.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import struct
 from dataclasses import replace
-from sqlite3 import Connection
-from typing import cast
-from uuid import uuid4
+from pathlib import Path
 
-import pytest
-from fastapi import FastAPI, Request
-from tests.support.executor_control import MessageStream, message_link
-from tests.support.in_memory_conversation_system import InMemoryConversationSystem
+from tests.support.executor_presence import lease_request, mac_identity
 
-from planner.core.clock import TestClock as ClockForTest
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ExecutorIdentity
-from planner.executor import link as link_module
-from planner.executor import vps_transport as vps
-from planner.executor.protocol import (
-    ConnectionState,
-    ExecutorHealth,
-    JsonObject,
-    WireMessage,
-    WireMessageKind,
-    encode_message,
-    encode_value,
-)
+from planner.core.clock import RealClock
+from planner.core.contracts import PlannerError
+from planner.core.db import connect, create_schema
+from planner.execution_identity import MAC_NEEDS_UPDATE
+from planner.executor.protocol import LeaseRefused, as_object
+from planner.executor.vps_transport import VpsExecutor
 
 
-def _draft_request() -> Request:
-    app = FastAPI()
-    app.state.conversation_system = InMemoryConversationSystem()
-    return Request({"type": "http", "app": app})
+def _database(tmp_path: Path) -> str:
+    path = str(tmp_path / "planning.db")
+    connection = connect(path)
+    try:
+        create_schema(connection)
+    finally:
+        connection.close()
+    return path
 
 
-class Writer(MessageStream):
-    def __init__(self) -> None:
-        super().__init__()
-        self.writes: list[WireMessage] = []
-
-    def is_closing(self) -> bool:
-        return self.closed
-
-    async def send(self, data: WireMessage) -> None:
-        self.writes.append(data)
-
-
-def _endpoint(tmp_db: Connection, clock: ClockForTest) -> vps.VpsExecutor:
-    return vps.VpsExecutor(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]), clock)
-
-
-def _hello() -> WireMessage:
-    identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, str(uuid4()), 1)
-    health = ExecutorHealth(identity, 42, ConnectionState.reconciling, False, 11, None)
-    return WireMessage(WireMessageKind.hello, "hello", cast(JsonObject, encode_value(health)))
-
-
-def test_refused_valid_frames_advance_contact_and_history_survives_loss(
-    tmp_db: Connection, fake_clock: ClockForTest, monkeypatch: pytest.MonkeyPatch
+def test_refused_requests_advance_contact_and_the_read_survives_a_vps_restart(
+    tmp_path: Path,
 ) -> None:
-    endpoint = _endpoint(tmp_db, fake_clock)
-    assert endpoint.health()["last_contact_at_ms"] is None
-    tick = [100]
-    monkeypatch.setattr(link_module, "now_ms", lambda: tick[0])
-    monkeypatch.setattr(vps, "now_ms", lambda: tick[0])
+    path = _database(tmp_path)
+    old = replace(mac_identity(), protocol_version=21)
 
-    async def run() -> None:
-        writer = Writer()
-        writer.feed_data(encode_message(_hello()))
-        task = asyncio.create_task(endpoint.session(writer))
-        while endpoint.runs.link is None:
-            await asyncio.sleep(0)
-        assert endpoint.health()["last_contact_at_ms"] == 100
-        tick[0] = 200
-        # A strictly decoded frame counts as contact even when its payload is refused.
-        writer.feed_data(
-            encode_message(WireMessage(WireMessageKind.refuse_envelope, "refusal", {}))
-        )
-        async with asyncio.timeout(1):
-            while not any(message.kind is WireMessageKind.error for message in writer.writes):
-                await asyncio.sleep(0)
-        assert endpoint.health()["last_contact_at_ms"] == 200
-        tick[0] = 300
-        writer.feed_eof()
-        await task
-        assert endpoint.health()["connection_state"] == "disconnected"
-        assert endpoint.health()["last_contact_at_ms"] == 200
-        assert _endpoint(tmp_db, fake_clock).health()["last_contact_at_ms"] == 200
-
-    asyncio.run(run())
-
-
-def test_malformed_or_superseded_frame_does_not_advance_contact(
-    tmp_db: Connection, fake_clock: ClockForTest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def send(message: WireMessage) -> None:
-        del message
-
-    async def probe() -> None:
-        return None
-
-    async def run() -> None:
-        for superseded in (False, True):
-            endpoint = _endpoint(tmp_db, fake_clock)
-
-            tick = [100]
-            monkeypatch.setattr(link_module, "now_ms", lambda tick=tick: tick[0])
-            monkeypatch.setattr(vps, "now_ms", lambda tick=tick: tick[0])
-            writer = Writer()
-            writer.feed_data(encode_message(_hello()))
-            task = asyncio.create_task(endpoint.session(writer))
-            while endpoint.runs.link is None:
-                await asyncio.sleep(0)
-            tick[0] = 200
-            if superseded:
-                assert endpoint.runs.link is not None
-                endpoint.runs.link.close()
-                endpoint.runs.link = message_link(
-                    Writer(), cast(ExecutorIdentity, endpoint.runs.identity)
+    async def exercise() -> None:
+        endpoint = VpsExecutor(path, RealClock())
+        try:
+            assert endpoint.health_payload()["last_contact_at_ms"] is None
+            refused = await endpoint.lease(lease_request(old))
+            assert isinstance(refused, LeaseRefused) and refused.refusal is not None
+            payload = endpoint.health_payload()
+            assert payload["presence"] == "refused"
+            assert payload["refusal"] == as_object(refused.refusal)
+            assert payload["last_contact_at_ms"] == refused.refusal.refused_at_ms
+            await asyncio.sleep(0.01)
+            # A work request fenced off is still contact, measured at once.
+            try:
+                endpoint.require_current(
+                    incarnation_header=old.executor_incarnation, protocol_header="21"
                 )
-                endpoint.runs.identity = replace(
-                    cast(ExecutorIdentity, endpoint.runs.identity), connection_generation=2
-                )
-                writer.feed_data(encode_message(WireMessage(WireMessageKind.error, "old", {})))
-                tick[0] = 300
+            except PlannerError:
+                pass
             else:
-                malformed = b'{"kind":"invented","request_id":"bad","payload":{}}'
-                writer.feed_data(struct.pack("!I", len(malformed)) + malformed)
-            await task
-            assert endpoint.health()["last_contact_at_ms"] == (200 if superseded else 100)
-            assert writer.closed
+                raise AssertionError("a refused process passed the fence")
+            fenced_contact = endpoint.health_payload()["last_contact_at_ms"]
+            assert isinstance(fenced_contact, int)
+            assert fenced_contact > refused.refusal.refused_at_ms
+        finally:
+            # Shutdown flushes the contact the interval had not yet written.
+            await endpoint.close()
+        restarted = VpsExecutor(path, RealClock())
+        try:
+            payload = restarted.health_payload()
+            assert payload["last_contact_at_ms"] == fenced_contact
+            assert payload["presence"] == "refused"
+            refusal = payload["refusal"]
+            assert isinstance(refusal, dict) and refusal["reason"] == MAC_NEEDS_UPDATE
+            assert refusal["peer_identity"] == as_object(old)
+        finally:
+            await restarted.close()
 
-    asyncio.run(run())
+    asyncio.run(asyncio.wait_for(exercise(), 20))

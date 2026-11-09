@@ -22,8 +22,8 @@ import json
 import logging
 import sqlite3
 import time
-from collections.abc import Callable, Collection, Coroutine, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from collections.abc import Callable, Collection, Coroutine, Iterator, Mapping
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -81,6 +81,7 @@ from planner.conversation.lifecycle_storage import (
     validate_runtime_ownership,
 )
 from planner.conversation.logic.conversation_start_resolution import bind_conversation_origin
+from planner.conversation.logic.retained_turn import OpenRunTurn, facts_after_restart
 from planner.conversation.publication.coordinator import (
     SignalPublicationCoordinator,
 )
@@ -106,6 +107,8 @@ from planner.notifications.attention import (
     conversation_attention_snapshot,
     conversation_attention_snapshot_is_current,
 )
+from planner.stalls.contracts import TrackedWaitHandle, TrackedWaitKind
+from planner.stalls.registry import WAITS
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
 
@@ -262,8 +265,17 @@ class ConversationStore:
             "runtime_field_undo", default=None
         )
 
-    def claim_runtime(self, *, existing_ownership: IO[bytes] | None = None) -> IO[bytes]:
-        """Exclusively reconcile lost capabilities before this runtime admits work."""
+    def claim_runtime(
+        self,
+        *,
+        existing_ownership: IO[bytes] | None = None,
+        open_runs: Mapping[str, OpenRunTurn] | None = None,
+    ) -> IO[bytes]:
+        """Exclusively reconcile lost capabilities before this runtime admits work.
+
+        ``open_runs`` names, by conversation, the turn of an open Mac run, whose agent the
+        previous process's end did not stop, so that turn is not reconciled away.
+        """
         ownership = (
             existing_ownership
             if existing_ownership is not None
@@ -277,7 +289,7 @@ class ConversationStore:
                 ownership.close()
             raise
         try:
-            self._reconcile_runtime(conn)
+            self._reconcile_runtime(conn, open_runs or {})
         except BaseException:
             if existing_ownership is None:
                 ownership.close()
@@ -286,7 +298,9 @@ class ConversationStore:
             conn.close()
         return ownership
 
-    def _reconcile_runtime(self, conn: sqlite3.Connection) -> None:
+    def _reconcile_runtime(
+        self, conn: sqlite3.Connection, open_runs: Mapping[str, OpenRunTurn]
+    ) -> None:
         conn.execute("BEGIN IMMEDIATE")
         interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
         ids = conn.execute(
@@ -295,24 +309,11 @@ class ConversationStore:
         ).fetchall()
         for row in ids:
             conversation_id = str(row[0])
-            facts = tuple(
-                replace(
-                    fact,
-                    status=(
-                        LifecycleStatus.unknown
-                        if fact.kind is LifecycleKind.attempt
-                        else LifecycleStatus.unavailable
-                    ),
-                )
-                for fact in read_facts(conn, conversation_id)
-                if fact.status
-                in (
-                    LifecycleStatus.intent,
-                    LifecycleStatus.running,
-                    LifecycleStatus.pending,
-                    LifecycleStatus.answering,
-                )
+            facts = facts_after_restart(
+                read_facts(conn, conversation_id), open_runs.get(conversation_id)
             )
+            if not facts:
+                continue
             apply_facts(conn, conversation_id, facts)
             interruption_data.settle_delivery(conn, conversation_id, facts, now=self._integer_now())
             participate(
@@ -585,24 +586,41 @@ class ConversationStore:
                 self._contention_retry_until.reset(limit)
         delay = CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS
         failures = 0
-        while True:
-            try:
-                return await operation()
-            except asyncio.CancelledError:
-                # A proven pre-dispatch refusal is an admission outcome, not a failed write.
-                raise
-            except Exception as error:
-                failures += 1
-                log.error(
-                    "conversation %s save failed (failure %d); retrying in %g s: %r",
-                    conversation_id,
-                    failures,
-                    delay,
-                    error,
-                    exc_info=True,
-                )
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS)
+        # From the first failure until the write succeeds, the stall checker sees a
+        # vps_save_retrying wait, which alarms once it passes its limit.
+        with ExitStack() as retrying:
+            wait: TrackedWaitHandle | None = None
+            while True:
+                try:
+                    return await operation()
+                except asyncio.CancelledError:
+                    # A proven pre-dispatch refusal is an admission outcome, not a failed
+                    # write.
+                    raise
+                except Exception as error:
+                    failures += 1
+                    detail = f"Stuck at write {failures}"
+                    if wait is None:
+                        wait = retrying.enter_context(
+                            WAITS.track(
+                                TrackedWaitKind.vps_save_retrying,
+                                conversation_id,
+                                conversation_id=conversation_id,
+                                detail=detail,
+                            )
+                        )
+                    else:
+                        wait.set_detail(detail)
+                    log.error(
+                        "conversation %s save failed (failure %d); retrying in %g s: %r",
+                        conversation_id,
+                        failures,
+                        delay,
+                        error,
+                        exc_info=True,
+                    )
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS)
 
     async def _write[T](self, operation: Callable[..., T], *args: object, **kwargs: object) -> T:
         """Retain one SQLite operation through caller cancellation and lock contention.

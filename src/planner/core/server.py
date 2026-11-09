@@ -82,6 +82,7 @@ from planner.environments.vps_metrics.config import load_config as load_metrics_
 from planner.environments.vps_metrics.config import store_path
 from planner.environments.vps_metrics.runtime import MetricsRuntime
 from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
+from planner.executor.clock import now_ms as executor_now_ms
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
@@ -107,6 +108,9 @@ from planner.resource_versions.api import router as resource_versions_router
 from planner.runtime.workspaces import register_workspace_root
 from planner.server_lifecycle.runtime import application_runtime
 from planner.skill_sources import provision_native_backend_skills, provision_workspace_skills
+from planner.stalls import checker as stalls_checker
+from planner.stalls.contracts import StallChecker, StallCheckerFactory
+from planner.stalls.registry import WAITS
 from planner.tickets.api import router as tickets_router
 from planner.tickets.workspace.api import router as ticket_workspace_router
 from planner.worker_settings.api import router as worker_settings_router
@@ -121,6 +125,8 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.already_running: 409,
     ErrorCode.gateway_offline: 503,
     ErrorCode.skill_save_incomplete: 500,
+    ErrorCode.executor_version_refused: 409,
+    ErrorCode.executor_incarnation_not_current: 409,
 }
 
 
@@ -178,6 +184,23 @@ async def _stop_runtime_with_deadline(runtime: Any, deadline: float) -> None:
     await runtime.stop(deadline=deadline)
 
 
+def _with_native_build_1_fields(health: dict[str, object]) -> dict[str, object]:
+    """Native build 1 (ios/Panels/Models/WorkspaceModels.swift, ExecutorHealth) requires
+    connection_state, and knows the Mac's activity only when it is "ready" and the
+    identity's connection_generation is above 0. Protocol 22 has neither, so both are
+    derived from presence here. Remove when the minimum native build reads presence."""
+    present = health.get("presence") == "present"
+    identity = health.get("identity")
+    if isinstance(identity, dict):
+        generation = identity.get("connection_generation", 0)
+        identity = {**identity, "connection_generation": max(int(generation), 1 if present else 0)}
+    return {
+        **health,
+        "identity": identity,
+        "connection_state": "ready" if present else "disconnected",
+    }
+
+
 def create_app(
     config: Config,
     clock: Clock,
@@ -188,7 +211,10 @@ def create_app(
     backend_child_factories_for_test: Mapping[ConversationBackendKey, BackendChildFactory]
     | None = None,
     vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
+    stall_checker_factory_for_test: StallCheckerFactory | None = None,
 ) -> FastAPI:
+    if stall_checker_factory_for_test is not None and not config.test_mode:
+        raise ValueError("stall_checker_factory_for_test is accepted only in test mode")
     if slot_participants_for_test is not None and not config.test_mode:
         raise ValueError("slot_participants_for_test is accepted only in test mode")
     if conversation_system_for_test is not None and not config.test_mode:
@@ -209,6 +235,7 @@ def create_app(
         loops: Any = None
         metrics: MetricsRuntime | None = None
         executor_endpoint = None
+        stall_checker: StallChecker | None = None
 
         async def shutdown_dependents() -> None:
             app.state.conversation = None
@@ -244,6 +271,8 @@ def create_app(
             app.state.vps_metrics = None
             if loops is not None:
                 await attempt(_stop_runtime_with_deadline(loops, deadline))
+            if stall_checker is not None:
+                await attempt(stall_checker.close())
             if executor_endpoint is not None:
                 await attempt(executor_endpoint.close())
             if attempt_observer is not None:
@@ -300,17 +329,13 @@ def create_app(
                 defer_view_cleanup=True,
                 startup_audit=audit_startup_tickets,
             ) as conversation:
-                audit_conn = conn_factory()
-                try:
-                    from planner.executor.store import ExecutorStore
-
-                    ExecutorStore.interrupt_after_restart(audit_conn)
-                    audit_conn.commit()
-                finally:
-                    audit_conn.close()
-
+                # Mac runs survive a VPS restart: their rows, assignments and commands
+                # are all in the database, and the conversation core adopts them.
                 if executor_endpoint is not None:
-                    executor_endpoint.configure(conversation.system, app)
+                    executor_endpoint.configure(
+                        conversation.system, app, update_check=app.state.mac_updates.check
+                    )
+                    await executor_endpoint.start()
                 conversation.system.configure_machine_catalog(
                     None if executor_endpoint is None else executor_endpoint.catalog
                 )
@@ -323,7 +348,7 @@ def create_app(
                 async def release_normal_work() -> None:
                     nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
                     nonlocal view_rebuild_task
-                    nonlocal loops, metrics
+                    nonlocal loops, metrics, stall_checker
                     conversation.live_tail.views.cleanup_stale_epochs()
                     database_parent = Path(config.db_path).resolve().parent
                     if config.workspace_root is not None:
@@ -416,6 +441,20 @@ def create_app(
                     )
                     app.state.vps_metrics = metrics
                     metrics.start()
+                    stall_checker_factory: StallCheckerFactory | None = (
+                        stall_checker_factory_for_test
+                        if config.test_mode
+                        else stalls_checker.StallChecker
+                    )
+                    if stall_checker_factory is not None:
+                        endpoint = executor_endpoint
+                        stall_checker = stall_checker_factory(
+                            config.db_path,
+                            WAITS,
+                            (lambda: ()) if endpoint is None else endpoint.stall_sources,
+                            executor_now_ms,
+                        )
+                        stall_checker.start()
                     await navigation_delivery.start()
                     await scoped_navigation.start()
                     await conversation.system.start_idle_child_janitor()
@@ -533,8 +572,10 @@ def create_app(
 
     def current_deployment_status() -> dict[str, object]:
         return deployment_status(
-            update_attempts.read(), config.app_sha,
-            success_seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS, now=datetime.now(UTC),
+            update_attempts.read(),
+            config.app_sha,
+            success_seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS,
+            now=datetime.now(UTC),
         )
 
     app.state.deployment_status = current_deployment_status
@@ -604,12 +645,8 @@ def create_app(
     async def executor_health() -> dict[str, object]:
         endpoint = getattr(app.state, "executor_endpoint", None)
         if endpoint is None:
-            return {
-                "mode": "local",
-                "last_contact_at_ms": None,
-                "connection_state": "disconnected",
-            }
-        return {"mode": "remote", **endpoint.health()}
+            return {"mode": "local", "connection_state": "disconnected"}
+        return _with_native_build_1_fields({"mode": "remote", **endpoint.health_payload()})
 
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:

@@ -1,10 +1,19 @@
-"""VPS backend adapter: native children remain owned by the Mac process."""
+"""VPS backend adapter: native children remain owned by the Mac process.
+
+Every operation is a mailbox row. What the caller waits for differs by kind:
+start, prompt, cancel and answers return once their row is committed; a steer waits up
+to STEER_DELIVERY_LIMIT_SECONDS for its result, and only while the Mac is present (one
+fetched without a result by then is uncertain, and later says if it never arrived); a
+stop waits, unbounded but tracked, for proof that the agent stopped.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Protocol
 from uuid import uuid4
 
 from planner.conversation.backends import contracts as backend
@@ -14,6 +23,7 @@ from planner.conversation.backends.contracts import (
 )
 from planner.conversation.contracts import (
     AnswerFate,
+    ConversationBackendKey,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
@@ -35,7 +45,6 @@ from planner.executor.protocol import (
     CanonicalSkillSnapshot,
     ChildCommand,
     ChildCommandArguments,
-    ChildInventory,
     ChildOperation,
     CommandDisposition,
     CommandOutcome,
@@ -44,144 +53,165 @@ from planner.executor.protocol import (
     StartRun,
     Steer,
     StopRun,
-    WireMessage,
-    WireMessageKind,
     WritePrompt,
-    decode_prompt_result,
-    encode_message,
-    encode_value,
 )
 from planner.executor.skills import validate_skill_snapshot
 
 type SkillSnapshotSupplier = Callable[[ResolvedConversationStart], CanonicalSkillSnapshot]
-type SendCommand = Callable[[ChildCommand], Awaitable[CommandOutcome]]
-type CancelInitialDelivery = Callable[[ChildReference, tuple[str, ...]], Awaitable[bool]]
+
+
+@dataclass(frozen=True, slots=True)
+class LateSteer:
+    """A steer the Mac fetched but did not answer within the delivery limit. not_delivered
+    resolves true once its row proves the steer never reached its turn."""
+
+    not_delivered: asyncio.Future[bool]
+
+
+class RemoteChildCommands(Protocol):
+    """What a remote child needs from MacRuns: the mailbox, per kind."""
+
+    async def put(self, command: ChildCommand) -> bool:
+        """Commit the command's row. False: refused at put (its process was replaced, or
+        the child's assignment is closed), and nothing was inserted."""
+        ...
+
+    def mac_is_present(self) -> bool: ...
+
+    async def deliver_steer(self, command: ChildCommand) -> CommandOutcome | LateSteer | None:
+        """The steer's outcome, or None when the Mac did not take it (away, withdrawn at
+        the delivery limit, expired, or refused at put), or LateSteer when it was fetched
+        and no result came within the limit."""
+        ...
+
+    async def stop(self, command: ChildCommand) -> CommandOutcome: ...
+
+    async def save_answer(self, command: ChildCommand) -> bool:
+        """Insert the answer under the conversation lock, only while its turn is live."""
+        ...
+
+    async def cancel_initial_delivery(
+        self, child: ChildReference, command_ids: tuple[str, ...]
+    ) -> bool:
+        """Withdraw what is still waiting. True if a prompt may have reached the agent."""
+        ...
+
+    def retire_child(self, child: ChildReference) -> None: ...
+
+
+def _raise_for(outcome: CommandOutcome) -> None:
+    """A command that did not succeed, as the backend error the core expects."""
+    if outcome.disposition is CommandDisposition.uncertain:
+        # An uncertainty is not proof of non-delivery. Never rebind/retry this command.
+        raise RemoteCommandUncertain(outcome.command_id)
+    if outcome.disposition is CommandDisposition.refused:
+        error_name = str(outcome.result.get("error_type", "BackendSpawnFailed"))
+        if error_name == "BackendPromptRejected":
+            raise backend.BackendPromptRejected(
+                str(outcome.result.get("error_message", "provider rejected prompt")),
+            )
+        errors: dict[str, type[backend.BackendAdapterError]] = {
+            name: getattr(backend, name)
+            for name in (
+                "BackendSpawnFailed",
+                "SessionLoadFailed",
+                "PromptWriteFailed",
+                "PromptWriteRefused",
+                "PermissionAnswerWriteFailed",
+                "UserInputAnswerWriteFailed",
+                "NeedsRebind",
+            )
+        }
+        raise errors.get(error_name, backend.BackendSpawnFailed)(
+            str(outcome.result.get("error_message", "remote operation refused"))
+        )
+
+
+_REPLACED_MESSAGE = "The Mac executor process that owned this child was replaced"
 
 
 class MacRemoteChild:
-    """A disconnect leaves command futures pending; it never fabricates a refusal."""
+    """A Mac child's commands, as mailbox rows."""
 
     def __init__(
         self,
         reference: ChildReference,
-        send_command: SendCommand,
+        commands: RemoteChildCommands,
         skill_snapshot_supplier: SkillSnapshotSupplier,
-        cancel_initial_delivery: CancelInitialDelivery | None = None,
         *,
         event_sink: backend.BackendEventSink | None = None,
         initial_history_complete: bool = True,
-        retire_reference: Callable[[ChildReference], None] | None = None,
-        send_answer: Callable[[ChildCommand], None] | None = None,
+        started_on: ResolvedConversationStart | None = None,
     ) -> None:
         self.reference = reference
         self.event_sink = event_sink
-        self._send_answer = send_answer
-        self.saved_answers: dict[str, ChildCommand] = {}
-        self._callbacks: set[AskReference] | None = None
-        self._retire_reference = retire_reference
-        self._send_command = send_command
+        self._commands = commands
         self._skill_snapshot_supplier = skill_snapshot_supplier
-        self._cancel_initial_delivery = cancel_initial_delivery
         self.initial_history_complete = initial_history_complete
         self._delivery_commands: list[ChildCommand] = []
+        # Initial puts still committing: a withdrawal waits for them, so a row that lands
+        # after it looked is still withdrawn.
+        self._initial_puts: set[asyncio.Task[bool]] = set()
         self.initial_delivery_cancelled = False
-        self.prompt_accepted = False
+        # A Claude child takes its model and effort when it starts. Its prompt is
+        # accepted at commit, so the Mac's refusal of a change would come back only as a
+        # failed turn: the change is refused here instead, and the core rebinds. A child
+        # bound again after a VPS restart is given the start it was made with.
+        self._claude_started_on: tuple[str, str | None] | None = None
+        if started_on is not None:
+            self._note_start(started_on)
+
+    def _note_start(self, resolved_start: ResolvedConversationStart) -> None:
+        if resolved_start.backend_key is ConversationBackendKey.claude:
+            self._claude_started_on = (resolved_start.model, resolved_start.reasoning_effort)
 
     @property
     def stop_outside_lock(self) -> bool:
         return True
 
     async def detach(self) -> None:
-        self.saved_answers.clear()
-        self._callbacks = set()
-        if self._retire_reference is not None:
-            self._retire_reference(self.reference)
+        self._commands.retire_child(self.reference)
 
     async def withdraw_delivery(self) -> bool:
         """Fence initial work; true proves the prompt never called the provider.
 
-        A successful child start does not prove prompt acceptance. Restored children
-        lack complete local transmission history.
+        Waiting rows are withdrawn on the VPS, which is proof they never ran. A row the
+        Mac fetched may have reached the provider. Restored children lack complete local
+        transmission history.
         """
         self.initial_delivery_cancelled = True
-        may_have_sent = (
-            await self._cancel_initial_delivery(
-                self.reference, tuple(command.command_id for command in self._delivery_commands)
-            )
-            if self._cancel_initial_delivery is not None
-            else any(
-                command.operation is ChildOperation.write_prompt
-                for command in self._delivery_commands
-            )
+        await asyncio.gather(*self._initial_puts, return_exceptions=True)
+        may_have_sent = await self._commands.cancel_initial_delivery(
+            self.reference, tuple(command.command_id for command in self._delivery_commands)
         )
-        return self.initial_history_complete and not may_have_sent and not self.prompt_accepted
+        return self.initial_history_complete and not may_have_sent
 
-    async def _call(
+    def _command(
         self, arguments: ChildCommandArguments, turn: backend.TurnToken | None = None
-    ) -> JsonObject:
-        operation = ChildOperation(arguments.kind)
-        command = ChildCommand(
+    ) -> ChildCommand:
+        return ChildCommand(
             command_id=str(uuid4()),
             child=self.reference,
-            operation=operation,
+            operation=ChildOperation(arguments.kind),
             turn=turn,
             arguments=arguments,
         )
-        if operation in (ChildOperation.start, ChildOperation.write_prompt):
-            if self.initial_delivery_cancelled:
-                raise DeliveryCancelled()
-            if operation is ChildOperation.write_prompt:
-                self._delivery_commands = [
-                    earlier
-                    for earlier in self._delivery_commands
-                    if earlier.operation is ChildOperation.start
-                ]
-                self.prompt_accepted = False
-            self._delivery_commands.append(command)
-        if operation is ChildOperation.start:
-            try:
-                encode_message(
-                    WireMessage(
-                        WireMessageKind.command,
-                        command.command_id,
-                        cast(JsonObject, encode_value(command)),
-                    )
-                )
-            except ProtocolRefused as error:
-                raise backend.BackendSpawnFailed(str(error)) from error
-        result = await self._send_command(command)
-        if result.disposition is CommandDisposition.uncertain:
-            if operation is ChildOperation.steer:
-                return {
-                    "kind": "steer_uncertain",
-                    "composed_content_delivered": result.result.get("composed_content_delivered"),
-                }
-            # An uncertainty is not proof of non-delivery. Never rebind/retry this command.
-            raise RemoteCommandUncertain(result.command_id)
-        if result.disposition is CommandDisposition.refused:
-            error_name = str(result.result.get("error_type", "BackendSpawnFailed"))
-            if error_name == "BackendPromptRejected":
-                raise backend.BackendPromptRejected(
-                    str(result.result.get("error_message", "provider rejected prompt")),
-                )
-            errors: dict[str, type[backend.BackendAdapterError]] = {
-                name: getattr(backend, name)
-                for name in (
-                    "BackendSpawnFailed",
-                    "SessionLoadFailed",
-                    "PromptWriteFailed",
-                    "PromptWriteRefused",
-                    "PermissionAnswerWriteFailed",
-                    "UserInputAnswerWriteFailed",
-                    "NeedsRebind",
-                )
-            }
-            raise errors.get(error_name, backend.BackendSpawnFailed)(
-                str(result.result.get("error_message", "remote operation refused"))
-            )
-        if operation is ChildOperation.write_prompt:
-            self.prompt_accepted = True
-        return result.result
+
+    async def _put_initial(self, command: ChildCommand) -> bool:
+        if self.initial_delivery_cancelled:
+            raise DeliveryCancelled()
+        if command.operation is ChildOperation.write_prompt:
+            self._delivery_commands = [
+                earlier
+                for earlier in self._delivery_commands
+                if earlier.operation is ChildOperation.start
+            ]
+        self._delivery_commands.append(command)
+        put = asyncio.ensure_future(self._commands.put(command))
+        self._initial_puts.add(put)
+        put.add_done_callback(self._initial_puts.discard)
+        # A cancelled caller does not cancel the commit, which a withdrawal then finds.
+        return await asyncio.shield(put)
 
     async def start(
         self,
@@ -211,7 +241,7 @@ class MacRemoteChild:
             # workspace as "/". The workspace itself sends no subfolder.
             subfolder = resolved_start.workspace_folder.relative_to("/")
             relative_path = None if subfolder == Path(".") else subfolder.as_posix()
-        await self._call(
+        command = self._command(
             StartRun(
                 canonical_skill_snapshot=snapshot,
                 resolved_start=resolved_start,
@@ -219,6 +249,13 @@ class MacRemoteChild:
                 workspace_home_relative=relative_path,
             )
         )
+        try:
+            placed = await self._put_initial(command)
+        except ProtocolRefused as error:
+            raise backend.BackendSpawnFailed(str(error)) from error
+        if not placed:
+            raise backend.BackendSpawnFailed(_REPLACED_MESSAGE)
+        self._note_start(resolved_start)
 
     async def write_prompt(
         self,
@@ -234,22 +271,38 @@ class MacRemoteChild:
         automatic_compaction: bool = False,
         reasoning_effort_is_set: bool = False,
     ) -> backend.BackendPromptAccepted:
-        return decode_prompt_result(
-            await self._call(
-                WritePrompt(
-                    content=content,
-                    sender_label=sender_label,
-                    sender_content=sender_content,
-                    sender_message_count=sender_message_count,
-                    mode=mode,
-                    model_change=model_change,
-                    reasoning_effort_change=reasoning_effort_change,
-                    reasoning_effort_is_set=reasoning_effort_is_set,
-                    automatic_compaction=automatic_compaction,
-                ),
-                turn_token,
-            )
+        """Accepted at commit. A prompt the Mac then cannot deliver ends its turn failed
+        through the ordered outbox."""
+        if self._claude_started_on is not None:
+            model, effort = self._claude_started_on
+            if (model_change is not None and model_change != model) or (
+                (reasoning_effort_change is not None or reasoning_effort_is_set)
+                and reasoning_effort_change != effort
+            ):
+                raise backend.NeedsRebind(
+                    "claude takes its model and reasoning effort when the child starts"
+                )
+        command = self._command(
+            WritePrompt(
+                content=content,
+                sender_label=sender_label,
+                sender_content=sender_content,
+                sender_message_count=sender_message_count,
+                mode=mode,
+                model_change=model_change,
+                reasoning_effort_change=reasoning_effort_change,
+                reasoning_effort_is_set=reasoning_effort_is_set,
+                automatic_compaction=automatic_compaction,
+            ),
+            turn_token,
         )
+        try:
+            placed = await self._put_initial(command)
+        except ProtocolRefused as error:
+            raise backend.PromptWriteRefused(str(error)) from error
+        if not placed:
+            raise backend.PromptWriteRefused(_REPLACED_MESSAGE)
+        return backend.BackendPromptAccepted(composed_content_delivered=True)
 
     async def steer(
         self,
@@ -259,14 +312,34 @@ class MacRemoteChild:
         sender_content: MessageContent | None = None,
         sender_label: str,
     ) -> backend.BackendSteerOutcome:
-        result = await self._call(
-            Steer(
-                content=content,
-                sender_content=sender_content,
-                sender_label=sender_label,
-            ),
-            turn_token,
+        not_delivered = backend.BackendSteerRefused(
+            PromptDeliveryRefusalReason.remote_steer_not_delivered
         )
+        if not self._commands.mac_is_present():
+            # No row: the core queues the text as the next message.
+            return not_delivered
+        try:
+            outcome = await self._commands.deliver_steer(
+                self._command(
+                    Steer(
+                        content=content,
+                        sender_content=sender_content,
+                        sender_label=sender_label,
+                    ),
+                    turn_token,
+                )
+            )
+        except ProtocolRefused:
+            return not_delivered  # Too large for one command: nothing was written.
+        if outcome is None:
+            return not_delivered
+        if isinstance(outcome, LateSteer):
+            return backend.BackendSteerUncertain(None, not_delivered=outcome.not_delivered)
+        if outcome.disposition is CommandDisposition.uncertain:
+            delivered = outcome.result.get("composed_content_delivered")
+            return backend.BackendSteerUncertain(delivered if isinstance(delivered, bool) else None)
+        _raise_for(outcome)
+        result: JsonObject = outcome.result
         if result["kind"] == "steer_refused":
             return backend.BackendSteerRefused(
                 PromptDeliveryRefusalReason(str(result["refusal_reason"])),
@@ -279,31 +352,12 @@ class MacRemoteChild:
         )
 
     async def cancel_running_turn(self) -> None:
-        await self._call(CancelTurn())
+        """Returns at commit. The VPS ends the turn itself; a cancel the Mac could not
+        carry out retires the child (MacRuns). Refused at put, the replaced process's
+        drain ends the turn."""
+        await self._commands.put(self._command(CancelTurn()))
 
-    def observe_callback(self, ask: AskReference) -> None:
-        if self._callbacks is not None:
-            self._callbacks.add(ask)
-
-    def observe_callbacks(self, inventory: ChildInventory | None) -> None:
-        self._callbacks = (
-            {ask for ask in inventory.pending_asks if ask.turn == inventory.active_turn}
-            if inventory is not None
-            else set()
-        )
-
-    def can_emit_answer(self, command: ChildCommand) -> bool:
-        args = command.arguments
-        return (
-            self.saved_answers.get(command.command_id) == command
-            and isinstance(args, (AnswerPermission, AnswerUserInput))
-            and args.answer is not None
-            and (self._callbacks is None or args.answer.ask in self._callbacks)
-        )
-
-    def _save_answer(self, answer: DurableAnswer) -> AnswerFate:
-        if self._send_answer is None:
-            return AnswerFate.refused
+    async def _save_answer(self, answer: DurableAnswer) -> AnswerFate:
         args = (
             AnswerPermission(
                 ask_id=answer.ask.ask_id, option_id=answer.option_id or "", answer=answer
@@ -316,9 +370,11 @@ class MacRemoteChild:
         command = ChildCommand(
             answer.answer_id, self.reference, ChildOperation(args.kind), answer.ask.turn, args
         )
-        self.saved_answers[answer.answer_id] = command
-        self._send_answer(command)
-        return AnswerFate.saved
+        try:
+            saved = await self._commands.save_answer(command)
+        except ProtocolRefused:
+            return AnswerFate.refused  # Too large for one command: nothing was written.
+        return AnswerFate.saved if saved else AnswerFate.refused
 
     async def answer_permission_ask(
         self,
@@ -330,7 +386,7 @@ class MacRemoteChild:
     ) -> AnswerFate:
         if answer_id is None or turn_token is None:
             return AnswerFate.refused
-        return self._save_answer(
+        return await self._save_answer(
             DurableAnswer(
                 answer_id,
                 AskReference(self.reference, turn_token, ask_id, AskKind.permission),
@@ -349,7 +405,7 @@ class MacRemoteChild:
     ) -> AnswerFate:
         if answer_id is None or turn_token is None:
             return AnswerFate.refused
-        return self._save_answer(
+        return await self._save_answer(
             DurableAnswer(
                 answer_id,
                 AskReference(self.reference, turn_token, request_id, AskKind.user_input),
@@ -360,4 +416,4 @@ class MacRemoteChild:
         )
 
     async def stop(self) -> None:
-        await self._call(StopRun())
+        _raise_for(await self._commands.stop(self._command(StopRun())))

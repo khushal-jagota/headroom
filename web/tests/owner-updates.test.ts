@@ -89,8 +89,8 @@ describe("the update card", () => {
   });
 
   it("keeps Mac diagnostics in the details, with plain facts for each failure", () => {
-    const identity = { protocol_version: 7, application_revision: "3f9a2c1d00", spool_format_version: 5, executor_incarnation: "mac", connection_generation: 1 };
-    const refused: MacStatus = { identity: null, connection_state: "disconnected", last_contact_at_ms: 1000 - 14 * 60_000,
+    const identity = { protocol_version: 7, application_revision: "3f9a2c1d00", spool_format_version: 5, executor_incarnation: "mac" };
+    const refused: MacStatus = { presence: "refused", since_ms: 0, identity: null, last_contact_at_ms: 1000 - 14 * 60_000,
       refusal: { reason: "Mac needs update", peer_identity: identity, server_identity: { ...identity, protocol_version: 8 }, refused_at_ms: 0 } };
     expect(updateDetails("failed", at("failed", { attempt, detail: "The new version did not pass its health check." }), 1000)).toEqual({
       title: "Update didn't install", facts: [
@@ -101,7 +101,7 @@ describe("the update card", () => {
         ["What happened", "The Mac did not check in during the update. It can be asleep or offline."],
         ["Panels", "22222222 (updated)"], ["Mac", "3f9a2c1d"], ["Last contact", "14 minutes ago"],
         ["Protocol", "Mac 7 · server 8"], ["Outbox format", "Mac 5 · server 5"], ["Refused", "Mac needs update"]] });
-    const reverted: MacStatus = { identity, connection_state: "ready", last_contact_at_ms: 1000,
+    const reverted: MacStatus = { presence: "present", since_ms: 0, identity, last_contact_at_ms: 1000,
       update: { request_id: "m1", target_revision: "next", phase: "reverted", detail: "The new Mac runtime did not start." } };
     expect(updateDetails("mac_failed", at("mac_failed", { mac_details: reverted }), 1000).facts).toEqual([
       ["What happened", "The new Mac runtime did not start."], ["Panels", "11111111 (updated)"], ["Mac", "3f9a2c1d (previous)"],

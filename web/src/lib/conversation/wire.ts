@@ -57,7 +57,8 @@ export type PromptDeliveryRefusalReason =
   | "running_turn_cannot_accept_steer"
   | "message_cannot_be_steered"
   | "backend_rejected_steer"
-  | "command_cannot_join_running_turn";
+  | "command_cannot_join_running_turn"
+  | "remote_steer_not_delivered";
 
 /** What one message is made of: written words, pictures, and files.
  *

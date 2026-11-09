@@ -7,10 +7,11 @@ from pathlib import Path
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from tests.support.migration_head import shipped_migration_head
 from tests.support.ticket_workflows import preset_workflow_json
 
 from planner.core import db as db_module
-from planner.core.db import BASELINE_REVISION, connect, create_schema
+from planner.core.db import connect, create_schema
 
 
 def _revision(conn: sqlite3.Connection) -> str:
@@ -27,11 +28,12 @@ def _migration_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _append_revision(tree: Path, statements: str) -> None:
+    head = shipped_migration_head()
     (tree / "versions" / "second.py").write_text(
         'from alembic import op\n'
         'from sqlalchemy import CheckConstraint, Column, Index, Integer, MetaData, Table, Text\n'
         'revision = "second"\n'
-        f'down_revision = {BASELINE_REVISION!r}\n'
+        f'down_revision = {head!r}\n'
         'branch_labels = depends_on = None\n'
         '\ndef upgrade():\n'
         + statements
@@ -52,14 +54,14 @@ def _parents_and_children(conn: sqlite3.Connection) -> None:
     )
 
 
-def test_fresh_database_starts_at_the_single_baseline(tmp_path: Path) -> None:
+def test_fresh_database_starts_at_the_single_shipped_head(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "fresh.db"))
     try:
         create_schema(conn)
         config = Config()
         config.set_main_option("script_location", str(db_module.MIGRATIONS_DIRECTORY))
-        assert ScriptDirectory.from_config(config).get_heads() == [BASELINE_REVISION]
-        assert _revision(conn) == BASELINE_REVISION
+        assert ScriptDirectory.from_config(config).get_heads() == [shipped_migration_head()]
+        assert _revision(conn) == shipped_migration_head()
         assert conn.execute("SELECT count(*) FROM projects").fetchone()[0] > 0
         assert conn.execute("SELECT 1 FROM worker_types WHERE worker_type='coding'").fetchone()
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1

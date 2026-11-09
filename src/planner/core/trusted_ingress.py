@@ -37,7 +37,7 @@ _EXECUTOR_SINGLETON_HEADERS: Final = frozenset(
         ORIGIN_HEADER,
         EXECUTOR_ID_HEADER,
         "x-panels-executor-incarnation",
-        "x-panels-executor-generation",
+        "x-panels-executor-protocol",
     }
 )
 _SINGLETON_SECURITY_HEADERS: Final = frozenset({TAILSCALE_USER_LOGIN_HEADER, ORIGIN_HEADER})
