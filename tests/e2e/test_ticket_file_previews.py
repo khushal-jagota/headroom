@@ -41,7 +41,10 @@ def _prove_dock_artifact_retention(page: Page, label: str, evidence: str | None)
     # The state changes before the dock motion releases the retained reader height.
     expect(settled_dock).to_have_count(1, timeout=WAIT_MS)
     draft.fill("Keep this draft through full conversation")
+    if pane.get_attribute("data-conversation-state") == "opened":
+        page.locator("[data-conversation-collapse]").click(timeout=WAIT_MS)
     expect(pane).to_have_attribute("data-conversation-state", "rest")
+    expect(settled_dock).to_have_count(1, timeout=WAIT_MS)
     frame.locator("[data-retained-form]").fill("Keep this artifact value")
     frame.locator("[data-bottom-control]").click(timeout=WAIT_MS)
     expect(frame.locator("[data-bottom-control]")).to_have_text("Bottom control works")
@@ -86,6 +89,10 @@ def _prove_dock_artifact_retention(page: Page, label: str, evidence: str | None)
     assert returned_bounds is not None
     assert returned_bounds["height"] == reader_height
     draft.fill("")
+    # Focusing the field opens the phone conversation, including during cleanup.
+    if pane.get_attribute("data-conversation-state") == "opened":
+        page.locator("[data-conversation-collapse]").click(timeout=WAIT_MS)
+    expect(settled_dock).to_have_count(1, timeout=WAIT_MS)
 
 
 def _ticket_files_dir(server: ServerHandle, ticket_id: str) -> Path:
@@ -489,7 +496,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         }, indent=2) + "\n", encoding="utf-8")
 
 
-def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
+def test_a_video_preview_shows_a_poster_then_plays_and_seeks(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -497,7 +504,7 @@ def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
 ) -> None:
     """A real browser and a real route, because nothing smaller can prove this.
 
-    The risk is that a media preview which downloads nothing up front cannot then play
+    The risk is that the metadata poster works but the activated player cannot play
     or seek. Playing and seeking are the browser's own media stack talking to the
     route's range handling, over a real socket. A component test has no range server and
     a unit test has no media stack, so neither can tell a working preview from one that
@@ -523,40 +530,39 @@ def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
 
     context = context_factory()
     page = context.new_page()
-    asked_for_the_clip: list[str] = []
-    page.on(
-        "request",
-        lambda request: asked_for_the_clip.append(request.url)
-        if "video/clip.mp4" in request.url
-        else None,
-    )
     page.goto(server.base + f"/#/workspace/{ticket_id}")
     page.wait_for_selector(
         f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
     _open_ticket_field(page, "what_changes")
-    play = page.locator('[data-file-preview-kind="video"] [data-media-play]').first
+    preview = page.locator('[data-file-preview-kind="video"]').first
+    play = preview.locator("[data-media-play]")
     play.wait_for(timeout=WAIT_MS)
-    page.wait_for_timeout(1500)
-    assert page.locator("video").count() == 0
-
-    # Nothing has been asked for: the reader has not asked for it.
-    assert asked_for_the_clip == [], asked_for_the_clip
+    # The approved poster loads metadata before play, without activating the player.
+    poster = preview.locator("video.file-preview-video-poster")
+    expect(poster).to_have_attribute("preload", "metadata")
+    page.wait_for_function(
+        "() => { const poster = document.querySelector('video.file-preview-video-poster');"
+        " return poster !== null && poster.readyState >= 2; }",
+        timeout=WAIT_MS,
+    )
+    assert poster.evaluate("node => node.paused")
+    expect(preview.locator("video[controls]")).to_have_count(0)
     # The reader can still see which file the player is.
     name = page.locator('[data-file-preview-kind="video"] .file-preview-name-link').first
-    assert name.is_visible(), "a player with no frame must still name its file"
+    assert name.is_visible(), "the poster must still name its file"
     assert "clip.mp4" in name.inner_text()
 
     # It plays on the first action.
     play.click()
-    video = page.locator("video").first
+    video = preview.locator("video[controls]")
+    expect(poster).to_have_count(0)
     video.evaluate("node => { node.muted = true; return node.play(); }")
     page.wait_for_function(
         "() => { const v = document.querySelector('video');"
         " return v !== null && v.readyState >= 3; }",
         timeout=WAIT_MS,
     )
-    assert asked_for_the_clip, "playing must fetch the clip"
 
     # And it seeks.
     video.evaluate("node => { node.currentTime = 2.0; }")
