@@ -1751,13 +1751,19 @@ class SleepCycles:
         ]
 
     def _interruptions(self) -> Counter[str]:
-        """Recorded interruptions of turns by a Mac restart, per conversation."""
+        """Recorded interruptions of turns by a Mac restart, per conversation.
+
+        A turn whose opening prompt the replaced process never fetched is not one: its
+        interruption only holds the message until the same prompt is written to a fresh
+        agent, and is then closed saying so. That message is judged as a message (it
+        must reach its agent exactly once), and its turn gets no recovery prompt."""
         return Counter(
             str(c)
             for (c,) in _query(
                 self.db_path,
                 "SELECT source_conversation_id FROM deploy_interruptions "
-                "WHERE deployment_id LIKE 'mac-process:%'",
+                "WHERE deployment_id LIKE 'mac-process:%' AND NOT (recovery_state='closed' "
+                "AND detail LIKE '%Its message was written again to a fresh agent.')",
             )
         )
 
