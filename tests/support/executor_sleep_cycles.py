@@ -134,6 +134,9 @@ RECOVERY_TEXT = "Inspect the interrupted work and continue the current authorize
 EVENT_TOKEN = re.compile(r"evt\[(?P<conversation>[a-z0-9]+):(?P<seq>\d+)\]")
 # Every message the harness sends carries one of these.
 MESSAGE_MARKER = re.compile(r"msg\[(?P<marker>[a-z0-9.]+)\]")
+# The agent's own id of a permission ask: conversation, agent life and turn. A prompt that
+# carries an answer to a killed agent's ask names it.
+ASK_ID = re.compile(r"ask-[a-z0-9]+-l\d+-t\d+")
 _DIRECTIVE = re.compile(r"\b(?P<name>steps|interval|ask)=(?P<value>[0-9.]+)")
 # The kinds the VPS stores in the conversation record. Agent prose is not stored there
 # (the core drops AgentMessageCompleted by design), so messages travel the same ordered
@@ -303,6 +306,7 @@ def run_agent(log_path: Path, conversation_id: str, executor_pid: int) -> int:
             if turn is not None:
                 log.write({"t": "anomaly", "detail": "a prompt while a turn is active"})
             turn, ending = int(message["turn"]), False
+            asks = sorted(set(ASK_ID.findall(text)))
             log.write(
                 {
                     "t": "prompt",
@@ -310,6 +314,9 @@ def run_agent(log_path: Path, conversation_id: str, executor_pid: int) -> int:
                     "life": life,
                     "markers": markers,
                     "recovery": RECOVERY_TEXT in text,
+                    # The text itself, when it speaks of an ask, so the judge reads what
+                    # the agent was told about it.
+                    **({"asks": asks, "text": text} if asks else {}),
                 }
             )
             plan_turn(turn, text)
@@ -488,7 +495,9 @@ def _agent_event(message: dict[str, Any]) -> BackendEventValue:
             return PermissionAskRaised(
                 ask=BackendPermissionAsk(
                     str(message["ask_id"]),
-                    f"Allow the next step? {token}",
+                    # Names the ask without naming an option, so a prompt that carries the
+                    # answer must say which option was chosen.
+                    f"May I take the next step? {message['ask_id']} {token}",
                     None,
                     (
                         PermissionAskOption("allow", "Allow", "allow_once"),
@@ -576,15 +585,31 @@ def run_executor(
 @dataclass(frozen=True)
 class CycleSchedule:
     """What each cycle does. The defaults are the 100-cycle run (contract §8.3, §11.8,
-    §11.10 row F)."""
+    §11.10 row F, and the review fixes in part-r-harness-notes.md).
+
+    A kind with ``every`` N and ``from`` F runs on cycles F, F+N, F+2N, ...; an ``every``
+    of 0 never runs it."""
 
     freeze_seconds: tuple[float, float] = (5.0, 60.0)
     dark_wake_every: int = 3
+    dark_wake_from: int = 3
     dark_wake_seconds: tuple[float, float] = (2.0, 10.0)
     cut_every: int = 4
-    mac_restart_every: int = 25
-    # Every this-many-th Mac restart also restarts the VPS while that restart's drain waits.
+    cut_from: int = 4
+    mac_restart_every: int = 10
+    mac_restart_from: int = 10
+    # The 1st, then every this-many-th, Mac restart dies offline and the VPS also crashes
+    # while that restart's drain waits; the others die mid-upload.
     vps_restart_every: int = 2
+    # The VPS alone restarts while the same Mac process sleeps mid-turn, with a streaming
+    # turn, an open ask, queued and steered messages; the Mac then wakes into the new VPS.
+    vps_restart_asleep_every: int = 10
+    vps_restart_asleep_from: int = 5
+    # Longer than every stall limit (the longest is 180 s), so an alarm raised for a
+    # sleeping Mac is seen.
+    long_freeze_every: int = 10
+    long_freeze_from: int = 7
+    long_freeze_seconds: tuple[float, float] = (240.0, 360.0)
     drain_limit_seconds: float = 120.0
     # A streaming turn outlasts the moment the group is frozen.
     stream_steps: int = 40
@@ -609,6 +634,9 @@ class CycleReport:
     kill: dict[str, object] | None = None
     vps_restart_during_drain: bool | None = None
     held_at_vps_restart: list[str] = field(default_factory=list)
+    # The asks open at a VPS restart while the Mac slept, and whether the new VPS still
+    # held them open.
+    asks_open_at_vps_restart: dict[str, bool] = field(default_factory=dict)
     drain_seconds: float | None = None
     counts: dict[str, object] = field(default_factory=dict)
     violations: list[str] = field(default_factory=list)
@@ -773,6 +801,13 @@ class CycleEndpoint(VpsExecutor):
         background; the old core is cut off from the database separately."""
         self._closed = True
         self._released.set()
+
+        def crashed(*arguments: object) -> object:
+            raise PlannerError(ErrorCode.retry_later, "this VPS process has gone")
+
+        # A dead process answers no held poll: without this, the cleanup below would wake
+        # each held poll into one last fetch, marking rows delivered that nobody received.
+        self.mailbox._fetch = crashed  # type: ignore[method-assign,assignment]
         for task in (*self._owned, *self.runs._tasks):
             task.cancel()
         self._crash_cleanup = asyncio.ensure_future(super().close())
@@ -853,6 +888,12 @@ class _Agents:
     # The turn of the last prompt, unless its turn_ended was acknowledged (in the outbox).
     open_turn: int | None
     anomalies: list[str]
+    # Each message marker's first arrival, as the number of the prompt or steer that
+    # carried it; and the markers that arrived as a steer the running turn took.
+    arrival: dict[str, int]
+    steered_in: set[str]
+    # Every prompt that spoke of an ask: the ask ids it named, and its text.
+    ask_prompts: list[tuple[list[str], str]]
 
     @classmethod
     def read(cls, path: Path) -> _Agents:
@@ -864,7 +905,10 @@ class _Agents:
         executors: list[int] = []
         open_turn: int | None = None
         anomalies: list[str] = []
-        for record in read_records(path):
+        arrival: dict[str, int] = {}
+        steered_in: set[str] = set()
+        ask_prompts: list[tuple[list[str], str]] = []
+        for number, record in enumerate(read_records(path)):
             kind = record.get("t")
             if kind == "life":
                 lives = int(record["life"])
@@ -886,10 +930,17 @@ class _Agents:
                     open_turn = None
             elif kind == "prompt":
                 received.update(record["markers"])
+                for marker in record["markers"]:
+                    arrival.setdefault(marker, number)
                 recoveries += bool(record["recovery"])
                 open_turn = int(record["turn"])
+                if record.get("asks"):
+                    ask_prompts.append((list(record["asks"]), str(record.get("text", ""))))
             elif kind == "steer" and record["accepted"]:
                 received.update(record["markers"])
+                for marker in record["markers"]:
+                    arrival.setdefault(marker, number)
+                    steered_in.add(marker)
             elif kind == "answer":
                 answers[str(record["ask_id"])] += 1
                 if not record["matched"]:
@@ -897,7 +948,18 @@ class _Agents:
             elif kind == "anomaly":
                 anomalies.append(str(record["detail"]))
         return cls(
-            emitted, acked, received, answers, recoveries, lives, executors, open_turn, anomalies
+            emitted,
+            acked,
+            received,
+            answers,
+            recoveries,
+            lives,
+            executors,
+            open_turn,
+            anomalies,
+            arrival,
+            steered_in,
+            ask_prompts,
         )
 
 
@@ -908,8 +970,11 @@ class SleepCycles:
     conversations = ("ca", "cb", "cc")
     roles = ("stream", "ask", "idle")
 
-    def __init__(self, work: Path, out: Path, schedule: CycleSchedule, seed: int) -> None:
+    def __init__(
+        self, work: Path, out: Path, schedule: CycleSchedule, seed: int, *, keep_going: bool
+    ) -> None:
         self.work = work
+        self.keep_going = keep_going
         self.out = out
         self.schedule = schedule
         self.seed = seed
@@ -935,14 +1000,18 @@ class SleepCycles:
         self.sends: list[asyncio.Task[None]] = []
         self.reports: list[CycleReport] = []
         self.vps_restarts_during_drain = 0
-        self.lost_with_vps_restart: set[str] = set()
+        self.vps_restarts_asleep = 0
+        # Messages held in VPS memory at a VPS restart: marker to when.
+        self.lost_with_vps_restart: dict[str, int] = {}
+        # Each violation is reported once, in the cycle that first finds it.
+        self.violations_seen: set[str] = set()
         self.ledger = LinkLedger()
         self.old_endpoints: list[CycleEndpoint] = []
         # Outbox items still waiting when a Mac process was killed: they must arrive.
         self.required_after_kill: set[str] = set()
-        # Messages that never reached an agent and whose record says so: marker to the
-        # record's kind and detail.
-        self.undelivered_in_record: dict[str, tuple[str, str]] = {}
+        # The one excused loss: messages held in VPS memory at a VPS restart that never
+        # reached their agent (the judge's latest reading).
+        self.excused_held_at_vps_restart: list[str] = []
 
     # --- the run -------------------------------------------------------------------------
 
@@ -975,7 +1044,7 @@ class SleepCycles:
                             report.drain_seconds or -1,
                             len(report.violations),
                         )
-                        if report.violations:
+                        if report.violations and not self.keep_going:
                             break
                 finally:
                     await self._stop_everything()
@@ -1180,12 +1249,16 @@ class SleepCycles:
     async def _cycle(self, cycle: int, *, last: bool) -> CycleReport:
         schedule = self.schedule
         rng = random.Random(self.seed * 100_003 + cycle)
-        dark = cycle % schedule.dark_wake_every == 0
-        cut = cycle % schedule.cut_every == 0
-        mac_restart = cycle % schedule.mac_restart_every == 0
-        vps_restart = (
-            mac_restart and (cycle // schedule.mac_restart_every) % schedule.vps_restart_every == 0
+        dark = _on(cycle, schedule.dark_wake_every, schedule.dark_wake_from)
+        mac_restart = _on(cycle, schedule.mac_restart_every, schedule.mac_restart_from)
+        # A Mac restart's wake is the kill, so it has no cut.
+        cut = not mac_restart and _on(cycle, schedule.cut_every, schedule.cut_from)
+        restart_number = (cycle - schedule.mac_restart_from) // max(schedule.mac_restart_every, 1)
+        vps_restart = mac_restart and restart_number % schedule.vps_restart_every == 0
+        vps_restart_asleep = not mac_restart and _on(
+            cycle, schedule.vps_restart_asleep_every, schedule.vps_restart_asleep_from
         )
+        long_freeze = _on(cycle, schedule.long_freeze_every, schedule.long_freeze_from)
         # Requests held by the blackhole: on odd cycles they stay dead after the wake
         # until the Mac's own timeouts give up on them (a long poll on a socket that died
         # in sleep); on even ones they are aborted when the network returns.
@@ -1195,12 +1268,15 @@ class SleepCycles:
             for flag, name in (
                 (dark, "dark_wake"),
                 (cut, "cut"),
+                (long_freeze, "long_freeze"),
                 (mac_restart, "mac_restart"),
                 (vps_restart, "vps_restart"),
+                (vps_restart_asleep, "vps_restart_asleep"),
             )
             if flag
         ]
-        freeze = round(rng.uniform(*schedule.freeze_seconds), 1)
+        span = schedule.long_freeze_seconds if long_freeze else schedule.freeze_seconds
+        freeze = round(rng.uniform(*span), 1)
         dark_wake = None
         if dark:
             seconds = round(rng.uniform(*schedule.dark_wake_seconds), 1)
@@ -1233,6 +1309,12 @@ class SleepCycles:
                 report.counts["final_quiet_seconds"] = schedule.final_quiet_seconds
         except Violation as error:
             report.violations.append(str(error))
+            # A violation found while the Mac slept leaves it frozen and offline: wake it,
+            # so a run that keeps going judges the next cycle, not this one's sleep.
+            with contextlib.suppress(Exception):
+                self.endpoint.release_replies()
+                self._signal(signal.SIGCONT)
+                await self._blackhole_off(report)
         report.counts["items_received"] = sum(self.ledger.received.values()) - received_before
         report.counts["items_resent"] = self._resent() - resent_before
         if not report.violations:
@@ -1287,17 +1369,26 @@ class SleepCycles:
         self._signal(signal.SIGSTOP)
         await asyncio.to_thread(self.proxy.blackhole, True)
         frozen_at = time.monotonic()
+        restart_asleep = "vps_restart_asleep" in report.kinds
+        # Before a VPS restart the ask stays open, and the new VPS answers it. Before a Mac
+        # restart it is answered just before the kill, after any dark wake, so an offline
+        # kill always finds the answer saved and not yet applied.
+        answer_now = not restart_asleep and "mac_restart" not in report.kinds
         for conversation_id, role in report.roles.items():
             prefix = f"msg[c{cycle}.{conversation_id}"
             if role == "stream":
                 self._send(cycle, conversation_id, f"{prefix}.steer]", PromptDeliveryMode.steer)
                 self._send(cycle, conversation_id, f"{prefix}.next] steps=2")
             elif role == "ask":
-                await self._answer(cycle, conversation_id, report)
+                if answer_now:
+                    await self._answer(cycle, conversation_id, report)
                 self._send(cycle, conversation_id, f"{prefix}.next] steps=2")
             else:
                 self._send(cycle, conversation_id, f"{prefix}.wake] steps=3")
                 self._send(cycle, conversation_id, f"{prefix}.steer]", PromptDeliveryMode.steer)
+        if restart_asleep:
+            # Before any dark wake, so the turns are still mid-way at the restart.
+            await self._restart_vps_while_asleep(cycle, report)
         if report.dark_wake is not None:
             await self._frozen_until(frozen_at + report.dark_wake["after"], report)
             self._signal(signal.SIGCONT)
@@ -1305,6 +1396,10 @@ class SleepCycles:
             await asyncio.sleep(report.dark_wake["seconds"])
             self._signal(signal.SIGSTOP)
             await asyncio.to_thread(self.proxy.blackhole, True)
+        if "mac_restart" in report.kinds:
+            for conversation_id, role in report.roles.items():
+                if role == "ask":
+                    await self._answer(cycle, conversation_id, report)
         await self._frozen_until(frozen_at + report.freeze_seconds, report)
 
         # Wake, without the wake hook.
@@ -1416,18 +1511,50 @@ class SleepCycles:
         await self._restart_vps(report)
         self.vps_restarts_during_drain += 1
 
-    async def _restart_vps(self, report: CycleReport) -> None:
+    async def _restart_vps_while_asleep(self, cycle: int, report: CycleReport) -> None:
+        """The VPS crashes and restarts while the lid is closed: the same Mac process stays
+        frozen mid-turn, with a streaming turn, an open ask and messages queued and steered,
+        while a new VPS starts over the same database. The new VPS must still hold the open
+        asks, and answers them; the Mac wakes into it. Its sockets are not reset: a sleeping
+        Mac misses the old VPS's resets, and finds its requests dead when it wakes."""
+        # Every send has its fate first: a send in flight at a crash is another case.
+        await self._await_sends()
+        self.vps_restarts_asleep += 1
+        asks = {
+            conversation_id: await self.system.pending_permission_ask_ids(conversation_id)
+            for conversation_id in self.conversations
+        }
+        for conversation_id, role in report.roles.items():
+            if role == "stream" and not await self.system.is_running(conversation_id):
+                raise Violation(f"{conversation_id}'s streaming turn ended before the restart")
+        if not any(asks.values()):
+            raise Violation("no ask was open at the VPS restart")
+        await self._restart_vps(report, reset_sockets=False)
+        for conversation_id, before in asks.items():
+            after = await self.system.pending_permission_ask_ids(conversation_id)
+            for ask_id in sorted(before):
+                report.asks_open_at_vps_restart[ask_id] = ask_id in after
+                if ask_id not in after:
+                    raise Violation(
+                        f"the ask {ask_id} open at the VPS restart is not open in the new VPS"
+                    )
+            if before:
+                await self._answer(cycle, conversation_id, report)
+
+    async def _restart_vps(self, report: CycleReport, *, reset_sockets: bool = True) -> None:
         """A crash and restart of the VPS process, then a new one built over the same
         database. The old one is cut off: its connections are cut, its tasks cancelled
         with nothing waiting for them, and its conversation core can no longer write.
         Saved batches whose replies were held lose only their receipts, so the Mac's
         resend to the new process is a true duplicate."""
         self.down["down"] = True
-        await asyncio.to_thread(self.proxy.cut_connections)
+        if reset_sockets:
+            await asyncio.to_thread(self.proxy.cut_connections)
         # Held messages live in the VPS process's memory and a restart loses them
-        # (docs/conversations.md). That is the core's documented behaviour, not the
-        # link's: each one held at this moment is recorded, and is excused only if no
-        # mailbox row for it exists.
+        # (docs/conversations.md). That is the one loss the judge excuses (a follow-up
+        # ticket owns it): each one held at this moment is named, and is excused only if
+        # it never reaches its agent and no mailbox row for it was put after this moment.
+        held_at_ms = now_ms()
         held = [
             marker["marker"]
             for conversation_id in self.conversations
@@ -1435,7 +1562,8 @@ class SleepCycles:
             for marker in MESSAGE_MARKER.finditer(message_content_text(prompt.content))
         ]
         report.held_at_vps_restart = held
-        self.lost_with_vps_restart.update(held)
+        for marker in held:
+            self.lost_with_vps_restart.setdefault(marker, held_at_ms)
         if self.checker is not None:
             await self.checker.close()
         self.endpoint.crash()
@@ -1751,7 +1879,7 @@ class SleepCycles:
             )[0][0]
             if ended_interrupted > interrupted:
                 violations.append(
-                    f"{conversation_id}: {ended_interrupted} turns ended interrupted, "
+                    f"c{cycle}.{conversation_id}: {ended_interrupted} turns ended interrupted, "
                     f"{interrupted} interruptions recorded"
                 )
             recoveries = _query(
@@ -1771,7 +1899,7 @@ class SleepCycles:
             report.counts[f"{conversation_id}_recoveries"] = recoveries
             if not restart and (interrupted or recoveries):
                 violations.append(
-                    f"{conversation_id}: {interrupted} interrupted turns and {recoveries} "
+                    f"c{cycle}.{conversation_id}: {interrupted} interrupted turns and {recoveries} "
                     "recoveries in a cycle without a Mac restart"
                 )
             if restart:
@@ -1781,8 +1909,8 @@ class SleepCycles:
                 )
                 if interrupted > 1 or recoveries != interrupted or (active and interrupted != 1):
                     violations.append(
-                        f"{conversation_id}: {interrupted} interrupted turns, {recoveries} "
-                        f"recovery messages (agent turn active at the kill: {active})"
+                        f"c{cycle}.{conversation_id}: {interrupted} interrupted turns, "
+                        f"{recoveries} recovery messages (agent turn active at the kill: {active})"
                     )
             if agents.recoveries != all_recoveries:
                 violations.append(
@@ -1818,15 +1946,17 @@ class SleepCycles:
             violations.append(f"commands run more than once: {twice[:10]}")
         rows = _query(
             self.db_path,
-            "SELECT command_id,operation,state,outcome_json,command_json FROM executor_commands "
-            "ORDER BY command_sequence",
+            "SELECT command_id,operation,state,outcome_json,command_json,created_at_ms "
+            "FROM executor_commands ORDER BY command_sequence",
         )
         known = {str(row[0]) for row in rows}
         strangers = sorted(set(invocations) - known)
         if strangers:
             violations.append(f"commands run that the mailbox never held: {strangers[:10]}")
-        last_fate: dict[str, bool] = {}
-        for command_id, operation, state, outcome_json, content in rows:
+        # Where each message and answer went in the mailbox, for the violation's detail.
+        trail: dict[str, list[str]] = {}
+        put_at: dict[str, list[int]] = {}
+        for command_id, operation, state, outcome_json, content, created_at_ms in rows:
             if operation not in _CHILD_OPERATIONS:
                 continue
             disposition = _disposition(outcome_json)
@@ -1835,29 +1965,32 @@ class SleepCycles:
                 violations.append(f"{operation} {command_id} succeeded but ran {runs} times")
             if (disposition == "refused" or state in ("withdrawn", "expired")) and runs:
                 violations.append(f"{operation} {command_id} was {state} {disposition} but ran")
-            # The last row naming a message or an ask decides whether it may be lost.
-            may_be_lost = (
-                state in ("withdrawn", "expired")
-                or disposition in ("refused", "uncertain")
-                or '"steer_refused"' in str(outcome_json or "")
+            step = f"{operation} {state} {disposition or '-'}"
+            reason = _outcome_reason(outcome_json)
+            if reason:
+                step += f" ({reason})"
+            names = list(
+                dict.fromkeys(found["marker"] for found in MESSAGE_MARKER.finditer(str(content)))
             )
-            for found in MESSAGE_MARKER.finditer(str(content)):
-                last_fate[found["marker"]] = may_be_lost
             if operation == "answer_permission_ask":
-                for ask in self.saved_answers:
-                    if ask in str(content):
-                        last_fate[f"ask:{ask}"] = may_be_lost
+                names += [f"ask:{ask}" for ask in self.saved_answers if ask in str(content)]
+            for name in names:
+                trail.setdefault(name, []).append(step)
+                put_at.setdefault(name, []).append(int(created_at_ms))
         report.counts["commands"] = len(rows)
         report.counts["commands_run"] = sum(invocations.values())
 
-        # 3. Each message and answer reached its agent once, unless the last mailbox row
-        # for it says it may not have (withdrawn, refused, uncertain, or the agent's own
-        # steer refusal); a message never in the mailbox only if a VPS restart lost it
-        # while it was held.
+        # 3. Each message reaches its agent exactly once, as a prompt or as a steer its turn
+        # took (Brief: no events lost or duplicated). A steer that missed its turn arrives
+        # as the next message: no message sent after it reaches the agent first. The one
+        # excused loss is a message held in VPS memory behind an open turn when the VPS
+        # restarted, named and counted apart; nothing else is excused.
+        agents_by_conversation = {
+            c: _Agents.read(self.agent_logs / f"{c}.jsonl") for c in self.conversations
+        }
         received: Counter[str] = Counter()
         answered: Counter[str] = Counter()
-        for conversation_id in self.conversations:
-            agents = _Agents.read(self.agent_logs / f"{conversation_id}.jsonl")
+        for agents in agents_by_conversation.values():
             received.update(agents.received)
             answered.update(agents.answers)
         report.sends.extend(
@@ -1865,56 +1998,106 @@ class SleepCycles:
             for record in self.messages.values()
             if record["cycle"] == cycle
         )
-        # The core's own record of a delivery that did not happen.
-        undelivered = {
-            found["marker"]: (str(kind), str(json.loads(payload).get("refusal_detail") or ""))
-            for kind, payload in _query(
-                self.db_path,
-                "SELECT kind,payload FROM conversation_events WHERE kind IN "
-                "('prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded')",
-            )
-            for found in MESSAGE_MARKER.finditer(str(payload))
-        }
-        excused = 0
-        for marker, record in self.messages.items():
+        # What the conversation record says of each message, for the violation's detail.
+        recorded: dict[str, list[str]] = {}
+        for kind, payload in _query(
+            self.db_path,
+            "SELECT kind,payload FROM conversation_events WHERE kind IN "
+            "('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded')"
+            " ORDER BY sequence",
+        ):
+            for found in MESSAGE_MARKER.finditer(str(payload)):
+                recorded.setdefault(found["marker"], []).append(str(kind))
+        excused: list[str] = []
+        sent_order = list(self.messages)
+        for index, (marker, record) in enumerate(self.messages.items()):
             count = received[marker]
+            conversation_id = str(record["conversation"])
+            agents = agents_by_conversation[conversation_id]
+            where = (
+                f"mailbox: {', '.join(trail.get(marker, [])) or 'no row'}; "
+                f"record: {', '.join(recorded.get(marker, [])) or 'nothing'}"
+            )
             if record["fate"] == "PromptDeliveryRefused":
                 violations.append(f"message {marker} was refused: {record.get('reason')}")
             elif count > 1:
-                violations.append(f"message {marker} reached its agent {count} times")
+                violations.append(f"message {marker} reached its agent {count} times ({where})")
             elif count == 0:
-                if marker in last_fate:
-                    if not last_fate[marker]:
-                        violations.append(
-                            f"message {marker} ({record['fate']}) never reached its agent, "
-                            "though its last mailbox row succeeded"
-                        )
-                elif (
-                    marker in undelivered and undelivered[marker][0] == "prompt_delivery_uncertain"
-                ):
-                    # Recorded as unknown. A message held behind a replaced Mac process's
-                    # turn waits for the fresh child, so its refusal is a violation.
-                    self.undelivered_in_record[marker] = undelivered[marker]
-                elif marker in undelivered:
-                    kind, detail = undelivered[marker]
-                    violations.append(f"message {marker} was recorded {kind}: {detail}")
-                elif marker not in self.lost_with_vps_restart:
+                held_at = self.lost_with_vps_restart.get(marker)
+                if held_at is not None and all(t < held_at for t in put_at.get(marker, [])):
+                    excused.append(marker)
+                else:
                     violations.append(
-                        f"message {marker} ({record['fate']}) never reached the mailbox"
+                        f"message {marker} ({record['fate']}) never reached its agent ({where})"
                     )
-                excused += record["cycle"] == cycle
-        for ask in self.saved_answers:
+            elif record["mode"] == PromptDeliveryMode.steer.value and (
+                marker not in agents.steered_in
+            ):
+                overtaken = [
+                    later
+                    for later in sent_order[index + 1 :]
+                    if self.messages[later]["conversation"] == conversation_id
+                    and later in agents.arrival
+                    and agents.arrival[later] < agents.arrival[marker]
+                ]
+                if overtaken:
+                    violations.append(
+                        f"steer {marker} missed its turn and reached its agent after "
+                        f"{', '.join(overtaken[:5])}, not as the next message ({where})"
+                    )
+        self.excused_held_at_vps_restart = excused
+
+        # 4. Each saved answer reaches its agent exactly once. When a Mac restart killed the
+        # agent that asked, the fresh agent must be told it: exactly one prompt to that
+        # conversation names the ask and the option chosen (the text it received, not
+        # the record's claim).
+        for ask, answer_cycle in self.saved_answers.items():
             count = answered[ask]
-            if count > 1:
-                violations.append(f"the answer to {ask} reached its agent {count} times")
-            elif count == 0 and not last_fate.get(f"ask:{ask}", False):
-                violations.append(f"the answer to {ask} never reached its agent")
+            provider_ask = ASK_ID.search(ask)
+            conversation_id = ask.split("-")[1] if provider_ask else ""
+            carried = [
+                text
+                for asks, text in (
+                    agents_by_conversation[conversation_id].ask_prompts
+                    if conversation_id in agents_by_conversation
+                    else []
+                )
+                if provider_ask is not None and provider_ask[0] in asks
+            ]
+            # The harness always allows; a prompt that also names the other option does
+            # not say which one was chosen.
+            told = sum("allow" in text.lower() and "deny" not in text.lower() for text in carried)
+            where = f"mailbox: {', '.join(trail.get(f'ask:{ask}', [])) or 'no row'}"
+            if count > 1 or (count == 0 and told > 1):
+                violations.append(
+                    f"the answer to {ask} (cycle {answer_cycle}) reached its agent "
+                    f"{count} times and {told} prompts carried it ({where})"
+                )
+            elif count == 0 and told == 0:
+                violations.append(
+                    f"the answer to {ask} (cycle {answer_cycle}) never reached its agent"
+                    + (
+                        ", and no prompt carried it"
+                        if not carried
+                        else ", and the prompt that named the ask did not carry the option chosen"
+                    )
+                    + f" ({where})"
+                )
         report.counts["messages_received"] = sum(
             received[m] for m, r in self.messages.items() if r["cycle"] == cycle
         )
-        report.counts["messages_excused"] = excused
+        report.counts["messages_excused"] = sum(
+            1 for m in excused if self.messages[m]["cycle"] == cycle
+        )
         report.counts["answers_saved"] = sum(1 for c in self.saved_answers.values() if c == cycle)
-        return violations
+        # A message, answer or event judged again in a later cycle is not reported again.
+        fresh = [
+            v
+            for v in violations
+            if v not in self.violations_seen or not v.startswith(_JUDGED_AGAIN)
+        ]
+        self.violations_seen.update(fresh)
+        return fresh
 
     # --- teardown ------------------------------------------------------------------------
 
@@ -1963,6 +2146,26 @@ class SleepCycles:
                     shutil.copy2(path, evidence / path.name)
 
 
+# The violations about the whole record, which every later cycle's judge finds again.
+_JUDGED_AGAIN = (
+    "message ",
+    "steer ",
+    "the answer to ",
+    "evt:",
+    "end:",
+    "ca:",
+    "cb:",
+    "cc:",
+    "answer applications",
+    "commands run",
+    *(f"{operation} " for operation in sorted(_CHILD_OPERATIONS)),
+)
+
+
+def _on(cycle: int, every: int, start: int) -> bool:
+    return every > 0 and cycle >= start and (cycle - start) % every == 0
+
+
 def _payload_key(payload: str) -> str | None:
     """The ledger key of an outbox item's BackendEvent payload."""
     match = EVENT_TOKEN.search(payload)
@@ -1973,6 +2176,18 @@ def _payload_key(payload: str) -> str | None:
     if value.get("method") == "turn_ended" and isinstance(turn, dict):
         return f"end:{turn['conversation_id']}:{turn['turn_number']}"
     return None
+
+
+def _outcome_reason(outcome_json: object) -> str | None:
+    """The reason or kind a command's result names, if any."""
+    if not outcome_json:
+        return None
+    outcome = json.loads(str(outcome_json)).get("child_outcome")
+    result = outcome.get("result") if isinstance(outcome, dict) else None
+    if not isinstance(result, dict):
+        return None
+    value = result.get("reason") or result.get("kind")
+    return None if value is None else str(value)
 
 
 def _disposition(outcome_json: object) -> str | None:
@@ -1992,10 +2207,16 @@ def _work_folder() -> Iterator[Path]:
 
 
 async def run_sleep_cycles(
-    out: Path, cycles: int, *, schedule: CycleSchedule | None = None, seed: int = 1
+    out: Path,
+    cycles: int,
+    *,
+    schedule: CycleSchedule | None = None,
+    seed: int = 1,
+    keep_going: bool = False,
 ) -> list[CycleReport]:
     """Run the cycles in a fresh temporary world, and write the per-cycle JSON lines and a
-    summary to ``out``."""
+    summary to ``out``. It stops after the first cycle with a violation, unless
+    keep_going, which runs every cycle and reports each violation once."""
     out.mkdir(parents=True, exist_ok=True)
     (out / "cycles.jsonl").unlink(missing_ok=True)
     chosen = schedule or CycleSchedule()
@@ -2003,7 +2224,7 @@ async def run_sleep_cycles(
     reports: list[CycleReport] = []
     error: BaseException | None = None
     with _work_folder() as work:
-        harness = SleepCycles(work, out, chosen, seed)
+        harness = SleepCycles(work, out, chosen, seed, keep_going=keep_going)
         try:
             reports = await harness.run(cycles)
         except BaseException as caught:
@@ -2012,17 +2233,31 @@ async def run_sleep_cycles(
             raise
         finally:
             violations = [v for report in reports for v in report.violations]
+            excused = sorted(harness.excused_held_at_vps_restart)
+            ok = error is None and not violations and len(reports) == cycles
             summary = {
                 "cycles_requested": cycles,
                 "cycles_run": len(reports),
-                "ok": error is None and not violations and len(reports) == cycles,
+                # The excused messages below do not count against it; nothing else is
+                # excused.
+                "ok": ok,
                 "violations": violations,
+                "violation_count": len(violations),
+                "excused": {
+                    "messages_held_in_vps_memory_at_a_vps_restart": {
+                        "count": len(excused),
+                        "messages": excused,
+                    }
+                },
                 "error": None if error is None else repr(error),
                 "seconds": round(time.monotonic() - started, 1),
                 "seed": seed,
                 "schedule": asdict(chosen),
                 "mac_restarts": sum("mac_restart" in r.kinds for r in reports),
                 "vps_restarts_during_drain": harness.vps_restarts_during_drain,
+                "vps_restarts_while_the_mac_slept": harness.vps_restarts_asleep,
+                "long_freezes": sum("long_freeze" in r.kinds for r in reports),
+                "longest_freeze_seconds": max((r.freeze_seconds for r in reports), default=0),
                 "dark_wakes": sum("dark_wake" in r.kinds for r in reports),
                 "cuts": sum("cut" in r.kinds for r in reports),
                 "presence_seen_while_frozen": sorted(
@@ -2034,14 +2269,21 @@ async def run_sleep_cycles(
                 ),
                 "messages": len(harness.messages),
                 "messages_held_at_a_vps_restart": sorted(harness.lost_with_vps_restart),
-                "messages_undelivered_in_the_record": {
-                    marker: list(fate) for marker, fate in harness.undelivered_in_record.items()
-                },
                 "items_received": sum(harness.ledger.received.values()),
                 "items_resent": harness._resent(),
                 "answers": len(harness.saved_answers),
             }
             (out / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
+            _LOG.warning(
+                "sleep cycles: %d of %d run, ok=%s, %d violations; excused, held in VPS "
+                "memory at a VPS restart: %d %s",
+                len(reports),
+                cycles,
+                ok,
+                len(violations),
+                len(excused),
+                excused,
+            )
     return reports
 
 

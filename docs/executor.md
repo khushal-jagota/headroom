@@ -103,7 +103,7 @@ The steps are in the [Mac executor installation runbook](../ops/mac-executor/ins
 
 ## What is proven, and what is not
 
-A harness on the VPS runs a real Mac half and a real VPS half through 100 sleep cycles: dropped links, silent links, dark wakes, and restarts of either side. It checks that no event is lost or applied twice. A two-cycle version runs in CI.
+A harness on the VPS runs a real Mac half and a real VPS half through 100 sleep cycles: dropped links, silent links, dark wakes, sleeps longer than any stall limit, and restarts of either side, including a VPS restart while the Mac sleeps mid-turn. It checks that no event is lost or applied twice, that every message and answer reaches its agent exactly once, and that a sleeping Mac raises no alarm. The one loss it excuses, and names, is a message held in VPS memory when the VPS restarts. A three-cycle version runs in CI.
 
 Not yet proven:
 

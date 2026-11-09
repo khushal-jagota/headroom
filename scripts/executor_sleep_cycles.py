@@ -8,8 +8,14 @@ database or the Mac. It signals only the process group it starts.
     .venv/bin/python scripts/executor_sleep_cycles.py --cycles 100 --out DIR
 
 Writes ``DIR/cycles.jsonl`` (one JSON object per cycle), ``DIR/summary.json`` and
-``DIR/evidence/`` (logs and databases). Exits non-zero on the first violation.
+``DIR/evidence/`` (logs and databases). Stops and exits non-zero on the first violation;
+with ``--keep-going`` it runs every cycle, reports each violation once, and still exits
+non-zero. The last log line gives the violation count and names the excused messages.
 There is no wake hook yet: the sleep and wake rules come in wave 2.
+
+Every user message must reach its agent exactly once, and every saved answer too. The
+one excused loss, named and counted apart in ``summary.json``, is a message held in VPS
+memory behind an open turn when the VPS restarted (a follow-up ticket owns it).
 """
 
 from __future__ import annotations
@@ -29,6 +35,11 @@ def main() -> int:
     parser.add_argument("--cycles", type=int, default=100)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="run every cycle after a violation, to see them all",
+    )
     args = parser.parse_args()
     # The harness starts its helper processes with ``python -m tests.support...``.
     sys.path.insert(0, str(REPOSITORY))
@@ -43,7 +54,9 @@ def main() -> int:
         # it started.
         for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             loop.add_signal_handler(number, task.cancel)
-        reports = await run_sleep_cycles(args.out.resolve(), args.cycles, seed=args.seed)
+        reports = await run_sleep_cycles(
+            args.out.resolve(), args.cycles, seed=args.seed, keep_going=args.keep_going
+        )
         failed = len(reports) != args.cycles or any(r.violations for r in reports)
         return 1 if failed else 0
 
