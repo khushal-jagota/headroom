@@ -21,6 +21,7 @@ from planner.conversation.backends.contracts import (
 )
 from planner.conversation.contracts import (
     AnswerFate,
+    ConversationBackendKey,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
@@ -140,6 +141,10 @@ class MacRemoteChild:
         # after it looked is still withdrawn.
         self._initial_puts: set[asyncio.Task[bool]] = set()
         self.initial_delivery_cancelled = False
+        # A Claude child takes its model and effort when it starts. Its prompt is
+        # accepted at commit, so the Mac's refusal of a change would come back only as a
+        # failed turn: the change is refused here instead, and the core rebinds.
+        self._claude_started_on: tuple[str, str | None] | None = None
 
     @property
     def stop_outside_lock(self) -> bool:
@@ -231,6 +236,8 @@ class MacRemoteChild:
             raise backend.BackendSpawnFailed(str(error)) from error
         if not placed:
             raise backend.BackendSpawnFailed(_REPLACED_MESSAGE)
+        if resolved_start.backend_key is ConversationBackendKey.claude:
+            self._claude_started_on = (resolved_start.model, resolved_start.reasoning_effort)
 
     async def write_prompt(
         self,
@@ -248,6 +255,15 @@ class MacRemoteChild:
     ) -> backend.BackendPromptAccepted:
         """Accepted at commit. A prompt the Mac then cannot deliver ends its turn failed
         through the ordered outbox."""
+        if self._claude_started_on is not None:
+            model, effort = self._claude_started_on
+            if (model_change is not None and model_change != model) or (
+                (reasoning_effort_change is not None or reasoning_effort_is_set)
+                and reasoning_effort_change != effort
+            ):
+                raise backend.NeedsRebind(
+                    "claude takes its model and reasoning effort when the child starts"
+                )
         command = self._command(
             WritePrompt(
                 content=content,

@@ -482,7 +482,9 @@ def recovery_blocker(
 ) -> str | None:
     from planner.conversation.lifecycle_storage import retained_run_is_unresolved
 
-    if retained_run_is_unresolved(conn, conversation_id):
+    # At admission (allow_restored) the recovery's own fresh Mac child already has its
+    # run; selection, which ran first, found no unresolved run of the interrupted child.
+    if not allow_restored and retained_run_is_unresolved(conn, conversation_id):
         return "native executor reconciliation owns this turn"
     row = conn.execute(
         "SELECT * FROM deploy_interruptions WHERE interruption_id=?", (reference.interruption_id,)

@@ -72,8 +72,10 @@ _MAILBOX_SETTLEMENTS = frozenset(
 
 
 def _settled_by_mailbox(outcome: CommandOutcome) -> bool:
+    """The VPS settled a row the Mac never ran. A delivered row of a replaced process
+    settles uncertain instead: it may have reached the agent, so it is not this."""
     return (
-        outcome.disposition is not CommandDisposition.succeeded
+        outcome.disposition is CommandDisposition.refused
         and outcome.result.get("reason") in _MAILBOX_SETTLEMENTS
     )
 
