@@ -393,6 +393,37 @@ def test_leases_accepted_only_minutes_apart_alarm_as_failing() -> None:
     assert episode.opened_at_ms <= episode.stalled_since_ms + limit_ms + CHECK_MS
 
 
+def _napping_mac(*, cycle_ms: int, leases_per_wake: int) -> Mac:
+    """Back-to-back naps: each wake gets leases_per_wake accepted leases 10 s apart, then
+    a poll's contact 8 s after the last of them, then sleep until the next cycle."""
+
+    def at(now_ms: int) -> PresenceRecord | None:
+        leases = [
+            start + i * LEASE_MS
+            for start in range(0, now_ms + 1, cycle_ms)
+            for i in range(leases_per_wake)
+            if start + i * LEASE_MS <= now_ms
+        ]
+        last = leases[-1]
+        since = last // cycle_ms * cycle_ms  # this wake's first lease
+        contact = last + 8 * S if last + 8 * S <= now_ms else last
+        record = _present(since, last, _lease((("c1", 7),)))
+        return replace(record, last_contact_at_ms=contact)
+
+    return at
+
+
+@pytest.mark.parametrize("leases_per_wake", [1, 2])
+def test_short_accepted_stretches_between_naps_raise_nothing(leases_per_wake: int) -> None:
+    # Naps of about 55 s back to back, with a backlog and a command waiting. Contact
+    # never stops for a minute, and no stretch is long enough to count, but every lease
+    # is accepted: this is a sleeping Mac, not a failing lease.
+    mac = _napping_mac(
+        cycle_ms=(62 if leases_per_wake == 1 else 75) * S, leases_per_wake=leases_per_wake
+    )
+    assert _simulate(mac, 3600 * S, _command_from(0)) == []
+
+
 def test_one_refused_lease_after_a_long_sleep_does_not_alarm_at_once() -> None:
     # Last accepted lease an hour before; contact starts again at wake. The failing
     # clock starts at the wake, not at the last lease.
