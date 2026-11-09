@@ -58,6 +58,7 @@ from planner.executor.protocol import (
     ReceiptDisposition,
     WaitingConversation,
 )
+from planner.executor.store import ExecutorStore
 from planner.executor.vps_transport import VpsExecutor
 
 SETTLES = 5.0
@@ -67,7 +68,7 @@ SENDER = "native"  # _envelope's sender
 @dataclass
 class _Core:
     """MacRunConversations: the real core, except retire_replaced_remote_child (Part D's),
-    which is recorded."""
+    which is recorded and, as the core's does, closes the run."""
 
     system: SqliteProcessConversationSystem
     retired: list[tuple[ChildReference, str]] = field(default_factory=list)
@@ -80,6 +81,9 @@ class _Core:
     async def retire_replaced_remote_child(
         self, reference: ChildReference, *, replaced_by: str
     ) -> None:
+        await asyncio.to_thread(
+            ExecutorStore(self.system._store._db_path).close_child, reference, 1
+        )
         self.retired.append((reference, replaced_by))
 
     async def confirm_remote_child_termination(self, reference: ChildReference) -> None:
@@ -389,7 +393,7 @@ def test_a_new_process_replays_the_old_childs_answer_and_write_before_its_run_dr
             assert written.receipts[0].result == {"edited": "ticket-1"}
             assert case.core.retired == []
 
-            # The outbox is empty for c: the old run closes and the core retires it.
+            # The outbox is empty for c: the core closes the old run as it retires it.
             await case.endpoint.lease(lease_request(successor))
             for _ in range(int(SETTLES / 0.01)):
                 if case.core.retired:

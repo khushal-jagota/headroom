@@ -114,6 +114,21 @@ STAGING_ONLY_TABLES = (
         'OT NULL,\n        PRIMARY KEY(conversation_id,turn_number,principal_kind,prin'
         'cipal_id))'
     ),
+    # The WebSocket executor tables, which retire_executor_websocket_tables drops after
+    # executor_mailboxes has copied them.
+    (
+        'CREATE TABLE executor_connections (\n        executor_incarnation TEXT PRIMARY KEY,'
+        ' connection_generation INTEGER NOT NULL,\n        identity_json TEXT NOT NULL, conn'
+        'ection_state TEXT NOT NULL,\n        active INTEGER NOT NULL CHECK(active IN (0,1)))'
+    ),
+    (
+        'CREATE UNIQUE INDEX executor_one_active_connection ON executor_connections(active) '
+        'WHERE active=1'
+    ),
+    (
+        'CREATE TABLE mac_contact_status (singleton INTEGER PRIMARY KEY CHECK(singleton=1), '
+        'last_contact_at_ms INTEGER NOT NULL, refusal_json TEXT)'
+    ),
 )
 
 

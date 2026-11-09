@@ -108,6 +108,7 @@ from planner.resource_versions.api import router as resource_versions_router
 from planner.runtime.workspaces import register_workspace_root
 from planner.server_lifecycle.runtime import application_runtime
 from planner.skill_sources import provision_native_backend_skills, provision_workspace_skills
+from planner.stalls import checker as stalls_checker
 from planner.stalls.contracts import StallChecker, StallCheckerFactory
 from planner.stalls.registry import WAITS
 from planner.tickets.api import router as tickets_router
@@ -168,14 +169,6 @@ def svelte_index_html(app_sha: str | None = None) -> str:
         )
     identity = f'<meta name="panels-app-sha" content="{html.escape(app_sha or "", quote=True)}">'
     return document.replace("</head>", f"{identity}</head>", 1)
-
-
-def _production_stall_checker_factory() -> StallCheckerFactory:
-    """The stall checker (stalls/checker.py), found by its import path."""
-    import importlib
-
-    module = importlib.import_module("planner.stalls.checker")
-    return cast(StallCheckerFactory, module.StallChecker)
 
 
 def http_status_for(code: ErrorCode) -> int:
@@ -431,10 +424,10 @@ def create_app(
                     )
                     app.state.vps_metrics = metrics
                     metrics.start()
-                    stall_checker_factory = (
+                    stall_checker_factory: StallCheckerFactory | None = (
                         stall_checker_factory_for_test
                         if config.test_mode
-                        else _production_stall_checker_factory()
+                        else stalls_checker.StallChecker
                     )
                     if stall_checker_factory is not None:
                         endpoint = executor_endpoint

@@ -1,9 +1,11 @@
-"""The executor_mailboxes revision on a fresh and on a staging-shaped database.
+"""The executor_mailboxes revision on a fresh and on a staging-shaped database, and the
+later drop of the WebSocket tables it copied from.
 
 Risk: the switch-over loses the current Mac incarnation, so the new runtime's replayed
 outbox items (which keep that incarnation through handoff.json) are fenced before its
 first lease; or it keeps a replaced incarnation current; or it loses the recorded
-refusal and contact time the Mac page shows. No test covers this revision. Layer: real
+refusal and contact time the Mac page shows; or the drop runs before the copy and loses
+both. No test covers these revisions. Layer: real
 migrations on a SQLite file. The staging shape is a database built to the staging head
 (canonical_manager_identities) by the shipped migrations, with the WebSocket rows a live
 staging database holds, then upgraded by create_schema like application startup.
@@ -12,6 +14,7 @@ staging database holds, then upgraded by create_schema like application startup.
 from __future__ import annotations
 
 import json
+import sqlite3
 from contextlib import closing
 from pathlib import Path
 from uuid import uuid4
@@ -43,6 +46,7 @@ NEW_TABLES = (
     "stall_findings",
     "stall_checker_heartbeat",
 )
+WEBSOCKET_TABLES = ("executor_connections", "mac_contact_status")
 CURRENT = ExecutorIdentity(21, "current-release", 5, str(uuid4()), 4)
 REPLACED = ExecutorIdentity(21, "older-release", 5, str(uuid4()), 9)
 REFUSAL = {
@@ -51,6 +55,10 @@ REFUSAL = {
     "server_identity": as_object(ExecutorIdentity(21, "server", 5, "", 0)),
     "refused_at_ms": 777,
 }
+
+
+def _tables(conn: sqlite3.Connection) -> set[str]:
+    return {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
 def _identity_json(identity: ExecutorIdentity) -> str:
@@ -85,12 +93,13 @@ def test_fresh_database_has_the_mailbox_tables_and_no_presence(tmp_path: Path) -
         )
         for table in NEW_TABLES:
             assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+        assert not _tables(conn) & set(WEBSOCKET_TABLES)
         assert read_presence(conn) is None
         assert judge_presence(read_presence(conn), 1).presence == "never"
         # The stored lease is diagnostic: an unreadable one reads as none, never an error.
         conn.execute(
             "INSERT INTO mac_executor_presence(singleton,last_lease_at_ms,lease_json) "
-            "VALUES (1,5,'{\"older\":\"shape\"}')"
+            'VALUES (1,5,\'{"older":"shape"}\')'
         )
         presence = read_presence(conn)
         assert presence is not None
@@ -109,14 +118,14 @@ def test_staging_upgrade_keeps_the_current_incarnation_contact_and_refusal(
             shipped_migration_head()
         )
         incarnations = {
-            row[0]: (row[1], row[2])
-            for row in conn.execute("SELECT * FROM executor_incarnations")
+            row[0]: (row[1], row[2]) for row in conn.execute("SELECT * FROM executor_incarnations")
         }
         (migrated_at_ms, current_replaced), (replaced_first, replaced_at) = (
             incarnations[CURRENT.executor_incarnation],
             incarnations[REPLACED.executor_incarnation],
         )
         assert len(incarnations) == 2
+        assert not _tables(conn) & set(WEBSOCKET_TABLES)
         assert current_replaced is None
         assert replaced_at == replaced_first == migrated_at_ms
         row = conn.execute(

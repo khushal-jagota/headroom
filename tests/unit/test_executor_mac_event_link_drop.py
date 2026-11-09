@@ -102,8 +102,9 @@ def _batch(envelope: QueuedEnvelope) -> ItemBatch:
 
 @dataclass
 class _Conversations:
-    """The conversation core as MacRuns sees it. retire_replaced_remote_child is Part D's
-    and absent from this tree, so it is recorded; the rest is the real system's."""
+    """The conversation core as MacRuns sees it. retire_replaced_remote_child is only
+    recorded and closes nothing, as when the core no longer holds the child, so the drain
+    closes the run itself; the rest is the real system's."""
 
     system: SqliteProcessConversationSystem
     retired: list[tuple[ChildReference, str]] = field(default_factory=list)
@@ -429,7 +430,7 @@ def test_a_new_mac_process_leasing_while_an_event_waits_saves_its_resend_once(
     receipt. The new process holds the same outbox item and sends it again; the child is
     of the old process, and its assignment stays open until the new process's lease
     shows the conversation drained, so the resend saves exactly once. Then the run of
-    the replaced process is closed and handed to the conversation core."""
+    the replaced process is handed to the conversation core and closed."""
 
     async def exercise() -> None:
         async with _world(tmp_path) as world:
@@ -468,15 +469,16 @@ def test_a_new_mac_process_leasing_while_an_event_waits_saves_its_resend_once(
             assert await world.tool_rows() == 1
             await world.assert_nothing_held()
 
-            # The successor's next lease shows nothing waiting: the old run closes and
-            # goes to the conversation core, once.
+            # The successor's next lease shows nothing waiting: the old run goes to the
+            # conversation core, once, and closes.
             await world.lease(successor)
             await _until(lambda: bool(world.conversations.retired), "the end of its drain")
             assert world.conversations.retired == [
                 (world.event.child, successor.executor_incarnation)
             ]
-            assert world.endpoint.runs.store.has_closed_child_assignment(world.event.child)
-            assert world.endpoint.runs.store.unresolved_runs_of_replaced_incarnations() == ()
+            store = world.endpoint.runs.store
+            await _until(lambda: store.has_closed_child_assignment(world.event.child), "a close")
+            assert store.unresolved_runs_of_replaced_incarnations() == ()
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
 

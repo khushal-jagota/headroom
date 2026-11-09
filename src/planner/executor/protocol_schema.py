@@ -1,7 +1,7 @@
 """Fingerprint the concrete executor contract, including nested event payloads.
 
-WireMessage.payload and envelope payloads are JSON dictionaries, so their schemas
-alone cannot detect changes to the concrete values that the codecs put in them.
+Envelope payloads and command results are JSON dictionaries, so their schemas alone
+cannot detect changes to the concrete values that the codecs put in them.
 """
 
 from __future__ import annotations

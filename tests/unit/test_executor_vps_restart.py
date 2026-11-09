@@ -373,15 +373,53 @@ def _link_mac_tickets(db_path: Path, *conversation_ids: str) -> None:
             "executor_incarnation": "inc-2",
         }
         conn.execute(
-            "INSERT INTO executor_connections VALUES ('inc-2',1,?,'ready',1)",
-            (json.dumps({**identity, "connection_generation": 1}),),
-        )
-        conn.execute(
             "INSERT INTO mac_executor_presence(singleton,executor_incarnation,identity_json,"
             "last_contact_at_ms,last_lease_at_ms,continuous_since_ms) VALUES (1,'inc-2',?,1,1,1)",
             (json.dumps(identity),),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def _record_open_runs(db_path: Path, *references: ChildReference) -> None:
+    """The executor's rows for runs of the replaced process, which its retirement closes."""
+    conn = connect(str(db_path))
+    try:
+        for reference in references:
+            conn.execute(
+                "INSERT INTO mac_runs VALUES (?,?,?,'ticket',?,1,0,'open')",
+                (
+                    reference.conversation_id,
+                    reference.executor_incarnation,
+                    reference.child_id,
+                    f"t-{reference.conversation_id}",
+                ),
+            )
+            conn.execute(
+                "INSERT INTO executor_child_assignments VALUES (?,?,?,'ticket',?,1,NULL)",
+                (
+                    reference.executor_incarnation,
+                    reference.child_id,
+                    reference.conversation_id,
+                    f"t-{reference.conversation_id}",
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _run_closed(db_path: Path, reference: ChildReference) -> bool:
+    conn = connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT r.stop_state,a.closed_at_ms FROM mac_runs AS r "
+            "JOIN executor_child_assignments AS a USING (executor_incarnation,child_id) "
+            "WHERE r.conversation_id=?",
+            (reference.conversation_id,),
+        ).fetchone()
+        return row is not None and row[0] == "closed" and row[1] is not None
     finally:
         conn.close()
 
@@ -408,13 +446,15 @@ def test_a_mac_restart_recovers_one_drained_conversation_once(
         _link_mac_tickets(db_path, "mac-a", "mac-b")
         try:
             old_a, old_b = runs.runs["mac-a"].reference, runs.runs["mac-b"].reference
+            _record_open_runs(db_path, old_a, old_b)
             # The Mac process restarts. Only mac-a has drained; mac-b's items still wait,
-            # so its run stays open. The executor closes mac-a's run, then retires it.
+            # so its run stays open. The retirement closes mac-a's run as it records the
+            # interrupted turn.
             runs.incarnation = "inc-2"
-            runs.runs["mac-a"] = replace(runs.runs["mac-a"], retirement_confirmed=True)
             await harness.system.retire_replaced_remote_child(old_a, replaced_by="inc-2")
             await harness.settle()
 
+            assert _run_closed(db_path, old_a) and not _run_closed(db_path, old_b)
             assert await _turn_endings(harness, "mac-a") == [ConversationTurnEnding.interrupted]
             assert runs.runs["mac-a"].reference.executor_incarnation == "inc-2"
             wire = harness.backend("mac-a").written_texts()
@@ -474,8 +514,9 @@ def test_a_drain_left_by_a_vps_restart_still_recovers_ahead_of_waiting_messages(
     async def exercise() -> None:
         first = await _first_server_with_running_turns(db_path, runs, "mac")
         _link_mac_tickets(db_path, "mac")
-        await first.system.shutdown()
         old = runs.runs["mac"].reference
+        _record_open_runs(db_path, old)
+        await first.system.shutdown()
         runs.incarnation = "inc-2"
         runs.runs["mac"] = replace(runs.runs["mac"], incarnation_current=False)
 
@@ -490,7 +531,6 @@ def test_a_drain_left_by_a_vps_restart_still_recovers_ahead_of_waiting_messages(
                 ToolCallStarted(tool_call_id="t1", title="ls", tool_kind="execute"),
             )
             assert replayed.taken
-            runs.runs["mac"] = replace(runs.runs["mac"], retirement_confirmed=True)
             await restarted.system.retire_replaced_remote_child(old, replaced_by="inc-2")
             await restarted.settle()
 
@@ -509,6 +549,54 @@ def test_a_drain_left_by_a_vps_restart_still_recovers_ahead_of_waiting_messages(
             )
             await restarted.settle()
             assert restarted.backend("mac").written_texts()[1:] == ("waited",)
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_a_vps_crash_between_closing_the_run_and_ending_the_turn_still_recovers(
+    world: tuple[Path, _MacRuns],
+) -> None:
+    """Risk: the drain closes a replaced process's run and the VPS stops before the turn
+    is ended and recovered. No drain is rebuilt from a closed run, so the turn would never
+    be recovered. Gap: the cases above retire without a crash. The run now closes in the
+    transaction that records the interruption, so startup recovery resumes the turn."""
+    from planner.conversation.deploy_interruptions.coordinator import (
+        close_run_and_record_mac_process_interruption,
+        run_automatic_recovery,
+    )
+    from planner.executor.store import ExecutorStore
+
+    db_path, runs = world
+
+    async def exercise() -> None:
+        first = await _first_server_with_running_turns(db_path, runs, "mac")
+        _link_mac_tickets(db_path, "mac")
+        old = runs.runs["mac"].reference
+        _record_open_runs(db_path, old)
+        runs.incarnation = "inc-2"
+        # The retirement's one transaction commits, then the VPS stops before it ends the
+        # turn or sends the recovery prompt.
+        close_run_and_record_mac_process_interruption(str(db_path), old, "inc-2", 5_000)
+        await first.system.shutdown()
+        assert _run_closed(db_path, old)
+        assert ExecutorStore(str(db_path)).unresolved_runs_of_replaced_incarnations() == ()
+        runs.runs["mac"] = replace(
+            runs.runs["mac"], retirement_confirmed=True, incarnation_current=False
+        )
+
+        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        try:
+            await run_automatic_recovery(restarted.system, restarted.store)
+            await restarted.settle()
+            wire = restarted.backend("mac").written_texts()
+            assert len(wire) == 1 and RECOVERY_TEXT in wire[0]
+            assert "A Mac restart ended this turn." in wire[0]
+            assert _claim(db_path, "mac") == ("out", 9)
+            await run_automatic_recovery(restarted.system, restarted.store)
+            await restarted.settle()
+            assert restarted.backend("mac").written_texts() == wire
         finally:
             await restarted.system.shutdown()
 
