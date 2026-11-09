@@ -23,7 +23,7 @@ import logging
 import sqlite3
 import time
 from collections.abc import Callable, Collection, Coroutine, Iterator, Mapping
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -107,6 +107,8 @@ from planner.notifications.attention import (
     conversation_attention_snapshot,
     conversation_attention_snapshot_is_current,
 )
+from planner.stalls.contracts import TrackedWaitHandle, TrackedWaitKind
+from planner.stalls.registry import WAITS
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
 
@@ -584,24 +586,41 @@ class ConversationStore:
                 self._contention_retry_until.reset(limit)
         delay = CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS
         failures = 0
-        while True:
-            try:
-                return await operation()
-            except asyncio.CancelledError:
-                # A proven pre-dispatch refusal is an admission outcome, not a failed write.
-                raise
-            except Exception as error:
-                failures += 1
-                log.error(
-                    "conversation %s save failed (failure %d); retrying in %g s: %r",
-                    conversation_id,
-                    failures,
-                    delay,
-                    error,
-                    exc_info=True,
-                )
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS)
+        # From the first failure until the write succeeds, the stall checker sees a
+        # vps_save_retrying wait, which alarms once it passes its limit.
+        with ExitStack() as retrying:
+            wait: TrackedWaitHandle | None = None
+            while True:
+                try:
+                    return await operation()
+                except asyncio.CancelledError:
+                    # A proven pre-dispatch refusal is an admission outcome, not a failed
+                    # write.
+                    raise
+                except Exception as error:
+                    failures += 1
+                    detail = f"Stuck at write {failures}"
+                    if wait is None:
+                        wait = retrying.enter_context(
+                            WAITS.track(
+                                TrackedWaitKind.vps_save_retrying,
+                                conversation_id,
+                                conversation_id=conversation_id,
+                                detail=detail,
+                            )
+                        )
+                    else:
+                        wait.set_detail(detail)
+                    log.error(
+                        "conversation %s save failed (failure %d); retrying in %g s: %r",
+                        conversation_id,
+                        failures,
+                        delay,
+                        error,
+                        exc_info=True,
+                    )
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS)
 
     async def _write[T](self, operation: Callable[..., T], *args: object, **kwargs: object) -> T:
         """Retain one SQLite operation through caller cancellation and lock contention.

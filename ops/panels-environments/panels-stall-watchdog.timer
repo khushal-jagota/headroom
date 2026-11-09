@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Panels stall watchdog every 30 seconds
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=panels-stall-watchdog.service
+
+[Install]
+WantedBy=timers.target
