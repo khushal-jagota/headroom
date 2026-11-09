@@ -1934,6 +1934,50 @@ def test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away(
     _run(exercise)
 
 
+@pytest.mark.parametrize("site", ["direct", "promoted"])
+def test_a_steer_the_mac_did_not_take_becomes_the_next_message(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, site: str
+) -> None:
+    """A steer the Mac was away for, or did not take in time, is not thrown away. It
+    waits in the line and opens the next turn, whichever way it was sent."""
+
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        backend = harness.backend("c")
+        backend.steer_outcome = BackendSteerRefused(
+            PromptDeliveryRefusalReason.remote_steer_not_delivered
+        )
+        fate: object
+        if site == "direct":
+            fate = await harness.system.send(
+                "c",
+                text_message_content("late steer"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+            )
+        else:
+            await harness.system.send("c", text_message_content("late steer"), sender_label="owner")
+            selected = (await harness.system.held_prompts("c"))[0]
+            fate = await harness.system.promote_held_prompt(
+                "c", selected.held_prompt_id, HeldPromptPromotionMode.steer
+            )
+
+        assert fate == PromptDeliveryQueued(queue_position=1)
+        held = await harness.system.held_prompts("c")
+        assert [message.queue_reason for message in held] == [PromptQueueReason.steer_refused]
+        assert ConversationEventKind.prompt_delivery_refused not in await harness.recorded_kinds(
+            "c"
+        )
+        await harness.complete_turn("c")
+        assert backend.writes[-1].text == "late steer"
+        assert not backend.writes[-1].steered
+        assert await harness.system.held_prompts("c") == ()
+
+    _run(exercise)
+
+
 def test_caller_cancellation_after_acceptance_preserves_receipt_and_duplicate_identity(
     harness: _Harness,
 ) -> None:

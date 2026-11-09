@@ -1,21 +1,50 @@
-"""One startup pass through the ordinary conversation delivery boundary."""
+"""Recovery through the ordinary conversation delivery boundary.
+
+A deploy recovers every eligible conversation once, at startup. A Mac process restart
+recovers the one conversation whose turn it interrupted, while the server keeps running.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from planner.conversation.contracts import ConversationSystem
+from planner.conversation.contracts import ConversationSystem, PromptDeliveryMode
+from planner.conversation.deploy_interruptions.contracts import CaptureManifest
+from planner.conversation.deploy_interruptions.data import import_captured_turns
 from planner.conversation.deploy_interruptions.logic import recovery_message_identity
 from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
 
 _LOG = logging.getLogger(__name__)
 
+MAC_RESTART_CLAIM_ERROR_REASON = "interrupted by a Mac restart"
+
 
 async def run_automatic_recovery(system: ConversationSystem, store: ConversationStore) -> None:
+    # Startup only: a recovery prompt still at intent was lost with the previous process.
     await store.record_unknown_recovery_deliveries()
+    await recover_conversations(system, store)
+
+
+async def recover_conversations(
+    system: ConversationSystem,
+    store: ConversationStore,
+    *,
+    conversation_ids: tuple[str, ...] | None = None,
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+) -> None:
+    """Send each eligible conversation its one recovery prompt, optionally only some.
+
+    ``send_now`` puts the prompt ahead of messages already waiting in the conversation.
+    """
     selected = await store.select_deployment_recoveries()
+    if conversation_ids is not None:
+        selected = {
+            conversation_id: references
+            for conversation_id, references in selected.items()
+            if conversation_id in conversation_ids
+        }
 
     async def resume(conversation_id: str) -> None:
         references = selected[conversation_id]
@@ -30,6 +59,7 @@ async def run_automatic_recovery(system: ConversationSystem, store: Conversation
                     "Inspect the interrupted work and continue the current authorized step."
                 ),
                 sender_label="Panels deployment recovery",
+                mode=mode,
                 sender_message_id=identity,
                 record_refusal=True,
                 recovery_references=references,
@@ -42,3 +72,38 @@ async def run_automatic_recovery(system: ConversationSystem, store: Conversation
     async with asyncio.TaskGroup() as group:
         for conversation_id in selected:
             group.create_task(resume(conversation_id))
+
+
+def record_mac_process_interruption(
+    db_path: str, conversation_id: str, replaced_by: str, now: int
+) -> None:
+    """Record the turn a replaced Mac process left unfinished, as a deploy records one.
+
+    Run after the conversation's Mac run is closed, and before its turn is ended, so the
+    turn is still unresolved and is not taken for one the executor still owns.
+    """
+    from planner.core.db import connect
+    from planner.environments.interruption_capture import read_unresolved_turns
+
+    conn = connect(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        turns = read_unresolved_turns(conn, conversation_ids=(conversation_id,))
+        if turns:
+            import_captured_turns(
+                conn,
+                CaptureManifest(
+                    f"mac-process:{replaced_by}",
+                    f"mac-process:{replaced_by}:{conversation_id}",
+                    now,
+                    "captured",
+                    None,
+                    turns,
+                ),
+                now,
+                claim_error_reason=MAC_RESTART_CLAIM_ERROR_REASON,
+                ended_by="A Mac restart",
+            )
+        conn.commit()
+    finally:
+        conn.close()

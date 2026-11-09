@@ -131,6 +131,7 @@ from planner.conversation.events import (
     ToolCallProgressFrame,
     UserInputAnswer,
     UserInputAnsweredEventPayload,
+    UserInputRequestedEventPayload,
 )
 from planner.conversation.lifecycle import (
     LifecycleFact,
@@ -151,6 +152,7 @@ from planner.conversation.logic.held_line import (
     leading_run_that_can_share_a_turn,
     one_prompt_from,
 )
+from planner.conversation.logic.retained_turn import OpenRunTurn, adopted_running_turn
 from planner.conversation.message_content import (
     MessageContent,
     MessageText,
@@ -273,6 +275,16 @@ def _prompt_fact(token: TurnToken, status: LifecycleStatus) -> LifecycleFact:
         LifecycleOperation.prompt,
         status,
     )
+
+
+def _run_keeps_its_turn(run: RetainedBackendRun) -> bool:
+    """Whether a VPS restart keeps a retained run's turn rather than reconciling it away.
+
+    An open run's agent may still be working: under the current executor process it is
+    taken over live, and under a replaced one its turn waits, fenced, for the drain that
+    ends it. A run with a stop in the mailbox waits only for its proof.
+    """
+    return not run.stop_requested and not run.retirement_confirmed
 
 
 class _ConversationPhase(StrEnum):
@@ -552,8 +564,9 @@ class SqliteProcessConversationSystem:
 
     It is handed the store its record lives in and one child factory per backend key. It
     spawns nothing until a conversation has something to send. Capabilities do not
-    survive a restart. Retained native identities fence fresh work until their old
-    children have been stopped; inventory never restores a live turn.
+    survive a restart, with one exception: an open Mac run of the executor process that is
+    still current is adopted live, its turn rebuilt from the durable facts. Other retained
+    native identities fence fresh work until their old children have been stopped.
     """
 
     def __init__(
@@ -592,19 +605,37 @@ class SqliteProcessConversationSystem:
         self.workspace_admission = WorkspaceAdmission()
         self._idle_child_janitor: asyncio.Task[None] | None = None
         self._signal = store.signal_coordinator
-        self._runtime_ownership = store.claim_runtime(existing_ownership=runtime_ownership)
+        retained_runs = tuple(
+            run
+            for factory in {
+                id(value): value for value in self._backend_child_factories.values()
+            }.values()
+            if isinstance(factory, RetainedBackendChildFactory)
+            for run in factory.retained_runs()
+        )
+        # An open Mac run outlived the previous VPS process, and its agent may still be
+        # working, so its turn is taken over rather than reconciled away.
+        open_runs = {
+            run.reference.conversation_id: run for run in retained_runs if _run_keeps_its_turn(run)
+        }
+        self._runtime_ownership = store.claim_runtime(
+            existing_ownership=runtime_ownership,
+            open_runs={
+                conversation_id: OpenRunTurn(run.turn.turn_number, run.incarnation_current)
+                for conversation_id, run in open_runs.items()
+            },
+        )
+        adopted_live: set[str] = set()
         try:
-            retained_ids = {
-                run.reference.conversation_id
-                for factory in {
-                    id(value): value for value in self._backend_child_factories.values()
-                }.values()
-                if isinstance(factory, RetainedBackendChildFactory)
-                for run in factory.retained_runs()
-            }
-            for record in store.read_conversation_records(retained_ids):
+            for record in store.read_conversation_records(
+                {run.reference.conversation_id for run in retained_runs}
+            ):
                 state = _ConversationState(record=record)
-                self._restore_retained_run(state)
+                open_run = open_runs.get(record.conversation_id)
+                if open_run is None:
+                    self._restore_retained_run(state)
+                elif self._adopt_retained_run(state, open_run):
+                    adopted_live.add(record.conversation_id)
                 self._conversations[record.conversation_id] = state
         except BaseException:
             self._runtime_ownership.close()
@@ -612,8 +643,12 @@ class SqliteProcessConversationSystem:
         if self._signal is not None:
             self._signal.bind_runtime(self._runtime_turn)
         # Read before this process can start any child, so every task here ended with the
-        # previous process.
-        self._background_tasks_left_by_previous_process = store.read_live_background_task_ids()
+        # previous process, except a run adopted live: its agent never stopped.
+        self._background_tasks_left_by_previous_process = {
+            conversation_id: task_ids
+            for conversation_id, task_ids in store.read_live_background_task_ids().items()
+            if conversation_id not in adopted_live
+        }
         self._shutting_down = False
         self._shutdown_task: asyncio.Task[None] | None = None
 
@@ -1641,7 +1676,10 @@ class SqliteProcessConversationSystem:
 
         if isinstance(steer_outcome, BackendSteerRefused) and (
             steer_outcome.refusal_reason
-            is PromptDeliveryRefusalReason.command_cannot_join_running_turn
+            in (
+                PromptDeliveryRefusalReason.command_cannot_join_running_turn,
+                PromptDeliveryRefusalReason.remote_steer_not_delivered,
+            )
         ):
             await self._persist(
                 state,
@@ -1651,16 +1689,17 @@ class SqliteProcessConversationSystem:
                     (replace(attempt, status=LifecycleStatus.refused),),
                 ),
             )
-            # A command the backend takes only as its own turn. Promoting it was the
-            # right gesture at the wrong moment, so the message goes back to the line
-            # rather than being written down as undeliverable and thrown away.
+            # A command the backend takes only as its own turn, or a steer the Mac did
+            # not take in time. Promoting it was the right gesture at the wrong moment,
+            # so the message goes back to the line rather than being written down as
+            # undeliverable and thrown away.
             state.steer_settlements.discard(barrier)
             barrier.set()
             async with state.lock:
                 self._settle_held_deliveries(state, (held,))
                 return self._hold_prompt(
                     state=state,
-                    queue_reason=PromptQueueReason.command_needs_its_own_turn,
+                    queue_reason=_queue_reason_for_refused_steer(steer_outcome.refusal_reason),
                     message=held,
                 )
 
@@ -4145,23 +4184,98 @@ class SqliteProcessConversationSystem:
         state.last_ended_turn_token = retained.turn
         state.child_is_quarantined = not retained.retirement_confirmed
 
-    async def interrupt_runs_of_replaced_host(self, current_incarnation: str) -> None:
-        """A new service process proves that children of the old service are gone.
+    def _adopt_retained_run(self, state: _ConversationState, retained: RetainedBackendRun) -> bool:
+        """Take over an open Mac run whose agent may have kept working; true if live.
 
-        launchd's default process-group cleanup is the termination evidence here,
-        not an empty inventory or a refusal to stop an obsolete child identity.
+        The running turn comes back from the facts the restart left in place, with its
+        open asks answerable. A run of the current executor process gets its proxy back
+        with this process's event sink. A run of a replaced process, or one whose proxy
+        cannot be recovered, stays fenced as any other retained run is, but keeps its turn:
+        items the Mac still replays apply to it, and its retirement records it interrupted.
         """
-        references = tuple(
-            state.retained_child_reference
-            for state in self._conversations.values()
-            if state.retained_child_reference is not None
-            and state.retained_child_reference.executor_incarnation != current_incarnation
-        )
-        for reference in references:
-            state = self._conversations[reference.conversation_id]
-            await self._own_settlement(
-                state, self._confirm_remote_child_termination(state, reference)
+        from planner.conversation.lifecycle_storage import read_facts
+        from planner.core.db import connect
+
+        conversation_id = state.record.conversation_id
+        conn = connect(self._store._db_path)
+        try:
+            facts = read_facts(conn, conversation_id)
+        finally:
+            conn.close()
+        user_input_questions = (
+            {
+                event.payload.request_id: event.payload.questions
+                for event in self._store._read_events_after_sync(conversation_id, 0)
+                if isinstance(event.payload, UserInputRequestedEventPayload)
+            }
+            if any(
+                fact.kind is LifecycleKind.request
+                and fact.operation is LifecycleOperation.user_input
+                and fact.turn_number == retained.turn.turn_number
+                for fact in facts
             )
+            else {}
+        )
+        running = adopted_running_turn(
+            retained.turn,
+            facts,
+            user_input_questions,
+            executor_process_current=retained.incarnation_current,
+        )
+        child: BackendChild | None = None
+        sink = _CoreBackendEventSink(self, state)
+        # A delivery the lost process left uncertain keeps the fence it had.
+        if retained.incarnation_current and (
+            running is not None or not retained.delivery_uncertain
+        ):
+            factory = self._backend_child_factories[state.record.backend_key]
+            assert isinstance(factory, RetainedBackendChildFactory)
+            child = factory.recover(retained.reference, event_sink=sink)
+        if child is None:
+            self._restore_retained_run(state)
+        else:
+            state.child_event_sink = sink
+            state.child = child
+            state.retained_child_reference = retained.reference
+            state.has_delivered_prompt = True
+            state.last_ended_turn_token = retained.turn
+            state.last_touched_monotonic = self._monotonic_now()
+        state.running_turn = running
+        if running is not None:
+            state.last_ended_turn_token = None
+        self._settle_phase(state)
+        return child is not None
+
+    async def retire_replaced_remote_child(
+        self, reference: ChildReference, *, replaced_by: str
+    ) -> None:
+        """After its drain, end this conversation's turn of a replaced Mac process.
+
+        The new process proves that the old one's agents are gone. The unfinished turn is
+        recorded the way a deploy records one, ended interrupted, and then recovered like
+        an interrupted VPS Ticket: one recovery prompt, which starts a fresh child that
+        resumes the stored session. Other conversations are not touched.
+        """
+        from planner.conversation.deploy_interruptions.coordinator import recover_conversations
+
+        state = await self._conversation_state(reference.conversation_id)
+        if state is None:
+            return
+        retired = await self._own_settlement(
+            state,
+            self._confirm_remote_child_termination(state, reference, replaced_by=replaced_by),
+        )
+        if not retired:
+            return
+        # Recovery goes ahead of messages that waited behind the interrupted turn, so the
+        # recovery prompt carries the interruption notice and restores the Ticket's claim.
+        await recover_conversations(
+            self,
+            self._store,
+            conversation_ids=(reference.conversation_id,),
+            mode=PromptDeliveryMode.send_now,
+        )
+        await self._drain_held_prompts(state)
 
     async def confirm_remote_child_termination(self, reference: ChildReference) -> None:
         """Retire an exact remote child after its termination evidence commits."""
@@ -4172,14 +4286,23 @@ class SqliteProcessConversationSystem:
             )
 
     async def _confirm_remote_child_termination(
-        self, state: _ConversationState, reference: ChildReference
-    ) -> None:
+        self,
+        state: _ConversationState,
+        reference: ChildReference,
+        *,
+        replaced_by: str | None = None,
+    ) -> bool:
+        """Clear the exact retired child; false if it is no longer this conversation's.
+
+        ``replaced_by`` names the Mac process that replaced the child's. The turn it left
+        unfinished is then recorded as interrupted before it ends, so it can be recovered.
+        """
         # Let original delivery writers settle before clearing the exact child.
         # Termination never supplies missing delivery or provider outcomes.
         await self._acquire_settled(state)
         try:
             if state.retained_child_reference != reference:
-                return
+                return False
             retained = self._retained_run(state)
             if (
                 retained is None
@@ -4187,6 +4310,19 @@ class SqliteProcessConversationSystem:
                 or not retained.retirement_confirmed
             ):
                 raise ValueError("Remote child termination was not committed")
+            if replaced_by is not None:
+                from planner.conversation.deploy_interruptions.coordinator import (
+                    record_mac_process_interruption,
+                )
+                from planner.core.task_settlement import run_on_worker_thread
+
+                await run_on_worker_thread(
+                    record_mac_process_interruption,
+                    self._store._db_path,
+                    reference.conversation_id,
+                    replaced_by,
+                    int(self._unix_time_now()),
+                )
             if state.running_turn is not None:
                 await self._end_turn(
                     state, state.running_turn, ConversationTurnEnding.interrupted, None
@@ -4202,6 +4338,7 @@ class SqliteProcessConversationSystem:
                 state.reserved_turn.resolved.set()
                 state.reserved_turn = None
             self._settle_phase(state)
+            return True
         finally:
             state.lock.release()
 
@@ -4982,6 +5119,10 @@ class _CoreBackendEventSink:
 
     def _enqueue(self, handle: _BackendEventHandler) -> None:
         self._state.backend_event_queue.put_nowait(handle)
+        # A child adopted after a restart was never spawned here, so nothing started its
+        # pump.
+        if not self._system._shutting_down:
+            self._system._ensure_backend_event_pump(self._state)
 
 
 def _standard_error_tail(standard_error: str | None) -> str | None:

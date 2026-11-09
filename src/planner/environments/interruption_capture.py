@@ -47,7 +47,7 @@ def capture_stopped_database(db_path: Path, deployment_id: str, capture_id: str)
                 conn.row_factory = sqlite3.Row
                 conn.execute("PRAGMA query_only=ON")
                 conn.execute("BEGIN")
-                turns = _read_unresolved_turns(conn)
+                turns = read_unresolved_turns(conn)
             result = CaptureManifest(
                 deployment_id, capture_id, captured_at, "captured", None, turns
             )
@@ -66,7 +66,11 @@ def capture_stopped_database(db_path: Path, deployment_id: str, capture_id: str)
     return result
 
 
-def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]:
+def read_unresolved_turns(
+    conn: sqlite3.Connection, *, conversation_ids: tuple[str, ...] | None = None
+) -> tuple[CapturedTurn, ...]:
+    """Turns still intent or running, outside unresolved Mac runs, optionally for some
+    conversations only."""
     tables = {
         str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
@@ -82,10 +86,17 @@ def _read_unresolved_turns(conn: sqlite3.Connection) -> tuple[CapturedTurn, ...]
         ).fetchone()
     epoch = str(row[0]) if row is not None else None
     occurrences = "conversation_turn_occurrences" in tables
+    only = (
+        ""
+        if conversation_ids is None
+        else f"AND conversation_id IN ({','.join('?' for _ in conversation_ids)}) "
+    )
     facts = conn.execute(
         "SELECT conversation_id,turn_number,status FROM conversation_lifecycle_facts "
         "WHERE kind='turn' AND status IN ('intent','running') "
-        "ORDER BY conversation_id,turn_number"
+        + only
+        + "ORDER BY conversation_id,turn_number",
+        conversation_ids or (),
     ).fetchall()
     captured: list[CapturedTurn] = []
     for fact in facts:
