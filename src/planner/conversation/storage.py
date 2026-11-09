@@ -22,7 +22,7 @@ import json
 import logging
 import sqlite3
 import time
-from collections.abc import Callable, Collection, Coroutine, Iterator
+from collections.abc import Callable, Collection, Coroutine, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -81,6 +81,7 @@ from planner.conversation.lifecycle_storage import (
     validate_runtime_ownership,
 )
 from planner.conversation.logic.conversation_start_resolution import bind_conversation_origin
+from planner.conversation.logic.retained_turn import OpenRunTurn, facts_after_restart
 from planner.conversation.publication.coordinator import (
     SignalPublicationCoordinator,
 )
@@ -262,8 +263,17 @@ class ConversationStore:
             "runtime_field_undo", default=None
         )
 
-    def claim_runtime(self, *, existing_ownership: IO[bytes] | None = None) -> IO[bytes]:
-        """Exclusively reconcile lost capabilities before this runtime admits work."""
+    def claim_runtime(
+        self,
+        *,
+        existing_ownership: IO[bytes] | None = None,
+        open_runs: Mapping[str, OpenRunTurn] | None = None,
+    ) -> IO[bytes]:
+        """Exclusively reconcile lost capabilities before this runtime admits work.
+
+        ``open_runs`` names, by conversation, the turn of an open Mac run, whose agent the
+        previous process's end did not stop, so that turn is not reconciled away.
+        """
         ownership = (
             existing_ownership
             if existing_ownership is not None
@@ -277,7 +287,7 @@ class ConversationStore:
                 ownership.close()
             raise
         try:
-            self._reconcile_runtime(conn)
+            self._reconcile_runtime(conn, open_runs or {})
         except BaseException:
             if existing_ownership is None:
                 ownership.close()
@@ -286,7 +296,9 @@ class ConversationStore:
             conn.close()
         return ownership
 
-    def _reconcile_runtime(self, conn: sqlite3.Connection) -> None:
+    def _reconcile_runtime(
+        self, conn: sqlite3.Connection, open_runs: Mapping[str, OpenRunTurn]
+    ) -> None:
         conn.execute("BEGIN IMMEDIATE")
         interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
         ids = conn.execute(
@@ -295,24 +307,11 @@ class ConversationStore:
         ).fetchall()
         for row in ids:
             conversation_id = str(row[0])
-            facts = tuple(
-                replace(
-                    fact,
-                    status=(
-                        LifecycleStatus.unknown
-                        if fact.kind is LifecycleKind.attempt
-                        else LifecycleStatus.unavailable
-                    ),
-                )
-                for fact in read_facts(conn, conversation_id)
-                if fact.status
-                in (
-                    LifecycleStatus.intent,
-                    LifecycleStatus.running,
-                    LifecycleStatus.pending,
-                    LifecycleStatus.answering,
-                )
+            facts = facts_after_restart(
+                read_facts(conn, conversation_id), open_runs.get(conversation_id)
             )
+            if not facts:
+                continue
             apply_facts(conn, conversation_id, facts)
             interruption_data.settle_delivery(conn, conversation_id, facts, now=self._integer_now())
             participate(
