@@ -39,7 +39,7 @@ The host supplies the glibc loader and a short named list of system libraries, N
 
 **The installer.** It stops the service that the server runs in, which the server reads from its own systemd cgroup, so a copy of Panels elsewhere can never stop the live one. It renames the current app aside, renames the waiting release into its place, starts the service, and waits for the new app to report its exact commit. A healthy answer comes from the process that serves Headroom, so work is already open. Startup also refreshes the agents' skill links. Interrupted conversations get one recovery prompt ([Conversations](conversations.md)). On success the installer marks the attempt done and keeps only the newest previous app.
 
-A new database starts from one complete schema. An existing staging database upgrades directly to it in one startup transaction. The oldest revision it upgrades is staging's `goal_holders`; the upgrade passes `retire_explicit_reply_requirement` and finishes at `canonical_manager_identities`, where the installed release already stands. A release refuses a database at a revision its own history does not contain. An upgrade refuses a database that still contains cancelled Tickets; resolve them through the prior supported version first.
+A new database starts from one complete schema. An existing staging database upgrades directly to it in one startup transaction. The oldest revision it upgrades is staging's `goal_holders`; the upgrade passes `retire_explicit_reply_requirement` and `canonical_manager_identities`, where the installed release already stands. Later revisions add the Mac executor's mailbox tables and the stall-alarm switch, and drop the old Mac connection tables. A release refuses a database at a revision its own history does not contain. An upgrade refuses a database that still contains cancelled Tickets; resolve them through the prior supported version first.
 
 ## What can be undone
 
@@ -53,7 +53,17 @@ Every attempt ends. The installing state carries a deadline. If the installer va
 
 One server answer supplies the card's state and allowed actions: up to date, available, waiting, updating, failed, Mac failed, or Mac unreachable. While the connection is lost during the restart, the card keeps saying updating until the deadline. The browser offers a refresh when its loaded app differs from the server, and the server rejects a write from an outdated page.
 
-The publication carries a Mac runtime from the same source, and one press covers both machines. The VPS never waits for the Mac. The Mac sees its target from the moment work pauses and activates it once the VPS install is done. The card stays updating until the Mac reports the new runtime. A Mac that reports a failure shows **Mac failed**; one that is not connected or says nothing within about a minute and a half shows **Mac unreachable**. Either way **Try again for the Mac** sends a fresh target for the same release, and a Mac that reconnects later and reports the new runtime moves the card on by itself. A release without a Mac part, or a host without a Mac, skips it. See [The Mac executor](executor.md#what-runs-on-the-mac).
+The publication carries a Mac runtime from the same source, and one press covers both machines. The VPS never waits for the Mac. The Mac sees its target from the moment work pauses and activates it once the VPS install is done. The card stays updating until the Mac reports the new runtime. A Mac that reports a failure shows **Mac failed**; one that says nothing for about a minute and a half after the VPS part shows **Mac unreachable**; it may be asleep or offline. Either way **Try again for the Mac** sends a fresh target for the same release, and a Mac that returns later and reports the new runtime moves the card on by itself. A release without a Mac part, or a host without a Mac, skips it. See [The Mac executor](executor.md#what-runs-on-the-mac).
+
+## The switch to mailboxes
+
+The first release in which the [Mac executor](executor.md) works through mailboxes (protocol 22) is one switch-over. The old and new Mac links never run side by side.
+
+1. **The order.** The VPS updates first, and the Mac follows by itself. One press covers both. **Update now** stops running Mac agents once; **When work finishes** waits for them. The schema changes, so Panels takes the backup before the install. The new VPS refuses the old Mac's link with "Mac needs update", but its update channel still serves it. The Mac installs its new runtime, which leases at once, and its report moves the card on. The Mac never updates before the VPS.
+2. **The watchdog.** The release ships the stall watchdog's unit and timer, but nothing starts them. Khushal installs and enables the timer once the release is current, with the [install lines](../ops/panels-environments/README.md#stall-watchdog). Until then, stalls are recorded but no alarm goes out. Native push also needs the `PLAN_APNS_*` inputs in that unit's environment.
+3. **The check.** The Mac shows as present, its health shows a recent lease, and a Mac Ticket starts.
+
+**Rollback** means the previous release plus the pre-deploy database backup. A new migration drops the old Mac connection tables, so the previous release refuses the upgraded database. Restore the backup while the service is stopped ([Backups](backups.md)). Work recorded after the deploy is lost. The Mac keeps its previous runtime beside the new one. The new runtime cannot lease from the old server, so the Mac goes back by the [runbook's](../ops/mac-executor/installation.md#deferred-update-and-failed-installation) recovery steps. The previous runtime opens the same outbox and reads the new runtime's handoff record. It ignores the command journal.
 
 ## The one-release bridge
 
@@ -93,4 +103,4 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 - `scripts/dev`, `scripts/development_safety/`: the worktree guard.
 - `ops/panels-environments/`: user units and runner setup.
 
-_Last verified: 2026-11-05._
+_Last verified: 2026-11-09._
