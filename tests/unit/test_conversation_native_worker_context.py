@@ -52,8 +52,7 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ChildReference, ExecutorIdentity
+from planner.execution_identity import ChildReference
 from planner.executor.configuration import NATIVE_WORKER_CONTEXT, ExecutorPaths
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
@@ -199,11 +198,6 @@ def test_native_worker_context_reaches_actual_provider_prompts(
             backend_child_factories={key: remote for key in ConversationBackendKey},
         )
         endpoint = VpsExecutor(db_path, RealClock())
-        executor_identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
-        )
-        endpoint.runs.identity = executor_identity
-        endpoint.runs.ready = True
         endpoint.runs.children[reference.child_id] = remote.recover(reference)
         system.configure_machine_catalog(endpoint.catalog)
         recipient = Principal(PrincipalKind.ticket, ticket.id)
@@ -291,17 +285,24 @@ def test_native_worker_context_reaches_actual_provider_prompts(
 
 
 @pytest.mark.parametrize("cleanup_fails", [False, True])
-def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
+def test_a_native_rebind_writes_only_after_confirmed_cleanup(
     tmp_path: Path, cleanup_fails: bool
 ) -> None:
-    """The original rebind deadlock and failure must be visible at the send seam."""
+    """The original rebind deadlock and failure must be visible at the send seam.
+
+    A Mac prompt is accepted when its mailbox row commits, so the Mac never refuses a
+    write back to this seam; the rebind is the core's own (an exact reasoning effort needs
+    a fresh child). The old Mac child's stop runs outside the lock, a send meanwhile
+    queues, and the prompt reaches a fresh child only once the stop is confirmed."""
+    from planner.conversation.backends.contracts import TurnEnded
     from planner.conversation.contracts import (
         ConversationStartRequest,
         PromptDeliveryQueued,
         PromptDeliveryRefused,
     )
+    from planner.conversation.events import ConversationTurnEnding
+    from planner.execution_identity import TurnToken
     from planner.executor.protocol import CommandDisposition
-    from planner.executor.vps_inbox import InboxStore
 
     async def exercise() -> None:
         db_path = str(tmp_path / "panels.sqlite")
@@ -310,7 +311,6 @@ def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
         connection.close()
         commands: list[ChildCommand] = []
         cleanup_entered, release_cleanup = asyncio.Event(), asyncio.Event()
-        executor_store = InboxStore(db_path)
         snapshot = CanonicalSkillSnapshot(
             tuple(
                 CanonicalSkillSource(name, f"---\nname: {name}\ndescription: test\n---\ntext")
@@ -321,29 +321,19 @@ def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
 
         async def dispatch(command: ChildCommand) -> CommandOutcome:
             commands.append(command)
-            if command.operation is ChildOperation.write_prompt and len(commands) == 2:
-                return CommandOutcome(
-                    command.command_id,
-                    command.child,
-                    CommandDisposition.refused,
-                    {"error_type": "NeedsRebind", "error_message": "model changed"},
-                )
             if command.operation is ChildOperation.stop and not cleanup_entered.is_set():
                 cleanup_entered.set()
                 await release_cleanup.wait()
                 if cleanup_fails:
                     raise RuntimeError("cleanup did not confirm exit")
             return CommandOutcome(
-                command.command_id,
-                command.child,
-                CommandDisposition.succeeded,
-                {"composed_content_delivered": True},
+                command.command_id, command.child, CommandDisposition.succeeded, {}
             )
 
+        incarnation = str(uuid4())
+
         def reference(start: ResolvedConversationStart, sink: Any) -> ChildReference:
-            child = ChildReference("test-incarnation", str(uuid4()), "c")
-            executor_store.runs.register_child(child, "ticket", "t_native", 1)
-            return child
+            return ChildReference(incarnation, str(uuid4()), "c")
 
         remote = MacRemoteChildFactory(reference, dispatch, lambda start: snapshot, db_path=db_path)
         system = SqliteProcessConversationSystem(
@@ -353,10 +343,25 @@ def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
         )
         try:
             await system.start_conversation(
-                ConversationStartRequest("c", "model", workspace_folder=tmp_path)
+                ConversationStartRequest(
+                    "c", "model", reasoning_effort="high", workspace_folder=tmp_path
+                )
             )
+            first = await system.send("c", text_message_content("first bytes"), sender_label="T")
+            assert first == PromptDeliveryStarted()
+            ended = TurnEnded(
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            )
+            assert (await system.take_backend_event(TurnToken("c", 1), ended)).taken
             delivery = asyncio.create_task(
-                system.send("c", text_message_content("original bytes"), sender_label="Test")
+                system.send(
+                    "c",
+                    text_message_content("original bytes"),
+                    sender_label="Test",
+                    reasoning_effort_is_set=True,
+                )
             )
             await cleanup_entered.wait()
             assert not delivery.done()
@@ -378,9 +383,8 @@ def test_refused_native_write_rebinds_only_after_confirmed_cleanup(
             else:
                 assert result == PromptDeliveryStarted()
                 assert len(written) == 2 and written[0].child != written[1].child
-                assert isinstance(written[0].arguments, WritePrompt)
                 assert isinstance(written[1].arguments, WritePrompt)
-                assert written[0].arguments.content == written[1].arguments.content
+                assert written[1].arguments.content == text_message_content("original bytes")
         finally:
             release_cleanup.set()
             await system.shutdown()

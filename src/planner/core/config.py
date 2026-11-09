@@ -27,7 +27,7 @@ CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS: Final = 0.5
 CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS: Final = 30.0
 # A Mac item still waiting on the VPS after this long is answered "retry later" and its
 # locks are let go; work that cannot stop part-way finishes on its own, and the resend
-# finds its receipt. The Mac waits 30 s for an answer (REQUEST_TIMEOUT_SECONDS in
+# finds its receipt. The Mac waits 30 s for an answer (ITEM_BATCH_TIMEOUT_SECONDS in
 # executor/configuration.py). The answer comes by this limit whatever is still running,
 # so the 10 s left over is only for the trip back and a busy event loop.
 MAC_ITEM_RETRY_LATER_SECONDS: Final = 20.0

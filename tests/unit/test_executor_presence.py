@@ -63,9 +63,14 @@ SETTLES = 5.0
 
 @dataclass
 class _Core:
-    """The conversation core's side of MacRunConversations, recorded."""
+    """The conversation core's side of MacRunConversations, recorded. Its retirement
+    closes nothing, as when the core no longer holds the child, so the drain closes the
+    run itself afterwards."""
 
     retired: list[tuple[ChildReference, str]] = field(default_factory=list)
+    # With db_path, the run's state when the retirement was called: the core closes it.
+    db_path: str = ""
+    run_states_at_retirement: list[str] = field(default_factory=list)
 
     async def emit_answer(
         self, turn: TurnToken, emit: Callable[[], Coroutine[Any, Any, object]]
@@ -75,6 +80,10 @@ class _Core:
     async def retire_replaced_remote_child(
         self, reference: ChildReference, *, replaced_by: str
     ) -> None:
+        if self.db_path:
+            self.run_states_at_retirement.append(
+                _run_state(self.db_path, reference.conversation_id)
+            )
         self.retired.append((reference, replaced_by))
 
     async def confirm_remote_child_termination(self, reference: ChildReference) -> None:
@@ -443,8 +452,8 @@ def test_a_silent_working_turn_is_exempted_by_a_running_tool_and_restarted_by_ac
 def test_a_replaced_process_drains_per_conversation_before_its_run_closes(
     tmp_path: Path,
 ) -> None:
-    core = _Core()
     path = _database(tmp_path)
+    core = _Core(db_path=path)
 
     async def exercise() -> None:
         async with _endpoint(path, core) as endpoint:
@@ -458,7 +467,8 @@ def test_a_replaced_process_drains_per_conversation_before_its_run_closes(
             # The successor still holds c's items; d has none, so d alone drains.
             await endpoint.lease(lease_request(new, waiting=(WaitingConversation("c", 3),)))
             await _eventually(lambda: core.retired == [(free, new.executor_incarnation)])
-            assert (_run_state(path, "c"), _run_state(path, "d")) == ("open", "closed")
+            await _eventually(lambda: _run_state(path, "d") == "closed")
+            assert _run_state(path, "c") == "open"
 
             # A truncated list may hide c: no drain finishes on it.
             await endpoint.lease(lease_request(new, truncated=True))
@@ -468,7 +478,10 @@ def test_a_replaced_process_drains_per_conversation_before_its_run_closes(
             await endpoint.lease(lease_request(new))
             await _eventually(lambda: len(core.retired) == 2)
             assert core.retired[1] == (held, new.executor_incarnation)
-            assert _run_state(path, "c") == "closed"
+            await _eventually(lambda: _run_state(path, "c") == "closed")
+            # Each run is still open when the core is asked to retire it, so the core's
+            # one transaction closes it with the interrupted turn it records.
+            assert core.run_states_at_retirement == ["open", "open"]
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
 
@@ -498,7 +511,7 @@ def test_a_vps_restart_keeps_a_pending_replacement_and_resumes_its_drain(
             assert core.retired == [] and _run_state(path, "c") == "open"
             await restarted.lease(lease_request(new))
             await _eventually(lambda: core.retired == [(child, new.executor_incarnation)])
-            assert _run_state(path, "c") == "closed"
+            await _eventually(lambda: _run_state(path, "c") == "closed")
             assert TrackedWaitKind.mac_replacement_pending not in _waits(restarted, now_ms())
 
     asyncio.run(asyncio.wait_for(exercise(), 20))

@@ -468,15 +468,6 @@ class MacOutbox:
                 )
             )
 
-    def pending_head(self, conversation_id: str) -> QueuedEnvelope | None:
-        with self._lock:
-            row = self._db.execute(
-                "SELECT * FROM items WHERE receipt_json IS NULL AND conversation_id=? "
-                "ORDER BY sequence LIMIT 1",
-                (conversation_id,),
-            ).fetchone()
-            return None if row is None else self._envelope(row)
-
     def lease_backlog(self) -> OutboxBacklog:
         with self._lock:
             count = int(

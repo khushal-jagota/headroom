@@ -31,9 +31,10 @@ from planner.conversation.contracts import PromptDeliveryMode
 from planner.conversation.events import ConversationTurnEnding
 from planner.environments.mac_runtime import extract_runtime
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ExecutorIdentity, TurnToken
+from planner.execution_identity import MAC_NEEDS_UPDATE, ExecutorIdentity, TurnToken
 from planner.executor import runtime_bootstrap
 from planner.executor.cli import executor_group
+from planner.executor.contracts import ExecutorHealthRead
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_presence import MacPresence
 from planner.executor.mac_runner import MacRunner
@@ -42,6 +43,7 @@ from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
     EnvelopeKind,
+    ExecutorRefusal,
     StopRun,
     WritePrompt,
 )
@@ -780,6 +782,7 @@ def test_refused_work_protocol_recovers_through_actual_server_update_contract(
         server = mac_service(tmp_path / "server", provider, published.manifest.app_sha)
         server.prepare(published)
         write(server, attempt(published, "done"))
+        server_identity = ExecutorIdentity(PROTOCOL_VERSION, "server", SPOOL_FORMAT_VERSION, "")
         exits: list[bool] = []
         phases: list[str] = []
         controller = MacUpdateController(
@@ -802,7 +805,18 @@ def test_refused_work_protocol_recovers_through_actual_server_update_contract(
                 return asdict(server.check())
             report = TypeAdapter(MacUpdateReport).validate_python(payload)
             phases.append(report.phase)
-            server.report(report, {"connection_state": "disconnected"})
+            # The VPS's presence read: this Mac's leases are refused, so it is never present.
+            refused = ExecutorHealthRead(
+                "refused",
+                1,
+                None,
+                1,
+                ExecutorRefusal(MAC_NEEDS_UPDATE, presence.identity, server_identity, 1),
+                None,
+                None,
+                False,
+            )
+            server.report(report, refused)
             return {"confirmed": False}
 
         async def download(session: aiohttp.ClientSession, target: MacUpdateTarget) -> Path:

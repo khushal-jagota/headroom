@@ -23,7 +23,6 @@ from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
     AgentMessageDelta,
     BackendEventValue,
-    BackendPromptAccepted,
     BackendStreamEnded,
     BackgroundTaskEnded,
     BackgroundTaskStarted,
@@ -52,7 +51,6 @@ from planner.execution_identity import (
     ChildReference,
     ExecutorIdentity,
     ProtocolRefused,
-    supports_executor_versions,
 )
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.executor.update_contracts import MacUpdateCheck
@@ -98,34 +96,6 @@ class CanonicalSkillSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
-class FileTransfer:
-    """Generation reservation; publication authority stays with the original child."""
-
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
-
-    transfer_id: str
-    direction: Literal["upload", "download"]
-    manifest: FileManifest
-
-
-class ConnectionState(StrEnum):
-    disconnected = "disconnected"
-    reconciling = "reconciling"
-    ready = "ready"
-    refused = "refused"
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutorHealth:
-    identity: ExecutorIdentity
-    process_id: int
-    connection_state: ConnectionState
-    reconciliation_ready: bool
-    observed_at_ms: int
-    lost_at_ms: int | None
-
-
-@dataclass(frozen=True, slots=True)
 class DurableAnswer:
     answer_id: str
     ask: AskReference
@@ -168,23 +138,6 @@ class FileUploadRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class WithdrawCommands:
-    child: ChildReference
-    command_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class WithdrawResult:
-    withdrawn: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class FileDownloadRequest:
-    command_id: str
-    stored_file_id: str
-
-
-@dataclass(frozen=True, slots=True)
 class FileSnapshot:
     manifest: FileManifest
     local_path: Path
@@ -214,14 +167,6 @@ class QueuedEnvelope:
     kind: EnvelopeKind
     payload: JsonObject
     file_dependencies: tuple[FileManifest, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class EnvelopeRefusal:
-    """A sender's permanent preparation failure, recorded as the item's receipt."""
-
-    envelope: QueuedEnvelope
-    error_message: str
 
 
 class ReceiptDisposition(StrEnum):
@@ -453,19 +398,6 @@ class ChildCommand:
                 raise ValueError("durable answer conflicts with command")
 
 
-def encode_command_for_peer(command: ChildCommand, protocol_version: int) -> JsonObject:
-    """Protocols 20 and 21 have identical commands, including nested start values.
-
-    Protocol 21 adds only a Mac-to-VPS event. Future command changes must supply an
-    explicit older-peer adaptation here, verified against its frozen schema.
-    """
-    from planner.execution_configuration import SPOOL_FORMAT_VERSION
-
-    if not supports_executor_versions(protocol_version, SPOOL_FORMAT_VERSION):
-        raise ProtocolRefused("unsupported command peer protocol")
-    return as_object(command)
-
-
 class CommandDisposition(StrEnum):
     succeeded = "succeeded"
     refused = "refused"
@@ -478,32 +410,6 @@ class CommandOutcome:
     child: ChildReference
     disposition: CommandDisposition
     result: JsonObject
-
-
-@dataclass(frozen=True, slots=True)
-class ChildInventory:
-    child: ChildReference
-    active_turn: TurnToken | None
-    pending_asks: tuple[AskReference, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class CommandState:
-    command_id: str
-    phase: Literal["unknown", "preparing", "invoking", "finished"]
-    outcome: CommandOutcome | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ReconnectAsk:
-    command_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ReconnectResult:
-    identity: ExecutorIdentity
-    commands: tuple[CommandState, ...]
-    children: tuple[ChildInventory, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -527,47 +433,6 @@ class Quiescence:
                 or self.unsent_entry_count
             )
         )
-
-
-class WireMessageKind(StrEnum):
-    hello = "hello"
-    hello_accepted = "hello_accepted"
-    protocol_refused = "protocol_refused"
-    reconnect_ask = "reconnect_ask"
-    reconnect_result = "reconnect_result"
-    reconciliation_ready = "reconciliation_ready"
-    live_backend_event = "live_backend_event"
-    envelope = "envelope"
-    refuse_envelope = "refuse_envelope"
-    receipt = "receipt"
-    missing_files = "missing_files"
-    put_file = "put_file"
-    withdraw = "withdraw"
-    withdraw_result = "withdraw_result"
-    get_file = "get_file"
-    file_transfer = "file_transfer"
-    command = "command"
-    command_outcome = "command_outcome"
-    read_request = "read_request"
-    read_response = "read_response"
-    catalog_request = "catalog_request"
-    catalog_response = "catalog_response"
-    health = "health"
-    error = "error"
-
-
-@dataclass(frozen=True, slots=True)
-class WireMessage:
-    """Frame body: {kind, request_id, payload}; kind selects the validated codec.
-
-    request_id correlates one exchange only. Domain retry identity always remains
-    submission_id or command_id in the payload. Never redispatch a
-    native command merely because a request_id response was lost.
-    """
-
-    kind: WireMessageKind
-    request_id: str
-    payload: JsonObject
 
 
 class IpcOperation(StrEnum):
@@ -897,9 +762,7 @@ def encode_bounded(value: object, *, limit: int = MAX_ENVELOPE_BYTES) -> bytes:
     return body
 
 
-def decode_bounded[T](
-    body: bytes, value_type: type[T], *, limit: int = MAX_ENVELOPE_BYTES
-) -> T:
+def decode_bounded[T](body: bytes, value_type: type[T], *, limit: int = MAX_ENVELOPE_BYTES) -> T:
     """Decode one protocol value from a JSON body of at most limit bytes.
 
     Lax, not strict: a ChildCommand decodes its arguments in a before-validator, which
@@ -958,12 +821,6 @@ def decode_event_arguments(event: BackendEvent) -> BackendEventValue:
     return type_adapter(_BACKEND_EVENT_TYPES[event.method]).validate_python(event.arguments)
 
 
-def decode_prompt_result(result: JsonObject) -> BackendPromptAccepted:
-    return BackendPromptAccepted(
-        composed_content_delivered=bool(result["composed_content_delivered"]),
-    )
-
-
 def _encode_payload(value: object) -> bytes:
     body = type_adapter(type(value)).dump_json(value)
     if not body or len(body) > MAX_ENVELOPE_BYTES:
@@ -977,16 +834,6 @@ async def read_typed_frame[T](reader: FrameReader, value_type: type[T]) -> T:
     if not length or length > MAX_ENVELOPE_BYTES:
         raise ProtocolRefused("invalid frame length")
     return type_adapter(value_type).validate_json(await reader.readexactly(length), strict=True)
-
-
-def encode_message(message: WireMessage) -> bytes:
-    return _encode_payload(message)
-
-
-def decode_message(body: bytes) -> WireMessage:
-    if not body or len(body) > MAX_ENVELOPE_BYTES:
-        raise ProtocolRefused("message exceeds envelope limit")
-    return type_adapter(WireMessage).validate_json(body, strict=True)
 
 
 def encode_frame(value: object) -> bytes:

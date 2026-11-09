@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
-from typing import Any, cast
+from typing import Any
 
 from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
@@ -16,12 +16,11 @@ from planner.conversation.backends.contracts import (
 )
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
-from planner.execution_identity import ChildReference, ExecutorIdentity, TicketLocale
+from planner.execution_identity import ChildReference, TicketLocale
 from planner.executor.protocol import (
     ChildCommand,
     ChildOperation,
     CommandOutcome,
-    ConnectionState,
 )
 from planner.executor.vps_presence_store import current_incarnation
 
@@ -57,41 +56,6 @@ class VpsDatabase:
 
 
 class ExecutorStore(VpsDatabase):
-    def contact(
-        self, at_ms: int, refusal: dict[str, Any] | None = None, *, clear: bool = False
-    ) -> None:
-        with self._transaction() as conn:
-            conn.execute(
-                "INSERT INTO mac_contact_status VALUES (1,?,?) "
-                "ON CONFLICT(singleton) DO UPDATE SET "
-                "last_contact_at_ms=MAX(last_contact_at_ms,excluded.last_contact_at_ms), "
-                "refusal_json=CASE WHEN ? THEN excluded.refusal_json ELSE refusal_json END",
-                (at_ms, None if refusal is None else _json(refusal), clear or refusal is not None),
-            )
-
-    def contact_status(self) -> tuple[int | None, dict[str, Any] | None]:
-        conn = connect(self.db_path)
-        try:
-            row = conn.execute(
-                "SELECT last_contact_at_ms,refusal_json FROM mac_contact_status WHERE singleton=1"
-            ).fetchone()
-            return (
-                (None, None)
-                if row is None
-                else (row[0], None if row[1] is None else json.loads(row[1]))
-            )
-        finally:
-            conn.close()
-
-    @staticmethod
-    def status(conn: sqlite3.Connection) -> tuple[tuple[str, str], ...]:
-        return tuple(
-            (row[0], row[1])
-            for row in conn.execute(
-                "SELECT identity_json,connection_state FROM executor_connections WHERE active=1"
-            )
-        )
-
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
         """Every run, with whether a stop is in the mailbox and whether its process is the
         current one. Only an open run of the current incarnation is adopted live."""
@@ -197,92 +161,6 @@ class ExecutorStore(VpsDatabase):
                 command.turn.turn_number if command.turn is not None else 0,
             ),
         )
-
-    def begin_connection(self, identity: ExecutorIdentity) -> None:
-        with self._transaction() as connection:
-            current = connection.execute(
-                "SELECT * FROM executor_connections WHERE active=1"
-            ).fetchone()
-            seen = connection.execute(
-                "SELECT * FROM executor_connections WHERE executor_incarnation=?",
-                (identity.executor_incarnation,),
-            ).fetchone()
-            if seen is not None and (
-                not seen["active"]
-                or identity.connection_generation <= seen["connection_generation"]
-            ):
-                raise _invalid("Executor connection generation is stale")
-            if current is not None:
-                connection.execute("UPDATE executor_connections SET active=0 WHERE active=1")
-            connection.execute(
-                "INSERT INTO executor_connections VALUES (?,?,?,?,1) "
-                "ON CONFLICT(executor_incarnation) DO UPDATE SET "
-                "connection_generation=excluded.connection_generation, "
-                "identity_json=excluded.identity_json,connection_state=excluded.connection_state,active=1",
-                (
-                    identity.executor_incarnation,
-                    identity.connection_generation,
-                    _record(identity),
-                    ConnectionState.reconciling.value,
-                ),
-            )
-
-    def require_current_incarnation(self, identity: ExecutorIdentity) -> None:
-        """Fence a Mac item by the process that sent it, never by the state of its link.
-
-        A Mac process keeps its executor_incarnation across every reconnect, and a new
-        process takes a new one, like a Kafka producer epoch. So an item from a process
-        that has been replaced is refused here, before any write starts. A dropped link
-        or a newer connection_generation of the same process refuses nothing: the item
-        is the same item, and its sequence decides whether it is new.
-        """
-        connection = connect(self.db_path)
-        try:
-            row = connection.execute(
-                "SELECT executor_incarnation FROM executor_connections WHERE active=1"
-            ).fetchone()
-        finally:
-            connection.close()
-        if row is None or row[0] != identity.executor_incarnation:
-            raise _invalid("Executor incarnation has been replaced")
-
-    @staticmethod
-    def _current(connection: sqlite3.Connection, identity: ExecutorIdentity) -> sqlite3.Row:
-        current = connection.execute("SELECT * FROM executor_connections WHERE active=1").fetchone()
-        if current is None or current["identity_json"] != _record(identity):
-            raise _invalid("Executor connection generation is stale")
-        return cast(sqlite3.Row, current)
-
-    @classmethod
-    def _connected(cls, connection: sqlite3.Connection, identity: ExecutorIdentity) -> sqlite3.Row:
-        current = cls._current(connection, identity)
-        if current["connection_state"] not in (
-            ConnectionState.reconciling.value,
-            ConnectionState.ready.value,
-        ):
-            raise _invalid("Executor connection is unavailable")
-        return current
-
-    def mark_ready(self, identity: ExecutorIdentity) -> None:
-        with self._transaction() as connection:
-            self._connected(connection, identity)
-            connection.execute(
-                "UPDATE executor_connections SET connection_state=? WHERE active=1",
-                (ConnectionState.ready.value,),
-            )
-
-    def mark_lost(self, identity: ExecutorIdentity) -> None:
-        with self._transaction() as connection:
-            # A late close from an old socket cannot invalidate the replacement.
-            row = connection.execute(
-                "SELECT identity_json FROM executor_connections WHERE active=1"
-            ).fetchone()
-            if row is None or row[0] != _record(identity):
-                return
-            connection.execute(
-                "UPDATE executor_connections SET connection_state=? WHERE active=1",
-                (ConnectionState.disconnected.value,),
-            )
 
     def register_child(
         self, child: ChildReference, principal_kind: str, principal_id: str, now_ms: int
@@ -394,7 +272,16 @@ class ExecutorStore(VpsDatabase):
     def close_child_in_transaction(
         connection: sqlite3.Connection, child: ChildReference, now_ms: int
     ) -> None:
-        """Close the run and its assignment in the caller's transaction."""
+        """Close the run and its assignment in the caller's transaction.
+
+        A child already closed is left as it is, so closing twice keeps the first close
+        and never touches a later run of the same conversation."""
+        if connection.execute(
+            "SELECT 1 FROM executor_child_assignments WHERE executor_incarnation=? "
+            "AND child_id=? AND conversation_id=? AND closed_at_ms IS NOT NULL",
+            (child.executor_incarnation, child.child_id, child.conversation_id),
+        ).fetchone():
+            return
         row = connection.execute(
             "SELECT stop_state FROM mac_runs WHERE conversation_id=? "
             "AND executor_incarnation=? AND child_id=?",

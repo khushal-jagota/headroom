@@ -15,18 +15,15 @@ MAX_TOOL_DETAIL_CHARACTERS: Final = 64 * 1024
 FILE_MODIFIED_WINDOW_NS: Final = 2_000_000_000
 FILE_CHUNK_BYTES: Final = 256 * 1024
 TRANSFER_CHUNK_BYTES: Final = 64 * 1024
-# Concurrent file transfers on one link. Outbox items are not limited by this.
+# Concurrent file transfers on the Mac. Outbox items are not limited by this.
 MAX_FILE_TRANSFERS: Final = 4
 
 # Request and connection timing.
 CLI_RESULT_TIMEOUT_SECONDS: Final = 30.0
 CLI_TRANSPORT_RESERVE_SECONDS: Final = 5.0
 REQUEST_TIMEOUT_SECONDS: Final = 30.0
-CATALOG_TIMEOUT_SECONDS: Final = 35.0
-RECONNECT_INTERVAL_SECONDS: Final = 5.0
 HTTP_CONNECT_TIMEOUT_SECONDS: Final = 10.0
 HTTP_CLOSE_TIMEOUT_SECONDS: Final = 5.0
-WS_HEARTBEAT_SECONDS: Final = 15.0
 # A conversation whose outbox send fails retries alone, doubling up to the cap.
 OUTBOX_RETRY_INITIAL_SECONDS: Final = 1.0
 OUTBOX_RETRY_MAX_SECONDS: Final = 60.0
@@ -133,7 +130,6 @@ EXECUTOR_CAPABILITY_ENV: Final = "PLAN_EXECUTOR_CAPABILITY"
 NATIVE_SKILLS_DIR_ENV: Final = "PLAN_NATIVE_SKILLS_DIR"
 EXECUTOR_ID_HEADER: Final = "X-Panels-Executor-ID"
 EXECUTOR_INCARNATION_HEADER: Final = "X-Panels-Executor-Incarnation"
-EXECUTOR_GENERATION_HEADER: Final = "X-Panels-Executor-Generation"
 EXECUTOR_PROTOCOL_HEADER: Final = "X-Panels-Executor-Protocol"
 # Route 5: base64url of the JSON FileUploadRequest. Route 6: the served bytes' digest.
 EXECUTOR_FILE_UPLOAD_HEADER: Final = "X-Panels-File-Upload"

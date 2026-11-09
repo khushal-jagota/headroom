@@ -1,4 +1,8 @@
-"""Real Claude cleanup failures must survive executor and canonical retirement gates."""
+"""Real Claude cleanup failures must survive executor and canonical retirement gates.
+
+Commands reach the real Mac runner in process (tests.support.executor_turns), and the
+runner's outbox items go through the real VPS inbox, so the stop's proof and the run's
+close are the executor's own."""
 
 from __future__ import annotations
 
@@ -11,10 +15,11 @@ from typing import cast
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage
 from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
+from tests.support.executor_presence import mac_identity
+from tests.support.executor_turns import MacRemoteChildFactory
 from tests.unit.test_executor_native_runtime import (
     canonical_snapshot,
 )
-from tests.unit.test_executor_retired_journal import IDENTITY as SOURCE_IDENTITY
 from tests.unit.test_executor_retired_journal import endpoint
 
 from planner.conversation.backends.claude_agent_sdk import (
@@ -34,6 +39,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import OWNER_PRINCIPAL
+from planner.execution_identity import ChildReference
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import MacRunner
@@ -93,7 +99,7 @@ def claude_registry(
     ), clients
 
 
-IDENTITY = replace(SOURCE_IDENTITY, executor_incarnation="11111111-1111-4111-8111-111111111111")
+IDENTITY = mac_identity("11111111-1111-4111-8111-111111111111")
 
 
 async def disconnect_failure() -> None:
@@ -107,10 +113,7 @@ def test_claude_stop_result_controls_canonical_retirement(
     """Gap: scripted native stop hid Claude's swallowed disconnect failures."""
 
     async def run() -> None:
-        remote = endpoint(tmp_db)
-        remote.runs.identity = IDENTITY
-        remote.runs.store.begin_connection(IDENTITY)
-        remote.runs.store.mark_ready(IDENTITY)
+        remote = endpoint(tmp_db, IDENTITY)
         registry, clients = claude_registry(tmp_path, monkeypatch)
         monkeypatch.setattr(conversation_start, "_default_workspace_folder", lambda conn: tmp_path)
         ticket = tickets.create_ticket(
@@ -136,11 +139,17 @@ def test_claude_stop_result_controls_canonical_retirement(
                 cast(MacOutbox, registry.outbox).acknowledge(receipt)
             return outcome
 
-        remote.runs.send_command = send  # type: ignore[method-assign]
-        remote.runs._read_skill_snapshot = lambda start: canonical_snapshot()  # type: ignore[method-assign]
+        children = MacRemoteChildFactory(
+            lambda start, sink: ChildReference(
+                IDENTITY.executor_incarnation, "claude-child", start.conversation_id
+            ),
+            send,
+            lambda start: canonical_snapshot(),
+            db_path=remote.db_path,
+        )
         system = SqliteProcessConversationSystem(
             store=ConversationStore(remote.db_path),
-            backend_child_factories=dict.fromkeys(ConversationBackendKey, remote.runs),
+            backend_child_factories=dict.fromkeys(ConversationBackendKey, children),
             message_files=ConversationMessageFiles(remote.db_path),
         )
         system.configure_machine_catalog(remote.catalog)
