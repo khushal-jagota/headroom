@@ -370,10 +370,11 @@ class CommandJournalApi(Protocol):
         """MAX(command_sequence), 0 when empty."""
         ...
 
-    def lower_poll_cursor(self, mailbox_high_sequence: int) -> bool:
-        """When the cursor is above the VPS's high sequence, set command_sequence=0 on
-        every row above it (kept for command_id deduplication), so the cursor falls to at
-        most mailbox_high_sequence. True if any row was lowered."""
+    def lower_poll_cursor(self, mailbox_high_sequence: int, *, cursor_at_lease: int) -> bool:
+        """When the cursor read before the lease was sent is above the VPS's high
+        sequence, set command_sequence=0 on every row above that sequence (kept for
+        command_id deduplication), so the cursor falls to at most it. A cursor that rose
+        above it only after the read is not lowered. True if any row was lowered."""
         ...
 
     def record_poll_reply(
@@ -406,7 +407,7 @@ class CommandJournalApi(Protocol):
 
 
 class MacFilesApi(Protocol):
-    """Uploads and input downloads, at most MAX_FILE_TRANSFERS at once."""
+    """Uploads and input downloads. No conversation's transfer waits on another's."""
 
     async def upload(self, upload: FileUploadRequest, source: Path) -> None: ...
 

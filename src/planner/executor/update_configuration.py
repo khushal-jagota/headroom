@@ -9,7 +9,7 @@ MAC_RUNTIME_UPDATE_EXIT_CODE = 75
 MAC_RUNTIME_CHILD_ENV = "PLAN_EXECUTOR_RUNTIME_CHILD"
 MAC_RUNTIME_READY_ENV = "PLAN_EXECUTOR_RUNTIME_READY"
 # How often the fixed supervisor checks for a new runtime's ready marker, and how often
-# a runtime replaying a planned handoff re-checks whether its old output is receipted.
+# a runtime not yet admitted after a planned handoff re-checks whether it may be.
 MAC_UPDATE_POLL_SECONDS = 1.0
 MAC_RUNTIME_READY_TIMEOUT_SECONDS = 60.0
 MAC_UPDATE_TERMINATE_SECONDS = 10.0

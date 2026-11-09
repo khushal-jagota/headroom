@@ -316,8 +316,7 @@ class MacUpdateController:
                         self.release_runtime_admission()
                 return
             if self.runner.planned_update_replay:
-                # A synthetic retirement can wait for the old FIFO. Joining it
-                # in prepare_update would prevent the next custody-release poll.
+                # The next update waits until this runtime is admitted.
                 await self._report(session, target, "waiting")
                 return
             if self.prepared_request != target.request_id:
@@ -399,11 +398,10 @@ class MacUpdateController:
                 self.runner.resume_after_cancelled_update()
 
     def release_runtime_admission(self) -> None:
-        if (
-            not self._runtime_gate_pending
-            or self.runner.planned_update_replay
-            or self.prepared_request is not None
-        ):
+        """Admit work once this runtime is leased and, on trial, the supervisor has kept
+        it. The previous runtime's saved output need not have drained: each conversation
+        sends it first, in its own order, so no conversation waits on another's."""
+        if not self._runtime_gate_pending or self.prepared_request is not None:
             return
         if os.environ.get(MAC_RUNTIME_READY_ENV) is not None:
             selected = read_record(self.root / "selection.json")
@@ -414,26 +412,38 @@ class MacUpdateController:
                 or (self.root / "pending.json").exists()
             ):
                 return
+        # Custody goes first: once work can start, a restart must come back as a new
+        # process, so the VPS ends that work's runs instead of trusting them.
+        if not self._release_custody():
+            return
+        self.runner.finish_planned_replay()
         self.runner.resume_after_cancelled_update()
         self._runtime_gate_pending = False
 
     def release_handoff_custody(self) -> None:
+        """Once the saved output has drained, a restart no longer needs the handoff."""
+        if self.runner.outbox.pending_count() == 0:
+            self._release_custody()
+
+    def _release_custody(self) -> bool:
+        """Mark the handoff replayed. False until this runtime is leased."""
         path = os.environ.get(MAC_RUNTIME_HANDOFF_ENV)
-        if path is None or not self.presence.leased() or self.runner.outbox.pending_count() != 0:
-            return
+        if path is None:
+            return True
+        if not self.presence.leased():
+            return False
         receipt = read_record(Path(path))
         if receipt is not None and receipt.get("replay_pending") is True:
             atomic_record(Path(path), handoff_record(self.presence.identity, replay_pending=False))
-            self.runner.finish_planned_replay()
-            self.release_runtime_admission()
+        return True
 
     async def run(self) -> None:
         """Apply each offered target in turn, the newest first."""
         try:
             while True:
                 if self.runner.planned_update_replay or self._runtime_gate_pending:
-                    # While a planned handoff replays, custody is re-checked each second,
-                    # so admission reopens as soon as the old output is receipted.
+                    # Until this runtime is admitted, admission is re-checked each second,
+                    # so it reopens as soon as the lease and any trial allow.
                     try:
                         await asyncio.wait_for(self._offered.wait(), MAC_UPDATE_POLL_SECONDS)
                     except TimeoutError:
