@@ -196,6 +196,9 @@ def test_assignment_rolls_back_if_run_cannot_be_saved(tmp_db: Connection) -> Non
 
     path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     child = ChildReference("22222222-2222-2222-2222-222222222222", "child", "c")
+    from tests.support.executor_presence import mac_identity, make_current
+
+    make_current(path, mac_identity(child.executor_incarnation))
     tmp_db.execute(
         "CREATE TRIGGER refuse_run BEFORE INSERT ON mac_runs "
         "BEGIN SELECT RAISE(ABORT,'run write failed'); END"

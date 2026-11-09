@@ -913,7 +913,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
             ConversationAccess.full,
             workspace_path_policy=policy,
         )
-        from planner.executor.vps_remote_child import MacRemoteChild
+        from tests.support.executor_turns import scripted_remote_child
 
         async def send(command: ChildCommand) -> CommandOutcome:
             outcome = await registry.run(command)
@@ -922,7 +922,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
 
         # Exercise VPS encoding and Mac hydration with distinct home directories.
         monkeypatch.setattr(Path, "home", staticmethod(lambda: vps_home))
-        remote = MacRemoteChild(reference, send, lambda start: canonical_snapshot())
+        remote = scripted_remote_child(reference, send, lambda start: canonical_snapshot())
         await remote.start(resolved, vendor_session_cursor="retained-native-session")
         assert received == constructed
         assert (paths.artifacts / "t_own" / "proof.txt").read_text() == "native artifact"

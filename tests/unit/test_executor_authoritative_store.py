@@ -1,4 +1,4 @@
-"""Authoritative acceptance, durable choices, generation fencing and file recovery."""
+"""Authoritative acceptance, durable choices, ordering and file recovery."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from tests.support.executor_inbox import lookup_receipt
+from tests.support.executor_presence import make_current
 from tests.support.executor_turns import persist_pending_turn
 from tests.unit.test_executor_native_runtime import isolated_native_home as isolated_native_home
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
@@ -43,7 +44,7 @@ def store(tmp_path: Path) -> InboxStore:
     finally:
         connection.close()
     result = InboxStore(path)
-    result.runs.begin_connection(IDENTITY)
+    make_current(path, IDENTITY)
     persist_pending_turn(result.runs, ASK)
     return result
 

@@ -1,27 +1,44 @@
-"""Machine model lists over the existing link; the VPS owns the last saved copy."""
+"""Machine model lists through the mailbox; the VPS owns the last saved copy.
+
+A model list is a read_model_list command. Its result is not conversation state, so
+it is waited for at most MODEL_LIST_LIMIT_SECONDS, and never asked of a Mac that is
+away: then the saved copy answers, saying so.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable
 from contextlib import closing
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import BackendSnapshot, BackendSnapshotService
 from planner.core.db import connect
-from planner.core.task_settlement import wait_for_settlement
+from planner.core.task_settlement import run_on_worker_thread, wait_for_settlement
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.configuration import CATALOG_TIMEOUT_SECONDS
+from planner.executor.configuration import MODEL_LIST_LIMIT_SECONDS
+from planner.executor.contracts import CommandSettlementReason
 from planner.executor.link import Link
-from planner.executor.protocol import WireMessage, WireMessageKind, as_object, type_adapter
+from planner.executor.protocol import (
+    ModelListRequest,
+    WireMessage,
+    WireMessageKind,
+    as_object,
+    type_adapter,
+)
+from planner.executor.vps_mailbox import SqliteCommandMailbox
+from planner.executor.vps_presence import MacPresenceService
+from planner.executor.vps_runs import MacRuns
 
-if TYPE_CHECKING:
-    from planner.executor.vps_runs import MacRuns
+LOGGER = logging.getLogger(__name__)
+MAC_AWAY_DIAGNOSIS = "The Mac is away."
 
 
+# The Mac half, kept here until Part C's executor/mac_catalog.py replaces it at
+# integration; it still speaks the old link and nothing new imports it.
 class MacCatalogRelay:
     def __init__(self, snapshots: BackendSnapshotService | None = None) -> None:
         self.snapshots = snapshots or BackendSnapshotService(machine_catalog=True)
@@ -66,20 +83,27 @@ class MacCatalogRelay:
 
 
 class VpsCatalogRelay:
-    def __init__(self, runs: MacRuns, *, machine_id: str = "macos") -> None:
+    def __init__(
+        self,
+        runs: MacRuns,
+        presence: MacPresenceService,
+        mailbox: SqliteCommandMailbox,
+        *,
+        machine_id: str = "macos",
+    ) -> None:
         self.runs = runs
+        self.presence = presence
+        self.mailbox = mailbox
         self.machine_id = machine_id
-        self._tasks: dict[
-            ConversationBackendKey, tuple[bool, asyncio.Task[BackendSnapshot]]
-        ] = {}
+        self._tasks: dict[ConversationBackendKey, tuple[bool, asyncio.Task[BackendSnapshot]]] = {}
 
     @property
     def identity(self) -> ExecutorIdentity | None:
-        return self.runs.identity
+        return self.presence.current_identity()
 
     @property
     def ready(self) -> bool:
-        return self.runs.ready
+        return self.presence.is_present()
 
     def owns_conversation(self, conversation_id: str) -> bool:
         return self.runs.owns_conversation(conversation_id)
@@ -98,10 +122,10 @@ class VpsCatalogRelay:
     async def snapshot(
         self, backend_key: ConversationBackendKey, *, refresh: bool = False
     ) -> BackendSnapshot:
-        kept = self.retained(backend_key)
-        if not self.runs.ready or self.runs.link is None:
+        kept = await run_on_worker_thread(self.retained, backend_key)
+        if not self.presence.is_present():
             answer = self._answer(backend_key, kept)
-            return replace(answer, diagnoses=(*answer.diagnoses, "The Mac is offline."))
+            return replace(answer, diagnoses=(*answer.diagnoses, MAC_AWAY_DIAGNOSIS))
         active = self._tasks.get(backend_key)
         if active is not None and refresh and not active[0]:
             # An ordinary version check may return the Mac's cached list. Refresh
@@ -116,9 +140,7 @@ class VpsCatalogRelay:
                 active = None
         pending = None if active is None else active[1]
         if pending is None:
-            pending = asyncio.create_task(self._read(backend_key, refresh=refresh))
-            self._tasks[backend_key] = (refresh, pending)
-            pending.add_done_callback(self._discard)
+            pending = self._start_read(backend_key, refresh=refresh)
         # Ordinary picker reads keep the last copy readable while the Mac checks
         # its version/backstop. Cold reads and explicit Refresh wait for the answer.
         if kept is not None and not refresh:
@@ -130,52 +152,58 @@ class VpsCatalogRelay:
                 return self._answer(backend_key, self.retained(backend_key))
             raise
 
+    def _start_read(
+        self, backend_key: ConversationBackendKey, *, refresh: bool
+    ) -> asyncio.Task[BackendSnapshot]:
+        task = asyncio.create_task(self._read(backend_key, refresh=refresh))
+        self._tasks[backend_key] = (refresh, task)
+        task.add_done_callback(self._discard)
+        return task
+
     async def _read(self, backend_key: ConversationBackendKey, *, refresh: bool) -> BackendSnapshot:
-        writer, identity = self.runs.link, self.runs.identity
-        if writer is None:
-            return self._answer(backend_key, self.retained(backend_key))
         try:
-            response = await writer.request(
-                WireMessageKind.catalog_request,
-                {"backend_key": backend_key.value, "refresh": refresh},
-                timeout=CATALOG_TIMEOUT_SECONDS,
-                close_on_timeout=False,
-                admit=lambda: self.runs.link is writer and self.runs.ready,
+            command = await self.mailbox.put_model_list_request(
+                ModelListRequest(backend_key.value, refresh)
             )
-            snapshot = type_adapter(BackendSnapshot).validate_json(json.dumps(response.payload))
-            if (
-                response.kind is not WireMessageKind.catalog_response
-                or snapshot.backend_key is not backend_key
-            ):
-                raise ValueError("unexpected machine snapshot")
-            if self.runs.link is writer and self.runs.identity == identity and self.runs.ready:
-                previous = self.retained(backend_key)
-                if (
-                    previous is not None
-                    and previous.models_complete
-                    and not snapshot.models_complete
-                ):
-                    snapshot = replace(
-                        snapshot,
-                        available_models=previous.available_models,
-                        reasoning_effort_options=previous.reasoning_effort_options,
-                        default_model_id=previous.default_model_id,
-                        default_reasoning_effort=previous.default_reasoning_effort,
-                        models_complete=True,
-                    )
-                with closing(connect(self.runs.db_path)) as conn:
-                    conn.execute(
-                        "INSERT INTO machine_backend_snapshots VALUES (?,?,?) "
-                        "ON CONFLICT(machine_id,backend_key) DO UPDATE "
-                        "SET snapshot_json=excluded.snapshot_json "
-                        "WHERE snapshot_json != excluded.snapshot_json",
-                        (self.machine_id, backend_key.value, json.dumps(as_object(snapshot))),
-                    )
-                    conn.commit()
-                return snapshot
-        except (TimeoutError, ConnectionError, OSError, ValueError):
-            pass
-        return self._answer(backend_key, self.retained(backend_key))
+            result = await self.mailbox.wait_result(command.command_id, MODEL_LIST_LIMIT_SECONDS)
+            if result is None:
+                await self.mailbox.withdraw_waiting(
+                    command.command_id, CommandSettlementReason.model_list_limit_passed
+                )
+            elif result.model_list is not None:
+                snapshot = type_adapter(BackendSnapshot).validate_json(
+                    json.dumps(result.model_list)
+                )
+                if snapshot.backend_key is not backend_key:
+                    raise ValueError("unexpected machine snapshot")
+                return await run_on_worker_thread(self._keep, backend_key, snapshot)
+        except (OSError, ValueError) as error:
+            LOGGER.warning("The Mac's %s model list was not read: %r", backend_key.value, error)
+        return self._answer(backend_key, await run_on_worker_thread(self.retained, backend_key))
+
+    def _keep(
+        self, backend_key: ConversationBackendKey, snapshot: BackendSnapshot
+    ) -> BackendSnapshot:
+        previous = self.retained(backend_key)
+        if previous is not None and previous.models_complete and not snapshot.models_complete:
+            snapshot = replace(
+                snapshot,
+                available_models=previous.available_models,
+                reasoning_effort_options=previous.reasoning_effort_options,
+                default_model_id=previous.default_model_id,
+                default_reasoning_effort=previous.default_reasoning_effort,
+                models_complete=True,
+            )
+        with closing(connect(self.runs.db_path)) as conn:
+            conn.execute(
+                "INSERT INTO machine_backend_snapshots VALUES (?,?,?) "
+                "ON CONFLICT(machine_id,backend_key) DO UPDATE "
+                "SET snapshot_json=excluded.snapshot_json "
+                "WHERE snapshot_json != excluded.snapshot_json",
+                (self.machine_id, backend_key.value, json.dumps(as_object(snapshot))),
+            )
+            conn.commit()
+        return snapshot
 
     @staticmethod
     def _answer(
@@ -196,17 +224,13 @@ class VpsCatalogRelay:
         )
 
     def connected(self) -> None:
-        async def refresh(backend: ConversationBackendKey) -> BackendSnapshot:
-            return await self._read(backend, refresh=True)
-
+        """A new Mac process, or a Mac back from away: refresh every model list."""
         for backend in ConversationBackendKey:
-            # A replaced generation's result cannot overwrite the new connection.
+            # A read put to a replaced process ends with nothing; ask the current one.
             previous = self._tasks.get(backend)
             if previous is not None:
                 previous[1].cancel()
-            task = asyncio.create_task(refresh(backend))
-            self._tasks[backend] = (True, task)
-            task.add_done_callback(self._discard)
+            self._start_read(backend, refresh=True)
 
     def _discard(self, completed: asyncio.Task[BackendSnapshot]) -> None:
         for backend, pending in tuple(self._tasks.items()):

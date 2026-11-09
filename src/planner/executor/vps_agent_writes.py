@@ -24,9 +24,9 @@ from planner.core.authority.intake import admit_command
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.core.db import connect
+from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.clock import now_ms
-from planner.executor.link_files import settled_io
 from planner.executor.protocol import (
     AcceptanceReceipt,
     CliWrite,
@@ -35,6 +35,7 @@ from planner.executor.protocol import (
     ReceiptDisposition,
     type_adapter,
 )
+from planner.executor.vps_presence_store import require_current_incarnation_in_transaction
 from planner.message_delivery import api, service
 from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets import actions, views
@@ -71,7 +72,8 @@ def write_ticket_mutation(
         route = "/api/collections/{collection}/{container_id}/{member_id}"
         method = "PUT" if write.operation == "ticket.block" else "DELETE"
         params = {
-            "collection": "blockers", "container_id": ticket_id,
+            "collection": "blockers",
+            "container_id": ticket_id,
             "member_id": args.get("blocker_id"),
         }
     admit_command(connection, principal, method, route, params, body)
@@ -146,7 +148,7 @@ class AgentWrites:
         write = type_adapter(CliWrite).validate_python(envelope.payload)
         if write.child.conversation_id != envelope.conversation_id:
             raise ValueError("CLI conversation conflicts with envelope")
-        principal = await settled_io(self.runs.authority, write.child)
+        principal = await run_on_worker_thread(self.runs.authority, write.child)
         if write.operation in ("message.send", "ticket.request_help"):
             return await self._deliver_message(envelope, write, principal, identity)
         from planner.tickets.review_transfer import notify_review_transfers
@@ -171,8 +173,8 @@ class AgentWrites:
                 review_transfer_notices=notices,
             )
 
-        receipt = await settled_io(
-            partial(self.store.accept, envelope, mutate, now_ms(), identity=identity)
+        receipt = await run_on_worker_thread(
+            self.store.accept, envelope, mutate, now_ms(), identity=identity
         )
         if notices:
             connection = connect(self.db_path)
@@ -206,7 +208,7 @@ class AgentWrites:
         identity: ExecutorIdentity,
     ) -> AcceptanceReceipt:
         """Reserve before calling a provider; a replay never calls it again."""
-        previous, recipient, message, mode = await settled_io(
+        previous, recipient, message, mode = await run_on_worker_thread(
             self._reserve_dispatch, envelope, write, principal, identity
         )
         if previous is not None:
@@ -234,13 +236,13 @@ class AgentWrites:
             connection.close()
 
         def save() -> AcceptanceReceipt:
-            # No sender check: the item was fenced by its process before the delivery,
-            # and the delivery has happened. A link that dropped meanwhile, or even a
-            # replaced process, must not turn its known outcome into "uncertain".
+            # No sender check: the item was fenced by its process at its reservation, and
+            # the delivery has happened. A dropped request meanwhile, or even a replaced
+            # process, must not turn its known outcome into "uncertain".
             with self.store._transaction() as conn:
                 return self._finish_dispatch(conn, envelope, result)
 
-        return await settled_io(save)
+        return await run_on_worker_thread(save)
 
     def _reserve_dispatch(
         self,
@@ -250,6 +252,8 @@ class AgentWrites:
         identity: ExecutorIdentity,
     ) -> tuple[AcceptanceReceipt | None, Principal, str, MessageDeliveryMode]:
         with self.store._transaction() as conn:
+            # The reservation is the write that admits the delivery: fence its sender here.
+            require_current_incarnation_in_transaction(conn, identity.executor_incarnation)
             previous = self.store._prior_receipt(conn, envelope, identity)
             if previous is not None:
                 return previous, principal, "", MessageDeliveryMode.queue
@@ -270,10 +274,16 @@ class AgentWrites:
                 default = self._help_recipient(conn, write, principal)
                 recipient = api._principal(body["recipient"]) if body.get("recipient") else default
             admit_command(
-                conn, principal, "POST",
-                ("/api/messages/send" if write.operation == "message.send"
-                 else "/api/tickets/{ticket_id}/request-help"),
-                {"ticket_id": write.arguments.get("ticket_id")}, body,
+                conn,
+                principal,
+                "POST",
+                (
+                    "/api/messages/send"
+                    if write.operation == "message.send"
+                    else "/api/tickets/{ticket_id}/request-help"
+                ),
+                {"ticket_id": write.arguments.get("ticket_id")},
+                body,
             )
             self.store.install_files(envelope.file_dependencies)
             result: JsonObject = {

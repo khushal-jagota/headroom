@@ -37,6 +37,17 @@ def test_executor_health_uses_configured_id_without_a_mode_flag(
     with TestClient(app) as client:
         health = client.get("/api/executor/health")
         assert health.status_code == 200
-        assert health.json()["mode"] == ("local" if executor_id is None else "remote")
-        assert health.json()["connection_state"] == "disconnected"
-        assert health.json()["last_contact_at_ms"] is None
+        if executor_id is None:
+            assert health.json() == {"mode": "local"}
+            return
+        assert health.json() == {
+            "mode": "remote",
+            "presence": "never",
+            "since_ms": None,
+            "identity": None,
+            "last_contact_at_ms": None,
+            "refusal": None,
+            "queue_depth": None,
+            "oldest_item_age_ms": None,
+            "admission_stopped": False,
+        }

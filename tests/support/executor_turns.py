@@ -44,6 +44,88 @@ def _public_request_id(
 
 
 @dataclass
+class ScriptedRemoteCommands:
+    """A remote child's commands answered by a scripted send, instead of the mailbox.
+
+    put, steer, stop and answers each await send_command, so a test can hold or observe
+    the exact command. With db_path, mac_runs is kept as the mailbox's put keeps it.
+    A command whose scripted outcome is refused with executor_process_replaced counts as
+    refused at put, as the mailbox refuses a command of a replaced process.
+    """
+
+    send_command: Callable[[ChildCommand], Awaitable[CommandOutcome]]
+    db_path: str = ""
+    cancel_initial: Callable[[ChildReference, tuple[str, ...]], Awaitable[bool]] | None = None
+    retire_reference: Callable[[ChildReference], None] | None = None
+    present: bool = True
+
+    async def _send(self, command: ChildCommand) -> CommandOutcome:
+        store = ExecutorStore(self.db_path) if self.db_path else None
+        if store is not None and command.operation in (
+            ChildOperation.start,
+            ChildOperation.write_prompt,
+            ChildOperation.stop,
+        ):
+            store.prepare_command(command)
+        outcome = await self.send_command(command)
+        if store is not None:
+            store.record_prompt_outcome(command, outcome)
+        return outcome
+
+    async def put(self, command: ChildCommand) -> bool:
+        outcome = await self._send(command)
+        return not (
+            outcome.disposition is CommandDisposition.refused
+            and outcome.result.get("reason") == "executor_process_replaced"
+        )
+
+    def mac_is_present(self) -> bool:
+        return self.present
+
+    async def deliver_steer(self, command: ChildCommand) -> CommandOutcome | None:
+        return await self._send(command)
+
+    async def stop(self, command: ChildCommand) -> CommandOutcome:
+        outcome = await self._send(command)
+        if self.db_path and outcome.disposition is CommandDisposition.succeeded:
+            ExecutorStore(self.db_path).close_child(command.child, 1)
+        return outcome
+
+    async def save_answer(self, command: ChildCommand) -> bool:
+        return (await self._send(command)).disposition is not CommandDisposition.refused
+
+    async def cancel_initial_delivery(
+        self, child: ChildReference, command_ids: tuple[str, ...]
+    ) -> bool:
+        if self.cancel_initial is None:
+            return False
+        return await self.cancel_initial(child, command_ids)
+
+    def retire_child(self, child: ChildReference) -> None:
+        if self.retire_reference is not None:
+            self.retire_reference(child)
+
+
+def scripted_remote_child(
+    reference: ChildReference,
+    send_command: Callable[[ChildCommand], Awaitable[CommandOutcome]],
+    skill_snapshot_supplier: Callable[[ResolvedConversationStart], CanonicalSkillSnapshot],
+    *,
+    db_path: str = "",
+    initial_history_complete: bool = True,
+    event_sink: BackendEventSink | None = None,
+) -> MacRemoteChild:
+    """A MacRemoteChild over ScriptedRemoteCommands."""
+    return MacRemoteChild(
+        reference,
+        ScriptedRemoteCommands(send_command, db_path),
+        skill_snapshot_supplier,
+        event_sink=event_sink,
+        initial_history_complete=initial_history_complete,
+    )
+
+
+@dataclass
 class MacRemoteChildFactory:
     """Scripted transport over the real run store; never substitutes conversation custody."""
 
@@ -62,28 +144,26 @@ class MacRemoteChildFactory:
     def recover(
         self, reference: ChildReference, *, event_sink: BackendEventSink | None = None
     ) -> MacRemoteChild:
-        return self._child(reference, restored=True)
+        return self._child(reference, restored=True, event_sink=event_sink)
 
-    def _child(self, reference: ChildReference, *, restored: bool = False) -> MacRemoteChild:
-        async def send(command: ChildCommand) -> CommandOutcome:
-            store = ExecutorStore(self.db_path)
-            store.prepare_command(command)
-            result = await self.send_command(command)
-            store.record_prompt_outcome(command, result)
-            if (
-                command.operation is ChildOperation.stop
-                and result.disposition is CommandDisposition.succeeded
-            ):
-                store.close_child(reference, 1)
-            return result
-
+    def _child(
+        self,
+        reference: ChildReference,
+        *,
+        restored: bool = False,
+        event_sink: BackendEventSink | None = None,
+    ) -> MacRemoteChild:
         return MacRemoteChild(
             reference,
-            send,
+            ScriptedRemoteCommands(
+                self.send_command,
+                self.db_path,
+                self.cancel_initial_delivery,
+                self.retire_reference,
+            ),
             self.skill_snapshot_supplier,
-            self.cancel_initial_delivery,
+            event_sink=event_sink,
             initial_history_complete=not restored,
-            retire_reference=self.retire_reference,
         )
 
     def __call__(
@@ -101,10 +181,14 @@ class MacRemoteChildFactory:
             else ()
         )
         if store.child_assignment(reference) is None:
+            # The scripted Mac is the current process, as its lease would make it.
+            from tests.support.executor_presence import mac_identity, make_current
+
+            make_current(self.db_path, mac_identity(reference.executor_incarnation))
             store.register_child(
                 reference, "ticket", environment.get("PLAN_TICKET_ID", "test-ticket"), 1
             )
-        return self._child(reference)
+        return self._child(reference, event_sink=event_sink)
 
 
 def persist_pending_turn(
@@ -112,8 +196,14 @@ def persist_pending_turn(
     *asks: AskReference,
     runtime_overrides: Mapping[str, JsonValue] | None = None,
 ) -> None:
-    """Install the assignment and turn that make an accepted ask owner-answerable."""
+    """Install the assignment and turn that make an accepted ask owner-answerable.
+
+    The ask's executor process is made current first, as its lease would.
+    """
     first = asks[0]
+    from tests.support.executor_presence import mac_identity, make_current
+
+    make_current(store.db_path, mac_identity(first.child.executor_incarnation))
     connection = connect(store.db_path)
     try:
         connection.execute(

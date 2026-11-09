@@ -68,11 +68,12 @@ def test_restart_closes_native_request_before_initial_signal_snapshot(
     tmp_db: sqlite3.Connection,
 ) -> None:
     """A VPS restart closes callbacks before the first attention snapshot."""
+    from tests.support.executor_presence import mac_identity, make_current
+    from tests.support.executor_turns import scripted_remote_child
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
     from planner.conversation.contracts import SignalSnapshot
     from planner.executor.protocol import ChildCommand, CommandOutcome
-    from planner.executor.vps_remote_child import MacRemoteChild
 
     path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
 
@@ -89,7 +90,11 @@ def test_restart_closes_native_request_before_initial_signal_snapshot(
         async def no_native_dispatch(command: ChildCommand) -> CommandOutcome:
             raise AssertionError("VPS restart must not dispatch native work")
 
-        state.child = MacRemoteChild(child, no_native_dispatch, lambda start: canonical_snapshot())
+        state.child = scripted_remote_child(
+            child, no_native_dispatch, lambda start: canonical_snapshot()
+        )
+        # The child's process is current, as its lease makes it, so it can be assigned.
+        make_current(str(path), mac_identity(child.executor_incarnation))
         native = InboxStore(str(path))
         native.runs.register_child(child, "chief", "chief", 1)
         await source.runtime.shutdown()
