@@ -1022,3 +1022,39 @@ def test_queued_recovery_wire_failure_records_existing_uncertainty_row(
             await restarted.system.shutdown()
 
     _run(exercise)
+
+
+def test_admission_exempts_only_the_current_mac_processs_run(tmp_path: Path) -> None:
+    """Risk: a Mac-restart recovery is blocked at admission by the run of the fresh
+    child it is being bound to, or, the other way, admitted while the interrupted run
+    of the replaced Mac process is still open. Admission exempts only runs of the
+    current Mac process; selection exempts none."""
+    from tests.support.executor_presence import mac_identity, make_current
+
+    from planner.conversation.contracts import DeploymentRecoveryReference
+    from planner.conversation.deploy_interruptions.data import recovery_blocker
+
+    path = str(tmp_path / "db.sqlite")
+    conn = connect(path)
+    create_schema(conn)
+    conn.close()
+    current = mac_identity()
+    make_current(path, current)
+    owned = "native executor reconciliation owns this turn"
+    reference = DeploymentRecoveryReference("missing", None)
+
+    def blocker(incarnation: str, *, allow_restored: bool) -> str | None:
+        with connect(path) as conn:
+            conn.execute("DELETE FROM mac_runs")
+            conn.execute(
+                "INSERT INTO mac_runs VALUES ('c',?,'child','ticket','t',1,0,'open')",
+                (incarnation,),
+            )
+            conn.commit()
+            return recovery_blocker(conn, "c", reference, allow_restored=allow_restored)
+
+    # The fresh child's own run, at admission: not the run reason.
+    assert blocker(current.executor_incarnation, allow_restored=True) != owned
+    assert blocker(current.executor_incarnation, allow_restored=False) == owned
+    # The replaced process's run still blocks, at admission too.
+    assert blocker("replaced-incarnation", allow_restored=True) == owned

@@ -195,6 +195,9 @@ class MacHttpClient:
             EXECUTOR_ID_HEADER: executor_id,
             EXECUTOR_INCARNATION_HEADER: identity.executor_incarnation,
             EXECUTOR_PROTOCOL_HEADER: str(identity.protocol_version),
+            # Bodies are never decompressed (auto_decompress=False), so none may be
+            # compressed: the VPS gzips any answer over 1 KB that a client accepts gzipped.
+            "Accept-Encoding": "identity",
         }
         self._sessions: dict[MacLoop, aiohttp.ClientSession] = {}
 
@@ -361,7 +364,7 @@ class MacHttpClient:
                 + EXECUTOR_COMMAND_FILE_PATH.format(
                     command_id=command_id, stored_file_id=stored_file_id
                 ),
-                headers=self._headers | {"Accept-Encoding": "identity"},
+                headers=self._headers,
                 allow_redirects=False,
                 timeout=aiohttp.ClientTimeout(
                     total=None,

@@ -12,22 +12,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
 from pathlib import Path
 
 import httpx
 import pytest
+from tests.support.stall_alarm_fakes import FakeChief as _Chief
+from tests.support.stall_alarm_fakes import FakeWebPush as _WebPush
 
 from planner.core.db import connect, create_schema
 from planner.notifications import apns_data
 from planner.notifications import data as notifications_data
 from planner.notifications.contracts import (
     APNsResult,
-    NotificationIntent,
     PendingAPNsDelivery,
-    PushSubscription,
-    WebPushIdentity,
-    WebPushResult,
 )
 from planner.stalls import alarms
 from planner.stalls.configuration import CHECKER_HEARTBEAT_STALE_SECONDS
@@ -36,22 +33,6 @@ from planner.stalls.watchdog import WATCHDOG_STATE_FILE_NAME, WatchdogRun, run_w
 S = 1000
 NOW_MS = 1_800_000_000_000  # 2027-01-15 08:00 UTC
 ORIGIN = "https://panels.example"
-
-
-class _WebPush:
-    def __init__(self) -> None:
-        self.sent: list[NotificationIntent] = []
-
-    def send(
-        self,
-        subscription: PushSubscription,
-        intent: NotificationIntent,
-        identity: WebPushIdentity,
-        *,
-        subject: str,
-    ) -> WebPushResult:
-        self.sent.append(intent)
-        return WebPushResult(delivered=True)
 
 
 class _APNs:
@@ -64,16 +45,6 @@ class _APNs:
 
     def close(self) -> None:
         pass
-
-
-class _Chief:
-    def __init__(self, answer: Callable[[str], bool]) -> None:
-        self.messages: list[str] = []
-        self._answer = answer
-
-    def __call__(self, text: str) -> bool:
-        self.messages.append(text)
-        return self._answer(text)
 
 
 def _database(tmp_path: Path, *, heartbeat_at_ms: int | None = NOW_MS) -> str:

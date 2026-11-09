@@ -18,12 +18,13 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Final
 
+from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.lifecycle import LifecycleFact
 from planner.conversation.lifecycle_storage import read_facts
 from planner.core.db import commit_without_change_signal, connect
 from planner.core.sse import register_open_stream_closer
 from planner.core.task_settlement import run_on_worker_thread
-from planner.execution_identity import ExecutorIdentity
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.clock import now_ms
 from planner.executor.configuration import (
     MAX_MAILBOX_POLL_BYTES,
@@ -44,6 +45,7 @@ from planner.executor.protocol import (
     MailboxPollReply,
     ModelListRequest,
     RejectedCommandResult,
+    StartRun,
     as_object,
     encode_bounded,
     type_adapter,
@@ -599,6 +601,22 @@ class SqliteCommandMailbox:
             return _read_row(connection, command_id)
         finally:
             connection.close()
+
+    def start_of(self, child: ChildReference) -> ResolvedConversationStart | None:
+        """What the child was started with, from its start row. Blocking."""
+        connection = connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT command_json FROM executor_commands WHERE child_id=? "
+                "AND operation='start' ORDER BY command_sequence DESC LIMIT 1",
+                (child.child_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        command = None if row is None else _mailbox_command(row[0]).child_command
+        if command is None or command.child != child or not isinstance(command.arguments, StartRun):
+            return None
+        return command.arguments.resolved_start
 
     def command_for_input(self, command_id: str) -> ChildCommand | None:
         """Route 6's scope: a child command still waiting or delivered. Blocking."""
