@@ -26,6 +26,7 @@ from planner.conversation.backends.contracts import (
     RetainedBackendRun,
 )
 from planner.conversation.contracts import ResolvedConversationStart
+from planner.conversation.logic.retained_turn import UndeliveredTurnPrompt
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core import db
 from planner.core.contracts import Principal, PrincipalKind
@@ -44,13 +45,14 @@ from planner.executor.protocol import (
     CommandOutcome,
     CommandResult,
     MailboxCommand,
+    WritePrompt,
     as_object,
 )
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.store import ExecutorStore
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService
-from planner.executor.vps_remote_child import MacRemoteChild
+from planner.executor.vps_remote_child import LateSteer, MacRemoteChild
 from planner.executor.worker_identity import ticket_id_of
 from planner.stalls.contracts import TrackedWait, TrackedWaitKind
 from planner.stalls.registry import WAITS
@@ -213,9 +215,10 @@ class MacRuns:
         placed = await self.mailbox.put_child_command(command)
         return isinstance(placed, MailboxCommand)
 
-    async def deliver_steer(self, command: ChildCommand) -> CommandOutcome | None:
+    async def deliver_steer(self, command: ChildCommand) -> CommandOutcome | LateSteer | None:
         """Bounded: a steer the Mac did not take within its limit is withdrawn, and the
-        core sends its text as the next message."""
+        core sends its text as the next message. One fetched but without a result by
+        then is late: the core is told later whether it never reached the turn."""
         if not await self.put(command):
             return None
         result = await self.mailbox.wait_result(command.command_id, STEER_DELIVERY_LIMIT_SECONDS)
@@ -227,16 +230,25 @@ class MacRuns:
             # Fetched, so it may have reached the turn; a result may also have just come.
             result = await self.mailbox.wait_result(command.command_id, 0)
             if result is None:
-                return CommandOutcome(
-                    command.command_id,
-                    command.child,
-                    CommandDisposition.uncertain,
-                    {"composed_content_delivered": None},
-                )
+                return LateSteer(self._own(self._steer_not_delivered(command)))
         outcome = result.child_outcome
         if outcome is None or _settled_by_mailbox(outcome):
             return None
         return outcome
+
+    async def _steer_not_delivered(self, command: ChildCommand) -> bool:
+        """Whether a late steer's row settled proving it never reached its turn: withdrawn
+        (its process was replaced before journaling it), refused, or refused by the agent
+        (its turn had ended)."""
+        result = await self.mailbox.wait_result(command.command_id)
+        outcome = None if result is None else result.child_outcome
+        return outcome is not None and (
+            outcome.disposition is CommandDisposition.refused
+            or (
+                outcome.disposition is CommandDisposition.succeeded
+                and outcome.result.get("kind") == "steer_refused"
+            )
+        )
 
     async def stop(self, command: ChildCommand) -> CommandOutcome:
         """Wait for proof the agent stopped: its accepted child_stopped item, a result
@@ -430,11 +442,54 @@ class MacRuns:
             self._start_drain(reference, current)
 
     async def resume_replacement_drains(self) -> None:
-        """At startup: rebuild the drains from mac_runs compared with the presence row."""
+        """At startup: rebuild the drains from mac_runs compared with the presence row,
+        and finish writing again any never-ran prompt a VPS crash cut."""
         current = self.presence.current_identity()
         if current is None:
             return
         await self.incarnation_replaced("", current.executor_incarnation)
+        await self._finish_prompts_written_again()
+
+    async def _close_interruptions_of_prompts_written_again(
+        self, conversation_id: str | None = None
+    ) -> None:
+        """Close the interruption of each turn whose never-ran prompt's fresh row has
+        committed, optionally for one conversation only."""
+        from planner.conversation.deploy_interruptions.coordinator import (
+            close_mac_interruption_of_turn,
+        )
+
+        for child, turn_number, _, written, _ in await run_on_worker_thread(
+            self.mailbox.prompts_written_again
+        ):
+            if written and conversation_id in (None, child.conversation_id):
+                await run_on_worker_thread(
+                    close_mac_interruption_of_turn,
+                    self.db_path,
+                    child.conversation_id,
+                    turn_number,
+                    now_ms() // 1000,
+                    "Its message was written again to a fresh agent.",
+                )
+
+    async def _finish_prompts_written_again(self) -> None:
+        """A never-ran prompt is written to a fresh child under its own turn, and its
+        turn's interruption closed once that row commits. A crash between leaves either
+        the committed row, whose interruption is closed now, or a fresh run with no row,
+        whose adopted turn is given the prompt now."""
+        if not hasattr(self, "conversations"):
+            return
+        await self._close_interruptions_of_prompts_written_again()
+        for child, turn_number, prompt, written, started in await run_on_worker_thread(
+            self.mailbox.prompts_written_again
+        ):
+            if written:
+                continue
+            self._own(
+                self.conversations.resume_undelivered_prompt(
+                    child, _undelivered(turn_number, prompt), start_needed=not started
+                )
+            )
 
     def _start_drain(self, reference: ChildReference, current: str) -> _Drain:
         drain = self._drains.get(reference.conversation_id)
@@ -451,6 +506,12 @@ class MacRuns:
             # The replaced process's items are replayed by its successor under the
             # still-open assignment; closing first would refuse them.
             await self.presence.wait_until_drained(reference.conversation_id)
+            # Its delivered rows settle at the successor's first poll, which proves which
+            # of them never ran. The retirement reads them, so it waits for that.
+            for command_id in await run_on_worker_thread(
+                self.mailbox.open_command_ids_of, reference
+            ):
+                await self.mailbox.wait_result(command_id)
             drain.reached = True
             drain.drained.set()
             self.retire_child(reference)
@@ -468,11 +529,7 @@ class MacRuns:
                     await self._retry(
                         "retire",
                         reference,
-                        partial(
-                            self.conversations.retire_replaced_remote_child,
-                            reference,
-                            replaced_by=drain.replaced_by,
-                        ),
+                        partial(self._retire_replaced, reference, drain.replaced_by),
                     )
             # The core retires only a child it still holds. One it already let go (a stop
             # that closed the run), or one it no longer knows, leaves the run to close here.
@@ -485,6 +542,37 @@ class MacRuns:
             drain.drained.set()
             if self._drains.get(reference.conversation_id) is drain:
                 del self._drains[reference.conversation_id]
+
+    async def _retire_replaced(self, reference: ChildReference, replaced_by: str) -> None:
+        """Retire the run in the core, with its turn's prompt if that provably never ran:
+        the core then writes it to a fresh child instead of interrupting the turn."""
+        # A retry after the prompt was written again, but before its interruption was
+        # closed, closes it now.
+        await self._close_interruptions_of_prompts_written_again(reference.conversation_id)
+        run = next(
+            (
+                run
+                for run in await run_on_worker_thread(self.store.retained_runs)
+                if run.reference == reference
+            ),
+            None,
+        )
+        prompt = (
+            None
+            if run is None
+            else await run_on_worker_thread(
+                self.mailbox.prompt_withdrawn_at_replacement, reference, run.turn.turn_number
+            )
+        )
+        await self.conversations.retire_replaced_remote_child(
+            reference,
+            replaced_by=replaced_by,
+            undelivered_prompt=(
+                None
+                if prompt is None or run is None
+                else _undelivered(run.turn.turn_number, prompt)
+            ),
+        )
 
     @staticmethod
     async def _retry(
@@ -520,6 +608,21 @@ class MacRuns:
         for task in tuple(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
+
+
+def _undelivered(turn_number: int, prompt: WritePrompt) -> UndeliveredTurnPrompt:
+    return UndeliveredTurnPrompt(
+        turn_number=turn_number,
+        content=prompt.content,
+        sender_content=prompt.sender_content,
+        sender_label=prompt.sender_label,
+        sender_message_count=prompt.sender_message_count,
+        mode=prompt.mode,
+        model_change=prompt.model_change,
+        reasoning_effort_change=prompt.reasoning_effort_change,
+        reasoning_effort_is_set=prompt.reasoning_effort_is_set,
+        automatic_compaction=prompt.automatic_compaction,
+    )
 
 
 class ReplacementStallSource:

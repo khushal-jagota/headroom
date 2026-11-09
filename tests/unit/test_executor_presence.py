@@ -77,8 +77,17 @@ class _Core:
     ) -> None:
         await emit()
 
+    async def resume_undelivered_prompt(
+        self, reference: ChildReference, prompt: object, *, start_needed: bool
+    ) -> None:
+        raise AssertionError("no prompt is written again here")
+
     async def retire_replaced_remote_child(
-        self, reference: ChildReference, *, replaced_by: str
+        self,
+        reference: ChildReference,
+        *,
+        replaced_by: str,
+        undelivered_prompt: object = None,
     ) -> None:
         if self.db_path:
             self.run_states_at_retirement.append(

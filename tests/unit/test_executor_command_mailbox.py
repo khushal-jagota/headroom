@@ -45,6 +45,7 @@ from planner.conversation.lifecycle import (
     LifecycleStatus,
 )
 from planner.conversation.lifecycle_storage import apply_facts
+from planner.conversation.logic.retained_turn import UndeliveredTurnPrompt
 from planner.conversation.message_content import text_message_content
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
@@ -77,6 +78,8 @@ class _Core:
     turn_live: bool = True
     retire_failures: int = 0
     retired: list[tuple[ChildReference, str]] = field(default_factory=list)
+    undelivered: list[object] = field(default_factory=list)
+    resumed: list[tuple[ChildReference, object, bool]] = field(default_factory=list)
     confirmed: list[ChildReference] = field(default_factory=list)
     stopped: list[ChildReference] = field(default_factory=list)
 
@@ -86,13 +89,23 @@ class _Core:
         if self.turn_live:
             await emit()
 
+    async def resume_undelivered_prompt(
+        self, reference: ChildReference, prompt: object, *, start_needed: bool
+    ) -> None:
+        self.resumed.append((reference, prompt, start_needed))
+
     async def retire_replaced_remote_child(
-        self, reference: ChildReference, *, replaced_by: str
+        self,
+        reference: ChildReference,
+        *,
+        replaced_by: str,
+        undelivered_prompt: object = None,
     ) -> None:
         if self.retire_failures:
             self.retire_failures -= 1
             raise RuntimeError("the core could not retire it yet")
         self.retired.append((reference, replaced_by))
+        self.undelivered.append(undelivered_prompt)
 
     async def confirm_remote_child_termination(self, reference: ChildReference) -> None:
         self.confirmed.append(reference)
@@ -309,29 +322,124 @@ def test_results_that_can_never_be_recorded_are_rejected_one_by_one(tmp_path: Pa
     asyncio.run(asyncio.wait_for(exercise(), 20))
 
 
-def test_a_new_mac_process_settles_the_old_ones_commands_in_its_lease(tmp_path: Path) -> None:
+def test_a_new_mac_process_settles_the_old_ones_commands_by_its_own_cursor(
+    tmp_path: Path,
+) -> None:
+    """Risk: a row marked delivered into a reply the old process never read is settled
+    uncertain ("it may have run"), so a message that never ran is lost as interrupted.
+    The successor journals into the same spool, so its cursor proves which rows the old
+    process never journaled: those are withdrawn, and the rest settle uncertain."""
+
     async def exercise() -> None:
         async with _world(tmp_path) as world:
             await _prompt(world.proxy)
-            await world.poll()  # delivered to the old process
-            await world.proxy.cancel_running_turn()  # still waiting
+            journaled = (await world.poll()).commands[0]  # the old process journaled it
+            await _prompt(world.proxy, TurnToken("c", 2))
+            lost = (await world.poll(after=journaled.command_sequence)).commands[0]
+            # Still waiting.
+            await world.proxy.answer_permission_ask(
+                "ask", "allow", answer_id="answer-1", turn_token=TurnToken("c", 2)
+            )
             replacement = mac_identity()
             await world.endpoint.lease(lease_request(replacement))
             # The lease reply was lost: the same lease again changes nothing.
             await world.endpoint.lease(lease_request(replacement))
-            # Delivered may have run: uncertain. Waiting never ran: withdrawn.
+            # Waiting never ran: withdrawn at once. Delivered waits for the successor.
+            assert world.rows() == [
+                ("write_prompt", "delivered"),
+                ("write_prompt", "delivered"),
+                ("answer_permission_ask", "withdrawn"),
+            ]
+            # The successor's cursor is the old process's last journaled row.
+            assert (
+                await world.poll(after=journaled.command_sequence, identity=replacement)
+            ).commands == ()
             assert world.rows() == [
                 ("write_prompt", "finished"),
-                ("cancel_running_turn", "withdrawn"),
+                ("write_prompt", "withdrawn"),
+                ("answer_permission_ask", "withdrawn"),
             ]
-            assert (await world.poll(identity=replacement)).commands == ()
+            # The drain hands the core the turn's prompt, which provably never ran.
+            for _ in range(int(SETTLES / 0.01)):
+                if world.core.retired:
+                    break
+                await asyncio.sleep(0.01)
+            (prompt,) = world.core.undelivered
+            assert isinstance(prompt, UndeliveredTurnPrompt) and prompt.turn_number == 2
+            assert prompt.content == text_message_content("work")
+            for command, disposition in (
+                (journaled, CommandDisposition.uncertain),
+                (lost, CommandDisposition.refused),
+            ):
+                row = await asyncio.to_thread(
+                    world.endpoint.mailbox.command_row, command.command_id
+                )
+                assert row is not None and row.result is not None
+                assert row.result.child_outcome is not None
+                assert row.result.child_outcome.disposition is disposition
             # The replaced process is refused, and must exit.
             refused = await world.endpoint.lease(lease_request(world.identity))
             assert not hasattr(refused, "accepted_at_vps_ms")
             # A command for the old child is refused at put, and nothing is inserted.
             with pytest.raises(PromptWriteRefused):
-                await _prompt(world.proxy, TurnToken("c", 2))
-            assert len(world.rows()) == 2
+                await _prompt(world.proxy, TurnToken("c", 3))
+            assert len(world.rows()) == 3
+
+    asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+@pytest.mark.parametrize("written", [False, True])
+def test_a_startup_finishes_writing_again_a_prompt_a_crash_cut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, written: bool
+) -> None:
+    """Risk: the VPS stops while a never-ran prompt is being written to a fresh child.
+    Cut before the fresh prompt row commits, the adopted turn never gets it; cut after,
+    its interruption stays open and its recovery would send the message a second time.
+    Gap: the core tests call the startup step directly; this proves the rows route to it."""
+    import planner.conversation.deploy_interruptions.coordinator as coordinator
+
+    closed: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        coordinator,
+        "close_mac_interruption_of_turn",
+        lambda db, conversation, turn, now, outcome: closed.append((conversation, turn)),
+    )
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            await _prompt(world.proxy)
+            await world.poll()  # Into the old process's dead socket.
+            replacement = mac_identity()
+            await world.endpoint.lease(lease_request(replacement))
+            await world.poll(identity=replacement)  # Proves it never ran: withdrawn.
+            for _ in range(int(SETTLES / 0.01)):
+                if world.core.retired and world.run_state()[0] == "closed":
+                    break
+                await asyncio.sleep(0.01)
+            # The rewrite's fresh child was registered at turn 1 before the crash.
+            fresh = ChildReference(replacement.executor_incarnation, "fresh", "c")
+            world.endpoint.runs.store.register_child(fresh, "ticket", "ticket-1", 2)
+            connection = connect(world.endpoint.db_path)
+            try:
+                connection.execute("UPDATE mac_runs SET turn_number=1 WHERE conversation_id='c'")
+                connection.commit()
+            finally:
+                connection.close()
+            if written:
+                proxy = world.endpoint.runs.recover(fresh)
+                assert proxy is not None
+                await _prompt(proxy)
+            await world.endpoint.runs.resume_replacement_drains()
+            for _ in range(int(SETTLES / 0.01)):
+                if closed or world.core.resumed:
+                    break
+                await asyncio.sleep(0.01)
+            if written:
+                assert closed == [("c", 1)] and world.core.resumed == []
+            else:
+                ((child, prompt, start_needed),) = world.core.resumed
+                assert child == fresh and start_needed and closed == []
+                assert isinstance(prompt, UndeliveredTurnPrompt) and prompt.turn_number == 1
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
 
@@ -411,16 +519,91 @@ def test_a_steer_waits_only_for_a_present_mac_and_only_for_its_limit(
             )
             assert await pending == BackendSteerAccepted(True)
 
-            # Fetched, but no result by the limit: it may have reached the turn.
+            # Fetched, but no result by the limit: it may have reached the turn. Its row
+            # says later whether it never did: the agent refused it, its turn had ended.
             pending = asyncio.create_task(steer(world))
-            await world.endpoint.poll(world.identity, command.command_sequence, SETTLES)
-            assert await pending == BackendSteerUncertain(None)
+            late = (
+                await world.endpoint.poll(world.identity, command.command_sequence, SETTLES)
+            ).commands[0]
+            uncertain = await pending
+            assert uncertain == BackendSteerUncertain(None)
+            assert uncertain.not_delivered is not None
+            await world.report(
+                _succeeded(
+                    late.command_id,
+                    world.child,
+                    kind="steer_refused",
+                    refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into.value,
+                )
+            )
+            assert await asyncio.wait_for(uncertain.not_delivered, SETTLES) is True
 
             # Away: no row is written at all.
             world.endpoint.presence._record = None
             before = len(world.rows())
             assert await steer(world) == not_delivered
             assert len(world.rows()) == before
+
+    asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+def test_a_held_poll_without_evidence_of_the_mac_marks_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: a held poll outlives a Mac that went silent, and a put wakes it: the row is
+    marked delivered into a reply nobody reads, so a steer can no longer be withdrawn
+    and comes back uncertain instead of becoming the next message."""
+    monkeypatch.setattr(vps_mailbox, "HELD_POLL_EVIDENCE_MS", 300)
+    monkeypatch.setattr(vps_runs, "STEER_DELIVERY_LIMIT_SECONDS", 0.3)
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            _running_turn(world.endpoint.db_path)
+            held = asyncio.create_task(world.endpoint.poll(world.identity, 0, 30))
+            await asyncio.sleep(0.5)  # No lease since: the Mac may have gone silent.
+            steered = await world.proxy.steer(
+                TURN, text_message_content("also"), sender_label="owner"
+            )
+            assert steered == BackendSteerRefused(
+                PromptDeliveryRefusalReason.remote_steer_not_delivered
+            )
+            assert (await asyncio.wait_for(held, SETTLES)).commands == ()
+            assert world.rows() == [("steer", "withdrawn")]
+            # A poll that has just arrived is its own evidence, and a fresh lease is too.
+            await world.proxy.cancel_running_turn()
+            assert len((await world.poll(after=1)).commands) == 1
+
+    asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+def test_a_put_whose_caller_is_cancelled_still_wakes_the_held_poll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: a cancelled caller (a steer's, a cancel's) commits its row but skips the
+    wake-up, so the command waits out the poll's hold, and the high sequence lags."""
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            entered, release = threading.Event(), threading.Event()
+            original = vps_mailbox.SqliteCommandMailbox._insert_child_command
+
+            def gated(self: Any, *args: Any) -> Any:
+                entered.set()
+                assert release.wait(SETTLES)
+                return original(self, *args)
+
+            monkeypatch.setattr(vps_mailbox.SqliteCommandMailbox, "_insert_child_command", gated)
+            held = asyncio.create_task(world.endpoint.poll(world.identity, 0, 30))
+            put = asyncio.create_task(world.proxy.cancel_running_turn())
+            assert await asyncio.to_thread(entered.wait, SETTLES)
+            put.cancel()
+            await asyncio.sleep(0)
+            release.set()
+            reply = await asyncio.wait_for(held, SETTLES)
+            assert [command.operation.value for command in reply.commands] == [
+                "cancel_running_turn"
+            ]
+            assert world.endpoint.mailbox.high_sequence() == reply.commands[0].command_sequence
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
 
@@ -494,7 +677,7 @@ def test_a_stop_of_a_replaced_process_succeeds_once_its_items_have_drained(
             # The core's retirement fails once; the drain retries it, tracked meanwhile.
             world.core.retire_failures = 1
             stopping = asyncio.create_task(world.proxy.stop())
-            await world.endpoint.poll(world.identity, 0, SETTLES)
+            stop = (await world.endpoint.poll(world.identity, 0, SETTLES)).commands[0]
             replacement = mac_identity()
             from planner.executor.protocol import WaitingConversation
 
@@ -507,6 +690,9 @@ def test_a_stop_of_a_replaced_process_succeeds_once_its_items_have_drained(
             assert world.run_state()[0] == "stopping"
             assert world.core.retired == []
             await world.endpoint.lease(lease_request(replacement))
+            await asyncio.sleep(0.1)
+            assert not stopping.done()  # The delivered stop waits for the successor's poll.
+            await world.poll(after=stop.command_sequence, identity=replacement)
             await asyncio.wait_for(stopping, SETTLES)
             assert world.run_state()[0] == "closed"
             for _ in range(100):

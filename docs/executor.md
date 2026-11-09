@@ -49,7 +49,7 @@ Start, prompt, steer, cancel, stop, answers, and model-list requests are rows in
 
 The journal keys each command by its ID. A recorded command never runs again; its saved result is reported again instead. Finished rows stay as tombstones, so a command restored from a VPS database backup is never run twice.
 
-Each result goes back on its own request, and the first result recorded wins. Effects on a conversation, such as a stop proof, travel in the outbox with the agent's events. Sending never waits for the Mac, except a steer. A stop never expires; it counts only after its proof arrives. The VPS can withdraw a command the Mac has not fetched, which proves it never ran.
+Each result goes back on its own request, and the first result recorded wins. Effects on a conversation, such as a stop proof, travel in the outbox with the agent's events. Sending never waits for the Mac, except a steer. A stop never expires; it counts only after its proof arrives. The VPS can withdraw a command the Mac has not fetched, which proves it never ran. A held long poll hands out commands only while the poll itself or the last lease is recent, so a Mac that went silent is not handed commands it will never read. A steer fetched without a result in time comes back uncertain; if its row later proves it never reached its turn, it goes to the queue as the next message.
 
 ## Getting work back to the VPS
 
@@ -64,7 +64,7 @@ A file reaches the VPS before any item that refers to it, so a Ticket link never
 Nothing is guessed. An uncertain outcome stays uncertain, and no provider call is repeated.
 
 - **A VPS restart** keeps Mac work running. The VPS rebuilds its view from the database and the lease, and adopts each open Mac run live. Waiting commands keep waiting.
-- **A Mac process restart** shows as a new process identity in the lease. The VPS withdraws the old process's waiting commands. Fetched commands without a result become uncertain. Then, for each conversation separately, the VPS waits until the Mac has sent everything it held for it. Only then does the turn end interrupted. The conversation gets one recovery prompt, which resumes the saved session ([Conversations](conversations.md#lifecycle)). A message waiting behind that turn waits until then too, even if the replay ends the turn normally, and then goes to the fresh agent.
+- **A Mac process restart** shows as a new process identity in the lease. The VPS withdraws the old process's waiting commands. The new process's first poll settles the ones the old process fetched: its cursor is the last command written to the shared journal, so a command above it never ran and is withdrawn, and the rest become uncertain. Then, for each conversation separately, the VPS waits until the Mac has sent everything it held for it. If the turn's prompt was withdrawn, nothing ran: the same prompt goes to a fresh agent under the same turn. Until that agent has it, the message waits in the turn's interruption notice, so a VPS crash in between still delivers it, through the recovery prompt or at the next start. Otherwise the turn ends interrupted, and the conversation gets one recovery prompt, which resumes the saved session ([Conversations](conversations.md#lifecycle)). The recovery prompt repeats each answer the old agent did not take, and says whether it may have reached it. A message waiting behind that turn waits until then too, even if the replay ends the turn normally, and then goes to the fresh agent.
 
 ## Health and alarms
 

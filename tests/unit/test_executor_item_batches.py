@@ -84,8 +84,17 @@ class _Core:
     ) -> None:
         await self.system.emit_answer(turn, emit)
 
+    async def resume_undelivered_prompt(
+        self, reference: ChildReference, prompt: object, *, start_needed: bool
+    ) -> None:
+        raise AssertionError("no prompt is written again here")
+
     async def retire_replaced_remote_child(
-        self, reference: ChildReference, *, replaced_by: str
+        self,
+        reference: ChildReference,
+        *,
+        replaced_by: str,
+        undelivered_prompt: object = None,
     ) -> None:
         await asyncio.to_thread(
             ExecutorStore(self.system._store._db_path).close_child, reference, 1
@@ -421,8 +430,10 @@ def test_a_new_process_replays_the_old_childs_answer_and_write_before_its_run_dr
             assert ConversationEventKind.prompt_delivery_refused not in {row.kind for row in events}
             assert case.core.retired == []
 
-            # The outbox is empty for c: the core closes the old run as it retires it.
+            # The outbox is empty for c, and the successor's poll settles what the old
+            # process fetched: the core closes the old run as it retires it.
             await case.endpoint.lease(lease_request(successor))
+            await case.endpoint.poll(successor, case.endpoint.mailbox.high_sequence(), 0)
             for _ in range(int(SETTLES / 0.01)):
                 if case.core.retired:
                     break

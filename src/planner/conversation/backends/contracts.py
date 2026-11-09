@@ -24,7 +24,8 @@ and is not translated into a refusal.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Awaitable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -151,9 +152,14 @@ class BackendSteerRefused:
 
 @dataclass(frozen=True, slots=True)
 class BackendSteerUncertain:
-    """The adapter cannot prove admission or non-admission after the attempt."""
+    """The adapter cannot prove admission or non-admission after the attempt.
+
+    ``not_delivered``, when the adapter can learn the answer later, resolves true once it
+    proves the message never reached the turn, so it can still go as the next message.
+    """
 
     composed_content_delivered: bool | None = True
+    not_delivered: Awaitable[bool] | None = field(default=None, compare=False)
 
 
 type BackendSteerOutcome = BackendSteerAccepted | BackendSteerRefused | BackendSteerUncertain

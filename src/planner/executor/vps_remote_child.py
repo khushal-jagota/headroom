@@ -2,7 +2,8 @@
 
 Every operation is a mailbox row. What the caller waits for differs by kind:
 start, prompt, cancel and answers return once their row is committed; a steer waits up
-to STEER_DELIVERY_LIMIT_SECONDS for its result, and only while the Mac is present; a
+to STEER_DELIVERY_LIMIT_SECONDS for its result, and only while the Mac is present (one
+fetched without a result by then is uncertain, and later says if it never arrived); a
 stop waits, unbounded but tracked, for proof that the agent stopped.
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
@@ -58,6 +60,14 @@ from planner.executor.skills import validate_skill_snapshot
 type SkillSnapshotSupplier = Callable[[ResolvedConversationStart], CanonicalSkillSnapshot]
 
 
+@dataclass(frozen=True, slots=True)
+class LateSteer:
+    """A steer the Mac fetched but did not answer within the delivery limit. not_delivered
+    resolves true once its row proves the steer never reached its turn."""
+
+    not_delivered: asyncio.Future[bool]
+
+
 class RemoteChildCommands(Protocol):
     """What a remote child needs from MacRuns: the mailbox, per kind."""
 
@@ -68,9 +78,10 @@ class RemoteChildCommands(Protocol):
 
     def mac_is_present(self) -> bool: ...
 
-    async def deliver_steer(self, command: ChildCommand) -> CommandOutcome | None:
+    async def deliver_steer(self, command: ChildCommand) -> CommandOutcome | LateSteer | None:
         """The steer's outcome, or None when the Mac did not take it (away, withdrawn at
-        the delivery limit, expired, or refused at put)."""
+        the delivery limit, expired, or refused at put), or LateSteer when it was fetched
+        and no result came within the limit."""
         ...
 
     async def stop(self, command: ChildCommand) -> CommandOutcome: ...
@@ -322,6 +333,8 @@ class MacRemoteChild:
             return not_delivered  # Too large for one command: nothing was written.
         if outcome is None:
             return not_delivered
+        if isinstance(outcome, LateSteer):
+            return backend.BackendSteerUncertain(None, not_delivered=outcome.not_delivered)
         if outcome.disposition is CommandDisposition.uncertain:
             delivered = outcome.result.get("composed_content_delivered")
             return backend.BackendSteerUncertain(delivered if isinstance(delivered, bool) else None)
