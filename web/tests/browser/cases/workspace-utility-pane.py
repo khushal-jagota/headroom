@@ -395,7 +395,9 @@ def run(browser, urls):
     verify_rail_overflow(page, fold, evidence)
     verify_selection_washes(page, url, card_fixture, evidence)
     verify_focus_slide_fill(page, url, card_fixture)
-    capture_card_motion(browser, url, card_fixture, respond, evidence)
+    # Review clips are optional artifacts, separate from the geometry assertions below.
+    if os.environ.get("PANELS_BROWSER_VIDEO") == "1":
+        capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
