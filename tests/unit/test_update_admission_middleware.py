@@ -141,7 +141,15 @@ def test_update_prefix_excludes_lease_but_not_sha_and_absent_system_forwards(
     harness: Harness,
 ) -> None:
     async def run() -> None:
-        for path in ("/api/updates", "/api/updates/install", "/api/updates-extra"):
+        # The Mac executor's routes (lease, results, items) are not owner work: they
+        # neither take a write lease nor are refused while an update pauses work.
+        for path in (
+            "/api/updates",
+            "/api/updates/install",
+            "/api/updates-extra",
+            "/api/executor/lease",
+            "/api/executor/conversations/c/items",
+        ):
             scope = harness.scope("POST", path)
             assert (await invoke(harness.wrap(answer), scope))[0]["status"] == 200
             scope["headers"] = [(b"x-panels-app-sha", STALE_SHA.encode())]

@@ -19,6 +19,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     fate: str,
 ) -> None:
     """The real native codec and remote decoder must agree before ownership can settle."""
+    from tests.support.executor_turns import scripted_remote_child
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
     from planner.conversation.backends.contracts import (
@@ -43,7 +44,6 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     from planner.executor.mac_outbox import MacOutbox
     from planner.executor.mac_runner import MacRunner
     from planner.executor.protocol import ChildCommand, CommandDisposition
-    from planner.executor.vps_remote_child import MacRemoteChild
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "provider-home"))
 
@@ -90,7 +90,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
             commands.append(command)
             return await registry.run(command)
 
-        remote = MacRemoteChild(reference, send, lambda _: canonical_snapshot())
+        remote = scripted_remote_child(reference, send, lambda _: canonical_snapshot())
         resolved = ResolvedConversationStart(
             "conversation",
             ConversationBackendKey.codex,

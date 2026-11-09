@@ -145,6 +145,9 @@ class CommandSettlementReason(StrEnum):
     steer_delivery_limit_passed = "steer_delivery_limit_passed"
     answered_request_not_open = "answered_request_not_open"
     model_list_limit_passed = "model_list_limit_passed"
+    # The core withdrew an initial start or prompt it no longer wants (a killed
+    # conversation) while the row still waited: withdrawn, so it never ran.
+    delivery_withdrawn = "delivery_withdrawn"
 
 
 class MacRunConversations(Protocol):
@@ -198,7 +201,13 @@ class PresenceService(Protocol):
         executor_version_refused or executor_incarnation_not_current (409)."""
         ...
 
+    def record(self) -> PresenceRecord | None:
+        """The last committed presence row, kept in memory."""
+        ...
+
     def judgement(self) -> PresenceJudgement: ...
+
+    def is_present(self) -> bool: ...
 
     def current_identity(self) -> ExecutorIdentity | None: ...
 
@@ -213,7 +222,10 @@ class PresenceService(Protocol):
         among its waiting conversations."""
         ...
 
-    def stall_sources(self) -> tuple[StallSource, ...]: ...
+    def stall_source(self) -> StallSource:
+        """mac_turn_silent, from memory. The checker derives mac_items_not_moving and
+        mac_lease_failing from the presence row."""
+        ...
 
     async def close(self) -> None: ...
 
@@ -257,13 +269,23 @@ class CommandMailbox(Protocol):
 
     def replace_incarnation_in_transaction(
         self, conn: sqlite3.Connection, *, replaced: str, current: str, now_ms: int
-    ) -> tuple[str, ...]:
+    ) -> tuple[tuple[MailboxCommand, CommandResult], ...]:
         """Withdraw the replaced incarnation's waiting rows and settle its delivered rows
-        uncertain, inside the lease transaction. Returns the settled command ids, whose
-        waiters are woken after the commit."""
+        uncertain, inside the lease transaction. Returns what it settled; pass it to
+        settled() after the commit to wake the waiters."""
         ...
 
+    def settled(self, settled: Iterable[tuple[MailboxCommand, CommandResult]]) -> None:
+        """Wake the waiters of rows settled in a transaction the mailbox did not run."""
+        ...
+
+    def has_waiter(self, command_id: str) -> bool: ...
+
     def high_sequence(self) -> int: ...
+
+    def stall_source(self) -> StallSource:
+        """mac_command_unfetched and mac_stop_unproven, from the rows."""
+        ...
 
     def command_for_input(self, command_id: str) -> ChildCommand | None:
         """Route 6's scope: an unfinished, unwithdrawn child command, or None."""
@@ -293,6 +315,10 @@ class MacRunsApi(RetainedBackendChildFactory, Protocol):
 
     async def resume_replacement_drains(self) -> None:
         """At startup: rebuild drain tasks from mac_runs compared with presence."""
+        ...
+
+    def stall_source(self) -> StallSource:
+        """mac_replacement_pending, from the rows."""
         ...
 
     async def close(self) -> None: ...

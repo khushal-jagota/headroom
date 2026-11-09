@@ -17,7 +17,7 @@ import tarfile
 import tempfile
 import threading
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path, PurePosixPath
 
@@ -35,6 +35,7 @@ from planner.environments.update_contracts import (
     UpdateAttemptState,
     UpdateProvider,
 )
+from planner.executor.contracts import ExecutorHealthRead
 from planner.executor.update_configuration import (
     MAC_RUNTIME_ARCHIVE_NAME,
     MAC_RUNTIME_MANIFEST_NAME,
@@ -156,7 +157,8 @@ class MacUpdateService:
         ):
             retained = self._read_applied()
             if retained is None or (retained.attempt_id, retained.mac_attempt_id) != (
-                attempt.attempt_id, attempt.mac_attempt_id
+                attempt.attempt_id,
+                attempt.mac_attempt_id,
             ):
                 atomic_write_json(self._applied_path, attempt_to_dict(attempt))
 
@@ -189,12 +191,9 @@ class MacUpdateService:
                 with zipfile.ZipFile(downloaded) as artifact:
                     entries = artifact.infolist()
                     names = {entry.filename for entry in entries}
-                    if (
-                        len(names) != len(entries)
-                        or names not in (
-                            {MAC_RUNTIME_ARCHIVE_NAME},
-                            {MAC_RUNTIME_ARCHIVE_NAME, "mac-runtime-publication.json"},
-                        )
+                    if len(names) != len(entries) or names not in (
+                        {MAC_RUNTIME_ARCHIVE_NAME},
+                        {MAC_RUNTIME_ARCHIVE_NAME, "mac-runtime-publication.json"},
                     ):
                         raise UpdateConflict("The Mac runtime artifact is invalid.")
                     runtime = artifact.getinfo(MAC_RUNTIME_ARCHIVE_NAME)
@@ -321,7 +320,12 @@ class MacUpdateService:
         except FileNotFoundError:
             return None
 
-    def report(self, report: MacUpdateReport, health: Mapping[str, object]) -> MacUpdateStatus:
+    def report(self, report: MacUpdateReport, health: ExecutorHealthRead | None) -> MacUpdateStatus:
+        """Record a Mac's update progress. "current" and "ready_to_restart" must come from
+        the process whose lease is current and fresh (health is the VPS's presence read)."""
+        leased_identity = (
+            health.identity if health is not None and health.presence == "present" else None
+        )
         with self._lock:
             target = self._target()
             if (
@@ -338,16 +342,13 @@ class MacUpdateService:
                 not target.activate
                 or report.identity is None
                 or report.identity.application_revision != target.application_revision
-                or health.get("connection_state") != "ready"
-                or health.get("identity") != asdict(report.identity)
+                or leased_identity != report.identity
             ):
-                raise UpdateConflict("The target Mac runtime did not report a ready connection.")
+                raise UpdateConflict("The target Mac runtime is not the present, leased one.")
             if report.phase == "ready_to_restart" and (
-                report.identity is None
-                or health.get("connection_state") not in {"ready", "reconciling"}
-                or health.get("identity") != asdict(report.identity)
+                report.identity is None or leased_identity != report.identity
             ):
-                raise UpdateConflict("The Mac stop report does not match its current connection.")
+                raise UpdateConflict("The Mac stop report does not match its present process.")
             result = MacUpdateStatus(
                 target.request_id, target.application_revision, report.phase, report.detail
             )

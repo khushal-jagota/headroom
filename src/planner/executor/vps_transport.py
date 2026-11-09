@@ -1,66 +1,74 @@
-"""Compose VPS executor owners and adapt app control and file transport."""
+"""Compose the VPS executor owners and adapt the executor routes to their typed inputs.
+
+Every route is its own HTTPS request, judged by the IDs it carries. No request waits
+on a conversation lock, and a dropped request never cancels a save: the lease, result
+recording, item batches and upload staging run in tasks this object owns, which only
+shutdown cancels.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import sqlite3
-from collections.abc import Awaitable, Callable
-from functools import partial
-from typing import Any, TypedDict, cast
+from collections.abc import AsyncIterator, Coroutine
+from typing import Any, cast
 
 from starlette.types import ASGIApp
 
-from planner.conversation.message_content import MessageFile
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import Clock
-from planner.core.contracts import PrincipalKind
-from planner.core.errors import PlannerError
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ExecutorIdentity, supports_executor_versions
+from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
+from planner.core.task_settlement import run_on_worker_thread, wait_for_settlement
+from planner.execution_identity import ExecutorIdentity
 from planner.executor.catalog_relay import VpsCatalogRelay
-from planner.executor.clock import now_ms
-from planner.executor.files import file_digest
-from planner.executor.link import ControlMessageStream, Link, accept_link, failure_name
-from planner.executor.link_files import GenerationTransfers, settled_io
+from planner.executor.configuration import (
+    COMMAND_OUTCOME_SERVER_LIMIT_SECONDS,
+    COMMAND_POLL_HOLD_SECONDS,
+    LEASE_SERVER_LIMIT_SECONDS,
+    LIVE_EVENT_SERVER_LIMIT_SECONDS,
+    LIVE_READ_SERVER_LIMIT_SECONDS,
+    MAX_COMMAND_OUTCOMES_PER_REPORT,
+    MAX_LIVE_EVENTS_PER_BATCH,
+)
+from planner.executor.contracts import ExecutorHealthRead, MacRunConversations, StallSource
 from planner.executor.protocol import (
     LIVE_BACKEND_EVENT_METHODS,
-    BackendEvent,
-    CommandOutcome,
-    EnvelopeRefusal,
-    ExecutorHealth,
-    FileDownloadRequest,
-    FileManifest,
-    FileScope,
-    FileSnapshot,
+    CommandOutcomeReply,
+    CommandOutcomeReport,
     FileUploadRequest,
+    ItemBatch,
+    ItemBatchReply,
     JsonObject,
+    LeaseRefused,
+    LeaseReply,
+    LeaseRequest,
+    LiveEventBatch,
     LiveReadRequest,
-    QueuedEnvelope,
-    Steer,
-    WireMessage,
-    WireMessageKind,
-    WritePrompt,
+    MailboxPollReply,
     as_object,
     decode_event_arguments,
-    encode_value,
-    type_adapter,
 )
-from planner.executor.vps_inbox import MacInbox, MissingFiles
+from planner.executor.vps_files import InputFile, VpsFiles
+from planner.executor.vps_inbox import MacInbox
+from planner.executor.vps_mailbox import SqliteCommandMailbox
+from planner.executor.vps_presence import MacPresenceService, UpdateCheck
 from planner.executor.vps_runs import MacRuns
 
-
-class ExecutorHealthRead(TypedDict):
-    """VPS API projection; receipt time is not activity or answer delivery evidence."""
-
-    identity: JsonObject | None
-    connection_state: str
-    last_contact_at_ms: int | None
-    refusal: JsonObject | None
+# GET-only Panels reads an agent on the Mac may make.
+_READABLE_PATHS = (
+    "/api/tickets",
+    "/api/managers",
+    "/api/sprint",
+    "/api/projects",
+    "/api/worker-types",
+    "/api/skills",
+    "/files/sprint-items/",
+    "/files/managers/",
+)
 
 
 class VpsExecutor:
-    """Compose VPS owners and adapt app transport frames to their typed inputs."""
+    """The VPS half: presence, mailbox, runs, inbox, files, catalog."""
 
     def __init__(
         self,
@@ -72,316 +80,209 @@ class VpsExecutor:
     ) -> None:
         self.db_path = db_path
         self.application_revision = application_revision
-        self.runs = MacRuns(db_path)
+        self.mailbox = SqliteCommandMailbox(db_path)
+        self.presence = MacPresenceService(
+            db_path, self.mailbox, application_revision=application_revision
+        )
+        self.runs = MacRuns(db_path, self.presence, self.mailbox)
         self.inbox = MacInbox(db_path, clock, self.runs)
-        self.catalog = VpsCatalogRelay(self.runs, machine_id=machine_id)
-        self.conversations: SqliteProcessConversationSystem
+        self.catalog = VpsCatalogRelay(
+            self.runs, self.presence, self.mailbox, machine_id=machine_id
+        )
         self.message_files = ConversationMessageFiles(db_path)
+        self.files = VpsFiles(db_path, self.inbox, self.mailbox, self.message_files)
+        self.presence.incarnation_replaced = self.runs.incarnation_replaced
+        self.presence.returned = self.catalog.connected
+        self.conversations: SqliteProcessConversationSystem
         self.app: ASGIApp
-        self._last_contact_at_ms: int | None = None
-        self._refusal: JsonObject | None = None
-        self.transfers: dict[ExecutorIdentity, GenerationTransfers] = {}
-        self._transport_lock = asyncio.Lock()
+        self._owned: set[asyncio.Task[Any]] = set()
 
     def bind_conversations(self, conversations: SqliteProcessConversationSystem) -> None:
         self.conversations = conversations
-        self.runs.conversations = conversations
+        # retire_replaced_remote_child is the conversation core's (Part D).
+        self.runs.conversations = cast(MacRunConversations, conversations)
         self.inbox.conversations = conversations
         self.inbox.agent_writes.conversations = conversations
 
-    def configure(self, conversations: SqliteProcessConversationSystem, app: ASGIApp) -> None:
+    def configure(
+        self,
+        conversations: SqliteProcessConversationSystem,
+        app: ASGIApp,
+        *,
+        update_check: UpdateCheck | None = None,
+    ) -> None:
         self.bind_conversations(conversations)
         self.app = app
+        if update_check is not None:
+            self.presence.update_check = update_check
+
+    async def start(self) -> None:
+        """After the database is migrated: read presence and the mailbox's high sequence
+        into memory, and resume the drains of runs of a replaced Mac process."""
+        await run_on_worker_thread(self.presence.record)
+        await run_on_worker_thread(self.mailbox.high_sequence)
+        await self.runs.resume_replacement_drains()
 
     async def close(self) -> None:
-        writer = self.runs.link
-        self._last_contact_at_ms = self.last_contact_at_ms
-        if writer is not None:
-            writer.close("server shutdown")
-            await self.runs.link_down(writer)
+        for task in tuple(self._owned):
+            task.cancel()
+        for task in tuple(self._owned):
+            await wait_for_settlement(task)
         await self.runs.close()
         await self.catalog.close()
-        for identity in tuple(self.transfers):
-            await self._close_transport(identity)
-        if writer is not None:
-            await writer.wait_closed()
+        await self.mailbox.close()
+        await self.presence.close()
 
-    @property
-    def last_contact_at_ms(self) -> int | None:
-        link = self.runs.link
-        return link.last_received_at_ms if link is not None else self._last_contact_at_ms
+    async def _owned_work[Result](
+        self, work: Coroutine[Any, Any, Result], *, answer_within: float | None = None
+    ) -> Result:
+        """Run work to its end even if the request that asked for it goes away. With
+        answer_within, the request is answered retry later past that limit while the work
+        goes on; its resend finds what it saved."""
+        task = asyncio.create_task(work)
+        self._owned.add(task)
+        task.add_done_callback(self._owned.discard)
+        try:
+            async with asyncio.timeout(answer_within):
+                return await asyncio.shield(task)
+        except TimeoutError as error:
+            raise PlannerError(ErrorCode.retry_later, "the VPS is still saving this") from error
+
+    # --- health --------------------------------------------------------------------------
 
     def health(self) -> ExecutorHealthRead:
-        self._last_contact_at_ms, self._refusal = self.runs.store.contact_status()
-        return {
-            "identity": None if self.runs.identity is None else as_object(self.runs.identity),
-            "refusal": self._refusal,
-            "last_contact_at_ms": self.last_contact_at_ms,
-            "connection_state": "ready"
-            if self.runs.ready
-            else "disconnected"
-            if self.runs.link is None
-            else "reconciling",
-        }
+        return self.presence.health()
 
-    async def _record_contact(self, at_ms: int) -> None:
-        # Every frame records the time it arrived. The write waits on the database lock,
-        # so it runs on a worker thread: on the event loop it would hold up every request.
-        await settled_io(self.runs.store.contact, at_ms)
+    def health_payload(self) -> JsonObject:
+        """GET /api/executor/health's fields after "mode"."""
+        return as_object(self.health())
 
-    async def _inspect_identity(self, identity: ExecutorIdentity) -> JsonObject | None:
-        if supports_executor_versions(identity.protocol_version, identity.spool_format_version):
-            return None
-        at_ms = now_ms()
-        server = ExecutorIdentity(
-            PROTOCOL_VERSION, self.application_revision, SPOOL_FORMAT_VERSION, "", 0
+    def stall_sources(self) -> tuple[StallSource, ...]:
+        return (
+            self.mailbox.stall_source(),
+            self.runs.stall_source(),
+            self.presence.stall_source(),
         )
-        refusal = {
-            "reason": "Mac needs update"
-            if identity.protocol_version < PROTOCOL_VERSION
-            or identity.spool_format_version < SPOOL_FORMAT_VERSION
-            else "Mac version is incompatible",
-            "peer_identity": as_object(identity),
-            "server_identity": as_object(server),
-            "refused_at_ms": at_ms,
-        }
-        if self.runs.link is None:
-            self._refusal = cast(JsonObject, refusal)
-            self._last_contact_at_ms = at_ms
-            await settled_io(self.runs.store.contact, at_ms, refusal)
-        return cast(JsonObject, refusal)
 
-    async def session(self, stream: ControlMessageStream) -> None:
-        link: Link | None = None
-        admitted: Link | None = None
-        reason = "session ended"
+    # --- routes --------------------------------------------------------------------------
 
-        async def admit(health: ExecutorHealth, candidate: Link) -> ExecutorIdentity:
-            nonlocal admitted
-            identity = health.identity
-            async with self._transport_lock:
-                old_identity = self.runs.identity
-                await self.runs.admit(candidate)
-                admitted = candidate
-                self._refusal = None
-                await settled_io(partial(self.runs.store.contact, clear=True), now_ms())
-                candidate.received = self._record_contact
-            if old_identity is not None:
-                await self._close_transport(old_identity)
-            if self.runs.link is not candidate:
-                raise ConnectionError("executor generation replaced during admission")
-            await self.runs.interrupt_replaced(old_identity)
-            return identity
+    def record_contact(self) -> None:
+        self.presence.record_contact()
 
-        try:
-            link = await accept_link(stream, admit, self._inspect_identity)
-            identity = link.identity
-            if self.runs.link is not link:
-                reason = "replaced by a newer generation during admission"
-                return
-            self.transfers[identity] = GenerationTransfers(
-                identity, lambda: self.runs.identity == identity and self.runs.link is link
-            )
-            for kind, handler in {
-                WireMessageKind.reconciliation_ready: self._reconciliation_ready,
-                WireMessageKind.live_backend_event: self._live_backend_event,
-                WireMessageKind.envelope: self._envelope,
-                WireMessageKind.refuse_envelope: self._refuse_envelope,
-                WireMessageKind.command_outcome: self._command_outcome,
-                WireMessageKind.read_request: self._read_request,
-                WireMessageKind.put_file: self._put_file,
-                WireMessageKind.get_file: self._get_file,
-            }.items():
-                link.on(kind, partial(self._handle, writer=link, handler=handler))
-            await link.closed()
-        except (ConnectionError, OSError, ValueError, TimeoutError, PlannerError) as error:
-            # A close the link made itself keeps that earlier, more exact reason.
-            reason = f"session ended: {failure_name(error)}"
-        except asyncio.CancelledError:
-            reason = "session cancelled"
-            raise
-        finally:
-            owned = link or admitted
-            if owned is not None:
-                identity = owned.identity
-                owned.close(reason)
-                if self.runs.link is owned:
-                    self._last_contact_at_ms = self.last_contact_at_ms
-                    await self.runs.link_down(owned)
-                await self._close_transport(identity)
+    def require_current(
+        self, *, incarnation_header: str | None, protocol_header: str | None
+    ) -> ExecutorIdentity:
+        return self.presence.require_current(
+            incarnation_header=incarnation_header, protocol_header=protocol_header
+        )
 
-    async def _handle(
+    async def lease(self, request: LeaseRequest) -> LeaseReply | LeaseRefused:
+        """Route 1."""
+        return await self._owned_work(
+            self.presence.accept_lease(request), answer_within=LEASE_SERVER_LIMIT_SECONDS
+        )
+
+    async def refuse_old_websocket(self) -> None:
+        """Route 10."""
+        await self._owned_work(self.presence.refuse_old_websocket())
+
+    async def poll(
+        self, identity: ExecutorIdentity, after: int, wait_seconds: float
+    ) -> MailboxPollReply:
+        """Route 2. A poll lost while held marked nothing; one lost after marking is
+        answered again by the next poll, which asks from the same cursor."""
+        if after < 0 or not 0 <= wait_seconds <= COMMAND_POLL_HOLD_SECONDS:
+            raise PlannerError(ErrorCode.validation, "invalid poll cursor or wait")
+        return await self.mailbox.poll(identity, after, wait_seconds)
+
+    async def record_outcomes(
+        self, identity: ExecutorIdentity, report: CommandOutcomeReport
+    ) -> CommandOutcomeReply:
+        """Route 3."""
+        if len(report.outcomes) > MAX_COMMAND_OUTCOMES_PER_REPORT:
+            raise PlannerError(ErrorCode.validation, "too many results in one report")
+        return await self._owned_work(
+            self.mailbox.record_results(identity, report),
+            answer_within=COMMAND_OUTCOME_SERVER_LIMIT_SECONDS,
+        )
+
+    async def accept_items(
+        self, identity: ExecutorIdentity, conversation_id: str, batch: ItemBatch
+    ) -> ItemBatchReply:
+        """Route 4."""
+        reply = await self._owned_work(self.inbox.accept_batch(conversation_id, batch, identity))
+        if reply.receipts:
+            self.presence.note_conversation_activity(conversation_id)
+        return reply
+
+    async def upload(
         self,
-        message: WireMessage,
-        writer: Link,
-        handler: Callable[[WireMessage, Link], Awaitable[WireMessage | None]],
-    ) -> WireMessage | None:
-        if self.runs.link is not writer or self.runs.identity != writer.identity:
-            return None
-        try:
-            response = await handler(message, writer)
-        except (sqlite3.OperationalError, OSError) as error:
-            writer.close(f"handler for {message.kind.value} failed: {failure_name(error)}")
-            return None
-        except (ValueError, PlannerError, KeyError, TypeError) as error:
-            response = WireMessage(
-                WireMessageKind.error,
-                message.request_id,
-                error.to_payload()
-                if isinstance(error, PlannerError)
-                else {"error": {"code": "validation", "message": str(error)}},
-            )
-        # Link closes this original writer if an unexpected failure escapes.
-        # Committed work recovers through replay; never answer on a replacement.
-        if self.runs.link is writer and self.runs.identity == writer.identity:
-            return response
-        return None
+        identity: ExecutorIdentity,
+        sha256: str,
+        upload: FileUploadRequest,
+        content_length: int | None,
+        chunks: AsyncIterator[bytes],
+    ) -> None:
+        """Route 5."""
+        await self._owned_work(self.files.upload(identity, sha256, upload, content_length, chunks))
 
-    async def _reconciliation_ready(self, message: WireMessage, writer: Link) -> None:
-        await self.runs.link_up(writer, message.request_id)
-        self.catalog.connected()
+    async def input_file(
+        self, identity: ExecutorIdentity, command_id: str, stored_file_id: str
+    ) -> InputFile:
+        """Route 6."""
+        return await self.files.input_file(identity, command_id, stored_file_id)
 
-    async def _live_backend_event(self, message: WireMessage, writer: Link) -> None:
-        event = type_adapter(BackendEvent).validate_python(message.payload)
-        if event.method not in LIVE_BACKEND_EVENT_METHODS:
-            raise ValueError("live frame must not carry a recorded event")
-        if event.child.executor_incarnation != writer.identity.executor_incarnation:
-            raise ValueError("live event incarnation conflicts with connection")
-        child = self.runs.children.get(event.child.child_id)
-        if child is not None and child.reference == event.child and child.event_sink is not None:
-            await child.event_sink.report(event.turn, decode_event_arguments(event))
-
-    async def _envelope(self, message: WireMessage, writer: Link) -> WireMessage:
-        envelope = type_adapter(QueuedEnvelope).validate_python(message.payload)
-        try:
-            receipt = await self.inbox.accept(envelope, writer.identity)
-            return WireMessage(WireMessageKind.receipt, message.request_id, as_object(receipt))
-        except MissingFiles as missing:
-            return WireMessage(
-                WireMessageKind.missing_files,
-                message.request_id,
-                {"files": encode_value(missing.manifests)},
-            )
-
-    async def _refuse_envelope(self, message: WireMessage, writer: Link) -> WireMessage:
-        receipt = await self.inbox.refuse_item(
-            type_adapter(EnvelopeRefusal).validate_python(message.payload),
-            writer.identity,
-            message.request_id,
-            self.transfers[writer.identity],
-        )
-        return WireMessage(WireMessageKind.receipt, message.request_id, as_object(receipt))
-
-    async def _command_outcome(self, message: WireMessage, writer: Link) -> None:
-        outcome = type_adapter(CommandOutcome).validate_python(message.payload)
-        if message.request_id != outcome.command_id:
-            raise ValueError("command result ID conflicts with reply")
-        self.runs._resolve_command(outcome)
-
-    async def _read_request(self, message: WireMessage, writer: Link) -> WireMessage:
-        read = type_adapter(LiveReadRequest).validate_python(message.payload)
-        return WireMessage(
-            WireMessageKind.read_response, message.request_id, await self._read(read)
-        )
-
-    async def _read(self, read: LiveReadRequest) -> JsonObject:
-        if not read.path.startswith(
-            (
-                "/api/tickets",
-                "/api/managers",
-                "/api/sprint",
-                "/api/projects",
-                "/api/worker-types",
-                "/api/skills",
-                "/files/sprint-items/",
-                "/files/managers/",
-            )
-        ):
-            raise ValueError("unsupported executor read")
+    async def read(self, identity: ExecutorIdentity, read: LiveReadRequest) -> JsonObject:
+        """Route 7: an allowlisted GET, as the child's own principal."""
+        del identity
+        if not read.path.startswith(_READABLE_PATHS):
+            raise PlannerError(ErrorCode.validation, "unsupported executor read")
         import httpx
 
         from planner.core.contracts import principal_legacy_actor
 
-        principal = await settled_io(self.runs.authority, read.child)
+        principal = await run_on_worker_thread(self.runs.authority, read.child)
         headers = {"X-Plan-Actor": principal_legacy_actor(principal)}
         if principal.kind is PrincipalKind.ticket:
             headers["X-Plan-Ticket-ID"] = principal.id
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url="http://executor"
-        ) as client:
-            response = await client.get(read.path, params=cast(Any, read.params), headers=headers)
-            try:
-                value = response.json()
-            except ValueError:
-                return {"text": response.text}
-            return value if isinstance(value, dict) else {"data": value}
-
-    async def _put_file(self, message: WireMessage, writer: Link) -> WireMessage:
-        service = self.transfers[writer.identity]
-        upload = type_adapter(FileUploadRequest).validate_python(message.payload)
-        await settled_io(self.inbox.authorize_upload, upload)
-        slot = service.create_upload(upload.manifest)
-        service.uploads[slot.transfer_id] = message.request_id, upload
-        return WireMessage(WireMessageKind.file_transfer, message.request_id, as_object(slot))
-
-    async def _get_file(self, message: WireMessage, writer: Link) -> WireMessage:
-        identity = writer.identity
-        service = self.transfers[identity]
-        request = type_adapter(FileDownloadRequest).validate_python(message.payload)
-        pending = self.runs.pending_commands.get(request.command_id)
-        if pending is None or pending.future.done():
-            raise ValueError("input command is no longer pending")
-        command = pending.command
-        if command.child.executor_incarnation != identity.executor_incarnation:
-            raise ValueError("input command belongs to another executor")
-        args = command.arguments
-        allowed = (
-            {
-                piece.stored_file_id
-                for content in (args.content, args.sender_content or ())
-                for piece in content
-                if isinstance(piece, MessageFile)
-            }
-            if isinstance(args, (WritePrompt, Steer))
-            else set()
-        )
-        if request.stored_file_id not in allowed or self.runs._initial_command_cancelled(command):
-            raise ValueError("input does not belong to this command")
-        await settled_io(self.runs.authority, command.child)
-        path = await settled_io(
-            self.message_files.path_of,
-            command.child.conversation_id,
-            request.stored_file_id,
-        )
-        digest, byte_count = await settled_io(file_digest, path)
-        snapshot = FileSnapshot(
-            FileManifest(
-                FileScope.conversation,
-                command.child.conversation_id,
-                path.name,
-                digest,
-                byte_count,
-            ),
-            path,
-        )
-        slot = await service.create_download_async(snapshot)
-        return WireMessage(WireMessageKind.file_transfer, message.request_id, as_object(slot))
-
-    async def store_upload(self, identity: ExecutorIdentity, transfer_id: str) -> None:
-        service = self.transfers.get(identity)
-        pending = service.uploads.pop(transfer_id, None) if service is not None else None
-        if service is None or pending is None:
-            raise ValueError("unknown file upload")
-        _, upload = pending
         try:
-            await settled_io(self.inbox.authorize_upload, upload)
-            source = service.upload_path(transfer_id)
-            await service.run_guarded(self.inbox.store_upload, upload, source)
-        finally:
-            service.release(transfer_id)
+            async with asyncio.timeout(LIVE_READ_SERVER_LIMIT_SECONDS):
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=self.app), base_url="http://executor"
+                ) as client:
+                    response = await client.get(
+                        read.path, params=cast(Any, read.params), headers=headers
+                    )
+        except TimeoutError as error:
+            raise PlannerError(ErrorCode.retry_later, "the read took too long") from error
+        try:
+            value = response.json()
+        except ValueError:
+            return {"text": response.text}
+        return value if isinstance(value, dict) else {"data": value}
 
-    async def _close_transport(self, identity: ExecutorIdentity) -> None:
-        # Replacement and old-session cleanup race; take ownership before yielding.
-        service = self.transfers.pop(identity, None)
-        if service is not None:
-            await service.close()
+    async def live(
+        self, identity: ExecutorIdentity, conversation_id: str, batch: LiveEventBatch
+    ) -> None:
+        """Route 8: lossy live text, straight to the child's event sink. Live text from a
+        child of another process, or of another conversation, is dropped."""
+        if len(batch.events) > MAX_LIVE_EVENTS_PER_BATCH or any(
+            event.method not in LIVE_BACKEND_EVENT_METHODS for event in batch.events
+        ):
+            raise PlannerError(ErrorCode.validation, "a live batch carries only live events")
+        try:
+            async with asyncio.timeout(LIVE_EVENT_SERVER_LIMIT_SECONDS):
+                for event in batch.events:
+                    if (
+                        event.child.executor_incarnation != identity.executor_incarnation
+                        or event.child.conversation_id != conversation_id
+                    ):
+                        continue
+                    child = self.runs.children.get(event.child.child_id)
+                    if child is None or child.reference != event.child or child.event_sink is None:
+                        continue
+                    await child.event_sink.report(event.turn, decode_event_arguments(event))
+        except TimeoutError:
+            return  # Live text is lossy; the ordered items carry what matters.
+        if batch.events:
+            self.presence.note_conversation_activity(conversation_id)

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import sqlite3
 
+from planner.executor.clock import now_ms
 from planner.tickets import locale_configuration
-from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
+from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketLocale, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkflowDefinition
 
@@ -33,6 +34,12 @@ def worker_step_blocker(
         return "the Ticket is backlogged"
     if not locale_configuration.can_execute_locale(conn, ticket.locale):
         return locale_configuration.execution_unavailable_reason(conn, ticket.locale)
+    # A start never waits in the mailbox for a Mac that may not come back: the claim is
+    # not taken until the Mac is here, and nothing errors meanwhile.
+    if ticket.locale is TicketLocale.macos and not locale_configuration.mac_is_present(
+        conn, now_ms()
+    ):
+        return locale_configuration.WAITING_FOR_THE_MAC
     if worker_type_definition.is_terminal(ticket.stage):
         return f"the Stage {ticket.stage} is terminal"
     ownership_mode = machine.stage_ownership_mode(
