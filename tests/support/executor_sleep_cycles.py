@@ -1889,12 +1889,15 @@ class SleepCycles:
                             f"message {marker} ({record['fate']}) never reached its agent, "
                             "though its last mailbox row succeeded"
                         )
-                elif marker in undelivered and (
-                    undelivered[marker][0] == "prompt_delivery_uncertain"
-                    or "process that owned this child was replaced" in undelivered[marker][1]
+                elif (
+                    marker in undelivered and undelivered[marker][0] == "prompt_delivery_uncertain"
                 ):
-                    # Recorded: unknown, or refused because its Mac process was replaced.
+                    # Recorded as unknown. A message held behind a replaced Mac process's
+                    # turn waits for the fresh child, so its refusal is a violation.
                     self.undelivered_in_record[marker] = undelivered[marker]
+                elif marker in undelivered:
+                    kind, detail = undelivered[marker]
+                    violations.append(f"message {marker} was recorded {kind}: {detail}")
                 elif marker not in self.lost_with_vps_restart:
                     violations.append(
                         f"message {marker} ({record['fate']}) never reached the mailbox"

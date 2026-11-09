@@ -81,6 +81,10 @@ class MacInboxConversations(Protocol):
         retry_later_at: float | None = None,
     ) -> AcceptedEvent: ...
 
+    async def fence_replaced_remote_child(
+        self, reference: ChildReference, *, retry_later_at: float | None = None
+    ) -> None: ...
+
     async def take_answer_application(
         self,
         turn: TurnToken,
@@ -654,6 +658,12 @@ class MacInbox:
         if event.child.conversation_id != envelope.conversation_id:
             raise ValueError("event conversation conflicts with envelope")
 
+        if event.child.executor_incarnation != identity.executor_incarnation:
+            # Replayed for a replaced process: a turn it ends must not hand the next
+            # message to that child.
+            await self.conversations.fence_replaced_remote_child(
+                event.child, retry_later_at=retry_later_at
+            )
         decoded = decode_event_arguments(event)
         result = await self.conversations.take_backend_event(
             event.turn,

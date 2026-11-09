@@ -26,6 +26,7 @@ from planner.conversation.backends.contracts import (
     BackendChildFactory,
     BackendEventSink,
     BackendPromptAccepted,
+    PromptWriteRefused,
     RetainedBackendRun,
     ToolCallStarted,
     TurnEnded,
@@ -83,6 +84,9 @@ class _MacChild(_FakeBackendChild):
     async def write_prompt(
         self, turn_token: TurnToken, *args: object, **kwargs: object
     ) -> BackendPromptAccepted:
+        if self.reference.executor_incarnation != self._runs.incarnation:
+            # The mailbox refuses a command for a replaced process's child (B5).
+            raise PromptWriteRefused("The Mac executor process that owned this child was replaced")
         accepted = await super().write_prompt(turn_token, *args, **kwargs)  # type: ignore[arg-type]
         run = self._runs.runs[self.reference.conversation_id]
         self._runs.runs[self.reference.conversation_id] = replace(run, turn=turn_token)
@@ -551,6 +555,54 @@ def test_a_drain_left_by_a_vps_restart_still_recovers_ahead_of_waiting_messages(
             assert restarted.backend("mac").written_texts()[1:] == ("waited",)
         finally:
             await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_a_message_held_behind_a_replayed_turn_end_reaches_the_fresh_child_once(
+    world: tuple[Path, _MacRuns],
+) -> None:
+    """Risk: the Mac process restarts while a message waits behind its turn, and the
+    successor's replay ends that turn normally. The message must not go to the replaced
+    child, whose mailbox refuses it, and must reach the fresh child once after the drain.
+    Gap: the drain cases above end the turn interrupted; this one ends it completed, with
+    no recovery to send. The inbox fences the child before the replayed item applies."""
+    db_path, runs = world
+
+    async def exercise() -> None:
+        harness = await _first_server_with_running_turns(db_path, runs, "mac")
+        _link_mac_tickets(db_path, "mac")
+        try:
+            old = runs.runs["mac"].reference
+            _record_open_runs(db_path, old)
+            queued = await harness.system.send(
+                "mac", text_message_content("waited"), sender_label="owner"
+            )
+            assert isinstance(queued, PromptDeliveryQueued)
+            runs.incarnation = "inc-2"
+            await harness.system.fence_replaced_remote_child(old)
+            await harness.system.take_backend_event(
+                TurnToken("mac", 1),
+                TurnEnded(
+                    ending=ConversationTurnEnding.completed,
+                    error_summary=None,
+                    standard_error_tail=None,
+                ),
+            )
+            await harness.settle()
+            assert harness.backend("mac").written_texts() == ("work",)
+
+            await harness.system.retire_replaced_remote_child(old, replaced_by="inc-2")
+            await harness.settle()
+            assert _run_closed(db_path, old)
+            assert harness.backend("mac").written_texts() == ("work", "waited")
+            assert runs.runs["mac"].reference.executor_incarnation == "inc-2"
+            assert await _turn_endings(harness, "mac") == [ConversationTurnEnding.completed]
+            assert ConversationEventKind.prompt_delivery_refused not in (
+                await harness.recorded_kinds("mac")
+            )
+        finally:
+            await harness.system.shutdown()
 
     _run(exercise)
 

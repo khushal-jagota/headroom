@@ -4279,6 +4279,30 @@ class SqliteProcessConversationSystem:
         )
         await self._drain_held_prompts(state)
 
+    async def fence_replaced_remote_child(
+        self, reference: ChildReference, *, retry_later_at: float | None = None
+    ) -> None:
+        """Hold every message until the drain retires this child of a replaced Mac process.
+
+        The replaced process cannot take a prompt. Its successor replays its items, and one
+        of them can end the turn, which would hand the next message to that child, where
+        the mailbox refuses it. The conversation is fenced instead, as a VPS restart leaves
+        it: the turn stays, and replayed items still apply to it. Messages wait until the
+        retirement unfences it, sends the recovery prompt, and delivers them to a fresh
+        child.
+        """
+        state = await self._conversation_state(reference.conversation_id)
+        if state is None:
+            return
+        async with _retry_later_past(retry_later_at):
+            await self._acquire_after_steers(state)
+        try:
+            if state.retained_child_reference == reference:
+                state.child = None
+                state.child_is_quarantined = True
+        finally:
+            state.lock.release()
+
     async def confirm_remote_child_termination(self, reference: ChildReference) -> None:
         """Retire an exact remote child after its termination evidence commits."""
         state = await self._conversation_state(reference.conversation_id)
