@@ -122,8 +122,17 @@ class _Conversations:
     ) -> None:
         await self.system.stop_interrupted_remote_child(reference, child)
 
+    async def resume_undelivered_prompt(
+        self, reference: ChildReference, prompt: object, *, start_needed: bool
+    ) -> None:
+        raise AssertionError("no prompt is written again here")
+
     async def retire_replaced_remote_child(
-        self, reference: ChildReference, *, replaced_by: str
+        self,
+        reference: ChildReference,
+        *,
+        replaced_by: str,
+        undelivered_prompt: object = None,
     ) -> None:
         self.retired.append((reference, replaced_by))
 

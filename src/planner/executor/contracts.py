@@ -21,6 +21,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import ResolvedConversationStart
+from planner.conversation.logic.retained_turn import UndeliveredTurnPrompt
 from planner.core.contracts import Principal
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
@@ -161,12 +162,27 @@ class MacRunConversations(Protocol):
         ...
 
     async def retire_replaced_remote_child(
-        self, reference: ChildReference, *, replaced_by: str
+        self,
+        reference: ChildReference,
+        *,
+        replaced_by: str,
+        undelivered_prompt: UndeliveredTurnPrompt | None = None,
     ) -> None:
         """After its drain: close the run of a replaced Mac process and record its
         interrupted turn in one transaction, end the turn, then recover it like an
         interrupted VPS Ticket (a fresh child resumes the session). A child the core no
-        longer holds is left alone, and its run stays for the caller to close."""
+        longer holds is left alone, and its run stays for the caller to close.
+
+        undelivered_prompt: the turn's prompt provably never reached an agent. Nothing
+        was interrupted: the run is closed and the same prompt is written to a fresh
+        child under the same turn."""
+        ...
+
+    async def resume_undelivered_prompt(
+        self, reference: ChildReference, prompt: UndeliveredTurnPrompt, *, start_needed: bool
+    ) -> None:
+        """At startup: give a fresh child the never-ran prompt a VPS crash kept it from
+        getting (see retire_replaced_remote_child), starting it first if needed."""
         ...
 
     async def confirm_remote_child_termination(self, reference: ChildReference) -> None: ...

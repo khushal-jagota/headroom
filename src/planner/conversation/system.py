@@ -32,7 +32,7 @@ import logging
 import sqlite3
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -152,10 +152,15 @@ from planner.conversation.logic.held_line import (
     leading_run_that_can_share_a_turn,
     one_prompt_from,
 )
-from planner.conversation.logic.retained_turn import OpenRunTurn, adopted_running_turn
+from planner.conversation.logic.retained_turn import (
+    OpenRunTurn,
+    UndeliveredTurnPrompt,
+    adopted_running_turn,
+)
 from planner.conversation.message_content import (
     MessageContent,
     MessageText,
+    message_content_text,
     prefix_message_content_text,
     require_message_content,
     text_message_content,
@@ -528,6 +533,9 @@ class _ConversationState:
     child_event_sink: object | None = None
     settlement_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     steer_settlements: set[asyncio.Event] = field(default_factory=set)
+    # Steers recorded uncertain whose adapter will say later whether they never reached
+    # their turn; one that never did goes back to the line. A kill drops them.
+    late_steers: set[asyncio.Task[None]] = field(default_factory=set)
     reserved_turn: _ReservedTurn | None = None
     running_turn: RunningTurn | None = None
     last_ended_turn_token: TurnToken | None = None
@@ -2031,6 +2039,7 @@ class SqliteProcessConversationSystem:
             tasks: list[asyncio.Task[Any]] = []
             for state in states:
                 tasks.extend(state.settlement_tasks)
+                tasks.extend(state.late_steers)
                 pump = state.backend_event_pump
                 state.backend_event_pump = None
                 if pump is not None:
@@ -2841,6 +2850,11 @@ class SqliteProcessConversationSystem:
                     and state.last_ended_turn_token.turn_number >= turn_token.turn_number
                 ):
                     raise DeliveryCancelled()
+            else:
+                # Checked before a child is made, so a delivery that lost its turn while
+                # the lock was free starts no agent.
+                async with state.lock:
+                    check_delivery_owner()
             child = await self._ensure_child(
                 state,
                 model=model_change,
@@ -2856,9 +2870,23 @@ class SqliteProcessConversationSystem:
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
-        if check_delivery_owner is not None:
+        async def still_owned() -> None:
+            """A child made for a delivery that is no longer its own is not kept. At
+            shutdown it stays, for the next start to find."""
+            assert check_delivery_owner is not None
             async with state.lock:
-                check_delivery_owner()
+                cancelled = state.child is not child
+                try:
+                    check_delivery_owner()
+                except DeliveryCancelled:
+                    cancelled = True
+            if cancelled:
+                if not self._shutting_down and state.child is child:
+                    await self._discard_child(state, child)
+                raise DeliveryCancelled()
+
+        if check_delivery_owner is not None:
+            await still_owned()
         automatic_notice = False
         if messages:
             messages, suppression_reason, automatic_notice = await self._admit_dispatch_messages(
@@ -2884,10 +2912,7 @@ class SqliteProcessConversationSystem:
                 )
             wire_content = composed_content
         if check_delivery_owner is not None:
-            async with state.lock:
-                check_delivery_owner()
-                if state.child is not child:
-                    raise DeliveryCancelled()
+            await still_owned()
         elif (
             state.last_ended_turn_token is not None
             and state.last_ended_turn_token.turn_number >= turn_token.turn_number
@@ -3476,6 +3501,8 @@ class SqliteProcessConversationSystem:
         Each message leaves the queue before its row is written, so a write that falls
         over part-way leaves the rest of the queue discarded rather than delivered.
         """
+        for late in tuple(state.late_steers):
+            late.cancel()
         for discarded in tuple(state.held_prompts):
             if discarded.delivery_uncertain:
                 continue
@@ -3582,7 +3609,44 @@ class SqliteProcessConversationSystem:
             state.running_turn.automatic_notice = (
                 state.running_turn.automatic_notice and automatic_notice
             )
+        if outcome.not_delivered is not None:
+            late = asyncio.create_task(
+                self._queue_late_steer_if_not_delivered(state, outcome.not_delivered, message)
+            )
+            state.late_steers.add(late)
+            late.add_done_callback(state.late_steers.discard)
         return PromptDeliveryUncertain()
+
+    async def _queue_late_steer_if_not_delivered(
+        self, state: _ConversationState, not_delivered: Awaitable[bool], message: _Message
+    ) -> None:
+        """A steer recorded uncertain that later proves it never reached its turn goes to
+        the line as the next message, as a steer the Mac did not take in time does. Its
+        uncertain row stays: it was true when written, and the delivery that follows is
+        the message's latest outcome."""
+        try:
+            if not await not_delivered or self._shutting_down:
+                return
+            # From here it is an ordinary send, owned as one: a kill no longer drops it.
+            current = asyncio.current_task()
+            if current is not None:
+                state.late_steers.discard(current)
+            # The executor-origin send's own record was written with the uncertain row.
+            await self._own_settlement(
+                state,
+                self._queue(
+                    state=state,
+                    queue_reason=PromptQueueReason.steer_refused,
+                    message=replace(message, recording_receipt=None),
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception(
+                "conversation %s: a steer that never reached its turn was not queued",
+                state.record.conversation_id,
+            )
 
     # --- turns --------------------------------------------------------------------------
 
@@ -4247,7 +4311,11 @@ class SqliteProcessConversationSystem:
         return child is not None
 
     async def retire_replaced_remote_child(
-        self, reference: ChildReference, *, replaced_by: str
+        self,
+        reference: ChildReference,
+        *,
+        replaced_by: str,
+        undelivered_prompt: UndeliveredTurnPrompt | None = None,
     ) -> None:
         """After its drain, end this conversation's turn of a replaced Mac process.
 
@@ -4257,11 +4325,20 @@ class SqliteProcessConversationSystem:
         interrupted, and then recovered like an interrupted VPS Ticket: one recovery
         prompt, which starts a fresh child that resumes the stored session. Other
         conversations are not touched.
+
+        A turn whose prompt provably never reached an agent (``undelivered_prompt``) was
+        not interrupted: nothing ran. The same prompt is written to a fresh child under
+        the same turn, so the message the record shows as sent is the one the agent gets.
         """
         from planner.conversation.deploy_interruptions.coordinator import recover_conversations
 
         state = await self._conversation_state(reference.conversation_id)
         if state is None:
+            return
+        if undelivered_prompt is not None and await self._own_settlement(
+            state,
+            self._write_undelivered_prompt_again(state, reference, undelivered_prompt, replaced_by),
+        ):
             return
         retired = await self._own_settlement(
             state,
@@ -4275,6 +4352,210 @@ class SqliteProcessConversationSystem:
             self,
             self._store,
             conversation_ids=(reference.conversation_id,),
+            mode=PromptDeliveryMode.send_now,
+        )
+        await self._drain_held_prompts(state)
+
+    async def _write_undelivered_prompt_again(
+        self,
+        state: _ConversationState,
+        reference: ChildReference,
+        prompt: UndeliveredTurnPrompt,
+        replaced_by: str,
+    ) -> bool:
+        """Write a turn's prompt, which never ran, to a fresh child under the same turn;
+        false leaves the retirement to the interruption path (the turn is no longer that
+        one).
+
+        The replaced process's run is closed in the transaction that records the turn as
+        interrupted, with the message itself in the interruption's notice, so a crash at
+        any later point still delivers it: through the recovery prompt, or through the
+        startup that finishes a write the crash cut (resume_undelivered_prompt). Once the
+        fresh child's prompt row commits, that interruption is closed: nothing was
+        interrupted after all.
+        """
+        from planner.conversation.deploy_interruptions.coordinator import (
+            close_run_and_record_mac_process_interruption,
+        )
+        from planner.core.task_settlement import run_on_worker_thread
+
+        await self._acquire_settled(state)
+        try:
+            running = state.running_turn
+            if (
+                state.retained_child_reference != reference
+                or running is None
+                or running.ended
+                or running.ending_is_the_cores
+                or running.token.turn_number != prompt.turn_number
+            ):
+                return False
+            await run_on_worker_thread(
+                close_run_and_record_mac_process_interruption,
+                self._store._db_path,
+                reference,
+                replaced_by,
+                int(self._unix_time_now() * 1000),
+                undelivered_message=message_content_text(prompt.sender_content)
+                + (
+                    " (It also carried attachments, which are not repeated here.)"
+                    if any(not isinstance(piece, MessageText) for piece in prompt.sender_content)
+                    else ""
+                ),
+            )
+            if child_stops_outside_lock(state.child):
+                await state.child.detach()
+            state.child = None
+            state.retained_child_reference = None
+            state.child_is_quarantined = False
+            # Restored from the facts, a replaced process's turn takes no asks; the fresh
+            # child is alive, so this turn can ask again.
+            running.callbacks_revoked = False
+        finally:
+            state.lock.release()
+        await self._deliver_undelivered_prompt(state, running, prompt)
+        return True
+
+    async def resume_undelivered_prompt(
+        self, reference: ChildReference, prompt: UndeliveredTurnPrompt, *, start_needed: bool
+    ) -> None:
+        """At startup: finish writing a never-ran prompt that a VPS crash cut after the
+        fresh child's run was registered, and before its prompt row committed. The turn
+        was adopted live with that child; it is started if its start never committed,
+        and then given the prompt."""
+        state = await self._conversation_state(reference.conversation_id)
+        if state is None:
+            return
+        await self._acquire_settled(state)
+        try:
+            running = state.running_turn
+            child = state.child
+            if (
+                state.retained_child_reference != reference
+                or running is None
+                or running.ended
+                or child is None
+                or running.token.turn_number != prompt.turn_number
+            ):
+                return
+            running.callbacks_revoked = False
+        finally:
+            state.lock.release()
+
+        async def deliver() -> None:
+            if start_needed:
+                # Started on the values the prompt carries, as _ensure_child would.
+                resolved_start = state.record.resolved_start()
+                if (
+                    prompt.model_change is not None
+                    or prompt.reasoning_effort_change is not None
+                    or prompt.reasoning_effort_is_set
+                ):
+                    resolved_start = replace(
+                        resolved_start,
+                        model=prompt.model_change or resolved_start.model,
+                        reasoning_effort=(
+                            resolved_start.reasoning_effort
+                            if prompt.reasoning_effort_change is None
+                            and not prompt.reasoning_effort_is_set
+                            else prompt.reasoning_effort_change
+                        ),
+                    )
+                try:
+                    await child.start(
+                        resolved_start,
+                        vendor_session_cursor=state.record.vendor_session_cursor,
+                    )
+                except Exception:
+                    LOGGER.exception(
+                        "conversation %s: a fresh Mac child did not start again",
+                        reference.conversation_id,
+                    )
+                    await self._interrupt_undelivered_prompt_turn(state, running)
+                    return
+            await self._deliver_undelivered_prompt(state, running, prompt)
+
+        await self._own_settlement(state, deliver())
+
+    async def _deliver_undelivered_prompt(
+        self, state: _ConversationState, running: RunningTurn, prompt: UndeliveredTurnPrompt
+    ) -> None:
+        """Write the prompt on the conversation's fresh child, then close the turn's
+        interruption. A child that will not take it leaves the turn to end interrupted,
+        and its recovery prompt carries the message."""
+        from planner.conversation.deploy_interruptions.coordinator import (
+            close_mac_interruption_of_turn,
+        )
+        from planner.core.task_settlement import run_on_worker_thread
+
+        conversation_id = state.record.conversation_id
+
+        def check_delivery_owner() -> None:
+            if self._shutting_down or state.running_turn is not running or running.ended:
+                raise DeliveryCancelled()
+
+        try:
+            delivery = await self._write_on_child(
+                state,
+                running.token,
+                content=prompt.sender_content,
+                wire_content=prompt.content,
+                sender_label=prompt.sender_label,
+                sender_message_count=prompt.sender_message_count,
+                mode=prompt.mode,
+                model_change=prompt.model_change,
+                reasoning_effort_change=prompt.reasoning_effort_change,
+                automatic_compaction=prompt.automatic_compaction,
+                reasoning_effort_is_set=prompt.reasoning_effort_is_set,
+                check_delivery_owner=check_delivery_owner,
+            )
+        except DeliveryCancelled:
+            if self._shutting_down:
+                return  # The next startup finishes it from the rows.
+            # A kill or the core's own ending took the turn: as a kill means, the message
+            # goes nowhere, and its notice must not ride on a later prompt.
+            await run_on_worker_thread(
+                close_mac_interruption_of_turn,
+                self._store._db_path,
+                conversation_id,
+                prompt.turn_number,
+                int(self._unix_time_now()),
+                "The turn ended before its message was written again.",
+            )
+            return
+        except Exception as error:
+            LOGGER.exception(
+                "conversation %s: a fresh Mac child did not take a prompt that never ran",
+                conversation_id,
+            )
+            delivery = _PromptDeliveryAttempt(
+                PromptDeliveryRefusalReason.write_to_backend_failed, refusal_detail=str(error)
+            )
+        if delivery.refusal_reason is None:
+            await run_on_worker_thread(
+                close_mac_interruption_of_turn,
+                self._store._db_path,
+                conversation_id,
+                prompt.turn_number,
+                int(self._unix_time_now()),
+                "Its message was written again to a fresh agent.",
+            )
+            return
+        await self._interrupt_undelivered_prompt_turn(state, running)
+
+    async def _interrupt_undelivered_prompt_turn(
+        self, state: _ConversationState, running: RunningTurn
+    ) -> None:
+        from planner.conversation.deploy_interruptions.coordinator import recover_conversations
+
+        async with state.lock:
+            if state.running_turn is running and not running.ended:
+                await self._end_turn(state, running, ConversationTurnEnding.interrupted, None)
+            self._settle_phase(state)
+        await recover_conversations(
+            self,
+            self._store,
+            conversation_ids=(state.record.conversation_id,),
             mode=PromptDeliveryMode.send_now,
         )
         await self._drain_held_prompts(state)

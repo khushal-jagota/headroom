@@ -1978,6 +1978,44 @@ def test_a_steer_the_mac_did_not_take_becomes_the_next_message(
     _run(exercise)
 
 
+@pytest.mark.parametrize("never_arrived", [True, False])
+def test_an_uncertain_steer_that_later_proves_it_never_arrived_becomes_the_next_message(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, never_arrived: bool
+) -> None:
+    """Risk: a Mac steer recorded uncertain whose row later proves it never reached its
+    turn (refused because the turn ended, or withdrawn when the Mac process was replaced)
+    is lost. It goes to the line as the next message; one that did arrive is not sent
+    again."""
+
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        backend = harness.backend("c")
+        verdict: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        backend.steer_outcome = BackendSteerUncertain(None, not_delivered=verdict)
+        fate = await harness.system.send(
+            "c",
+            text_message_content("late steer"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.steer,
+        )
+        assert fate == PromptDeliveryUncertain()
+        assert await harness.system.held_prompts("c") == ()
+        verdict.set_result(never_arrived)
+        await harness.settle()
+        held = await harness.system.held_prompts("c")
+        assert [message_content_text(message.content) for message in held] == (
+            ["late steer"] if never_arrived else []
+        )
+        await harness.complete_turn("c")
+        assert [write.text for write in backend.writes if not write.steered][-1] == (
+            "late steer" if never_arrived else "incumbent"
+        )
+
+    _run(exercise)
+
+
 def test_caller_cancellation_after_acceptance_preserves_receipt_and_duplicate_identity(
     harness: _Harness,
 ) -> None:

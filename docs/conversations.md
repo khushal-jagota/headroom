@@ -59,7 +59,7 @@ A Claude agent can start a background task, such as a long test run, that keeps 
 
 Held messages live in memory, so a restart loses anything not yet delivered.
 
-New conversation ends the running turn, discards held work, and links a fresh conversation. The old notebook stays as history, and only the active conversation accepts sends. After a deploy interrupts sessions, eligible conversations get one recovery prompt through the ordinary send path, and nothing is replayed. See [Deployment](deployment.md). A restart of the Mac's executor process interrupts its turns the same way: once the Mac has sent everything it held for a conversation, that turn ends interrupted and gets the same one recovery prompt, which resumes the session in a fresh agent. A steer the Mac does not take in time waits in the queue as the next message.
+New conversation ends the running turn, discards held work, and links a fresh conversation. The old notebook stays as history, and only the active conversation accepts sends. After a deploy interrupts sessions, eligible conversations get one recovery prompt through the ordinary send path, and nothing is replayed. See [Deployment](deployment.md). A restart of the Mac's executor process interrupts its turns the same way: once the Mac has sent everything it held for a conversation, that turn ends interrupted and gets the same one recovery prompt, which resumes the session in a fresh agent. A message the old process never fetched goes to the fresh agent instead, and nothing is interrupted. A steer the Mac does not take in time, or that later proves it never reached its turn, waits in the queue as the next message.
 
 ## Worker resources on Linux
 

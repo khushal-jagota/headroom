@@ -52,6 +52,7 @@ from planner.conversation.lifecycle import (
     LifecycleOperation,
     LifecycleStatus,
 )
+from planner.conversation.logic.retained_turn import UndeliveredTurnPrompt
 from planner.conversation.message_content import message_content_text, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.db import connect, create_schema
@@ -651,5 +652,316 @@ def test_a_vps_crash_between_closing_the_run_and_ending_the_turn_still_recovers(
             assert restarted.backend("mac").written_texts() == wire
         finally:
             await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def _never_ran_prompt() -> UndeliveredTurnPrompt:
+    """Turn 1's prompt as it went on the wire: the role, then the owner's message."""
+    from planner.conversation.contracts import PromptDeliveryMode
+
+    return UndeliveredTurnPrompt(
+        turn_number=1,
+        content=text_message_content("role\n\nwork"),
+        sender_content=text_message_content("work"),
+        sender_label="owner",
+        sender_message_count=1,
+        mode=PromptDeliveryMode.queue,
+        model_change=None,
+        reasoning_effort_change=None,
+        reasoning_effort_is_set=False,
+        automatic_compaction=False,
+    )
+
+
+def _interruption_states(db_path: Path) -> list[str]:
+    with connect(str(db_path)) as conn:
+        return [
+            str(row[0]) for row in conn.execute("SELECT recovery_state FROM deploy_interruptions")
+        ]
+
+
+def test_a_turn_whose_prompt_never_reached_the_replaced_process_goes_to_a_fresh_child(
+    world: tuple[Path, _MacRuns],
+) -> None:
+    """Risk: the Mac process is replaced before it fetches a turn's prompt. Its withdrawn
+    row proves the prompt never ran, yet the turn was ended interrupted and only the
+    generic recovery text went out, so the message the record shows as sent was lost.
+    Gap: the drain cases above all interrupt a turn that ran. The same prompt, as it went
+    on the wire, is written to a fresh child under the same turn; nothing is interrupted."""
+    db_path, runs = world
+
+    async def exercise() -> None:
+        harness = await _first_server_with_running_turns(db_path, runs, "mac")
+        _link_mac_tickets(db_path, "mac")
+        try:
+            old = runs.runs["mac"].reference
+            _record_open_runs(db_path, old)
+            runs.incarnation = "inc-2"
+            await harness.system.retire_replaced_remote_child(
+                old, replaced_by="inc-2", undelivered_prompt=_never_ran_prompt()
+            )
+            await harness.settle()
+            assert _run_closed(db_path, old)
+            assert harness.backend("mac").written_texts() == ("work", "role\n\nwork")
+            assert runs.runs["mac"].reference.executor_incarnation == "inc-2"
+            assert await harness.system.is_running("mac")
+            assert await _turn_endings(harness, "mac") == []
+            # The interruption that kept the message safe meanwhile is closed, and the
+            # claim it errored is restored: no recovery prompt follows.
+            assert _interruption_states(db_path) == ["closed"]
+            assert _claim(db_path, "mac") == ("out", 9)
+            prompts = [
+                event
+                for event in await harness.events("mac")
+                if isinstance(event.payload, PromptEventPayload)
+            ]
+            assert len(prompts) == 1
+        finally:
+            await harness.system.shutdown()
+
+    _run(exercise)
+
+
+def _record_answer_row(
+    db_path: Path, reference: ChildReference, provider_ask_id: str, option_id: str, state: str
+) -> None:
+    """The mailbox row of a saved permission answer of the replaced process's child, as
+    its replacement left it: withdrawn (never fetched) or finished uncertain (fetched)."""
+    from planner.execution_identity import AskKind, AskReference
+    from planner.executor.contracts import CommandSettlementReason
+    from planner.executor.protocol import (
+        AnswerPermission,
+        ChildCommand,
+        ChildOperation,
+        CommandDisposition,
+        DurableAnswer,
+        MailboxCommand,
+        as_object,
+    )
+    from planner.executor.vps_mailbox import settlement_result
+
+    turn = TurnToken(reference.conversation_id, 1)
+    answer_id = f"answer-{provider_ask_id}"
+    command = MailboxCommand(
+        1,
+        answer_id,
+        1,
+        child_command=ChildCommand(
+            answer_id,
+            reference,
+            ChildOperation.answer_permission_ask,
+            turn,
+            AnswerPermission(
+                ask_id=provider_ask_id,
+                option_id=option_id,
+                answer=DurableAnswer(
+                    answer_id,
+                    AskReference(reference, turn, provider_ask_id, AskKind.permission),
+                    option_id,
+                    1,
+                ),
+            ),
+        ),
+    )
+    result = settlement_result(
+        command,
+        CommandDisposition.refused if state == "withdrawn" else CommandDisposition.uncertain,
+        CommandSettlementReason.executor_process_replaced,
+    )
+    conn = connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO executor_commands(command_id,executor_incarnation,operation,"
+            "conversation_id,child_id,turn_number,command_json,state,created_at_ms,"
+            "outcome_json) VALUES (?,?,'answer_permission_ask',?,?,1,?,?,1,?)",
+            (
+                answer_id,
+                reference.executor_incarnation,
+                reference.conversation_id,
+                reference.child_id,
+                json.dumps(as_object(command)),
+                state,
+                json.dumps(as_object(result)),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("state", "said"),
+    [
+        ("withdrawn", "That answer never reached you."),
+        ("finished", "That answer may already have reached you before the restart."),
+    ],
+)
+def test_an_answer_the_replaced_agent_did_not_take_is_carried_in_the_recovery_prompt(
+    world: tuple[Path, _MacRuns], state: str, said: str
+) -> None:
+    """Risk: the owner answers an ask, then the Mac process is replaced before the agent
+    takes the answer. The fresh agent has no ask to answer, so the answer is lost. Gap:
+    the recovery cases above carry no answer. The recovery prompt says what was asked and
+    which option was chosen, and whether the answer provably never reached the agent or
+    may have."""
+    db_path, runs = world
+
+    async def exercise() -> None:
+        harness = await _first_server_with_running_turns(db_path, runs, "mac")
+        _link_mac_tickets(db_path, "mac")
+        try:
+            await harness.raise_permission_ask("mac")
+            old = runs.runs["mac"].reference
+            _record_open_runs(db_path, old)
+            _record_answer_row(db_path, old, "ask-1", "allow-once", state)
+            runs.incarnation = "inc-2"
+            await harness.system.retire_replaced_remote_child(old, replaced_by="inc-2")
+            await harness.settle()
+            wire = harness.backend("mac").written_texts()
+            assert len(wire) == 2 and RECOVERY_TEXT in wire[1]
+            assert (
+                'Before the restart you asked: "Run a command?". '
+                "The answer was: Approve once. " + said
+            ) in wire[1]
+            assert "Decline" not in wire[1]
+        finally:
+            await harness.system.shutdown()
+
+    _run(exercise)
+
+
+def test_a_vps_crash_before_a_never_ran_prompt_is_written_again_still_delivers_it(
+    world: tuple[Path, _MacRuns],
+) -> None:
+    """Risk: the VPS stops after closing the replaced process's run, before the fresh
+    child's prompt row commits, and nothing durable says the message is owed. Gap: the
+    rewrite above runs without a crash. The close commits with the turn's interruption,
+    whose notice carries the message, so startup recovery delivers it."""
+    from planner.conversation.deploy_interruptions.coordinator import (
+        close_run_and_record_mac_process_interruption,
+        run_automatic_recovery,
+    )
+
+    db_path, runs = world
+
+    async def exercise() -> None:
+        first = await _first_server_with_running_turns(db_path, runs, "mac")
+        _link_mac_tickets(db_path, "mac")
+        old = runs.runs["mac"].reference
+        _record_open_runs(db_path, old)
+        runs.incarnation = "inc-2"
+        close_run_and_record_mac_process_interruption(
+            str(db_path), old, "inc-2", 5_000, undelivered_message="work"
+        )
+        await first.system.shutdown()
+        runs.runs["mac"] = replace(
+            runs.runs["mac"], retirement_confirmed=True, incarnation_current=False
+        )
+        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        try:
+            await run_automatic_recovery(restarted.system, restarted.store)
+            await restarted.settle()
+            (wire,) = restarted.backend("mac").written_texts()
+            assert RECOVERY_TEXT in wire
+            assert "never reached you" in wire and "The message was: work" in wire
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_a_vps_crash_after_the_fresh_child_is_registered_gives_it_the_prompt_at_startup(
+    world: tuple[Path, _MacRuns],
+) -> None:
+    """Risk: the VPS stops after the fresh child's run is registered and before its
+    prompt row commits. The restart adopts the turn live with that child, which never
+    gets the prompt, so the turn hangs. Gap: the crash case above stops earlier. Startup
+    gives the adopted child the prompt, once, and closes the interruption."""
+    from planner.conversation.deploy_interruptions.coordinator import (
+        close_run_and_record_mac_process_interruption,
+        run_automatic_recovery,
+    )
+
+    db_path, runs = world
+
+    async def exercise() -> None:
+        first = await _first_server_with_running_turns(db_path, runs, "mac")
+        _link_mac_tickets(db_path, "mac")
+        old = runs.runs["mac"].reference
+        _record_open_runs(db_path, old)
+        close_run_and_record_mac_process_interruption(
+            str(db_path), old, "inc-2", 5_000, undelivered_message="work"
+        )
+        await first.system.shutdown()
+        # The fresh child's run committed, open under the current process, at turn 1.
+        runs.incarnation = "inc-2"
+        fresh = ChildReference("inc-2", "child-fresh", "mac")
+        runs.runs["mac"] = RetainedBackendRun(
+            fresh, TurnToken("mac", 1), False, False, incarnation_current=True
+        )
+        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        try:
+            assert await restarted.system.is_running("mac")
+            await restarted.system.resume_undelivered_prompt(
+                fresh, _never_ran_prompt(), start_needed=False
+            )
+            await restarted.settle()
+            await run_automatic_recovery(restarted.system, restarted.store)
+            await restarted.settle()
+            assert restarted.backend("mac").written_texts() == ("role\n\nwork",)
+            assert _interruption_states(db_path) == ["closed"]
+            assert _claim(db_path, "mac") == ("out", 9)
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_a_kill_while_a_never_ran_prompt_waits_to_be_written_again_starts_no_agent(
+    world: tuple[Path, _MacRuns], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: a kill takes the conversation after the old run's close and before the fresh
+    child is made, and the rewrite still starts an agent on the killed conversation, or
+    leaves the message's notice to ride on a later prompt. Gap: the cases above are not
+    killed. The rewrite checks its turn before it makes a child, and closes the notice."""
+    import asyncio
+
+    from planner.conversation.system import SqliteProcessConversationSystem
+
+    db_path, runs = world
+    entered, go = asyncio.Event(), asyncio.Event()
+    original = SqliteProcessConversationSystem._write_on_child
+
+    async def after_the_kill(self: object, *args: object, **kwargs: object) -> object:
+        if kwargs.get("check_delivery_owner") is not None:  # The rewrite's write.
+            entered.set()
+            await go.wait()
+        return await original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(SqliteProcessConversationSystem, "_write_on_child", after_the_kill)
+
+    async def exercise() -> None:
+        harness = await _first_server_with_running_turns(db_path, runs, "mac")
+        _link_mac_tickets(db_path, "mac")
+        try:
+            old = runs.runs["mac"].reference
+            _record_open_runs(db_path, old)
+            runs.incarnation = "inc-2"
+            retiring = asyncio.create_task(
+                harness.system.retire_replaced_remote_child(
+                    old, replaced_by="inc-2", undelivered_prompt=_never_ran_prompt()
+                )
+            )
+            await asyncio.wait_for(entered.wait(), 5)
+            await asyncio.wait_for(harness.system.kill("mac"), 5)
+            go.set()
+            await asyncio.wait_for(retiring, 5)
+            await harness.settle()
+            assert harness.backend("mac").written_texts() == ("work",)
+            assert runs.runs["mac"].reference == old  # No fresh child was made.
+            assert _interruption_states(db_path) == ["closed"]
+        finally:
+            await harness.system.shutdown()
 
     _run(exercise)

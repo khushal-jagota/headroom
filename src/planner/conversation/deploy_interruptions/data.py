@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from collections.abc import Mapping
 from typing import cast
 from uuid import uuid4
 
@@ -106,12 +107,14 @@ def import_captured_turns(
     *,
     claim_error_reason: str,
     ended_by: str,
+    turn_notes: Mapping[tuple[str, int], str] | None = None,
 ) -> None:
     """Record one capture's interrupted turns and error each matching Ticket claim.
 
     It neither rotates the runtime epoch nor settles recovery deliveries, so it also
     serves a running server, where a Mac process restart interrupted one conversation.
     ``ended_by`` names what ended the turns, for the notice the agent is given.
+    ``turn_notes`` adds to a turn's notice, by conversation and turn number.
     """
     old_epoch = _runtime_epoch(conn)
     conn.execute(
@@ -177,6 +180,9 @@ def import_captured_turns(
         if uncertain_recovery:
             state = "unable_to_resume"
             detail += " Recovery delivery outcome is unknown. No automatic retry occurred."
+        note = (turn_notes or {}).get((turn.conversation_id, turn.turn_number))
+        if note is not None:
+            detail += " " + note
         if not exists:
             detail += " Its conversation is unavailable after restore."
         elif not matched:
@@ -452,11 +458,7 @@ def _owner_blocker(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
         from planner.managers.data import manager_agent_key
 
         try:
-            key = (
-                "chief_of_staff"
-                if kind == "chief"
-                else manager_agent_key(str(owner_id), conn)
-            )
+            key = "chief_of_staff" if kind == "chief" else manager_agent_key(str(owner_id), conn)
         except PlannerError:
             return "the Manager conversation identity conflicts"
         agent = conn.execute(

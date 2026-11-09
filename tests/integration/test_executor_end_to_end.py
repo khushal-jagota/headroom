@@ -1880,6 +1880,72 @@ def test_mac_replacement_drains_then_interrupts_old_run_and_recovers_once(
     asyncio.run(run())
 
 
+def test_a_message_the_replaced_mac_process_never_fetched_reaches_the_fresh_agent_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: a message is sent while the Mac process is gone, and its long poll, still
+    held, marks the prompt delivered into a dead socket. A new process then leases. The
+    message must reach the fresh agent once, and nothing be recorded as interrupted.
+    Gap: the unit tests prove the cursor rule and the rewrite apart; this proves the real
+    successor's journal cursor, the drain and the core together."""
+    fast_leases(monkeypatch)
+    mark = "a message sent while the Mac was gone"
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        try:
+            delivered: list[str] = []
+            write_prompt = harness.native.write_prompt
+
+            async def recorded_prompt(
+                turn: TurnToken, content: MessageContent, **kwargs: object
+            ) -> BackendPromptAccepted:
+                delivered.append(
+                    "\n".join(piece.text for piece in content if isinstance(piece, MessageText))
+                )
+                return await write_prompt(turn, content, **kwargs)
+
+            monkeypatch.setattr(harness.native, "write_prompt", recorded_prompt)
+            await harness.end_turn()
+            await harness.wait_settled("the first turn did not settle")
+            await harness.stop_mac()  # Its held poll stays on the VPS.
+            await harness.system.send(
+                "c_scripted", text_message_content(mark), sender_label="Owner"
+            )
+            await eventually(
+                lambda: (
+                    [state for _, state in harness.mailbox_commands("write_prompt")][-1]
+                    == "delivered"
+                ),
+                "the held poll did not take the prompt",
+            )
+            replacement = harness.new_mac()
+            await harness.start_mac(replacement)
+            await eventually(lambda: len(delivered) == 1, "the fresh agent did not get it")
+            await harness.wait_settled("the rewritten prompt did not settle")
+            assert mark in delivered[0]
+            assert harness.child.reference.executor_incarnation == (
+                replacement.identity.executor_incarnation
+            )
+            assert [state for _, state in harness.mailbox_commands("write_prompt")][-2:] == [
+                "withdrawn",
+                "finished",
+            ]
+            assert harness.events("turn_ended") == 1  # Only the first turn's.
+            # The interruption that held the message through the rewrite is closed.
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                assert [
+                    row[0]
+                    for row in connection.execute("SELECT recovery_state FROM deploy_interruptions")
+                ] == ["closed"]
+            await asyncio.sleep(0.3)
+            assert len(delivered) == 1
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
 def test_stop_waits_for_its_proof_item_after_its_result_and_a_dropped_link(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

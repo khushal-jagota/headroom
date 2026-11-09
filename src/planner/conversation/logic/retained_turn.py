@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from planner.conversation.backend_event_contracts import RunningTurn
+from planner.conversation.contracts import PromptDeliveryMode
 from planner.conversation.events import UserInputQuestion
 from planner.conversation.lifecycle import (
     LifecycleFact,
@@ -18,6 +19,7 @@ from planner.conversation.lifecycle import (
     LifecycleOperation,
     LifecycleStatus,
 )
+from planner.conversation.message_content import MessageContent
 from planner.execution_identity import TurnToken
 
 LIVE_FACT_STATUSES = frozenset(
@@ -41,6 +43,25 @@ class OpenRunTurn:
 
     turn_number: int
     executor_process_current: bool
+
+
+@dataclass(frozen=True, slots=True)
+class UndeliveredTurnPrompt:
+    """The prompt that opened an open Mac run's turn, exactly as it was written, when its
+    mailbox row proves it never reached an agent: the row was withdrawn because its Mac
+    process was replaced before journaling it. ``content`` is what went on the wire (the
+    role and any notice included); the rest are the write's own arguments."""
+
+    turn_number: int
+    content: MessageContent
+    sender_content: MessageContent
+    sender_label: str
+    sender_message_count: int
+    mode: PromptDeliveryMode
+    model_change: str | None
+    reasoning_effort_change: str | None
+    reasoning_effort_is_set: bool
+    automatic_compaction: bool
 
 
 def facts_after_restart(
