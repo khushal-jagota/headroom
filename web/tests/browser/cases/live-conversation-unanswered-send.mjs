@@ -18,6 +18,11 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
   import "../../assets/app.css";
   import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
   import { connectionStatus } from "../src/lib/changeStream";
+  import type { ConversationState } from "../src/lib/conversation/conversationState";
+
+  if (new URLSearchParams(location.search).has("initial-connected")) connectionStatus.set("connected");
+  let conversationState = $state<ConversationState|null>(new URLSearchParams(location.search).has("full-container") ? null : "opened");
+  (window as any).__setConversationState = (state:ConversationState|null) => conversationState = state;
 
   const scopeProof = new URLSearchParams(location.search).has('scope-proof');
   let startValues = $state({backend_key:"codex" as const, model:"gpt-test", reasoning_effort:null as string|null, workspace_folder:"/project", workspace_path_policy:"absolute" as const});
@@ -67,7 +72,7 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
   composerPlaceholder={new URLSearchParams(location.search).get('placeholder')??undefined}
   persistenceKey="unanswered-send-fixture"
   label="Worker"
-  conversationState="opened"
+  bind:conversationState
   readOnly={new URLSearchParams(location.search).has('readOnly')}
   {sendMessage}
 />{/if}
@@ -128,7 +133,7 @@ let credentialAttempt=0;
 (window as any).__credentialDelivery=(status:string)=>{credential={...credential,delivery:{attempt_id:'attempt-one',status,refusal_reason:status==='refused'?'backend_did_not_start':null}};coverage++;(window as any).__pulse();};
 function currentSnapshot(lens:ConversationViewLens, transcript=true) {
   const current=viewSnapshot('conversation-one',lens,history,transcript);
-  current.page.items.push(...recorded, ...(withheldNewest&&!incomplete?[withheldNewest]:[]));
+  if(transcript)current.page.items.push(...recorded, ...(withheldNewest&&!incomplete?[withheldNewest]:[]));
   if(credential)current.page.items.push({kind:'row',key:'credential-request-one',row_kind:'credential_request',order:{sequence:1,slot:0},source_sequence:1,sender_message_id:null,changed_through_sequence:coverage,created_at:1,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:credential}});
   if(incomplete)current.page.newer={projection_version:current.page.projection_version,lens,scope:current.page.scope,order:{sequence:coverage,slot:0}};
   current.coverage.through_sequence=coverage;
@@ -143,18 +148,21 @@ function currentSnapshot(lens:ConversationViewLens, transcript=true) {
   if(kind==='prompt')Object.assign(body,{mode:sent.mode,sent_at_unix_milliseconds:sent.sent_at_unix_milliseconds});
   if(kind==='prompt_refused')Object.assign(body,{reason:'running_turn_changed_before_steer',refusal_detail:'the turn had already ended'});
   recorded.push({kind:'row',key:'row:'+sequence,row_kind:kind,order:{sequence,slot:0},source_sequence:sequence,sender_message_id:sent.sender_message_id,changed_through_sequence:sequence,created_at:sequence,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:body}});
-  for(const source of sources)source.emit('snapshot',currentSnapshot(source.lens));
+  for(const source of sources)source.emit('snapshot',currentSnapshot(source.lens,source.transcript));
 };
 // A no-op notification exercises the real view reader and observer reconciliation.
-(window as any).__pulse=()=>{for(const source of sources)source.emit('snapshot',currentSnapshot(source.lens));};
+(window as any).__pulse=()=>{for(const source of sources)source.emit('snapshot',currentSnapshot(source.lens,source.transcript));};
+(window as any).__stallCurrentTails=()=>{for(const source of sources)source.stalled=true;};
+(window as any).__activeTails=()=>sources.filter(source=>!source.closed).map(source=>({transcript:source.transcript,lens:source.lens}));
+(window as any).__releaseTailSnapshots=()=>{for(const source of sources)source.releaseSnapshot?.();};
 (window as any).__publishAnswer=(text:string)=>{
   const previous=recorded.find(row=>row.key==='streamed-answer');
   const sequence=++coverage;
   const answer={kind:'row',key:'streamed-answer',row_kind:'agent_message',order:previous?.order??{sequence,slot:0},source_sequence:previous?.source_sequence??sequence,sender_message_id:null,changed_through_sequence:sequence,created_at:sequence,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:{kind:'agent_message',content:[{piece:'text',text}],to_owner:true}}};
   if(previous)recorded[recorded.indexOf(previous)]=answer;else recorded.push(answer);
-  for(const source of sources)source.emit('snapshot',currentSnapshot(source.lens));
+  for(const source of sources)source.emit('snapshot',currentSnapshot(source.lens,source.transcript));
 };
-(window as any).__publishStream=(addition:string)=>{streamingText+=addition;streamingVersion++;coverage++;for(const source of sources)source.emit('snapshot',currentSnapshot(source.lens));};
+(window as any).__publishStream=(addition:string)=>{streamingText+=addition;streamingVersion++;coverage++;for(const source of sources)source.emit('snapshot',currentSnapshot(source.lens,source.transcript));};
 (globalThis as any).__recordReads = 0;
 let theServerIsDown = window.sessionStorage.getItem("server-is-down") === "yes";
 (globalThis as any).__theServerIsDown = (down: boolean) => {
@@ -208,19 +216,25 @@ class FakeEventSource {
   static opened = 0;
   listeners=new Map<string,Array<(event:MessageEvent<string>)=>void>>();
   lens:ConversationViewLens='focus';
+  transcript=true;
+  closed=false;
+  stalled=false;
+  releaseSnapshot:(()=>void)|null=null;
   constructor(url: string) {
     if (/conversations\/conversation-one\/view\/tail/.test(url)) {
       FakeEventSource.opened += 1;
       const args=new URL(url,location.origin).searchParams;
-      this.lens=args.get('lens') as ConversationViewLens; sources.push(this);
-      queueMicrotask(()=>this.emit('snapshot',currentSnapshot(this.lens,args.get('transcript')==='true')));
+      this.lens=args.get('lens') as ConversationViewLens; this.transcript=args.get('transcript')==='true'; sources.push(this);
+      const snapshot=()=>this.emit('snapshot',currentSnapshot(this.lens,this.transcript));
+      if(new URLSearchParams(location.search).has('hold-first-tail')&&FakeEventSource.opened===1)this.releaseSnapshot=snapshot;
+      else queueMicrotask(snapshot);
     }
   }
   addEventListener(type:string,listener:(event:MessageEvent<string>)=>void): void {
     this.listeners.set(type,[...(this.listeners.get(type)??[]),listener]);
   }
-  emit(type:string,data:unknown):void{for(const listener of this.listeners.get(type)??[])listener(new MessageEvent(type,{data:JSON.stringify(data)}));}
-  close(): void {}
+  emit(type:string,data:unknown):void{if(this.closed||this.stalled)return;for(const listener of this.listeners.get(type)??[])listener(new MessageEvent(type,{data:JSON.stringify(data)}));}
+  close(): void {this.closed=true;}
 }
 
 (globalThis as any).EventSource = FakeEventSource;
