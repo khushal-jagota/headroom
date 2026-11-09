@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,26 @@ def short_transport_root() -> Iterator[Path]:
 class HttpsProxy:
     origin: str
     ca_path: Path
+    control: str | None = None
+
+    def cut_connections(self) -> None:
+        """Abort every open connection through the proxy, as a dropped link does.
+
+        Requests in flight get no reply. Later requests connect again normally."""
+        self._control("cut")
+
+    def blackhole(self, enabled: bool = True) -> None:
+        """While on, open connections are cut and new requests are held with no reply,
+        as when the network silently drops packets. Turning it off aborts the held
+        requests (their packets were lost); later requests pass normally."""
+        self._control("blackhole/on" if enabled else "blackhole/off")
+
+    def _control(self, action: str) -> None:
+        if self.control is None:
+            raise RuntimeError("this proxy has no control listener")
+        request = urllib.request.Request(f"{self.control}/{action}", method="POST")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            response.read()
 
     def session_factory(self) -> aiohttp.ClientSession:
         context = ssl.create_default_context(cafile=str(self.ca_path))
@@ -105,7 +126,8 @@ def isolated_https_proxy(
             if process.poll() is not None or time.monotonic() >= deadline:
                 raise RuntimeError((root / "proxy.log").read_text())
             time.sleep(0.01)
-        yield HttpsProxy(json.loads(ready.read_text())["origin"], cert)
+        published = json.loads(ready.read_text())
+        yield HttpsProxy(published["origin"], cert, published["control"])
     finally:
         process.terminate()
         try:
@@ -174,7 +196,44 @@ async def _serve(upstream: str, cert: Path, key: Path, ready: Path, login: str) 
         auto_decompress=False,
     )
 
+    blackholed = asyncio.Event()
+    released = asyncio.Event()
+    released.set()
+    runner: web.AppRunner | None = None
+
+    def cut() -> None:
+        server = runner.server if runner is not None else None
+        for handler in tuple(server.connections if server is not None else ()):
+            transport = handler.transport
+            if transport is not None:
+                transport.abort()
+
+    async def held_by_blackhole(request: web.Request) -> bool:
+        if not blackholed.is_set():
+            return False
+        await released.wait()
+        if request.transport is not None:
+            request.transport.abort()
+        return True
+
+    async def control(request: web.Request) -> web.Response:
+        action = request.match_info["action"]
+        if action == "cut":
+            cut()
+        elif action == "blackhole/on":
+            blackholed.set()
+            released.clear()
+            cut()
+        elif action == "blackhole/off":
+            blackholed.clear()
+            released.set()
+        else:
+            return web.Response(status=404)
+        return web.Response(text="ok")
+
     async def proxy(request: web.Request) -> web.StreamResponse:
+        if await held_by_blackhole(request):
+            return web.Response(status=502)
         connection_headers = {
             name.strip().lower() for name in request.headers.get("connection", "").split(",")
         }
@@ -252,23 +311,37 @@ async def _serve(upstream: str, cert: Path, key: Path, ready: Path, login: str) 
     app = web.Application(client_max_size=0)
     app.router.add_route("*", "/{path:.*}", proxy)
     runner = web.AppRunner(app, access_log=None)
+    control_app = web.Application()
+    control_app.router.add_post("/{action:.*}", control)
+    control_runner = web.AppRunner(control_app, access_log=None)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
     try:
         await runner.setup()
+        await control_runner.setup()
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen()
         site = web.SockSite(runner, listener, ssl_context=context)
         await site.start()
+        control_listener = socket.socket()
+        control_listener.bind(("127.0.0.1", 0))
+        control_listener.listen()
+        await web.SockSite(control_runner, control_listener).start()
         # Publish readiness only after the complete JSON file has been closed.
         temporary_ready = ready.with_suffix(".tmp")
         temporary_ready.write_text(
-            json.dumps({"origin": f"https://127.0.0.1:{listener.getsockname()[1]}"})
+            json.dumps(
+                {
+                    "origin": f"https://127.0.0.1:{listener.getsockname()[1]}",
+                    "control": f"http://127.0.0.1:{control_listener.getsockname()[1]}",
+                }
+            )
         )
         temporary_ready.replace(ready)
         await asyncio.Event().wait()
     finally:
+        await control_runner.cleanup()
         await runner.cleanup()
         await session.close()
 
