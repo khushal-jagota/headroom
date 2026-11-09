@@ -6,7 +6,8 @@ keyed by command_id, so a redelivered or restored command never runs twice. Comm
 for one child run strictly in mailbox order; different children run side by side. A
 stop skips its child's queue, and a model list has no child. The poll loop records a
 reply and polls again at once: it never waits for a command to run. Results go back on
-their own route, retried until the VPS records or rejects them.
+their own route, retried until the VPS records or rejects them. A reported command
+shrinks to a tombstone that is kept, so a restored mailbox never runs it twice.
 """
 
 from __future__ import annotations
@@ -214,12 +215,21 @@ class CommandJournal:
                     (command.command_sequence, command.command_id),
                 )
                 if row[0] == "finished":
+                    # Re-answer it: report its result again, and if it owes output (R1,
+                    # R2, a stop proof, an answer application), publish that again from
+                    # the command just served, which a tombstone no longer holds.
                     owed = self._outputs_owed(command, self._result(row[1]))
                     self._db.execute(
                         "UPDATE commands SET result_reported=0,"
-                        "outputs_published=CASE WHEN ? THEN 0 ELSE outputs_published END "
+                        "outputs_published=CASE WHEN ? THEN 0 ELSE outputs_published END,"
+                        "mailbox_command_json=CASE WHEN ? THEN ? ELSE mailbox_command_json END "
                         "WHERE command_id=?",
-                        (owed, command.command_id),
+                        (
+                            owed,
+                            owed,
+                            type_adapter(MailboxCommand).dump_json(command),
+                            command.command_id,
+                        ),
                     )
         return tuple(fresh)
 
@@ -276,13 +286,24 @@ class CommandJournal:
                 [(command_id,) for command_id in command_ids],
             )
 
-    def prune(self) -> None:
+    def shrink_to_tombstones(self) -> None:
+        """Shrink each finished, reported, published row to a tombstone: its command_id,
+        sequence and incarnation, and the result that re-answers it (the child and its
+        outcome; a model list is dropped). The command itself is dropped. Rows are never
+        deleted, so a command a restored VPS mailbox serves again is never run again."""
         with self._lock, self._db:
-            self._db.execute(
-                "DELETE FROM commands WHERE phase='finished' AND result_reported=1 "
-                "AND outputs_published=1 AND command_id IS NOT ("
-                "SELECT command_id FROM commands ORDER BY command_sequence DESC LIMIT 1)"
-            )
+            rows = self._db.execute(
+                "SELECT command_id,result_json FROM commands WHERE phase='finished' "
+                "AND result_reported=1 AND outputs_published=1 "
+                "AND length(mailbox_command_json)>0"
+            ).fetchall()
+            for command_id, raw in rows:
+                result = self._result(raw)
+                kept = CommandResult(result.command_id, child_outcome=result.child_outcome)
+                self._db.execute(
+                    "UPDATE commands SET mailbox_command_json=X'',result_json=? WHERE command_id=?",
+                    (type_adapter(CommandResult).dump_json(kept), command_id),
+                )
 
     def close(self) -> None:
         with self._lock:
@@ -327,7 +348,7 @@ class MacResultReporter:
             try:
                 while await self._report_once():
                     delay = OUTBOX_RETRY_INITIAL_SECONDS
-                await asyncio.to_thread(self.journal.prune)
+                await asyncio.to_thread(self.journal.shrink_to_tombstones)
             except Exception as error:
                 # A failed request or journal write: try again after the back-off.
                 connection_diagnostics.report(error, phase=ConnectionPhase.outcomes)

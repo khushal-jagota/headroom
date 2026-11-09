@@ -18,9 +18,7 @@ from typing import cast
 from uuid import uuid4
 
 import pytest
-from tests.unit.test_executor_native_runtime import (
-    ScriptedChild,
-)
+from tests.unit.test_executor_native_runtime import ScriptedChild, acknowledge_pending
 from tests.unit.test_executor_native_runtime import isolated_native_home as isolated_native_home
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
 
@@ -108,6 +106,17 @@ def rows(spool: Path) -> dict[str, tuple[object, ...]]:
         }
 
 
+def command_sizes(spool: Path) -> dict[str, int]:
+    with sqlite3.connect(spool / JOURNAL_NAME) as connection:
+        return dict(
+            connection.execute("SELECT command_id,length(mailbox_command_json) FROM commands")
+        )
+
+
+def size_of(command: ChildCommand) -> int:
+    return len(type_adapter(MailboxCommand).dump_json(mailbox(0, command)))
+
+
 @pytest.fixture
 def child() -> ChildReference:
     return ChildReference(str(uuid4()), str(uuid4()), "c_one")
@@ -156,15 +165,14 @@ def test_journal_records_once_and_its_cursor_follows_a_restored_mailbox(
     assert journal.poll_cursor() == 2
     assert journal.unreported(32) == (finished,)
     journal.mark_reported(["p1"])
-    # Pruning keeps the row that holds the cursor, and every unfinished one.
-    journal.finish(
-        "s1",
-        CommandResult("s1", CommandOutcome("s1", child, CommandDisposition.refused, {})),
-        outputs_owed=False,
-    )
-    journal.mark_reported(["s1"])
-    journal.prune()
-    assert set(rows(tmp_path / "spool")) == {"p2", "s1"}
+    # Shrinking deletes nothing: an unfinished row keeps its command for running.
+    journal.shrink_to_tombstones()
+    assert set(rows(tmp_path / "spool")) == {"p1", "p2", "s1"}
+    assert command_sizes(tmp_path / "spool") == {
+        "p1": 0,
+        "p2": size_of(second),
+        "s1": size_of(stop(child, "s1")),
+    }
 
 
 def test_open_settles_this_incarnations_unfinished_commands_and_republishes_r1(
@@ -279,6 +287,76 @@ def test_failed_start_refuses_its_prompt_then_publishes_r1_and_r2_in_order(
                 "start_failed_stop_" + digest(inherited.child_id),
             ]
         finally:
+            journal.close()
+
+    asyncio.run(run())
+
+
+def test_a_restored_command_matching_a_tombstone_is_re_answered_and_never_run_twice(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+) -> None:
+    """Risk (§11.2 M5): a VPS database restore serves again commands the Mac already ran,
+    after their journal rows were shrunk, and the agent gets the same prompt twice."""
+
+    async def run() -> None:
+        runner, outbox, native, start = native_registry
+        incarnation = start.child.executor_incarnation
+        journal = CommandJournal(outbox.root, incarnation, outputs_owed=command_owes_outputs)
+        runner.journal = journal
+        queues = MacCommandQueues(runner, journal, MacCatalog(), result_finished=lambda: None)
+        try:
+            delivered = prompt(start.child, "delivered_prompt")
+            never_started = ChildReference(incarnation, str(uuid4()), "c_two")
+            refused = prompt(never_started, "refused_prompt")
+            commands = (mailbox(1, start), mailbox(2, delivered), mailbox(3, refused))
+            journal.record_poll_reply(MailboxPollReply(commands), incarnation)
+            for command in (start, delivered, refused):
+                await runner.run(command)
+            assert native.prompts == 1
+            acknowledge_pending(outbox)  # R1 and R2 of the refused prompt arrived.
+            journal.mark_reported(r.command_id for r in journal.unreported(32))
+            journal.shrink_to_tombstones()
+            assert set(command_sizes(outbox.root).values()) == {0}
+            results = {
+                command.command_id: journal.result_of(command.command_id)
+                for command in (start, delivered, refused)
+            }
+
+            # The VPS database is restored: its mailbox ends at 1 and serves 2 and 3 again
+            # under new numbers. A fresh process holds this journal.
+            journal.close()
+            journal = CommandJournal(outbox.root, incarnation, outputs_owed=command_owes_outputs)
+            fresh_runner = MacRunner(
+                incarnation=incarnation,
+                outbox=outbox,
+                factory=runner.factory,
+                message_files=runner.message_files,
+                paths=runner.paths,
+                journal=journal,
+            )
+            queues = MacCommandQueues(
+                fresh_runner, journal, MacCatalog(), result_finished=lambda: None
+            )
+            assert journal.lower_poll_cursor(1)
+            served = MailboxPollReply((mailbox(2, delivered), mailbox(3, refused)))
+            assert journal.record_poll_reply(served, incarnation, polled_after=0) == ()
+            queues.republish()
+            while journal.unpublished():
+                await asyncio.sleep(0.01)
+            await queues.close()
+            assert native.prompts == 1  # Nothing ran again.
+            assert list(journal.unreported(32)) == [
+                results["delivered_prompt"],
+                results["refused_prompt"],
+            ]
+            # The refused prompt is answered again as it was: R1, then R2.
+            assert [item.submission_id for item in outbox.pending()] == [
+                "turn_failed_" + digest(refused.command_id),
+                "start_failed_stop_" + digest(never_started.child_id),
+            ]
+            assert journal.poll_cursor() == 3
+        finally:
+            await queues.close()
             journal.close()
 
     asyncio.run(run())
