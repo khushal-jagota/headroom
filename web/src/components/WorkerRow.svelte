@@ -4,6 +4,7 @@
   import DestinationIcon from "./DestinationIcon.svelte";
   import type { TicketLocale } from "../lib/ticketMachines";
   import type { ConversationSignal } from "../lib/conversationSignal";
+  import type { AgentHoldFacts } from "../lib/workAttentionPresentation";
 
   let {
     locale, machine = true,
@@ -16,6 +17,7 @@
     onclick = undefined,
     lead = undefined,
     approval = null,
+    agentHold = undefined,
     class: extraClass = "",
     ...rest
   }: {
@@ -32,6 +34,8 @@
     lead?: import("svelte").Snippet;
     /** Whose approval the Ticket waits on, drawn in the mark column as the Review icon. */
     approval?: "owner" | "agent" | null;
+    /** Whether an agent holds the Ticket, for what a Mac Ticket says while the Mac is away. */
+    agentHold?: AgentHoldFacts;
     class?: string;
     [key: string]: unknown;
   } = $props();
@@ -50,7 +54,7 @@
   {:else if approval === "agent" && !signal?.message_for_owner && !signal?.working}
     <span class="conversation-signal-marks approval-mark approval-mark--agent" role="img" aria-label="Awaiting an agent's approval" data-approval-mark="agent" data-conversation-id={conversationId ?? undefined}><DestinationIcon name="review" /></span>
   {:else}
-    <MachineActivityMark {locale} {signal} {conversationId} completed={quiet} />
+    <MachineActivityMark {locale} {signal} {conversationId} completed={quiet} {agentHold} />
   {/if}
 
 {/snippet}

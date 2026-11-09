@@ -356,7 +356,7 @@
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
               /></h1>
-              <span class="ticket-title-mark"><MachineActivityMark working={false} locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} /></span>
+              <span class="ticket-title-mark"><MachineActivityMark working={false} agentHold={detail} locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} /></span>
             </div>
             <RecapSlot>
             {#snippet children()}
@@ -381,7 +381,7 @@
             <!-- What became of an ask for a recap reads under the recap, as staging. -->
             {#if recapNote}<p class="ticket-recap-note" role="status" data-request-recap-note>{recapNote}</p>{/if}
           </div>
-          {#if masthead.locale === "macos"}<MacStatus health={machineHealth.isError ? undefined : machineHealth.data} showDisconnected />{/if}
+          {#if masthead.locale === "macos"}<MacStatus health={machineHealth.isError ? undefined : machineHealth.data} ticket={{ticket_status: detail.ticket_status, locale: masthead.locale, conversation_signal: masthead.conversation_signal}} />{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
               <span class="ticket-blocker-heading">Blocked by</span>

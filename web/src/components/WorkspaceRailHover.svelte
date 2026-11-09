@@ -2,7 +2,8 @@
   import { skipPreviewTabStops } from "../lib/previewTabOrder";
   import MachineActivityMark from "./machines/MachineActivityMark.svelte";
   import MachineIdentity from "./machines/MachineIdentity.svelte";
-  import { macActivityKnown, macAvailability } from "../lib/ticketMachines";
+  import { macActivityKnown, macPresenceLabel, macTicketActivityLabel } from "../lib/ticketMachines";
+  import { MACHINE_ACTIVITY_UNKNOWN } from "../lib/machines/config";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -27,7 +28,9 @@
   let currentWorker = $derived(worker);
   const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
   let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
-  let stageSentence = $derived(unknownMac ? macAvailability(health.isError ? undefined : health.data) : currentWorker ? workspaceWorkerStageSentence(currentWorker) : "");
+  let macHealth = $derived(health.isError ? undefined : health.data);
+  let stageSentence = $derived(unknownMac ? (worker ? macTicketActivityLabel(macHealth, worker) : null) ?? macPresenceLabel(macHealth) ?? MACHINE_ACTIVITY_UNKNOWN
+    : currentWorker ? workspaceWorkerStageSentence(currentWorker) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
   let recapIdentity = $derived(recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null);
   let pointerVisit = $state<{ target: HTMLElement | null; recapIdentity: string | null } | null>(null);
@@ -132,7 +135,7 @@
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
   <div class="kicker">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span>{kicker}</span></div>
-  <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark agentHold={currentWorker ?? undefined} locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}

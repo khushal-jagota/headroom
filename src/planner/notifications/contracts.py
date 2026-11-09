@@ -9,6 +9,8 @@ from planner.core.contracts import Principal, PrincipalKind
 
 TICKET_NOTIFICATION_SUBJECT_KEY: Final = "tickets"
 MANAGER_NOTIFICATION_SUBJECT_KEY: Final = "managers"
+PANELS_NOTIFICATION_SUBJECT_KEY: Final = "panels"
+STALL_ALARM_NOTIFICATION_TYPE: Final = "stall_alarm"
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +25,8 @@ class NotificationType:
 class NotificationSubject:
     key: str
     label: str
-    principal_kind: PrincipalKind
+    # None for Panels itself, which is not a principal.
+    principal_kind: PrincipalKind | None
     notification_type_ids: tuple[str, ...]
 
 
@@ -58,6 +61,13 @@ NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
         "A worker turn or Ticket failed and needs attention.",
         True,
     ),
+    # Raised by the stall watchdog unit, not by an attention edge.
+    NotificationType(
+        STALL_ALARM_NOTIFICATION_TYPE,
+        "Stalled work",
+        "Panels work stopped moving and needs a look.",
+        True,
+    ),
 )
 NOTIFICATION_TYPE_BY_ID: Final[dict[str, NotificationType]] = {
     item.id: item for item in NOTIFICATION_TYPES
@@ -90,6 +100,12 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
         "Managers",
         PrincipalKind.manager,
         ("awaiting_reply", "awaiting_answer", "errored"),
+    ),
+    NotificationSubject(
+        PANELS_NOTIFICATION_SUBJECT_KEY,
+        "Panels",
+        None,
+        (STALL_ALARM_NOTIFICATION_TYPE,),
     ),
 )
 NOTIFICATION_SUBJECT_BY_KEY: Final[dict[str, NotificationSubject]] = {

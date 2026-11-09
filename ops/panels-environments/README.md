@@ -34,6 +34,29 @@ change.
 `panels-live.service` binds the app to loopback port 8767 through its explicit live
 configuration. The existing Tailscale Serve route remains unchanged.
 
+## Stall watchdog
+
+`panels-stall-watchdog.timer` runs `panels stalls watchdog` every 30 seconds, outside the
+live service, so a stuck server can still raise an alarm. Each run opens the live
+database read-only, alarms once on each stall the server's checker has recorded and on
+a checker heartbeat older than 90 seconds, pushes to Khushal's subscribed browsers and
+devices unless the Panels "Stalled work" notification is switched off, and messages the
+Chief through the live server (best effort, 10 seconds). Its record of what it has
+already alarmed on is `data/stall-watchdog/stall-watchdog-state.json`. Native push needs
+the same `PLAN_APNS_*` inputs as the live service, added to this unit's environment.
+
+Install it once, after the release that ships it is current:
+
+```sh
+cd "$HOME/Deployments/Panels/current/app/ops/panels-environments"
+cp panels-stall-watchdog.service panels-stall-watchdog.timer "$HOME/.config/systemd/user/"
+systemctl --user daemon-reload
+systemctl --user enable --now panels-stall-watchdog.timer
+```
+
+Check it with `systemctl --user list-timers panels-stall-watchdog.timer` and
+`journalctl --user -u panels-stall-watchdog.service`.
+
 ## Dedicated GitHub Actions runner
 
 Install the repository's self-hosted runner beneath

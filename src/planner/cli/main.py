@@ -45,6 +45,7 @@ from planner.measures.cli import measure as measure_group
 from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.previews.cli import preview as preview_group
 from planner.server_lifecycle.cli import serve as serve_command
+from planner.stalls.cli import stalls_group
 from planner.tickets.contracts import TicketLocale
 from planner.worker_settings.contracts import SkillPatch
 from planner.worker_types.contracts import BRIEF_FIELD_ID
@@ -435,6 +436,7 @@ main.add_command(dataset_group)
 main.add_command(attention_group)
 main.add_command(measure_source_group)
 main.add_command(preview_group)
+main.add_command(stalls_group)
 environment_group.hidden = True
 
 
