@@ -1676,6 +1676,9 @@ button.list-row:hover .list-row-title {
 }
 
 .chat-thread {
+  /* Contains absolutely positioned descendants (the hidden loading status). Otherwise they
+     extend the clipped page above, and anything that scrolls it moves the whole conversation. */
+  position: relative;
   flex: 1;
   min-height: 0;
   min-width: 0;
