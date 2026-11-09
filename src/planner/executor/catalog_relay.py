@@ -10,76 +10,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
 from contextlib import closing
 from dataclasses import replace
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.snapshot import BackendSnapshot, BackendSnapshotService
+from planner.conversation.snapshot import BackendSnapshot
 from planner.core.db import connect
-from planner.core.task_settlement import run_on_worker_thread, wait_for_settlement
+from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import MODEL_LIST_LIMIT_SECONDS
 from planner.executor.contracts import CommandSettlementReason
-from planner.executor.link import Link
-from planner.executor.protocol import (
-    ModelListRequest,
-    WireMessage,
-    WireMessageKind,
-    as_object,
-    type_adapter,
-)
+from planner.executor.protocol import ModelListRequest, as_object, type_adapter
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService
 from planner.executor.vps_runs import MacRuns
 
 LOGGER = logging.getLogger(__name__)
 MAC_AWAY_DIAGNOSIS = "The Mac is away."
-
-
-# The Mac half, kept here until Part C's executor/mac_catalog.py replaces it at
-# integration; it still speaks the old link and nothing new imports it.
-class MacCatalogRelay:
-    def __init__(self, snapshots: BackendSnapshotService | None = None) -> None:
-        self.snapshots = snapshots or BackendSnapshotService(machine_catalog=True)
-        self._tasks: set[asyncio.Task[None]] = set()
-
-    def handle(self, message: WireMessage, link: Link, *, admit: Callable[[], bool]) -> None:
-        if not admit():
-            return
-
-        async def reply() -> None:
-            try:
-                raw_backend = message.payload["backend_key"]
-                if not isinstance(raw_backend, str):
-                    return
-                backend = ConversationBackendKey(raw_backend)
-                snapshot = await self.snapshots.snapshot(
-                    backend,
-                    refresh=message.payload.get("refresh") is True,
-                    discover_update_advisory=False,
-                )
-                await link.tell(
-                    WireMessageKind.catalog_response,
-                    as_object(snapshot),
-                    request_id=message.request_id,
-                    admit=admit,
-                )
-            except (ConnectionError, OSError, ValueError, TypeError, KeyError):
-                # An optional read must not disturb the shared execution link.
-                return
-
-        task = asyncio.create_task(reply())
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-
-    async def settle(self) -> None:
-        tasks = tuple(self._tasks)
-        for task in tasks:
-            if not task.cancelling():
-                task.cancel()
-        for task in tasks:
-            await wait_for_settlement(task)
 
 
 class VpsCatalogRelay:

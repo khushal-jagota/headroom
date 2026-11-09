@@ -385,7 +385,7 @@ def test_field_mac_session_receives_the_published_archive_bytes_from_the_real_se
     from planner.core.clock import build_clock
     from planner.core.config import load_config
     from planner.core.server import create_app
-    from planner.executor.link import create_client_session
+    from planner.executor.mac_http import create_update_session
 
     # Random bytes keep the archive above the compression threshold after gzip.
     filler = random.Random(0).randbytes(8192)
@@ -425,7 +425,7 @@ def test_field_mac_session_receives_the_published_archive_bytes_from_the_real_se
                 while not server.started:
                     await asyncio.sleep(0.01)
             origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
-            async with create_client_session() as session:
+            async with create_update_session(None) as session:
                 async with session.get(origin + "/api/executor/update", headers=HEADERS) as check:
                     assert check.headers.get("Content-Encoding") is None
                     body = json.loads(await check.read())

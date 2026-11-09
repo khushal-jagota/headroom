@@ -30,7 +30,7 @@ from planner.executor.configuration import (
     MAX_COMMAND_OUTCOMES_PER_REPORT,
     MAX_LIVE_EVENTS_PER_BATCH,
 )
-from planner.executor.contracts import ExecutorHealthRead, MacRunConversations, StallSource
+from planner.executor.contracts import ExecutorHealthRead, StallSource
 from planner.executor.protocol import (
     LIVE_BACKEND_EVENT_METHODS,
     CommandOutcomeReply,
@@ -99,8 +99,7 @@ class VpsExecutor:
 
     def bind_conversations(self, conversations: SqliteProcessConversationSystem) -> None:
         self.conversations = conversations
-        # retire_replaced_remote_child is the conversation core's (Part D).
-        self.runs.conversations = cast(MacRunConversations, conversations)
+        self.runs.conversations = conversations
         self.inbox.conversations = conversations
         self.inbox.agent_writes.conversations = conversations
 

@@ -4251,10 +4251,12 @@ class SqliteProcessConversationSystem:
     ) -> None:
         """After its drain, end this conversation's turn of a replaced Mac process.
 
-        The new process proves that the old one's agents are gone. The unfinished turn is
-        recorded the way a deploy records one, ended interrupted, and then recovered like
-        an interrupted VPS Ticket: one recovery prompt, which starts a fresh child that
-        resumes the stored session. Other conversations are not touched.
+        The new process proves that the old one's agents are gone. The run is closed in
+        the transaction that records the unfinished turn the way a deploy records one, so
+        a VPS crash cannot close the run and lose the turn's recovery. The turn is ended
+        interrupted, and then recovered like an interrupted VPS Ticket: one recovery
+        prompt, which starts a fresh child that resumes the stored session. Other
+        conversations are not touched.
         """
         from planner.conversation.deploy_interruptions.coordinator import recover_conversations
 
@@ -4304,24 +4306,25 @@ class SqliteProcessConversationSystem:
             if state.retained_child_reference != reference:
                 return False
             retained = self._retained_run(state)
+            # A replaced process's run is closed below, together with its interruption.
             if (
                 retained is None
                 or retained.reference != reference
-                or not retained.retirement_confirmed
+                or (replaced_by is None and not retained.retirement_confirmed)
             ):
                 raise ValueError("Remote child termination was not committed")
             if replaced_by is not None:
                 from planner.conversation.deploy_interruptions.coordinator import (
-                    record_mac_process_interruption,
+                    close_run_and_record_mac_process_interruption,
                 )
                 from planner.core.task_settlement import run_on_worker_thread
 
                 await run_on_worker_thread(
-                    record_mac_process_interruption,
+                    close_run_and_record_mac_process_interruption,
                     self._store._db_path,
-                    reference.conversation_id,
+                    reference,
                     replaced_by,
-                    int(self._unix_time_now()),
+                    int(self._unix_time_now() * 1000),
                 )
             if state.running_turn is not None:
                 await self._end_turn(

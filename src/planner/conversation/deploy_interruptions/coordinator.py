@@ -15,6 +15,7 @@ from planner.conversation.deploy_interruptions.data import import_captured_turns
 from planner.conversation.deploy_interruptions.logic import recovery_message_identity
 from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
+from planner.execution_identity import ChildReference
 
 _LOG = logging.getLogger(__name__)
 
@@ -74,20 +75,27 @@ async def recover_conversations(
             group.create_task(resume(conversation_id))
 
 
-def record_mac_process_interruption(
-    db_path: str, conversation_id: str, replaced_by: str, now: int
+def close_run_and_record_mac_process_interruption(
+    db_path: str, reference: ChildReference, replaced_by: str, now_ms: int
 ) -> None:
-    """Record the turn a replaced Mac process left unfinished, as a deploy records one.
+    """Close the run of a replaced Mac process and record the turn it left unfinished, as
+    a deploy records one, in one transaction.
 
-    Run after the conversation's Mac run is closed, and before its turn is ended, so the
-    turn is still unresolved and is not taken for one the executor still owns.
+    Committed together, a VPS crash either leaves the run open, so the drain is rebuilt at
+    startup and comes back here, or leaves the recorded interruption, which startup
+    recovery resumes. The turn is read after the close in the same transaction, so it is
+    no longer taken for one the executor still owns.
     """
     from planner.core.db import connect
     from planner.environments.interruption_capture import read_unresolved_turns
+    from planner.executor.store import ExecutorStore
 
+    conversation_id = reference.conversation_id
+    now = now_ms // 1000
     conn = connect(db_path)
     try:
         conn.execute("BEGIN IMMEDIATE")
+        ExecutorStore.close_child_in_transaction(conn, reference, now_ms)
         turns = read_unresolved_turns(conn, conversation_ids=(conversation_id,))
         if turns:
             import_captured_turns(

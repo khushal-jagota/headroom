@@ -163,8 +163,10 @@ class MacRunConversations(Protocol):
     async def retire_replaced_remote_child(
         self, reference: ChildReference, *, replaced_by: str
     ) -> None:
-        """After its drain: interrupt this conversation's turn of a replaced Mac process,
-        then recover it like an interrupted VPS Ticket (a fresh child resumes the session)."""
+        """After its drain: close the run of a replaced Mac process and record its
+        interrupted turn in one transaction, end the turn, then recover it like an
+        interrupted VPS Ticket (a fresh child resumes the session). A child the core no
+        longer holds is left alone, and its run stays for the caller to close."""
         ...
 
     async def confirm_remote_child_termination(self, reference: ChildReference) -> None: ...

@@ -84,7 +84,9 @@ class _Drain:
 
     reference: ChildReference
     replaced_by: str
-    closed: asyncio.Event = field(default_factory=asyncio.Event)
+    # Set when the drain ends; reached says whether the conversation's items drained.
+    drained: asyncio.Event = field(default_factory=asyncio.Event)
+    reached: bool = False
     task: asyncio.Task[None] | None = None
 
 
@@ -257,14 +259,22 @@ class MacRuns:
 
     async def _closed_without_stop(self, child: ChildReference) -> None:
         """A stop that never reached its process: the process is gone. Its run closes once
-        the conversation's items have drained."""
+        the conversation's items have drained.
+
+        The stop closes the run itself rather than waiting for the drain's retirement,
+        which needs the conversation lock that the stop's caller may hold. That close
+        records no interruption: the stop's caller is ending the child's turn itself. A
+        drain that ended without draining (shutdown) leaves the run open for the drain
+        rebuilt at startup."""
         if await run_on_worker_thread(self.store.has_closed_child_assignment, child):
             return
         current = self.presence.current_identity()
         if current is None or current.executor_incarnation == child.executor_incarnation:
             return
         drain = self._start_drain(child, current.executor_incarnation)
-        await drain.closed.wait()
+        await drain.drained.wait()
+        if drain.reached:
+            await run_on_worker_thread(self.store.close_child, child, now_ms())
 
     async def save_answer(self, command: ChildCommand) -> bool:
         """The row is inserted under the conversation lock, only while its turn is live,
@@ -434,16 +444,14 @@ class MacRuns:
             # The replaced process's items are replayed by its successor under the
             # still-open assignment; closing first would refuse them.
             await self.presence.wait_until_drained(reference.conversation_id)
-            await self._retry(
-                "close",
-                reference,
-                partial(run_on_worker_thread, self.store.close_child, reference, now_ms()),
-            )
-            drain.closed.set()
+            drain.reached = True
+            drain.drained.set()
             self.retire_child(reference)
             if hasattr(self, "conversations"):
-                # Closed, the run no longer counts as pending in the rows, so the retire is
-                # tracked here until it succeeds: its turn must end and be recovered.
+                # The core closes the run in the transaction that records its interrupted
+                # turn, so a VPS crash cannot close the run and lose its recovery. Once
+                # closed, the run no longer counts as pending in the rows, so the rest of
+                # the retirement (ending the turn, the recovery prompt) is tracked here.
                 with WAITS.track(
                     TrackedWaitKind.mac_replacement_pending,
                     reference.conversation_id,
@@ -459,8 +467,15 @@ class MacRuns:
                             replaced_by=drain.replaced_by,
                         ),
                     )
+            # The core retires only a child it still holds. One it already let go (a stop
+            # that closed the run), or one it no longer knows, leaves the run to close here.
+            await self._retry(
+                "close",
+                reference,
+                partial(run_on_worker_thread, self.store.close_child, reference, now_ms()),
+            )
         finally:
-            drain.closed.set()
+            drain.drained.set()
             if self._drains.get(reference.conversation_id) is drain:
                 del self._drains[reference.conversation_id]
 

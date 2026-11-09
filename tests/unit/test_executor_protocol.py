@@ -10,8 +10,9 @@ the real codecs (type_adapter, encode_bounded, decode_bounded) and the recorded 
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -40,6 +41,7 @@ from planner.executor.protocol import (
     CommandOutcome,
     CommandOutcomeReport,
     CommandResult,
+    IpcWritePayload,
     LeaseRequest,
     MailboxCommand,
     MailboxOperation,
@@ -174,17 +176,61 @@ def test_mailbox_values_round_trip_and_ignore_unknown_fields() -> None:
     assert decode_bounded(encode_bounded(report), CommandOutcomeReport) == report
 
 
+def test_a_start_ignores_unknown_fields_at_every_level_but_local_ipc_stays_strict() -> None:
+    """A start nests its resolved start and role materials, each once a strict level.
+    Unknown fields are ignored there too, while a malformed command and an unknown IPC
+    field are still refused."""
+    command = type_adapter(ChildCommand).validate_python(
+        {
+            "command_id": "start",
+            "child": as_object(CHILD),
+            "operation": "start",
+            "turn": None,
+            "arguments": {
+                "resolved_start": {
+                    "conversation_id": "conversation",
+                    "backend_key": "codex",
+                    "model": "fixture",
+                    "reasoning_effort": None,
+                    "role_materials": {"role_text": "Worker", "identity_environment_variables": []},
+                    "workspace_folder": "/tmp/fixture",
+                    "access": "full",
+                },
+                "canonical_skill_snapshot": {"sources": [], "required_skill_names": []},
+            },
+        }
+    )
+    raw = as_object(command)
+    raw["future_envelope"] = {"anything": True}
+    arguments = cast(dict[str, Any], raw["arguments"])
+    arguments["future_argument"] = True
+    arguments["resolved_start"]["future_start"] = True
+    arguments["resolved_start"]["role_materials"]["future_material"] = True
+    assert type_adapter(ChildCommand).validate_python(raw) == command
+    for change in ({"operation": "stop"}, {"child": {"child_id": "missing original identity"}}):
+        with pytest.raises(ValidationError):
+            type_adapter(ChildCommand).validate_python({**deepcopy(raw), **change})
+    with pytest.raises(ValidationError):
+        type_adapter(IpcWritePayload).validate_python(
+            {"operation": "ticket.edit", "arguments": {}, "unrecognized": True}
+        )
+
+
 def test_a_mailbox_command_carries_exactly_one_payload_under_its_own_id() -> None:
     command = _prompt_command()
     for raw in (
         {"command_sequence": 1, "command_id": "x", "created_at_vps_ms": 1},
         {
-            "command_sequence": 1, "command_id": command.command_id, "created_at_vps_ms": 1,
+            "command_sequence": 1,
+            "command_id": command.command_id,
+            "created_at_vps_ms": 1,
             "child_command": as_object(command),
             "model_list_request": {"backend_key": "codex", "refresh": False},
         },
         {
-            "command_sequence": 1, "command_id": "another id", "created_at_vps_ms": 1,
+            "command_sequence": 1,
+            "command_id": "another id",
+            "created_at_vps_ms": 1,
             "child_command": as_object(command),
         },
     ):
@@ -228,4 +274,3 @@ def test_protocol_manifest_detects_schema_edits_and_cannot_hide_them_by_updating
         {key: value for key, value in recorded.items() if not key.startswith("command_journal_")},
     )
     check_protocol_manifest(journal_changed, journal_changed, before_journal)
-
