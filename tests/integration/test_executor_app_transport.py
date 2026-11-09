@@ -5,8 +5,9 @@ gate (login, executor ID, Origin, duplicated security headers) admits a request 
 should refuse; the work-route fence answers the wrong status or body; a status, body
 shape or header the Mac reads (lease 200/409, poll hold, 413, 204, the upload header,
 the download's Content-Length and digest) differs once uvicorn and the proxy are in
-between; response compression is applied to an input download; or the old WebSocket is
-accepted instead of refused and recorded.
+between; a lease that fails after ingress records no contact (so failing leases look
+like sleep and never alarm); response compression is applied to an input download; or
+the old WebSocket is accepted instead of refused and recorded.
 Gap: the typed adapters are proved without HTTP in test_executor_command_mailbox.py
 and the inbox tests; nothing else crosses uvicorn and TLS with raw requests.
 Layer: integration. One real uvicorn behind the isolated TLS proxy
@@ -204,6 +205,19 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                             "POST", "/api/executor/lease", headers, lease_body
                         )
                         assert status == 403, headers
+                    assert endpoint.health().presence == "never"
+                    assert endpoint.health().last_contact_at_ms is None
+
+                    # A lease past ingress that then fails records contact, so leases
+                    # that keep failing alarm rather than look like a sleeping Mac.
+                    status, body, _ = await call(
+                        "POST",
+                        "/api/executor/lease",
+                        only_id | {"Accept-Encoding": "identity"},
+                        b"{}",
+                    )
+                    assert (status, _error_code(body)) == (400, "validation")
+                    assert endpoint.health().last_contact_at_ms is not None
                     assert endpoint.health().presence == "never"
 
                     # A client that verifies certificates by default, as the Mac's sessions

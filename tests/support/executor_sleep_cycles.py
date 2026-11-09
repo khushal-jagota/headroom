@@ -1399,7 +1399,7 @@ class SleepCycles:
                 bool(held)
                 and set(self.endpoint.runs._drains) <= held
                 and not any(
-                    wait.kind is TrackedWaitKind.mac_replacement_pending
+                    wait.kind is TrackedWaitKind.vps_replacement_retiring
                     for wait in WAITS.snapshot()
                 )
                 and bool(await asyncio.to_thread(self._unresolved_replaced_runs))

@@ -1,8 +1,9 @@
 """The in-server stall checker against a real database, with fake stall sources.
 
 Risk: findings that never reach the table the watchdog reads (or never clear), a check
-that fails without the heartbeat showing it, a restart that re-dates or drops an open
-stall, and a VPS save retrying forever with nothing tracking it. Nothing covered the
+that fails without the heartbeat showing it, a sleep or a restart that re-dates or drops
+an open stall (so it alarms again), and a VPS save retrying forever with nothing
+tracking it. Nothing covered the
 checker before this change. Layer: StallChecker over a fresh schema in tmp_path, with
 fake sources standing in for Part B's VpsExecutor.stall_sources(); the rule itself is
 proven in test_stall_findings.py.
@@ -163,32 +164,42 @@ def test_a_check_writes_named_findings_and_the_heartbeat_and_clears_what_moved(
     assert _heartbeat(db_path) == clock.now_ms
 
 
-def test_open_stalls_keep_their_start_across_a_checker_restart(tmp_path: Path) -> None:
+def test_open_stalls_stay_open_with_their_start_across_a_sleep_and_a_restart(
+    tmp_path: Path,
+) -> None:
+    # A command and an item stuck from 0. The Mac is present 0-100 s and 220-325 s, so
+    # both reach their limits in present time across two stretches. Then it sleeps, the
+    # server restarts while it sleeps (the presence row alone shows only the last run of
+    # leases), and the Mac returns with both still stuck.
     db_path = _database(tmp_path)
     clock = _Clock()
     sources: tuple[StallSource, ...] = (_UnfetchedCommands(),)
     _put_command(db_path, created_at_ms=0)
+    stuck = {"mac_command_unfetched:cmd-1", "mac_items_not_moving:c1:7"}
+
+    def awake(now_ms: int) -> bool:
+        return now_ms <= 100 * S or 220 * S <= now_ms <= 325 * S or now_ms >= 1200 * S
 
     async def checks(checker: StallChecker, until_ms: int) -> None:
         while clock.now_ms <= until_ms:
-            _lease(db_path, clock.now_ms, oldest_sequence=7)
-            await checker.check_once()
+            if awake(clock.now_ms):
+                _lease(db_path, clock.now_ms, oldest_sequence=7)
+            open_keys = {finding.finding_key for finding in await checker.check_once()}
+            if clock.now_ms >= 330 * S:
+                assert open_keys == stuck, clock.now_ms
             clock.now_ms += configuration.STALL_CHECK_INTERVAL_SECONDS * S
 
-    asyncio.run(
-        checks(StallChecker(db_path, ProcessWaitRegistry(clock), lambda: sources, clock), 180 * S)
-    )
-    before = _rows(db_path)
-    assert set(before) == {"mac_command_unfetched:cmd-1", "mac_items_not_moving:c1:7"}
-    # A new server process: a fresh checker with no memory of the leases it saw.
-    asyncio.run(
-        checks(StallChecker(db_path, ProcessWaitRegistry(clock), lambda: sources, clock), 195 * S)
-    )
-    after = _rows(db_path)
-    for key, row in before.items():
-        assert after[key]["cleared_at_ms"] is None
-        assert after[key]["stalled_since_ms"] == row["stalled_since_ms"] == 0
-        assert after[key]["ticket_title"] == "Fix the login bug"
+    def checker() -> StallChecker:
+        return StallChecker(db_path, ProcessWaitRegistry(clock), lambda: sources, clock)
+
+    asyncio.run(checks(checker(), 600 * S))
+    assert set(_rows(db_path)) == stuck
+    # A new server process while the Mac sleeps: a fresh checker with no memory.
+    asyncio.run(checks(checker(), 1400 * S))
+    for row in _rows(db_path).values():
+        assert row["cleared_at_ms"] is None
+        assert row["stalled_since_ms"] == 0
+        assert row["ticket_title"] == "Fix the login bug"
 
 
 def test_the_loop_runs_on_its_interval_and_a_failing_check_writes_no_heartbeat(

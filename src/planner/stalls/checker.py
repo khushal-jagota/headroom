@@ -6,9 +6,12 @@ and the heartbeat in one quiet commit. The watchdog unit reads both with the dat
 opened read-only, so a stuck server still raises an alarm: its heartbeat goes stale.
 
 The sources read database rows, so their waits keep their starts across a restart. The
-item and lease-failing observations are rebuilt from the open findings at the first
-check: an overdue stall stays overdue from its first start, but one not yet overdue
-when the server restarted counts again from the restart (a known gap).
+open findings, and the item and lease-failing observations behind them, are rebuilt
+from the database at the first check, so an overdue row-based stall stays open from its
+first start and does not alarm again. The rest is memory (known gaps): the Mac's present
+time restarts from the presence row's current run of leases, an item or lease failure
+not yet overdue counts again from the restart, and in-memory waits (registry waits,
+silent turns) start again.
 """
 
 from __future__ import annotations
@@ -18,6 +21,8 @@ import json
 import logging
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
+from types import MappingProxyType
 
 from planner.core.db import commit_without_change_signal, connect
 from planner.core.task_settlement import run_on_worker_thread
@@ -33,6 +38,7 @@ from planner.stalls.contracts import (
 from planner.stalls.logic.findings import (
     OverdueWait,
     PresenceObservation,
+    forget_present_time_before,
     observation_from_open_findings,
     overdue_waits,
     presence_waits,
@@ -136,7 +142,8 @@ class StallChecker:
             finally:
                 conn.execute("ROLLBACK")
             lease_waits, observation = presence_waits(record, now_ms, self._observation)
-            overdue = overdue_waits((*registry_waits, *source_waits, *lease_waits), record, now_ms)
+            waits = (*registry_waits, *source_waits, *lease_waits)
+            overdue = overdue_waits(waits, record, now_ms, observation)
             conn.execute("BEGIN IMMEDIATE")
             try:
                 findings = _write_findings(conn, overdue, now_ms)
@@ -145,7 +152,12 @@ class StallChecker:
                 raise
             # No screen shows findings; the watchdog reads them on its own timer.
             commit_without_change_signal(conn)
-            self._observation = observation
+            self._observation = replace(
+                forget_present_time_before(observation, waits),
+                open_findings=MappingProxyType(
+                    {finding.finding_key: finding.stalled_since_ms for finding in findings}
+                ),
+            )
             return findings
         finally:
             conn.close()

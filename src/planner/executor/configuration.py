@@ -39,7 +39,7 @@ LEASE_TIMEOUT_SECONDS: Final = 10.0
 LEASE_SERVER_LIMIT_SECONDS: Final = 5.0
 MAC_AWAY_AFTER_SECONDS: Final = 60.0
 # A lease more than this long after the previous accepted one restarts continuous
-# presence, which every Mac-dependent stall rule counts from.
+# presence ("present since"). A drain also needs a lease this fresh.
 LEASE_CONTINUITY_SECONDS: Final = 25.0
 # The lease lists at most this many conversations with waiting outbox items.
 MAX_LEASE_WAITING_CONVERSATIONS: Final = 64

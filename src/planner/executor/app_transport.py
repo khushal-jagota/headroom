@@ -191,6 +191,9 @@ def build_executor_router() -> APIRouter:
     async def lease(request: Request) -> Response:
         try:
             endpoint = endpoint_for(request)
+            # Any lease attempt past ingress is contact, whatever fails next, so a
+            # failing lease cannot look like a sleeping Mac (mac_lease_failing).
+            endpoint.record_contact()
             lease_request = _decode(
                 await _body(request, MAX_ENVELOPE_BYTES), LeaseRequest, MAX_ENVELOPE_BYTES
             )
