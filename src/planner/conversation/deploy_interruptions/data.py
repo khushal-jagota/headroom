@@ -473,6 +473,21 @@ def _owner_blocker(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
     return None
 
 
+def _only_current_mac_process_runs(conn: sqlite3.Connection, conversation_id: str) -> bool:
+    """Every open Mac run of the conversation belongs to the current Mac process. At
+    admission that is the run of the fresh child the recovery is being bound to; a run of
+    a replaced process is still the interrupted one, and still blocks."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM mac_runs AS r LEFT JOIN mac_executor_presence AS p "
+            "ON p.singleton=1 WHERE r.conversation_id=? AND r.stop_state!='closed' "
+            "AND r.executor_incarnation IS NOT p.executor_incarnation",
+            (conversation_id,),
+        ).fetchone()
+        is None
+    )
+
+
 def recovery_blocker(
     conn: sqlite3.Connection,
     conversation_id: str,
@@ -482,9 +497,9 @@ def recovery_blocker(
 ) -> str | None:
     from planner.conversation.lifecycle_storage import retained_run_is_unresolved
 
-    # At admission (allow_restored) the recovery's own fresh Mac child already has its
-    # run; selection, which ran first, found no unresolved run of the interrupted child.
-    if not allow_restored and retained_run_is_unresolved(conn, conversation_id):
+    if retained_run_is_unresolved(conn, conversation_id) and not (
+        allow_restored and _only_current_mac_process_runs(conn, conversation_id)
+    ):
         return "native executor reconciliation owns this turn"
     row = conn.execute(
         "SELECT * FROM deploy_interruptions WHERE interruption_id=?", (reference.interruption_id,)

@@ -16,7 +16,7 @@ ExecutorHarness from test_executor_end_to_end. Conversation A's event write is h
 ConversationStore.commit_backend_event before it opens its transaction (before BEGIN
 IMMEDIATE, §11 M11): a write stuck inside its transaction holds SQLite's single writer
 lock for everyone, which only the heartbeat alarm catches (§11.7 known gap c).
-Cost: about 7 s, most of it the boot and the second conversation's start.
+Cost: about 2.6 s of test time, plus about 1 s of boot (10 s wall for the file alone).
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import sqlite3
+import time
 from functools import partial
 from pathlib import Path
 from typing import Any, cast
@@ -94,17 +95,22 @@ def held_mac_writes(harness: ExecutorHarness, conversation_id: str) -> Any:
         store.commit_backend_event = commit  # type: ignore[method-assign]
 
 
-def writer_lock_is_free(db_path: str) -> bool:
-    """Another writer can begin at once: the held write holds no SQLite lock."""
-    connection = sqlite3.connect(db_path, timeout=0)
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.rollback()
-        return True
-    except sqlite3.OperationalError:
-        return False
-    finally:
-        connection.close()
+def writer_lock_is_free(db_path: str, seconds: float = 1.0) -> bool:
+    """Another writer can begin within a second: the held write holds no SQLite lock.
+    A lease or contact write may hold it for a moment, so the first free moment counts."""
+    deadline = time.monotonic() + seconds
+    while True:
+        connection = sqlite3.connect(db_path, timeout=0)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.rollback()
+            return True
+        except sqlite3.OperationalError:
+            if time.monotonic() >= deadline:
+                return False
+        finally:
+            connection.close()
+        time.sleep(0.01)
 
 
 def test_a_held_conversation_write_blocks_no_other_conversation(
@@ -150,7 +156,7 @@ def test_a_held_conversation_write_blocks_no_other_conversation(
                 await asyncio.wait_for(entered.wait(), ISOLATION_LIMIT_SECONDS)
                 loop = asyncio.get_running_loop()
                 held_at = loop.time()
-                assert writer_lock_is_free(harness.endpoint.db_path)
+                assert await asyncio.to_thread(writer_lock_is_free, harness.endpoint.db_path)
 
                 # B's items are stored while A's write is held.
                 assert native_b.sink is not None and native_b.turn is not None

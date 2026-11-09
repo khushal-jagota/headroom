@@ -364,7 +364,7 @@ class MacHttpClient:
                 + EXECUTOR_COMMAND_FILE_PATH.format(
                     command_id=command_id, stored_file_id=stored_file_id
                 ),
-                headers=self._headers | {"Accept-Encoding": "identity"},
+                headers=self._headers,
                 allow_redirects=False,
                 timeout=aiohttp.ClientTimeout(
                     total=None,

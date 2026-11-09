@@ -11,10 +11,10 @@ VPS's real still-saving wait, the real stall sources of a running VpsExecutor.
 Layer: integration, over real HTTPS through serve_executor_app. Setup reused: boot and
 ExecutorHarness from test_executor_end_to_end, held_mac_writes from
 test_executor_isolation (the write is held before its transaction opens), and the fake
-push adapter and Chief from test_stall_watchdog. The limits are scaled down by
+push adapter and Chief from tests/support/stall_alarm_fakes. The limits are scaled down by
 monkeypatch (stalls.configuration is read at call time); the checker runs through
 check_once instead of its 15 s timer, and the watchdog through run_watchdog.
-Cost: about 10 s, most of it the boot.
+Cost: about 5 s of test time, plus about 1 s of boot (12 s wall for the file alone).
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from tests.integration.test_executor_end_to_end import (
     mac_unreachable,
 )
 from tests.integration.test_executor_isolation import held_mac_writes
-from tests.unit.test_stall_watchdog import _Chief, _WebPush
+from tests.support.stall_alarm_fakes import FakeChief, FakeWebPush
 
 from planner.conversation.backends.contracts import ToolCallStarted
 from planner.core.db import connect
@@ -39,7 +39,7 @@ from planner.executor.clock import now_ms
 from planner.executor.vps_presence_store import read_presence
 from planner.notifications import data as notifications_data
 from planner.stalls.checker import StallChecker
-from planner.stalls.contracts import StallFinding, TrackedWaitKind
+from planner.stalls.contracts import StallFinding, TrackedWait, TrackedWaitKind
 from planner.stalls.registry import WAITS
 from planner.stalls.watchdog import WatchdogRun, run_watchdog
 
@@ -60,6 +60,18 @@ def leased_backlog(db_path: str) -> tuple[str, ...]:
     return tuple(waiting.conversation_id for waiting in record.lease.waiting_conversations)
 
 
+class WaitsSince:
+    """The process-wide wait registry, seen from one moment on. Another test on the
+    same worker that left a wait behind cannot then be mistaken for this one's."""
+
+    def __init__(self, since_ms: int) -> None:
+        self.since_ms = since_ms
+        self.track = WAITS.track
+
+    def snapshot(self) -> tuple[TrackedWait, ...]:
+        return tuple(wait for wait in WAITS.snapshot() if wait.started_at_ms >= self.since_ms)
+
+
 def last_lease_at_ms(db_path: str) -> int:
     connection = connect(db_path)
     try:
@@ -70,7 +82,9 @@ def last_lease_at_ms(db_path: str) -> int:
     return record.last_lease_at_ms
 
 
-def watch(harness: ExecutorHarness, chief: _Chief, web_push: _WebPush, at_ms: int) -> WatchdogRun:
+def watch(
+    harness: ExecutorHarness, chief: FakeChief, web_push: FakeWebPush, at_ms: int
+) -> WatchdogRun:
     return run_watchdog(
         harness.endpoint.db_path,
         harness.root / "watchdog-state",
@@ -96,6 +110,7 @@ def test_a_stuck_conversation_alarms_once_and_an_away_mac_with_the_same_backlog_
     monkeypatch.setattr("planner.executor.vps_inbox.MAC_ITEM_RETRY_LATER_SECONDS", 0.5)
 
     async def run() -> None:
+        started_ms = now_ms()
         harness = await boot(tmp_path, monkeypatch)
         try:
             db_path = harness.endpoint.db_path
@@ -103,8 +118,9 @@ def test_a_stuck_conversation_alarms_once_and_an_away_mac_with_the_same_backlog_
                 notifications_data.register_subscription(
                     connection, endpoint="https://push.example/1", p256dh="key", auth="auth", now=1
                 )
-            checker = StallChecker(db_path, WAITS, harness.endpoint.stall_sources, now_ms)
-            chief, web_push = _Chief(lambda text: True), _WebPush()
+            waits = WaitsSince(started_ms)
+            checker = StallChecker(db_path, waits, harness.endpoint.stall_sources, now_ms)
+            chief, web_push = FakeChief(lambda text: True), FakeWebPush()
             assert await checker.check_once() == ()
 
             with held_mac_writes(harness, "c_scripted") as (entered, release):
@@ -154,7 +170,7 @@ def test_a_stuck_conversation_alarms_once_and_an_away_mac_with_the_same_backlog_
                         lambda: (
                             harness.events("tool_call_started") == 1
                             and not any(
-                                wait.conversation_id == "c_scripted" for wait in WAITS.snapshot()
+                                wait.conversation_id == "c_scripted" for wait in waits.snapshot()
                             )
                         ),
                         "the held save did not finish once released",

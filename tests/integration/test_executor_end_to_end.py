@@ -25,6 +25,7 @@ import hashlib
 import json
 import ssl
 import threading
+from collections import Counter
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -254,6 +255,9 @@ class CutReceiptEndpoint(VpsExecutor):
         # Route 4: the reply that carries this submission's receipt.
         self.cut_submission: str | None = None
         self.cut_count = 0
+        self.cut_submissions: list[str] = []
+        # Every route-4 item the VPS was sent, by submission, resends included.
+        self.seen_submissions: Counter[str] = Counter()
         self.cut_user_input_application = False
         # Route 4: hold that reply this long instead of cutting it (a silent link).
         self.withhold_seconds: float | None = None
@@ -272,6 +276,7 @@ class CutReceiptEndpoint(VpsExecutor):
     async def accept_items(
         self, identity: ExecutorIdentity, conversation_id: str, batch: ItemBatch
     ) -> ItemBatchReply:
+        self.seen_submissions.update(item.envelope.submission_id for item in batch.items)
         if self.cut_user_input_application:
             for item in batch.items:
                 envelope = item.envelope
@@ -287,6 +292,7 @@ class CutReceiptEndpoint(VpsExecutor):
         if self.cut_submission is not None and any(
             receipt.submission_id == self.cut_submission for receipt in reply.receipts
         ):
+            self.cut_submissions.append(self.cut_submission)
             self.cut_submission = None
             self.cut_count += 1
             if self.withhold_seconds is not None:
@@ -1071,6 +1077,8 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
             assert "payload_sha256" not in as_object(first_receipt)
             assert "payload_sha256" not in as_object(pending[0])
             await harness.wait_settled("Committed entry did not replay and acknowledge")
+            # The VPS was sent the item again after its reply was lost.
+            assert harness.endpoint.seen_submissions[pending[0].submission_id] >= 2
             assert harness.events("permission_asked") == 1
             assert harness.native.answers == []
             receipt = lookup_receipt(
@@ -1140,6 +1148,8 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
                 "input application acknowledgment was not cut",
             )
             await harness.wait_settled("input application replay did not drain")
+            (cut,) = harness.endpoint.cut_submissions
+            assert harness.endpoint.seen_submissions[cut] >= 2
             assert harness.native.user_answers == [("request_input", ORDERED_INPUT_ANSWERS)]
             assert harness.events("user_input_answered") == 1
             assert harness.events("answer_applied") == 1
@@ -1763,6 +1773,18 @@ def test_mac_replacement_drains_then_interrupts_old_run_and_recovers_once(
                 raise AssertionError("unreachable")
 
             monkeypatch.setattr(harness.native, "steer", held_steer, raising=False)
+            delivered: list[str] = []
+            write_prompt = harness.native.write_prompt
+
+            async def recorded_prompt(
+                turn: TurnToken, content: MessageContent, **kwargs: object
+            ) -> BackendPromptAccepted:
+                delivered.append(
+                    "\n".join(piece.text for piece in content if isinstance(piece, MessageText))
+                )
+                return await write_prompt(turn, content, **kwargs)
+
+            monkeypatch.setattr(harness.native, "write_prompt", recorded_prompt)
             steering = asyncio.create_task(
                 harness.system.send(
                     "c_scripted",
@@ -1818,22 +1840,29 @@ def test_mac_replacement_drains_then_interrupts_old_run_and_recovers_once(
             await harness.wait_settled("The recovery did not settle")
             assert harness.events("prompt_delivery_uncertain") == 1
             with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
-                # The recovery restored the worker step's claim.
-                assert (
-                    connection.execute(
-                        "SELECT worker_step_claim FROM tickets WHERE id=?", (harness.ticket_id,)
-                    ).fetchone()[0]
-                    == "out"
-                )
+                # The recovery restored the worker step's claim, as a new revision.
+                claim, revision = connection.execute(
+                    "SELECT worker_step_claim,worker_step_claim_revision FROM tickets WHERE id=?",
+                    (harness.ticket_id,),
+                ).fetchone()
+                assert claim == "out" and revision > 7
                 assert [
                     row[0]
                     for row in connection.execute(
                         "SELECT recovery_state FROM deploy_interruptions "
                         "WHERE source_conversation_id='c_scripted'"
                     )
-                ] != ["awaiting_action"]
+                ] == ["resumed"]
             await asyncio.sleep(0.3)
             assert harness.native.start_count == harness.native.prompt_count == 2
+            # The fresh child got the recovery prompt, once.
+            assert len(delivered) == 1
+            assert (
+                delivered[0].count(
+                    "Inspect the interrupted work and continue the current authorized step."
+                )
+                == 1
+            )
         finally:
             if steering is not None and not steering.done():
                 steering.cancel()
@@ -2124,9 +2153,11 @@ async def raise_kind(harness: ExecutorHarness, kind: AskKind) -> AskReference:
 def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Gap: the real Claude adapter's model change crosses runner, mailbox, outcome and
-    core, and the replacement starts only after the exact old child's cleanup, with the
-    old assignment kept until then and the prompt framed once."""
+    """Gap: a Claude child keeps the model and effort it started with, and a prompt is
+    accepted at its commit, so the VPS refuses a change itself (NeedsRebind) and writes
+    no prompt row for the old child. The core then rebinds: the replacement starts only
+    after the exact old child's cleanup, with the old assignment kept until then, and
+    the prompt is framed once for the real Claude adapter."""
     from claude_agent_sdk import ClaudeAgentOptions, ResultMessage
     from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
 
@@ -2181,6 +2212,16 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 for message in client.streamed_messages
             ]
 
+        def old_child_prompt_rows(child_id: str) -> int:
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                return int(
+                    connection.execute(
+                        "SELECT count(*) FROM executor_commands "
+                        "WHERE operation='write_prompt' AND child_id=?",
+                        (child_id,),
+                    ).fetchone()[0]
+                )
+
         sending = None
         conn = connect(harness.endpoint.db_path)
         try:
@@ -2211,6 +2252,7 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 old = clients[-1]
                 old_prompt = prompts(old)[-1]
                 old_reference = harness.child.reference
+                prompt_rows = old_child_prompt_rows(old_reference.child_id)
                 cleanup_entered.clear()
                 cleanup_release.clear()
                 sender_text = f"Keep sender bytes {index}: café\nsecond line"
@@ -2256,6 +2298,8 @@ def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
                 assert replacement.options.model == "claude-new"
                 assert replacement.options.effort == ("low" if index == 1 else "high")
                 assert harness.endpoint.runs.store.child_assignment(old_reference) is None
+                # The refused prompt was never put for the old child.
+                assert old_child_prompt_rows(old_reference.child_id) == prompt_rows
                 prompt = prompts(replacement)[0]
                 assert prompt.startswith(NATIVE_WORKER_CONTEXT)
                 assert prompt.count(NATIVE_WORKER_CONTEXT) == 1
@@ -2538,6 +2582,14 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
             artifact = harness.mac.paths.artifacts / native_child.ticket_id / "queued.txt"
             artifact.parent.mkdir(parents=True, exist_ok=True)
             artifact.write_text("bytes published before a queued payload refusal")
+            acknowledged: dict[str, ReceiptDisposition] = {}
+            acknowledge = harness.mac.outbox.acknowledge
+
+            def recorded(receipt: AcceptanceReceipt) -> None:
+                acknowledged[receipt.submission_id] = receipt.disposition
+                acknowledge(receipt)
+
+            monkeypatch.setattr(harness.mac.outbox, "acknowledge", recorded)
             async with paused_outbox(harness.mac):
                 malformed = harness.mac.outbox.add(
                     OutboxEntry(
@@ -2576,6 +2628,8 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
                 lambda: not harness.mac.outbox.pending(),
                 "Permanent refusal stranded the next item in the conversation",
             )
+            # The Mac does not keep a stop's receipt; it was handed over once, refused.
+            assert acknowledged[malformed.submission_id] is ReceiptDisposition.refused
             refused = harness.mac.outbox.lookup(unassigned.submission_id)
             assert refused is not None and refused.receipt is not None
             assert refused.receipt.disposition is ReceiptDisposition.refused

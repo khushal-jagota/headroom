@@ -135,7 +135,10 @@ class MacRuns:
         reaches the conversation again."""
         if self.store.child_assignment(reference) is None:
             return None
-        child = self._make_child(reference, event_sink=event_sink)
+        # A Claude child keeps the model it started with; a change needs a new child.
+        child = self._make_child(
+            reference, event_sink=event_sink, started_on=self.mailbox.start_of(reference)
+        )
         self.children[reference.child_id] = child
         return child
 
@@ -183,6 +186,7 @@ class MacRuns:
         *,
         event_sink: BackendEventSink | None = None,
         initial_history_complete: bool = False,
+        started_on: ResolvedConversationStart | None = None,
     ) -> MacRemoteChild:
         """Bind the retained identity without starting it or granting new authority."""
         return MacRemoteChild(
@@ -191,6 +195,7 @@ class MacRuns:
             self._read_skill_snapshot,
             event_sink=event_sink,
             initial_history_complete=initial_history_complete,
+            started_on=started_on,
         )
 
     def retire_child(self, child: ChildReference) -> None:

@@ -626,3 +626,66 @@ def test_a_vps_restart_keeps_the_mailbox_and_its_unproven_stops(tmp_path: Path) 
                 await restarted.close()
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+def test_a_claude_model_change_asks_for_a_rebind_even_after_a_vps_restart(
+    tmp_path: Path,
+) -> None:
+    """Risk: a Claude child takes its model and effort when it starts, and a prompt is
+    accepted at commit, so a change sent through the mailbox comes back only as a failed
+    turn instead of a rebind. After a VPS restart every Mac run is adopted through a new
+    proxy, which must still know what its child started with. Layer: the real
+    VpsExecutor and mailbox over SQLite; the proxy after restart comes from recover()."""
+    from tests.unit.test_executor_native_runtime import canonical_snapshot
+
+    from planner.conversation.backends.contracts import NeedsRebind
+    from planner.conversation.contracts import (
+        ConversationAccess,
+        ConversationBackendKey,
+        ConversationRoleMaterials,
+        ResolvedConversationStart,
+    )
+
+    def start(backend: ConversationBackendKey) -> ResolvedConversationStart:
+        return ResolvedConversationStart(
+            "c",
+            backend,
+            "claude-old",
+            "low",
+            ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "ticket-1"),)),
+            tmp_path,
+            ConversationAccess.full,
+        )
+
+    async def prompt(proxy: MacRemoteChild, model: str | None, effort: str | None) -> None:
+        content = text_message_content("work")
+        await proxy.write_prompt(
+            TURN,
+            content,
+            sender_label="owner",
+            sender_content=content,
+            mode=PromptDeliveryMode.queue,
+            model_change=model,
+            reasoning_effort_change=effort,
+            reasoning_effort_is_set=effort is not None,
+        )
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            started = MacRemoteChild(
+                world.child, world.endpoint.runs, lambda resolved: canonical_snapshot()
+            )
+            await started.start(start(ConversationBackendKey.claude), vendor_session_cursor=None)
+            # After a VPS restart the run is bound again through a new proxy.
+            adopted = world.endpoint.runs.recover(world.child)
+            assert adopted is not None and adopted is not started
+            for proxy in (started, adopted):
+                for model, effort in (("claude-new", None), (None, "high")):
+                    with pytest.raises(NeedsRebind):
+                        await prompt(proxy, model, effort)
+            assert [operation for operation, _ in world.rows()] == ["start"]
+            # The same model and effort are no change: the prompt is put.
+            await prompt(adopted, "claude-old", "low")
+            assert [operation for operation, _ in world.rows()] == ["start", "write_prompt"]
+
+    asyncio.run(asyncio.wait_for(exercise(), 20))

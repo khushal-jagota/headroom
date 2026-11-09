@@ -130,6 +130,7 @@ class MacRemoteChild:
         *,
         event_sink: backend.BackendEventSink | None = None,
         initial_history_complete: bool = True,
+        started_on: ResolvedConversationStart | None = None,
     ) -> None:
         self.reference = reference
         self.event_sink = event_sink
@@ -143,8 +144,15 @@ class MacRemoteChild:
         self.initial_delivery_cancelled = False
         # A Claude child takes its model and effort when it starts. Its prompt is
         # accepted at commit, so the Mac's refusal of a change would come back only as a
-        # failed turn: the change is refused here instead, and the core rebinds.
+        # failed turn: the change is refused here instead, and the core rebinds. A child
+        # bound again after a VPS restart is given the start it was made with.
         self._claude_started_on: tuple[str, str | None] | None = None
+        if started_on is not None:
+            self._note_start(started_on)
+
+    def _note_start(self, resolved_start: ResolvedConversationStart) -> None:
+        if resolved_start.backend_key is ConversationBackendKey.claude:
+            self._claude_started_on = (resolved_start.model, resolved_start.reasoning_effort)
 
     @property
     def stop_outside_lock(self) -> bool:
@@ -236,8 +244,7 @@ class MacRemoteChild:
             raise backend.BackendSpawnFailed(str(error)) from error
         if not placed:
             raise backend.BackendSpawnFailed(_REPLACED_MESSAGE)
-        if resolved_start.backend_key is ConversationBackendKey.claude:
-            self._claude_started_on = (resolved_start.model, resolved_start.reasoning_effort)
+        self._note_start(resolved_start)
 
     async def write_prompt(
         self,
