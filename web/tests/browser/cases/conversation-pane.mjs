@@ -52,6 +52,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   // chart compatibility with a light host without adding a product theme.
   if(chartsOnly && new URLSearchParams(location.search).get("chartTheme")==="light") {
     const lightTokens={"surface-1":"#f7f7f7","surface-2":"#ffffff","surface-recessed":"#ededed",
+      "surface-input":"#e3e3e3","surface-input-hover":"#d8d8d8","surface-selected":"#d3d3d3","surface-raised":"#ffffff",
       "tone-strong":"#151515","tone-primary":"#252525","tone-secondary":"#555555","tone-tertiary":"#666666",
       "chart-surface":"#ffffff","chart-surface-raised":"#f1f1f1","chart-surface-muted":"#ededed",
       "chart-grid":"#0000001a","chart-border-strong":"#00000024","chart-reference":"#777777"};
@@ -74,7 +75,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let chartSource=$state(chartExamples);
   let chartRows=$derived([{key:"chart-message",kind:"agent_message" as const,sequence:1,createdAt:1,toOwner:true,
     content:[{piece:"text" as const,text:chartSource}]}]);
-  let chartEditor:HTMLDivElement;
+  let chartEditor=$state<HTMLDivElement>();
   let chartEditable:import("../src/lib/managedMarkdown").EditableManagedMarkdownSurface|null=null;
   import {createManagedMarkdownSurface} from "../src/lib/managedMarkdown";
   (window as any).__chatChartProbe={
@@ -86,7 +87,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     unsafe:()=>{chartSource=chartFence(chartSpec("line",'<img src=x onerror="window.chartInjected=true">'));},
     long:()=>{chartSource=chartFence(chartSpec("line","Long message chart"))+"\n\n"+Array.from({length:700},(_,index)=>"Paragraph "+index+" "+"Retained text. ".repeat(12)).join("\n\n");},
     remove:()=>{chartSource="Chart removed.";},
-    editable:()=>{chartEditable??=createManagedMarkdownSurface(chartEditor,{mode:"editable"});chartEditable.update(chartFence(chartSpec()));},
+    editable:()=>{chartEditable??=createManagedMarkdownSurface(chartEditor!,{mode:"editable"});chartEditable.update(chartFence(chartSpec()));},
     readEditable:()=>chartEditable?.read()
   };
   const readerOnly=new URLSearchParams(window.location.search).has("reader");

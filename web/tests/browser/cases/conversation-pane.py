@@ -4438,14 +4438,14 @@ def _chat_charts(browser, url):
                 page.goto(url + "?charts=1&chartTheme=" + theme, wait_until="domcontentloaded")
                 expect(chart_hosts).to_have_count(3)
                 chart_hosts.nth(0).scroll_into_view_if_needed()
-                expect(page.get_by_text("Merged PRs per week", exact=True)).to_be_visible()
+                expect(page.get_by_role("heading", name="Merged PRs per week", exact=True)).to_be_visible()
                 expect(chart_hosts.nth(0).locator("canvas")).to_be_visible()
                 bars = page.evaluate("window.__chatChartProbe.bars()")
                 assert bars[0]["datasets"] == [{"label": "Panels", "data": [3, 7, 5]}, {"label": "Tools", "data": [2, 4, 6]}], bars
                 assert bars[0].get("stacked") is not True and bars[1]["stacked"] is True, bars
                 page.screenshot(path=str(output / f"chat-charts-{label}-{theme}.png"))
                 chart_hosts.nth(1).scroll_into_view_if_needed()
-                expect(page.get_by_text("Weekly trend", exact=True)).to_be_visible()
+                expect(page.get_by_role("heading", name="Weekly trend", exact=True)).to_be_visible()
                 assert chart_hosts.nth(1).locator("svg").count() > 0
                 page.screenshot(path=str(output / f"chat-line-{label}-{theme}.png"))
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "Charts overflow the phone page"
@@ -4465,9 +4465,9 @@ def _chat_charts(browser, url):
         expect(page.locator("pre code.language-panels-chart")).to_have_count(1)
         page.evaluate("window.__chatChartProbe.stream(true)")
         expect(chart_hosts).to_have_count(1)
-        expect(page.get_by_text("Streamed chart", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="Streamed chart", exact=True)).to_be_visible()
         page.evaluate("window.__chatChartProbe.unsafe()")
-        expect(page.get_by_text('<img src=x onerror="window.chartInjected=true">', exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name='<img src=x onerror="window.chartInjected=true">', exact=True)).to_be_visible()
         assert page.locator("[data-chat-chart-fixture] img").count() == 0
         assert not page.evaluate("window.chartInjected === true")
         page.evaluate("window.__chatChartProbe.editable()")
@@ -4477,12 +4477,17 @@ def _chat_charts(browser, url):
         assert "```panels-chart" in page.evaluate("window.__chatChartProbe.readEditable()")
         page.evaluate("window.__chatChartProbe.long()")
         thread.evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
-        expect(page.get_by_text("Long message chart", exact=True)).to_be_visible(timeout=10000)
+        expect(page.get_by_role("heading", name="Long message chart", exact=True)).to_be_visible(timeout=10000)
         expect(page.locator("[data-markdown-window]")).not_to_have_count(0)
-        thread.evaluate("node => {node.scrollTop=node.scrollHeight;node.dispatchEvent(new Event('scroll'));}")
+        # Visit enough groups to exceed the shared four-view retention budget.
+        # A direct jump retains the chart by design and does not prove eviction.
+        groups = page.locator("[data-markdown-window]")
+        for index in range(1, 8):
+            groups.nth(index).scroll_into_view_if_needed()
+            expect(groups.nth(index).locator(":scope > *")).not_to_have_count(0)
         expect(chart_hosts).to_have_count(0, timeout=10000)
         thread.evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
-        expect(page.get_by_text("Long message chart", exact=True)).to_be_visible(timeout=10000)
+        expect(page.get_by_role("heading", name="Long message chart", exact=True)).to_be_visible(timeout=10000)
         expect(chart_hosts).to_have_count(1)
         page.evaluate("window.__chatChartProbe.remove()")
         expect(chart_hosts).to_have_count(0)
