@@ -451,11 +451,12 @@ def run(browser, urls):
         expect(panel).to_be_visible()
         assert panel.evaluate("""panel => {
             const p=panel.getBoundingClientRect(), d=panel.closest('.ticket-doc').getBoundingClientRect();
-            return p.top>=Math.max(0,d.top)-1 && p.bottom<=Math.min(innerHeight,d.bottom)+1;
+            const worker=panel.closest('.ticket-page').querySelector('[data-conversation-layer-host]').getBoundingClientRect();
+            return p.top>=Math.max(0,d.top)-1 && p.bottom<=Math.min(innerHeight,d.bottom,worker.top)+1;
         }""")
         return panel
 
-    for offset, direction in [(20, "below"), (430, "above"), (210, "scroll")]:
+    for offset, direction in [(20, "below"), (330, "above"), (210, "scroll")]:
         if direction == "scroll":
             original_coding = copy.deepcopy(coding)
             extra = [{"id": f"needs_design_{i}", "label": f"Design review {i}", "gating_field": f"design_{i}", "is_terminal": False, "ownership_mode": "worker"} for i in range(1, 13)]

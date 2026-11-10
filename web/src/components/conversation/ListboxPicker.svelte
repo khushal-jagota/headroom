@@ -216,7 +216,9 @@
     const panel = panelElement.getBoundingClientRect();
     const gap = parseFloat(getComputedStyle(panelElement).getPropertyValue("--space-1")) || 4;
     const top = Math.max(0, area.top);
-    const bottom = Math.min(window.innerHeight, area.bottom);
+    // The resting conversation dock can overlay a full-height document.
+    const dock = boundary.closest(".ticket-page")?.querySelector<HTMLElement>("[data-conversation-layer-host]")?.getBoundingClientRect();
+    const bottom = Math.min(window.innerHeight, area.bottom, dock?.top ?? area.bottom);
     if (button.bottom <= top || button.top >= bottom) { close(false); return; }
     const above = Math.max(0, button.top - top - gap);
     const beneath = Math.max(0, bottom - button.bottom - gap);
@@ -236,6 +238,8 @@
     const update = () => fitPanel();
     const observer = new ResizeObserver(update);
     observer.observe(boundary);
+    const dock = boundary.closest(".ticket-page")?.querySelector("[data-conversation-layer-host]");
+    if (dock) observer.observe(dock);
     boundary.addEventListener("scroll", update);
     window.addEventListener("resize", update);
     void tick().then(update);
