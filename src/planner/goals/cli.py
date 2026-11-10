@@ -20,7 +20,10 @@ def _emit_goal_response(data: Any, as_json: bool) -> NoReturn:
 
 @click.group("goal")
 def goal() -> None:
-    """Read and edit goals. See goal schema create|edit|primary-chart for request contracts."""
+    """Read, edit, and permanently delete goals.
+
+    See goal schema create|edit|primary-chart for request contracts.
+    """
 
 
 @goal.command("schema")
@@ -188,3 +191,15 @@ def make_manager(goal_id: str, as_json: bool) -> None:
         ),
         as_json,
     )
+
+
+@goal.command("delete")
+@click.argument("goal_id")
+@click.option("--yes", is_flag=True, help="Permanently delete the goal, page, and artifacts.")
+@json_option
+def delete_goal(goal_id: str, yes: bool, as_json: bool) -> None:
+    """Delete a goal permanently. The owner, Chief, and holding Manager can delete it."""
+    if not yes:
+        http.fail_validation("permanent deletion requires --yes", as_json)
+    data = http.send("DELETE", f"/api/goals/{quote(goal_id, safe='')}", as_json=as_json)
+    http.emit(data, as_json, f"{goal_id} permanently deleted")

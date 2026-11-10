@@ -1,6 +1,7 @@
 <script lang="ts">
   /** A managed file outside an existing conversation pane belongs beside its owner's
    * current conversation. Opening the file leaves that conversation at rest. */
+  import { PlannerFetchError } from "../lib/api";
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount } from "svelte";
   import ManagerFrame from "../components/ManagerFrame.svelte";
@@ -87,7 +88,9 @@
 </script>
 
 <section class="file-preview-route" data-file-preview-route>
-  {#if target}
+  {#if goalId && goal.error instanceof PlannerFetchError && goal.error.status === 404}
+    <p>Goal not found.</p>
+  {:else if target}
     <ManagerFrame openedFile={shownFile} onOpenFile={changeFile} bind:conversationState>
       <p>{owner?.title ?? "Artifact"}</p>
       {#snippet conversation()}

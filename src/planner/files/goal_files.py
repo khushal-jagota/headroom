@@ -9,6 +9,7 @@ from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import managed_files
 from planner.files.logic.paths import goal_files_root
+from planner.measures.data import transaction
 
 
 def require_goal(conn: sqlite3.Connection, principal: Principal, goal_id: str) -> None:
@@ -24,12 +25,14 @@ def write_file(
     relative_path: str,
     content: str,
 ) -> dict[str, object]:
-    require_goal(conn, principal, goal_id)
-    root = managed_files.owner_root(
-        goal_files_root(db_path), goal_id, create=True, label="goal"
-    )
-    assert root is not None
-    managed_files.write_text(root, relative_path, content, "goal")
+    # Serialize private file creation with permanent deletion.
+    with transaction(conn):
+        require_goal(conn, principal, goal_id)
+        root = managed_files.owner_root(
+            goal_files_root(db_path), goal_id, create=True, label="goal"
+        )
+        assert root is not None
+        managed_files.write_text(root, relative_path, content, "goal")
     return {
         "goal_id": goal_id,
         "path": relative_path,
@@ -44,9 +47,10 @@ def delete_file(
     db_path: str,
     relative_path: str,
 ) -> dict[str, object]:
-    require_goal(conn, principal, goal_id)
-    root = managed_files.owner_root(
-        goal_files_root(db_path), goal_id, create=False, label="goal"
-    )
-    managed_files.delete(root, relative_path, "goal")
+    with transaction(conn):
+        require_goal(conn, principal, goal_id)
+        root = managed_files.owner_root(
+            goal_files_root(db_path), goal_id, create=False, label="goal"
+        )
+        managed_files.delete(root, relative_path, "goal")
     return {"ok": True, "goal_id": goal_id, "path": relative_path}
