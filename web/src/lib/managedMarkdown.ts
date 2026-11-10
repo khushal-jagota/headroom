@@ -270,7 +270,7 @@ export function createManagedMarkdownSurface(
         const slot = document.createElement("div");
         slot.className = "chat-chart-slot";
         code.replaceWith(slot);
-        const stopCopy = registerMarkdownCopyRange(slot, () => chart.source);
+        const stopCopy = registerMarkdownCopyRange(slot, () => chart.source + "\n\n");
         previews.set(slot, {
           slot, stopCopy, unmounted: false,
           component: mount(ChatChart, {
@@ -479,7 +479,7 @@ function markdownWeight(node: MarkdownTreeNode): number {
   return 40 + (node.value?.length || 0) + (node.children || []).reduce((sum, child) => sum + markdownWeight(child), 0);
 }
 function markdownText(node: MarkdownTreeNode): string {
-  if (node.chart) return node.chart.source + "\n";
+  if (node.chart) return node.chart.source + "\n\n";
   if (node.type === "text") return node.value || "";
   if (node.tagName === "br") return "\n";
   if (node.tagName === "img") return String(node.properties?.alt || "");

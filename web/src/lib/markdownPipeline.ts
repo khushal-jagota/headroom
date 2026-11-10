@@ -406,6 +406,10 @@ function domNodeToHast(
 
 function propertiesFromElement(element: HTMLElement): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
+  if (element.tagName === "CODE") {
+    const language = [...element.classList].find(name => /^language-[\w-]+$/.test(name));
+    if (language) properties.className = [language];
+  }
   for (const name of ["href", "src", "alt", "title", "align", "type"]) {
     const value = element.getAttribute(name);
     if (value !== null) properties[name] = value;

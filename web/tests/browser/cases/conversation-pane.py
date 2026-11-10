@@ -4460,6 +4460,7 @@ def _chat_charts(browser, url):
         }""")
         assert "```panels-chart" in copied and '"kind":"bar"' in copied
         assert "After the malformed chart." in copied
+        assert page.evaluate("source=>window.__chatChartProbe.copiedCharts(source)", copied) == 3
         page.evaluate("window.__chatChartProbe.stream(false)")
         expect(chart_hosts).to_have_count(0)
         expect(page.locator("pre code.language-panels-chart")).to_have_count(1)
@@ -4475,6 +4476,9 @@ def _chat_charts(browser, url):
         expect(editor.locator("pre code.language-panels-chart")).to_have_count(1)
         assert editor.locator(".goal-chart-host").count() == 0
         assert "```panels-chart" in page.evaluate("window.__chatChartProbe.readEditable()")
+        editor.locator("code").evaluate("node => {const spec=JSON.parse(node.textContent);spec.title='Edited chart';node.textContent=JSON.stringify(spec);node.dispatchEvent(new InputEvent('input',{bubbles:true}));}")
+        edited = page.evaluate("window.__chatChartProbe.readEditable()")
+        assert "```panels-chart" in edited and '"title":"Edited chart"' in edited
         page.evaluate("window.__chatChartProbe.long()")
         thread.evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
         expect(page.get_by_role("heading", name="Long message chart", exact=True)).to_be_visible(timeout=10000)

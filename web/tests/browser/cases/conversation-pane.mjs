@@ -47,6 +47,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     swap:()=>{intentReader=makeIntentReader();},
     swapSynchronously:()=>flushSync(()=>{intentReader=makeIntentReader();})};
   import {Chart as BrowserChart} from "chart.js";
+  import {parseMarkdown} from "../src/lib/markdownPipeline";
   const chartsOnly=new URLSearchParams(location.search).has("charts");
   // The product currently ships dark tokens only. This fixture checks shared
   // chart compatibility with a light host without adding a product theme.
@@ -79,6 +80,10 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let chartEditable:import("../src/lib/managedMarkdown").EditableManagedMarkdownSurface|null=null;
   import {createManagedMarkdownSurface} from "../src/lib/managedMarkdown";
   (window as any).__chatChartProbe={
+    copiedCharts:(source:string)=>{
+      const count=(nodes:import("../src/lib/markdown/contracts").MarkdownTreeNode[]):number=>nodes.reduce((total,node)=>total+(node.chart?1:0)+count(node.children??[]),0);
+      return count(parseMarkdown(source).children);
+    },
     bars:()=>[...document.querySelectorAll<HTMLCanvasElement>('[data-chat-chart-fixture] canvas')].map(canvas=>{
       const chart=BrowserChart.getChart(canvas);return {datasets:chart?.data.datasets.map(item=>({label:item.label,data:item.data})),stacked:chart?.options.scales?.x?.stacked};
     }),
