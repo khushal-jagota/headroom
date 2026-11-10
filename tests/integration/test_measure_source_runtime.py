@@ -136,7 +136,11 @@ def test_cancel_before_and_during_execution(tmp_path: Path) -> None:
     early = runtime.execute(admission("raise AssertionError", run_id="early"), MemoryCredentials())
     assert early.failure is not None and early.failure.code is FailureCode.interrupted
     marker = tmp_path / "pid"
-    script = f"import os,time\nopen({str(marker)!r},'w').write(str(os.getpid()))\ntime.sleep(30)"
+    # Publish the pid atomically so the test never reads a created-but-empty file.
+    script = (
+        f"import os,time\np={str(marker)!r}\nopen(p+'.tmp','w').write(str(os.getpid()))\n"
+        "os.replace(p+'.tmp',p)\ntime.sleep(30)"
+    )
     results: list[RunResult] = []
     thread = threading.Thread(
         target=lambda: results.append(
