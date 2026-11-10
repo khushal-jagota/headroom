@@ -6,6 +6,8 @@ import rehypeSanitize, { type Options as SanitizeSchema } from "rehype-sanitize"
 import rehypeToRemark from "rehype-remark";
 import remarkStringify from "remark-stringify";
 import { visit } from "unist-util-visit";
+import { parseChatChart } from "./markdown/charts/validation";
+import type { MarkdownChart } from "./markdown/charts/contracts";
 
 type Position = {
   start?: { offset?: number };
@@ -15,6 +17,8 @@ type Position = {
 type MarkdownNode = {
   type: string;
   value?: string;
+  lang?: string | null;
+  meta?: string | null;
   identifier?: string;
   label?: string;
   url?: string;
@@ -30,6 +34,11 @@ type AtomicPlaceholder = {
   placeholder: string;
   sourceToken: string;
 };
+
+const chartsByElement = new WeakMap<HTMLElement, MarkdownChart>();
+export function markdownChartForElement(element: HTMLElement): MarkdownChart | undefined {
+  return chartsByElement.get(element);
+}
 
 const referenceDefinitionsByRoot = new WeakMap<Node, ReferenceDefinition[]>();
 
@@ -153,7 +162,39 @@ export function parseMarkdown(source: string): ParsedMarkdown {
   const processor = forwardProcessor(source);
   const parsed = processor.parse(source);
   const definitions = collectReferenceDefinitions(parsed as unknown as MarkdownNode);
+  // Code blocks retain traversal order through remark-rehype and sanitization.
+  // Keep chart metadata outside HTML properties, after the sanitize boundary.
+  const candidates: Array<MarkdownChart | undefined> = [];
+  visit(parsed as never, (node: MarkdownNode) => {
+    if (node.type !== "code") return;
+    let chart: MarkdownChart | undefined;
+    const start = node.position?.start?.offset, end = node.position?.end?.offset;
+    if (node.lang === "panels-chart" && !node.meta && start !== undefined && end !== undefined) {
+      const token = source.slice(start, end);
+      const opening = /^(`{3,}|~{3,})panels-chart[ \t]*\r?\n/.exec(token);
+      const closing = /^[ \t]*(?:>[ \t]*)*(`+|~+)[ \t]*\r?$/.exec(token.split("\n").at(-1) || "");
+      if (opening && closing && closing[1][0] === opening[1][0] && closing[1].length >= opening[1].length) {
+        const block = parseChatChart(node.value || "");
+        if (block) {
+          // Nested fences include quote/list prefixes after the opening line.
+          // Copy a standalone fence instead of a fragment with mixed prefixes.
+          const lastLine = token.split("\n").at(-1)?.replace(/\r$/, "");
+          const copiedSource = lastLine === closing[1] ? token :
+            `${opening[1]}panels-chart\n${node.value || ""}\n${closing[1]}`;
+          chart = { block, source: copiedSource };
+        }
+      }
+    }
+    candidates.push(chart);
+  });
   const tree = processor.runSync(parsed) as HastNode;
+  let codeIndex = 0;
+  visit(tree as never, (node: HastNode) => {
+    if (node.type === "element" && node.tagName === "pre") {
+      const chart = candidates[codeIndex++];
+      if (chart) node.chart = chart;
+    }
+  });
   return { children: tree.children || [], definitions };
 }
 
@@ -227,6 +268,7 @@ function appendHastNode(parent: HTMLElement, node: HastNode, mapText?: MarkdownT
   }
   if (node.type !== "element" || !node.tagName) return;
   const element = document.createElement(node.tagName);
+  if (node.chart) chartsByElement.set(element, node.chart);
   if (element instanceof HTMLImageElement) {
     element.loading = "lazy";
     element.decoding = "async";

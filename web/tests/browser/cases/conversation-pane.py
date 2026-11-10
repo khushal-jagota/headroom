@@ -4258,6 +4258,7 @@ def run(browser, urls):
         if __import__('os').environ.get('CONVERSATION_SETTLED_CASE') == 'visibility':
             _preview_lifecycle(browser, urls[0])
             return
+        _chat_charts(browser, urls[0])
         _machine_evidence(browser, urls[0])
         if __import__('os').environ.get('PANELS_MACHINE_ONLY') == '1':
             return
@@ -4405,5 +4406,88 @@ def _short_lens_restoration(browser, url):
         assert restored['status'] is None,restored
         assert abs(restored['top']-before['top'])<=1,{'before':before,'restored':restored}
         print('SHORT_LENS_RESTORATION '+json.dumps({'before':before,'full':after,'focus':restored,'seconds':round(time.perf_counter()-started,3),'newHosts':0}),flush=True)
+    finally:
+        page.close()
+
+
+def _chat_charts(browser, url):
+    """The real transcript must mount shared charts, not only parse their specs."""
+    import os
+    import time
+    from pathlib import Path
+
+    from playwright.sync_api import expect
+
+    started = time.perf_counter()
+    page = browser.new_page(viewport={"width": 1100, "height": 1100})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    output = Path(os.environ.get("PANELS_CHAT_CHART_EVIDENCE_DIR", os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp")))
+    output.mkdir(parents=True, exist_ok=True)
+    try:
+        page.goto(url + "?charts=1", wait_until="domcontentloaded")
+        thread = page.locator("[data-conversation-thread]")
+        chart_hosts = page.locator("[data-chat-chart-fixture] .goal-chart-host")
+        expect(chart_hosts).to_have_count(3)
+        expect(page.get_by_text("After the malformed chart.", exact=True)).to_be_visible()
+        expect(page.locator("pre code.language-panels-chart")).to_have_count(1)
+        for width, label in [(1100, "desktop"), (390, "phone")]:
+            page.set_viewport_size({"width": width, "height": 1100})
+            for theme in ["light", "dark"]:
+                page.emulate_media(color_scheme=theme, reduced_motion="reduce")
+                page.goto(url + "?charts=1&chartTheme=" + theme, wait_until="domcontentloaded")
+                expect(chart_hosts).to_have_count(3)
+                chart_hosts.nth(0).scroll_into_view_if_needed()
+                expect(page.get_by_text("Merged PRs per week", exact=True)).to_be_visible()
+                expect(chart_hosts.nth(0).locator("canvas")).to_be_visible()
+                bars = page.evaluate("window.__chatChartProbe.bars()")
+                assert bars[0]["datasets"] == [{"label": "Panels", "data": [3, 7, 5]}, {"label": "Tools", "data": [2, 4, 6]}], bars
+                assert bars[0].get("stacked") is not True and bars[1]["stacked"] is True, bars
+                page.screenshot(path=str(output / f"chat-charts-{label}-{theme}.png"))
+                chart_hosts.nth(1).scroll_into_view_if_needed()
+                expect(page.get_by_text("Weekly trend", exact=True)).to_be_visible()
+                assert chart_hosts.nth(1).locator("svg").count() > 0
+                page.screenshot(path=str(output / f"chat-line-{label}-{theme}.png"))
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "Charts overflow the phone page"
+        page.locator("pre code.language-panels-chart").scroll_into_view_if_needed()
+        page.screenshot(path=str(output / "chat-malformed-fallback.png"))
+        copied = thread.evaluate("""element => {
+          const range=document.createRange();range.selectNodeContents(element);
+          const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+          let text='';const event=new Event('copy',{bubbles:true,cancelable:true});
+          Object.defineProperty(event,'clipboardData',{value:{setData:(kind,value)=>{if(kind==='text/plain')text=value}}});
+          element.dispatchEvent(event);selection.removeAllRanges();return text;
+        }""")
+        assert "```panels-chart" in copied and '"kind":"bar"' in copied
+        assert "After the malformed chart." in copied
+        page.evaluate("window.__chatChartProbe.stream(false)")
+        expect(chart_hosts).to_have_count(0)
+        expect(page.locator("pre code.language-panels-chart")).to_have_count(1)
+        page.evaluate("window.__chatChartProbe.stream(true)")
+        expect(chart_hosts).to_have_count(1)
+        expect(page.get_by_text("Streamed chart", exact=True)).to_be_visible()
+        page.evaluate("window.__chatChartProbe.unsafe()")
+        expect(page.get_by_text('<img src=x onerror="window.chartInjected=true">', exact=True)).to_be_visible()
+        assert page.locator("[data-chat-chart-fixture] img").count() == 0
+        assert not page.evaluate("window.chartInjected === true")
+        page.evaluate("window.__chatChartProbe.editable()")
+        editor = page.locator("[data-chat-chart-editor]")
+        expect(editor.locator("pre code.language-panels-chart")).to_have_count(1)
+        assert editor.locator(".goal-chart-host").count() == 0
+        assert "```panels-chart" in page.evaluate("window.__chatChartProbe.readEditable()")
+        page.evaluate("window.__chatChartProbe.long()")
+        thread.evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+        expect(page.get_by_text("Long message chart", exact=True)).to_be_visible(timeout=10000)
+        expect(page.locator("[data-markdown-window]")).not_to_have_count(0)
+        thread.evaluate("node => {node.scrollTop=node.scrollHeight;node.dispatchEvent(new Event('scroll'));}")
+        expect(chart_hosts).to_have_count(0, timeout=10000)
+        thread.evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+        expect(page.get_by_text("Long message chart", exact=True)).to_be_visible(timeout=10000)
+        expect(chart_hosts).to_have_count(1)
+        page.evaluate("window.__chatChartProbe.remove()")
+        expect(chart_hosts).to_have_count(0)
+        expect(page.get_by_text("Chart removed.", exact=True)).to_be_visible()
+        assert not errors, errors
+        print("CHAT_CHART_PROOF seconds=" + str(round(time.perf_counter() - started, 3)) + " newHosts=0", flush=True)
     finally:
         page.close()

@@ -1,9 +1,10 @@
 import type { MarkdownPresentationController } from "./markdown/textLocation";
 import { mount, unmount } from "svelte";
+import ChatChart from "./markdown/charts/ChatChart.svelte";
 import FilePreview from "../components/FilePreview.svelte";
 import ManagedMarkdownRegion from "../components/ManagedMarkdownRegion.svelte";
 import { resolvePreview, targetFromHref } from "./filePreview";
-import { renderMarkdownToElement, renderParsedMarkdown, serializeMarkdownDomToSource } from "./markdownPipeline";
+import { renderMarkdownToElement, renderParsedMarkdown, markdownChartForElement, serializeMarkdownDomToSource } from "./markdownPipeline";
 import { parseMarkdownInWorker } from "./markdown/workerClient";
 import { MARKDOWN_GROUP_WEIGHT, MARKDOWN_WORKER_THRESHOLD } from "./markdown/config";
 import type { MarkdownTreeNode, ParsedMarkdown } from "./markdown/contracts";
@@ -36,6 +37,7 @@ type MountedPreview = {
   slot: HTMLElement;
   component: Record<string, unknown>;
   unmounted: boolean;
+  stopCopy?: () => void;
 };
 
 type ReadOnlyRenderInput = {
@@ -49,6 +51,7 @@ type ManagedMarkdownMode = "read-only" | "editable";
 
 const EDITABLE_CARET_GUARD = "\u200b";
 const SOURCE_UNSET = Symbol("source-unset");
+let nextChartIdentity = 0;
 
 export function createManagedMarkdownSurface(
   host: HTMLElement,
@@ -221,6 +224,7 @@ export function createManagedMarkdownSurface(
     if (preview.unmounted) return;
     preview.unmounted = true;
     previews.delete(preview.slot);
+    preview.stopCopy?.();
     void unmount(preview.component);
   }
 
@@ -259,6 +263,23 @@ export function createManagedMarkdownSurface(
     depth: number,
     visited: readonly string[]
   ): void {
+    if (mode === "read-only") {
+      for (const code of root.querySelectorAll<HTMLElement>("pre")) {
+        const chart = markdownChartForElement(code);
+        if (!chart) continue;
+        const slot = document.createElement("div");
+        slot.className = "chat-chart-slot";
+        code.replaceWith(slot);
+        const stopCopy = registerMarkdownCopyRange(slot, () => chart.source);
+        previews.set(slot, {
+          slot, stopCopy, unmounted: false,
+          component: mount(ChatChart, {
+            target: slot,
+            props: { block: chart.block, identity: `chat-${++nextChartIdentity}` }
+          })
+        });
+      }
+    }
     for (const renderedTarget of Array.from(root.querySelectorAll("a[href], img[src]"))) {
       if (!root.contains(renderedTarget)) continue;
       const isImage = renderedTarget.tagName === "IMG";
@@ -458,6 +479,7 @@ function markdownWeight(node: MarkdownTreeNode): number {
   return 40 + (node.value?.length || 0) + (node.children || []).reduce((sum, child) => sum + markdownWeight(child), 0);
 }
 function markdownText(node: MarkdownTreeNode): string {
+  if (node.chart) return node.chart.source + "\n";
   if (node.type === "text") return node.value || "";
   if (node.tagName === "br") return "\n";
   if (node.tagName === "img") return String(node.properties?.alt || "");
