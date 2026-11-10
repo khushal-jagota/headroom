@@ -432,8 +432,8 @@ def run(browser, urls):
     evidence = []
     # The document clips descendants at the Worker panel. Exercise real layout,
     # rather than a z-index assertion, in this existing TicketRoute host.
-    import time
     import copy
+    import time
     placement_started = time.monotonic()
     page.set_viewport_size({"width": 1280, "height": 600})
     page.emulate_media(reduced_motion="reduce")
