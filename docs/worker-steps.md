@@ -30,7 +30,7 @@ That narrowness is the design. A Worker can run for a long time, a person can ta
 All of these must hold:
 
 - It is not backlogged.
-- It can run here: its locale is this machine, or it is a Mac Ticket and the [Mac executor](executor.md) is connected and ready.
+- It can run here: its locale is this machine, or it is a Mac Ticket and the [Mac executor](executor.md) is present (its lease is fresh). Until then the step shows "Waiting for the Mac".
 - The stage is not terminal and has a field for the Worker to fill.
 - The Ticket's status is empty. That one check keeps out parked proposals, blockers, a claim already out, and errors.
 - On a user-owned stage, this entry onto the stage has not had its opener yet.

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from tests.support.executor_inbox import lookup_receipt
+from tests.support.executor_presence import mac_identity, make_current
 from tests.unit.test_conversation_api import _Harness, _start
 from tests.unit.test_conversation_executor_publication import _envelope, _take_event
 
@@ -19,7 +20,6 @@ from planner.conversation.events import ConversationEventKind
 from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.core.db import connect, create_schema
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
     BackendEvent,
@@ -61,11 +61,13 @@ async def _case(
         await harness.system.send("c", text_message_content("work"), sender_label="owner")
         state = harness.system._conversations["c"]
         assert state.running_turn is not None
-        child = ChildReference("proof", "child", "c")
+        # The sending process is current, as its lease makes it; a VpsExecutor built
+        # after this reads it from the presence row.
+        identity = mac_identity()
+        child = ChildReference(identity.executor_incarnation, "child", "c")
         state.retained_child_reference = child
         store = InboxStore(str(path))
-        identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "proof", 1)
-        store.runs.begin_connection(identity)
+        make_current(str(path), identity)
         store.runs.register_child(child, "chief", "chief", 1000)
         event = BackendEvent(
             child,
@@ -183,7 +185,6 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
                 assert sink is not None
                 endpoint = VpsExecutor(str(harness.db_path), RealClock())
                 endpoint.bind_conversations(harness.system)
-                endpoint.runs.identity = identity
                 permission = PermissionAskRaised(
                     ask=BackendPermissionAsk(
                         "ask", "Run?", None, (PermissionAskOption("allow", "Allow", "allow_once"),)
@@ -283,7 +284,6 @@ def test_stale_events_receive_durable_ignored_acceptance_without_rows_or_live_fr
             original_rows = await harness.store.read_events_after("c", 0)
             endpoint = VpsExecutor(str(harness.db_path), RealClock())
             endpoint.bind_conversations(harness.system)
-            endpoint.runs.identity = identity
             with harness.live_tail.subscribe("c") as tail:
                 sequence: tuple[tuple[BackendEventMethod, JsonObject], ...] = (
                     (first.method, first.arguments),

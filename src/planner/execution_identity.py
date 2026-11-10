@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Final
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -41,7 +42,9 @@ class ExecutorIdentity:
     application_revision: str
     spool_format_version: int
     executor_incarnation: str
-    connection_generation: int
+    # Unread by protocol 22. Kept, and written back unchanged into handoff.json, only so
+    # the previous runtime can still parse an identity this one wrote (rollback).
+    connection_generation: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,14 +73,26 @@ class ProtocolRefused(ValueError):
     """The peer did not speak the agreed protocol; replay must not start."""
 
 
+MAC_NEEDS_UPDATE: Final = "Mac needs update"
+MAC_VERSION_INCOMPATIBLE: Final = "Mac version is incompatible"
+
+
 def supports_executor_versions(protocol_version: int, spool_format_version: int) -> bool:
-    """Only the current and previous work protocol share the stable spool format."""
+    """Only the current protocol, on the current spool format, is admitted."""
     return (
         type(protocol_version) is int
         and type(spool_format_version) is int
         and MIN_SUPPORTED_PROTOCOL_VERSION <= protocol_version <= PROTOCOL_VERSION
         and spool_format_version == SPOOL_FORMAT_VERSION
     )
+
+
+def refusal_reason_for_versions(protocol_version: int, spool_format_version: int) -> str:
+    """Name a refused Mac: older in either version needs an update; anything else is
+    incompatible. An old WebSocket client, which sends no identity, needs an update."""
+    if protocol_version < PROTOCOL_VERSION or spool_format_version < SPOOL_FORMAT_VERSION:
+        return MAC_NEEDS_UPDATE
+    return MAC_VERSION_INCOMPATIBLE
 
 
 def validate_identity(identity: ExecutorIdentity, *, check_versions: bool = True) -> None:
@@ -103,8 +118,6 @@ def validate_identity(identity: ExecutorIdentity, *, check_versions: bool = True
         identity.protocol_version, identity.spool_format_version
     ):
         raise ProtocolRefused("executor protocol or spool format mismatch")
-    if identity.connection_generation < 1 or not identity.executor_incarnation:
-        raise ProtocolRefused("invalid executor identity")
 
 
 def parse_identity(payload: object, *, check_versions: bool = True) -> ExecutorIdentity:
@@ -113,11 +126,10 @@ def parse_identity(payload: object, *, check_versions: bool = True) -> ExecutorI
         "application_revision",
         "spool_format_version",
         "executor_incarnation",
-        "connection_generation",
     }.issubset(payload):
         raise ProtocolRefused("invalid identity fields")
     for key in ("protocol_version", "spool_format_version", "connection_generation"):
-        if type(payload[key]) is not int:
+        if key in payload and type(payload[key]) is not int:
             raise ProtocolRefused("identity integer field has wrong type")
     for key in ("application_revision", "executor_incarnation"):
         if type(payload[key]) is not str:

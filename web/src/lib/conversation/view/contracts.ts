@@ -40,7 +40,7 @@ export interface PromptRowBody {
   sent_at_unix_milliseconds: number;
 }
 
-export type PromptDeliveryRefusalReason = "no_such_conversation" | "backend_did_not_start" | "model_resolution_failed" | "session_did_not_load" | "write_to_backend_failed" | "no_running_turn_to_steer_into" | "backend_cannot_steer" | "command_cannot_join_running_turn" | "running_turn_changed_before_steer" | "running_turn_cannot_accept_steer" | "message_cannot_be_steered" | "backend_rejected_steer" | "backend_rejected_prompt";
+export type PromptDeliveryRefusalReason = "no_such_conversation" | "backend_did_not_start" | "model_resolution_failed" | "session_did_not_load" | "write_to_backend_failed" | "no_running_turn_to_steer_into" | "backend_cannot_steer" | "command_cannot_join_running_turn" | "remote_steer_not_delivered" | "running_turn_changed_before_steer" | "running_turn_cannot_accept_steer" | "message_cannot_be_steered" | "backend_rejected_steer" | "backend_rejected_prompt";
 
 export interface RefusedPromptRowBody {
   kind: "prompt_refused";

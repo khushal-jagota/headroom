@@ -48,7 +48,7 @@ async def status(request: Request) -> dict[str, object]:
     service = _service(request)
     result = await asyncio.to_thread(service.status)
     endpoint = getattr(request.app.state, "executor_endpoint", None)
-    mac_details = None if endpoint is None else dict(endpoint.health())
+    mac_details = None if endpoint is None else dict(endpoint.health_payload())
     if mac_details is not None:
         update = await asyncio.to_thread(request.app.state.mac_updates.status)
         mac_details["update"] = None if update is None else asdict(update)

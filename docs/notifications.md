@@ -4,11 +4,12 @@ A notification is a phone or desktop push for a kind of attention Khushal opted 
 
 ## What it is made of
 
-- **Subjects.** Tickets, the Chief, and Managers. Preferences are per subject class: all Managers share one switch per kind,  A Chief preference never changes the matching Ticket preference.
+- **Subjects.** Tickets, the Chief, Managers, and Panels itself (for the stall alarm). Preferences are per subject class: all Managers share one switch per kind,  A Chief preference never changes the matching Ticket preference.
 - **Attention flags.** Each subject has separate flags for a message waiting for a reply, an ask waiting for an answer, and a failure. Tickets also have a proposal waiting for approval and a stage assigned to Khushal.
-- **Edges.** A flag flipping from false to true is an edge. An edge is the only thing that can notify.
+- **Edges.** A flag flipping from false to true is an edge. Apart from the stall alarm below, an edge is the only thing that can notify.
 - **The policy.** One decision door that turns an edge into a push or drops it, according to Khushal's preferences.
 - **Devices.** Each browser or installed app that enabled notifications is a Web Push subscription. A service worker on the device shows the push and opens the link.
+- **The stall alarm.** Panels itself is a subject with one switch, Stalled work. The stall watchdog unit sends it when work stops moving or the server's stall checker stops; it has no edge and does not pass the policy, but it reads that switch. See [Executor](executor.md) for the watchdog.
 - **The settings section.** Notifications is a section of Settings. It renders the server's catalogue of choices and does not keep its own list.
 
 ```

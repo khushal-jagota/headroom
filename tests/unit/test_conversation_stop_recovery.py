@@ -70,7 +70,9 @@ class _StopFactory:
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
         return tuple(self.runs.values())
 
-    def recover(self, reference: ChildReference) -> None:
+    def recover(
+        self, reference: ChildReference, *, event_sink: BackendEventSink | None = None
+    ) -> None:
         return None
 
     def __call__(

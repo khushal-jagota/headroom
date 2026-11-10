@@ -1,4 +1,8 @@
-"""Native provider receipts and replay through the remote child interface."""
+"""Native provider receipts and replay through the remote child interface.
+
+A Mac prompt is accepted when its mailbox row commits. What the provider then did is the
+Mac's recorded outcome, and a prompt it did not deliver ends its turn failed through the
+outbox (R1), whose fixed identity a replay does not add again."""
 
 import asyncio
 from pathlib import Path
@@ -18,14 +22,15 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
     monkeypatch: pytest.MonkeyPatch,
     fate: str,
 ) -> None:
-    """The real native codec and remote decoder must agree before ownership can settle."""
+    """The real native codec and the Mac's outcome must agree before ownership settles."""
+    from tests.support.executor_turns import scripted_remote_child
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
     from planner.conversation.backends.contracts import (
         BackendPromptAccepted,
         BackendPromptRejected,
         PromptWriteFailed,
-        RemoteCommandUncertain,
+        TurnEnded,
         TurnToken,
     )
     from planner.conversation.contracts import (
@@ -34,16 +39,21 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
         PromptDeliveryMode,
         ResolvedConversationStart,
     )
+    from planner.conversation.events import ConversationTurnEnding
     from planner.conversation.message_content import text_message_content
     from planner.conversation.message_files import ConversationMessageFiles
-    from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-    from planner.execution_identity import ChildReference, ExecutorIdentity
+    from planner.execution_identity import ChildReference
     from planner.executor.configuration import ExecutorPaths
-    from planner.executor.mac_connection import MacConnection
     from planner.executor.mac_outbox import MacOutbox
     from planner.executor.mac_runner import MacRunner
-    from planner.executor.protocol import ChildCommand, CommandDisposition
-    from planner.executor.vps_remote_child import MacRemoteChild
+    from planner.executor.protocol import (
+        BackendEvent,
+        ChildCommand,
+        CommandDisposition,
+        EnvelopeKind,
+        decode_event_arguments,
+        type_adapter,
+    )
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "provider-home"))
 
@@ -71,15 +81,6 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
         registry = MacRunner(
             paths=ExecutorPaths(tmp_path / "native"),
             incarnation=reference.executor_incarnation,
-            connection=MacConnection(
-                ExecutorIdentity(
-                    PROTOCOL_VERSION,
-                    "a" * 40,
-                    SPOOL_FORMAT_VERSION,
-                    reference.executor_incarnation,
-                    1,
-                )
-            ),
             outbox=spool,
             factory=cast(Any, lambda *args: lambda **kwargs: native),
             message_files=ConversationMessageFiles(tmp_path / "db"),
@@ -90,7 +91,7 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
             commands.append(command)
             return await registry.run(command)
 
-        remote = MacRemoteChild(reference, send, lambda _: canonical_snapshot())
+        remote = scripted_remote_child(reference, send, lambda _: canonical_snapshot())
         resolved = ResolvedConversationStart(
             "conversation",
             ConversationBackendKey.codex,
@@ -118,18 +119,11 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
                     reasoning_effort_change=None,
                 )
 
-            if fate == "unknown":
-                with pytest.raises(PromptWriteFailed) as uncertain:
-                    await write()
-                assert isinstance(uncertain.value, RemoteCommandUncertain)
-            elif fate == "rejected":
-                with pytest.raises(BackendPromptRejected, match="provider refused request"):
-                    await write()
-            else:
-                accepted = await write()
-                assert accepted.composed_content_delivered is True
+            # Every fate is accepted at commit: the provider's answer comes later.
+            accepted = await write()
+            assert accepted.composed_content_delivered is True
             command = commands[-1]
-            recorded = registry.ask((command.command_id,))[0].outcome
+            recorded = registry._commands[command.command_id].outcome
             assert recorded is not None
             expected = {
                 "accepted": CommandDisposition.succeeded,
@@ -137,7 +131,33 @@ def test_native_provider_outcomes_preserve_receipts_uncertainty_and_replay(
                 "unknown": CommandDisposition.uncertain,
             }[fate]
             assert recorded.disposition is expected
+
+            def turn_endings() -> list[TurnEnded]:
+                endings = []
+                for envelope in spool.pending():
+                    assert envelope.kind is EnvelopeKind.backend_event
+                    event = type_adapter(BackendEvent).validate_python(envelope.payload)
+                    assert (event.child, event.turn) == (reference, turn)
+                    value = decode_event_arguments(event)
+                    assert isinstance(value, TurnEnded)
+                    endings.append(value)
+                return endings
+
+            published = turn_endings()
+            if fate == "accepted":
+                assert published == []
+            else:
+                (ending,) = published
+                assert ending.ending is ConversationTurnEnding.failed
+                assert ending.error_summary is not None
+                assert (
+                    "provider refused request"
+                    if fate == "rejected"
+                    else "it may have reached the agent"
+                ) in ending.error_summary
+            # A replay returns the recorded outcome and neither writes nor publishes again.
             assert await registry.run(command) == recorded
+            assert turn_endings() == published
             assert writes == [turn]
         finally:
             spool.close()

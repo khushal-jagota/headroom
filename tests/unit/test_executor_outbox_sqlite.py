@@ -1,4 +1,4 @@
-"""Crash/loss acceptance for the durable outbox, using SQLite and a scripted link.
+"""Crash/loss acceptance for the durable outbox, using SQLite and a scripted VPS.
 
 These replace layout/pin/preflight assertions. Distinct risks are durable add,
 atomic receipt cleanup, stable IDs, ordering/concurrency and wakeup races. No real
@@ -9,28 +9,32 @@ from __future__ import annotations
 
 import asyncio
 import errno
-import json
 import os
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import cast
+from uuid import uuid4
 
 import pytest
-from pydantic import TypeAdapter
-from tests.support.executor_control import deliver, message_link
-from tests.unit.test_executor_request_deadlines import IDENTITY, peer
 
 from planner.execution_configuration import SPOOL_FORMAT_VERSION
+from planner.executor.configuration import ExecutorPaths
+from planner.executor.contracts import MacFilesApi, MacHttpClient
+from planner.executor.mac_files import UploadRefused
 from planner.executor.mac_outbox import DATABASE_NAME, MacOutbox, OutboxEntry
 from planner.executor.protocol import (
     AcceptanceReceipt,
     EnvelopeKind,
+    FileUploadRequest,
+    ItemBatch,
+    ItemBatchReply,
+    ItemBatchStop,
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
-    WireMessage,
-    WireMessageKind,
 )
 
 
@@ -215,12 +219,63 @@ def test_unsupported_format_preserved_without_conversion(tmp_path: Path) -> None
     assert not (root / "blobs").exists()
 
 
-def receipt_reply(request_id: str, envelope: QueuedEnvelope) -> WireMessage:
-    return WireMessage(
-        WireMessageKind.receipt,
-        request_id,
-        json.loads(TypeAdapter(AcceptanceReceipt).dump_json(receipt(envelope))),
+type Answer = Callable[[str, ItemBatch], Awaitable[ItemBatchReply]]
+
+
+class ScriptedItems:
+    """Route 4 of a scripted VPS, and an upload client that records what it was sent."""
+
+    def __init__(self, answer: Answer, *, refuse_uploads: bool = False) -> None:
+        self.answer = answer
+        self.batches: list[ItemBatch] = []
+        self.uploads: list[FileUploadRequest] = []
+        self.refuse_uploads = refuse_uploads
+
+    async def post_items(self, conversation_id: str, batch: ItemBatch) -> ItemBatchReply:
+        self.batches.append(batch)
+        assert {item.envelope.conversation_id for item in batch.items} == {conversation_id}
+        return await self.answer(conversation_id, batch)
+
+    async def upload(self, upload: FileUploadRequest, source: Path) -> None:
+        self.uploads.append(upload)
+        assert source.read_bytes()
+        if self.refuse_uploads:
+            raise UploadRefused("artifact refused for this agent")
+
+
+def accepted(batch: ItemBatch, result: JsonObject | None = None) -> ItemBatchReply:
+    return ItemBatchReply(
+        tuple(
+            AcceptanceReceipt(
+                item.envelope.sender_id,
+                item.envelope.submission_id,
+                ReceiptDisposition.refused
+                if item.sender_refusal is not None
+                else ReceiptDisposition.accepted,
+                {"original": True} if result is None else result,
+                1,
+            )
+            for item in batch.items
+        )
     )
+
+
+def busy(batch: ItemBatch) -> ItemBatchReply:
+    stop = ItemBatchStop(batch.items[0].envelope.sequence, "retry_later", "VPS busy")
+    return ItemBatchReply((), stop)
+
+
+async def sending(outbox: MacOutbox, vps: ScriptedItems) -> asyncio.Task[None]:
+    task = asyncio.create_task(
+        outbox.send_pending(cast(MacHttpClient, vps), cast(MacFilesApi, vps))
+    )
+    await asyncio.sleep(0)
+    return task
+
+
+async def stop_sending(task: asyncio.Task[None]) -> None:
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
 
 
 def test_send_wakes_after_commit_and_stuck_conversations_hold_back_no_other(
@@ -231,36 +286,25 @@ def test_send_wakes_after_commit_and_stuck_conversations_hold_back_no_other(
     async def run() -> None:
         outbox = MacOutbox(tmp_path / "outbox")
         active: set[str] = set()
-        sent: list[QueuedEnvelope] = []
         release = asyncio.Event()
         stuck = ("c_a", "c_b", "c_c", "c_d")
 
-        writer = peer()
-        link = message_link(writer, IDENTITY)
-        replies: list[asyncio.Task[None]] = []
-
-        async def respond(message: WireMessage) -> None:
-            assert message.kind is WireMessageKind.envelope
-            envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
+        async def answer(conversation_id: str, batch: ItemBatch) -> ItemBatchReply:
             # The row is readable from another connection before sending starts.
             with sqlite3.connect(outbox.root / DATABASE_NAME) as connection:
                 assert connection.execute(
-                    "SELECT 1 FROM items WHERE submission_id=?", (envelope.submission_id,)
+                    "SELECT 1 FROM items WHERE submission_id=?",
+                    (batch.items[0].envelope.submission_id,),
                 ).fetchone()
-            assert envelope.conversation_id not in active
-            active.add(envelope.conversation_id)
-            sent.append(envelope)
-            if envelope.conversation_id in stuck:
+            assert conversation_id not in active
+            active.add(conversation_id)
+            if conversation_id in stuck:
                 await release.wait()
-            active.remove(envelope.conversation_id)
-            await deliver(link, receipt_reply(message.request_id, envelope))
+            active.remove(conversation_id)
+            return accepted(batch)
 
-        async def send(message: WireMessage) -> None:
-            replies.append(asyncio.create_task(respond(message)))
-
-        writer.send.side_effect = send
-        sender = asyncio.create_task(outbox.send_pending(link))
-        await asyncio.sleep(0)
+        vps = ScriptedItems(answer)
+        sender = await sending(outbox, vps)
         try:
             for conversation in (*stuck, "c_e"):
                 for number in range(2):
@@ -268,12 +312,14 @@ def test_send_wakes_after_commit_and_stuck_conversations_hold_back_no_other(
                         outbox.add, entry(f"{conversation}_{number}", conversation)
                     )
             assert await outbox.wait_confirmed("c_e_1", 2) is not None
+            sent = [item.envelope for batch in vps.batches for item in batch.items]
             assert {e.submission_id for e in sent if e.conversation_id in stuck} == {
                 f"{conversation}_0" for conversation in stuck
             }
             release.set()
             for conversation in stuck:
                 assert await outbox.wait_confirmed(f"{conversation}_1", 2) is not None
+            sent = [item.envelope for batch in vps.batches for item in batch.items]
             for conversation in (*stuck, "c_e"):
                 assert [e.submission_id for e in sent if e.conversation_id == conversation] == [
                     f"{conversation}_0",
@@ -282,16 +328,13 @@ def test_send_wakes_after_commit_and_stuck_conversations_hold_back_no_other(
             assert outbox.pending_count() == 0
         finally:
             release.set()
-            sender.cancel()
-            await asyncio.gather(sender, return_exceptions=True)
-            await asyncio.gather(*replies)
-            await link.wait_closed()
+            await stop_sending(sender)
             outbox.close()
 
     asyncio.run(run())
 
 
-def test_failing_conversation_backs_off_alone_and_keeps_the_link(
+def test_failing_conversation_backs_off_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setattr("planner.executor.mac_outbox.OUTBOX_RETRY_INITIAL_SECONDS", 0.01)
@@ -301,26 +344,16 @@ def test_failing_conversation_backs_off_alone_and_keeps_the_link(
         outbox = MacOutbox(tmp_path / "outbox")
         attempts: list[tuple[str, float]] = []
         others_confirmed = asyncio.Event()
-        writer = peer()
-        link = message_link(writer, IDENTITY)
-        replies: list[asyncio.Task[None]] = []
 
-        async def respond(message: WireMessage) -> None:
-            envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
-            if envelope.conversation_id == "c_bad":
-                attempts.append((envelope.submission_id, asyncio.get_running_loop().time()))
+        async def answer(conversation_id: str, batch: ItemBatch) -> ItemBatchReply:
+            if conversation_id == "c_bad":
+                head = batch.items[0].envelope.submission_id
+                attempts.append((head, asyncio.get_running_loop().time()))
                 # Refuse until every other item is confirmed, and at least four times.
                 if not others_confirmed.is_set() or len(attempts) < 5:
-                    busy: JsonObject = {"error": {"code": "retry_later", "message": "VPS busy"}}
-                    reply = WireMessage(WireMessageKind.error, message.request_id, busy)
-                    await deliver(link, reply)
-                    return
-            await deliver(link, receipt_reply(message.request_id, envelope))
+                    return busy(batch)
+            return accepted(batch)
 
-        async def send(message: WireMessage) -> None:
-            replies.append(asyncio.create_task(respond(message)))
-
-        writer.send.side_effect = send
         for submission, conversation in (
             ("bad_0", "c_bad"),
             ("bad_1", "c_bad"),
@@ -329,13 +362,13 @@ def test_failing_conversation_backs_off_alone_and_keeps_the_link(
             ("good_2", "c_good"),
         ):
             outbox.add(entry(submission, conversation))
-        sender = asyncio.create_task(outbox.send_pending(link))
+        sender = await sending(outbox, ScriptedItems(answer))
         try:
             for submission in ("good_0", "good_1", "good_2"):
                 assert await outbox.wait_confirmed(submission, 10) is not None
             others_confirmed.set()
             assert await outbox.wait_confirmed("bad_1", 10) is not None
-            assert not link.is_closing() and not sender.done()
+            assert not sender.done()
             # The failing head was retried in place, never skipped, then the next sent.
             names = [name for name, _ in attempts]
             assert names[-1] == "bad_1" and set(names[:-1]) == {"bad_0"}
@@ -346,64 +379,115 @@ def test_failing_conversation_backs_off_alone_and_keeps_the_link(
             failures = [r.getMessage() for r in caplog.records if "outbox send failed" in r.message]
             assert len(failures) == len(names) - 2
             assert "conversation=c_bad" in failures[0]
-            assert failures[0].endswith("error=error reply retry_later")
+            assert failures[0].endswith("error=retry_later")
             assert outbox.pending_count() == 0
         finally:
-            sender.cancel()
-            await asyncio.gather(sender, return_exceptions=True)
-            await asyncio.gather(*replies)
-            await link.wait_closed()
+            await stop_sending(sender)
             outbox.close()
 
     asyncio.run(run())
 
 
-def test_link_loss_ends_sending_at_once_while_a_conversation_backs_off(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    # Back-off outlasts the test and no request is in flight to fail with the link,
-    # so only noticing the lost link itself can end sending in time.
-    monkeypatch.setattr("planner.executor.mac_outbox.OUTBOX_RETRY_INITIAL_SECONDS", 60.0)
+def test_batch_ends_after_the_first_item_that_is_not_a_plain_event(tmp_path: Path) -> None:
+    """Risk: a cli_write in the middle of a batch gets the synthetic receipt a resend
+    returns for already-stored plain events, and the agent reads {} as its result."""
 
     async def run() -> None:
         outbox = MacOutbox(tmp_path / "outbox")
-        writer = peer()
-        link = message_link(writer, IDENTITY)
-        sent: list[str] = []
-        replies: list[asyncio.Task[None]] = []
+        for number in range(3):
+            outbox.add(entry(f"event_{number}", kind=EnvelopeKind.backend_event))
+        outbox.add(entry("write"))
+        for number in range(3, 5):
+            outbox.add(entry(f"event_{number}", kind=EnvelopeKind.backend_event))
 
-        async def send(message: WireMessage) -> None:
-            envelope = TypeAdapter(QueuedEnvelope).validate_python(message.payload)
-            sent.append(envelope.conversation_id)
-            if envelope.conversation_id == "c_bad":
-                busy: JsonObject = {"error": {"code": "retry_later", "message": "VPS busy"}}
-                reply = WireMessage(WireMessageKind.error, message.request_id, busy)
-                replies.append(asyncio.create_task(deliver(link, reply)))
+        async def answer(conversation_id: str, batch: ItemBatch) -> ItemBatchReply:
+            return accepted(batch, {"written": True})
 
-        writer.send.side_effect = send
-        outbox.add(entry("bad_0", "c_bad"))
-        sender = asyncio.create_task(outbox.send_pending(link))
+        vps = ScriptedItems(answer)
+        sender = await sending(outbox, vps)
         try:
-            while not any("outbox send failed" in r.message for r in caplog.records):
-                await asyncio.sleep(0.01)  # c_bad is now in its back-off.
-            assert sent == ["c_bad"] and not sender.done()
-            link.close("test drops the link")
-            with pytest.raises(ConnectionError):
-                await asyncio.wait_for(sender, 5)
-            remaining = [
-                task
-                for task in asyncio.all_tasks()
-                if "_send_conversation" in repr(task.get_coro())
+            receipt = await outbox.wait_confirmed("write", 2)
+            assert receipt is not None and receipt.result == {"written": True}
+            while outbox.pending_count():
+                await asyncio.sleep(0.01)
+            assert [[i.envelope.submission_id for i in b.items] for b in vps.batches] == [
+                ["event_0", "event_1", "event_2", "write"],
+                ["event_3", "event_4"],
             ]
-            assert remaining == []
-            assert outbox.pending_count() == 1
         finally:
-            sender.cancel()
-            await asyncio.gather(sender, *replies, return_exceptions=True)
-            await link.wait_closed()
+            await stop_sending(sender)
             outbox.close()
 
-    asyncio.run(asyncio.wait_for(run(), 20))
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("refuse_uploads", [False, True])
+def test_missing_files_upload_then_resend_and_a_refused_upload_rides_on_its_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refuse_uploads: bool
+) -> None:
+    """Risk: an item whose file the VPS lacks is resent forever, a VPS that lost an upload
+    is never sent it again, or a file the VPS refuses for good blocks its conversation
+    instead of becoming the item's refused receipt."""
+    monkeypatch.setattr("planner.executor.mac_outbox.OUTBOX_RETRY_INITIAL_SECONDS", 0.01)
+
+    async def run() -> None:
+        outbox = MacOutbox(tmp_path / "executor/spool")
+        artifacts = ExecutorPaths(tmp_path / "executor").artifacts / "t_one"
+        artifacts.mkdir(parents=True)
+        (artifacts / "notes.md").write_text("artifact bytes")
+        child: JsonObject = {
+            "executor_incarnation": str(uuid4()),
+            "child_id": "child",
+            "conversation_id": "c",
+        }
+        envelope = outbox.add(
+            OutboxEntry("c", EnvelopeKind.backend_event, {"child": child}, "with_file"),
+            ticket_id="t_one",
+        )
+        (manifest,) = envelope.file_dependencies
+
+        async def answer(conversation_id: str, batch: ItemBatch) -> ItemBatchReply:
+            (item,) = batch.items
+            # Accepting needs two uploads: staging lost the first, as on a VPS restart.
+            if item.sender_refusal is None and len(vps.uploads) < 2:
+                stop = ItemBatchStop(
+                    item.envelope.sequence, "missing_files", "send it", (manifest,)
+                )
+                return ItemBatchReply((), stop)
+            return accepted(batch)
+
+        vps = ScriptedItems(answer, refuse_uploads=refuse_uploads)
+        sender = await sending(outbox, vps)
+        try:
+            receipt = await outbox.wait_confirmed("with_file", 2)
+            assert receipt is not None
+            assert vps.uploads[0].child.child_id == "child"
+            refusals = [item.sender_refusal for batch in vps.batches for item in batch.items]
+            if refuse_uploads:
+                assert [upload.manifest for upload in vps.uploads] == [manifest]
+                assert receipt.disposition is ReceiptDisposition.refused
+                assert refusals == [None, "artifact refused for this agent"]
+            else:
+                # Asked again for a file it was sent, the sender backs off, then uploads it
+                # again rather than stalling the conversation.
+                assert [upload.manifest for upload in vps.uploads] == [manifest, manifest]
+                assert receipt.disposition is ReceiptDisposition.accepted
+                assert refusals == [None, None, None, None]
+        finally:
+            await stop_sending(sender)
+            outbox.close()
+
+    asyncio.run(run())
+
+
+def test_add_returns_the_item_already_held_under_its_submission_id(tmp_path: Path) -> None:
+    """Risk: publishing a command's owed output again after a crash hits the unique
+    submission constraint, so the output is never marked published."""
+    outbox = MacOutbox(tmp_path / "outbox")
+    first = outbox.add(entry("owed", kind=EnvelopeKind.child_stopped))
+    assert outbox.add(entry("owed", kind=EnvelopeKind.child_stopped)) == first
+    assert outbox.pending_count() == 1
+    outbox.close()
 
 
 def test_refused_confirmation_is_available_to_later_retry_without_requeue(tmp_path: Path) -> None:

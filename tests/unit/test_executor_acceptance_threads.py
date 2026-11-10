@@ -1,4 +1,12 @@
-"""SQLite contention must not freeze unrelated conversation reads or control frames."""
+"""SQLite contention must not freeze unrelated conversation reads or the fence.
+
+An item's acceptance waiting on the database writer lock runs on a worker thread, so
+the event loop keeps answering: an agent's read of another conversation (route 7) and
+the routes answered from memory (the work-route fence and health). The lease and the
+poll are writes themselves and wait for the lock like any write (contract §11.7, gap
+c). A cancelled acceptance keeps its conversation until its blocking unit settles, and
+the resend gets the one receipt, which settles the stop that waited for it.
+"""
 
 from __future__ import annotations
 
@@ -8,18 +16,16 @@ import threading
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
-from tests.support.executor_control import deliver, message_link
 from tests.support.executor_inbox import lookup_receipt
 from tests.unit.test_executor_authoritative_store import CHILD, IDENTITY, envelope
 from tests.unit.test_executor_authoritative_store import store as store
-from tests.unit.test_executor_request_deadlines import peer
 
 from planner.core.clock import RealClock
 from planner.core.db import connect
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.executor import store as store_module
 from planner.executor.protocol import (
     AcceptanceReceipt,
@@ -32,8 +38,6 @@ from planner.executor.protocol import (
     LiveReadRequest,
     ReceiptDisposition,
     StopRun,
-    WireMessage,
-    WireMessageKind,
     encode_value,
 )
 from planner.executor.vps_inbox import InboxStore
@@ -41,16 +45,13 @@ from planner.executor.vps_transport import VpsExecutor
 
 
 @pytest.mark.parametrize("blocked_unit", ["preflight", "accept"])
-def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_cancel_settles(
+def test_locked_acceptance_keeps_conversation_reads_and_the_fence_live_until_cancel_settles(
     store: InboxStore, monkeypatch: pytest.MonkeyPatch, blocked_unit: str
 ) -> None:
     async def exercise() -> None:
+        # The fixture made IDENTITY's process current; the endpoint reads it at start.
         endpoint = VpsExecutor(store.db_path, RealClock())
         endpoint.inbox.store = store
-        endpoint.runs.identity = IDENTITY
-        writer = peer()
-        writer.wait_closed = AsyncMock()
-        endpoint.runs.link = message_link(writer, IDENTITY)
         sibling = replace(CHILD, child_id="sibling", conversation_id="other-conversation")
         store.runs.register_child(sibling, "ticket", "other-ticket", 1000)
         app = FastAPI()
@@ -62,12 +63,14 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
 
         endpoint.app = app
         outcome = CommandOutcome("accepted-command", CHILD, CommandDisposition.succeeded, {})
+        # A stop waits for its accepted child_stopped item, the one accepted below.
         stopping = asyncio.create_task(
-            endpoint.runs.send_command(
+            endpoint.runs.stop(
                 ChildCommand(outcome.command_id, CHILD, ChildOperation.stop, None, StopRun())
             )
         )
-        await asyncio.sleep(0)
+        while not endpoint.mailbox.has_waiter(outcome.command_id):
+            await asyncio.sleep(0.01)
         payload = encode_value(outcome)
         assert isinstance(payload, dict)
         queued = replace(envelope(), kind=EnvelopeKind.child_stopped, payload=payload)
@@ -118,23 +121,17 @@ def test_locked_acceptance_keeps_conversation_reads_and_heartbeat_live_until_can
             assert not release.is_set()
             assert sqlite_threads and all(thread != loop_thread for thread in sqlite_threads)
             read = await asyncio.wait_for(
-                endpoint._read(LiveReadRequest(sibling, "/api/tickets/other-ticket", {})), 1
+                endpoint.read(IDENTITY, LiveReadRequest(sibling, "/api/tickets/other-ticket", {})),
+                1,
             )
             assert read == {"conversation_id": sibling.conversation_id}
-            heartbeat = asyncio.create_task(endpoint.runs.link.request(WireMessageKind.health, {}))
-            while not endpoint.runs.link._pending:
-                await asyncio.sleep(0)
-            request_id = next(iter(endpoint.runs.link._pending))
-            await deliver(
-                endpoint.runs.link,
-                WireMessage(
-                    WireMessageKind.health,
-                    request_id,
-                    {"mac_received_at_ms": 1001, "mac_sent_at_ms": 1002},
-                ),
+            # Every work route's fence, and health, answer from memory meanwhile.
+            fenced = endpoint.require_current(
+                incarnation_header=IDENTITY.executor_incarnation,
+                protocol_header=str(PROTOCOL_VERSION),
             )
-            assert (await asyncio.wait_for(heartbeat, 1)).kind is WireMessageKind.health
-            writer.send.assert_awaited()
+            assert fenced.executor_incarnation == IDENTITY.executor_incarnation
+            assert endpoint.health().presence == "present"
             assert not release.is_set() and not accepting.done()
             accepting.cancel()
             await asyncio.sleep(0)

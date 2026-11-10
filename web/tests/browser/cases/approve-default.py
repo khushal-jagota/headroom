@@ -430,6 +430,74 @@ def run(browser, urls):
     page.evaluate("window.__refresh()")
     artifact_dir = os.environ.get("PANELS_APPROVAL_ARTIFACT_DIR")
     evidence = []
+    # The document clips descendants at the Worker panel. Exercise real layout,
+    # rather than a z-index assertion, in this existing TicketRoute host.
+    import time
+    import copy
+    placement_started = time.monotonic()
+    page.set_viewport_size({"width": 1280, "height": 600})
+    page.emulate_media(reduced_motion="reduce")
+    placement_style = page.add_style_tag(content=".ticket-doc { padding-bottom:400px; }")
+    approve = block().locator("[data-accept]")
+
+    def place_trigger(offset):
+        approve.evaluate("""(button, offset) => {
+            const doc=button.closest('.ticket-doc');
+            doc.scrollTop += button.getBoundingClientRect().top-doc.getBoundingClientRect().top-offset;
+        }""", offset)
+
+    def check_containment():
+        panel = page.locator("[data-ceiling-picker-panel]")
+        expect(panel).to_be_visible()
+        assert panel.evaluate("""panel => {
+            const p=panel.getBoundingClientRect(), d=panel.closest('.ticket-doc').getBoundingClientRect();
+            const worker=panel.closest('.ticket-page').querySelector('[data-conversation-layer-host]').getBoundingClientRect();
+            return p.top>=Math.max(0,d.top)-1 && p.bottom<=Math.min(innerHeight,d.bottom,worker.top)+1;
+        }""")
+        return panel
+
+    for offset, direction in [(20, "below"), (330, "above"), (210, "scroll")]:
+        if direction == "scroll":
+            original_coding = copy.deepcopy(coding)
+            extra = [{"id": f"needs_design_{i}", "label": f"Design review {i}", "gating_field": f"design_{i}", "is_terminal": False, "ownership_mode": "worker"} for i in range(1, 13)]
+            coding["stages"][-1:-1] = extra
+            coding["ceiling_range"][-1:-1] = [row["id"] for row in extra]
+            page.evaluate("window.__refresh()")
+            expect(approve).to_be_visible()
+        place_trigger(offset)
+        approve.press("ArrowDown")
+        panel = check_containment()
+        box, button = panel.bounding_box(), approve.bounding_box()
+        if direction == "below":
+            assert box["y"] >= button["y"]+button["height"]
+        elif direction == "above":
+            assert box["y"]+box["height"] <= button["y"]
+        else:
+            assert panel.locator(".listbox-picker-list").evaluate("list => list.scrollHeight>list.clientHeight"), panel.evaluate("p => ({panel:p.getBoundingClientRect().toJSON(),doc:p.closest('.ticket-doc').getBoundingClientRect().toJSON(),list:p.querySelector('.listbox-picker-list').outerHTML,style:p.getAttribute('style')})")
+            page.get_by_role("listbox").press("End")
+            last = panel.locator('[data-ceiling-picker-choice="done"]')
+            assert last.evaluate("""row => {
+                const r=row.getBoundingClientRect(), p=row.closest('[data-ceiling-picker-panel]').getBoundingClientRect();
+                return r.top>=p.top && r.bottom<=p.bottom;
+            }""")
+            if artifact_dir:
+                Path(artifact_dir).mkdir(parents=True, exist_ok=True)
+                page.screenshot(path=str(Path(artifact_dir) / "ceiling-contained-short-viewport.png"))
+            last.click()
+            expect(page.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
+            check_containment()
+        page.get_by_role("listbox").press("Escape")
+        expect(approve).to_be_focused()
+        expect(page.locator("[data-ceiling-picker-panel]")).to_have_count(0)
+    approve.press("ArrowDown")
+    page.locator("[data-ticket-identity]").click()
+    expect(page.locator("[data-ceiling-picker-panel]")).to_have_count(0)
+    print(f"ceiling placement regression: {time.monotonic()-placement_started:.2f}s", flush=True)
+    placement_style.evaluate("element => element.remove()")
+    coding.clear()
+    coding.update(original_coding)
+    page.evaluate("window.__refresh()")
+
     for host_kind in ["ticket", "review"]:
         if host_kind == "review":
             page.evaluate("window.__showReview('t_coding', 'success_condition')")

@@ -114,14 +114,43 @@ STAGING_ONLY_TABLES = (
         'OT NULL,\n        PRIMARY KEY(conversation_id,turn_number,principal_kind,prin'
         'cipal_id))'
     ),
+    # The WebSocket executor tables, which retire_executor_websocket_tables drops after
+    # executor_mailboxes has copied them.
+    (
+        'CREATE TABLE executor_connections (\n        executor_incarnation TEXT PRIMARY KEY,'
+        ' connection_generation INTEGER NOT NULL,\n        identity_json TEXT NOT NULL, conn'
+        'ection_state TEXT NOT NULL,\n        active INTEGER NOT NULL CHECK(active IN (0,1)))'
+    ),
+    (
+        'CREATE UNIQUE INDEX executor_one_active_connection ON executor_connections(active) '
+        'WHERE active=1'
+    ),
+    (
+        'CREATE TABLE mac_contact_status (singleton INTEGER PRIMARY KEY CHECK(singleton=1), '
+        'last_contact_at_ms INTEGER NOT NULL, refusal_json TEXT)'
+    ),
+)
+
+
+# Tables created by revisions after canonical_manager_identities, which a database at
+# goal_holders does not have yet.
+LATER_TABLES = (
+    "executor_incarnations",
+    "mac_executor_presence",
+    "executor_commands",
+    "stall_findings",
+    "stall_checker_heartbeat",
 )
 
 
 def _staging_shape(tmp_path: Path) -> Path:
-    """Keep retained schema real and reinstate only the tables the upgrade removes."""
+    """Keep retained schema real, reinstate only the tables the upgrade removes, and
+    remove the tables later revisions add."""
     path = tmp_path / "staging.db"
     with closing(connect(str(path))) as conn:
         create_schema(conn)
+        for table in LATER_TABLES:
+            conn.execute(f"DROP TABLE {table}")
         for statement in STAGING_ONLY_TABLES:
             conn.execute(statement)
         # This is only an isolated unit fixture, not a database upgrade or proof stamp.

@@ -13,7 +13,6 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Literal
 from uuid import uuid4
 
@@ -21,7 +20,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
+from tests.support.executor_presence import lease_request, make_current
 
+from planner.core.clock import RealClock
+from planner.core.db import connect, create_schema
 from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
 from planner.environments.app import AppManifest
 from planner.environments.mac_updates import MacUpdateService
@@ -41,8 +43,11 @@ from planner.environments.update_contracts import (
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.app_transport import build_executor_router
+from planner.executor.configuration import EXECUTOR_LEASE_PATH
+from planner.executor.protocol import encode_bounded
 from planner.executor.update_configuration import MAX_MAC_UPDATE_RESPONSE_BYTES
 from planner.executor.update_contracts import MacUpdateReport
+from planner.executor.vps_transport import VpsExecutor
 
 RUNNING_SHA = "a" * 40
 TARGET_SHA = "b" * 40
@@ -187,7 +192,7 @@ def test_retry_mac_presents_a_new_target_with_no_saved_failure(tmp_path: Path) -
     service.prepare(published)
     done = attempt(published, "done")
     write(service, done)
-    service.report(MacUpdateReport("mac_one", TARGET_SHA, "failed", "fixture failure"), {})
+    service.report(MacUpdateReport("mac_one", TARGET_SHA, "failed", "fixture failure"), None)
     assert service.phase("mac_one") == "failed"
     service.attempts.change(
         done.attempt_id, frozenset({"done"}), lambda value: replace(value, mac_attempt_id="mac_two")
@@ -198,10 +203,10 @@ def test_retry_mac_presents_a_new_target_with_no_saved_failure(tmp_path: Path) -
     status = service.status()
     assert status is not None and (status.request_id, status.phase) == ("mac_two", "waiting")
     with pytest.raises(UpdateConflict):
-        service.report(MacUpdateReport("mac_one", TARGET_SHA, "waiting"), {})
+        service.report(MacUpdateReport("mac_one", TARGET_SHA, "waiting"), None)
     with pytest.raises(UpdateConflict):
         service.archive("mac_one")
-    service.report(MacUpdateReport("mac_two", TARGET_SHA, "waiting"), {})
+    service.report(MacUpdateReport("mac_two", TARGET_SHA, "waiting"), None)
     assert service.phase("mac_two") == "waiting"
 
 
@@ -267,7 +272,9 @@ def test_mac_stopped_by_the_legacy_server_activates_after_the_bridge(tmp_path: P
 def test_executor_routes_work_without_work_handshake_but_reject_untrusted_callers(
     tmp_path: Path,
 ) -> None:
-    """Risk: an untrusted caller reads runtime bytes, or a stale generation confirms current."""
+    """Risk: an untrusted caller reads runtime bytes, or a process that is away or not the
+    current one confirms current. The update routes take only the ID header, as a
+    protocol-21 Mac sends; "current" needs the present, leased process."""
     provider = MacProvider()
     published, ready = provider.publish(), provider.publish(NEXT_SHA)
     service = mac_service(tmp_path, provider, TARGET_SHA, ready)
@@ -275,39 +282,90 @@ def test_executor_routes_work_without_work_handshake_but_reject_untrusted_caller
     service.prepare(ready)
     write(service, attempt(published, "done"))
     app = executor_app(service)
+    db_path = str(tmp_path / "planning.db")
+    boot = connect(db_path)
+    create_schema(boot)
+    boot.close()
+    identity = ExecutorIdentity(PROTOCOL_VERSION, TARGET_SHA, SPOOL_FORMAT_VERSION, str(uuid4()))
+    # Known, but last heard from long ago: away.
+    make_current(db_path, identity, at_ms=1)
     with TestClient(app) as client:
         check = client.get("/api/executor/update", headers=HEADERS).json()
         target, prefetch = check["target"], check["prefetch"]
         for path in ("/api/executor/update", target["archive_path"], prefetch["archive_path"]):
             assert client.get(path).status_code == 403
-            assert client.get(
-                path, headers={**HEADERS, "X-Panels-Executor-ID": "other"}
-            ).status_code == 403
-            assert client.get(
-                path, headers={**HEADERS, "Origin": "https://panels.example.test"}
-            ).status_code == 403
+            assert (
+                client.get(path, headers={**HEADERS, "X-Panels-Executor-ID": "other"}).status_code
+                == 403
+            )
+            assert (
+                client.get(
+                    path, headers={**HEADERS, "Origin": "https://panels.example.test"}
+                ).status_code
+                == 403
+            )
         assert client.get(target["archive_path"], headers=HEADERS).content == provider.archives[4]
         assert client.get(prefetch["archive_path"], headers=HEADERS).content == provider.archives[5]
-        for refused in ("/api/executor/update/not-a-target/archive",
-                        f"/api/executor/update/prefetch/{target['archive_sha256']}"):
+        for refused in (
+            "/api/executor/update/not-a-target/archive",
+            f"/api/executor/update/prefetch/{target['archive_sha256']}",
+        ):
             assert client.get(refused, headers=HEADERS).status_code == 409
-        identity = ExecutorIdentity(
-            PROTOCOL_VERSION, TARGET_SHA, SPOOL_FORMAT_VERSION, str(uuid4()), 2
-        )
         report = asdict(MacUpdateReport("mac_one", TARGET_SHA, "current", identity=identity))
+        # No executor: no presence to confirm against.
         assert client.post("/api/executor/update", headers=HEADERS, json=report).status_code == 409
-        health: dict[str, object] = {"identity": asdict(identity), "connection_state": "ready"}
-        app.state.executor_endpoint = SimpleNamespace(health=lambda: health)
-        stale = {**report, "identity": {**report["identity"], "connection_generation": 1}}
-        assert client.post("/api/executor/update", headers=HEADERS, json=stale).status_code == 409
-        for changed in ({"phase": "invented"}, {"detail": "x" * 501}, {"request_id": "other"}):
-            assert client.post(
-                "/api/executor/update", headers=HEADERS, json={**report, **changed}
-            ).status_code == 409
-        assert client.post("/api/executor/update", headers=HEADERS, json=report).json() == {
-            "confirmed": True
-        }
-        assert service.phase("mac_one") == "current"
+        endpoint = VpsExecutor(db_path, RealClock())
+        endpoint.presence.returned = None
+        app.state.executor_endpoint = endpoint
+        try:
+            # The process is current but away: it can neither confirm nor report its stop.
+            stopping = {**report, "phase": "ready_to_restart"}
+            for away in (report, stopping):
+                assert (
+                    client.post("/api/executor/update", headers=HEADERS, json=away).status_code
+                    == 409
+                )
+
+            def lease(leased: ExecutorIdentity) -> int:
+                return int(
+                    client.post(
+                        EXECUTOR_LEASE_PATH,
+                        headers=HEADERS,
+                        content=encode_bounded(lease_request(leased)),
+                    ).status_code
+                )
+
+            assert lease(identity) == 200
+            assert client.post("/api/executor/update", headers=HEADERS, json=stopping).json() == {
+                "confirmed": False
+            }
+            stale = {
+                **report,
+                "identity": {**report["identity"], "executor_incarnation": str(uuid4())},
+            }
+            assert (
+                client.post("/api/executor/update", headers=HEADERS, json=stale).status_code == 409
+            )
+            for changed in ({"phase": "invented"}, {"detail": "x" * 501}, {"request_id": "other"}):
+                assert (
+                    client.post(
+                        "/api/executor/update", headers=HEADERS, json={**report, **changed}
+                    ).status_code
+                    == 409
+                )
+            assert client.post("/api/executor/update", headers=HEADERS, json=report).json() == {
+                "confirmed": True
+            }
+            assert service.phase("mac_one") == "current"
+            # Once replaced, the earlier process can no longer confirm.
+            successor = replace(identity, executor_incarnation=str(uuid4()))
+            assert lease(successor) == 200
+            assert (
+                client.post("/api/executor/update", headers=HEADERS, json=report).status_code == 409
+            )
+        finally:
+            assert client.portal is not None
+            client.portal.call(endpoint.close)
 
 
 def test_field_mac_session_receives_the_published_archive_bytes_from_the_real_server(
@@ -326,9 +384,8 @@ def test_field_mac_session_receives_the_published_archive_bytes_from_the_real_se
 
     from planner.core.clock import build_clock
     from planner.core.config import load_config
-    from planner.core.db import connect, create_schema
     from planner.core.server import create_app
-    from planner.executor.link import create_client_session
+    from planner.executor.mac_http import create_update_session
 
     # Random bytes keep the archive above the compression threshold after gzip.
     filler = random.Random(0).randbytes(8192)
@@ -368,7 +425,7 @@ def test_field_mac_session_receives_the_published_archive_bytes_from_the_real_se
                 while not server.started:
                     await asyncio.sleep(0.01)
             origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
-            async with create_client_session() as session:
+            async with create_update_session(None) as session:
                 async with session.get(origin + "/api/executor/update", headers=HEADERS) as check:
                     assert check.headers.get("Content-Encoding") is None
                     body = json.loads(await check.read())

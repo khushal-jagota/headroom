@@ -1,7 +1,10 @@
-"""Independent recovery polling and durable preparation for a runtime handoff.
+"""Apply the update target each lease reply carries, and prepare a runtime handoff.
 
-The ready release's runtime is downloaded and extracted in the background before any
-update starts, so activation finds it verified on disk and skips the download.
+The lease loop only offers the newest target; this controller applies it in its own
+task, so a download or a slow stop never delays a lease. Reports and archives still use
+the version-independent update routes. The ready release's runtime is downloaded and
+extracted in the background before any update starts, so activation finds it verified
+on disk and skips the download.
 """
 
 from __future__ import annotations
@@ -18,12 +21,11 @@ from typing import Any
 from uuid import UUID
 
 import aiohttp
-from pydantic import TypeAdapter
 
 from planner.environments.mac_runtime import extract_runtime, read_runtime_revision
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import EXECUTOR_ID_HEADER, ExecutorPaths
-from planner.executor.mac_connection import MacConnection
+from planner.executor.mac_presence import MacPresence
 from planner.executor.mac_runner import MacRunner
 from planner.executor.runtime_bootstrap import atomic_record, read_record
 from planner.executor.update_configuration import (
@@ -47,7 +49,12 @@ from planner.executor.update_contracts import (
 
 
 def handoff_identity(identity: ExecutorIdentity) -> ExecutorIdentity:
-    """A normal launch gets a new incarnation. Only a planned swap inherits one."""
+    """A normal launch gets a new incarnation. Only a planned swap inherits one.
+
+    Protocol 22 never reads connection_generation. It keeps the value it found (0 if
+    none) and writes it back unchanged into every handoff.json, so the previous runtime
+    can still parse the record after a rollback.
+    """
     path = os.environ.get(MAC_RUNTIME_HANDOFF_ENV)
     if path is None:
         return identity
@@ -55,24 +62,19 @@ def handoff_identity(identity: ExecutorIdentity) -> ExecutorIdentity:
     if record is None:
         raise ValueError("planned update lacks its durable executor handoff")
     incarnation = record.get("executor_incarnation")
-    generation = record.get("connection_generation")
+    generation = record.get("connection_generation", 0)
     if not isinstance(incarnation, str) or type(generation) is not int or generation < 0:
         raise ValueError("invalid planned executor handoff")
     UUID(incarnation)
     return replace(identity, executor_incarnation=incarnation, connection_generation=generation)
 
 
-def advance_generation(identity: ExecutorIdentity) -> ExecutorIdentity:
-    advanced = replace(identity, connection_generation=identity.connection_generation + 1)
-    path = os.environ.get(MAC_RUNTIME_HANDOFF_ENV)
-    if path is not None:
-        previous = read_record(Path(path)) or {}
-        atomic_record(Path(path), {
-            "executor_incarnation": advanced.executor_incarnation,
-            "connection_generation": advanced.connection_generation,
-            "replay_pending": previous.get("replay_pending", True),
-        })
-    return advanced
+def handoff_record(identity: ExecutorIdentity, *, replay_pending: bool) -> dict[str, Any]:
+    return {
+        "executor_incarnation": identity.executor_incarnation,
+        "connection_generation": identity.connection_generation,
+        "replay_pending": replay_pending,
+    }
 
 
 class MacUpdateController:
@@ -81,14 +83,14 @@ class MacUpdateController:
         *,
         paths: ExecutorPaths,
         runner: MacRunner,
-        connection: MacConnection,
+        presence: MacPresence,
         server_url: str,
         executor_id: str,
         session_factory: Callable[[], aiohttp.ClientSession],
         request_exit: Callable[[], None],
     ) -> None:
         self.root = paths.root / "updates"
-        self.runner, self.connection = runner, connection
+        self.runner, self.presence = runner, presence
         self.server_url, self.executor_id = server_url, executor_id
         self.session_factory, self.request_exit = session_factory, request_exit
         self.prepared_request: str | None = None
@@ -97,17 +99,30 @@ class MacUpdateController:
             runner.planned_update_replay or os.environ.get(MAC_RUNTIME_READY_ENV) is not None
         )
         self._lock = asyncio.Lock()
+        # The newest target a lease reply offered, applied by run() in its own task.
+        self.latest: MacUpdateCheck | None = None
+        self._offered = asyncio.Event()
         # One background download at a time, and one try per archive sha256 in a process.
         self._prefetch: tuple[str, asyncio.Task[None]] | None = None
 
+    def offer(self, check: MacUpdateCheck) -> None:
+        """Called by the lease loop; never waits. The newest check wins."""
+        self.latest = check
+        self._offered.set()
+
     async def _json(
-        self, session: aiohttp.ClientSession, method: str, path: str,
+        self,
+        session: aiohttp.ClientSession,
+        method: str,
+        path: str,
         payload: dict[str, Any] | None = None,
     ) -> Any:
         async with session.request(
-            method, self.server_url + path,
+            method,
+            self.server_url + path,
             headers={EXECUTOR_ID_HEADER: self.executor_id},
-            json=payload, allow_redirects=False,
+            json=payload,
+            allow_redirects=False,
         ) as response:
             if response.status != 200:
                 raise ConnectionError("Mac update channel refused the request")
@@ -119,13 +134,18 @@ class MacUpdateController:
             return json.loads(content)
 
     async def _report(
-        self, session: aiohttp.ClientSession, target: MacUpdateTarget,
-        phase: MacUpdatePhase, detail: str | None = None,
+        self,
+        session: aiohttp.ClientSession,
+        target: MacUpdateTarget,
+        phase: MacUpdatePhase,
+        detail: str | None = None,
     ) -> bool:
         report = MacUpdateReport(
-            target.request_id, target.application_revision,
-            phase, detail,
-            self.connection.identity if phase in ("current", "ready_to_restart") else None,
+            target.request_id,
+            target.application_revision,
+            phase,
+            detail,
+            self.presence.identity if phase in ("current", "ready_to_restart") else None,
         )
         response = await self._json(session, "POST", "/api/executor/update", asdict(report))
         return isinstance(response, dict) and response.get("confirmed") is True
@@ -146,8 +166,14 @@ class MacUpdateController:
         return self.root / "releases" / f"{revision}-{archive_sha256}"
 
     async def _fetch(
-        self, session: aiohttp.ClientSession, archive_path: str, *, revision: str,
-        archive_sha256: str, archive_size: int, download_name: str,
+        self,
+        session: aiohttp.ClientSession,
+        archive_path: str,
+        *,
+        revision: str,
+        archive_sha256: str,
+        archive_size: int,
+        download_name: str,
     ) -> Path:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         archive = self.root / download_name
@@ -173,8 +199,11 @@ class MacUpdateController:
                     stream.flush()
                     os.fsync(stream.fileno())
             return await asyncio.to_thread(
-                extract_runtime, archive, self.root / "releases",
-                expected_sha256=archive_sha256, expected_size=archive_size,
+                extract_runtime,
+                archive,
+                self.root / "releases",
+                expected_sha256=archive_sha256,
+                expected_size=archive_size,
                 expected_revision=revision,
             )
         finally:
@@ -183,8 +212,11 @@ class MacUpdateController:
     async def _download(self, session: aiohttp.ClientSession, target: MacUpdateTarget) -> Path:
         if re.fullmatch(r"[A-Za-z0-9_-]+", target.request_id) is None or not (
             self._valid_runtime_reference(
-                target.application_revision, target.archive_sha256, target.archive_size,
-                target.archive_path, f"/api/executor/update/{target.request_id}/archive",
+                target.application_revision,
+                target.archive_sha256,
+                target.archive_size,
+                target.archive_path,
+                f"/api/executor/update/{target.request_id}/archive",
             )
         ):
             raise ValueError("invalid Mac runtime target")
@@ -196,8 +228,11 @@ class MacUpdateController:
             read_runtime_revision(release, target.application_revision)
             return release
         return await self._fetch(
-            session, target.archive_path, revision=target.application_revision,
-            archive_sha256=target.archive_sha256, archive_size=target.archive_size,
+            session,
+            target.archive_path,
+            revision=target.application_revision,
+            archive_sha256=target.archive_sha256,
+            archive_size=target.archive_size,
             download_name="download.tar.gz",
         )
 
@@ -205,14 +240,17 @@ class MacUpdateController:
         """Download the ready runtime without stopping work or holding up the poll."""
         if (
             prefetch is None
-            or prefetch.application_revision == self.connection.identity.application_revision
+            or prefetch.application_revision == self.presence.identity.application_revision
             or (
                 self._prefetch is not None
                 and (not self._prefetch[1].done() or self._prefetch[0] == prefetch.archive_sha256)
             )
             or not self._valid_runtime_reference(
-                prefetch.application_revision, prefetch.archive_sha256, prefetch.archive_size,
-                prefetch.archive_path, mac_prefetch_archive_path(prefetch.archive_sha256),
+                prefetch.application_revision,
+                prefetch.archive_sha256,
+                prefetch.archive_size,
+                prefetch.archive_path,
+                mac_prefetch_archive_path(prefetch.archive_sha256),
             )
             or self._release_path(prefetch.application_revision, prefetch.archive_sha256).exists()
         ):
@@ -224,20 +262,20 @@ class MacUpdateController:
             with contextlib.suppress(OSError, ValueError, ConnectionError, aiohttp.ClientError):
                 async with self.session_factory() as session:
                     await self._fetch(
-                        session, prefetch.archive_path, revision=prefetch.application_revision,
+                        session,
+                        prefetch.archive_path,
+                        revision=prefetch.application_revision,
                         archive_sha256=prefetch.archive_sha256,
-                        archive_size=prefetch.archive_size, download_name="prefetch.tar.gz",
+                        archive_size=prefetch.archive_size,
+                        download_name="prefetch.tar.gz",
                     )
 
         self._prefetch = (prefetch.archive_sha256, asyncio.create_task(download()))
 
-    async def check(self) -> None:
+    async def apply(self, check: MacUpdateCheck) -> None:
         async with self._lock, self.session_factory() as session:
             self.release_handoff_custody()
             self.release_runtime_admission()
-            check = TypeAdapter(MacUpdateCheck).validate_python(
-                await self._json(session, "GET", "/api/executor/update")
-            )
             if check.schema_version != MAC_UPDATE_SCHEMA_VERSION:
                 raise ValueError("unsupported Mac update channel schema")
             self._start_prefetch(check.prefetch)
@@ -255,29 +293,30 @@ class MacUpdateController:
             failure = read_record(self.root / "failure.json")
             if failure is not None and failure.get("request_id") == target.request_id:
                 await self._report(
-                    session, target, "failed" if failure.get("phase") == "failed" else "reverted",
+                    session,
+                    target,
+                    "failed" if failure.get("phase") == "failed" else "reverted",
                     str(failure.get("detail", "")),
                 )
                 return
-            if target.application_revision == self.connection.identity.application_revision:
-                if (
-                    self.connection.ready_link() is not None
-                    and self.confirmed_request != target.request_id
-                ):
+            if target.application_revision == self.presence.identity.application_revision:
+                if self.presence.leased() and self.confirmed_request != target.request_id:
                     if await self._report(session, target, "current"):
                         marker = os.environ.get(MAC_RUNTIME_READY_ENV)
                         if marker is not None:
-                            atomic_record(Path(marker), {
-                                "request_id": target.request_id,
-                                "application_revision": target.application_revision,
-                                "identity": asdict(self.connection.identity),
-                            })
+                            atomic_record(
+                                Path(marker),
+                                {
+                                    "request_id": target.request_id,
+                                    "application_revision": target.application_revision,
+                                    "identity": asdict(self.presence.identity),
+                                },
+                            )
                         self.confirmed_request = target.request_id
                         self.release_runtime_admission()
                 return
             if self.runner.planned_update_replay:
-                # A synthetic retirement can wait for the old FIFO. Joining it
-                # in prepare_update would prevent the next custody-release poll.
+                # The next update waits until this runtime is admitted.
                 await self._report(session, target, "waiting")
                 return
             if self.prepared_request != target.request_id:
@@ -285,17 +324,22 @@ class MacUpdateController:
                     prepared = await self.runner.prepare_update(target.mode)
                 except (OSError, ValueError, RuntimeError) as error:
                     detail = f"Mac work could not stop safely: {type(error).__name__}."
-                    atomic_record(self.root / "failure.json", {
-                        "request_id": target.request_id, "phase": "failed", "detail": detail,
-                        "admission_stopped": True,
-                    })
+                    atomic_record(
+                        self.root / "failure.json",
+                        {
+                            "request_id": target.request_id,
+                            "phase": "failed",
+                            "detail": detail,
+                            "admission_stopped": True,
+                        },
+                    )
                     await self._report(session, target, "failed", detail)
                     return
                 if not prepared:
                     await self._report(session, target, "waiting")
                     return
                 self.prepared_request = target.request_id
-            if not target.activate or self.connection.ready_link() is not None:
+            if not target.activate or self.presence.leased():
                 await self._report(session, target, "ready_to_restart")
             if not target.activate:
                 return
@@ -312,29 +356,35 @@ class MacUpdateController:
                 detail = f"Mac runtime installation failed: {type(error).__name__}: {error}"[
                     :MAX_MAC_UPDATE_DETAIL_CHARACTERS
                 ]
-                atomic_record(self.root / "failure.json", {
-                    "request_id": target.request_id, "phase": "failed", "detail": detail,
-                })
+                atomic_record(
+                    self.root / "failure.json",
+                    {
+                        "request_id": target.request_id,
+                        "phase": "failed",
+                        "detail": detail,
+                    },
+                )
                 self.prepared_request = None
                 self._resume_if_safe()
                 await self._report(session, target, "failed", detail)
                 return
             previous = read_record(self.root / "selection.json")
             selection = MacRuntimeSelection(
-                target.request_id, target.application_revision, str(runtime),
+                target.request_id,
+                target.application_revision,
+                str(runtime),
                 str(previous["runtime_path"]) if previous else None,
-                self.connection.identity.application_revision,
-                self.connection.identity.executor_incarnation,
-                self.connection.identity.connection_generation,
+                self.presence.identity.application_revision,
+                self.presence.identity.executor_incarnation,
+                self.presence.identity.connection_generation,
                 target.archive_sha256,
             )
-            atomic_record(self.root / "handoff.json", {
-                "executor_incarnation": selection.executor_incarnation,
-                "connection_generation": selection.connection_generation,
-                "replay_pending": True,
-            })
+            atomic_record(
+                self.root / "handoff.json",
+                handoff_record(self.presence.identity, replay_pending=True),
+            )
             atomic_record(self.root / "pending.json", asdict(selection))
-            if self.connection.ready_link() is not None:
+            if self.presence.leased():
                 await self._report(session, target, "ready_to_restart")
             self.request_exit()
 
@@ -348,50 +398,70 @@ class MacUpdateController:
                 self.runner.resume_after_cancelled_update()
 
     def release_runtime_admission(self) -> None:
-        if (
-            not self._runtime_gate_pending or self.runner.planned_update_replay
-            or self.prepared_request is not None
-        ):
+        """Admit work once this runtime is leased and, on trial, the supervisor has kept
+        it. The previous runtime's saved output need not have drained: each conversation
+        sends it first, in its own order, so no conversation waits on another's."""
+        if not self._runtime_gate_pending or self.prepared_request is not None:
             return
         if os.environ.get(MAC_RUNTIME_READY_ENV) is not None:
             selected = read_record(self.root / "selection.json")
             if (
-                self.confirmed_request is None or selected is None
+                self.confirmed_request is None
+                or selected is None
                 or selected.get("request_id") != self.confirmed_request
                 or (self.root / "pending.json").exists()
             ):
                 return
+        # Custody goes first: once work can start, a restart must come back as a new
+        # process, so the VPS ends that work's runs instead of trusting them.
+        if not self._release_custody():
+            return
+        self.runner.finish_planned_replay()
         self.runner.resume_after_cancelled_update()
         self._runtime_gate_pending = False
 
     def release_handoff_custody(self) -> None:
+        """Once the saved output has drained, a restart no longer needs the handoff."""
+        if self.runner.outbox.pending_count() == 0:
+            self._release_custody()
+
+    def _release_custody(self) -> bool:
+        """Mark the handoff replayed. False until this runtime is leased."""
         path = os.environ.get(MAC_RUNTIME_HANDOFF_ENV)
-        if (
-            path is None or self.connection.ready_link() is None
-            or self.runner.outbox.pending_count() != 0
-        ):
-            return
+        if path is None:
+            return True
+        if not self.presence.leased():
+            return False
         receipt = read_record(Path(path))
         if receipt is not None and receipt.get("replay_pending") is True:
-            atomic_record(Path(path), {
-                "executor_incarnation": self.connection.identity.executor_incarnation,
-                "connection_generation": self.connection.identity.connection_generation,
-                "replay_pending": False,
-            })
-            self.runner.finish_planned_replay()
-            self.release_runtime_admission()
+            atomic_record(Path(path), handoff_record(self.presence.identity, replay_pending=False))
+        return True
 
-    async def poll(self, stop: asyncio.Event) -> None:
+    async def run(self) -> None:
+        """Apply each offered target in turn, the newest first."""
         try:
-            while not stop.is_set():
+            while True:
+                if self.runner.planned_update_replay or self._runtime_gate_pending:
+                    # Until this runtime is admitted, admission is re-checked each second,
+                    # so it reopens as soon as the lease and any trial allow.
+                    try:
+                        await asyncio.wait_for(self._offered.wait(), MAC_UPDATE_POLL_SECONDS)
+                    except TimeoutError:
+                        self.release_handoff_custody()
+                        self.release_runtime_admission()
+                        continue
+                else:
+                    await self._offered.wait()
+                self._offered.clear()
+                check = self.latest
+                if check is None:
+                    continue
                 try:
-                    await self.check()
+                    await self.apply(check)
                 except (OSError, ValueError, ConnectionError, aiohttp.ClientError):
-                    # The same recovery channel remains available after a work
-                    # handshake refusal. A failed check never authorizes activation.
+                    # A failed apply never authorizes activation; the next lease offers
+                    # the target again.
                     pass
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(stop.wait(), MAC_UPDATE_POLL_SECONDS)
         finally:
             if self._prefetch is not None:
                 self._prefetch[1].cancel()

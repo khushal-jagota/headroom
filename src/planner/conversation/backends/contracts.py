@@ -24,7 +24,8 @@ and is not translated into a refusal.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Awaitable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -151,9 +152,14 @@ class BackendSteerRefused:
 
 @dataclass(frozen=True, slots=True)
 class BackendSteerUncertain:
-    """The adapter cannot prove admission or non-admission after the attempt."""
+    """The adapter cannot prove admission or non-admission after the attempt.
+
+    ``not_delivered``, when the adapter can learn the answer later, resolves true once it
+    proves the message never reached the turn, so it can still go as the next message.
+    """
 
     composed_content_delivered: bool | None = True
+    not_delivered: Awaitable[bool] | None = field(default=None, compare=False)
 
 
 type BackendSteerOutcome = BackendSteerAccepted | BackendSteerRefused | BackendSteerUncertain
@@ -392,12 +398,22 @@ class BackendChild(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class RetainedBackendRun:
-    """Identity and custody only. A retained run never restores a live turn."""
+    """Identity and custody of a run that outlived the VPS process.
+
+    stop_requested: a stop command is in the mailbox, so the run stays quarantined until
+    its proof arrives rather than being adopted live.
+
+    incarnation_current: the run's executor incarnation is the current one. Only an open
+    run of the current incarnation is adopted live after a VPS restart; a run of a
+    replaced incarnation stays quarantined until its drain retires it.
+    """
 
     reference: ChildReference
     turn: TurnToken
     delivery_uncertain: bool
     retirement_confirmed: bool
+    stop_requested: bool = False
+    incarnation_current: bool = False
 
 
 class BackendChildFactory(Protocol):
@@ -426,7 +442,11 @@ class BackendChildFactory(Protocol):
 class RetainedBackendChildFactory(BackendChildFactory, Protocol):
     """Recover an exact retained child without allocating or starting an agent."""
 
-    def recover(self, reference: ChildReference) -> BackendChild | None: ...
+    def recover(
+        self, reference: ChildReference, *, event_sink: BackendEventSink | None = None
+    ) -> BackendChild | None:
+        """event_sink, when given, is where an adopted live run reports its later events."""
+        ...
 
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
         """Read durable custody, including confirmed retirement, without starting work."""
