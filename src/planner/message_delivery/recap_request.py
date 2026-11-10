@@ -8,9 +8,8 @@ every other message uses, with Panels as its source. It owns no transport, no qu
 no record of its own. What it owns is the sentence, which belongs beside the system that
 delivers it rather than in the browser that presses the button.
 
-The answer to this message is the recap the agent writes, not words it sends back. So the
-send carries no reply requirement: a press leaves the owner's attention alone and the
-fresh recap is the whole result.
+The answer to this message is the recap the agent writes, not words it sends back. A
+press leaves the owner's attention alone and the fresh recap is the whole result.
 
 Asking also clears the recap being replaced. The owner read that line before pressing, so
 it is spent, and leaving it in place makes a pending recap look like a current one. The
@@ -27,6 +26,7 @@ from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.managers import data as managers_data
 from planner.message_delivery import service
 from planner.message_delivery.contracts import MessageDeliveryMode, MessageDeliveryResult
@@ -61,7 +61,8 @@ async def request_recap(
             "a recap can be asked of a ticket, a Manager, or the Chief",
             {"kind": recipient.kind.value},
         )
-    _clear_recap(conn, clock, ctx, recipient)
+    # The clear is a write, so it waits on the SQLite lock on a worker thread.
+    await run_on_worker_thread(_clear_recap, conn, clock, ctx, recipient)
     return await service.send_message(
         conversations,
         conn,
@@ -70,7 +71,6 @@ async def request_recap(
         recipient,
         RECAP_REQUEST_MESSAGE,
         MessageDeliveryMode.steer,
-        expects_reply=False,
         system_message=True,
     )
 

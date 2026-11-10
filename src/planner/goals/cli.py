@@ -1,4 +1,4 @@
-"""Goal agents and owners use the same canonical writer."""
+"""Goal holders and owners use the same canonical writer."""
 
 import json
 import sys
@@ -67,7 +67,7 @@ def create_goal(as_json: bool) -> None:
 @click.argument("goal_id")
 @json_option
 def edit_goal(goal_id: str, as_json: bool) -> None:
-    """Read revision-checked changes from stdin. Discover display switches with goal schema edit."""
+    """Read changes from stdin. Discover display switches with goal schema edit."""
     _emit_goal_response(
         http.send(
             "PATCH",
@@ -172,3 +172,19 @@ def write_artifact(goal_id: str, artifact_path: str, body_file: str, as_json: bo
 def delete_artifact(goal_id: str, artifact_path: str, as_json: bool) -> None:
     data = http.send("DELETE", _artifact_url(goal_id, artifact_path), as_json=as_json)
     http.emit(data, as_json, f"{artifact_path} deleted")
+
+
+@goal.command("make-manager")
+@click.argument("goal_id")
+@json_option
+def make_manager(goal_id: str, as_json: bool) -> None:
+    """Move one Chief goal to a new Manager. Read the request body from stdin."""
+    _emit_goal_response(
+        http.send(
+            "POST",
+            f"/api/goals/{quote(goal_id, safe='')}/make-manager",
+            json_body=stdin_object(as_json),
+            as_json=as_json,
+        ),
+        as_json,
+    )

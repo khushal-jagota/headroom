@@ -5,7 +5,7 @@ import { tick } from "svelte";
 import type { BoardCard, BoardManager, ManagerWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
 import { buildWorkspaceRail, railTicketEligible, refreshWorkspaceRailSignals, stabilizeWorkspaceRail, workspaceWorkerStageSentence, workspaceListRecap } from "../src/lib/workspaceRail";
-import { railDomMatches } from "../src/lib/workspaceRailDom";
+import { railDomMatches } from "./support/workspaceRailDom";
 import { createRailMotionController, type WorkspaceRailPresentation } from "../src/lib/workspaceRailMotion";
 
 const quiet = {
@@ -183,6 +183,27 @@ describe("manager rail projection", () => {
     expect(presented.rail).toEqual(stabilizeWorkspaceRail(updated, frozen));
     motion.dispose();
 
+  });
+
+  it("does not hold a goal window under the pointer that its own answer reports as short", async () => {
+    // A lagging goal list once sized Chief's window to 2 of 3 goals, and a pointer resting
+    // on a goal row kept the full window from ever showing.
+    const goal = (id: string) => ({id}) as NonNullable<WorkspaceRailPresentation["goalRails"]>[number]["rows"][number];
+    const window = (limit: number, ids: string[], total: number) => ({window_id:"goals:chief", request:{section:"goals" as const, owner:{kind:"chief" as const,id:"chief"},
+      group:"all" as const, child_filter:"all" as const, anchor:null, direction:"after" as const, limit},
+      members:ids.map(id=>({kind:"goal" as const,id})), total, previous:null, next:null, forward_overlap:null, backward_overlap:null});
+    const holder = (limit: number, ids: string[], total: number) => [{owner:{kind:"chief" as const,id:"chief"}, sole:null, rows:ids.map(goal), window:window(limit,ids,total)}];
+    let presented: WorkspaceRailPresentation = {rail:buildWorkspaceRail([]), settledOpen:false, goalRails:holder(2,["a","b"],3)};
+    const motion = createRailMotionController(() => null, () => presented, (next) => presented = next);
+    motion.freeze(true);
+    motion.update({...presented, goalRails:holder(3,["a","b","c"],3)});
+    await tick();
+    expect(presented.goalRails?.[0].rows.map(row=>row.id)).toEqual(["a","b","c"]);
+    // A complete window holds still under the pointer as before.
+    motion.update({...presented, goalRails:holder(3,["a","c","d"],3)});
+    await tick();
+    expect(presented.goalRails?.[0].rows.map(row=>row.id)).toEqual(["a","b","c"]);
+    motion.dispose();
   });
 
   it("acknowledges manual folds during a frozen rail exit and admits late pages without another entrance", async () => {
@@ -371,7 +392,7 @@ describe("manager rail projection", () => {
     const chief={querySelectorAll:()=>[],querySelector:(selector:string)=>selector==='.item-head .item-title'?title('Chief of Staff',''):{querySelector:()=>null}};
     let visible=rows;
     const root={querySelectorAll:(selector:string)=>selector==='.active-work-scroll > .manager-card-slot > .manager-card'?[chief]:visible,
-      querySelector:(selector:string)=>selector==='[data-settled-count]'?title('(2)',''):message?{}:null} as unknown as HTMLElement;
+      querySelector:(selector:string)=>selector==='[data-settled-count]'?title('2',''):message?{}:null} as unknown as HTMLElement;
     const matches=(open=true)=>railDomMatches(root,rail,null,open);
     expect(matches()).toBe(true);
     visible=[...rows].reverse();expect(matches()).toBe(false);visible=rows;
@@ -382,34 +403,26 @@ describe("manager rail projection", () => {
     message=false;expect(matches(false)).toBe(true);
   });
 
-  it("states only manifest stages and facts that prove work", () => {
-    const lifecycle = buildLifecycle({
-      worker_type: "bespoke", label: "Bespoke", stages: [
-        { id: "draft", label: "Draft", gating_field: "draft", is_terminal: false, ownership_mode: "worker" },
-        { id: "review", label: "Review", gating_field: "review", is_terminal: false, ownership_mode: "user" },
-        { id: "done", label: "Done", gating_field: null, is_terminal: true, ownership_mode: null }
-      ], advance: {}, fields: [], ceiling_range: [], default_ceiling: "done",
-      worker_profile_id: "bespoke", default_backend: "codex", default_model: null, default_reasoning_effort: null
-    } as WorkerTypeManifest);
-    const reviewing = card("reviewing", {stage:"review", ticket_status:"agent"});
-    expect(workspaceWorkerStageSentence(reviewing, lifecycle)).toBe("At Review.");
-    expect(workspaceWorkerStageSentence({...reviewing, conversation_signal:{working:true,message_for_owner:false}}, lifecycle)).toBe("Currently doing Review.");
-    expect(workspaceWorkerStageSentence({...reviewing, awaiting_approval:true, conversation_signal:{working:true,message_for_owner:false}}, lifecycle)).toBe("Awaiting your approval at Review.");
-    expect(workspaceWorkerStageSentence({...reviewing, agent_state:"errored"}, lifecycle)).toBe("The last turn failed at Review.");
-    expect(workspaceWorkerStageSentence({...reviewing, blocked:true, conversation_signal:{working:true,message_for_owner:false}}, lifecycle)).toBe("Blocked at Review.");
-    expect(workspaceWorkerStageSentence(reviewing, null)).toBe("");
+  it("states only saved stage labels and facts that prove work", () => {
+    const reviewing = card("reviewing", {stage:"review", stage_label:"Review", ticket_status:"agent"});
+    expect(workspaceWorkerStageSentence(reviewing)).toBe("At Review.");
+    expect(workspaceWorkerStageSentence({...reviewing, conversation_signal:{working:true,message_for_owner:false}})).toBe("Currently doing Review.");
+    expect(workspaceWorkerStageSentence({...reviewing, awaiting_approval:true, conversation_signal:{working:true,message_for_owner:false}})).toBe("Awaiting your approval at Review.");
+    expect(workspaceWorkerStageSentence({...reviewing, agent_state:"errored"})).toBe("The last turn failed at Review.");
+    expect(workspaceWorkerStageSentence({...reviewing, blocked:true, conversation_signal:{working:true,message_for_owner:false}})).toBe("Blocked at Review.");
+    expect(workspaceWorkerStageSentence({...reviewing, stage_label:undefined})).toBe("");
   });
 });
 
 // Shared-publication adoption: these are browser adapters, not a new Signal policy.
-import { createNavigationCollection } from '../src/lib/navigation/collection';
+import { createNavigationCollection } from './support/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
 import { navigationWorkspacePresentation, navigationTicketMasthead, navigationReviewPresentation, navigationWorkingAgentCount, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
 import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
-import { encodeCursor } from '../src/lib/navigation/validation';
+import { encodeCursor } from './support/navigation/fixtures';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
 const sourceTicket:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'source-ticket',value:{
-  title:'Source Ticket',recap:'Full source recap.\n'+'Body continues. '.repeat(20),recap_preview:'Source recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
+  title:'Source Ticket',recap:'Full source recap.\n'+'Body continues. '.repeat(20),recap_preview:'Source recap',worker_type:'coding',stage_label:'Implementation',workflow_label:'Coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
   updated_at:11,worker_step_claim_out:false,deadline:null,project_id:'project',manager_kind:'manager',
   manager_id:'item',conversation_id:'conversation',is_backlogged:false,ceiling:'needs_implementation',
   ceiling_holder:{kind:'owner',id:'owner'},gating_field:'implementation',proposal_field:null,proposal_revision:0,
@@ -491,7 +504,7 @@ describe('canonical navigation workspace presentation',()=>{
       expect(staleLabels.gatingField.needs_implementation).toBe('implementation');
       const ticket=navigationWorkspacePresentation(knowledge.getView()!).tickets[0];
       expect(ticket.gating_field).toBe('consequences');
-      expect(workspaceWorkerStageSentence(ticket,staleLabels)).toBe('At Implementation.');
+      expect(workspaceWorkerStageSentence(ticket)).toBe('At Implementation.');
     } finally {adapter.destroy();}
   });
   it('retains exact historical unread addresses independently of current conversation and visible sidebar classification',()=>{

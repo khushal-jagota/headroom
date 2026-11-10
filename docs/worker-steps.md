@@ -1,62 +1,78 @@
 # Worker steps
 
-A Worker step is one prompt that asks the Ticket’s Worker to fill the current blank, or to revise a proposal that was sent back. Headroom’s job here is narrow: notice that a Ticket is ready, claim it, and send that prompt into its conversation. The loop does not watch the turn, does not decide the proposal, and does not advance the stage.
+A Worker step is one prompt that asks a Ticket's Worker to fill the current stage, or to revise a proposal that was sent back. The step loop's job is narrow: notice that a Ticket is ready, claim it, and send that prompt into the Ticket's conversation. It does not watch the turn, decide the proposal, or advance the stage.
 
-That narrowness is the product. The Worker can run for a long time, the person can talk to it in the same conversation, and the stage moves only when a proposal is filed or a parked proposal is decided.
+That narrowness is the design. A Worker can run for a long time, a person can talk to it in the same conversation, and the stage moves only when a proposal is filed or a parked proposal is decided. See [Ticket lifecycle](tickets.md#how-a-stage-advances).
 
-## When a step starts
+## What it is made of
 
-The loop looks at ordinary Tickets in the order they were last updated, least recently updated first, then by id. A Ticket is ready when all of these are true together:
+- **The readiness decision.** A read-only check of one Ticket that answers "may a step start now?" or names the reason it may not.
+- **The worker-step claim.** The only control fact a Ticket stores about automatic work: at rest, out, or errored. See [Ticket lifecycle](tickets.md#how-status-is-read).
+- **The opener fact.** On a stage the person shares with the Worker, a record that this entry onto the stage has had its opening turn.
+- **The loop.** A background pass over the Tickets that could start, least recently updated first, that runs readiness, takes the claim, and sends. It skips backlogged Tickets, Tickets at a final Stage, and Tickets whose step is out, failed, or waiting on a proposal before it reads them.
 
-- It is not backlogged, and its locale is this machine.
-- The stage is not Done and still has a blank.
-- The derived status is empty. That single check keeps out parked approvals, live blockers, claims already out, and errors.
-- If the stage is user-owned, this entry onto the stage has not yet had its opening turn.
+```
+ change signal or timer
+          │
+          ▼
+ readiness ──no──► skip
+          │yes
+ conversation busy? ──yes──► skip this pass
+          │no
+ one guarded write: take the claim (and the opener fact)
+          │
+          ▼
+ send the opener in Queue mode ──► fate decides the claim
+```
 
-The ceiling is not one of these questions. The ceiling decides what a finished proposal does. It does not decide whether the Worker may start.
+## When a Ticket is ready
 
-One more question is asked of the conversation itself, because the record cannot answer it: is this Worker’s turn already running? A busy conversation is left alone for this pass. Automation does not steer into an unrelated turn.
+All of these must hold:
 
-If the Ticket is ready and idle, one guarded write takes the worker-step claim. The same write records the user-owned opener fact when this stage needs one. Every readiness check runs again inside that write, so two loops cannot both win. While the claim is out, the Ticket reads as agent.
+- It is not backlogged.
+- It can run here: its locale is this machine, or it is a Mac Ticket and the [Mac executor](executor.md) is present (its lease is fresh). Until then the step shows "Waiting for the Mac".
+- The stage is not terminal and has a field for the Worker to fill.
+- The Ticket's status is empty. That one check keeps out parked proposals, blockers, a claim already out, and errors.
+- On a user-owned stage, this entry onto the stage has not had its opener yet.
+- The Ticket's model is enabled. A disabled model shows as the blocker until it is enabled or the choice changes. See [Usage](usage.md).
 
-The loop then starts or reuses the Ticket’s conversation, composes the opener from the current Ticket, the Worker type, any revision guidance, and a memory-loss note when one is owed, and sends it in queue mode. Queue mode waits for a free turn instead of injecting into whatever is running.
+The ceiling is not a readiness question. It decides what a finished proposal does, not whether the Worker may start. Manager settlement does not gate a step either.
 
-## When a Worker loses its memory mid-step
+One more question goes to the conversation itself: is a turn already running? A busy conversation is left alone this pass, so automation never steers into an unrelated turn.
 
-A Worker whose step is already in flight gets a short memory-loss notice after automatic compaction. The loop checks that the Ticket’s locale can execute, then queues the notice in the existing conversation. A worker-step prompt sent after the boundary, or one already held in the queue, prevents another notice. The scan also counts an uncertain notice after the boundary as sent, so it does not repeat a message that may have reached the Worker.
+## How a step is sent
 
-A definite refusal or a send exception leaves the notice available for a later poll. There is no separate reservation or hold table. A crash between sending and recording the prompt can therefore repeat the note. An uncertain notice is still not a delivered prompt: if another wake is needed, that wake keeps its existing rule for including the memory-loss note.
+One guarded write takes the claim, re-running every readiness check inside it, so two passes cannot both win. On a user-owned stage the same write records the opener fact. The loop then starts or reuses the Ticket's conversation and sends an opener built from the current Ticket and its saved workflow, any revision guidance from a sent-back proposal, and a memory-loss note when the Worker was compacted mid-step. It sends in Queue mode, which waits for a free turn.
 
-## What the send does to the claim
-
-| Delivery fate | What the claim does |
+| Delivery fate | What happens to the claim |
 | --- | --- |
-| started, queued, or injected, worker-owned stage | The step counts as started. The claim stays out. |
-| started, queued, or injected, user-owned opener | The step counts as started. The claim returns to rest. The opener fact stays, so readiness will not send a second automatic opener for this entry onto the stage. The turn may still be running. |
-| backend_did_not_start, Worker-owned stage | The exact claim becomes errored. The failed conversation and native reason remain visible for explicit restart. |
-| other refused or suppressed outcomes, or user-owned opener | The claim returns to rest. A tentative user-stage opener is forgotten, so a later pass can try again. |
-| uncertain | The claim becomes errored and stays there until `panels ticket restart-worker`. Headroom does not retry an uncertain send. |
+| started, queued, or injected, Worker-owned stage | The step counts as started. The claim stays out. |
+| started, queued, or injected, user-owned opener | The claim returns to rest. The opener fact stays, so no second automatic opener is sent. |
+| refused because the backend did not start, Worker-owned stage | The claim becomes errored. The failed conversation stays for an explicit restart. |
+| any other refusal, or suppressed | The claim returns to rest, and a tentative opener is forgotten, so a later pass can try again. |
+| uncertain | The claim becomes errored. Headroom does not resend a prompt that may have arrived. |
 
-Queued is success because the prompt will run. On a worker-owned stage the claim stays out until the Worker files a proposal or someone accepts, rejects, or completes the gate. Those writers give the claim back. A turn that merely ends does not. On a user-owned opener the claim is already back once the send is accepted, which is why a collaborative stage can read as empty while its opening turn is still going. The opener fact, not the claim, is what stops a second automatic prompt.
+On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A turn that merely ends does not give it back. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot.
 
-The loop wakes on the contentless change signal and on a timer. The timer and the database remain the canonical answer. A missed signal only delays a check.
-
-## What a step feeds, and what feeds it
-
-Ticket state, blockers, backlog, locale, and the conversation’s busy bit feed the decision. The step feeds one real prompt. That prompt is the Worker’s input. The Worker’s proposal, or a person’s decision on a parked proposal, feeds the next time the Ticket can read empty and be eligible again.
-
-Manager settlement does not gate this. A settled Manager’s children still run. Backlog does.
+Every Ticket receives its complete workflow guide at kickoff, from its own copy, so a later edit to its Worker type does not change what it reads. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step.
 
 ## Where it shows up
 
-On the Ticket and the rail, a running turn shows a working mark. That mark comes from the conversation, not from the claim. An idle Ticket whose claim is still out can look quiet and still read as agent, because a worker-owned step was handed off and has not been answered with a proposal yet. After a user-owned opener is accepted, the claim is already at rest, so the Ticket can read as empty while that opening turn is what the pane shows. An errored claim is visible as an error and is how a supervisor learns that automatic progress has stopped.
+A running turn or a running background task shows a working mark, and that mark comes from the conversation, not the claim. An idle Ticket with its claim out can look quiet while it waits for a proposal. An errored claim shows as an error. It also sends one notice to the Ticket's assigned supervisor: the Chief for a Chief ticket, its Manager otherwise. The notice names the reason, for example "could not start (backend_did_not_start)" or "delivery uncertain". A sender whose message is refused sees the reason too, as in `message refused: backend_did_not_start`. Restarting the Worker is the explicit repair. The loop never does it by itself.
 
-Restarting the Worker is the explicit repair for an errored claim. It is not something the loop does by itself.
+## Decisions that shape it
 
-## Pointers
+- Start work, then stop watching. Nothing listens for a turn to end.
+- Readiness is computed from the record, never stored as its own state.
+- A send that may have reached the Worker is never repeated automatically.
+- The loop wakes on the [change signal](live-updates.md) and on a timer. The database is the answer, so a missed signal only delays a check.
 
-The read-only decision is `src/planner/runtime/worker_step_readiness.py`. The poll and `start_ready_worker_step` are `src/planner/runtime/worker_step_readiness_loop.py`. The claim writers are in `src/planner/tickets/data.py`. Opening and sending against the conversation contract is `src/planner/runtime/conversation_start.py`.
+## Code
 
-_Last verified: 2026-10-31._
+- `src/planner/runtime/worker_step_readiness.py`: the readiness decision.
+- `src/planner/runtime/worker_step_readiness_loop.py`: the loop and one step's start.
+- `src/planner/runtime/worker_memory.py`: the memory-loss note.
+- `src/planner/tickets/data.py`: the claim writers.
+- `src/planner/runtime/conversation_start.py`: starting the conversation and sending.
 
-A definite backend start failure keeps the Worker claim errored and retains its conversation with the native refusal detail. Automatic dispatch does not retry that attempt. The existing explicit restart action permits one new attempt. Unknown delivery outcomes remain separate and keep their existing recovery rules. User-owned paired openers keep their existing recovery behavior.
+_Last verified: 2026-11-04._

@@ -1,53 +1,69 @@
 # Managers and Chief
 
-A Manager is a stable place to hold a direction and the Tickets that serve it. It has a goal, a recap, an optional project, child Tickets, artifacts, and its own conversation. The Manager agent commissions and steers Workers. It has no private API. It calls the same routes everyone else calls, and authority limits it to its own record and its current children.
+A Manager is an agent that holds one direction and the Tickets that serve it. It exists so a line of work has a stable home and a supervisor: someone who commissions Workers, reads their results, decides the proposals addressed to it, and keeps a short status a person can read. Chief is the top-level agent above all of them.
 
-Chief is the special case: an assignment target and a global principal who stands above everything, with a retained conversation and settings. Chief is not stored as an ordinary Manager row. Chief never settles.
+## What a Manager is made of
 
-Assignment, ceiling holder, and Chief’s global reach are three different facts. A Ticket can be assigned to a Manager, park its proposal for Khushal, and still be approvable by Chief because Chief stands above it.
+- **A goal**: the sentence that says why this Manager exists. This is a field on the Manager, not a [goal](goals.md) with a deadline and a page.
+- **A recap**: the current status line. Each new recap replaces the old one.
+- **An optional project.** A Manager's project is also the effective project of its Tickets.
+- **Child Tickets**: the Tickets assigned to it.
+- **Artifacts** and **its own conversation**, on the ordinary [conversation system](conversations.md).
+- **A launch setup**: the backend, model, and reasoning its conversation uses.
 
-## Goal, recap, and settlement
+## Manager identity
 
-The goal is why the Manager exists. A non-blank goal can start the Manager conversation as a queued message. That message does not create a reply debt. The recap is the current status line. A new recap replaces the old one. The owner and the Manager may edit both. Cards show the recap. An empty recap falls back to the child count. It does not fall back to the goal. Chief has a recap and no goal band.
+Current agent identities use `PLAN_ACTOR=manager` and `PLAN_MANAGER_ID`. The forward migration preserves each Manager and its conversation. Retained conversations receive the current role instructions on their next turn. Old actor names, command aliases, request headers, and environment names do not select a Manager.
 
-Settlement is an owner-only control on an ordinary Manager. It changes presentation: the Manager leaves the active rail and can be reopened from Settled. Workers keep running, Ticket approvals stay in Review, and messages can still be sent. The settled Manager’s own unread conversation leaves Review. Ticket messages under that Manager stay eligible until the Ticket is Done or backlogged. Children are not completed. Settled is the right destination for new work to avoid. Existing work may continue. Chief cannot be settled, and Chief cannot settle anyone. The settle writer checks for the owner directly, which is tighter than the usual “Chief stands above everything” rule.
+Manager files retain `/files/sprint-items/` addresses so that existing Ticket links still open. Historical migration backfills remain isolated from current navigation writes.
 
-## Children
+## Chief
 
-The Manager creates children through ordinary Ticket creation. The Workspace lists each child with its attention and its proposal holder, not the full stage bodies. Opening a row opens the Ticket. Deleting a child is permanent and can cut off a Worker mid-turn. A Manager may not re-parent a Ticket. Moving work to another Manager changes who stands above it, and that stays with Khushal and Chief. See [Who may act](authority.md).
+Chief is the special case. It is a global principal that stands above everything, with its own retained conversation and settings. Tickets can be assigned to Chief directly. Chief is not stored as an ordinary Manager, has no goal field, and can never be settled.
 
-Backlogged and Done children are sections on the Manager page. The rail’s attention groups omit backlogged Tickets. Chief’s page shows Chief’s children beside Chief’s conversation, in pages.
+## What a Manager does
 
-## Manager models
+A Manager acts through the same routes as everyone else. It has no private API. [Authority](authority.md) limits it to its own record and its current children. It can create child Tickets, approve or send back their proposals, message them, delete them, and restart a Worker that errored. It cannot move a Ticket to another Manager. Only Khushal and Chief can.
 
-Khushal chooses defaults for new Managers in Settings → Config, under the Manager role. Chief can read and save the same defaults through `GET|PUT /api/managers/launch-defaults`. Each new Manager copies those choices. Existing Managers retain their own choices. A fresh installation uses Codex `gpt-6.1-sol` with `medium` effort. The migration preserves existing Managers.
-
-Chief can change one existing Manager through `GET|PUT /api/managers/{id}/launch-defaults`. The owner also retains access to these routes. The complete object contains `employee_backend`, `employee_launch_model`, and nullable `employee_launch_reasoning_effort`. A save sends no message and preserves the conversation and history. An active turn keeps its model. An explicit save applies to the next message, unless its sender explicitly selects another choice. Historical launch metadata does not override an existing conversation.
-
-Queued messages retain the choice that accompanied their admission. An accepted owner picker change also saves that intent, even while its message waits. Later wakes and unchanged messages use that saved choice. A null effort requests the provider default on that next message.
-
-An existing conversation keeps its backend. To change backend, the owner or Chief starts a new conversation first. Ordinary Managers cannot change global defaults or another Manager's settings.
-
-Model choices are exact backend tokens. Catalogs help the picker but do not restrict valid unlisted tokens. New settings reject disabled models. Reads do not reject historical settings. Existing conversations retain their current model until an explicit change. The migration marks historical settings as implicit, because their columns do not prove a later choice. A setting save records explicit intent without a timestamp guess. Normal messages, wakes, and review notices share that distinction.
-
-The former Codex default `sol` is a known unsupported token. If a conversation starts or resumes on that token, the Codex adapter refuses before process startup. The conversation records that refusal with explicit-model guidance. A healthy conversation remains reachable when only its historical launch setting names `sol`. No choice changes silently. If the current conversation model itself is disabled, the existing execution policy still records a durable refusal. Provider availability still requires a real start.
+The owner, Chief, Managers, and Workers talk through Send Message, which delivers a real prompt into the recipient's conversation. Two Managers can message each other. That is speech, not authority over each other's Tickets.
 
 ## How a Manager hears about work
 
-Three kinds of durable wake become real queued prompts in the Chief or Manager conversation. They are recorded in the same transaction as the fact that caused them. A loop later delivers a batch, and it closes a wake only when that prompt is durably in the notebook. A stale proposal notice is dropped rather than sent. Replying to a wake does not approve anything. Approval is still the proposal resolver.
+Some events become durable **wakes**, real prompts queued into the responsible Chief or Manager conversation:
 
-- A proposal routed to Chief or to that Manager.
-- The worker-step claim becoming errored, for an ordinary Manager named on the Ticket. A Chief-assigned Ticket has no Manager id, so this particular wake is not created. The owner sees that failure through attention.
-- A Ticket turn that failed, when the ceiling holder is an agent. If the holder is Khushal, he is told through attention and notifications, not through this wake.
+- a Ticket proposal parked for that Manager or for Chief;
+- a worker step erroring on an ordinary Manager's child Ticket;
+- a Ticket turn failing when an agent holds that Ticket's review;
+- a [measure source](measures.md) failing when that Manager or Chief is responsible for it.
 
-The owner, Chief, and Managers talk to each other, and to Workers, through Send Message. Two Managers may message one another. That permission is speech. It does not put either above the other’s Tickets. Backend chatter inside a Manager’s own turn is not delivery to Khushal. Delivery is Send Message.
+Each wake is recorded in the same write as the event that caused it, then delivered by a loop, so a crash cannot lose it. A notice that has gone stale, such as a proposal already decided, is dropped rather than sent. Replying to a wake approves nothing. Proposals are decided only through the [Ticket lifecycle](tickets.md).
 
-## What feeds a Manager, and where it shows up
+When the event concerns Khushal rather than an agent, it reaches him through [Review](review.md) and [notifications](notifications.md) instead.
 
-Creation, goal and recap edits, child Ticket activity, and wakes feed the Manager. The Manager feeds child Tickets, messages, and its own recap. Workspace shows Chief first, then active Managers with their Workers grouped by attention, then a Settled fold. A Manager page is the header, the recap, the conversation, and the children. `#/workspace/chief-of-staff` opens Chief. `#/workspace/manager/<id>` opens a Manager. Older `#/workspace/item/…` and `#/agents/chief-of-staff` addresses still redirect.
+## Settlement
 
-## Pointers
+Settling a Manager is a presentation control, and only Khushal may do it. A settled Manager leaves the active part of the Workspace rail and can be reopened from Settled. Its children keep running, their approvals stay in Review, and messages still work. Settled means "don't put new work here", not "stop".
 
-`src/planner/managers/` is the record. Wakes live in `src/planner/manager_wakes/`. The screens are `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`.
+## Launch setup
 
-_Last verified: 2026-11-02._
+Khushal and Chief set the default backend, model, and reasoning for new Managers, and can change any one Manager's setup. A new Manager copies the defaults. A change applies to the next message and does not interrupt a running turn. An existing conversation keeps its backend. Switching backend means starting a new conversation.
+
+## Where it shows up
+
+The Workspace shows Chief first, then active Managers with their Tickets grouped by the attention they need, then the Settled fold. A Manager page has its header, recap, conversation, held goals, and its page document with its Tickets. A Manager with one goal is shown as that goal under its own name. See [Goals](goals.md). When a Manager or Chief page opens, its children list shows a placeholder until its own data arrives, then draws once. `panels manager` reaches the same records.
+
+## Decisions that shape it
+
+- **No private API.** A Manager's power is exactly what the authority rule gives it over its current children.
+- **Assignment is not re-assignable by the assignee.** Handing a Ticket away would let a Manager give away authority it holds, so only Khushal and Chief move work.
+- **Wakes are written with their cause.** A supervisor is never told about something that did not commit, and never misses something that did.
+- **Settlement hides. It does not stop.** Work in flight always finishes or fails on its own terms.
+
+## Code
+
+- `src/planner/managers/`: the record, settlement, and launch settings.
+- `src/planner/manager_wakes/`: wake creation and delivery.
+- `src/planner/worker_settings/`: Chief's own settings.
+- `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`: the screens.
+
+_Last verified: 2026-11-04._

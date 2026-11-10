@@ -13,6 +13,7 @@ from planner.conversation.backends.contracts import (
     BackendEventValue,
     BackendPermissionAsk,
     BackendUserInputRequest,
+    CommandReplyReported,
     ContextCompacted,
     PermissionAskRaised,
     PlanUpdated,
@@ -27,10 +28,10 @@ from planner.conversation.backends.contracts import (
 from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.events import (
     AutomaticCompactionResult,
+    CommandReplyEventPayload,
     ContextCompactedEventPayload,
     ConversationEventPayload,
     ConversationTurnEnding,
-    ExplicitReplyMissingEventPayload,
     PermissionAskedEventPayload,
     PlanUpdatedEventPayload,
     TokenUsageEventPayload,
@@ -95,11 +96,7 @@ def interpret_turn_ending(
         and not context.compaction_confirmed
         else None
     )
-    payloads = tuple(
-        ExplicitReplyMissingEventPayload(prompt_sender=sender)
-        for sender in context.prompt_senders
-        if sender not in context.explicit_reply_recipients
-    ) + (
+    payloads = (
         TurnEndedEventPayload(
             ending=ending,
             error_summary=normalized_failure_summary(error_summary)
@@ -192,6 +189,8 @@ def interpret_backend_event(
                 cost_usd=args.cost_usd,
             ),
         )
+    elif isinstance(args, CommandReplyReported):
+        payloads = (CommandReplyEventPayload(reply_text=args.reply_text),)
     elif compacted:
         payloads = (ContextCompactedEventPayload(),)
         if predicted is not None:
@@ -228,8 +227,6 @@ def interpret_backend_event(
                 running.automatic_compaction,
                 running.compaction_confirmed,
                 running.automatic_notice,
-                tuple(running.prompt_senders),
-                tuple(running.explicit_reply_recipients),
             ),
             args.ending,
             args.error_summary,

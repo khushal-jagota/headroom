@@ -10,6 +10,15 @@ export async function prepare({ scratchRoot }) {
   // reload. Network sources use the case fixture through the real navigation transport.
   await writeFile(join(scratchRoot, host), `<script lang="ts">
 import AppWithQueryClient from '../src/AppWithQueryClient.svelte';
+import {queryClient} from '../src/lib/queryClient';
+import {goalQueries} from '../src/lib/goals/queries';
+// Observe cache admission without replacing or advancing the production query.
+(globalThis as any).__goalQueryState = (id: string) => {
+  const state = queryClient.getQueryState(goalQueries.detail(id).queryKey);
+  const data = state?.data as {body?: {revision?: number}} | undefined;
+  return {fetchStatus: state?.fetchStatus, status: state?.status,
+    dataUpdateCount: state?.dataUpdateCount, revision: data?.body?.revision};
+};
 import {Chart} from 'chart.js';
 // Canvas tooltips have no DOM node. Observe the production instance in this host.
 (globalThis as any).__goalCanvasInspection = (canvas: HTMLCanvasElement) => {
@@ -22,7 +31,7 @@ import {Chart} from 'chart.js';
       y: (chart.chartArea.top + chart.chartArea.bottom) / 2,
     } : null} : null;
 };
-import { railDomMatches } from '../src/lib/workspaceRailDom';
+import { railDomMatches } from '../tests/support/workspaceRailDom';
 import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 (globalThis as any).__railDomMatches = (cards, managers, chief) => railDomMatches(
   document.querySelector('.workspace-rail'), buildWorkspaceRail(cards, managers), chief, false,
@@ -46,14 +55,22 @@ let sourceIdentity = 0;
 };
 class QuietEventSource {
   onopen = null; onmessage = null; onerror = null;
-  listeners = new Map(); closed = false;
+  listeners = new Map(); closed = false; readyState = 0;
   url: string;
   id = ++sourceIdentity; generation = 0;
   constructor(url: string) {
     this.url = url;
-    if (ownerUpdates && url === '/api/changes') {
+    if (url === '/api/changes') {
       (globalThis as any).__ownerUpdatesSignal = () => (this.onmessage as any)?.({data:''});
-      queueMicrotask(() => (this.onopen as any)?.());
+      (globalThis as any).__ownerUpdatesDisconnect = () => {
+        (globalThis as any).__ownerUpdatesOffline = true;
+        this.readyState = 2;
+        (this.onerror as any)?.();
+      };
+      queueMicrotask(() => {
+        if ((globalThis as any).__ownerUpdatesOffline) { this.readyState = 2; (this.onerror as any)?.(); }
+        else { this.readyState = 1; (this.onopen as any)?.(); }
+      });
       return;
     }
     if (!url.startsWith('/api/navigation/view/events')) { if (overlay) return new ReaderSource(url); return; }

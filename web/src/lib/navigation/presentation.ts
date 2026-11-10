@@ -44,7 +44,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   let exactOutClaimCount=0;
   let chiefRecord:Extract<(typeof records)[number],{kind:'chief'}> | undefined;
   for(const record of records) {
-    if(record.kind==='ticket' || record.kind==='manager' || record.kind==='chief' || record.kind==='goal') {
+    if(record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') {
       if(record.value.conversation_id!==null) currentConversationIds.add(record.value.conversation_id);
     }
     if(record.kind==='ticket') {
@@ -88,7 +88,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const owner=row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner';
     const parked=row.ticket_status==='awaiting_approval';
     const parent=row.manager_kind==='chief' ? null : row.manager_id;
-    return [{id:record.id,locale:row.locale === "macos" ? "macos" as const : "vps" as const,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,worker_type:row.worker_type,
+    return [{id:record.id,locale:row.locale === "macos" ? "macos" as const : "vps" as const,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,stage_label:row.stage_label,worker_type:row.worker_type,
       ticket_status:row.ticket_status,is_backlogged:row.is_backlogged,blocked:row.blocked,
       activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
@@ -110,7 +110,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(raw.manager_id!==null && !parent) continue;
     const projectId=raw.manager_id===null ? raw.project_id : parent!.value.project_id;
     if(projectId!==null && !rawProjectsById.has(projectId)) continue;
-    ticketMastheadsById.set(ticket.id,{id:ticket.id,locale:ticket.locale ?? "vps",title:raw.title,worker_type:raw.worker_type,
+    ticketMastheadsById.set(ticket.id,{id:ticket.id,locale:ticket.locale ?? "vps",title:raw.title,worker_type:raw.worker_type,workflow_label:'workflow_label' in raw ? raw.workflow_label : undefined,
       project:projectId===null ? null : rawProjectsById.get(projectId)!.value.name,
       conversation_id:raw.conversation_id,conversation_signal:signal(raw.conversation_id===null ? undefined : view.conversations.get(raw.conversation_id))});
   }
@@ -150,7 +150,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const ticket=byTicket.get(address.owner_id), item=managersById.get(address.owner_id);
     const parentId=address.parent_kind==='chief' ? 'chief' : address.parent_id;
     const parent=parentId === null ? undefined : managersById.get(parentId);
-    const title=address.owner_kind==='ticket' ? ticket?.title : address.owner_kind==='manager' ? item?.title : address.owner_kind==='goal' ? rawGoalsById.get(address.owner_id)?.value.title : chief?.label;
+    const title=address.owner_kind==='ticket' ? ticket?.title : address.owner_kind==='manager' ? item?.title : chief?.label;
     if(title===undefined) continue;
     seen.add(key);
     messages.push({kind:address.owner_kind==='manager' ? 'manager' : address.owner_kind,
@@ -170,7 +170,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     // to a former owner when the canonical owner is excluded.
     reviewConversations.add(address.conversation_id);
     const owner=address.owner_kind==='ticket' ? rawTicketsById.get(address.owner_id)?.value
-      : address.owner_kind==='manager' ? managersById.get(address.owner_id) : address.owner_kind==='goal' ? rawGoalsById.get(address.owner_id)?.value : chiefRecord?.value;
+      : address.owner_kind==='manager' ? managersById.get(address.owner_id) : chiefRecord?.value;
     if(!owner)continue;
     if(address.owner_kind==='ticket' && ('stage' in owner && owner.stage==='done' || 'is_backlogged' in owner && owner.is_backlogged))continue;
     if(address.owner_kind==='manager' && 'settled' in owner && owner.settled)continue;
@@ -239,7 +239,7 @@ export function navigationWorkingAgentCount(view:EffectiveNavigationView | null 
   if(counts)return counts.running_conversations;
   const pointers=new Set<string>();
   for(const record of view.publication.records) {
-    if((record.kind==='ticket' || record.kind==='manager' || record.kind==='chief' || record.kind==='goal') && record.value.conversation_id!==null) {
+    if((record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') && record.value.conversation_id!==null) {
       pointers.add(record.value.conversation_id);
     }
   }
@@ -273,7 +273,8 @@ export type NavigationTicketMasthead = {
   readonly locale:import("../ticketMachines").TicketLocale;
   readonly id:string;
   readonly title:string;
-  readonly worker_type:string;
+  readonly worker_type:string | null;
+  readonly workflow_label?:string;
   readonly project:string | null;
   readonly conversation_id:string | null;
   readonly conversation_signal:Partial<ConversationSignal>;

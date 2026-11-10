@@ -420,6 +420,9 @@
   async function adopt(id: string): Promise<void> {
     closeStream();
     openedId = id;
+    // Restoring this tab's messages is part of opening. App recovery must not start
+    // a second opening while that asynchronous restoration still owns the first.
+    opening = true;
     refreshedReadThrough.clear();
     viewAnchor=null;
     viewFolds=new Set();
@@ -485,10 +488,10 @@
     }
   }
   /** One cancellable reader per selected lens and visible transcript demand. */
-  function attachReader(id:string):ConversationViewReader{
+  function attachReader(id:string,transcript=documentIsVisible&&conversationState!=="rest"):ConversationViewReader{
     closeStream();
     let lastCoverage=-1;
-    const local=new ConversationViewReader(id,lens,documentIsVisible&&conversationState!=="rest",()=>{
+    const local=new ConversationViewReader(id,lens,transcript,()=>{
       if(reader!==local)return;
       connectionTrouble=local.trouble;
       livenessPulse++;
@@ -503,10 +506,16 @@
   }
   $effect(()=>{
     const selectedLens=lens;
-    const transcript=documentIsVisible&&conversationState!=="rest";
+    const visible=documentIsVisible;
+    const opened=conversationState!=="rest";
     const currentReader=untrack(()=>reader);
-    if(currentReader===null||currentReader.lens===selectedLens&&currentReader.transcript===transcript)return;
-    const next=untrack(()=>attachReader(currentReader.id));
+    if(currentReader===null)return;
+    // Returning to the dock keeps a transcript already read, so opening again draws it at
+    // once instead of reconnecting and redrawing it. The viewport holds its place at rest
+    // and places it when the conversation opens; owner reads still wait for the open state.
+    const transcript=visible&&(opened||currentReader.transcript);
+    if(currentReader.lens===selectedLens&&currentReader.transcript===transcript)return;
+    const next=untrack(()=>attachReader(currentReader.id,transcript));
     void next.connect().catch(()=>{if(reader===next)connectionTrouble=true;});
   });
   async function openConversation(id: string): Promise<void> {
@@ -954,18 +963,17 @@
   $effect(() => tellWhenAWaitRunsOut(sentMessages, (told) => void holdOnTo(told)));
 
   onMount(() => {
-    // The record is the only thing that can settle a send this tab never heard an answer
-    // for, and most of the time it already has the answer: the row was written and this
-    // browser was not listening. So when the server comes back, read again. Coming back is
-    // not something this pane has to work out — the app's own connection says it, and a
-    // reconnect is what everything else on screen reacts to as well.
-    let reachable = false;
+    // App recovery also repairs a transcript whose own stream stalled silently.
+    // Unknown sends still need receipt recovery when their transcript is not visible.
+    // The subscription's initial value is not a reconnect: opening owns that read.
+    let reachable: boolean | null = null;
     const stopWatchingTheConnection = connectionStatus.subscribe((status) => {
       const nowReachable = status === "connected";
-      const cameBack = nowReachable && !reachable;
+      const cameBack = nowReachable && reachable === false;
       reachable = nowReachable;
       if (!cameBack) return;
-      if (!anOutgoingMessageIsWaitingOnTheRecord(sentMessages)) return;
+      const transcriptIsVisible = documentIsVisible && conversationState !== "rest";
+      if (!transcriptIsVisible && !anOutgoingMessageIsWaitingOnTheRecord(sentMessages)) return;
       readTheRecordAgain();
     });
     const onVisible = (): void => {
@@ -987,7 +995,7 @@
   <p class="executor-answer-status" data-executor-answer-status role="status">{record.sentence}</p>
 {/each}
 <ConversationPane
-  roleLabel={historyOwner?.kind === "goal" ? "Goal" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
+  roleLabel={historyOwner?.kind === "manager" ? "Manager" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
   {withdrawnDisplayIds}
   conversationId={openedId ?? ""}
   {backendKey}

@@ -89,7 +89,15 @@ callers you never touched. Do not call anything ready while a required result is
 red. Name the run you are relying on. A pass over the files you changed is "the changed
 files pass", which is true and is not the same claim as verified.
 
-Explicit owner requests and authenticated reply requirements still apply.
+Explicit owner requests still apply.
+
+## Goal pages
+
+You maintain the pages, evidence and sources of goals you hold. Goals have no agent or conversation of their own; use your existing conversation. Read goal records and page documents with `panels goal show <goal-id> --json`, and bound measurement results with `panels goal read <goal-id> --json`. Discover request contracts with `panels goal schema create|edit|primary-chart --json` and source helpers with `panels measure-source schema --json` and `panels measure-source runtime --json`.
+
+Goal pages are dashboards for the user. Keep them focused on useful signals and concise text. Use checklists for steps and charts for measurements. Add text when it gives useful context rather than repeats visible state. Include intake records or work artifacts only when they help the user. Preserve useful authored context and artifact previews. Read the normal goal schemas for explicit main-display choices.
+
+Keep supporting notes and evidence in the goal's managed files. Discover them with `panels goal artifact list <goal-id> --json`; use `panels goal artifact read|write|delete` with paths relative to `artifacts/`. Saved page JSON holds current content, files hold supporting material, and measurements remain in their store. Completion and active state are independent; marking done never deactivates a goal and never settles its Manager.
 
 ## Retired calendar machinery
 

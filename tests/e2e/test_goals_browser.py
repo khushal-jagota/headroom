@@ -75,6 +75,12 @@ def test_formula_expectation_projection_and_correction_reach_mounted_chart(
             "project_id": project["id"],
             "title": "Follow the phased expectation",
             "kind": "quantitative",
+            "completion_rule": {
+                "actual": {"op": "reference", "measure_id": actual["id"], "day_offset": 0},
+                "target": {"op": "constant", "value": 999},
+                "direction": "atleast",
+                "first_date": "2026-07-01",
+            },
             "deadline": "2026-07-08",
             "primary_chart": {
                 "type": "chart",
@@ -246,6 +252,10 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
 ) -> None:
     server = signal_server
     project = api.direct_post(server, "/api/projects", {"name": "Goal browser proof"})
+    # Another mounted holder must not dismiss Chief's goal previews.
+    api.direct_post(
+        server, "/api/managers", {"title": "Other holder", "project_id": project["id"]}
+    )
     source = api.direct_post(
         server,
         "/api/measure-sources",
@@ -436,13 +446,12 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert any(
         row["id"] == goal["id"] for row in api.get(server, "/api/goals?active=true")["goals"]
     )
-    # Agent configuration crosses the API and change stream into the mounted page.
+    # Holder configuration crosses the API and change stream into the mounted page.
     before_selection = current["page"]
     selected = httpx.patch(
         server.base + path,
-        headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
+        headers={"X-Plan-Actor": "chief"},
         json={
-            "expected_revision": current["revision"],
             "primary_checklist_block_id": "approach",
         },
         timeout=10,
@@ -472,7 +481,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         assert date_saved.value.ok
         body = date_saved.value.request.post_data_json
         assert isinstance(body, dict)
-        assert body["expected_revision"] == before["revision"]
+        assert "expected_revision" not in body
         accepted = api.get(server, path)
         expected_page = before["page"]
         expected_page["blocks"][0]["items"][1]["deadline"] = value
@@ -531,9 +540,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     updated_page["blocks"][0]["items"][1]["state"] = "open"
     response = httpx.patch(
         server.base + path,
-        headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
+        headers={"X-Plan-Actor": "chief"},
         json={
-            "expected_revision": current["revision"],
             "page": updated_page,
             "active": True,
         },
@@ -556,7 +564,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(card.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
     )
-    # The newly interactive overview must use the real revision-checked writer.
+    # The newly interactive overview must use the real goal writer.
     # Reuse this connected scenario: component tests cannot prove persisted API
     # acceptance, effective completion, or reload reads from a card-originated edit.
     overview_revision = api.get(server, path)["revision"]
@@ -570,7 +578,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert overview_saved.value.ok
     overview_body = overview_saved.value.request.post_data_json
     assert isinstance(overview_body, dict)
-    assert overview_body["expected_revision"] == overview_revision
+    assert "expected_revision" not in overview_body
     overview_accepted = api.get(server, path)
     assert overview_accepted["revision"] == overview_revision + 1
     assert overview_accepted["page"]["blocks"][0]["items"][1]["state"] == "done"
@@ -592,9 +600,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(card.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "1 of 2 done", timeout=WAIT_MS
     )
-    page.get_by_role("region", name="Active goals", exact=True).get_by_role(
-        "link", name="All goals", exact=True
-    ).click(timeout=WAIT_MS)
+    page.locator('.rail-utilities a[data-screen="goals"]').click(timeout=WAIT_MS)
     row = page.get_by_role("row").filter(
         has=page.get_by_role("link", name="Publish a field guide", exact=True)
     )
@@ -660,8 +666,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
 
     # Reuse this connected host to prove a real native title commit and reload.
     # Frontend-only cases cannot prove API acceptance and persisted browser reads.
-    title_editor = page.get_by_role("textbox", name="Goal title", exact=True)
     before_title = api.get(server, path)
+    title_editor = page.get_by_role("textbox", name="Goal title", exact=True)
     title_editor.fill("Owner title", timeout=WAIT_MS)
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
@@ -670,7 +676,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         title_editor.press("Enter", timeout=WAIT_MS)
     assert titled.value.ok, titled.value.text()
     assert titled.value.request.post_data_json == {
-        "expected_revision": before_title["revision"],
         "title": "Owner title",
     }
     accepted_title = api.get(server, path)
@@ -680,8 +685,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     expect(title_editor).to_have_text("Owner title", timeout=WAIT_MS)
 
-    # An external revision must reach the mounted page without replacing a focused
-    # draft. Submitting that original revision must produce a real stale response.
+    # An external revision reaches the mounted page without replacing a focused
+    # draft. The later title-only save wins and preserves the remotely edited page.
     title_editor.fill("Unaccepted local title", timeout=WAIT_MS)
     page.locator("[data-goal-page]").evaluate(
         "node => node.dataset.nativeEditProof = 'retained'"
@@ -698,10 +703,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     ):
         remote = httpx.patch(
             server.base + path,
-            headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal["id"]},
+            headers={"X-Plan-Actor": "chief"},
             json={
-                "expected_revision": current["revision"],
-                "title": "Agent title",
+                "title": "Chief title",
                 "page": reordered,
             },
             timeout=10,
@@ -709,7 +713,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         assert remote.is_success, remote.text
     expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
     expect(page.locator(f'a[data-goal-id="{goal["id"]}"] .row-title')).to_have_text(
-        "Agent title", timeout=WAIT_MS
+        "Chief title", timeout=WAIT_MS
     )
     expect(page.locator("[data-goal-page]")).to_have_attribute(
         "data-native-edit-proof", "retained", timeout=WAIT_MS
@@ -717,23 +721,34 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     with page.expect_response(
         lambda reply: reply.url.endswith(path) and reply.request.method == "PATCH",
         timeout=WAIT_MS,
-    ) as stale_title:
+    ) as local_title:
         title_editor.press("Enter", timeout=WAIT_MS)
-    assert stale_title.value.status == 409
-    assert stale_title.value.request.post_data_json == {
-        "expected_revision": current["revision"],
+    assert local_title.value.status == 200, local_title.value.text()
+    assert local_title.value.request.post_data_json == {
         "title": "Unaccepted local title",
     }
     error = page.locator("[data-goal-page] .goal-heading .error-line")
-    expect(error).to_contain_text("goal changed", timeout=WAIT_MS)
-    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
-    accepted_remote = api.get(server, path)
-    assert accepted_remote["title"] == "Agent title"
-    assert accepted_remote["revision"] == remote.json()["revision"]
-    title_editor.press("Escape", timeout=WAIT_MS)
-    expect(title_editor).to_have_text("Agent title", timeout=WAIT_MS)
     expect(error).to_have_count(0, timeout=WAIT_MS)
-    assert api.get(server, path)["revision"] == accepted_remote["revision"]
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    accepted_local = api.get(server, path)
+    assert remote.json()["revision"] == current["revision"] + 1
+    assert accepted_local["title"] == "Unaccepted local title"
+    assert accepted_local["revision"] == remote.json()["revision"] + 1
+    assert accepted_local["page"] == reordered
+    expect(page.locator(f'a[data-goal-id="{goal["id"]}"] .row-title')).to_have_text(
+        "Unaccepted local title", timeout=WAIT_MS
+    )
+    expect(page.locator("[data-goal-page]")).to_have_attribute(
+        "data-native-edit-proof", "retained", timeout=WAIT_MS
+    )
+    # The field stays locked until the page reads the saved goal back, so the
+    # old title cannot flash. Playwright fill fails at once on a locked field.
+    expect(title_editor).to_have_attribute("contenteditable", "true", timeout=WAIT_MS)
+    title_editor.fill("Discard this unsaved title", timeout=WAIT_MS)
+    title_editor.press("Escape", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    expect(error).to_have_count(0, timeout=WAIT_MS)
+    assert api.get(server, path)["revision"] == accepted_local["revision"]
     expect(page.locator('[data-block="table"] tbody tr').first).to_contain_text(
         "Second", timeout=WAIT_MS
     )
@@ -753,205 +768,83 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             "primary_checklist_block_id": None,
         },
     )
-    # One preview scenario proves the real native controls, backend acceptance,
-    # and mounted page/list refresh together. Browser-only cases own layout and
-    # all manual models. Reuse this server and its accepted manual measure.
+    # Rail previews are proved by the goal-preview browser case. This connected host
+    # proves only that the page's own checklist control reaches the backend.
     rail_checklist = page.locator(f'a[data-goal-id="{goal["id"]}"]')
-    rail_checklist.hover(timeout=WAIT_MS)
-    checklist_preview = page.locator(f'[data-goal-preview="{goal["id"]}"]')
-    expect(checklist_preview).to_be_visible(timeout=WAIT_MS)
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
         timeout=WAIT_MS,
-    ) as preview_check:
-        checklist_preview.get_by_role(
+    ) as checked:
+        primary.get_by_role(
             "checkbox", name="Review the updated draft", exact=True
         ).click(timeout=WAIT_MS)
-    assert preview_check.value.ok
+    assert checked.value.ok
     assert api.get(server, path)["completed"] is True
-    expect(primary.get_by_role("progressbar")).to_have_attribute(
-        "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
-    )
     expect(rail_checklist.locator("small")).to_contain_text("Done", timeout=WAIT_MS)
-    rail_binary = page.locator(f'a[data-goal-id="{other["id"]}"]')
-    rail_binary.hover(timeout=WAIT_MS)
-    binary_preview = page.locator(f'[data-goal-preview="{other["id"]}"]')
-    with page.expect_response(
-        lambda response: (
-            response.url.endswith(f"/api/goals/{other['id']}")
-            and response.request.method == "PATCH"
-        ),
-        timeout=WAIT_MS,
-    ) as preview_binary:
-        binary_preview.get_by_role("button", name="Mark done", exact=True).click(timeout=WAIT_MS)
-    assert preview_binary.value.ok
-    assert api.get(server, f"/api/goals/{other['id']}")["completed"] is True
-    expect(rail_binary.locator("small")).to_contain_text("Done", timeout=WAIT_MS)
-
-    manual_goal = api.direct_post(
-        server,
-        "/api/goals",
-        {
-            "project_id": project["id"],
-            "title": "Record the published guides",
-            "kind": "quantitative",
-            "primary_chart": {
-                "type": "chart",
-                "id": "preview-manual",
-                "kind": "bar",
-                "title": "Published guides",
-                "measure_id": manual_snapshot["id"],
-                "target": 12,
-                "manual": {"model": "daily_quota", "increments": [1]},
-            },
-        },
-    )
-    rail_manual = page.locator(f'a[data-goal-id="{manual_goal["id"]}"]')
-    rail_manual.hover(timeout=WAIT_MS)
-    manual_preview = page.locator(f'[data-goal-preview="{manual_goal["id"]}"]')
-    value = manual_preview.get_by_role("textbox")
-    expect(value).to_have_value("12", timeout=WAIT_MS)
-    selected_state = api.get(server, f"/api/measures/{manual_snapshot['id']}/manual-state")
-    value.fill("7", timeout=WAIT_MS)
-    with page.expect_response(
-        lambda response: (
-            response.url.endswith(f"/api/measures/{manual_snapshot['id']}/manual-writes")
-            and response.request.method == "POST"
-        ),
-        timeout=WAIT_MS,
-    ) as preview_manual:
-        # Replacing the preview must commit the native valid draft before unmount.
-        rail_binary.hover(timeout=WAIT_MS)
-    assert preview_manual.value.ok
-    write_body = preview_manual.value.request.post_data_json
-    assert isinstance(write_body, dict) and write_body["date"] == selected_state["date"]
-    expect(manual_preview).to_have_count(0, timeout=WAIT_MS)
-    state = api.get(server, f"/api/measures/{manual_snapshot['id']}/manual-state")
-    assert state["observation"]["value"] == 7
-    expect(snapshot.get_by_role("textbox")).to_have_attribute("data-reading", "7", timeout=WAIT_MS)
-    expect(rail_manual.locator("small")).to_contain_text("Below target", timeout=WAIT_MS)
-    expect(rail_manual.locator("[data-tone]")).to_have_attribute(
-        "data-tone", "bad", timeout=WAIT_MS
-    )
-    rail_manual.hover(timeout=WAIT_MS)
-    expect(value).to_have_attribute("data-reading", "7", timeout=WAIT_MS)
-    rail_manual.click(timeout=WAIT_MS)
-    manual_page = page.locator('[data-goal-page] [data-chart-id="preview-manual"]')
-    expect(manual_page.get_by_role("textbox")).to_have_attribute(
-        "data-reading", "7", timeout=WAIT_MS
-    )
-    expect(manual_page.locator(".comparison")).to_have_count(0)
-    expect(manual_page.locator(".card-heading > :not(h3)")).to_have_count(0)
-    selected_bar = manual_page.locator(".bar-pick").last
-    expect(selected_bar).to_have_attribute("aria-pressed", "true", timeout=WAIT_MS)
-    expect(selected_bar.locator(".bar")).to_have_attribute(
-        "style", re.compile(r"background-color: var\(--accent-error\)"), timeout=WAIT_MS
-    )
-    date_label = str(selected_bar.get_attribute("aria-label")).split(",", 1)[0]
-    selected_bar.hover(timeout=WAIT_MS)
-    inspection = manual_page.locator("[data-chart-tooltip]")
-    expect(inspection.locator("p").first).to_have_text(date_label, timeout=WAIT_MS)
-    expect(inspection.locator('[data-tooltip-series="actual"]')).to_have_text(
-        "Published guides7", timeout=WAIT_MS
-    )
-    expect(inspection.locator('[data-tooltip-series="target"]')).to_have_text(
-        "Target12", timeout=WAIT_MS
-    )
-    # Hover inspection of another date does not replace the selected edit context.
-    manual_page.locator(".bar-pick").first.hover(timeout=WAIT_MS)
-    expect(inspection.locator('[data-tooltip-series="actual"]')).to_contain_text(
-        "No reading", timeout=WAIT_MS
-    )
-    expect(selected_bar).to_have_attribute("aria-pressed", "true", timeout=WAIT_MS)
-    expect(manual_page.get_by_role("textbox")).to_have_attribute(
-        "aria-label", f"Published guides for {date_label}", timeout=WAIT_MS
-    )
-    expect(manual_page.get_by_role("textbox")).to_have_attribute("data-reading", "7")
-    page.reload()
-    expect(manual_page.get_by_role("textbox")).to_have_attribute(
-        "data-reading", "7", timeout=WAIT_MS
-    )
-    expect(rail_manual.locator("small")).to_contain_text("Below target", timeout=WAIT_MS)
-    expect(selected_bar.locator(".bar")).to_have_attribute(
-        "style", re.compile(r"background-color: var\(--accent-error\)"), timeout=WAIT_MS
-    )
-    if evidence := os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR"):
-        folder = Path(evidence) / "manual-target-progress"
-        folder.mkdir(parents=True, exist_ok=True)
-        original_viewport = page.viewport_size
-        for mode, width, height in (
-            ("desktop", 1440, 1000),
-            ("phone", 390, 844),
-        ):
-            page.set_viewport_size({"width": width, "height": height})
-            selected_bar.click(timeout=WAIT_MS)
-            expect(inspection.locator('[data-tooltip-series="actual"]')).to_have_text(
-                "Published guides7", timeout=WAIT_MS
-            )
-            manual_page.screenshot(
-                path=str(folder / f"manual-target-{mode}.png"),
-                animations="disabled",
-                timeout=WAIT_MS,
-            )
-        if original_viewport:
-            page.set_viewport_size(original_viewport)
     rail_checklist.click(timeout=WAIT_MS)
     expect(primary.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
     )
+    # Opening either goal starts no model. Both pages use their shared holder.
+    assert api.get(server, "/api/chief/conversation")["conversation_id"] is None
     other_message = api.direct_post(
         server,
         "/api/messages/send",
         {
-            "target": {"kind": "goal", "id": other["id"]},
-            "message": "Work on the other goal",
+            "target": {"kind": "chief", "id": "chief"},
+            "message": "Work on our goals",
         },
     )
-    other_id = other_message["conversation_id"]
+    holder_conversation_id = other_message["conversation_id"]
+    chief = page.locator("[data-chief-destination]")
     rail_goal = page.locator(f'[data-goal-id="{other["id"]}"]')
-    expect(rail_goal.locator('[data-conversation-signal="working"]')).to_have_count(
+    expect(chief.locator('[data-conversation-signal="working"]')).to_have_count(
         1, timeout=WAIT_MS
     )
+    # Goals retain no independent conversation marks, even when their holder works.
+    expect(rail_goal.locator("[data-conversation-signal]")).to_have_count(0)
+    assert api.get(server, "/api/chief/conversation")["conversation_id"] == holder_conversation_id
     api.direct_post(
         server,
-        f"/api/test/connected/{other_id}/message",
+        f"/api/test/connected/{holder_conversation_id}/message",
         {
-            "kind": "goal",
-            "id": other["id"],
-            "text": "A question from the other goal",
+            "kind": "chief",
+            "id": "chief",
+            "text": "A question from your goals holder",
         },
     )
-    expect(rail_goal.locator('[data-conversation-signal="message"]')).to_have_count(
+    expect(chief.locator('[data-conversation-signal="message"]')).to_have_count(
         1, timeout=WAIT_MS
     )
-    api.direct_post(server, f"/api/test/signals/{other_id}/finish", {})
-    # Opening the page did not start a model. Its first browser message must do so.
-    assert api.get(server, path)["conversation_id"] is None
+    expect(rail_goal.locator("[data-conversation-signal]")).to_have_count(0)
+    api.direct_post(server, f"/api/test/signals/{holder_conversation_id}/finish", {})
+    # A browser message beside either goal reuses the holder's existing conversation.
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
-    type_instead = page.get_by_role("button", name="Type instead", exact=True)
-    if type_instead.is_visible():
-        type_instead.click(timeout=WAIT_MS)
     page.locator("[data-conversation-input]").fill("Help with this goal", timeout=WAIT_MS)
     with page.expect_response(
-        lambda response: response.url.endswith(path + "/conversation/send"), timeout=WAIT_MS
+        lambda response: response.url.endswith("/api/chief/conversation/send"), timeout=WAIT_MS
     ) as delivered:
         page.locator("[data-conversation-input]").press("Enter", timeout=WAIT_MS)
     assert delivered.value.ok, delivered.value.text()
     conversation_id = delivered.value.json()["conversation_id"]
+    assert conversation_id == holder_conversation_id
+    assert api.get(server, "/api/chief/conversation")["conversation_id"] == conversation_id
     wire = api.get(server, f"/api/test/signals/{conversation_id}/delivered")["texts"][-1]
-    assert "You are the agent for goal " + goal["id"] in wire
+    assert "You are the agent for goal " not in wire
     assert "Help with this goal" in wire
     api.direct_post(server, f"/api/test/signals/{conversation_id}/finish", {})
     page.get_by_role("button", name="Conversation options", exact=True).click(timeout=WAIT_MS)
     page.locator("[data-conversation-new-arm]").click(timeout=WAIT_MS)
     with page.expect_response(
-        lambda response: response.url.endswith(path + "/conversation/reset"), timeout=WAIT_MS
+        lambda response: response.url.endswith("/api/chief/conversation/reset"), timeout=WAIT_MS
     ) as reset:
         page.locator("[data-conversation-new-confirm]").click(timeout=WAIT_MS)
     assert reset.value.ok
-    history = api.get(server, f"/api/conversation-history/goal/{goal['id']}")
-    assert [entry["conversation_id"] for entry in history["entries"]] == [conversation_id]
-    assert api.get(server, path)["conversation_id"] is None
+    assert api.get(server, "/api/chief/conversation")["conversation_id"] is None
+    # Reset clears the shared pointer and preserves the holder's recorded messages.
+    assert "Help with this goal" in api.get(
+        server, f"/api/test/signals/{conversation_id}/delivered"
+    )["texts"][-1]
     page.reload()
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"

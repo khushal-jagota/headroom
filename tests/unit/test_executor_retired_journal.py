@@ -1,22 +1,31 @@
-"""Exact-child stop fences delayed journal writes without granting live authority."""
+"""Exact-child stop fences delayed journal writes without granting live authority.
+
+A closed assignment refuses the child's later items on the VPS, and a command put for
+it is never committed, even when the close lands while the put is on its way.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import threading
+from collections.abc import Callable, Coroutine
 from sqlite3 import Connection
-from types import SimpleNamespace
-from typing import cast
+from typing import Any
 
 import pytest
-from tests.support.executor_control import MessageStream, message_link
-from tests.unit.test_executor_native_runtime import ScriptedChild
+from tests.support.executor_presence import mac_identity, make_current
+from tests.unit.test_executor_native_runtime import ScriptedChild, canonical_snapshot
 from tests.unit.test_executor_native_runtime import isolated_native_home as isolated_native_home
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
 
-from planner.core.clock import Clock
+import planner.executor.vps_mailbox as vps_mailbox
+from planner.conversation.backends.contracts import BackendSpawnFailed, PromptWriteRefused
+from planner.conversation.contracts import AnswerFate, PromptDeliveryMode
+from planner.conversation.message_content import text_message_content
+from planner.core.clock import RealClock
 from planner.core.contracts import OWNER_PRINCIPAL
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-from planner.execution_identity import ExecutorIdentity
+from planner.core.db import connect
+from planner.execution_identity import ExecutorIdentity, TurnToken
 from planner.executor.mac_outbox import MacOutbox, OutboxEntry
 from planner.executor.mac_runner import MacRunner
 from planner.executor.protocol import (
@@ -24,16 +33,16 @@ from planner.executor.protocol import (
     ChildOperation,
     EnvelopeKind,
     ReceiptDisposition,
+    StartRun,
     as_object,
     decode_command_arguments,
 )
+from planner.executor.vps_remote_child import MacRemoteChild
 from planner.executor.vps_transport import VpsExecutor
 from planner.tickets import data
 from planner.tickets.contracts import Ticket
 
-IDENTITY = ExecutorIdentity(
-    PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "ca27d941-1e77-4ac9-a102-e0ac14b51626", 1
-)
+SETTLES = 5.0
 
 
 def ticket(conn: Connection) -> Ticket:
@@ -50,15 +59,24 @@ def ticket(conn: Connection) -> Ticket:
     )
 
 
-def endpoint(conn: Connection, *, identity: ExecutorIdentity = IDENTITY) -> VpsExecutor:
+def endpoint(conn: Connection, identity: ExecutorIdentity) -> VpsExecutor:
+    """The VPS half with identity as the current Mac process."""
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
-    result = VpsExecutor(path, cast(Clock, SimpleNamespace()))
-    result.runs.identity = identity
-    result.runs.link = message_link(MessageStream(), identity)
-    result.runs.ready = True
-    result.runs.store.begin_connection(identity)
-    result.runs.store.mark_ready(identity)
-    return result
+    make_current(path, identity)
+    return VpsExecutor(path, RealClock())
+
+
+def _rows(db_path: str) -> list[str]:
+    connection = connect(db_path)
+    try:
+        return [
+            row[0]
+            for row in connection.execute(
+                "SELECT operation FROM executor_commands ORDER BY command_sequence"
+            )
+        ]
+    finally:
+        connection.close()
 
 
 @pytest.mark.parametrize("bad_case", range(4))
@@ -80,8 +98,8 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
 
         t = ticket(tmp_db)
         registry, spool, native, start = native_registry
-        identity = replace(IDENTITY, executor_incarnation=registry.incarnation)
-        remote = endpoint(tmp_db, identity=identity)
+        identity = mac_identity(registry.incarnation)
+        remote = endpoint(tmp_db, identity)
         remote.runs.store.register_child(start.child, "ticket", t.id, 3)
         stop = ChildCommand(
             "stop",
@@ -98,7 +116,7 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
         assert outcome.disposition is CommandDisposition.refused
         assert native.starts == 0
         assert spool.pending() == ()
-        assert registry.ask((start.command_id,))[0].outcome == outcome
+        assert registry._commands[start.command_id].outcome == outcome
         assert await registry.run(start) == outcome
         # Its direct refusal grants no authority to publish fresh child output.
         bad_payloads = [
@@ -130,5 +148,89 @@ def test_retired_delayed_start_refuses_without_live_child_authority(
         receipt = await remote.inbox.accept(row, identity)
         assert receipt.disposition is ReceiptDisposition.refused
         assert remote.runs.store.child_assignment(start.child) is None
+        await remote.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "path", ["start_after_close", "prompt_racing_close", "answer_racing_close"]
+)
+def test_closed_assignment_refuses_a_put_even_when_the_close_lands_during_it(
+    tmp_db: Connection,
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    """The close can commit after the caller looked: the put reads the assignment in its
+    own write, so nothing reaches the mailbox and the Mac never sees the command."""
+
+    async def run() -> None:
+        registry, _spool, native, start = native_registry
+        identity = mac_identity(registry.incarnation)
+        remote = endpoint(tmp_db, identity)
+        t = ticket(tmp_db)
+        remote.runs.store.register_child(start.child, "ticket", t.id, 3)
+
+        class Conversations:
+            async def emit_answer(
+                self, turn: TurnToken, emit: Callable[[], Coroutine[Any, Any, object]]
+            ) -> None:
+                await emit()
+
+        remote.runs.conversations = Conversations()  # type: ignore[assignment]
+        proxy = MacRemoteChild(start.child, remote.runs, lambda _: canonical_snapshot())
+        try:
+            if path == "start_after_close":
+                remote.runs.store.close_child(start.child, 4)
+                assert isinstance(start.arguments, StartRun)
+                with pytest.raises(BackendSpawnFailed):
+                    await proxy.start(start.arguments.resolved_start, vendor_session_cursor=None)
+            else:
+                entered, release = threading.Event(), threading.Event()
+                original = vps_mailbox.SqliteCommandMailbox._insert_child_command
+
+                def gated(self: Any, *args: Any) -> Any:
+                    entered.set()
+                    assert release.wait(SETTLES)
+                    return original(self, *args)
+
+                monkeypatch.setattr(
+                    vps_mailbox.SqliteCommandMailbox, "_insert_child_command", gated
+                )
+                turn = TurnToken(start.child.conversation_id, 1)
+                content = text_message_content("late")
+
+                async def put() -> object:
+                    if path == "prompt_racing_close":
+                        return await proxy.write_prompt(
+                            turn,
+                            content,
+                            sender_label="owner",
+                            sender_content=content,
+                            mode=PromptDeliveryMode.queue,
+                            model_change=None,
+                            reasoning_effort_change=None,
+                        )
+                    return await proxy.answer_permission_ask(
+                        "q", "yes", answer_id="answer", turn_token=turn
+                    )
+
+                putting = asyncio.create_task(put())
+                try:
+                    assert await asyncio.to_thread(entered.wait, SETTLES)
+                    await asyncio.to_thread(remote.runs.store.close_child, start.child, 4)
+                finally:
+                    release.set()
+                if path == "prompt_racing_close":
+                    with pytest.raises(PromptWriteRefused):
+                        await asyncio.wait_for(putting, SETTLES)
+                else:
+                    assert await asyncio.wait_for(putting, SETTLES) is AnswerFate.refused
+            assert _rows(remote.db_path) == []
+            assert native.starts == native.prompts == 0
+            assert native.answers == []
+        finally:
+            await remote.close()
 
     asyncio.run(run())

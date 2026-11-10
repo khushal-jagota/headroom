@@ -13,7 +13,9 @@ from typing import Any, cast
 from zoneinfo import TZPATH, ZoneInfo
 
 import pytest
+from fastapi.testclient import TestClient
 from starlette.requests import Request
+from tests.support.api_app import _app
 from tests.unit.test_manual_measures import manual_measure
 from tests.unit.test_measure_persistence import NOW, collect, run, source, taken
 
@@ -21,7 +23,14 @@ from planner.core.clock import RealClock
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, PlannerError, Principal, PrincipalKind
 from planner.goals import actions, category_reads, data, views
-from planner.goals.contracts import ChartBlock, ChecklistBlock, Goal, GoalsResponse, SegmentedBlock
+from planner.goals import calendar as goal_calendar
+from planner.goals.contracts import (
+    ChartBlock,
+    ChecklistBlock,
+    Goal,
+    GoalCompletionRule,
+    SegmentedBlock,
+)
 from planner.goals.logic.documents import prepare_document
 from planner.goals.logic.status import (
     calendar_projection,
@@ -57,7 +66,22 @@ def page() -> JsonDict:
     }
 
 
+def numeric_rule(conn: Connection, measure_id: str | None = None) -> GoalCompletionRule:
+    """Chart tests use an explicit separate finish line, not chart progress targets."""
+    identifier = measure_id or manual_measure(conn).id
+    return {
+        "actual": {"op": "reference", "measure_id": identifier, "day_offset": 0},
+        "target": {"op": "constant", "value": 1e99},
+        "direction": "atleast",
+        "first_date": datetime.fromtimestamp(NOW).astimezone().date().isoformat(),
+    }
+
+
 def create(conn: Connection, **extra: Any) -> Goal:
+    if extra.get("kind") == "quantitative" and "completion_rule" not in extra:
+        extra["completion_rule"] = numeric_rule(
+            conn, extra.get("primary_chart", {}).get("measure_id")
+        )
     return actions.create_goal(
         conn,
         {"project_id": "project_vylo", "title": "Ship the guide", "kind": "binary",
@@ -68,50 +92,51 @@ def create(conn: Connection, **extra: Any) -> Goal:
 
 
 def test_saved_page_race_and_independent_completion_activation(tmp_db: Connection) -> None:
-    goal = create(tmp_db, deadline="2026-10-28")
-    agent = Principal(PrincipalKind.goal, goal.id)
+    from planner.managers.data import create_manager
+    manager = create_manager(
+        tmp_db, title="Guide", project_id="project_vylo",
+        clock=FakeClock(datetime.fromtimestamp(NOW, UTC)),
+    )
+    goal = create(tmp_db, deadline="2026-10-28", holder_kind="manager", holder_id=manager.id)
+    agent = Principal(PrincipalKind.manager, manager.id)
     draft = deepcopy(goal.page)
     draft["blocks"].reverse()
     cast(ChecklistBlock, draft["blocks"][0])["items"][0]["state"] = "done"
     accepted = actions.update_goal(
         tmp_db,
         goal.id,
-        {"expected_revision": 1, "page": draft, "completed": True},
+        {"page": draft, "completed": True},
         principal=agent,
         now=NOW + 1,
     )
     assert accepted.active and accepted.binary_checked
     assert data.read_goal(tmp_db, goal.id).page == draft
     assert [item.id for item in data.list_goals(tmp_db, active=True)] == [goal.id]
-    with pytest.raises(PlannerError, match="goal changed"):
-        actions.update_goal(
-            tmp_db,
-            goal.id,
-            {"expected_revision": 1, "page": goal.page},
-            principal=OWNER_PRINCIPAL,
-            now=NOW + 2,
-        )
+    replaced = actions.update_goal(
+        tmp_db, goal.id, {"page": goal.page}, principal=OWNER_PRINCIPAL, now=NOW + 2
+    )
+    assert replaced.page == goal.page
     inactive = actions.update_goal(
-        tmp_db, goal.id, {"expected_revision": 2, "active": False}, principal=agent, now=NOW + 3
+        tmp_db, goal.id, {"active": False}, principal=agent, now=NOW + 3
     )
     assert inactive.binary_checked and not data.list_goals(tmp_db, active=True)
     reactivated = actions.update_goal(
-        tmp_db, goal.id, {"expected_revision": 3, "active": True}, principal=agent, now=NOW + 4
+        tmp_db, goal.id, {"active": True}, principal=agent, now=NOW + 4
     )
     assert reactivated.active and reactivated.binary_checked
     reversed_goal = actions.update_goal(
-        tmp_db, goal.id, {"expected_revision": 4, "completed": False}, principal=agent, now=NOW + 5
+        tmp_db, goal.id, {"completed": False}, principal=agent, now=NOW + 5
     )
     assert reversed_goal.active and not reversed_goal.binary_checked
     other = create(tmp_db, title="Another goal")
-    with pytest.raises(PlannerError):
-        actions.update_goal(
-            tmp_db,
-            other.id,
-            {"expected_revision": 1, "active": False},
-            principal=agent,
-            now=NOW + 6,
+    with TestClient(_app(tmp_db)) as client:
+        denied = client.patch(
+            f"/api/goals/{other.id}", json={"active": False},
+            headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal.id},
         )
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+    assert data.read_goal(tmp_db, other.id).active
 
 
 @pytest.mark.parametrize("kind", [MeasureKind.reading, MeasureKind.running_total])
@@ -226,7 +251,7 @@ def test_goal_calendar_uses_process_tz_before_localtime_fallback(
 
         return SimpleNamespace(open=open_localtime)
 
-    monkeypatch.setattr(views, "Path", localtime_path)
+    monkeypatch.setattr(goal_calendar, "Path", localtime_path)
     monkeypatch.setenv("TZ", ":Pacific/Honolulu")
     configured = views.calendar_now(clock)
     assert configured.isoformat() == "2026-03-28T14:30:00-10:00"
@@ -312,7 +337,7 @@ def test_document_rejects_bad_ids_and_preserves_static_signed_charts(tmp_db: Con
         actions.update_goal(
             tmp_db,
             goal.id,
-            {"expected_revision": 1, "page": accepted},
+            {"page": accepted},
             principal=OWNER_PRINCIPAL,
             now=NOW + 1,
         )
@@ -327,34 +352,6 @@ def test_document_rejects_bad_ids_and_preserves_static_signed_charts(tmp_db: Con
     accepted_segmented = create(tmp_db, page=segmented)
     saved_segmented = cast(SegmentedBlock, accepted_segmented.page["blocks"][-1])
     assert saved_segmented["views"][0]["id"] == "overview"
-
-
-def test_goal_list_revision_tracks_conversation_links_without_document_edits(
-    tmp_db: Connection,
-) -> None:
-    goal = create(tmp_db)
-    clock = FakeClock(datetime(2026, 10, 28, 12, tzinfo=ZoneInfo("Europe/Berlin")))
-    request = Request({"type": "http", "app": SimpleNamespace(state=SimpleNamespace(clock=clock))})
-    provider = GoalResources()
-    before = provider.capture(tmp_db, request, "/api/goals")
-    assert before and cast(GoalsResponse, before.read())["goals"][0]["conversation_id"] is None
-    tmp_db.execute(
-        "INSERT INTO agents(agent_key,conversation_id) VALUES(?,?)",
-        ("goal_" + goal.id, "goal-list-conversation"),
-    )
-    tmp_db.commit()
-    linked = provider.capture(tmp_db, request, "/api/goals")
-    assert linked and linked.revision != before.revision
-    assert (
-        cast(GoalsResponse, linked.read())["goals"][0]["conversation_id"]
-        == "goal-list-conversation"
-    )
-    tmp_db.execute("UPDATE agents SET conversation_id=NULL WHERE agent_key=?", ("goal_" + goal.id,))
-    tmp_db.commit()
-    reset = provider.capture(tmp_db, request, "/api/goals")
-    assert reset and reset.revision != linked.revision
-    assert cast(GoalsResponse, reset.read())["goals"][0]["conversation_id"] is None
-    assert data.read_goal(tmp_db, goal.id).revision == 1
 
 
 def test_sheet_charts_preserve_summary_semantics_and_saved_cell_tones(tmp_db: Connection) -> None:
@@ -435,7 +432,7 @@ def test_sheet_charts_preserve_summary_semantics_and_saved_cell_tones(tmp_db: Co
         actions.update_goal(
             tmp_db,
             goal.id,
-            {"expected_revision": 1, "page": invalid},
+            {"page": invalid},
             principal=OWNER_PRINCIPAL,
             now=NOW + 1,
         )
@@ -447,7 +444,7 @@ def test_sheet_charts_preserve_summary_semantics_and_saved_cell_tones(tmp_db: Co
             actions.update_goal(
                 tmp_db,
                 goal.id,
-                {"expected_revision": 1, "page": invalid},
+                {"page": invalid},
                 principal=OWNER_PRINCIPAL,
                 now=NOW + 1,
             )
@@ -576,7 +573,7 @@ def test_manual_controls_require_matching_models_and_manual_origin(tmp_db: Conne
         actions.update_goal(
             tmp_db,
             goal.id,
-            {"expected_revision": 1, "page": rejected},
+            {"page": rejected},
             principal=OWNER_PRINCIPAL,
             now=NOW,
         )
@@ -943,7 +940,7 @@ def test_goal_demand_budget_includes_legacy_future_values_and_counts_shared_pair
     actions.update_goal(
         tmp_db,
         goal.id,
-        {"expected_revision": 1, "page": document},
+        {"page": document},
         principal=OWNER_PRINCIPAL,
         now=NOW,
     )
@@ -1034,7 +1031,7 @@ def test_future_actual_requires_retained_data_and_expectation_removal_restores_t
     actions.update_goal(
         tmp_db,
         goal.id,
-        {"expected_revision": 1, "primary_chart": primary},
+        {"primary_chart": primary},
         principal=OWNER_PRINCIPAL,
         now=NOW,
     )

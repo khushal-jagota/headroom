@@ -1,21 +1,29 @@
 <script lang="ts">
+  import Button from "./Button.svelte";
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
   import { createQuery } from "@tanstack/svelte-query";
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
-  import ManagerChildren from "./ManagerChildren.svelte";
-  import { createRailHoverController } from "../lib/workspaceRailInteraction";
+  import {hasTickets} from '../lib/pageKit/holderDocument';
+  import PageTickets from "./pageKit/PageTickets.svelte";
+  import HolderDocument from "./pageKit/HolderDocument.svelte";
+  import GoalHeader from "./goals/GoalHeader.svelte";
+  import GoalContent from "./goals/GoalContent.svelte";
+  import GoalsOverview from "./goals/GoalsOverview.svelte";
+  import {goalsForHolder} from "../lib/goals/holders";
+  import {holderPageQuery} from "../lib/pageKit/holderEditing";
+  import {refreshAtBoundary} from "../lib/goals/presentation";
+  import {queryClient} from "../lib/queryClient";
+  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import { createRailHoverController, listenForUserScroll } from "../lib/workspaceRailInteraction";
   import WorkspaceRailHover from "./WorkspaceRailHover.svelte";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import type { EffectiveNavigationView } from "../lib/navigation/knowledge";
-  import { managerHeaderImpact, workspaceHoverImpact, managerEditImpact, managerSettleImpact, conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
-  import { hoverDomMatches } from "../lib/workspaceRailDom";
-  import { workspaceHeaderDomMatches } from "../lib/managerWorkspaceDom";
-  import { lifecycleFor } from "../lib/lifecycle";
+
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
-  import type { RenderObserver } from "../lib/navigation/visibility";
+
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {
     readBackends,
@@ -27,8 +35,10 @@
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
   import ManagerHeader from "./ManagerHeader.svelte";
+  import RequestRecapAction from "./RequestRecapAction.svelte";
   import ManagerFrame from "./ManagerFrame.svelte";
   import ArtifactsBand from "./ArtifactsBand.svelte";
+  import type {ManagedFileTarget} from "../lib/filePreview";
   import type { ManagerWorkspaceContent } from "../lib/types";
 
   export type ManagerWorkspaceResource = {
@@ -41,17 +51,22 @@
     itemId,
     workspaceName,
     requestedConversationId = null,
+    openedFile = null,
+    onOpenFile,
     backHref = "#/workspace/chief-of-staff",
     workspaceResource = null
     // A host that is already a way back can pass null so the line is not drawn.
   }: {
     itemId: string;
     requestedConversationId?: string | null;
+    openedFile?:ManagedFileTarget|null;
+    onOpenFile?:(file:ManagedFileTarget|null)=>void;
     workspaceName: string;
     backHref?: string | null;
     workspaceResource?: ManagerWorkspaceResource | null;
   } = $props();
 
+  const holderPage=createQuery(()=>holderPageQuery({kind:'manager',id:itemId}));
   const ownWorkspace = createQuery(() => ({
     ...queries.managerWorkspaceContent(itemId),
     enabled: workspaceResource === null
@@ -61,10 +76,7 @@
     if(!context) throw new Error('ManagerWorkspace requires the application navigation owner');
     return context;
   })();
-  const headerObserver=navigation.registerRenderBoundary(`manager-header:${crypto.randomUUID()}`,impact => {
-    const view=navigation.state.effective;return managerHeaderImpact(impact,itemId,view ? navigation.presentationFor(view) : undefined);
-  });
-  onDestroy(()=>navigation.disposeRenderBoundary(headerObserver));
+
   let displayedView=$state.raw<EffectiveNavigationView | undefined>(undefined);
   $effect(()=>{const view=navigation.selectors.effective;if(view) displayedView=view;});
   let shared=$derived(displayedView ? navigation.presentationFor(displayedView) : undefined);
@@ -72,24 +84,27 @@
   const fullRecap=selectedRecap(()=>rawPublicItem?.recap_reference,()=>true);
   let publicItem=$derived(rawPublicItem?.recap_reference && fullRecap.body===undefined?undefined:rawPublicItem?{...rawPublicItem,recap:fullRecap.body ?? rawPublicItem.recap}:undefined);
   let content=$derived(workspaceResource ?? ownWorkspace);
+  let held=$derived(goalsForHolder(content.data?.goals??[],{kind:'manager',id:itemId}));
+  let soleGoal=$derived(held.sole);
+  $effect(()=>{if(content.data?.goals.length)return refreshAtBoundary(Math.min(...content.data.goals.map(goal=>goal.next_refresh_at)),()=>void queryClient.invalidateQueries({queryKey:queries.managerWorkspaceContent(itemId).queryKey}));});
   let workspace=$derived({data:publicItem && content.data ? {...publicItem,...content.data} : undefined,
     error:fullRecap.error ?? content.error,isLoading:content.isLoading || !publicItem});
-  const manifests=createQuery(()=>queries.workerTypeManifests());
   let headerElement=$state<HTMLElement | null>(null);
   let hoverElement=$state<HTMLDivElement | null>(null);
-  let hoverObserver=$state.raw<RenderObserver | null>(null);
+
   const startValues = createQuery(() => queries.managerConversationStartValues(itemId));
   let conversationId = $state<string | null>(null);
   let selectedPastConversationId = $state<string | null>(null);
   let selectedConversationId = $derived(selectedPastConversationId ?? conversationId);
-  $effect(()=>navigation.owner.setDemand('manager',{selected:{kind:'manager',id:itemId},selected_conversation_id:selectedPastConversationId,windows:[]}));
+  let historyOwner=$derived({kind:'manager' as const,id:itemId});
+  $effect(()=>navigation.owner.setDemand('manager',{selected:historyOwner,selected_conversation_id:selectedPastConversationId,windows:[]}));
   onDestroy(()=>navigation.owner.setDemand('manager',undefined));
   let conversationState = $state<ConversationState>("rest");
   let requestedConversationApplied: string | null | undefined;
   $effect(() => {
-    if (!publicItem || requestedConversationApplied === requestedConversationId) return;
+    if (!workspace.data || requestedConversationApplied === requestedConversationId) return;
     requestedConversationApplied = requestedConversationId;
-    selectedPastConversationId = requestedConversationId && requestedConversationId !== publicItem.conversation_id ? requestedConversationId : null;
+    selectedPastConversationId = requestedConversationId && requestedConversationId !== workspace.data.conversation_id ? requestedConversationId : null;
     if (requestedConversationId) conversationState = "opened";
   });
   let backends = $state<readonly BackendSnapshot[]>([]);
@@ -107,6 +122,22 @@
     hoverVisible = true; hoverInstant = instant;
   }, () => hoverVisible = false);
   onDestroy(() => hover.dispose());
+  // A touch hold keeps the preview after the finger lifts (createRailPreviewInput), so a
+  // press outside it and its row, or the person's own scrolling, is what dismisses it.
+  onMount(() => {
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (hoverVisible && !hoverElement?.contains(target) && !hoverTarget?.contains(target)) hover.leave();
+    };
+    window.addEventListener("pointerdown", outside);
+    const stopUserScroll = listenForUserScroll(window, event => {
+      const target = event.target as Node | null;
+      // A key on the previewed row itself moves focus, which opens the next preview.
+      if (hoverElement?.contains(target) || (event.type === "keydown" && hoverTarget?.contains(target))) return;
+      hover.leave();
+    });
+    return () => { window.removeEventListener("pointerdown", outside); stopUserScroll(); };
+  });
   function hoverRow(target: HTMLElement, ticket: WorkItemTicketFacts, immediate = false): void {
     hover.enter({target, ticket}, immediate);
   }
@@ -128,8 +159,7 @@
   });
 
   function saveItem(field: "title" | "recap", value: string): Promise<unknown> {
-    return navigation.runCommand(managerEditImpact(itemId,field),responseMetadata =>
-      mutateJson(`/api/managers/${encodeURIComponent(itemId)}`, {method:"PATCH",body:{[field]:value},responseMetadata}),`edit manager ${field}`);
+    return mutateJson(`/api/managers/${encodeURIComponent(itemId)}`, {method:"PATCH",body:{[field]:value}});
   }
 
   // No navigation record carries the goal: the rail and the board show the recap. So this
@@ -141,12 +171,14 @@
 
   let settleBusy = $state(false);
   let settleError = $state("");
+  let recapNote = $state<string | null>(null);
+  // A note belongs to the Manager it was asked of.
+  $effect(() => { void itemId; recapNote = null; });
   async function setSettled(settled: boolean): Promise<void> {
     settleBusy = true;
     settleError = "";
     try {
-      await navigation.runCommand(managerSettleImpact(itemId),responseMetadata =>
-        mutateJson(`/api/managers/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled},responseMetadata}),"set manager settled");
+      await mutateJson(`/api/managers/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled}});
     } catch (error) {
       settleError = error instanceof Error ? error.message : "The manager could not be updated.";
     } finally {
@@ -155,69 +187,28 @@
   }
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const view=navigation.state.effective;
-    const delivered = await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'manager',itemId),responseMetadata => mutateJson<DeliveredMessage>(
-      `/api/managers/${encodeURIComponent(itemId)}/conversation/send`, {method:"POST",body,responseMetadata}),"send manager message");
+    const delivered = await mutateJson<DeliveredMessage>(
+      `/api/managers/${encodeURIComponent(itemId)}/conversation/send`, {method:"POST",body});
     conversationId = delivered.conversation_id;
     return delivered;
   }
 
   async function newConversation(): Promise<void> {
-    const view=navigation.state.effective;
-    await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'manager',itemId),responseMetadata => mutateJson(
-      `/api/managers/${encodeURIComponent(itemId)}/conversation/reset`, {method:"POST",responseMetadata}),"reset manager conversation");
+    await mutateJson(
+      `/api/managers/${encodeURIComponent(itemId)}/conversation/reset`, {method:"POST"});
     conversationId = null;
   }
-
-  $effect(()=>{
-    const view=navigation.selectors.effective;
-    const generation=navigation.state.generation;
-    const root=headerElement;
-    const item=publicItem;
-    if(!view?.runtimeCurrent || view!==displayedView || !root || !item) return;
-    const observation=headerObserver.observeSelectors(view.publication,generation);
-    let obsolete=false;
-    void tick().then(()=>{
-      if(obsolete || !root.isConnected || navigation.state.generation!==generation || navigation.selectors.effective!==view) return;
-      if(workspaceHeaderDomMatches(root,item)) headerObserver.acknowledgeRender(view.publication,observation);
-    });
-    return ()=>{obsolete=true;};
-  });
-  $effect(()=>{
-    if(!hoverVisible || !hoverElement) return;
-    const observer=navigation.registerRenderBoundary(`manager-hover:${crypto.randomUUID()}`,impact => {
-      const view=navigation.state.effective;return hoverWorkerId!==null && workspaceHoverImpact(impact,'ticket',hoverWorkerId,hoverWorker?.conversation_id,view ? navigation.presentationFor(view) : undefined);
-    });
-    hoverObserver=observer;
-    return ()=>{navigation.disposeRenderBoundary(observer);hoverObserver=null;};
-  });
-  $effect(()=>{
-    const view=navigation.selectors.effective;
-    const generation=navigation.state.generation;
-    const root=hoverElement, target=hoverTarget,observer=hoverObserver,worker=hoverWorker;
-    const parent=publicItem;
-    const stage=worker ? workspaceWorkerStageSentence(worker,lifecycleFor(manifests.data,worker.worker_type)) : '';
-    if(!view?.runtimeCurrent || view!==displayedView || !root || !target?.isConnected || !observer || !worker || !parent || !hoverVisible) return;
-    const observation=observer.observeSelectors(view.publication,generation);
-    let obsolete=false;
-    void tick().then(()=>{
-      if(obsolete || !root.isConnected || !target.isConnected || hoverTarget!==target || !hoverVisible
-        || navigation.state.generation!==generation || navigation.selectors.effective!==view) return;
-      if(hoverDomMatches(root,worker.title,worker.recap_preview ?? '',stage,worker.conversation_signal,worker.conversation_id,parent.title))
-        observer.acknowledgeRender(view.publication,observation);
-    });
-    return ()=>{obsolete=true;};
-  });
 
 </script>
 
 <ManagerFrame
   class="manager-resource-workspace"
+  {openedFile} {onOpenFile}
   bind:conversationState
   data-manager-workspace={itemId}
   data-manager-view={itemId}
 >
-    <ResourceState shape="document" layout="fill"
+    <ResourceState shape="document"
       error={workspace.error}
       loading={workspace.isLoading}
       hasData={workspace.data !== undefined}
@@ -226,36 +217,41 @@
       {#if workspace.data}
         {@const item = workspace.data}
           <div bind:this={headerElement}>
-          <ManagerHeader signal={item.conversation_signal} conversationId={item.conversation_id}
-            recap={item.recap} onSaveRecap={(value) => saveItem("recap", value)}
-            recapTarget={{ kind: "manager", id: item.id }}>
-            {#snippet eyebrow()}
-            <div class="page-eyebrow">
-              <span>{item.project}</span>
-              {#if backHref !== null}<span aria-hidden="true">/</span><a href={backHref} aria-label={`Back to ${workspaceName}`}>↖</a>{/if}
-              <button type="button" class="page-settle" disabled={settleBusy} onclick={() => void setSettled(!(item.settled ?? false))} aria-label={`${item.settled ? "Reopen" : "Settle"} ${item.title}`}>
-                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>{item.settled ? "Reopen" : "Settle"}
-              </button>
-            </div>
-            {#if settleError}<p role="alert">{settleError}</p>{/if}
-            {/snippet}
-            {#snippet title()}
-              <InlineEdit
-                value={item.title}
-                placeholder="(untitled Manager)"
-                onSave={(value) => saveItem("title", value)}
-              />
-            {/snippet}
+          {#snippet managerTitle()}<InlineEdit value={item.title} placeholder="(untitled Manager)" ariaLabel="Manager name" onSave={(value)=>saveItem("title",value)}/>{/snippet}
+          {#snippet settleButton()}
+            <Button variant="ghost" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{item.settled?'Reopen':'Settle'}</Button>
+          {/snippet}
+          {#snippet goalHeading()}
+            {#if soleGoal}<GoalHeader goal={soleGoal}>
+              {#snippet title()}{@render managerTitle()}<ConversationSignalMark signal={item.conversation_signal && {...item.conversation_signal, working:false}} conversationId={item.conversation_id}/>{/snippet}
+              {#snippet mark()}<span class="goal-head-actions">{@render settleButton()}<RequestRecapAction kind="manager" id={item.id} bind:note={recapNote} noteInline={false} /></span>{/snippet}
+            </GoalHeader>{/if}
+          {/snippet}
+          <ManagerHeader bind:recapNote heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
+            recap={item.recap} onSaveRecap={(value)=>saveItem("recap",value)} recapTarget={{kind:"manager",id:item.id}}>
+            {#snippet eyebrow()}<div class="page-eyebrow"><span>{item.project}</span>{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`} title={`Back to ${workspaceName}`}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11 11 5 5M5 10V5h5"/></svg></a>{/if}</div>{/snippet}
+            {#snippet actions()}{@render settleButton()}{/snippet}
+            {#snippet title()}{@render managerTitle()}{/snippet}
           </ManagerHeader>
+          {#if settleError}<p role="alert">{settleError}</p>{/if}
           </div>
 
-          <section class="manager-workers" aria-label="Workers">
-            <ManagerChildren principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication} tickets={shared?.ticketsByParent.get(`manager:${itemId}`) ?? []}
-              onHover={(element, id, immediate) => {
-                const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
-                if (ticket) hoverRow(element, ticket, immediate);
-              }} onLeave={() => hover.leave()} />
-          </section>
+          {#snippet tickets()}
+            {#if !hasTickets(soleGoal?soleGoal.page:holderPage.data?.page)}<section class="manager-workers" aria-label="Workers">
+              <PageTickets principal={{ kind: "manager", id: itemId }} publication={displayedView?.publication}
+                onHover={(element, id, immediate) => {
+                  const ticket = shared?.ticketsByParent.get(`manager:${itemId}`)?.find(candidate=>candidate.id===id);
+                  if (ticket) hoverRow(element, ticket, immediate);
+                }} onLeave={() => hover.leave()} />
+            </section>{/if}
+          {/snippet}
+          <!-- A Manager exists for its goals, so they lead its page; its tickets follow. -->
+          {#if soleGoal}<GoalContent goal={soleGoal}/>
+          {:else}
+            {#if held.held.length>1}<GoalsOverview goals={item.goals} holderKind="manager" holderId={itemId}/>{/if}
+            {#if holderPage.data?.page}<HolderDocument holder={{kind:"manager",id:itemId}}/>{/if}
+          {/if}
+          {@render tickets()}
           <div class="manager-bands disclosure-bands">
             <details class="disclosure-band goal-band" data-goal-band>
               <summary>Goal<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
@@ -277,7 +273,7 @@
       {/if}
     </ResourceState>
   {#snippet conversation()}
-      <LiveConversation historyOwner={{kind:"manager",id:itemId}}
+      <LiveConversation {historyOwner}
         bind:conversationState
         conversationId={selectedConversationId}
         persistenceKey={`owner:sprint-item:${itemId}`}
@@ -297,19 +293,23 @@
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Manager"} worker={hoverWorker} cards={[]} rail={hoverTarget} recapTarget={hoverWorker ? { kind: "ticket", id: hoverWorker.id } : null} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
 <style>
-  :global(.manager-resource-workspace .manager-column) { height:100%; min-height:0; display:flex; flex-direction:column; }
-  .page-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
-  .page-eyebrow a { color:inherit; text-decoration:none; }
-  .page-eyebrow a:hover { color:var(--text-strong); }
-  .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; margin-right:-8px; border:0; border-radius:var(--radius-sm); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
-  .page-settle svg { width:13px; height:13px; }
-  :global(.manager-doc):hover .page-settle, .page-settle:focus-visible { opacity:1; }
-  .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .manager-workers { margin-top:var(--space-5); }
-  .manager-bands { margin-top:var(--space-5); }
-  .manager-goal { font-size:var(--type-md); line-height:1.6; color:var(--text-faint); max-width:66ch; }
-  .goal-chevron { font-size:var(--type-md); line-height:1; }
+  /* A sole goal's header keeps the page's utilities at the right end of its line, as every
+     other page does: Settle (shown on hover), then Ask for a recap at the edge. */
+  .goal-head-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--space-2); }
+  /* As staging: the project, then the way back to the Workspace (an up-left arrow), at every
+     width. It is drawn as an icon button, not a glyph after a slash, so it reads as a control
+     and not as a missing crumb: 24px target, no fill until pointed at. */
+  .page-back { display:inline-grid; place-items:center; width:24px; height:24px; margin-left:var(--space-1); border-radius:var(--radius-sm); color:var(--tone-tertiary); }
+  .page-back:hover { background:var(--wash-hover); color:var(--tone-strong); }
+  .page-back svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+  /* Settle shows while the pointer is on the page or focus is on it, as staging. */
+  :global(.page-settle.button) { opacity:0; transition:opacity var(--motion-fast) var(--motion-ease); }
+  :global(.manager-doc:hover .page-settle.button), :global(.page-settle.button:focus-visible) { opacity:1; }
+  .manager-workers { margin-top:var(--page-section-gap); }
+  .manager-bands { margin-top:var(--page-section-gap); }
+  .manager-goal { font-size:var(--type-body); line-height:var(--leading-body); color:var(--tone-primary); max-width:var(--page-prose-measure); }
+  .goal-chevron { font-size:var(--type-body); line-height:1; }
   .goal-chevron::before { content:"\203A"; }
   .goal-band[open] > summary .goal-chevron::before { content:"\2304"; }
-  a:focus-visible, button:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+  a:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
 </style>

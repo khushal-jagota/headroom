@@ -129,8 +129,9 @@ from planner.core.authctx import RequestContext, request_context, require_owner
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.response_compression import answers_with_an_event_stream
+from planner.core.response_compression import answers_uncompressed
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
+from planner.core.task_settlement import run_on_worker_thread
 from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.runtime import conversation_start
 
@@ -210,8 +211,6 @@ def _require_unassociated_send_conversation(
         "worker",
         "chief",
         "manager",
-        "sprint_item_supervisor",
-        "goal",
     }:
         raise HTTPException(
             status_code=409,
@@ -560,7 +559,7 @@ async def read_conversation_event_detail(
 
 
 @router.get("/conversations/{conversation_id}/tail")
-@answers_with_an_event_stream
+@answers_uncompressed
 async def tail_conversation(
     conversation_id: str, runtime: Runtime, after: int = 0
 ) -> StreamingResponse:
@@ -621,6 +620,7 @@ async def send_into_conversation(
                 conversation_id,
                 content,
                 sender_label=body.sender_label,
+                sender=ctx.principal,
                 mode=body.mode,
                 model_change=body.model_change,
                 reasoning_effort_change=body.reasoning_effort_change,
@@ -803,7 +803,6 @@ async def read_scoped_backends(
     refresh: bool = False,
 ) -> dict[str, Any]:
     """Read the models of the Ticket's machine, including its last offline copy."""
-    from planner.core import authority
     from planner.core.errors import ErrorCode, PlannerError
     from planner.tickets import data as ticket_data
     from planner.tickets.contracts import TicketLocale
@@ -815,7 +814,6 @@ async def read_scoped_backends(
     ):
         raise PlannerError(ErrorCode.validation, "ticket_id is required", {})
     with closing(connect(runtime.database_path)) as conn:
-        authority.require_above_or_self(conn, ctx.principal, authority.ticket(raw["ticket_id"]))
         ticket = ticket_data.read_ticket(conn, raw["ticket_id"])
     from planner.conversation.model_resolution.contracts import RemoteCatalogSource
 
@@ -876,7 +874,9 @@ async def put_model_enablement(
         raise HTTPException(status_code=404, detail="model is not in the backend catalogue")
     if runtime.backend_state is None:
         raise HTTPException(status_code=503, detail="backend state is unavailable")
-    runtime.backend_state.write_model_enablement(backend_key, model_id, body.enabled)
+    await run_on_worker_thread(
+        runtime.backend_state.write_model_enablement, backend_key, model_id, body.enabled
+    )
     return {"backend_key": str(backend_key), "model_id": model_id, "enabled": body.enabled}
 
 
@@ -1113,7 +1113,11 @@ async def _pending_user_input(
 
 
 class VideoSendAdmission:
-    """Bind one upload before conversation creation and adopt it before dispatch."""
+    """Bind one upload before conversation creation and adopt it before dispatch.
+
+    Every step writes the upload's row in its own ``BEGIN IMMEDIATE`` transaction, so each
+    runs on a worker thread: the send that holds this admission is on the event loop.
+    """
 
     def __init__(
         self,
@@ -1138,7 +1142,8 @@ class VideoSendAdmission:
     async def preflight(self, current_conversation_id: str | None) -> MessageDeliveryResult | None:
         upload = next(piece for piece in self.sent if isinstance(piece, SentVideoUploadPiece))
         try:
-            self.checked = self.service.preflight(
+            self.checked = await run_on_worker_thread(
+                self.service.preflight,
                 upload.upload_id,
                 self.destination.model_copy(
                     update={"expected_conversation_id": current_conversation_id}
@@ -1175,7 +1180,7 @@ class VideoSendAdmission:
                 fate = PromptDeliveryRefused(
                     payload.refusal_reason,
                 )
-        self.finish(fate)
+        await run_on_worker_thread(self.finish, fate)
         assert self.recipient is not None
         return MessageDeliveryResult(self.recipient, prior, fate)
 
@@ -1339,7 +1344,7 @@ async def conversation_message_content(
                 )
             case SentVideoUploadPiece():
                 assert video_admission is not None
-                pieces.append(video_admission.adopt(conversation_id))
+                pieces.append(await run_on_worker_thread(video_admission.adopt, conversation_id))
             case SentFilePiece():
                 contents, media_type = validated_files[file_index]
                 file_index += 1

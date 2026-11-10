@@ -11,18 +11,17 @@
   import { navigationWindow, type NavigationPresentation } from "../lib/navigation/presentation";
   import { stabilizeWorkspaceRail } from "../lib/workspaceRail";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
-  import { lifecycleFor } from "../lib/lifecycle";
-  import type { RenderObserver } from "../lib/navigation/visibility";
-  import type { NavigationPublication } from "../lib/navigation/collection";
-  import { railDomMatches, hoverDomMatches } from "../lib/workspaceRailDom";
-  import { workspaceRailImpact, workspaceHoverImpact, managerSettleImpact } from "../lib/workspaceNavigationImpact";
+  import {goalsForHolder,goalRailWindowLimit} from "../lib/goals/holders";
+  import {refreshAtBoundary} from "../lib/goals/presentation";
+  import {goalQueries} from "../lib/goals/queries";
+  import type { NavigationPublication } from "../lib/navigation/publication";
   import { createRailMotionController, type WorkspaceRailPresentation } from "../lib/workspaceRailMotion";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
   import { buildWorkspaceRail, workspaceListRecap, type WorkspaceRailItem } from "../lib/workspaceRail";
-  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
+  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController, listenForUserScroll } from "../lib/workspaceRailInteraction";
   import { correctedWorkspaceAddress, whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import { parseUtilityPath, type UtilityHref, type WorkspaceUtility } from "../lib/utilityAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
@@ -39,16 +38,17 @@
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
 
   import type { Snippet } from "svelte";
-  let { address, externalPane, railFoot, onDismissed = () => undefined }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet; onDismissed?: (noteId: string) => void } = $props();
+  let { address, externalPane, railFoot, railStatus }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet; railStatus?: Snippet } = $props();
   const navigation = (() => {
     const context = navigationApplication();
     if (!context) throw new Error("Workspace requires the application navigation owner");
     return context;
   })();
-  const manifests = createQuery(() => queries.workerTypeManifests());
   // Chief recap is dedicated content outside navigation records, so the popover
   // reads it from the same settings query the Chief conversation pane already uses.
   const chiefSettings = createQuery(() => queries.chiefSettings());
+  const goalBodies=createQuery(()=>goalQueries.list());
+  $effect(()=>{if(goalBodies.data)return refreshAtBoundary(goalBodies.data.next_refresh_at,()=>void goalBodies.refetch());});
   let workspace = $state.raw<NavigationPresentation | null>(null);
   let displayedPublication = $state.raw<NavigationPublication | null>(null);
   $effect(() => {
@@ -58,23 +58,22 @@
       displayedPublication = effective.publication;
     }
   });
-  const railObserver = navigation.registerRenderBoundary(`workspace-rail:${crypto.randomUUID()}`,impact => {
-    const view=navigation.state.effective;return workspaceRailImpact(impact,view ? navigation.presentationFor(view) : undefined,rail,settledOpen);
-  });
-  onDestroy(() => navigation.disposeRenderBoundary(railObserver));
+
   let opening = $derived(whatTheAddressOpens(address));
+  let selectedGoalHolder=$derived(opening.markedGoalId?goalBodies.data?.goals.find(goal=>goal.id===opening.markedGoalId):undefined);
+  let soleGoalManager=$derived(selectedGoalHolder?.holder_kind==='manager'&&goalsForHolder(goalBodies.data?.goals??[],{kind:'manager',id:selectedGoalHolder.holder_id}).sole?selectedGoalHolder.holder_id:null);
+  let managerId=$derived(opening.openManagerId??soleGoalManager);
   const selectedPaneModule = $derived.by(() => {
     if (opening.markedTicketId) return cachedImport("./TicketRoute.svelte", () => import("./TicketRoute.svelte"));
-    if (opening.openManagerId) return cachedImport("../components/ManagerWorkspace.svelte", () => import("../components/ManagerWorkspace.svelte"));
+    if (managerId) return cachedImport("../components/ManagerWorkspace.svelte", () => import("../components/ManagerWorkspace.svelte"));
     switch (opening.markedUtility) {
       case "usage": return cachedImport("./BackendsRoute.svelte", () => import("./BackendsRoute.svelte"));
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./SettingsRoute.svelte"));
       case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./IdeasRoute.svelte"));
-      case "feedback": return cachedImport("./FeedbackRoute.svelte", () => import("./FeedbackRoute.svelte"));
       default: return null;
     }
   });
-  let paneShape = $derived(opening.markedUtility === "usage" || opening.markedUtility === "ideas" || opening.markedUtility === "feedback" ? "rows" as const : "document" as const);
+  let paneShape = $derived(opening.markedUtility === "usage" || opening.markedUtility === "ideas" ? "rows" as const : "document" as const);
   // The screen's own position, read the same way its standalone page reads it. The
   // address is parsed before it reaches here, so a placement is always present.
   let placement = $derived(
@@ -103,7 +102,7 @@
     const corrected = correctedWorkspaceAddress(address, (id) => managerIds.has(id));
     if (corrected !== null) window.location.replace(corrected);
   });
-  const selectedItemWorkspace = createQuery(() => ({ ...queries.managerWorkspaceContent(opening.openManagerId ?? ""), enabled: opening.openManagerId !== null }));
+  const selectedItemWorkspace = createQuery(() => ({ ...queries.managerWorkspaceContent(managerId ?? ""), enabled: managerId !== null }));
   let allCards = $derived(workspace?.tickets ?? []);
   let visibleItems=$state<string[]>([]);
   let railWindows=$state<Record<string,{anchor:string;direction:'before'|'after'}>>({});
@@ -123,6 +122,16 @@
       const item=settledById.get(key.id);return item ? [item] : [];
     })};
   });
+  let goalRails=$derived.by(()=>{
+    const bodies=goalBodies.data?.goals??[];
+    const goals=bodies.map(goal=>({...goal,...workspace?.rawGoalsById.get(goal.id)?.value}));
+    return [{kind:'chief' as const,id:'chief'},...desiredRail.items.map(item=>({kind:'manager' as const,id:item.id}))].map(owner=>{
+      const {sole}=goalsForHolder(goals,owner);
+      const window=navigationWindow(workspace,'goals',owner);
+      return {owner,sole:owner.kind==='manager'?sole:null,
+        rows:(window?.members??[]).flatMap(member=>{const goal=goals.find(goal=>goal.id===member.id);return goal?[goal]:[];}),window};
+    });
+  });
   let presentation = $state<WorkspaceRailPresentation>({rail:buildWorkspaceRail([]), settledOpen:false});
   const scrollCoordinator = createScrollWindowCoordinator();
   function renderedRailWindow(section:ViewWindowRequest['section'],owner:ViewWindowRequest['owner']=null) {
@@ -136,23 +145,30 @@
   $effect(()=>{
     const windows:ViewWindowRequest[]=[viewWindow('rail_parents',null,{limit:60,...railWindows.parents}),viewWindow('rail_tickets',{kind:'chief',id:'chief'},{...railWindows.chief})];
     for(const id of visibleItems)windows.push(viewWindow('rail_tickets',{kind:'manager',id},{limit:60,...railWindows[id]}));
+    // Rows share one budget, so only holders with goals ask, and only for as many rows as they hold.
+    const held=new Map<string,number>();
+    for(const goal of goalBodies.data?.goals??[]){const key=goal.holder_kind==='manager'?goal.holder_id!:'chief';held.set(key,(held.get(key)??0)+1);}
+    for(const owner of [{kind:'chief' as const,id:'chief'},...desiredRail.items.map(item=>({kind:'manager' as const,id:item.id}))]){
+      const count=held.get(owner.id)??0;
+      if(count)windows.push(viewWindow('goals',owner,{limit:goalRailWindowLimit(count,navigationWindow(workspace,'goals',owner)),...railWindows[`goals:${owner.id}`]}));
+    }
     if(requestedSettledOpen)windows.push(viewWindow('settled',null,{limit:60,...railWindows.settled}));
     navigation.owner.setDemand('workspace-rail',{windows});
   });
   onDestroy(()=>navigation.owner.setDemand('workspace-rail',undefined));
-  let itemPane = $derived(opening.markedManagerId !== null);
+  let itemPane = $derived(opening.markedManagerId !== null || soleGoalManager !== null);
   let railElement = $state<HTMLElement | null>(null);
   const motion = createRailMotionController(() => railElement, () => presentation, (next) => presentation = next,
     () => scrollCoordinator.flush(), () => scrollCoordinator.captureBeforePublication());
   $effect(() => {
-    const next = {rail:desiredRail, settledOpen:requestedSettledOpen,
+    const next = {rail:desiredRail, settledOpen:requestedSettledOpen,goalRails,
       scrollPublication:{publicationId:displayedPublication?.publicationId ?? null,windows:workspace?.viewWindows ?? []}};
     untrack(() => motion.update(next));
   });
   function freezeRows(event: PointerEvent, leaving: boolean): void {
     if (event.pointerType === "touch") return;
     const target = (leaving ? event.relatedTarget : event.target) as HTMLElement | null;
-    motion.freeze(Boolean(target?.closest?.(".worker-row")));
+    motion.freeze(Boolean(target?.closest?.(".worker-row,[data-goal-id]")));
   }
   let shellElement = $state<HTMLDivElement | null>(null);
   let railWidth = $state<number | null>(null);
@@ -162,7 +178,7 @@
   let settleError = $state("");
   let hoverVisible = $state(false);
   let hoverElement = $state<HTMLDivElement | null>(null);
-  let hoverObserver = $state.raw<RenderObserver | null>(null);
+
   let hoverInstant = $state(false);
   let hoverTarget = $state<HTMLElement | null>(null);
   let hoverTitle = $state("");
@@ -174,7 +190,7 @@
   let goalHoverElement = $state<HTMLElement | null>(null);
   let hoverIntentTarget: HTMLElement | null = null;
   let restoringGoalFocus = false;
-  const goalPreviewInput = createGoalRailPreviewInput(() => hoverIntentTarget);
+  const goalPreviewInput = createGoalRailPreviewInput();
   let rawHoverWorker = $derived.by(() => {
     const ticket = allCards.find((card) => card.id === hoverWorkerId)
       ?? [...desiredRail.items,...desiredRail.settledItems].flatMap(item => item.tickets).find(ticket => ticket.id === hoverWorkerId);
@@ -238,9 +254,10 @@
     enterHover({target,title:'',kicker:'',goalId},immediate);
   }
   $effect(() => { address.selection; untrack(() => { if (hoverGoalId) dismissHover(); }); });
+  $effect(()=>{const id=hoverGoalId;if(id&&!presentation.goalRails?.some(holder=>holder.sole?.id===id||holder.rows.some(goal=>goal.id===id)))untrack(dismissHover);});
   function scrollHover(event: Event): void {
-    if (!hoverGoalId) { hover.leave(); return; }
-    if (goalHoverElement?.contains(event.target as Node)) return;
+    // Only the person's own scrolling dismisses a row preview (listenForUserScroll).
+    if (!hoverGoalId || goalHoverElement?.contains(event.target as Node)) return;
     // Layout and query refreshes can move outer scroll positions. Explicit user
     // input below owns dismissal; the panel's scroll observer owns repositioning.
     hover.keepOpen();
@@ -250,7 +267,10 @@
     railWidth = readRailWidth(preferenceStorage());
     const outside = (event: PointerEvent) => {
       goalPreviewInput.clearTouch();
-      if (hoverGoalId && !goalHoverElement?.contains(event.target as Node) && !hoverTarget?.contains(event.target as Node)) dismissHover();
+      // A touch hold keeps every row preview after the finger lifts, so a press outside
+      // the preview and its row is what dismisses it.
+      const panel = hoverGoalId ? goalHoverElement : hoverElement;
+      if (hoverVisible && !panel?.contains(event.target as Node) && !hoverTarget?.contains(event.target as Node)) dismissHover();
     };
     const wheel = (event: WheelEvent) => { if (hoverGoalId && !goalHoverElement?.contains(event.target as Node)) dismissHover(); };
     const key = (event: KeyboardEvent) => {
@@ -271,7 +291,14 @@
     const click = (event: MouseEvent) => goalPreviewInput.click(event);
     window.addEventListener('pointerdown',outside); window.addEventListener('wheel',wheel,{passive:true});
     window.addEventListener('scroll',scrollHover,true); window.addEventListener('keydown',key); window.addEventListener('click',click,true);
+    const stopUserScroll = listenForUserScroll(window, event => {
+      const target = event.target as Node | null;
+      // A key on the previewed row itself moves focus, which opens the next preview.
+      if (hoverGoalId || hoverElement?.contains(target) || (event.type === 'keydown' && hoverTarget?.contains(target))) return;
+      hover.leave();
+    });
     return () => {
+      stopUserScroll();
       blurGoalPreviewInput(goalHoverElement);
       window.removeEventListener('pointerdown',outside); window.removeEventListener('wheel',wheel);
       window.removeEventListener('scroll',scrollHover,true); window.removeEventListener('keydown',key); window.removeEventListener('click',click,true);
@@ -322,69 +349,11 @@
   function hoverWorkerRow(target: HTMLElement, worker: WorkItemTicketFacts, immediate = false): void {
     enterHover({ target, title:worker.title, kicker:"Worker", worker }, immediate);
   }
-  $effect(() => {
-    const publication = displayedPublication;
-    const effective = navigation.selectors.effective;
-    const generation = navigation.state.generation;
-    const root = railElement;
-    const target = stabilizeWorkspaceRail(desiredRail, rail);
-    const chief = workspace?.chief;
-    const open = settledOpen;
-    // The observer never credits retained knowledge or a deferred motion structure.
-    if (!publication || !root || !effective?.runtimeCurrent || effective.publication !== publication) return;
-    const observation = railObserver.observeSelectors(publication, generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (obsolete || !root.isConnected || displayedPublication !== publication
-        || navigation.state.generation !== generation || navigation.selectors.effective !== effective) return;
-      if (railDomMatches(root,target,chief,open,workspace?.globalCounts?.settled)) railObserver.acknowledgeRender(publication,observation);
-    });
-    return () => { obsolete = true; };
-  });
-  $effect(() => {
-    if (!hoverVisible || hoverGoalId || !hoverElement || !(hoverWorkerId || hoverItemId || hoverChief)) return;
-    const observer = navigation.registerRenderBoundary(`workspace-hover:${crypto.randomUUID()}`,impact => {
-      const kind=hoverWorkerId ? 'ticket' : hoverItemId ? 'manager' : 'chief';
-      const id=hoverWorkerId ?? hoverItemId ?? 'chief';
-      const view=navigation.state.effective;
-      return workspaceHoverImpact(impact,kind,id,hoverWorker?.conversation_id ?? hoverConversationId,view ? navigation.presentationFor(view) : undefined,
-        kind==='chief' || kind==='manager' && !hoveredItem?.recap?.trim());
-    });
-    hoverObserver = observer;
-    return () => { navigation.disposeRenderBoundary(observer); hoverObserver = null; };
-  });
-  $effect(() => {
-    const publication = displayedPublication;
-    const effective = navigation.selectors.effective;
-    const generation = navigation.state.generation;
-    const root = hoverElement;
-    const observer = hoverObserver;
-    const target = hoverTarget;
-    const sourceKind = hoverWorkerId ? 'ticket' : hoverItemId ? 'manager' : hoverChief ? 'chief' : null;
-    const sourceId = hoverWorkerId ?? hoverItemId;
-    const sourceExists = sourceKind !== null && publication?.records.some(record => record.kind === sourceKind && (sourceKind === 'chief' || record.id === sourceId));
-    const worker = hoverWorker;
-    const title = currentHoverTitle;
-    const kicker = currentHoverKicker;
-    const recap = worker ? worker.recap ?? '' : hoverRecap;
-    const stage = worker ? workspaceWorkerStageSentence(worker,lifecycleFor(manifests.data,worker.worker_type)) : '';
-    const signal = worker?.conversation_signal ?? hoverSignal;
-    const conversation = worker?.conversation_id ?? hoverConversationId;
-    if (!hoverVisible || hoverGoalId || !root || !target?.isConnected || !sourceExists || !observer || !publication || !effective?.runtimeCurrent || effective.publication !== publication) return;
-    const observation = observer.observeSelectors(publication,generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (obsolete || !root.isConnected || !target.isConnected || hoverTarget !== target || !hoverVisible || displayedPublication !== publication
-        || navigation.state.generation !== generation || navigation.selectors.effective !== effective) return;
-      if (hoverDomMatches(root,title,recap,stage,signal,conversation,kicker)) observer.acknowledgeRender(publication,observation);
-    });
-    return () => { obsolete = true; };
-  });
+
   async function settle(item: WorkspaceRailItem, settled: boolean): Promise<void> {
     busyItem = item.id; settleError = ""; dismissHover();
     try {
-      await navigation.runCommand(managerSettleImpact(item.id),responseMetadata =>
-        mutateJson(`/api/managers/${encodeURIComponent(item.id)}/settled`, {method:"PATCH",body:{settled},responseMetadata}),"set manager settled");
+      await mutateJson(`/api/managers/${encodeURIComponent(item.id)}/settled`, {method:"PATCH",body:{settled}});
     }
     catch (error) { settleError = error instanceof Error ? error.message : "The manager could not be updated."; }
     finally { busyItem = null; }
@@ -393,37 +362,48 @@
 
 <section class="board-screen" data-screen="workspace">
     <div class="board-workspace-wrap">
-      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
+      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked && !managerId} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section use:workspaceRailWash bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
           <div class="rail-work">
           <ResourceState shape="block" layout="fill" loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
             <div role="presentation" class="active-work-scroll" onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:renderedRailWindow('rail_parents'),pageRestoration:{coordinator:scrollCoordinator,priority:'parent',publicationId:presentation.scrollPublication?.publicationId ?? null,members:rail.items.map(item=>item.id)},activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.manager-card:not(.chief)',key:node=>node.dataset.manager ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={scrollHover}>
-            <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} navigationWindow={renderedRailWindow('rail_tickets',{kind:'chief',id:'chief'})} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" suppressBackgroundPreview={Boolean(hoverGoalId)} title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked && !opening.markedGoalId} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => enterHover({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet beforeGroups()}<GoalRail selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
+            <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} navigationWindow={renderedRailWindow('rail_tickets',{kind:'chief',id:'chief'})} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" suppressBackgroundPreview={Boolean(hoverGoalId)} title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked && !opening.markedGoalId} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => enterHover({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet beforeGroups()}<GoalRail structure={presentation.goalRails?.find(holder=>holder.owner.kind==='chief')} onPage={(anchor,direction)=>railPage('goals:chief',anchor,direction)} selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
             {#each rail.items as item (item.id)}
-              <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} onVisibility={itemVisibility} navigationWindow={renderedRailWindow('rail_tickets',{kind:'manager',id:item.id})} onWindow={(anchor,direction)=>railPage(item.id,anchor,direction)} id={item.id} title={item.title} project={item.project} signal={item.conversationSignal} conversationId={item.conversationId} selected={opening.markedManagerId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target, immediate) => hoverItem(target,item,immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} />
+              <WorkspaceRailCard {scrollCoordinator} scrollPublicationId={presentation.scrollPublication?.publicationId ?? null} onVisibility={itemVisibility} navigationWindow={renderedRailWindow('rail_tickets',{kind:'manager',id:item.id})} onWindow={(anchor,direction)=>railPage(item.id,anchor,direction)} id={item.id} title={item.title} project={item.project} signal={item.conversationSignal} conversationId={item.conversationId} selected={opening.markedManagerId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target, immediate) => hoverItem(target,item,immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => {if (!hoverGoalId) hover.leave();}} >{#snippet beforeGroups()}<GoalRail structure={presentation.goalRails?.find(holder=>holder.owner.kind==='manager'&&holder.owner.id===item.id)} onPage={(anchor,direction)=>railPage(`goals:${item.id}`,anchor,direction)} selectedId={opening.markedGoalId} previewId={hoverVisible ? hoverGoalId : null} previewTarget={hoverTarget} rail={railElement} instant={hoverInstant} previewInput={goalPreviewInput} bind:element={goalHoverElement} onHover={hoverGoal} onLeave={leaveGoal} onKeepOpen={()=>hover.keepOpen()} onDismiss={dismissHover}/>{/snippet}</WorkspaceRailCard>
             {/each}
             {#if settleError}<p role="alert">{settleError}</p>{/if}
             </div>
-            <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
-              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>({workspace?.globalCounts?.settled ?? rail.settledItems.length})</span></span></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 10 3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
-              {#if presentation.settledBodyOpen ?? settledOpen}
-                <div class="settled-body" data-settled-scroll use:navigationScrollWindow={{window:settledWindow,activate:()=>navigation?.owner.prioritizeWindow(settledWindow?.request),selector:'[data-settled-item]',key:node=>node.dataset.settledItem ?? '',move:(anchor,direction)=>railPage('settled',anchor,direction)}} onscroll={scrollHover}>
-                {#each rail.settledItems as item (item.id)}
-                  <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
-                  <div class="settled-row">
-                    <button class="settled-title" type="button" aria-current={opening.markedManagerId === item.id ? "page" : undefined} aria-label={`Open ${item.title}`} onclick={() => selectItem(item.id)}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
-                    <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
-                  </div>
-                  </div>
-                {/each}
-                </div>
-              {/if}
-            </div>
           </div>
           </ResourceState>
+          <!-- Outside the loading region, so the one card never remounts and shows while the workspace cannot load. -->
+          {#if railStatus}<div class="rail-status">{@render railStatus()}</div>{/if}
           </div>
-          {#if railFoot}{@render railFoot()}{/if}
+          <!-- The dock: Settled and the destinations, one grouping at the foot of the column. -->
+          <div class="rail-dock">
+            <div class="rail-dock-inner">
+            {#if workspace}
+              <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
+                <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>{workspace?.globalCounts?.settled ?? rail.settledItems.length}</span></span></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                {#if presentation.settledBodyOpen ?? settledOpen}
+                  <div class="settled-body" data-settled-scroll use:navigationScrollWindow={{window:settledWindow,activate:()=>navigation?.owner.prioritizeWindow(settledWindow?.request),selector:'[data-settled-item]',key:node=>node.dataset.settledItem ?? '',move:(anchor,direction)=>railPage('settled',anchor,direction)}} onscroll={scrollHover}>
+                  {#each rail.settledItems as item (item.id)}
+                    <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
+                    <!-- The whole row is the washed area, so a press anywhere on it opens the item. Reopen keeps its own press. -->
+                    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+                    <div class="settled-row" onclick={(event) => { if (!(event.target as HTMLElement).closest('button')) selectItem(item.id); }}>
+                      <button class="settled-title" type="button" aria-current={opening.markedManagerId === item.id ? "page" : undefined} aria-label={`Open ${item.title}`} onclick={() => selectItem(item.id)}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
+                      <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
+                    </div>
+                    </div>
+                  {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+            <div class="rail-dock-foot">{#if railFoot}{@render railFoot()}{/if}</div>
+            </div>
+          </div>
         </section>
         <!-- A focusable separator implements the WAI-ARIA window splitter keyboard pattern. -->
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -431,18 +411,20 @@
         <section
           class:board-workspace-right--destination={Boolean(externalPane)}
           class:board-workspace-right--ticket={Boolean(opening.markedTicketId)}
-          class:board-workspace-right--chief={opening.chiefMarked}
+          class:board-workspace-right--chief={opening.chiefMarked && !managerId}
           class:board-workspace-right--item={itemPane}
           class:board-workspace-right--utility={opening.markedUtility !== null}
           class="board-workspace-right"
-          aria-label={opening.chiefMarked ? "Chief of Staff conversation" : itemPane ? "Manager workspace" : "Workspace inspector"}
+          aria-label={opening.chiefMarked && !managerId ? "Chief of Staff conversation" : itemPane ? "Manager workspace" : "Workspace inspector"}
         >
           {#if externalPane}
             {@render externalPane()}
-          {:else if opening.markedGoalId}
+          {:else if opening.markedGoalId && !goalBodies.data}
+            <ResourceState shape="document" layout="fill" error={goalBodies.error} loading={goalBodies.isPending} loadingText="Loading goal…"/>
+          {:else if opening.markedGoalId && !managerId}
             {#key opening.markedGoalId}<GoalWorkspace id={opening.markedGoalId} requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket}/>{/key}
-          {:else if opening.chiefMarked}
-            <ChiefConversation allGoals={opening.allGoals} requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket} />
+          {:else if opening.chiefMarked && !managerId}
+            <ChiefConversation requestedConversationId={address.selectedConversationId ?? null} openedFile={address.openFile} onOpenFile={openFileOnTicket} />
           {:else if opening.markedUtility !== null && selectedPaneModule && placement}
           <!-- The pane owns the scroll for a utility screen. These screens are written as
                pages that let the document scroll, so without this they have no scroller of
@@ -468,12 +450,6 @@
 {:catch error}
 <ErrorLine {error} />
 {/await}
-          {:else if placement.utility === "feedback"}
-            {#await import("./FeedbackRoute.svelte") then view}
-<view.default {onDismissed} />
-{:catch error}
-<ErrorLine {error} />
-{/await}
           {/if}
           </LazyRegion>
           </div>
@@ -492,11 +468,13 @@
 <ErrorLine {error} />
 {/await}
             {/key}
-          {:else if itemPane && opening.openManagerId}
-            {#key opening.openManagerId}
+          {:else if itemPane && managerId}
+            {#key managerId}
               {#await import("../components/ManagerWorkspace.svelte") then view}
 <view.default
-                itemId={opening.openManagerId}
+                itemId={managerId}
+                openedFile={opening.markedGoalId?address.openFile:null}
+                onOpenFile={opening.markedGoalId?openFileOnTicket:undefined}
                 requestedConversationId={address.selectedConversationId ?? null}
                 workspaceName="Workspace"
                 backHref="#/workspace"
@@ -537,35 +515,81 @@
      whole stack above pane content without moving native controls out of DOM order. */
   .workspace-rail { position:relative; z-index:1; }
   .board-workspace-right { position:relative; z-index:0; }
-  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); border-right:0; }
-  .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
-  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
-  .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
-  .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
+  /* Bubbles. The column has no surface of its own: it takes the page's colour, so the sidebar
+     and the page are one surface, and every Manager (the Chief first) is a rounded bubble in
+     the old sidebar colour, 8px from the column's sides and 8px from the next. The dock
+     (Settled and the destinations) is the last bubble, at the foot. No line divides the column
+     from the page (owner). */
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; scrollbar-gutter:auto; font-size:var(--type-sm); line-height:normal; padding:0; border-right:0; background:var(--rail-column); }
+  .rail-work { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; }
+  /* The list's two edges fade into the page's colour: a fixed layer over the list's box, the
+     same whatever is scrolled where (8px at the top; at the bottom --rail-list-fade, where the
+     list meets the dock). The list's own bottom padding is as tall as that fade, so every
+     bubble and row scrolls fully clear of it. Nothing is measured; the list simply scrolls. */
+  .rail-work .rail-work::before, .rail-work .rail-work::after { content:""; position:absolute; z-index:3; left:0; right:0; pointer-events:none; }
+  .rail-work .rail-work::before { top:0; bottom:auto; height:var(--rail-edge-fade); background:linear-gradient(to bottom, var(--rail-column), transparent); }
+  .rail-work .rail-work::after { bottom:0; height:var(--rail-list-fade); background:linear-gradient(to top, var(--rail-column) 4px, transparent); }
+  /* The rail's lists scroll themselves. The wrapper clips their bleed, scrollbar
+     included, without becoming a scroller that a hover could slide sideways. */
+  .rail-work > :global(.skeleton-region--fill > .skeleton-content) { overflow:clip; }
+  /* Scrollbars never move the bubbles. The list keeps a gutter on both sides
+     (scrollbar-gutter: stable both-edges), so the bubbles' left and right insets are always
+     equal, the same scrolled or not: a 4px styled scrollbar (Chromium, Safari) runs in the
+     right gutter at the column's outer edge with the bubbles 8px in on both sides; an overlay
+     scrollbar takes no gutter (4px in on both sides); a classic one keeps its own width on both
+     sides. The dock keeps the same gutters, so it lines up with the bubbles in every case. */
+  .active-work-scroll { flex:1; min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges; scrollbar-width:auto; scrollbar-color:auto; padding:var(--rail-bubble-gap) calc(var(--rail-bubble-gap) - var(--rail-scrollbar-width)) var(--rail-list-fade); scroll-padding-block:var(--rail-edge-fade) var(--rail-list-fade); }
+  /* The list isolates its selection washes. Lift that whole stack while a fixed goal
+     preview is open, so the dock cannot cover its controls on a short phone. */
+  .active-work-scroll:has(:global([data-goal-preview])) { z-index:5; }
+  .active-work-scroll::-webkit-scrollbar { width:var(--rail-scrollbar-width); }
+  .active-work-scroll::-webkit-scrollbar-track { background:transparent; }
+  .active-work-scroll::-webkit-scrollbar-thumb { border-radius:var(--radius-pill); background:transparent; }
+  .active-work-scroll:is(:hover, :active)::-webkit-scrollbar-thumb { background:var(--border-hover); }
+  @supports not selector(::-webkit-scrollbar) { .active-work-scroll { scrollbar-width:thin; scrollbar-color:var(--border-color) transparent; } }
+
+  .settled-body { min-height:0; overflow-x:hidden; overflow-y:auto; scrollbar-width:thin; }
+  /* The grip straddles the rail's edge above both panes. It keeps a compositing layer of its own:
+     without one Chromium squashes it with the page under it and, after some page changes, kept
+     showing stale fragments of the old page in the 5px of it over the page for seconds. */
+  .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); will-change:transform; cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
   .rail-grip::after { content:""; position:absolute; top:50%; left:50%; width:var(--space-1); height:var(--space-6); transform:translate(-50%,-50%) scaleY(var(--rail-grip-rest-scale)); border-radius:var(--radius-pill); background:var(--border-color); opacity:0; pointer-events:none; transition:opacity var(--motion-base) var(--motion-ease),background var(--motion-base) var(--motion-ease),transform var(--motion-enter) var(--motion-ease); }
   .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { opacity:1; transform:translate(-50%,-50%) scaleY(1); }
   .resizing .rail-grip::after { background:var(--text-strong); }
   .resizing { user-select:none; cursor:col-resize; }
-  .settled { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); }
-  .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); padding:var(--space-2) calc(var(--space-3) + var(--border-hairline)); border:0; background:none; width:100%; font:inherit; color:var(--text-faint); cursor:pointer; }
-  .settled-head:hover { color:var(--text-strong); }
+  .rail-status { flex:none; padding:var(--space-2) var(--rail-edge) 0; }
+  /* The dock: Settled and the destinations share one bubble like a Manager's, 8px from the
+     column's sides and foot, and the list fades into the page above it. Its fills sit 4px
+     inside it, concentric with its 12px corners; its words and first icon stand on the rail's
+     one text edge. The destinations sit directly under Settled, no gap (owner). */
+  .rail-dock { position:relative; z-index:4; flex:0 1 auto; display:flex; flex-direction:column; min-height:0; max-height:var(--settled-max-height); overflow:visible; padding:0 var(--rail-bubble-gap) var(--rail-bubble-gap); }
+  .rail-dock-inner { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; padding:var(--rail-bubble-pad); border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); }
+  .settled { position:relative; display:flex; flex-direction:column; flex:0 1 auto; min-height:0; margin:0; border:0; padding:0; }
+  .rail-dock-foot { flex:none; }
+  .rail-dock-foot :global(.rail-foot) { padding:0 0 0 calc(var(--rail-pad) - 9px); }
+  /* Settled: one row in the rail's row voice, staging's 32px tall, its count a plain Small
+     numeral after it. */
+  .settled-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); box-sizing:border-box; height:32px; min-height:0; padding:0 var(--rail-pad); margin-inline:0; border:0; border-radius:var(--radius-md); background:none; width:100%; font:inherit; font-size:var(--type-row); font-weight:var(--weight-body); line-height:20px; color:var(--rail-tone-rest); cursor:pointer; }
+  .settled-head:hover { background:var(--wash-hover); color:var(--rail-tone-bright); }
   .settled-count { position:relative; display:inline-block; }
-  .settled-chevron { width:16px; height:16px; flex:none; }
-  .settled--open .settled-chevron { transform:rotate(180deg); }
-  .count { flex:none; font-size:var(--type-xs); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
-  .settled-item + .settled-item { margin-top:var(--space-3); }
-  .settled-row { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-1) calc(var(--space-2) + var(--border-hairline)); margin:0 var(--space-1); border-radius:var(--radius-md); }
-  .settled-row:hover { color:var(--text-strong); }
+  .settled-chevron { width:14px; height:14px; flex:none; color:var(--rail-tone-label); transition:transform var(--motion-base) var(--motion-ease); }
+  .settled--open .settled-chevron { transform:rotate(90deg); }
+  .count { flex:none; margin-left:5px; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--rail-tone-label); font-variant-numeric:tabular-nums; }
+  .settled-item + .settled-item { margin-top:var(--rail-row-gap); }
+  .settled-row { display:flex; align-items:center; gap:var(--space-2); box-sizing:border-box; min-height:var(--rail-row-height); padding:5px var(--rail-pad); margin:0; border-radius:var(--radius-md); font-size:var(--type-row); line-height:20px; cursor:pointer; }
+  .settled-row:hover { color:var(--rail-tone-bright); }
   .settled-title,.reopen { border:0; background:none; font:inherit; cursor:pointer; color:var(--text-faintest); padding:0; }
-  .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; }
+  .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; color:var(--rail-tone-rest); }
   .settled-title > span { flex:1; min-width:0; overflow-wrap:anywhere; }
-  .reopen { opacity:0; margin-left:auto; color:var(--text-faint); font-size:12px; }
+  .reopen { opacity:0; margin-left:auto; color:var(--rail-tone-label); font-size:var(--type-small); }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
-  button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+  button:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   @media(prefers-reduced-motion:reduce) {
     .rail-grip::after { transition:none; }
   }
   @media(max-width:720px) {
+    /* Phone shows the card above the bottom bar instead. */
+    .rail-status { display:none; }
     .approved-rail-shell { grid-template-columns:1fr; }
     .rail-grip { display:none; }
     .board-workspace-shell--chief .approved-rail,

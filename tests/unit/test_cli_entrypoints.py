@@ -21,14 +21,13 @@ def test_explicit_ticket_parts_read_only_the_named_retained_field(
     record: dict[str, Any] = {
         "id": ticket_id,
         "worker_type": "coding",
+        "workflow": {"fields": [{"id": "brief"}]},
         "field_values": {"brief": "Current brief"},
     }
 
     def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         assert method == "GET"
         calls.append(path)
-        if path == "/api/worker-types":
-            return {"worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]}
         if path in ("/api/tickets", f"/api/tickets/{ticket_id}/worker-self"):
             return record
         if path == body_path:
@@ -115,6 +114,7 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
             "next_offset": 2,
         },
     }
+
     def fake_send(method: str, requested_path: str, **kwargs: Any) -> dict[str, Any]:
         assert method == "GET"
         requested_paths.append(requested_path)
@@ -137,9 +137,7 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
     assert requested_paths == [path, path]
 
 
-def test_issued_manager_reply_alias_remains_executable_without_teaching_old_flags(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_manager_commands_reject_old_names(monkeypatch: pytest.MonkeyPatch) -> None:
     targets: list[dict[str, str]] = []
 
     def sent(method: str, path: str, **kwargs: Any) -> dict[str, str]:
@@ -149,42 +147,22 @@ def test_issued_manager_reply_alias_remains_executable_without_teaching_old_flag
 
     monkeypatch.setattr(http, "send", sent)
     runner = CliRunner()
-    for option in ("--manager", "--sprint-item"):
-        result = runner.invoke(
-            cli_main.main, ["send-message", option, "si_same", "--message", "Reply."]
-        )
-        assert result.exit_code == 0, result.output
-    assert targets == [{"kind": "manager", "id": "si_same"}] * 2
-    help_text = runner.invoke(cli_main.main, ["send-message", "--help"]).output
-    assert "--manager" in help_text and "--sprint-item" not in help_text
-    refused = runner.invoke(
-        cli_main.main,
-        ["send-message", "--manager", "si_one", "--sprint-item", "si_other", "--message", "Reply."],
-    )
-    assert refused.exit_code != 0
-    assert len(targets) == 2
-
-
-def test_schedule_issued_assignment_field_normalizes_before_canonical_choice_validation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    writes: list[dict[str, Any]] = []
-
-    def sent(method: str, path: str, **kwargs: Any) -> dict[str, str]:
-        assert (method, path) == ("PATCH", "/api/schedules/schedule_example")
-        writes.append(kwargs["json_body"])
-        return {"id": "schedule_example"}
-
-    monkeypatch.setattr(http, "send", sent)
-    result = CliRunner().invoke(
-        cli_main.main,
-        ["schedule", "set", "schedule_example", "sprint-item", "--value", "si_example"],
+    result = runner.invoke(
+        cli_main.main, ["send-message", "--manager", "si_same", "--message", "Reply."]
     )
     assert result.exit_code == 0, result.output
-    assert writes == [{"manager": {"kind": "manager", "id": "si_example"}}]
+    for args in (
+        ["send-message", "--sprint-item", "si_same", "--message", "Reply."],
+        ["orchestrator", "list"],
+        ["sprint", "item", "list"],
+        ["schedule", "set", "schedule_example", "sprint-item", "--value", "si_same"],
+    ):
+        refused = runner.invoke(cli_main.main, args)
+        assert refused.exit_code != 0, refused.output
+    assert targets == [{"kind": "manager", "id": "si_same"}]
 
 
-@pytest.mark.parametrize("prefix", [("manager",), ("orchestrator",), ("sprint", "item")])
+@pytest.mark.parametrize("prefix", [("manager",)])
 def test_manager_state_survives_cli_reads_and_filters(
     monkeypatch: pytest.MonkeyPatch, prefix: tuple[str, ...]
 ) -> None:
@@ -245,12 +223,6 @@ def test_manager_help_explains_assignment_state() -> None:
         ("manager",),
         ("manager", "list"),
         ("manager", "show"),
-        ("orchestrator",),
-        ("orchestrator", "list"),
-        ("orchestrator", "show"),
-        ("sprint", "item"),
-        ("sprint", "item", "list"),
-        ("sprint", "item", "show"),
         ("ticket", "create"),
         ("ticket", "assign"),
     ):
@@ -260,3 +232,67 @@ def test_manager_help_explains_assignment_state() -> None:
         assert "finished destinations" in text
         assert "active manager for new work" in text
         assert "settled" in text and "absent settled field" in text
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ("project", "create", "--name", "Legacy", "--requires-macos"),
+        ("project", "set", "project_panels", "requires-macos", "--value", "true"),
+    ),
+)
+def test_project_cli_rejects_removed_macos_requirement(arguments: tuple[str, ...]) -> None:
+    result = CliRunner().invoke(cli_main.main, arguments)
+    assert result.exit_code != 0
+    assert "requires-macos" in result.output
+
+
+def test_removed_ticket_syntax_never_sends_a_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Removed parser paths cannot silently retain their old mutation behavior."""
+    def unexpected_send(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("removed syntax sent a request")
+
+    monkeypatch.setattr(http, "send", unexpected_send)
+    runner = CliRunner()
+    for command in ("set", "set-value", "place", "approve", "reject", "copy"):
+        result = runner.invoke(cli_main.main, ["ticket", command, "t_old"])
+        assert result.exit_code != 0
+        assert "is not a command" in result.output
+    for option in (
+        "--title", "--worker-type", "--employee-backend", "--employee-launch-model",
+        "--deadline", "--project", "--project-id", "--manager", "--blocked-by",
+        "--kickoff-note", "--kickoff-note-file", "--ceiling", "--holder",
+    ):
+        result = runner.invoke(cli_main.main, ["ticket", "create", option, "old"])
+        assert result.exit_code != 0
+        assert "is not an option" in result.output
+    for command, option in (("delete", "--yes"), ("backlog", "--expected-record-sha256"),
+                            ("resume", "--expected-record-sha256")):
+        result = runner.invoke(cli_main.main, ["ticket", command, "t_old", option])
+        assert result.exit_code != 0
+        assert "is not an option" in result.output
+
+
+def test_ticket_delete_force_and_deferral_need_no_confirmations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI forwards force only when requested and sends no deferral fingerprint."""
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        return {}
+
+    monkeypatch.setattr(http, "send", send)
+    runner = CliRunner()
+    for arguments in (("delete", "t_old"), ("delete", "t_old", "--force"),
+                      ("backlog", "t_old"), ("resume", "t_old")):
+        result = runner.invoke(cli_main.main, ["ticket", *arguments])
+        assert result.exit_code == 0, result.output
+    assert calls[0][0:2] == ("DELETE", "/api/tickets/t_old")
+    assert calls[0][2]["params"] is None
+    assert calls[1][2]["params"] == {"force": True}
+    assert [(method, path, kwargs["json_body"]) for method, path, kwargs in calls[2:]] == [
+        ("POST", "/api/tickets/t_old/backlog", {}),
+        ("POST", "/api/tickets/t_old/resume", {}),
+    ]

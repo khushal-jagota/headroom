@@ -16,7 +16,6 @@ lives in ``tests/support/conversation_claude_agent_sdk_bench.py``.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -24,11 +23,22 @@ from uuid import UUID
 
 import pytest
 from anyio.abc import Process
-from claude_agent_sdk import ClaudeAgentOptions, CLINotFoundError, TextBlock
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    CLINotFoundError,
+    SystemMessage,
+    TaskNotificationMessage,
+    TaskStartedMessage,
+    TaskUpdatedMessage,
+    TextBlock,
+)
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from tests.support.conversation_claude_agent_sdk_bench import (
     ANOTHER_SESSION_ID,
     SESSION_ID,
+    TURN,
+    TURN_2,
     _assistant,
     _bench,
     _run,
@@ -44,6 +54,9 @@ from planner.conversation.backends.claude_agent_sdk import (
 )
 from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
+    BackendStreamEnded,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     NeedsRebind,
     SessionLoadFailed,
     TurnToken,
@@ -69,8 +82,7 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
         child, sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=SESSION_ID)
         options = clients[0].options
-        assert options.settings is not None
-        assert json.loads(options.settings) == {"disableAllHooks": True}
+        assert options.settings is None
         assert options.setting_sources is None
         assert options.cwd == str(tmp_path)
         assert options.cli_path == Path("/usr/bin/claude")
@@ -111,8 +123,7 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
         child, _sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=None)
         options = clients[0].options
-        assert options.settings is not None
-        assert json.loads(options.settings) == {"disableAllHooks": True}
+        assert options.settings is None
         assert options.setting_sources is None
         assert options.cwd == str(tmp_path)
         assert options.cli_path == Path("/usr/bin/claude")
@@ -137,6 +148,281 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
         assert len(clients[0].prompts) == 1
         assert "Panels" in clients[0].prompts[0]
         assert "Review the manager wake." in clients[0].prompts[0]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_claude_model_change_rebinds_the_child_and_preserves_the_conversation(
+    tmp_path: Path,
+) -> None:
+    """A same-provider model change must cross Claude's fresh-child boundary."""
+    from claude_agent_sdk import ResultMessage
+
+    from planner.conversation.backends.claude_agent_sdk import (
+        ClaudeAgentSdkBackendChildFactory,
+        ClaudeAgentSdkChildLaunch,
+    )
+    from planner.conversation.contracts import (
+        ConversationBackendKey,
+        ConversationStartRequest,
+        PromptDeliveryStarted,
+    )
+    from planner.conversation.live_tail import ConversationLiveTail
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.conversation.storage import ConversationStore
+    from planner.conversation.system import SqliteProcessConversationSystem
+    from planner.core.db import connect, create_schema
+
+    db_path = str(tmp_path / "claude-model-change.db")
+    conn = connect(db_path)
+    create_schema(conn)
+    conn.close()
+
+    async def exercise() -> None:
+        clients: list[_ScriptedClaudeSdkClient] = []
+
+        def make(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
+            client = _ScriptedClaudeSdkClient(options)
+            clients.append(client)
+            return client
+
+        store = ConversationStore(db_path)
+        system = SqliteProcessConversationSystem(
+            store=store,
+            message_files=ConversationMessageFiles(db_path),
+            backend_child_factories={
+                key: ClaudeAgentSdkBackendChildFactory(
+                    ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")),
+                    client_factory=make,
+                )
+                for key in ConversationBackendKey
+            },
+            live_tail=ConversationLiveTail(),
+        )
+
+        async def finish(client: _ScriptedClaudeSdkClient, session: str) -> None:
+            client.say(ResultMessage(
+                subtype="success", duration_ms=1, duration_api_ms=1,
+                is_error=False, num_turns=1, session_id=session,
+            ))
+            await client.until_taken_in()
+            await system.wait_until_quiescent()
+
+        try:
+            await system.start_conversation(ConversationStartRequest(
+                conversation_id="claude-model-change", backend_key=ConversationBackendKey.claude,
+                model="opus", workspace_folder=tmp_path,
+            ))
+            first = await system.send(
+                "claude-model-change", text_message_content("First turn"), sender_label="owner",
+            )
+            assert isinstance(first, PromptDeliveryStarted)
+            session = clients[0].options.session_id
+            assert session is not None
+            await finish(clients[0], session)
+            changed = await system.send(
+                "claude-model-change", text_message_content("Use Sonnet"),
+                sender_label="owner", model_change="sonnet",
+            )
+            assert isinstance(changed, PromptDeliveryStarted)
+            assert [client.options.model for client in clients] == ["opus", "sonnet"]
+            assert clients[0].disconnected
+            assert len(clients[0].prompts) == 1
+            assert clients[1].options.resume == session
+            assert len(clients[1].prompts) == 1
+            assert "Use Sonnet" in clients[1].prompts[0]
+            record = await store.read_conversation("claude-model-change")
+            assert record is not None
+            assert record.model == "sonnet"
+            assert record.vendor_session_cursor == session
+            await finish(clients[1], session)
+        finally:
+            await system.shutdown()
+
+    _run(exercise)
+
+
+def test_background_tasks_follow_claudes_live_set(tmp_path: Path) -> None:
+    """Claude's live set alone says which tasks are live, so an end it never announced
+    still clears the task, and each end says how it happened. The frames follow claude's
+    real order, including a terminated claude stopping its tasks before its stream ends.
+    """
+
+    def live(*task_ids: str, ambient: str | None = None) -> SystemMessage:
+        tasks: list[dict[str, object]] = [
+            {"task_id": task_id, "task_type": "local_bash", "description": f"sleep for {task_id}"}
+            for task_id in task_ids
+        ]
+        if ambient is not None:
+            watcher = {"task_id": ambient, "task_type": "monitor", "description": "watch"}
+            tasks.append({**watcher, "ambient": True})
+        return SystemMessage(
+            subtype="background_tasks_changed",
+            data={"type": "system", "subtype": "background_tasks_changed", "tasks": tasks},
+        )
+
+    def started(task_id: str) -> TaskStartedMessage:
+        return TaskStartedMessage(
+            subtype="task_started",
+            data={},
+            task_id=task_id,
+            description=f"sleep for {task_id}",
+            uuid=f"u-{task_id}",
+            session_id=SESSION_ID,
+        )
+
+    def notified(task_id: str, status: str) -> TaskNotificationMessage:
+        return TaskNotificationMessage(
+            subtype="task_notification",
+            data={},
+            task_id=task_id,
+            status=status,  # type: ignore[arg-type]
+            output_file="/tmp/out",
+            summary="",
+            uuid=f"n-{task_id}",
+            session_id=SESSION_ID,
+        )
+
+    def updated(task_id: str, status: str) -> TaskUpdatedMessage:
+        return TaskUpdatedMessage(
+            subtype="task_updated",
+            data={},
+            task_id=task_id,
+            patch={"status": status},
+            status=status,  # type: ignore[arg-type]
+            session_id=SESSION_ID,
+        )
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=SESSION_ID)
+        clients[0].say(
+            live("a", ambient="w"),
+            started("a"),
+            updated("a", "completed"),
+            notified("a", "completed"),
+            live(ambient="w"),
+            # Stopped by the agent, which goes on working: the stop is the task's own end.
+            live("b"),
+            started("b"),
+            updated("b", "killed"),
+            live(),
+            _assistant(TextBlock(text="stopped it")),
+            # A shell whose end claude never announced leaves the live set all the same.
+            live("e"),
+            started("e"),
+            live(),
+            _assistant(TextBlock(text="carrying on")),
+            # A watcher claude marks ambient stops being activity while it goes on.
+            live("m"),
+            live(ambient="m"),
+            # Stopped while claude itself is being terminated: the stream ends next.
+            live("c"),
+            started("c"),
+            notified("c", "stopped"),
+            updated("c", "killed"),
+            live(),
+        )
+        clients[0].end_the_stream()
+        await clients[0].until_taken_in()
+
+        assert sink.session_news == [
+            BackgroundTaskStarted(task_id="a", task_description="sleep for a"),
+            BackgroundTaskEnded(task_id="a", task_status="completed"),
+            BackgroundTaskStarted(task_id="b", task_description="sleep for b"),
+            BackgroundTaskEnded(task_id="b", task_status="killed"),
+            BackgroundTaskStarted(task_id="e", task_description="sleep for e"),
+            BackgroundTaskEnded(task_id="e", task_status="unreported"),
+            BackgroundTaskStarted(task_id="m", task_description="sleep for m"),
+            BackgroundTaskEnded(task_id="m", task_status="ambient"),
+            BackgroundTaskStarted(task_id="c", task_description="sleep for c"),
+            BackgroundTaskEnded(task_id="c", task_status="killed"),
+            BackendStreamEnded(),
+        ]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_claudes_own_command_reply_is_reported_only_when_nothing_else_says_it(
+    tmp_path: Path,
+) -> None:
+    """Claude answers a local command with a ``<synthetic>`` message and no streamed text.
+
+    That message is the only place a command's reply exists. It is held, and reported as
+    soon as the model works on (``/goal set`` starts the goal in the same turn) or just
+    before a completed ending. A failed turn already shows its error, which Claude also
+    writes this way, and automatic compaction records its own outcome, so neither
+    repeats it. Ordinary model text stays ordinary agent output.
+    """
+    from claude_agent_sdk import ResultMessage, ToolUseBlock
+
+    goal_set = "Goal set: the file done.txt exists"
+    refusal = "/goal can't run while hooks are restricted."
+
+    def result(*, is_error: bool = False, text: str | None = None) -> ResultMessage:
+        return ResultMessage(
+            subtype="error_during_execution" if is_error else "success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=is_error,
+            num_turns=0,
+            session_id=SESSION_ID,
+            result=text,
+        )
+
+    def synthetic(text: str) -> AssistantMessage:
+        return _assistant(TextBlock(text=text), model="<synthetic>")
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=SESSION_ID)
+        # The order Claude 2.1.259 uses for /goal set: its reply, then the goal's work.
+        await _write(child, "/goal the file done.txt exists", TURN)
+        clients[0].say(
+            synthetic(goal_set),
+            _assistant(ToolUseBlock(id="write-1", name="Write", input={"file_path": "done.txt"})),
+            _assistant(TextBlock(text="Done.")),
+            result(),
+        )
+        await clients[0].until_taken_in()
+        assert sink.calls_in_order == [
+            "command_reply", "tool_call_started", "token_usage", "turn_ended",
+        ]
+        await _write(child, "/goal finish the work", TURN_2)
+        clients[0].say(synthetic(refusal), result())
+        await clients[0].until_taken_in()
+        failing_turn = TurnToken(conversation_id=TURN.conversation_id, turn_number=3)
+        await _write(child, "hello", failing_turn)
+        overloaded = "API Error: 529 Overloaded"
+        clients[0].say(synthetic(overloaded), result(is_error=True, text=overloaded))
+        await clients[0].until_taken_in()
+        compaction_turn = TurnToken(conversation_id=TURN.conversation_id, turn_number=4)
+        compact = text_message_content("/compact")
+        await child.write_prompt(
+            compaction_turn,
+            compact,
+            sender_content=compact,
+            sender_label="Panels",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+            automatic_compaction=True,
+        )
+        clients[0].say(synthetic("Error: No messages to compact"), result())
+        await clients[0].until_taken_in()
+
+        assert sink.command_replies == [(TURN, goal_set), (TURN_2, refusal)]
+        assert sink.message_texts == [(TURN, "Done.")]
+        assert [ending["ending"] for ending in sink.endings] == [
+            ConversationTurnEnding.completed,
+            ConversationTurnEnding.completed,
+            ConversationTurnEnding.failed,
+            ConversationTurnEnding.completed,
+        ]
         await child.stop()
 
     _run(exercise)

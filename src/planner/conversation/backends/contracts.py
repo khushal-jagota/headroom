@@ -24,7 +24,8 @@ and is not translated into a refusal.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Awaitable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -151,9 +152,14 @@ class BackendSteerRefused:
 
 @dataclass(frozen=True, slots=True)
 class BackendSteerUncertain:
-    """The adapter cannot prove admission or non-admission after the attempt."""
+    """The adapter cannot prove admission or non-admission after the attempt.
+
+    ``not_delivered``, when the adapter can learn the answer later, resolves true once it
+    proves the message never reached the turn, so it can still go as the next message.
+    """
 
     composed_content_delivered: bool | None = True
+    not_delivered: Awaitable[bool] | None = field(default=None, compare=False)
 
 
 type BackendSteerOutcome = BackendSteerAccepted | BackendSteerRefused | BackendSteerUncertain
@@ -192,7 +198,9 @@ class BackendEventSink(Protocol):
 
     Session cursor and composer catalog reports carry no turn token. The cursor is the
     conversation's durable session identity, and it has to be kept
-    whatever turn happened to be running when it changed.
+    whatever turn happened to be running when it changed. Background task reports and
+    the end of the child's stream carry none either: they are facts about the session,
+    and they usually arrive when no turn is running at all.
     """
 
     async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
@@ -390,12 +398,22 @@ class BackendChild(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class RetainedBackendRun:
-    """Identity and custody only. A retained run never restores a live turn."""
+    """Identity and custody of a run that outlived the VPS process.
+
+    stop_requested: a stop command is in the mailbox, so the run stays quarantined until
+    its proof arrives rather than being adopted live.
+
+    incarnation_current: the run's executor incarnation is the current one. Only an open
+    run of the current incarnation is adopted live after a VPS restart; a run of a
+    replaced incarnation stays quarantined until its drain retires it.
+    """
 
     reference: ChildReference
     turn: TurnToken
     delivery_uncertain: bool
     retirement_confirmed: bool
+    stop_requested: bool = False
+    incarnation_current: bool = False
 
 
 class BackendChildFactory(Protocol):
@@ -424,7 +442,11 @@ class BackendChildFactory(Protocol):
 class RetainedBackendChildFactory(BackendChildFactory, Protocol):
     """Recover an exact retained child without allocating or starting an agent."""
 
-    def recover(self, reference: ChildReference) -> BackendChild | None: ...
+    def recover(
+        self, reference: ChildReference, *, event_sink: BackendEventSink | None = None
+    ) -> BackendChild | None:
+        """event_sink, when given, is where an adopted live run reports its later events."""
+        ...
 
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
         """Read durable custody, including confirmed retirement, without starting work."""
@@ -464,6 +486,18 @@ class AgentMessageCompleted:
     """
 
     content: MessageContent
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CommandReplyReported:
+    """The backend's own answer to a slash command, written without the model.
+
+    Claude answers some commands locally, and Codex answers its goal commands through
+    its own call. Either way no agent message streams, so this is the only place the
+    reply exists. It is plain words: a command reply carries no files.
+    """
+
+    reply_text: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -610,10 +644,47 @@ class ComposerCatalogReported:
     composer_catalog: tuple[ComposerCatalogEntry, ...]
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BackgroundTaskStarted:
+    """The agent started a task that can keep running after its turn has ended.
+
+    No turn token: the task belongs to the session, not to the turn that started it.
+    ``task_description`` is the backend's own one-line description of the task.
+    """
+
+    task_id: str
+    task_description: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BackgroundTaskEnded:
+    """A background task reached a terminal status while its session was still alive.
+
+    ``task_status`` is the backend's own word for how it ended. A task that ends because
+    its whole session went away is covered by ``BackendStreamEnded``, though a backend
+    being terminated may first report its tasks stopped.
+    """
+
+    task_id: str
+    task_status: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BackendStreamEnded:
+    """The child's message stream ended on its own: the process exited or its wire broke.
+
+    Reported whether or not a turn was running, and never for a stop the core asked
+    for. Anything the child was still running ended with it.
+    """
+
+    pass
+
+
 type BackendEventValue = (
     AgentMessageDelta
     | ModelThinkingHappened
     | AgentMessageCompleted
+    | CommandReplyReported
     | ToolCallStarted
     | ToolCallProgress
     | ToolCallFinished
@@ -626,4 +697,7 @@ type BackendEventValue = (
     | TurnEnded
     | VendorSessionCursorRebound
     | ComposerCatalogReported
+    | BackgroundTaskStarted
+    | BackgroundTaskEnded
+    | BackendStreamEnded
 )

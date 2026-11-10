@@ -25,7 +25,9 @@ def test_ticket_backlog_resume_and_settled_discovery(
     server = rail_server
     project = api.direct_post(server, "/api/projects", {"name": "Lifecycle proof"})
     item = api.direct_post(
-        server, "/api/items", {"title": "Synthetic lifecycle review", "project_id": project["id"]}
+        server,
+        "/api/managers",
+        {"title": "Synthetic lifecycle review", "project_id": project["id"]},
     )
     ticket = api.direct_post(
         server,
@@ -34,7 +36,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
             "title": "Synthetic ticket with retained evidence",
             "worker_type": "coding",
             "brief": "A synthetic brief for browser verification.",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
         },
     )
     ticket_id = str(ticket["id"])
@@ -121,7 +123,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
     page.locator('[data-conversation-lens-choice="full"]').click()
     expect(page.get_by_text(transcript, exact=True)).to_be_visible()
 
-    api.direct_patch(server, f"/api/items/{item['id']}/settled", {"settled": True})
+    api.direct_patch(server, f"/api/managers/{item['id']}/settled", {"settled": True})
     page.goto(server.base + "/#/workspace")
     settled = page.locator(".settled-head")
     expect(settled).to_be_visible()

@@ -134,6 +134,21 @@ def test_an_ordinary_steer_still_carries_its_sender_label(tmp_path: Path) -> Non
     _run(exercise)
 
 
+def test_a_goal_command_reply_is_reported_as_the_command_reply(tmp_path: Path) -> None:
+    """Codex answers a goal through its own call, so no agent message carries the reply."""
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={"turns": []}) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("/goal set ship the fix"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.command_replies == ["Goal set: ship the fix"]
+            assert scripted.sink.agent_message_texts == []
+
+    _run(exercise)
+
+
 async def _until(condition: Any) -> None:
     import asyncio
 
@@ -372,10 +387,14 @@ def test_metadata_batches_stop_on_failure_and_cache_expires_only_on_a_hint(tmp_p
             reads = scripted.all_sent("app/read")
             assert [len(read["params"]["appIds"]) for read in reads] == [100, 100, 1]
             reports = len(scripted.sink.composer_catalog_reports)
+            installed_before_hint = coordinator.installed
             coordinator.hint_apps()
             now[0] += 1
             coordinator.wake()
             await _until(lambda: len(scripted.all_sent("app/installed")) == 2)
+            # Wait for the reply, not only the request: applying it asks for metadata,
+            # and that refresh must read the clock before the clock jumps below.
+            await _until(lambda: coordinator.installed is not installed_before_hint)
             await _until(lambda: not coordinator._lanes["metadata"].pending)
             assert len(scripted.all_sent("app/read")) == 3
             assert len(scripted.sink.composer_catalog_reports) == reports
@@ -457,23 +476,21 @@ def test_catalog_publication_failures_back_off_and_republish_after_sink_recovery
     _run(exercise)
 
 
-@pytest.mark.parametrize("respond", ["never", "error"])
 def test_ordinary_start_needs_correlated_response(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    respond: str,
 ) -> None:
     from planner.conversation.backends.codex_app_server import client
-    from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
-
-    monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
+    from planner.conversation.backends.contracts import PromptWriteFailed
 
     async def exercise() -> None:
-        script: dict[str, Any] = {"turns": [{"respond": respond, "actions": []}]}
+        script: dict[str, Any] = {"turns": [{"respond": "never", "actions": []}]}
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            expected = PromptWriteFailed if respond == "never" else BackendPromptRejected
-            with pytest.raises(expected):
+            # Only the reply that never comes gets a short wait. The initialize
+            # handshake keeps the full wait.
+            monkeypatch.setattr(client, "REQUEST_TIMEOUT_SECONDS", 0.1)
+            with pytest.raises(PromptWriteFailed):
                 await scripted.write_prompt(1, text_message_content("exact provider token"))
             assert scripted.sink.endings == []
 

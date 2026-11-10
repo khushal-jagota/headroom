@@ -1,21 +1,48 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  clampRailWidth, createRailHoverController, createRailPreviewInput, railWidthForKey, readRailWidth,
-  saveRailWidth, RAIL_WIDTH_STORAGE_KEY
+  clampRailWidth, createRailHoverController, createRailPreviewInput, listenForUserScroll, railWidthForKey, readRailWidth,
+  saveRailWidth, RAIL_HOVER_EXIT_MS, RAIL_WIDTH_STORAGE_KEY
 } from "../src/lib/workspaceRailInteraction";
 import {createGoalRailPreviewInput} from "../src/lib/goals/railPreview";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("approved rail interaction", () => {
-  it("keeps a completed goal hold through release blur and suppresses its retargeted overlay click", () => {
+  it("leaves a row preview only on the person's own scrolling", () => {
+    // BoardRoute once left the preview on any scroll event, which a layout scroll under a
+    // still pointer could fire. Only these inputs dismiss now. The browser proof is the
+    // conversation-signals E2E hover.
+    vi.useFakeTimers();
+    const page=new EventTarget();
+    const show=vi.fn(), hide=vi.fn();
+    const hover=createRailHoverController<string>(show,hide);
+    const stop=listenForUserScroll(page,()=>hover.leave());
+    const touch=(name:string,y:number)=>page.dispatchEvent(Object.assign(new Event(name),{touches:[{clientX:10,clientY:y}]}));
+    const key=(name:string,target:unknown=null)=>{
+      const event=Object.assign(new Event('keydown'),{key:name,altKey:false,ctrlKey:false,metaKey:false});
+      Object.defineProperty(event,'target',{value:target});
+      page.dispatchEvent(event);
+    };
+    const kept=(act:()=>void)=>{ hover.enter('row',true); act(); vi.advanceTimersByTime(RAIL_HOVER_EXIT_MS); expect(hide).not.toHaveBeenCalled(); };
+    const left=(act:()=>void)=>{ hover.enter('row',true); act(); vi.advanceTimersByTime(RAIL_HOVER_EXIT_MS); expect(hide).toHaveBeenCalledOnce(); hide.mockClear(); };
+    kept(()=>{ touch('touchstart',100); touch('touchmove',105); });
+    kept(()=>key('ArrowDown',{closest:(selector:string)=>selector.includes('textarea') ? {} : null}));
+    kept(()=>key('Escape'));
+    left(()=>page.dispatchEvent(new Event('wheel')));
+    left(()=>{ touch('touchstart',100); touch('touchmove',130); });
+    left(()=>key('PageDown'));
+    stop();
+    kept(()=>page.dispatchEvent(new Event('wheel')));
+    expect(show).toHaveBeenCalledWith('row',true);
+  });
+  it("keeps a completed goal hold through its release and suppresses its retargeted overlay click", () => {
     vi.useFakeTimers();
     vi.stubGlobal('window',{matchMedia:()=>({matches:true})});
     vi.stubGlobal('document',{body:{}});
     const row=Object.assign(new EventTarget(),{isConnected:true,matches:()=>true}) as unknown as HTMLElement;
     let active:HTMLElement|null=null;
     const leave=vi.fn();
-    const input=createGoalRailPreviewInput(()=>active);
+    const input=createGoalRailPreviewInput();
     const action=input.row(row,{show:target=>active=target,leave});
     const pointer=(name:string,x=10)=>{
       const event=Object.assign(new Event(name),{pointerType:'touch',clientX:x,clientY:10,pointerId:1});
@@ -31,8 +58,8 @@ describe("approved rail interaction", () => {
     input.click(overlayClick);
     expect(overlayClick.preventDefault).toHaveBeenCalledOnce();
     expect(overlayClick.stopImmediatePropagation).toHaveBeenCalledOnce();
-    input.clearTouch();
-    pointer('pointerleave');
+    // Only a completed hold keeps the preview: a short tap's release still leaves.
+    pointer('pointerdown');pointer('pointerup');pointer('pointerleave');
     expect(leave).toHaveBeenLastCalledWith(row);
     pointer('pointerdown');pointer('pointermove',19);vi.advanceTimersByTime(400);
     input.click(overlayClick);
@@ -46,7 +73,7 @@ describe("approved rail interaction", () => {
     const second=Object.assign(new EventTarget(),{isConnected:true,matches:()=>true}) as unknown as HTMLElement;
     let active=first;
     const hide=vi.fn();
-    const input=createGoalRailPreviewInput(()=>active);
+    const input=createGoalRailPreviewInput();
     const action=input.row(first,{show:()=>undefined,leave:source=>{if(source===active)hide();}});
     active=second;
     first.dispatchEvent(new Event('blur'));
@@ -155,8 +182,11 @@ describe("approved rail interaction", () => {
     input.down(pointer("touch"));
     vi.advanceTimersByTime(400);
     expect(show).toHaveBeenLastCalledWith(target, true);
-    input.end();
-    input.leave();
+    // Worker and Manager rows share this input. Lifting the finger is not leaving.
+    input.end(); hide.mockClear();
+    input.leave({type:"pointerleave", pointerType:"touch"} as unknown as PointerEvent);
+    input.leave({type:"blur", relatedTarget:null} as unknown as FocusEvent);
+    expect(hide).not.toHaveBeenCalled();
     const click = {preventDefault:vi.fn()} as unknown as MouseEvent;
     expect(input.click(click)).toBe(false);
     expect(click.preventDefault).toHaveBeenCalledOnce();

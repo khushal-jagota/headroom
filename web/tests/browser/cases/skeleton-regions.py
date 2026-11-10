@@ -423,7 +423,12 @@ def run(browser, urls):
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "geometry.json").write_text(json.dumps(measurements, indent=2))
         page.evaluate("window.__load(true)")
-        page.wait_for_timeout(200)
+        # The placeholders have appeared after their delay and finished entering.
+        page.wait_for_function("""() => {
+          const layers = [...document.querySelectorAll('.skeleton')];
+          return layers.length > 0 && layers.every(layer =>
+            layer.getAnimations().every(animation => animation.playState === 'finished'));
+        }""")
         page.screenshot(path=str(directory / "skeleton-narrow.png"), full_page=True)
     # This existing host also exercises the imperative Markdown/Svelte boundary.
     # A controlled Worker exposes waits that a real parser can finish between frames.
@@ -952,11 +957,15 @@ def _preview_cards(page):
     page.set_viewport_size({"width": 1100, "height": 900})
     screenshot("preview-video-desktop.png")
     page.set_viewport_size({"width": 390, "height": 900})
-    assert fixture.locator("video").count() == 0
+    poster = fixture.locator("video.file-preview-video-poster")
+    expect(poster).to_have_attribute("preload", "metadata")
+    assert poster.evaluate("node => node.paused")
+    expect(fixture.locator("video[controls]")).to_have_count(0)
     # The native media stack receives keyboard activation and focus after replacement.
     fixture.locator("[data-media-play]").focus()
     page.keyboard.press("Enter")
-    expect(fixture.locator("video")).to_be_focused()
+    expect(fixture.locator("video[controls]")).to_be_focused()
+    expect(poster).to_have_count(0)
     page.evaluate("window.__preview('proof.mp4',true)")
     expect(fixture.locator("video[controls]")).to_be_visible()
     assert fixture.locator("[data-media-play]").count() == 0

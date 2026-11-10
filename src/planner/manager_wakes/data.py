@@ -94,19 +94,25 @@ def create_proposal_wake(
 def create_worker_error_wake(
     conn: sqlite3.Connection,
     *,
-    manager_id: str,
+    target: Principal,
     ticket_id: str,
     claim_revision: int,
     ticket_title: str,
+    error_reason: str,
     now: int,
 ) -> bool:
+    """Tell the Ticket's assigned supervisor that its Worker stopped, and why."""
     return create_wake(
         conn,
-        manager_id=manager_id,
+        manager_id=target.id if target.kind is PrincipalKind.manager else "",
         ticket_id=ticket_id,
         source_kind=WakeSourceKind.worker_error,
         source_revision=claim_revision,
-        summary=f"Ticket `{ticket_id}` ({ticket_title}) entered the explicit worker-error state.",
+        target=target,
+        summary=(
+            f"Ticket `{ticket_id}` ({ticket_title}) entered the explicit worker-error state: "
+            f"{error_reason}."
+        ),
         now=now,
     )
 

@@ -15,15 +15,16 @@ from sqlite3 import Connection
 from typing import Literal
 
 import pytest
+from tests.support.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backend_state import write_model_enablement
 from planner.conversation.contracts import (
-    AddressedPromptDeliveryReceipt,
     ConversationAccess,
     ConversationBackendKey,
     ConversationStartRequest,
-    ConversationTurnReference,
     DeploymentRecoveryReference,
     HeldPrompt,
     HeldPromptPromotionFate,
@@ -35,9 +36,6 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     WorkspacePathPolicy,
-)
-from planner.conversation.in_memory_conversation_system import (
-    InMemoryConversationSystem,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.workspace_admission import WorkspaceAdmission
@@ -146,8 +144,8 @@ class _LinkWatchingConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
-        reply_requested: bool = True,
         recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        record_refusal: bool = False,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         return await self._system.send(
@@ -163,45 +161,6 @@ class _LinkWatchingConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
-            recovery_references=recovery_references,
-            recording_receipt=recording_receipt,
-        )
-
-    async def send_with_receipt(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
-        model_change: str | None = None,
-        reasoning_effort_change: str | None = None,
-        reasoning_effort_is_set: bool = False,
-        owner_read_through_sequence: int | None = None,
-        sender_message_id: str | None = None,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-        reply_requested: bool = True,
-        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
-        record_refusal: bool = False,
-        recording_receipt: NativeMessageOperation | None = None,
-    ) -> AddressedPromptDeliveryReceipt:
-        return await self._system.send_with_receipt(
-            conversation_id,
-            content,
-            sender_label=sender_label,
-            mode=mode,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            reasoning_effort_is_set=reasoning_effort_is_set,
-            owner_read_through_sequence=owner_read_through_sequence,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
-            reply_requested=reply_requested,
             recovery_references=recovery_references,
             record_refusal=record_refusal,
             recording_receipt=recording_receipt,
@@ -217,7 +176,6 @@ class _LinkWatchingConversationSystem:
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
-        credit_explicit_reply: bool = True,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> None:
         await self._system.record_message_to_owner(
@@ -228,22 +186,8 @@ class _LinkWatchingConversationSystem:
             recipient=recipient,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            credit_explicit_reply=credit_explicit_reply,
             recording_receipt=recording_receipt,
         )
-
-    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
-        return await self._system.active_turn_reference(conversation_id)
-
-    async def turn_expects_reply(
-        self, turn: ConversationTurnReference, recipient: Principal
-    ) -> bool:
-        return await self._system.turn_expects_reply(turn, recipient)
-
-    async def record_explicit_reply(
-        self, turn: ConversationTurnReference, recipient: Principal
-    ) -> None:
-        await self._system.record_explicit_reply(turn, recipient)
 
     async def interrupt(self, conversation_id: str) -> None:
         await self._system.interrupt(conversation_id)
@@ -510,31 +454,32 @@ def test_worker_resolve_preserves_disabled_history_but_rejects_new_disabled_over
     assert read_ticket(tmp_db, ticket.id) == ticket
 
 
-def test_mac_project_path_is_resolved_on_the_execution_host(
+def test_mac_project_ticket_starts_in_its_mac_workspace_project_folder(
     tmp_db: Connection, tmp_path: Path, ticket: Ticket
 ) -> None:
-    target = tmp_path / "vps-target"
-    target.mkdir()
-    alias = tmp_path / "checkout"
-    alias.symlink_to(target, target_is_directory=True)
-    project = create_project(tmp_db, name="Mac project", folder_path=alias, now=1)
+    from planner.tickets.api import _conversation_start_values_json
+
+    server_checkout = tmp_path / "vps-checkout"
+    server_checkout.mkdir()
+    project = create_project(tmp_db, name="Mac project", folder_path=server_checkout, now=1)
     tmp_db.execute(
         "UPDATE tickets SET project_id = ?, locale = 'macos' WHERE id = ?",
         (project.id, ticket.id),
     )
     ticket = read_ticket(tmp_db, ticket.id)
     values = worker_resolve(tmp_db, ticket)
-    assert values.workspace_folder == alias
-    assert values.workspace_path_policy is WorkspacePathPolicy.absolute
-    # The checkout may not exist on the VPS. Starting work must retain the Mac path.
-    update_project(tmp_db, project.id, folder_path=tmp_path / "mac-only", now=2)
-    values = worker_resolve(tmp_db, ticket)
+    # The server's Project path stays on the server. The Mac gets its own Project folder.
+    assert values.workspace_folder == Path("/projects") / project.id
+    assert values.workspace_path_policy is WorkspacePathPolicy.executor_default
+    assert _conversation_start_values_json(values)["workspace_folder"] is None
     system = InMemoryConversationSystem()
     conversation_id = asyncio.run(_started(system, tmp_db, ticket, values, now=3))
     row = tmp_db.execute(
-        "SELECT workspace_folder FROM conversations WHERE conversation_id = ?", (conversation_id,)
+        "SELECT workspace_folder, workspace_path_policy FROM conversations "
+        "WHERE conversation_id = ?",
+        (conversation_id,),
     ).fetchone()
-    assert row[0] == str(tmp_path / "mac-only")
+    assert tuple(row) == (f"/projects/{project.id}", "executor_default")
 
 
 @pytest.mark.parametrize("retain", [False, True])
@@ -549,20 +494,18 @@ def test_first_spawn_refusal_retention_preserves_a_replacement_link(
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         watching = FailingStart(system, tmp_db, ticket.id)
-        # Simulate a replacement selected while the initial send awaits its receipt.
-        original_send = watching.send_with_receipt
+        # Simulate a replacement selected while the initial send awaits its fate.
+        original_send = watching.send
 
-        async def replace_then_refuse(
-            *args: object, **kwargs: object
-        ) -> AddressedPromptDeliveryReceipt:
-            receipt = await original_send(*args, **kwargs)  # type: ignore[arg-type]
+        async def replace_then_refuse(*args: object, **kwargs: object) -> PromptDeliveryFate:
+            fate = await original_send(*args, **kwargs)  # type: ignore[arg-type]
             tmp_db.execute(
                 "UPDATE tickets SET conversation_id = 'replacement' WHERE id = ?", (ticket.id,)
             )
             tmp_db.commit()
-            return receipt
+            return fate
 
-        watching.send_with_receipt = replace_then_refuse  # type: ignore[method-assign]
+        watching.send = replace_then_refuse  # type: ignore[method-assign]
         result = await send_to_ticket_conversation(
             watching,
             tmp_db,
@@ -599,23 +542,90 @@ def test_unconfigured_mac_uses_executor_workspace_without_replacing_explicit_cho
     assert _conversation_start_values_json(values)["workspace_folder"] is None
     assert _conversation_start_values_json(values)["workspace_path_policy"] == "executor_default"
     project = create_project(tmp_db, name="No checkout", now=2)
-    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id) == (
-        Path("/"),
-        WorkspacePathPolicy.executor_default,
-    )
+    project_folder = (Path("/projects") / project.id, WorkspacePathPolicy.executor_default)
+    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id) == project_folder
     missing = tmp_path / "explicit-missing"
     assert workspace_for_project(tmp_db, TicketLocale.macos, project.id, explicit=missing) == (
         missing,
         WorkspacePathPolicy.absolute,
     )
+    # A server folder on the Project changes nothing on the Mac.
     update_project(tmp_db, project.id, folder_path=missing, now=3)
-    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id) == (
-        missing,
-        WorkspacePathPolicy.absolute,
-    )
+    assert workspace_for_project(tmp_db, TicketLocale.macos, project.id) == project_folder
     from planner.runtime.conversation_start import _default_workspace_folder
 
     assert workspace_for_project(tmp_db, TicketLocale.vps, None) == (
         _default_workspace_folder(tmp_db),
         WorkspacePathPolicy.home_relative,
     )
+
+
+def test_deleted_specialist_keeps_saved_guide_on_start_restart_and_continue(
+    tmp_db: Connection, tmp_path: Path
+) -> None:
+    """Risk: skill deletion strands a saved Ticket at bootstrap or loses its guide.
+
+    Existing lifecycle tests retain every skill. Reuse the in-memory backend wire and
+    real database to exercise delivery, plus the executor's snapshot/install boundary.
+    """
+    from planner.executor.configuration import ExecutorPaths
+    from planner.executor.skills import install_native_skill_snapshot, read_canonical_skill_snapshot
+    from planner.worker_settings.service import delete_skill, delete_worker_type_definition
+    from planner.worker_types.guidance import render_workflow_guide
+
+    chosen = create_ticket(
+        tmp_db,
+        title="Keep the saved guide",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="coding",
+        employee_backend="codex",
+        employee_launch_model="gpt-6.1-sol",
+    )
+    guide = render_workflow_guide(chosen.workflow)
+    specialist = chosen.workflow.specialist_skill
+    assert specialist is not None
+    delete_worker_type_definition(tmp_db, "coding")
+    delete_skill(tmp_db, specialist, database_parent=tmp_path)
+    assert (
+        tmp_db.execute("SELECT 1 FROM managed_skills WHERE skill_name=?", (specialist,)).fetchone()
+        is None
+    )
+
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        previous_id: str | None = None
+        for now, action in enumerate(("start", "continue", "restart"), start=2):
+            if action == "restart":
+                await reset_ticket_conversation(system, tmp_db, chosen.id, now=now)
+            snapshot = read_canonical_skill_snapshot(tmp_db, chosen.id)
+            assert snapshot.required_skill_names == ("panels", "panels-worker")
+            install_native_skill_snapshot(
+                snapshot,
+                paths=ExecutorPaths(tmp_path / "executor"),
+                native_home=tmp_path / "account",
+            )
+            delivered = await send_to_ticket_conversation(
+                system,
+                tmp_db,
+                chosen.id,
+                text_message_content(action),
+                conversation_id=previous_id if action == "continue" else None,
+                sender_label="loop",
+                now=now,
+            )
+            assert isinstance(delivered.fate, PromptDeliveryStarted)
+            current_id = delivered.conversation_id
+            assert current_id is not None
+            if action == "continue":
+                assert current_id == previous_id
+            elif action == "restart":
+                assert current_id != previous_id
+            writes = system.backend_prompt_writes(current_id)
+            assert guide in writes[0].text
+            assert action in writes[-1].text
+            system.complete_running_turn(current_id)
+            previous_id = current_id
+
+    asyncio.run(exercise())

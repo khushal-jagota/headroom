@@ -12,6 +12,7 @@ from tests.support.conversation_test_loop import conversation_test_loop
 from tests.unit.test_conversation_system import (
     _FakeBackendChild,
     _Harness,
+    _retry_failed_conversation_writes_quickly,
     _run,
     _start,
 )
@@ -33,7 +34,6 @@ from planner.conversation.lifecycle import (
 )
 from planner.conversation.lifecycle_storage import ConversationRuntimeAlreadyOwned
 from planner.conversation.message_content import text_message_content
-from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
 
@@ -49,14 +49,6 @@ def durable(tmp_path: Path) -> Iterator[_Harness]:
             yield harness
         finally:
             runner.run(harness.system.shutdown())
-
-
-async def _paused(store: ConversationStore) -> None:
-    async def wait() -> None:
-        while not store.recording_failures("c"):
-            await asyncio.sleep(0.001)
-
-    await asyncio.wait_for(wait(), 5)
 
 
 def test_intent_failure_prevents_provider_effect_and_rolls_back(durable: _Harness) -> None:
@@ -134,19 +126,27 @@ def test_receipt_and_candidate_participant_failure_roll_back_together(durable: _
 
 
 
-def test_crash_gap_is_unknown_and_never_resends(durable: _Harness) -> None:
+def test_crash_gap_is_unknown_and_never_resends(
+    durable: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _retry_failed_conversation_writes_quickly(monkeypatch)
+
     async def exercise() -> None:
         await _start(durable, "c")
+        loop = asyncio.get_running_loop()
+        failed = asyncio.Event()
 
         def fail(conn: sqlite3.Connection, candidate: LifecycleTransition) -> None:
             if candidate.receipt_sequences:
+                # The participant runs on the write's worker thread.
+                loop.call_soon_threadsafe(failed.set)
                 raise RuntimeError("receipt disk failure")
 
         durable.store._transaction_participant = fail
         sending = asyncio.create_task(
             durable.system.send("c", text_message_content("once"), sender_label="owner")
         )
-        await _paused(durable.store)
+        await failed.wait()
         assert durable.backend("c").written_texts() == ("once",)
         assert {f.status for f in await durable.store.lifecycle_facts("c")} == {
             LifecycleStatus.intent
@@ -202,6 +202,7 @@ def test_answer_commit_failure_and_caller_cancellation_never_repeat_callback(
 
     monkeypatch.setattr(_FakeBackendChild, "answer_permission_ask", permission)
     monkeypatch.setattr(_FakeBackendChild, "answer_user_input", user_input)
+    _retry_failed_conversation_writes_quickly(monkeypatch)
 
     async def exercise() -> None:
         await _start(durable, "c")
@@ -223,17 +224,21 @@ def test_answer_commit_failure_and_caller_cancellation_never_repeat_callback(
                 return await durable.system.answer_user_input("c", request_id, answers)
 
         fail = True
+        loop = asyncio.get_running_loop()
+        failed = asyncio.Event()
 
         def participant(conn: sqlite3.Connection, candidate: LifecycleTransition) -> None:
             if fail and any(
                 f.operation.endswith("_answer") and f.status is LifecycleStatus.accepted
                 for f in candidate.facts
             ):
+                # The participant runs on the write's worker thread.
+                loop.call_soon_threadsafe(failed.set)
                 raise RuntimeError("answer settlement failed")
 
         durable.store._transaction_participant = participant
         answering = asyncio.create_task(answer())
-        await _paused(durable.store)
+        await failed.wait()
         assert counts == 1
         assert not await durable.system.has_pending_permission_ask("c")
         assert not await durable.system.has_pending_user_input("c")
@@ -248,8 +253,8 @@ def test_answer_commit_failure_and_caller_cancellation_never_repeat_callback(
         answering.cancel()
         with pytest.raises(asyncio.CancelledError):
             await answering
+        # The cause clears; the store's own retry settles the answer the caller left.
         fail = False
-        assert durable.store.resume_recording("c") == 1
         await durable.settle()
         assert await answer() is AnswerFate.refused
         assert counts == 1
@@ -276,11 +281,17 @@ def test_answer_commit_failure_and_caller_cancellation_never_repeat_callback(
 
 
 
-def test_cancellation_outcome_and_ending_share_one_commit(durable: _Harness) -> None:
+def test_cancellation_outcome_and_ending_share_one_commit(
+    durable: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _retry_failed_conversation_writes_quickly(monkeypatch)
+
     async def exercise() -> None:
         await _start(durable, "c")
         await durable.system.send("c", text_message_content("work"), sender_label="owner")
         fail = True
+        loop = asyncio.get_running_loop()
+        failed = asyncio.Event()
 
         def participant(conn: sqlite3.Connection, candidate: LifecycleTransition) -> None:
             if any(
@@ -289,11 +300,13 @@ def test_cancellation_outcome_and_ending_share_one_commit(durable: _Harness) -> 
             ):
                 assert candidate.receipt_sequences
                 if fail:
+                    # The participant runs on the write's worker thread.
+                    loop.call_soon_threadsafe(failed.set)
                     raise RuntimeError("cancel outcome commit failure")
 
         durable.store._transaction_participant = participant
         interruption = asyncio.create_task(durable.system.interrupt("c"))
-        await _paused(durable.store)
+        await failed.wait()
         assert durable.backend("c").cancellations == 1
         facts = await durable.store.lifecycle_facts("c")
         assert any(
@@ -301,8 +314,8 @@ def test_cancellation_outcome_and_ending_share_one_commit(durable: _Harness) -> 
             for f in facts
         )
         assert await durable.recorded_endings("c") == ()
+        # The cause clears; the store's own retry commits the outcome with the ending.
         fail = False
-        assert durable.store.resume_recording("c") == 1
         await interruption
         facts = await durable.store.lifecycle_facts("c")
         assert any(

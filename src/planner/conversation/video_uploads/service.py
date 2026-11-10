@@ -10,7 +10,7 @@ import time
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal, cast
+from typing import BinaryIO, Literal, cast
 from uuid import uuid4
 
 from planner.conversation.message_files import MEDIA_TYPE_SUFFIX, KeptMessageFile
@@ -30,10 +30,16 @@ from planner.conversation.video_uploads.logic.rules import (
 )
 from planner.conversation.video_uploads.probe import probe_video, require_probe
 from planner.core.db import connect
+from planner.core.task_settlement import run_on_worker_thread
 from planner.files.logic.paths import conversation_files_root
 
 _ACTIVE = ("reserved", "transferring", "ready", "admitted", "linked")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _flush_to_disk(output: BinaryIO) -> None:
+    output.flush()
+    os.fsync(output.fileno())
 
 
 class VideoUploadService:
@@ -161,6 +167,38 @@ class VideoUploadService:
             )
 
     async def transfer(self, upload_id: str, chunks: AsyncIterator[bytes]) -> VideoUploadStatus:
+        """Take the bytes in, one chunk at a time.
+
+        Every step that touches the database or the file runs on a worker thread. Each
+        holds the write lock, and on the event loop a wait for that lock holds up every
+        request.
+        """
+        declared, filename = await run_on_worker_thread(self._begin_transfer, upload_id)
+        received = 0
+        try:
+            with self._temporary(upload_id).open("xb") as output:
+                async for incoming in chunks:
+                    for offset in range(0, len(incoming), config.TRANSFER_CHUNK_BYTES):
+                        chunk = incoming[offset : offset + config.TRANSFER_CHUNK_BYTES]
+                        if received + len(chunk) > declared:
+                            raise VideoUploadError("Transfer exceeds its reserved size.", 413)
+                        received = await run_on_worker_thread(
+                            self._store_chunk, upload_id, output, chunk, received
+                        )
+                await run_on_worker_thread(_flush_to_disk, output)
+            if received != declared:
+                raise VideoUploadError("Video transfer was interrupted. Retry the attachment.")
+            media_type = await probe_video(self._temporary(upload_id), filename)
+            return await run_on_worker_thread(self._mark_ready, upload_id, media_type)
+        except BaseException as exc:
+            await run_on_worker_thread(self._mark_failed, upload_id, exc)
+            if isinstance(exc, OSError):
+                raise VideoUploadError(
+                    "Video could not be stored. Retry the attachment.", 507
+                ) from exc
+            raise
+
+    def _begin_transfer(self, upload_id: str) -> tuple[int, str]:
         with self._transaction() as conn:
             row = self._row(conn, upload_id)
             if row["state"] != "reserved" or row["expires_at"] <= int(time.time()):
@@ -171,62 +209,44 @@ class VideoUploadService:
                 "UPDATE conversation_video_uploads SET state='transferring' WHERE upload_id=?",
                 (upload_id,),
             )
-            declared, filename = row["byte_count"], row["filename"]
-        received = 0
-        try:
-            with self._temporary(upload_id).open("xb") as output:
-                async for incoming in chunks:
-                    for offset in range(0, len(incoming), config.TRANSFER_CHUNK_BYTES):
-                        chunk = incoming[offset : offset + config.TRANSFER_CHUNK_BYTES]
-                        if received + len(chunk) > declared:
-                            raise VideoUploadError("Transfer exceeds its reserved size.", 413)
-                        with self._transaction() as conn:
-                            if self._row(conn, upload_id)["state"] != "transferring":
-                                raise VideoUploadError(
-                                    "The video upload was cancelled or expired.", 409
-                                )
-                            self._disk_capacity(conn)
-                            if (
-                                shutil.disk_usage(self.root).free - len(chunk)
-                                < config.FREE_SPACE_FLOOR_BYTES
-                            ):
-                                raise VideoUploadError(
-                                    "Video upload stopped: disk space is low.", 507
-                                )
-                            output.write(chunk)
-                            received += len(chunk)
-                            conn.execute(
-                                "UPDATE conversation_video_uploads SET received_bytes=? "
-                                "WHERE upload_id=?",
-                                (received, upload_id),
-                            )
-                output.flush()
-                os.fsync(output.fileno())
-            if received != declared:
-                raise VideoUploadError("Video transfer was interrupted. Retry the attachment.")
-            media_type = await probe_video(self._temporary(upload_id), filename)
-            with self._transaction() as conn:
-                if self._row(conn, upload_id)["state"] != "transferring":
-                    raise VideoUploadError("The video upload was cancelled or expired.", 409)
-                conn.execute(
-                    "UPDATE conversation_video_uploads SET state='ready',media_type=? "
-                    "WHERE upload_id=?",
-                    (media_type, upload_id),
-                )
-            return self.status(upload_id)
-        except BaseException as exc:
-            self._temporary(upload_id).unlink(missing_ok=True)
-            with self._transaction() as conn:
-                conn.execute(
-                    "UPDATE conversation_video_uploads SET state='failed',error=? "
-                    "WHERE upload_id=?",
-                    (str(exc) or "Upload interrupted.", upload_id),
-                )
-            if isinstance(exc, OSError):
-                raise VideoUploadError(
-                    "Video could not be stored. Retry the attachment.", 507
-                ) from exc
-            raise
+            return row["byte_count"], row["filename"]
+
+    def _store_chunk(
+        self, upload_id: str, output: BinaryIO, chunk: bytes, received: int
+    ) -> int:
+        with self._transaction() as conn:
+            if self._row(conn, upload_id)["state"] != "transferring":
+                raise VideoUploadError("The video upload was cancelled or expired.", 409)
+            self._disk_capacity(conn)
+            if shutil.disk_usage(self.root).free - len(chunk) < config.FREE_SPACE_FLOOR_BYTES:
+                raise VideoUploadError("Video upload stopped: disk space is low.", 507)
+            output.write(chunk)
+            received += len(chunk)
+            conn.execute(
+                "UPDATE conversation_video_uploads SET received_bytes=? WHERE upload_id=?",
+                (received, upload_id),
+            )
+        return received
+
+    def _mark_ready(self, upload_id: str, media_type: str) -> VideoUploadStatus:
+        with self._transaction() as conn:
+            if self._row(conn, upload_id)["state"] != "transferring":
+                raise VideoUploadError("The video upload was cancelled or expired.", 409)
+            conn.execute(
+                "UPDATE conversation_video_uploads SET state='ready',media_type=? "
+                "WHERE upload_id=?",
+                (media_type, upload_id),
+            )
+        return self.status(upload_id)
+
+    def _mark_failed(self, upload_id: str, exc: BaseException) -> None:
+        self._temporary(upload_id).unlink(missing_ok=True)
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE conversation_video_uploads SET state='failed',error=? "
+                "WHERE upload_id=?",
+                (str(exc) or "Upload interrupted.", upload_id),
+            )
 
     def preflight(
         self, upload_id: str, destination: UploadDestination, sender_message_id: str

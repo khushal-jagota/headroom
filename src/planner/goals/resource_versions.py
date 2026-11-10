@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import sqlite3
 from urllib.parse import parse_qs, urlsplit
 
@@ -33,23 +31,10 @@ class GoalResources:
                 return None
             active = None if raw_active is None else raw_active == "true"
             project = query.get("project_id", [None])[0]
-            # The list carries conversation pointers independently of authored facts.
-            links = conn.execute(
-                "SELECT goals.id,agents.conversation_id FROM goals "
-                "LEFT JOIN agents ON agents.agent_key='goal_' || goals.id ORDER BY goals.id"
-            ).fetchall()
-            revision += ":" + hashlib.sha256(
-                json.dumps([tuple(row) for row in links]).encode()
-            ).hexdigest()
             return ResourceSnapshot(
                 revision, lambda: views.list_json(conn, now, active=active, project_id=project)
             )
         if len(parts) == 2 and not query:
-            # Conversation links change independently of the authored goal document.
-            row = conn.execute(
-                "SELECT conversation_id FROM agents WHERE agent_key=?", (f"goal_{parts[1]}",)
-            ).fetchone()
-            revision += ":" + (str(row[0]) if row else "")
             return ResourceSnapshot(
                 revision, lambda: views.goal_json(conn, data.read_goal(conn, parts[1]), now)
             )

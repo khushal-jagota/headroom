@@ -89,6 +89,7 @@ from planner.conversation.backends.contracts import (
     BackendSteerRefused,
     BackendSteerUncertain,
     BackendUserInputRequest,
+    CommandReplyReported,
     ComposerCatalogReported,
     ContextCompacted,
     ModelThinkingHappened,
@@ -409,6 +410,9 @@ class CodexAppServerBackendChild:
                 argv=self._launch.argv,
                 environment=environment,
                 working_directory=resolved_start.workspace_folder,
+                worker_ticket_id=dict(self._identity_environment(resolved_start)).get(
+                    "PLAN_TICKET_ID"
+                ),
             )
         except CodexChildWouldNotStart as would_not_spawn:
             raise BackendSpawnFailed(str(would_not_spawn)) from would_not_spawn
@@ -1054,9 +1058,7 @@ class CodexAppServerBackendChild:
         except (CodexAppServerError, ValidationError) as failed:
             raise PromptWriteFailed(str(failed)) from failed
 
-        await self._sink.report(
-            turn.token, AgentMessageCompleted(content=text_message_content(message))
-        )
+        await self._sink.report(turn.token, CommandReplyReported(reply_text=message))
         if self._turn is turn:
             self._turn = None
         await self._sink.report(
@@ -1642,7 +1644,9 @@ class CodexAppServerBackendChild:
             TurnEnded(
                 ending=ConversationTurnEnding.failed,
                 error_summary=self._read_the_login_in(
-                    turn, "the codex process ended while the turn was running"
+                    turn,
+                    self._client.end_reason
+                    or "the codex process ended while the turn was running",
                 ),
                 standard_error_tail=self._client.standard_error_tail(),
             ),

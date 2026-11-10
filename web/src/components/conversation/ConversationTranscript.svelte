@@ -27,7 +27,6 @@
     AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE,
     askDeadSentence,
     CONTEXT_COMPACTED_SENTENCE,
-    explicitReplyMissingSentence,
     promptLabelFor,
     turnEndingSentence,
     PROMPT_DISCARDED_SENTENCE,
@@ -193,10 +192,6 @@
       <article class="chat-a" data-conversation-row="agent_message" data-conversation-source-key={item.row.key}>
         <MessagePieces presentationRowKey={item.key} content={item.row.content} {conversationId} />
       </article>
-    {:else if item.row.kind === "explicit_reply_missing"}
-      <div class="acp-turn-end" data-conversation-row="explicit_reply_missing">
-        {explicitReplyMissingSentence(item.row.promptSender)}
-      </div>
     {:else if item.row.kind === "streaming_agent_message"}
       <article class="chat-a c2-streaming" data-conversation-row="streaming">
         <MarkdownBlock text={item.row.text} />
@@ -250,6 +245,10 @@
       <div class="acp-compaction" role="separator" data-conversation-row="context_compacted">
         <span>{CONTEXT_COMPACTED_SENTENCE}</span>
       </div>
+    {:else if item.row.kind === "command_reply"}
+      <!-- The backend answered a slash command itself. Its words are kept whole, quiet and
+           in the tool voice, because they are the backend's output rather than the agent's. -->
+      <p class="acp-command-reply" data-conversation-row="command_reply">{item.row.replyText}</p>
     {:else if item.row.kind === "turn_ended" && item.row.automaticCompactionResult === "not_compacted"}
       <div class="acp-compaction" role="status" data-conversation-row="turn_ended">
         {AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE}
@@ -281,15 +280,16 @@
   .c2-streaming { color: var(--text-muted); }
   .c2-ask-row {
     align-self: stretch;
-    border-inline-start: var(--border-hairline) solid var(--accent-bright);
-    padding-inline-start: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--accent-surface);
     color: var(--text-default);
     font-family: var(--font-ui);
     font-size: var(--type-sm);
     overflow-wrap: anywhere;
   }
   .c2-ask-row.is-dead {
-    border-inline-start-color: var(--text-faintest);
+    background: var(--surface-2);
     color: var(--text-faintest);
   }
   .c2-ask-row.is-dead .c2-label { color: var(--text-faintest); }

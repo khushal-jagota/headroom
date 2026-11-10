@@ -12,7 +12,8 @@ from pathlib import Path
 
 import httpx
 import pytest
-from tests.support.server import BOOT_BUDGET_S, PLAN_BIN, REPO_ROOT, ServerHandle
+from tests.support.server import PLAN_BIN, REPO_ROOT, ServerHandle
+from tests.support.server_fixtures import _first_meta_answer
 
 
 def _direct_children(parent_pid: int) -> list[int]:
@@ -63,17 +64,6 @@ def _wait_for_one_child(parent_pid: int, *, different_from: int | None = None) -
     return child
 
 
-def _wait_for_http(base: str) -> None:
-    def ready() -> bool:
-        try:
-            response = httpx.get(f"{base}/api/meta", timeout=0.5)
-        except httpx.HTTPError:
-            return False
-        return response.status_code == 200
-
-    _wait_until(ready, f"{base} did not become ready", timeout=BOOT_BUDGET_S)
-
-
 def _isolated_server_env(handle: ServerHandle, control_socket: Path) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
     env.update(
@@ -121,7 +111,7 @@ def test_second_supervisor_with_different_socket_cannot_replace_owner(
     tmp_path: Path,
 ) -> None:
     application_pid = _wait_for_one_child(server.proc.pid)
-    second_socket = Path("/tmp") / f"panels-second-{server.port}.sock"
+    second_socket = Path(os.environ.get("TMPDIR", "/tmp")) / f"panels-second-{server.port}.sock"
     second_socket.unlink(missing_ok=True)
 
     result = subprocess.run(
@@ -141,8 +131,12 @@ def test_second_supervisor_with_different_socket_cannot_replace_owner(
 
 
 def test_operator_shutdown_removes_child_socket_and_listener(server: ServerHandle) -> None:
+    from planner.server_lifecycle.control import resolve_event_loop_tasks_socket_path
+
     application_pid = _wait_for_one_child(server.proc.pid)
     assert server.control_socket_path.exists()
+    event_loop_tasks_socket = resolve_event_loop_tasks_socket_path(server.control_socket_path)
+    assert event_loop_tasks_socket.exists()
 
     server.proc.terminate()
     server.proc.wait(timeout=10.0)
@@ -150,6 +144,8 @@ def test_operator_shutdown_removes_child_socket_and_listener(server: ServerHandl
     assert server.proc.returncode == 0
     _wait_until(lambda: not _process_exists(application_pid), "application child remained alive")
     assert not server.control_socket_path.exists()
+    # The application's SIGTERM shutdown removes its own socket too.
+    assert not event_loop_tasks_socket.exists()
     _wait_until(lambda: _nothing_listens(server.port), "server port remained open")
 
 
@@ -168,7 +164,11 @@ def test_restart_from_ticket_worktree_uses_captured_launch_root(
 
     assert result.returncode == 0, result.stderr
     _wait_for_one_child(server.proc.pid, different_from=application_pid)
-    _wait_for_http(server.base)
+    # The supervisor keeps the fixture's listener across the restart, so this request
+    # waits in its queue for the replacement child.
+    _first_meta_answer(
+        server.base, server.log_path, lambda: f"panels serve (rc={server.proc.poll()})"
+    )
     replacement_shell = httpx.get(f"{server.base}/").text
     assert "data-svelte-app" in replacement_shell
     assert replacement_shell == original_shell

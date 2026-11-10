@@ -17,6 +17,7 @@ def run(browser, urls):
     from pathlib import Path
     from urllib.parse import parse_qs
 
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import expect
 
     def worker_manifest(worker_type, label, stages):
@@ -151,11 +152,7 @@ def run(browser, urls):
                     {**parent, "id": identity}
                     for identity in {
                         "item_one",
-                        *(
-                            row["manager_id"]
-                            for row in tickets.values()
-                            if row["manager_id"]
-                        ),
+                        *(row["manager_id"] for row in tickets.values() if row["manager_id"]),
                     }
                 ],
             },
@@ -175,6 +172,8 @@ def run(browser, urls):
                     ceiling=row["ceiling"],
                     ceiling_holder=row["ceiling_holder"],
                     gating_field=stage["gating_field"],
+                    stage_label=stage["label"],
+                    workflow_label=definition["label"],
                     stage_ownership=stage["ownership_mode"],
                     terminal=stage["is_terminal"],
                     proposal_field=None if proposal is None else proposal["field"],
@@ -198,8 +197,10 @@ def run(browser, urls):
         )
         return {
             **source,
+            "workflow": definition,
             "locale": "en-US",
-            "manager": {"kind": "manager", "id": "item_one"},
+            "manager": ({"kind": "manager", "id": source["manager_id"]}
+                        if source["manager_id"] else {"kind": "chief", "id": "chief"}),
             "record_sha256": source.get("record_sha256", "record-initial"),
             "field_values": {gate: source["field_values"].get(gate, "")} if gate else {},
             "field_summaries": {
@@ -318,7 +319,15 @@ def run(browser, urls):
             worker_type = path.split("/")[1]
             matches = [row for row in manifest["worker_types"] if row["worker_type"] == worker_type]
             if not matches:
-                route.fulfill(status=404, json={"error": {"code": "unknown_worker_type", "message": f"Unknown worker type: {worker_type}"}})
+                route.fulfill(
+                    status=404,
+                    json={
+                        "error": {
+                            "code": "unknown_worker_type",
+                            "message": f"Unknown worker type: {worker_type}",
+                        }
+                    },
+                )
                 return
             result = {"worker_types": matches}
         elif path == "worker-types":
@@ -404,10 +413,13 @@ def run(browser, urls):
         page.locator(f'[data-ceiling-picker-choice="{reviewer}"]').click()
 
     def wait_count(items, count):
-        for _ in range(100):
-            if len(items) == count:
-                return
-            page.wait_for_timeout(20)
+        # The route records a write before it fulfills it, so the write's own
+        # finished request is the earliest moment the record can be complete.
+        if len(items) != count:
+            try:
+                page.wait_for_event("requestfinished", lambda _: len(items) == count, timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
         assert len(items) == count, items
 
     expect(block().locator("[data-reviewer-heading]")).to_have_text("Manager")
@@ -494,7 +506,7 @@ def run(browser, urls):
             page.set_viewport_size({"width": width, "height": 1000})
             page.emulate_media(reduced_motion="reduce")
             if host_kind == "ticket":
-                expect(page.locator("[data-ticket-identity]")).to_have_text("Panels · Coding · VPS")
+                expect(page.locator("[data-ticket-identity]")).to_have_text("Panels · Coding")
                 page.locator("[data-stage-fold]").evaluate("(element) => element.open = true")
             assert page.evaluate(
                 "Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= innerWidth + 1"
@@ -540,15 +552,16 @@ def run(browser, urls):
     assert page.evaluate("location.hash") == hash_before
     assert approvals == [] and scope_writes == []
     page.get_by_role("listbox").press("Escape")
-    tickets["t_worker_holder"] = ticket(
-        "t_worker_holder", "coding", "needs_plan", "plan", "Worker-held plan", 10
+    tickets["t_user_holder"] = ticket(
+        "t_user_holder", "coding", "needs_plan", "plan", "User-held plan", 10
     )
-    tickets["t_worker_holder"]["ceiling_holder"] = {"kind": "ticket", "id": "t_holder"}
-    page.evaluate("window.__showTicket('t_worker_holder')")
-    expect(block().locator("[data-reviewer-heading]")).to_have_text("Worker")
+    tickets["t_user_holder"]["ceiling_holder"] = {"kind": "owner", "id": "owner"}
+    page.evaluate("window.__showTicket('t_user_holder')")
+    expect(block().locator("[data-reviewer-heading]")).to_have_text("User")
     block().locator("[data-reviewer-heading]").click()
-    expect(page.get_by_role("option", name="Worker", exact=True)).to_have_attribute(
-        "data-ceiling-picker-choice", "t_holder"
+    expect(page.get_by_role("option", name="Worker", exact=True)).to_have_count(0)
+    expect(page.get_by_role("option", name="User", exact=True)).to_have_attribute(
+        "data-ceiling-picker-choice", "owner"
     )
     expect(page.get_by_role("option", name="Manager", exact=True)).to_have_attribute(
         "data-ceiling-picker-choice", "item_one"
@@ -558,10 +571,10 @@ def run(browser, urls):
     page.evaluate("window.__showTicket('t_coding')")
     block().locator("[data-reviewer-heading]").click()
     expect(page.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
-    page.locator('[data-ceiling-picker-choice="chief"]').click()
+    page.locator('[data-ceiling-picker-choice="item_one"]').click()
     wait_count(scope_writes, 1)
     page.evaluate("window.__refresh()")
-    assert scope_writes[-1] == {"ceiling_holder": {"kind": "chief", "id": "chief"}}
+    assert scope_writes[-1] == {"ceiling_holder": {"kind": "manager", "id": "item_one"}}
     assert approvals == []
     open_approval()
     page.locator('[data-ceiling-part="holder"]').click()
@@ -641,10 +654,10 @@ def run(browser, urls):
             scope_count = len(scope_writes)
             block().locator("[data-reviewer-heading]").click()
             expect(page.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
-            page.locator('[data-ceiling-picker-choice="chief"]').click()
+            page.locator('[data-ceiling-picker-choice="owner"]').click()
             wait_count(scope_writes, scope_count + 1)
             page.evaluate("window.__refresh()")
-            expect(block().locator("[data-reviewer-heading]")).to_have_text("Chief")
+            expect(block().locator("[data-reviewer-heading]")).to_have_text("User")
             assert len(approvals) == count
         expected_holder = dict(tickets[ticket_id]["ceiling_holder"])
         expected_revision = tickets[ticket_id]["pending_proposal"]["revision"]
@@ -688,7 +701,9 @@ def run(browser, urls):
                 "edited_body": edited_body,
             },
         }
-        assert len([item for item in accept_attempts if item["ticket_id"] == ticket_id]) == (2 if host_kind == "review" else 1)
+        assert len([item for item in accept_attempts if item["ticket_id"] == ticket_id]) == (
+            2 if host_kind == "review" else 1
+        )
     page.evaluate("window.__showTicket('t_stale')")
     expect(block()).to_have_attribute("data-field", "plan")
     choose("needs_implementation")
@@ -757,15 +772,14 @@ def run(browser, urls):
             {"kind": "owner", "id": "owner"},
             {"kind": "chief", "id": "chief"},
             {"kind": "manager", "id": "si_assigned"},
-            {"kind": "manager", "id": "si_foreign"},
-            {"kind": "ticket", "id": "t_foreign"},
         ]
     ):
         identity = "t_principal_" + str(index)
         value = ticket(
             identity, "coding", "needs_plan", "plan", "Literal principal proposal", 100 + index
         )
-        value["manager_id"] = "si_assigned"
+        value["manager_id"] = None if principal["kind"] == "chief" else "si_assigned"
+        value["manager_kind"] = "chief" if principal["kind"] == "chief" else "manager"
         value["ceiling_holder"] = principal
         tickets[identity] = value
         page.evaluate("(id) => window.__showTicket(id)", identity)
@@ -788,7 +802,7 @@ def run(browser, urls):
     expect(page.get_by_role("button", name="Resume ticket", exact=True)).to_be_visible()
     assert lifecycle_writes[-1] == {
         "action": "backlog",
-        "body": {"expected_record_sha256": "record-before-backlog"},
+        "body": {},
     }
     page.get_by_role("button", name="Resume ticket", exact=True).click()
     expect(page.get_by_text("Resume refused. Retry with this record.", exact=False)).to_be_visible()
@@ -801,7 +815,7 @@ def run(browser, urls):
     expect(page.get_by_role("button", name="Backlog ticket", exact=True)).to_be_visible()
     assert lifecycle_writes[-1] == {
         "action": "resume",
-        "body": {"expected_record_sha256": "record-after-backlog"},
+        "body": {},
     }
     expect(block().locator("[contenteditable]")).to_have_text("Retained proposal body")
     assert lifecycle["pending_proposal"] == {

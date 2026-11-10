@@ -18,6 +18,12 @@ already knows how to answer.
 
 Nothing here makes a conversation on its own. One made and not spoken into is one nobody
 can see and nobody can send from, which is what a separate start door left behind.
+
+Every write here runs on a worker thread through ``run_on_worker_thread``, because a write
+can wait out the SQLite busy timeout and the event loop is every request's thread. The
+link locks, the kills, and every call into the conversation system stay on the loop, and
+a step that ran under a link lock still runs under it. The plain reads between them stay
+on the loop too: under WAL a read never waits for the write lock.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 from uuid import uuid4
@@ -34,7 +40,6 @@ from weakref import WeakValueDictionary
 
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import (
-    AddressedPromptDeliveryReceipt,
     ConversationBackendKey,
     ConversationMessageContent,
     ConversationStartRequest,
@@ -45,7 +50,6 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
-    PromptDeliverySuppressed,
     WorkspacePathPolicy,
 )
 from planner.conversation.logic.conversation_start_resolution import (
@@ -55,6 +59,9 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.storage import ensure_started_conversation_record
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
+from planner.files.lifecycle import database_path
+from planner.files.logic.paths import chief_files_root, manager_files_root
 from planner.projects import data as projects_data
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
@@ -70,10 +77,12 @@ from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration
 from planner.tickets.contracts import Ticket, TicketLocale
 from planner.worker_settings.service import (
+    CHIEF_SETTINGS_KEY,
     read_chief_settings,
     read_worker_launch_defaults_for_ticket_creation,
 )
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.guidance import render_workflow_guide
 from planner.worker_types.registry import WorkerTypeRegistry
 
 if TYPE_CHECKING:
@@ -113,6 +122,16 @@ def _default_workspace_folder(conn: sqlite3.Connection) -> Path:
     return configured if configured is not None else resolve_worker_workspace_root()
 
 
+def chief_home_folder(conn: sqlite3.Connection) -> Path:
+    """The Chief's own folder, which its conversation starts in unless told otherwise."""
+    return chief_files_root(database_path(conn))
+
+
+def manager_home_folder(conn: sqlite3.Connection, manager_id: str) -> Path:
+    """A Manager's own folder: its files folder, beside the ``artifacts/`` the owner sees."""
+    return manager_files_root(database_path(conn)) / manager_id
+
+
 def new_conversation_id() -> str:
     """Mint the caller-owned id a conversation is known by everywhere afterwards."""
     return f"{CONVERSATION_ID_PREFIX}{uuid4().hex}"
@@ -141,15 +160,27 @@ def worker_resolve(
     registry = worker_type_registry
     if registry is None:
         registry = configured_worker_type_registry()
-    launch_defaults = read_worker_launch_defaults_for_ticket_creation(registry, ticket.worker_type)
-    selected_workspace, workspace_policy = _worker_workspace(conn, ticket, workspace_folder)
-    values = resolve_worker_conversation_start(
-        ticket_id=ticket.id,
-        worker_type_launch_defaults=ConversationStartConfiguration(
+    if ticket.employee_launch_model is not None:
+        defaults_configuration = ConversationStartConfiguration(
+            backend_key=ConversationBackendKey(ticket.employee_backend),
+            model=ticket.employee_launch_model,
+            reasoning_effort=ticket.employee_launch_reasoning_effort,
+        )
+    else:
+        if ticket.worker_type is None:
+            raise PlannerError(ErrorCode.validation, "custom Ticket requires a launch model")
+        launch_defaults = read_worker_launch_defaults_for_ticket_creation(
+            registry, ticket.worker_type
+        )
+        defaults_configuration = ConversationStartConfiguration(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),
             model=launch_defaults.employee_launch_model,
             reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
-        ),
+        )
+    selected_workspace, workspace_policy = _worker_workspace(conn, ticket, workspace_folder)
+    values = resolve_worker_conversation_start(
+        ticket_id=ticket.id,
+        worker_type_launch_defaults=defaults_configuration,
         ticket_last_chosen=(
             None
             if ticket.employee_launch_model is None
@@ -163,8 +194,15 @@ def worker_resolve(
         workspace_folder=selected_workspace,
         workspace_path_policy=workspace_policy,
     )
-    locale_configuration.require_locale_backend_compatibility(
-        ticket.locale, values.backend_key.value
+    values = replace(
+        values,
+        role_materials=replace(
+            values.role_materials,
+            role_text=values.role_materials.role_text
+            + "\n\n[Ticket workflow guidance]\n"
+            + render_workflow_guide(ticket.workflow)
+            + "\n[/Ticket workflow guidance]",
+        ),
     )
     if ticket.employee_launch_model is None or overrides.model is not None:
         require_enabled_model(conn, values.backend_key, values.model)
@@ -184,24 +222,30 @@ def workspace_for_project(
     *,
     explicit: Path | None = None,
 ) -> tuple[Path, WorkspacePathPolicy]:
-    """Use the existing project localization policy for both drafts and real starts."""
-    policy = (
-        WorkspacePathPolicy.absolute
-        if locale == TicketLocale.macos
-        else WorkspacePathPolicy.home_relative
-    )
+    """Choose one start folder for both drafts and real starts.
+
+    An explicit folder wins. A Mac Ticket otherwise starts in the Mac's own workspace:
+    the Project's folder there when it has a Project, the workspace itself when not.
+    The server's Project path never goes to the Mac.
+    """
     if explicit is not None:
-        return explicit, policy
+        if locale == TicketLocale.macos:
+            return explicit, WorkspacePathPolicy.absolute
+        return explicit, WorkspacePathPolicy.home_relative
+    if locale == TicketLocale.macos:
+        if project_id is not None:
+            return mac_project_workspace_folder(project_id), WorkspacePathPolicy.executor_default
+        return Path("/"), WorkspacePathPolicy.executor_default
     if project_id is not None:
         project_folder = projects_data.read_project(conn, project_id).folder_path
-        if project_folder is not None:
-            if locale == TicketLocale.macos:
-                return project_folder, policy
-            if project_folder.is_dir():
-                return project_folder.resolve(strict=False), policy
-    if locale == TicketLocale.macos:
-        return Path("/"), WorkspacePathPolicy.executor_default
+        if project_folder is not None and project_folder.is_dir():
+            return project_folder.resolve(strict=False), WorkspacePathPolicy.home_relative
     return _default_workspace_folder(conn), WorkspacePathPolicy.home_relative
+
+
+def mac_project_workspace_folder(project_id: str) -> Path:
+    """A Project's folder inside the Mac workspace, written with that workspace as ``/``."""
+    return Path("/") / "projects" / project_id
 
 
 def agent_resolve(
@@ -223,9 +267,8 @@ def agent_resolve(
             reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
         ),
         overrides=overrides,
-        workspace_folder=(
-            _default_workspace_folder(conn) if workspace_folder is None else workspace_folder
-        ),
+        workspace_folder=chief_home_folder(conn) if workspace_folder is None else workspace_folder,
+        shared_workspace_folder=_default_workspace_folder(conn),
     )
     require_enabled_model(conn, values.backend_key, values.model)
     return values
@@ -248,8 +291,9 @@ def manager_resolve(
         ),
         overrides=overrides,
         workspace_folder=(
-            _default_workspace_folder(conn) if workspace_folder is None else workspace_folder
+            manager_home_folder(conn, item.id) if workspace_folder is None else workspace_folder
         ),
+        shared_workspace_folder=_default_workspace_folder(conn),
     )
 
     return values
@@ -304,26 +348,8 @@ async def start_ticket_conversation(
     )
     await system.start_conversation(request)
     try:
-        ensure_started_conversation_record(
-            conn, resolve_conversation_start_request(request), created_at=now
-        )
-        actual_start = conn.execute(
-            "SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?",
-            (conversation_id,),
-        ).fetchone()
-        linked = tickets_data.write_ticket_conversation_start(
-            conn,
-            ticket.id,
-            conversation_id=conversation_id,
-            expected_configuration=tickets_data.employee_launch_configuration(ticket),
-            backend=values.backend_key.value,
-            model=values.model if actual_start is None else actual_start["model"],
-            reasoning_effort=(
-                values.reasoning_effort
-                if actual_start is None
-                else actual_start["reasoning_effort"]
-            ),
-            now=now,
+        linked = await run_on_worker_thread(
+            _record_and_link_ticket_conversation, conn, ticket.id, request, values, now
         )
     except BaseException as start_error:
         try:
@@ -339,6 +365,34 @@ async def start_ticket_conversation(
     return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
 
 
+def _record_and_link_ticket_conversation(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    request: ConversationStartRequest,
+    values: ConversationStartValues,
+    now: int,
+) -> Ticket:
+    """Fill in the started conversation's durable row, then point the Ticket at it."""
+    ensure_started_conversation_record(
+        conn, resolve_conversation_start_request(request), created_at=now
+    )
+    actual_start = conn.execute(
+        "SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?",
+        (request.conversation_id,),
+    ).fetchone()
+    return tickets_data.write_ticket_conversation_start(
+        conn,
+        ticket_id,
+        conversation_id=request.conversation_id,
+        backend=values.backend_key.value,
+        model=values.model if actual_start is None else actual_start["model"],
+        reasoning_effort=(
+            values.reasoning_effort if actual_start is None else actual_start["reasoning_effort"]
+        ),
+        now=now,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DeliveredMessage:
     """What happened to a message, and which conversation it happened in.
@@ -350,64 +404,6 @@ class DeliveredMessage:
 
     conversation_id: str | None
     fate: PromptDeliveryFate
-    newly_accepted: bool = True
-
-
-async def _send_with_addressed_receipt(
-    system: ConversationSystem,
-    conversation_id: str,
-    content: MessageContent,
-    *,
-    sender_label: str,
-    mode: PromptDeliveryMode,
-    model_change: str | None = None,
-    reasoning_effort_change: str | None = None,
-    reasoning_effort_is_set: bool = False,
-    owner_read_through_sequence: int | None = None,
-    sender_message_id: str | None,
-    sent_at_unix_milliseconds: int | None,
-    sender: Principal | None,
-    recipient: Principal | None,
-    reply_requested: bool,
-    record_refusal: bool = False,
-    recording_receipt: NativeMessageOperation | None = None,
-) -> AddressedPromptDeliveryReceipt:
-    """Keep recipient attribution and freshness for caller-authored and system sends."""
-    if recipient is not None:
-        return await system.send_with_receipt(
-            conversation_id,
-            content,
-            sender_label=sender_label,
-            mode=mode,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            reasoning_effort_is_set=reasoning_effort_is_set,
-            owner_read_through_sequence=owner_read_through_sequence,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
-            reply_requested=reply_requested,
-            record_refusal=record_refusal,
-            recording_receipt=recording_receipt,
-        )
-    fate = await system.send(
-        conversation_id,
-        content,
-        sender_label=sender_label,
-        mode=mode,
-        model_change=model_change,
-        reasoning_effort_change=reasoning_effort_change,
-        reasoning_effort_is_set=reasoning_effort_is_set,
-        owner_read_through_sequence=owner_read_through_sequence,
-        sender_message_id=sender_message_id,
-        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-        recording_receipt=recording_receipt,
-    )
-    return AddressedPromptDeliveryReceipt(
-        fate=fate,
-        newly_accepted=not isinstance(fate, (PromptDeliveryRefused, PromptDeliverySuppressed)),
-    )
 
 
 async def send_to_ticket_conversation(
@@ -426,7 +422,6 @@ async def send_to_ticket_conversation(
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
-    reply_requested: bool = True,
     worker_type_registry: WorkerTypeRegistry | None = None,
     retain_backend_start_failure: bool = False,
     now: int,
@@ -480,8 +475,7 @@ async def send_to_ticket_conversation(
     if not locale_configuration.can_execute_locale(conn, ticket.locale):
         raise PlannerError(
             ErrorCode.validation,
-            f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
-            f"this {locale_configuration.CURRENT_EXECUTION_LOCALE.value} machine",
+            locale_configuration.execution_unavailable_reason(conn, ticket.locale),
             {
                 "ticket_id": ticket_id,
                 "locale": ticket.locale.value,
@@ -504,7 +498,6 @@ async def send_to_ticket_conversation(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
             worker_type_registry=worker_type_registry,
             now=now,
             recording_receipt=recording_receipt,
@@ -533,7 +526,6 @@ async def send_to_ticket_conversation(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
-        reply_requested=reply_requested,
         now=now,
         recording_receipt=recording_receipt,
     )
@@ -554,7 +546,6 @@ async def _send_into_the_conversation_the_ticket_is_in(
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
-    reply_requested: bool,
     now: int,
     recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
@@ -571,8 +562,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
     own values — and the value it keeps for a field this message did not change is read
     back now rather than taken from before the send, for the same reason.
     """
-    receipt = await _send_with_addressed_receipt(
-        system,
+    fate = await system.send(
         sending_into,
         content,
         sender_label=sender_label,
@@ -585,32 +575,46 @@ async def _send_into_the_conversation_the_ticket_is_in(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
-        reply_requested=reply_requested,
         recording_receipt=recording_receipt,
     )
-    fate = receipt.fate
     if isinstance(fate, PromptDeliveryStarted) and (
         runs_under.model is not None
         or runs_under.reasoning_effort is not None
         or runs_under.reasoning_effort_is_set
     ):
-        current = tickets_data.read_ticket(conn, ticket_id)
-        tickets_data.write_ticket_last_chosen_configuration(
+        await run_on_worker_thread(
+            _record_the_change_a_started_message_carried,
             conn,
             ticket_id,
-            expected_conversation_id=sending_into,
-            model=current.employee_launch_model if runs_under.model is None else runs_under.model,
-            reasoning_effort=(
-                current.employee_launch_reasoning_effort
-                if runs_under.reasoning_effort is None and not runs_under.reasoning_effort_is_set
-                else runs_under.reasoning_effort
-            ),
-            now=now,
+            sending_into,
+            runs_under,
+            now,
         )
     return DeliveredMessage(
         conversation_id=sending_into,
         fate=fate,
-        newly_accepted=receipt.newly_accepted,
+    )
+
+
+def _record_the_change_a_started_message_carried(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    sending_into: str,
+    runs_under: ConversationStartOverrides,
+    now: int,
+) -> None:
+    current = tickets_data.read_ticket(conn, ticket_id)
+    tickets_data.write_ticket_last_chosen_configuration(
+        conn,
+        ticket_id,
+        expected_conversation_id=sending_into,
+        model=current.employee_launch_model if runs_under.model is None else runs_under.model,
+        reasoning_effort=(
+            current.employee_launch_reasoning_effort
+            if runs_under.reasoning_effort is None and not runs_under.reasoning_effort_is_set
+            else runs_under.reasoning_effort
+        ),
+        now=now,
     )
 
 
@@ -629,7 +633,6 @@ async def _make_a_conversation_and_send_into_it(
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
-    reply_requested: bool,
     worker_type_registry: WorkerTypeRegistry | None,
     retain_backend_start_failure: bool = False,
     now: int,
@@ -681,15 +684,13 @@ async def _make_a_conversation_and_send_into_it(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
             now=now,
             recording_receipt=recording_receipt,
         )
     # From here the conversation is this call's own: it was made here, on the values this
     # message says it runs under, so the message has nothing to change and carries none.
     try:
-        receipt = await _send_with_addressed_receipt(
-            system,
+        fate = await system.send(
             making,
             await _message_content_for(content, making),
             sender_label=sender_label,
@@ -702,12 +703,11 @@ async def _make_a_conversation_and_send_into_it(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
             recording_receipt=recording_receipt,
         )
-        fate = receipt.fate
         if isinstance(fate, PromptDeliveryStarted):
-            tickets_data.write_ticket_last_chosen_configuration(
+            await run_on_worker_thread(
+                tickets_data.write_ticket_last_chosen_configuration,
                 conn,
                 ticket.id,
                 expected_conversation_id=making,
@@ -732,9 +732,7 @@ async def _make_a_conversation_and_send_into_it(
     ):
         # This exact conversation holds the refusal for explicit recovery. Do not
         # relink it: a concurrent reset can already have selected a newer one.
-        return DeliveredMessage(
-            conversation_id=making, fate=fate, newly_accepted=receipt.newly_accepted
-        )
+        return DeliveredMessage(conversation_id=making, fate=fate)
     if isinstance(fate, PromptDeliveryRefused):
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now
@@ -742,12 +740,10 @@ async def _make_a_conversation_and_send_into_it(
         return DeliveredMessage(
             conversation_id=None,
             fate=fate,
-            newly_accepted=receipt.newly_accepted,
         )
     return DeliveredMessage(
         conversation_id=making,
         fate=fate,
-        newly_accepted=receipt.newly_accepted,
     )
 
 
@@ -761,8 +757,12 @@ async def _let_go_of_a_conversation_that_was_never_spoken_in(
 ) -> None:
     """Undo a conversation whose first message did not land, and only that one."""
     await system.kill(conversation_id)
-    tickets_data.remove_ticket_conversation_start(
-        conn, ticket_id, conversation_id=conversation_id, now=now
+    await run_on_worker_thread(
+        tickets_data.remove_ticket_conversation_start,
+        conn,
+        ticket_id,
+        conversation_id=conversation_id,
+        now=now,
     )
 
 
@@ -824,15 +824,7 @@ def read_manager_conversation_history(
             for pair in identity
             if isinstance(pair, list) and len(pair) == 2
         }
-        if (
-            values.get("PLAN_ACTOR") not in {"manager", "sprint_item_supervisor"}
-            or values.get("PLAN_MANAGER_ID", values.get("PLAN_SPRINT_ITEM_ID")) != manager_id
-            or (
-                "PLAN_MANAGER_ID" in values
-                and "PLAN_SPRINT_ITEM_ID" in values
-                and values["PLAN_MANAGER_ID"] != values["PLAN_SPRINT_ITEM_ID"]
-            )
-        ):
+        if values.get("PLAN_ACTOR") != "manager" or values.get("PLAN_MANAGER_ID") != manager_id:
             continue
         history.append(
             {
@@ -851,7 +843,6 @@ async def start_agent_conversation(
     *,
     conversation_id: str,
     required_manager_id: str | None = None,
-    required_goal_id: str | None = None,
 ) -> LinkedConversation:
     """Start a conversation for an agent that is not a Ticket, under a minted name.
 
@@ -860,7 +851,19 @@ async def start_agent_conversation(
     that does not exist. The link lands only on an agent that has none, for the reason a
     Ticket's does — an agent has one conversation, and the loser of a race would otherwise
     be left live and unreachable.
+
+    The Chief and a Manager start in a home folder of their own, which does not exist
+    until their first start. It is made here, because a backend refuses to start in a
+    folder that is not there. Any other folder is the caller's, and is left as it is.
     """
+    if agent_key == CHIEF_SETTINGS_KEY:
+        home: Path | None = chief_home_folder(conn)
+    elif required_manager_id is not None:
+        home = manager_home_folder(conn, required_manager_id)
+    else:
+        home = None
+    if home is not None and values.workspace_folder == home:
+        home.mkdir(parents=True, exist_ok=True)
     await system.start_conversation(
         ConversationStartRequest(
             conversation_id=conversation_id,
@@ -873,20 +876,31 @@ async def start_agent_conversation(
             access=values.access,
         )
     )
-    missing_supervisor = False
+    now_in = await run_on_worker_thread(
+        _link_agent_conversation, conn, agent_key, conversation_id, required_manager_id
+    )
+    if now_in is None:
+        await system.kill(conversation_id)
+        raise PlannerError(
+            ErrorCode.not_found,
+            "Manager no longer exists",
+            {"manager_id": required_manager_id},
+        )
+    return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
+
+
+def _link_agent_conversation(
+    conn: sqlite3.Connection,
+    agent_key: str,
+    conversation_id: str,
+    required_manager_id: str | None,
+) -> str | None:
+    """Point an agent with no conversation at this one. Returns the one it is now in.
+
+    None means the link was for a Manager that no longer exists, so the agent is in none.
+    """
     with conn:
-        if required_goal_id is not None:
-            linked = conn.execute(
-                "INSERT INTO agents (agent_key, conversation_id) "
-                "SELECT ?, ? WHERE EXISTS (SELECT 1 FROM goals WHERE id=? AND ? = 'goal_' || id) "
-                "ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id "
-                "WHERE agents.conversation_id IS NULL",
-                (agent_key, conversation_id, required_goal_id, agent_key),
-            )
-            missing_supervisor = (
-                linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None
-            )
-        elif required_manager_id is None:
+        if required_manager_id is None:
             conn.execute(
                 "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
                 "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id "
@@ -898,24 +912,12 @@ async def start_agent_conversation(
                 "UPDATE agents SET conversation_id=? WHERE agent_key=? "
                 "AND conversation_id IS NULL AND EXISTS ("
                 "SELECT 1 FROM managers WHERE id=? "
-                "AND ('manager_' || id=agents.agent_key "
-                "OR 'sprint_item_supervisor_' || id=agents.agent_key))",
+                "AND 'manager_' || id=agents.agent_key)",
                 (conversation_id, agent_key, required_manager_id),
             )
-            missing_supervisor = (
-                linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None
-            )
-    if missing_supervisor:
-        await system.kill(conversation_id)
-        raise PlannerError(
-            ErrorCode.not_found,
-            "goal no longer exists" if required_goal_id is not None else "Manager no longer exists",
-            {"goal_id": required_goal_id}
-            if required_goal_id is not None
-            else {"manager_id": required_manager_id},
-        )
-    now_in = read_agent_conversation(conn, agent_key) or conversation_id
-    return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
+            if linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None:
+                return None
+    return read_agent_conversation(conn, agent_key) or conversation_id
 
 
 async def send_to_agent_conversation(
@@ -935,9 +937,7 @@ async def send_to_agent_conversation(
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
-    reply_requested: bool = True,
     required_manager_id: str | None = None,
-    required_goal_id: str | None = None,
     retain_created_conversation: bool = False,
     recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
@@ -981,14 +981,12 @@ async def send_to_agent_conversation(
             values,
             conversation_id=making,
             required_manager_id=required_manager_id,
-            required_goal_id=required_goal_id,
         )
         if linked.made_here:
             # Made here, on the values this message says it runs under, so the message has
             # nothing to change and carries none.
             try:
-                receipt = await _send_with_addressed_receipt(
-                    system,
+                fate = await system.send(
                     making,
                     await _message_content_for(content, making),
                     sender_label=sender_label,
@@ -998,11 +996,9 @@ async def send_to_agent_conversation(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=reply_requested,
                     record_refusal=retain_created_conversation,
                     recording_receipt=recording_receipt,
                 )
-                fate = receipt.fate
             except BaseException:
                 if not retain_created_conversation:
                     await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
@@ -1013,12 +1009,10 @@ async def send_to_agent_conversation(
                 return DeliveredMessage(
                     conversation_id=making if retain_created_conversation else None,
                     fate=fate,
-                    newly_accepted=receipt.newly_accepted,
                 )
             return DeliveredMessage(
                 conversation_id=making,
                 fate=fate,
-                newly_accepted=receipt.newly_accepted,
             )
         # The race went the other way. The conversation made here will never be spoken
         # into, so it is let go of, and the message joins the agent's on the ordinary
@@ -1032,8 +1026,7 @@ async def send_to_agent_conversation(
             "the agent is not in that conversation",
             {"agent_key": agent_key, "conversation_id": conversation_id},
         )
-    receipt = await _send_with_addressed_receipt(
-        system,
+    fate = await system.send(
         sending_into,
         await _message_content_for(content, sending_into),
         sender_label=sender_label,
@@ -1046,14 +1039,12 @@ async def send_to_agent_conversation(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
-        reply_requested=reply_requested,
         record_refusal=retain_created_conversation,
         recording_receipt=recording_receipt,
     )
     return DeliveredMessage(
         conversation_id=sending_into,
-        fate=receipt.fate,
-        newly_accepted=receipt.newly_accepted,
+        fate=fate,
     )
 
 
@@ -1069,6 +1060,13 @@ async def _let_go_of_an_agent_conversation(
     that is pointing at somebody else's — the race went the other way — is left alone.
     """
     await system.kill(conversation_id)
+    await run_on_worker_thread(_unlink_agent_conversation, conn, agent_key, conversation_id)
+
+
+def _unlink_agent_conversation(
+    conn: sqlite3.Connection, agent_key: str, conversation_id: str
+) -> None:
+    """Cut the agent loose from this conversation, and only while it still names it."""
     with conn:
         conn.execute(
             "UPDATE agents SET conversation_id = NULL WHERE agent_key = ? AND conversation_id = ?",
@@ -1100,12 +1098,7 @@ async def reset_agent_conversation(
         if conversation_id is None:
             return
         await system.kill(conversation_id)
-        with conn:
-            conn.execute(
-                "UPDATE agents SET conversation_id = NULL "
-                "WHERE agent_key = ? AND conversation_id = ?",
-                (agent_key, conversation_id),
-            )
+        await run_on_worker_thread(_unlink_agent_conversation, conn, agent_key, conversation_id)
 
 
 async def reset_ticket_conversation(
@@ -1139,7 +1132,8 @@ async def reset_ticket_conversation(
         if conversation_id is None:
             return
         await system.kill(conversation_id)
-        tickets_data.clear_ticket_conversation_link(
+        await run_on_worker_thread(
+            tickets_data.clear_ticket_conversation_link,
             conn,
             ticket_id,
             expected_conversation_id=conversation_id,

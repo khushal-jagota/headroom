@@ -1,12 +1,13 @@
-"""The publication identity and one owner-authorized adoption request.
+"""The publication identity, the one update attempt, and the owner update status.
 
-These values cross the browser, publication workflow, and deployment runner.
+The attempt record is the one value that crosses application versions: the server
+that writes it may be older or newer than the installer or server that reads it.
 AppManifest remains the authority for the installed application's identity.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -17,9 +18,20 @@ UPDATE_ARTIFACT_RETENTION_DAYS = 30
 
 type UpdateMode = Literal["now", "idle"]
 type UpdateActivity = Literal["idle", "busy", "unknown"]
-type UpdateRequestState = Literal[
-    "pending", "dispatched", "applying", "applied", "cancelled", "failed"
+type UpdateAttemptState = Literal["waiting", "preparing", "installing", "done", "failed"]
+type UpdateExperienceState = Literal[
+    "up_to_date", "available", "waiting", "updating", "failed", "mac_failed", "mac_unreachable"
 ]
+type UpdateAction = Literal["update", "cancel", "update_now", "retry", "retry_mac"]
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedMacUpdate:
+    """The prebuilt arm64 runtime from the same source as the VPS publication."""
+
+    artifact_id: int
+    archive_sha256: str
+    archive_size: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,50 +43,53 @@ class PublishedUpdate:
     archive_sha256: str
     schema_floor: str
     expires_at: str
+    mac: PublishedMacUpdate | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class OwnerUpdateRequest:
-    request_id: str
-    release: PublishedUpdate
+class UpdateAttempt:
+    """One owner press, from waiting to its end, in `<data>/update-attempt.json`.
+
+    `steps` maps a step name to the UTC time it finished; it is the timing evidence.
+    `extra` holds fields this version does not know, so a write preserves them.
+    """
+
+    attempt_id: str
+    from_sha: str
+    to_sha: str
     mode: UpdateMode
-    state: UpdateRequestState
+    confirm_activity: bool
+    state: UpdateAttemptState
     created_at: str
+    updated_at: str
+    release: PublishedUpdate
     detail: str | None = None
-    confirm_activity: bool = False
+    deadline_at: str | None = None
+    backup: str | None = None
+    steps: dict[str, str] = field(default_factory=dict)
+    mac_attempt_id: str | None = None
+    extra: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class UpdateStatus:
-    configured: bool
-    available: PublishedUpdate | None
-    request: OwnerUpdateRequest | None
+    """The `GET /api/updates` body, apart from the Mac details the route adds."""
+
+    state: UpdateExperienceState
+    allowed_actions: tuple[UpdateAction, ...]
     activity: UpdateActivity
-    detail: str | None = None
+    available: PublishedUpdate | None
+    attempt: UpdateAttempt | None
+    app_sha: str | None
+    detail: str | None
+    deadline_at: str | None
 
 
 class UpdateProvider(Protocol):
-    """Repository-scoped external operations; credentials never enter a receipt."""
+    """Repository-scoped external reads; credentials never enter a record."""
 
     def available(self) -> PublishedUpdate | None: ...
 
-    def dispatch(self, request: OwnerUpdateRequest) -> None: ...
-
-    def download_artifact(self, artifact_id: int, destination: Path) -> None: ...
-
-
-class UpdateRequestStore(Protocol):
-    """One request outside the application database's rollback scope."""
-
-    def read(self) -> OwnerUpdateRequest | None: ...
-
-    def create(self, request: OwnerUpdateRequest) -> OwnerUpdateRequest: ...
-
-    def transition(
-        self,
-        request_id: str,
-        expected: frozenset[UpdateRequestState],
-        state: UpdateRequestState,
-        *,
-        detail: str | None = None,
-    ) -> OwnerUpdateRequest: ...
+    def download_artifact(self, artifact_id: int, destination: Path) -> None:
+        """Stream one artifact ZIP to `destination` on disk, never into memory."""
+        ...

@@ -1,89 +1,107 @@
 # Deployment
 
-Deployment is how a commit on `main` becomes the app the live host runs, without the host rebuilding it and without a push installing itself. Publication and installation are separate. A push creates a retained release on disposable hosted runners. The live workspace changes only after an owner asks for that exact release. The buttons and the idle-or-now choice are [Updates](updates.md). The Python inside the sealed archive is [Archive runtime](archive-runtime.md).
+Deployment is how a commit on `main` becomes the app the live host runs. Publication and installation are separate. A push produces a sealed, checked release on disposable hosted machines. Panels downloads that release in the background and checks it, but nothing changes until Khushal presses Update. Then Panels installs exactly those bytes itself. The host never builds code, and a push never installs itself.
 
 ```text
-main → checks → build once → seal archive → smoke → disposable rehearsal
-                                                          ↓
-                                              retained archive and proof
-                                                          ↓
-owner request → dedicated runner → stop → verified backup → replace app → health
-                                                          ↓
-                                        admit work → skills → published HTTP/2
+push to main ─┬→ suites (unit, integration, e2e, browser) ──────────────────────┐
+              ├→ static checks (ruff, mypy, frontend, vitest) ──────────────────┤
+              ├→ build once → seal → prove on clean root, beside rehearsal ─────┤
+              └→ native Mac build → sealed runtime → native proof ──────────────┤
+                                                          all passed → receipt
+                                                                                │
+server: newest release → download to disk → check once → unpack beside app → "Update available"
+                                                                                │
+owner presses Update (now or when work finishes) → pause work → backup if schema changes
+                                                                                │
+installer unit: stop → swap folders → start → health ── healthy → done
+                                                    └─ not healthy → swap back, restore → failed
 ```
 
-## The live tree
+## What it is made of
 
-Production runs one Git-free application as the existing `vps` user:
+- **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and static checks run on their own machines while another builds once and seals the archive. It then proves the archive on a clean Debian root and, at the same time, rehearses the install on a throwaway known-good release with the same installer the live host uses. A native Mac machine builds and proves the Mac runtime. A last machine checks every proof against the build and writes the receipt. Panels offers a release only when the whole run passed. If one job fails, "Re-run failed jobs" reruns only that job. Every attempt of a run checks the same commit, so the last machine accepts evidence from the attempt that made it, and still requires the latest result of every job to be a pass. Shared or unknown changes select all default suites.
+- **The sealed release.** An archive plus a receipt. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages, including the Claude Code and Codex CLIs.
+- **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. An install changes only `app`. The next release waits beside it, unpacked, and the previous one stays beside it after an install. See [Environments](environments.md).
+- **The installer.** One small program that uses only Python's standard library. It runs outside every app, so the app it replaces cannot break it.
+- **The attempt record.** One small file beside the live data, outside the database and its backups. It says what one press of Update is doing and how it ended, with the time of each step. The update card and the deployment status that the iOS app shows read it. It is the one file that crosses versions, so every version ignores what it does not know and keeps it when it writes.
 
-```text
-~/Deployments/Panels/current/
-├── app/     the executable release
-├── data/    database, configuration, managed files, deployment records
-└── logs/
-```
+## What a release needs from the host
 
-Replacement changes `app`. Data and logs stay. Backups taken on this path include the database and the managed configuration roots. They exclude uploads and Ticket artifacts under `data/files`. See [Backups](backups.md).
+A release brings its own Python, so installation never runs a package installer. Before publication, a separate proof runs the archive on a minimal Debian root with no Python 3.12 and no network.
 
-The live service is the user unit `panels-live.service`, started with `systemctl --user`. The deployment runner is its own user unit. The workflow does not provision the host and does not change Tailscale Serve. Health is `http://127.0.0.1:8767/api/health`. The database file is `current/data/planner.db`. Agent homes stay `~/.hermes`, `~/.codex`, and `~/.claude`. Provider secrets stay in the service environment, including `~/.config/panels/panels-live.env`. Replacing `app` does not replace that file.
+The host supplies the glibc loader and a short named list of system libraries, Node 22, Hermes, media tools such as `ffprobe`, `python3` 3.11 or newer for the installer, and every credential. Credentials live in the host's service environment and agent homes, so replacing the app never replaces them. Each release states its needs in a versioned runtime contract, and Panels checks it against the host before it offers the release.
 
-Video uploads need `ffprobe` on the host path. Missing, they refuse new videos. The rest of the app still runs.
+## How an install happens
 
-Workers never stop the service that hosts them. The operator stops the unit. A systemd-launched supervisor accepts ordinary shutdown signals only from its verified manager. Installers run outside the unit they replace. `nohup` does not leave that cgroup. Owner adoption uses a separate short-lived user unit so stopping Headroom cannot kill the installer.
+**Getting ready.** On its usual one-minute check, the server looks for the newest successful publication from `main`. For a release it is not running, it streams the archive to disk, checks its fingerprint against the receipt once, and unpacks it beside the live app on the same disk. It checks that the unpacked release names itself as the receipt does and that the host meets its runtime contract, and keeps the matching Mac runtime. Only then does the card show **Update available**. A failed download or check is tried again on the next pass and never shows as an error. Only one waiting release is kept.
 
-## What a push proves
+**The press.** Khushal chooses **Update now** or **When work finishes**. Only the owner can; Chief, Managers, and Workers are refused. The server answers at once and does the rest in the background. **When work finishes** waits for an idle workspace through the existing readiness loop; Khushal can cancel the wait or change it to Update now. When it is time, Panels pauses work, checks Ticket integrity, and, if the new release would change the database schema, takes a verified [backup](backups.md) while the server is still running. Then it marks the attempt as installing and starts the installer in its own short-lived user service, so stopping Headroom cannot kill it. The server copies the installer out of its own app first, so the folder swap cannot change the code that runs.
 
-Publication runs on GitHub-hosted Ubuntu with Python 3.12 and Node 22. It runs Ruff, mypy, the Svelte check, typechecked Vitest, and the browser catalog. Unit, integration, end-to-end, and browser suites run as separate jobs so one failure does not cancel the others. They all build from the same requested commit. The app is packed once into `panels-app.tar.gz` plus a proof artifact. Smoke and a disposable rehearsal consume that archive. The rehearsal uses synthetic records on an ephemeral machine. It does not touch production. Artifacts are requested for about 30 days. The repository can drop them sooner. A release whose artifacts are gone disappears from the owner’s list.
+**The installer.** It stops the service that the server runs in, which the server reads from its own systemd cgroup, so a copy of Panels elsewhere can never stop the live one. It renames the current app aside, renames the waiting release into its place, starts the service, and waits for the new app to report its exact commit. A healthy answer comes from the process that serves Headroom, so work is already open. Startup also refreshes the agents' skill links. Interrupted conversations get one recovery prompt ([Conversations](conversations.md)). On success the installer marks the attempt done and keeps only the newest previous app.
 
-A pull request’s merged-tree mypy check is not publication. Publication is the push to `main`.
+A new database starts from one complete schema. An existing staging database upgrades directly to it in one startup transaction. The oldest revision it upgrades is staging's `goal_holders`; the upgrade passes `retire_explicit_reply_requirement` and `canonical_manager_identities`, where the installed release already stands. Later revisions add the Mac executor's mailbox tables and the stall-alarm switch, and drop the old Mac connection tables. A release refuses a database at a revision its own history does not contain. An upgrade refuses a database that still contains cancelled Tickets; resolve them through the prior supported version first.
 
-## Replacement and what can be undone
+## What can be undone
 
-The runner downloads the pinned archive and proof. It does not rebuild. It checks the archive, the runtime contract, and the database schema ancestry before downtime. The schema floor is `video_upload_ledger`. An older or unknown ancestry is refused before the service stops.
+- **Before the stop.** A refusal leaves the running app untouched and the attempt failed with a plain reason.
+- **After the swap.** If the new app does not prove healthy in time, the installer stops it, renames the previous app back, restores the database from the backup if one was taken, starts the prior app, and waits for it to prove healthy. The attempt is then failed with a plain reason. A failed recovery says so plainly, never success.
+- **After health.** The database is never restored. A later code rollback is a new install and does not rewind data.
 
-The candidate is staged while production is still serving. The runner then stops writers and takes a verified snapshot. Only after that snapshot succeeds does it keep the prior app and replace `current/app`. Uploads and Ticket artifacts are outside the snapshot and outside the replacement.
+Every attempt ends. The installing state carries a deadline. If the installer vanishes, the server settles the attempt past that deadline from the commit it is running: the new one counts as done, anything else as failed. A settled attempt never blocks a new one.
 
-Until the runner records the local commit, ordinary HTTP, CLI work, conversation recovery, background loops, and file cleanup stay closed. Health and status are up so the candidate can be proved. Each requested-app and prior-app health proof gets 300 seconds after the restart command returns. The installed smoke budget is 45 seconds. Neither number is a promise about how long the site is down.
+## The card and the Mac
 
-Failure before that commit restores the snapshot and the prior app, then proves the prior SHA. A failed recovery reports the retained paths. It is not reported as success.
+One server answer supplies the card's state and allowed actions: up to date, available, waiting, updating, failed, Mac failed, or Mac unreachable. While the connection is lost during the restart, the card keeps saying updating until the deadline. The browser offers a refresh when its loaded app differs from the server, and the server rejects a write from an outdated page.
 
-After the commit, ordinary work opens. A later skill failure or a failed published-route check leaves the installed app in place and reports the workflow incomplete. Those failures do not restore the database and do not mark the app unhealthy. The finalizer records the exact attempt, the observed health and recovery failures, the installed SHA, and each workflow check on its own. A confirmed cancellation before installation is reported as neutral. Missing evidence stays uncertain. A stale finalizer cannot overwrite a replacement attempt. If the report itself cannot be read, the saved evidence remains authoritative and the report says it is uncertain. A reporting failure does not change what the update does. An intentional later code rollback does not rewind the database by itself. There is no arbitrary-SHA rollback button. The owner selects another retained release.
+The publication carries a Mac runtime from the same source, and one press covers both machines. The VPS never waits for the Mac. The Mac sees its target from the moment work pauses and activates it once the VPS install is done. The card stays updating until the Mac reports the new runtime. A Mac that reports a failure shows **Mac failed**; one that says nothing for about a minute and a half after the VPS part shows **Mac unreachable**; it may be asleep or offline. Either way **Try again for the Mac** sends a fresh target for the same release, and a Mac that returns later and reports the new runtime moves the card on by itself. A release without a Mac part, or a host without a Mac, skips it. See [The Mac executor](executor.md#what-runs-on-the-mac).
 
-Both lifecycle finalizers run with host Python and source from the checked-out control revision. They do not use the disposable deployment environment or the installed app. The launcher excludes ambient Python packages. A missing source file or a failed report write fails the reporting step. It does not restart the app or restore data.
+## The switch to mailboxes
 
-Cleanup rejects any removal target that overlaps the control checkout or the resolved Python interpreter. It checks all targets before a service action or deletion. Publication cleanup also requires retained proof. If a rehearsal attempted installation, cleanup requires a terminal record for that exact attempt. If either condition fails, cleanup preserves the temporary evidence and reports its refusal. This protects a report from future step reorders. These startup checks do not promise race-free containment of concurrent filesystem changes.
+The first release in which the [Mac executor](executor.md) works through mailboxes (protocol 22) is one switch-over. The old and new Mac links never run side by side.
 
-The published route check runs after skill reconciliation. The operator sets the Actions variable `PANELS_PUBLISHED_ORIGIN` to the private HTTPS origin. The helper requests `/api/meta` with HTTP/2 and rejects anything that did not negotiate HTTP/2. That check is separate from the loopback health check.
+1. **The order.** The VPS updates first, and the Mac follows by itself. One press covers both. **Update now** stops running Mac agents once; **When work finishes** waits for them. The schema changes, so Panels takes the backup before the install. The new VPS refuses the old Mac's link with "Mac needs update", but its update channel still serves it. The Mac installs its new runtime, which leases at once, and its report moves the card on. The Mac never updates before the VPS.
+2. **The watchdog.** The release ships the stall watchdog's unit and timer, but nothing starts them. Khushal installs and enables the timer once the release is current, with the [install lines](../ops/panels-environments/README.md#stall-watchdog). Until then, stalls are recorded but no alarm goes out. Native push also needs the `PLAN_APNS_*` inputs in that unit's environment.
+3. **The LaunchAgent.** An update replaces the Mac's runtime but not its LaunchAgent. Khushal renders and loads it again once, by the [runbook](../ops/mac-executor/installation.md#render-and-start-one-launchagent), so macOS schedules the executor as foreground work and does not defer its lease. Loading it restarts the executor, so do it while no Mac agent runs.
+4. **The check.** The Mac shows as present, its health shows a recent lease, and a Mac Ticket starts.
 
-Interrupted agent sessions are captured outside the snapshot. After admission, eligible conversations get one recovery prompt through the normal send path. Nothing uncertain is replayed. See [Conversations](conversations.md).
+**Rollback** means the previous release plus the pre-deploy database backup. A new migration drops the old Mac connection tables, so the previous release refuses the upgraded database. Restore the backup while the service is stopped ([Backups](backups.md)). Work recorded after the deploy is lost. The Mac keeps its previous runtime beside the new one. The new runtime cannot lease from the old server, so the Mac goes back by the [runbook's](../ops/mac-executor/installation.md#deferred-update-and-failed-installation) recovery steps. The previous runtime opens the same outbox and reads the new runtime's handoff record. It ignores the command journal.
 
-If the runner disappears before commit, work stays closed. Expired lifecycle evidence reports an unconfirmed installation and required Chief review. Expiry does not admit traffic, restore data, or prove that a restart is necessary. No maximum outage is promised. When a recorded commit matches the available app and admission is open, only the final report remains uncertain. That owner notice ends after five minutes without changing the evidence. See [Updates](updates.md) for the display rules.
+## The one-release bridge
 
-Deployment attention stays beside the lifecycle, outside database snapshots and temporary cleanup. Panels sends the Chief a real system prompt through the normal conversation path. Its durable message identity prevents duplicate prompts after a lost receipt. A pending record never means that delivery occurred. If startup or conversation admission holds agent work, attention remains pending until admission permits delivery. An uncertain delivery stays uncertain and does not automatically resend.
+The installed release before this design installs through the old route: it asks GitHub to run an `adopt` job on the self-hosted runner. That job stays for one release. It checks out the release the host is running and runs that release's own installer, unchanged. This works from 5622d2a81, whose installer already accepts the new release's runtime, schema, receipt, and health answer; an older installed release refuses it before anything stops. On its first start the new server turns the old install request into a done attempt, so a Mac that the old server stopped receives its target and updates. The next release deletes the runner, the adopt job, its dispatch inputs, and that import.
 
-## An older database that still has cancelled Tickets
+The deploy workflow never changes Tailscale Serve. A separate manual workflow restores the private route if it is lost.
 
-An upgrade refuses a database that contains cancelled Tickets, or that would create them while replaying historical migrations. The refusal leaves the schema and the rows alone. Stop the service, then archive those Tickets with the release you are installing. Run as the owner, with no Worker identity, and with an archive directory whose parent already exists:
+## Decisions that shape it
 
-```sh
-systemctl --user stop panels-live.service
-PLAN_DB_PATH=/absolute/path/to/planner.db \
-  panels maintenance archive-cancelled-tickets \
-  --archive-dir /absolute/path/to/cancelled-ticket-archive --yes
-```
+- Build once, prove those bytes, install the same bytes.
+- A push publishes. Only the owner's press installs.
+- Do the slow work before the press: download, check, and unpack while Headroom keeps working.
+- The installer depends on nothing it replaces: standard library, host Python, its own unit.
+- Data is restorable only until the new app is proven.
+- Every attempt ends, and nothing waits for the Mac.
 
-The command first stores a verified snapshot of the whole database. Keep that directory as private as the database. Some older files need historical migrations before the cancelled rows exist. This command prepares those migrations and stops before the retirement-removal migration. It does not start the server. Deletion and that preparation share one transaction. Failure rolls both back. Ticket files on disk stay where they are. The archive keeps references, not copies. After it succeeds, retry the upgrade.
+## When `scripts/dev` refuses
 
-## Development must not share the deployed tree
+Development worktrees must never share dependency storage with the installed app, because a shared `node_modules` or `.venv` can write into the deployed tree and break its integrity proof. `scripts/dev` guards setup, npm, pytest, and mypy before the tool starts. No flag turns it off.
 
-Worktrees install their own `.venv` and their own `web/` and `agent_backends/` dependencies. A shared `node_modules` can write caches into the deployed app and break its integrity proof. Use `scripts/dev` for setup, npm, pytest, and mypy. Setup refuses to delete a `.venv` or a Node directory that is already there. No flag turns the guard off.
+A refusal prints the command and one of two findings: shared deployment storage detected, or dependency safety could not be established. It names the path examined, what it resolved to, the protected deployment path, and the signal used.
 
-A refusal names the command, the path it examined, the path it resolved to, and the protected deployment path. If the sharing is real, make a fresh worktree. Do not delete dependencies through an unresolved link or mount. If independent dependencies are refused by mistake, fix the detector and add a regression check. If the detector cannot see the mount evidence, restore that evidence and retry. Direct Ruff or Python invocations outside these entry points can still write into the deployed tree. The archive digest can show damage afterward. It does not prevent the write. If a write reaches the installed tree, leave it in place and report it. Do not clean the installed tree to force an install through.
+- **The sharing is real.** Make a fresh worktree and run `scripts/dev setup`. Do not delete dependencies through an unresolved link or mount.
+- **Independent dependencies were refused.** Fix the detector and add a regression check.
+- **Evidence was missing.** Restore it, then retry.
 
-The guarded commands and the reason they exist are also in [`AGENTS.md`](../AGENTS.md). This section is the diagnostic meaning of a refusal.
+Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still write into the deployed tree. The archive digest shows the damage afterwards; it does not prevent it. If a write reaches the installed tree, leave it in place and report it. Never clean the installed tree to force an install through.
 
-## Pointers
+## Code
 
-`.github/workflows/deploy.yml` is publication and adoption. `src/planner/environments/deployment.py` and `update_runner.py` perform the replacement. `scripts/dev` and `scripts/development_safety/` are the worktree guard. `ops/panels-environments/` holds the user units.
+- `.github/workflows/deploy.yml`: publication, the install rehearsal, and the bridge `adopt` job. `recover-private-route.yml`: route repair.
+- `src/planner/environments/update_provider.py`: reading publications and streaming downloads. `update_service.py`, `update_api.py`: getting ready, the press, and the card's state.
+- `src/planner/environments/update_attempts.py`: the attempt record. `update_install.py`: the schema and backup decision and the installer's start. `update_installer.py`: the installer.
+- `src/planner/environments/runtime_packaging.py`, `runtime_contracts.py`, `runtime_admission.py`, and `scripts/runtime_target_proof.py`: the private runtime and host contract.
+- `src/planner/environments/mac_updates.py`: the Mac target and its progress.
+- `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the card.
+- `scripts/dev`, `scripts/development_safety/`: the worktree guard.
+- `ops/panels-environments/`: user units and runner setup.
 
-_Last verified: 2026-10-30 against source. This page does not claim a hosted publication or a production adoption was run from here._
+_Last verified: 2026-11-09._

@@ -1,4 +1,4 @@
-"""Authoritative acceptance, durable choices, generation fencing and file recovery."""
+"""Authoritative acceptance, durable choices, ordering and file recovery."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from tests.support.executor_inbox import lookup_receipt
+from tests.support.executor_presence import make_current
 from tests.support.executor_turns import persist_pending_turn
 from tests.unit.test_executor_native_runtime import isolated_native_home as isolated_native_home
 from tests.unit.test_executor_native_runtime import native_registry as native_registry
@@ -25,7 +26,6 @@ from planner.executor.protocol import (
     JsonObject,
     QueuedEnvelope,
     ReceiptDisposition,
-    envelope_payload_digest,
 )
 from planner.executor.vps_inbox import InboxStore
 
@@ -44,7 +44,7 @@ def store(tmp_path: Path) -> InboxStore:
     finally:
         connection.close()
     result = InboxStore(path)
-    result.runs.begin_connection(IDENTITY)
+    make_current(path, IDENTITY)
     persist_pending_turn(result.runs, ASK)
     return result
 
@@ -52,17 +52,8 @@ def store(tmp_path: Path) -> InboxStore:
 def envelope(sequence: int = 1, *, conversation: str = "conversation") -> QueuedEnvelope:
     payload: JsonObject = {"operation": "test"}
     submission_id = f"{conversation}-{sequence}"
-    digest = envelope_payload_digest(
-        payload,
-        (),
-        sender_id="sender",
-        conversation_id=conversation,
-        sequence=sequence,
-        submission_id=submission_id,
-        kind=EnvelopeKind.cli_write,
-    )
     return QueuedEnvelope(
-        "sender", conversation, sequence, submission_id, EnvelopeKind.cli_write, payload, digest
+        "sender", conversation, sequence, submission_id, EnvelopeKind.cli_write, payload
     )
 
 
@@ -96,22 +87,6 @@ def test_order_gap_does_not_block_another_conversation(store: InboxStore) -> Non
         ]
     finally:
         connection.close()
-
-
-def test_digest_binds_kind_and_routing_identity(store: InboxStore) -> None:
-    original = envelope()
-    # Invalid content is a permanent refused receipt, rather than a poison queue head.
-    refused = store.accept(
-        replace(original, kind=EnvelopeKind.backend_event), effect, 1100, identity=IDENTITY
-    )
-    assert refused.disposition is ReceiptDisposition.refused
-    assert "digest" in str(refused.result)
-    assert (
-        store.accept(
-            replace(original, kind=EnvelopeKind.backend_event), effect, 1200, identity=IDENTITY
-        )
-        == refused
-    )
 
 
 def manifest(contents: bytes) -> FileManifest:
@@ -176,18 +151,7 @@ def file_envelope(sequence: int, file: FileManifest) -> QueuedEnvelope:
         payload=payload,
         file_dependencies=(file,),
     )
-    return replace(
-        row,
-        payload_sha256=envelope_payload_digest(
-            payload,
-            row.file_dependencies,
-            sender_id=row.sender_id,
-            conversation_id=row.conversation_id,
-            sequence=row.sequence,
-            submission_id=row.submission_id,
-            kind=row.kind,
-        ),
-    )
+    return row
 
 
 def test_file_install_precedes_effect_and_old_item_cannot_overwrite_newer(

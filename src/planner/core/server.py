@@ -10,15 +10,17 @@ import re
 import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic as _monotonic
 from typing import Any, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from planner.attention.api import router as attention_router
 from planner.conversation.api import (
     router as conversation_router,
 )
@@ -35,16 +37,23 @@ from planner.conversation.video_uploads.config import CLEANUP_INTERVAL_SECONDS
 from planner.conversation.video_uploads.destinations import authorize_destination
 from planner.conversation.video_uploads.service import VideoUploadService
 from planner.conversation.views.api import router as conversation_views_router
+from planner.conversation.views.rebuild import rebuild_out_of_date_views
 from planner.core import change_signal
 from planner.core.clock import Clock
-from planner.core.config import HOST, Config
+from planner.core.config import (
+    DB_BUSY_TIMEOUT_MS,
+    HOST,
+    SHUTDOWN_GRACE_SECONDS,
+    SSE_HEARTBEAT_MS,
+    Config,
+)
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
 from planner.core.request_guidance import preserve_authored_request_examples
 from planner.core.response_compression import (
-    CompressExceptEventStreams,
-    answers_with_an_event_stream,
-    event_stream_route_patterns,
+    CompressExceptMarkedRoutes,
+    answers_uncompressed,
+    uncompressed_route_patterns,
 )
 from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
@@ -53,39 +62,39 @@ from planner.core.web_assets import WebAssets
 from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
 from planner.datasets.api import router as datasets_router
-from planner.environments.deployment_attention import DeploymentAttentionObserver
-from planner.environments.deployment_configuration import DEPLOYMENT_ATTENTION_POLL_SECONDS
-from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
-from planner.environments.update_admission import matching_commit, startup_requires_commit
+from planner.environments import ticket_scratch
+from planner.environments.hermes_home import provision_planner_home_skills, resolve_planner_home
+from planner.environments.logic.update_experience import deployment_status
+from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
 from planner.environments.update_api import router as updates_router
+from planner.environments.update_attempts import (
+    FileUpdateAttemptStore,
+    attempt_path,
+    import_legacy_request,
+)
+from planner.environments.update_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
+from planner.environments.update_install import own_service_unit
 from planner.environments.update_provider import GitHubUpdateProvider
-from planner.environments.update_requests import FileUpdateRequestStore
 from planner.environments.update_service import UpdateService
 from planner.environments.vps_metrics.api import router as vps_metrics_router
 from planner.environments.vps_metrics.config import load_config as load_metrics_config
 from planner.environments.vps_metrics.config import store_path
 from planner.environments.vps_metrics.runtime import MetricsRuntime
-from planner.environments.vps_status import (
-    VpsStatusSnapshot,
-    VpsStatusSummary,
-    collect_vps_status,
-    collect_vps_status_summary,
-)
-from planner.feedback.api import router as feedback_router
+from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
+from planner.executor.clock import now_ms as executor_now_ms
 from planner.files.api import router as files_router
 from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
-from planner.goals.conversation_api import router as goal_conversation_router
 from planner.ideas.api import router as ideas_router
-from planner.managers.api import legacy_router as legacy_managers_router
+from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
+from planner.measure_sources.participants import SlotParticipantFactory
 from planner.measures.api import router as measures_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.navigation.delivery import create_delivery_runtime
-from planner.navigation.middleware import NavigationCommandFenceMiddleware
 from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
 from planner.previews.api import handle_preview_error
@@ -97,14 +106,11 @@ from planner.previews.transport import PreviewTransport
 from planner.projects.api import router as projects_router
 from planner.resource_versions.api import router as resource_versions_router
 from planner.runtime.workspaces import register_workspace_root
-from planner.scheduled_tickets.api import router as scheduled_tickets_router
-from planner.scheduled_tickets.participants import SlotParticipantFactory
 from planner.server_lifecycle.runtime import application_runtime
-from planner.skill_sources import provision_workspace_skills
-from planner.skill_versions import (
-    reconcile_managed_skill_versions,
-    reconcile_provisional_worker_step_bindings,
-)
+from planner.skill_sources import provision_native_backend_skills, provision_workspace_skills
+from planner.stalls import checker as stalls_checker
+from planner.stalls.contracts import StallChecker, StallCheckerFactory
+from planner.stalls.registry import WAITS
 from planner.tickets.api import router as tickets_router
 from planner.tickets.workspace.api import router as ticket_workspace_router
 from planner.worker_settings.api import router as worker_settings_router
@@ -119,6 +125,8 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.already_running: 409,
     ErrorCode.gateway_offline: 503,
     ErrorCode.skill_save_incomplete: 500,
+    ErrorCode.executor_version_refused: 409,
+    ErrorCode.executor_incarnation_not_current: 409,
 }
 
 
@@ -176,6 +184,23 @@ async def _stop_runtime_with_deadline(runtime: Any, deadline: float) -> None:
     await runtime.stop(deadline=deadline)
 
 
+def _with_native_build_1_fields(health: dict[str, object]) -> dict[str, object]:
+    """Native build 1 (ios/Panels/Models/WorkspaceModels.swift, ExecutorHealth) requires
+    connection_state, and knows the Mac's activity only when it is "ready" and the
+    identity's connection_generation is above 0. Protocol 22 has neither, so both are
+    derived from presence here. Remove when the minimum native build reads presence."""
+    present = health.get("presence") == "present"
+    identity = health.get("identity")
+    if isinstance(identity, dict):
+        generation = identity.get("connection_generation", 0)
+        identity = {**identity, "connection_generation": max(int(generation), 1 if present else 0)}
+    return {
+        **health,
+        "identity": identity,
+        "connection_state": "ready" if present else "disconnected",
+    }
+
+
 def create_app(
     config: Config,
     clock: Clock,
@@ -186,10 +211,10 @@ def create_app(
     backend_child_factories_for_test: Mapping[ConversationBackendKey, BackendChildFactory]
     | None = None,
     vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
-    vps_status_summary_collector: (
-        Callable[[Config, str | None, str | None], VpsStatusSummary] | None
-    ) = None,
+    stall_checker_factory_for_test: StallCheckerFactory | None = None,
 ) -> FastAPI:
+    if stall_checker_factory_for_test is not None and not config.test_mode:
+        raise ValueError("stall_checker_factory_for_test is accepted only in test mode")
     if slot_participants_for_test is not None and not config.test_mode:
         raise ValueError("slot_participants_for_test is accepted only in test mode")
     if conversation_system_for_test is not None and not config.test_mode:
@@ -200,22 +225,21 @@ def create_app(
     @asynccontextmanager
     async def _configured_lifespan(app: FastAPI) -> AsyncIterator[None]:
         Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
         from planner.tickets import data as tickets_data
 
         recovery_task: asyncio.Task[None] | None = None
-        lifecycle_observer: asyncio.Task[None] | None = None
-        attention_observer: asyncio.Task[None] | None = None
+        attempt_observer: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
+        ticket_scratch_task: asyncio.Task[None] | None = None
+        view_rebuild_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
         executor_endpoint = None
-
-        release_task: asyncio.Task[None] | None = None
+        stall_checker: StallChecker | None = None
 
         async def shutdown_dependents() -> None:
             app.state.conversation = None
-            deadline = _monotonic() + float(config.shutdown_grace_seconds)
+            deadline = _monotonic() + float(SHUTDOWN_GRACE_SECONDS)
             failures: list[BaseException] = []
 
             async def attempt(operation: Awaitable[None]) -> None:
@@ -232,12 +256,12 @@ def create_app(
                     pass
 
             await attempt(preview_runtime.close())
-            if attention_observer is not None:
-                await attempt(cancel_task(attention_observer))
-            if release_task is not None and not release_task.done():
-                await attempt(cancel_task(release_task))
             if video_cleanup_task is not None:
                 await attempt(cancel_task(video_cleanup_task))
+            if ticket_scratch_task is not None:
+                await attempt(cancel_task(ticket_scratch_task))
+            if view_rebuild_task is not None:
+                await attempt(cancel_task(view_rebuild_task))
             if recovery_task is not None:
                 await attempt(cancel_task(recovery_task))
             await attempt(scoped_navigation.close())
@@ -247,17 +271,19 @@ def create_app(
             app.state.vps_metrics = None
             if loops is not None:
                 await attempt(_stop_runtime_with_deadline(loops, deadline))
+            if stall_checker is not None:
+                await attempt(stall_checker.close())
             if executor_endpoint is not None:
                 await attempt(executor_endpoint.close())
-            if lifecycle_observer is not None:
-                await attempt(cancel_task(lifecycle_observer))
+            if attempt_observer is not None:
+                await attempt(cancel_task(attempt_observer))
             if failures:
                 for later in failures[1:]:
                     failures[0].add_note(f"dependent shutdown also failed: {later!r}")
                 raise failures[0]
 
         remembered_codex_login_rejection = DurableCodexLoginRejection(
-            config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
+            config.db_path, busy_timeout_ms=DB_BUSY_TIMEOUT_MS
         )
         backend_factories = (
             backend_child_factories_for_test
@@ -271,7 +297,12 @@ def create_app(
             from planner.executor.routing import LocaleBackendChildFactory
             from planner.executor.vps_transport import VpsExecutor
 
-            executor_endpoint = VpsExecutor(config.db_path, clock, machine_id=config.executor_id)
+            executor_endpoint = VpsExecutor(
+                config.db_path,
+                clock,
+                machine_id=config.executor_id,
+                application_revision=config.app_sha or "unknown",
+            )
             backend_factories = {
                 key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.runs)
                 for key, local in backend_factories.items()
@@ -289,8 +320,8 @@ def create_app(
 
             async with application_runtime(
                 db_path=config.db_path,
-                db_busy_timeout_ms=config.db_busy_timeout_ms,
-                sse_heartbeat_ms=config.sse_heartbeat_ms,
+                db_busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
+                sse_heartbeat_ms=SSE_HEARTBEAT_MS,
                 backend_child_factories=backend_factories,
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
                 navigation_delivery=navigation_delivery,
@@ -298,19 +329,13 @@ def create_app(
                 defer_view_cleanup=True,
                 startup_audit=audit_startup_tickets,
             ) as conversation:
-                audit_conn = conn_factory()
-                try:
-                    from planner.executor.store import ExecutorStore
-
-                    ExecutorStore.interrupt_after_restart(audit_conn)
-                    audit_conn.commit()
-                    reconcile_managed_skill_versions(audit_conn)
-                    reconcile_provisional_worker_step_bindings(audit_conn)
-                finally:
-                    audit_conn.close()
-
+                # Mac runs survive a VPS restart: their rows, assignments and commands
+                # are all in the database, and the conversation core adopts them.
                 if executor_endpoint is not None:
-                    executor_endpoint.configure(conversation.system, app)
+                    executor_endpoint.configure(
+                        conversation.system, app, update_check=app.state.mac_updates.check
+                    )
+                    await executor_endpoint.start()
                 conversation.system.configure_machine_catalog(
                     None if executor_endpoint is None else executor_endpoint.catalog
                 )
@@ -320,42 +345,22 @@ def create_app(
                     else conversation_system_for_test
                 )
 
-                attention = DeploymentAttentionObserver(
-                    lifecycle_store=deployment_lifecycle_store,
-                    attention_directory=deployment_lifecycle_path.parent / "deployment-attention",
-                    app_sha=config.app_sha,
-                    clock=clock,
-                    connect_database=conn_factory,
-                    conversation_system=lambda: app.state.conversation_system,
-                    startup_pending=lambda: app.state.update_startup_pending,
-                    admission_closed=lambda: app.state.update_admission_closed,
-                )
-
-                async def observe_deployment_attention() -> None:
-                    while True:
-                        try:
-                            observed = await attention.poll()
-                            if observed != app.state.deployment_attention:
-                                app.state.deployment_attention = observed
-                                change_signal.emit()
-                        except Exception:
-                            logging.getLogger(__name__).exception(
-                                "Deployment attention could not be recorded or delivered"
-                            )
-                        await asyncio.sleep(DEPLOYMENT_ATTENTION_POLL_SECONDS)
-
-                attention_observer = asyncio.create_task(observe_deployment_attention())
-
                 async def release_normal_work() -> None:
-                    nonlocal recovery_task, video_cleanup_task, loops, metrics
-                    # A matching runner commit is irreversible even if later setup fails.
-                    app.state.update_startup_pending = False
-                    change_signal.emit()
+                    nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
+                    nonlocal view_rebuild_task
+                    nonlocal loops, metrics, stall_checker
                     conversation.live_tail.views.cleanup_stale_epochs()
+                    database_parent = Path(config.db_path).resolve().parent
                     if config.workspace_root is not None:
-                        provision_workspace_skills(
-                            config.workspace_root, Path(config.db_path).resolve().parent
+                        provision_workspace_skills(config.workspace_root, database_parent)
+                    if installed_app:
+                        # An installed release links its skills into the agent homes itself,
+                        # so an update needs no separate provisioning step.
+                        provision_planner_home_skills(
+                            resolve_planner_home(), configured_database_parent=database_parent
                         )
+                        provision_native_backend_skills(Path.home() / ".codex", database_parent)
+                        provision_native_backend_skills(Path.home() / ".claude", database_parent)
                     from planner.conversation.deploy_interruptions.coordinator import (
                         run_automatic_recovery,
                     )
@@ -376,14 +381,30 @@ def create_app(
                                         )
                                     finally:
                                         notice_conn.close()
+                                system = conversation.system
+                                await system.tell_agents_of_background_tasks_lost_at_restart()
                                 await run_automatic_recovery(
                                     conversation.system, conversation.store
                                 )
 
                     recovery_task = asyncio.create_task(recover_conversations())
+                    view_rebuild_task = asyncio.create_task(
+                        rebuild_out_of_date_views(
+                            config.db_path,
+                            DB_BUSY_TIMEOUT_MS,
+                            conversation.system.workspace_admission,
+                        )
+                    )
                     app.state.conversation = conversation
                     await asyncio.to_thread(video_uploads.recover_and_cleanup)
                     video_cleanup_task = asyncio.create_task(_clean_video_uploads())
+                    scratch_layout = ticket_scratch.layout_for(
+                        config.ticket_scratch_root, config.ticket_scratch_database, config.db_path
+                    )
+                    if scratch_layout is not None and not config.test_mode:
+                        ticket_scratch_task = asyncio.create_task(
+                            _clean_ticket_scratch(scratch_layout)
+                        )
                     # Worker tests can supply a held conversation system.
                     # Production always uses the real system.
                     if not config.test_mode:
@@ -394,7 +415,7 @@ def create_app(
                             clock,
                             conversation_system=app.state.conversation_system,
                             asyncio_loop=asyncio.get_running_loop(),
-                            before_readiness_poll=lambda: app.state.updates.dispatch_pending(),
+                            before_readiness_poll=app.state.updates.poll,
                         )
 
                     elif slot_participants_for_test is not None:
@@ -420,48 +441,33 @@ def create_app(
                     )
                     app.state.vps_metrics = metrics
                     metrics.start()
+                    stall_checker_factory: StallCheckerFactory | None = (
+                        stall_checker_factory_for_test
+                        if config.test_mode
+                        else stalls_checker.StallChecker
+                    )
+                    if stall_checker_factory is not None:
+                        endpoint = executor_endpoint
+                        stall_checker = stall_checker_factory(
+                            config.db_path,
+                            WAITS,
+                            (lambda: ()) if endpoint is None else endpoint.stall_sources,
+                            executor_now_ms,
+                        )
+                        stall_checker.start()
                     await navigation_delivery.start()
                     await scoped_navigation.start()
                     await conversation.system.start_idle_child_janitor()
                     if loops is not None:
                         loops.start(config.tick_seconds)
-                    app.state.update_startup_pending = False
+                    app.state.updates.start(asyncio.get_running_loop())
                     change_signal.emit()
 
-                def lifecycle_changed() -> None:
-                    nonlocal release_task
-                    change_signal.emit()
-                    if (
-                        app.state.update_startup_pending
-                        and release_task is None
-                        and matching_commit(deployment_lifecycle_store, config.app_sha)
-                    ):
-                        release_task = asyncio.create_task(release_normal_work())
-
-                        def report_setup_result(task: asyncio.Task[None]) -> None:
-                            if not task.cancelled() and task.exception() is not None:
-                                app.state.update_startup_detail = (
-                                    "The app is installed, but setup did not complete. "
-                                    "Chief review is required."
-                                )
-                                import logging
-
-                                logging.getLogger(__name__).error(
-                                    "Deferred setup failed after app %s committed",
-                                    config.app_sha,
-                                    exc_info=task.exception(),
-                                )
-                                change_signal.emit()
-
-                        release_task.add_done_callback(report_setup_result)
-
-                if not app.state.update_startup_pending:
-                    await release_normal_work()
-                lifecycle_observer = asyncio.create_task(
-                    observe_path_changes(deployment_lifecycle_path, lifecycle_changed)
+                await release_normal_work()
+                # The installer writes the attempt record from outside this process.
+                attempt_observer = asyncio.create_task(
+                    observe_path_changes(update_attempts.path, change_signal.emit)
                 )
-                # Close the read/observer-install race without a second watcher.
-                lifecycle_changed()
                 await preview_runtime.start()
                 yield
 
@@ -476,6 +482,25 @@ def create_app(
                     if admitted:
                         await asyncio.to_thread(video_uploads.recover_and_cleanup)
 
+    async def _clean_ticket_scratch(layout: ticket_scratch.ScratchLayout) -> None:
+        already_kept: set[str] = set()
+        logger = logging.getLogger(__name__)
+        while True:
+            await asyncio.sleep(ticket_scratch.CLEANUP_INTERVAL_SECONDS)
+            try:
+                result = await asyncio.to_thread(
+                    ticket_scratch.clean_finished_ticket_scratch,
+                    layout,
+                    config.db_path,
+                    clock.now_unix(),
+                    already_kept,
+                )
+            except Exception:
+                logger.exception("Ticket scratch cleanup failed")
+                continue
+            for kept in result.skipped:
+                logger.warning("Ticket scratch kept: %s (%s)", kept["path"], kept["reason"])
+
     navigation_delivery = create_delivery_runtime(config.db_path)
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
@@ -487,17 +512,18 @@ def create_app(
     app.state.previews = preview_service
     app.state.preview_transport = preview_transport
     app.state.video_uploads = video_uploads
-    app.add_middleware(
-        NavigationCommandFenceMiddleware,
-        conn_factory=conn_factory,
-        db_path=config.db_path,
-    )
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
     from planner.executor.app_transport import build_executor_router
 
-    app.include_router(build_executor_router())
+    # The compression at the end of this function skips the marked routes. An included
+    # router's routes do not appear in app.routes, so each router adds its own marks here.
+    # The Mac update channel is among them.
+    uncompressed_patterns: list[re.Pattern[str]] = []
+    executor_router = build_executor_router()
+    app.include_router(executor_router)
+    uncompressed_patterns.extend(uncompressed_route_patterns(executor_router.routes))
     app.state.executor_id = config.executor_id
     app.state.config = config
     app.state.clock = clock
@@ -511,43 +537,50 @@ def create_app(
     configured_vps_status_collector = vps_status_collector or (
         lambda status_config: collect_vps_status(status_config, application_root=_REPO_ROOT)
     )
-    configured_vps_status_summary_collector = vps_status_summary_collector or (
-        lambda status_config, outcome, detail: collect_vps_status_summary(
-            status_config,
-            deployment_outcome=outcome,
-            deployment_detail=detail,
-        )
+    data_directory = Path(config.db_path).expanduser().resolve(strict=False).parent
+    current_root = data_directory.parent
+    # Only an installed release under <current_root>/app installs its own updates.
+    installed_app = bool(config.app_sha) and _REPO_ROOT == current_root / "app"
+    # The installer restarts the unit this server runs in, and nothing else.
+    service_unit = own_service_unit() if installed_app else None
+    update_attempts = FileUpdateAttemptStore(attempt_path(data_directory))
+    import_legacy_request(update_attempts, data_directory, config.app_sha)
+    update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
+    app.state.mac_updates = MacUpdateService(
+        data_directory / "mac-updates",
+        update_attempts,
+        update_provider,
+        config.app_sha,
+        ready_release=lambda: app.state.updates.ready_release(),
     )
-    deployment_lifecycle_path = (
-        Path(config.db_path).expanduser().resolve(strict=False).parent / "deployment-lifecycle.json"
-    )
-    deployment_lifecycle_store = DeploymentLifecycleStore(deployment_lifecycle_path)
-    app.state.deployment_lifecycle_store = deployment_lifecycle_store
-    update_request_store = FileUpdateRequestStore(
-        deployment_lifecycle_path.with_name("owner-update-request.json")
-    )
-    recorded_update = update_request_store.read()
-    applying_candidate = bool(
-        recorded_update is not None
-        and recorded_update.state == "applying"
-        and recorded_update.release.manifest.app_sha == config.app_sha
-    )
-    app.state.update_startup_pending = startup_requires_commit(
-        deployment_lifecycle_store, config.app_sha
-    ) or (applying_candidate and not matching_commit(deployment_lifecycle_store, config.app_sha))
-    app.state.update_admission_closed = False
-    app.state.update_startup_detail = None
-    app.state.deployment_attention = None
     app.state.updates = UpdateService(
-        GitHubUpdateProvider.configured(),
-        update_request_store,
+        update_provider,
+        update_attempts,
         lambda: app.state.conversation_system,
         connection_factory=conn_factory,
+        current_root=current_root,
+        database=Path(config.db_path).expanduser().resolve(strict=False),
+        backup_directory=Path(config.backup_dir).expanduser(),
         current_app_sha=config.app_sha,
-        availability_path=deployment_lifecycle_path.with_name("owner-update-availability.json"),
-        can_refresh=lambda: not app.state.update_startup_pending,
+        health_url=f"http://{HOST}:{config.port}/api/health",
+        service_unit=service_unit or "",
+        prepare_mac_update=app.state.mac_updates.prepare,
+        mac_phase=app.state.mac_updates.phase,
+        mac_reported_at=app.state.mac_updates.reported_at,
+        mac_configured=lambda: getattr(app.state, "executor_endpoint", None) is not None,
     )
 
+    def current_deployment_status() -> dict[str, object]:
+        return deployment_status(
+            update_attempts.read(),
+            config.app_sha,
+            success_seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS,
+            now=datetime.now(UTC),
+        )
+
+    app.state.deployment_status = current_deployment_status
+
+    app.add_middleware(IOSBuildGateMiddleware)
     app.add_middleware(UpdateAdmissionMiddleware, config=config)
 
     app.state.resource_version_epoch = str(uuid4())
@@ -555,13 +588,12 @@ def create_app(
     app.add_exception_handler(PlannerError, handle_planner_error)
     app.add_exception_handler(PreviewError, handle_preview_error)
 
-    # Every router the application serves is included through here, so this is where the
-    # live streams among them are collected. The compression below has to know them.
-    event_stream_patterns: list[re.Pattern[str]] = []
-
+    # Every domain router is included through here, so its marked routes join the list.
     def include_router(router: APIRouter, prefix: str = "") -> None:
-        app.include_router(router, prefix=prefix)
-        event_stream_patterns.extend(event_stream_route_patterns(router.routes, prefix))
+        from planner.core.authority.intake import request_admission
+
+        app.include_router(router, prefix=prefix, dependencies=[Depends(request_admission)])
+        uncompressed_patterns.extend(uncompressed_route_patterns(router.routes, prefix))
 
     for domain_router in (
         updates_router,
@@ -572,18 +604,15 @@ def create_app(
         conversation_history_router,
         projects_router,
         managers_router,
-        legacy_managers_router,
         ideas_router,
-        scheduled_tickets_router,
         measure_sources_router,
         measures_router,
         datasets_router,
+        attention_router,
         goals_router,
-        goal_conversation_router,
         credentials_router,
         credential_requests_router,
         notifications_router,
-        feedback_router,
         worker_settings_router,
         message_delivery_router,
         membership_router,
@@ -591,7 +620,6 @@ def create_app(
     ):
         include_router(domain_router, prefix="/api")
     include_router(previews_router)
-    include_router(navigation_delivery.router)
     include_router(scoped_navigation.router)
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
@@ -617,12 +645,8 @@ def create_app(
     async def executor_health() -> dict[str, object]:
         endpoint = getattr(app.state, "executor_endpoint", None)
         if endpoint is None:
-            return {
-                "mode": "local",
-                "last_contact_at_ms": None,
-                "connection_state": "disconnected",
-            }
-        return {"mode": "remote", **endpoint.health()}
+            return {"mode": "local", "connection_state": "disconnected"}
+        return _with_native_build_1_fields({"mode": "remote", **endpoint.health_payload()})
 
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:
@@ -644,54 +668,9 @@ def create_app(
         snapshot = await asyncio.to_thread(configured_vps_status_collector, config)
         return snapshot.as_dict()
 
-    def deployment_admission_open() -> bool:
-        system = app.state.conversation_system
-        return bool(
-            not app.state.update_startup_pending
-            and not app.state.update_admission_closed
-            and app.state.update_startup_detail is None
-            and system is not None
-            and not system.workspace_admission.closed
-        )
-
     @app.get("/api/deployment-status")
-    async def deployment_status() -> dict[str, object]:
-        projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha,
-            admission_open=deployment_admission_open(),
-        )
-        payload = projection.to_public_dict()
-        # Admission can close while the record read runs in the worker thread.
-        if not deployment_admission_open():
-            payload["installation_confirmed"] = False
-            payload["unknown_display_until"] = None
-            payload["work_paused"] = True
-            if projection.state == "unknown":
-                payload["detail"] = (
-                    "Installation is unconfirmed. Work remains paused. Chief review is required."
-                )
-        if app.state.update_startup_detail is not None:
-            payload["detail"] = app.state.update_startup_detail
-            payload["state"] = "problem"
-            payload["installation_confirmed"] = False
-            payload["unknown_display_until"] = None
-        attention = app.state.deployment_attention
-        payload["attention_status"] = attention.status if attention is not None else None
-        return payload
-
-    @app.get("/api/vps-status-summary")
-    async def vps_status_summary() -> dict[str, object]:
-        projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha,
-            admission_open=deployment_admission_open(),
-        )
-        summary = await asyncio.to_thread(
-            configured_vps_status_summary_collector,
-            config,
-            projection.outcome,
-            projection.detail,
-        )
-        return summary.as_dict()
+    async def deployment_status_route() -> dict[str, object]:
+        return await asyncio.to_thread(current_deployment_status)
 
     @app.get("/api/worker-types")
     async def worker_types(supported: bool = False) -> dict[str, Any]:
@@ -715,10 +694,10 @@ def create_app(
         return {"worker_types": [registry.manifest(worker_type)]}
 
     @app.get("/api/changes")
-    @answers_with_an_event_stream
+    @answers_uncompressed
     async def changes() -> StreamingResponse:
         return StreamingResponse(
-            change_stream(config.sse_heartbeat_ms),
+            change_stream(SSE_HEARTBEAT_MS),
             media_type="text/event-stream",
         )
 
@@ -745,15 +724,14 @@ def create_app(
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
     # Reads are large and the link is remote, so bodies travel compressed. Level 4 is
     # the measured knee on the largest real body: it costs 100 ms of CPU and saves
-    # 7.5 MB, where level 9 spends 245 ms for 0.12 MB more. The change signal and the
-    # conversation tail go around the compression entirely, because the middleware holds
-    # every response's headers back until a body arrives, and a live stream that has
-    # nothing to say yet has no body to release them with.
+    # 7.5 MB, where level 9 spends 245 ms for 0.12 MB more. The live streams and the Mac
+    # update channel go around the compression entirely: the middleware holds a stream's
+    # headers back until a body arrives, and the Mac saves update bytes exactly as sent.
     app.add_middleware(
-        CompressExceptEventStreams,
-        event_stream_patterns=(
-            *event_stream_patterns,
-            *event_stream_route_patterns(app.routes),
+        CompressExceptMarkedRoutes,
+        uncompressed_patterns=(
+            *uncompressed_patterns,
+            *uncompressed_route_patterns(app.routes),
         ),
         minimum_size=1024,
         compresslevel=4,

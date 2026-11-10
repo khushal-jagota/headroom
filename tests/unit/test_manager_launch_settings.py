@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from sqlite3 import Connection
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from fastapi import Request
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation.contracts import (
     ConversationBackendKey as Backend,
@@ -18,11 +23,11 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryStarted,
 )
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.db import connect
 from planner.core.errors import PlannerError
 from planner.managers import api, data
 from planner.managers.contracts import ManagerLaunchConfiguration
@@ -39,9 +44,7 @@ def test_defaults_are_prospective_and_chief_can_save_without_a_turn(tmp_db: Conn
         "employee_launch_model": "gpt-6.1-terra",
         "employee_launch_reasoning_effort": "high",
     }
-    result = asyncio.run(
-        api.put_manager_launch_defaults(choice, tmp_db, RequestContext(CHIEF_PRINCIPAL))
-    )
+    result = api.put_manager_launch_defaults(choice, tmp_db, RequestContext(CHIEF_PRINCIPAL))
     assert result == choice
     second = data.create_manager(tmp_db, title="New", project_id="project_vylo", clock=clock)
     assert first.manager_launch_configuration.employee_launch_model == "gpt-6.1-sol"
@@ -53,7 +56,7 @@ def test_defaults_are_prospective_and_chief_can_save_without_a_turn(tmp_db: Conn
     assert conversation_start.read_agent_conversation(tmp_db, first.manager_agent_key) is None
     denied = RequestContext(Principal(PrincipalKind.manager, first.id))
     with pytest.raises(PlannerError):
-        asyncio.run(api.put_manager_launch_defaults(choice, tmp_db, denied))
+        api.put_manager_launch_defaults(choice, tmp_db, denied)
 
 
 def test_saved_model_and_null_effort_reach_reused_conversation(
@@ -65,6 +68,15 @@ def test_saved_model_and_null_effort_reach_reused_conversation(
     system = InMemoryConversationSystem()
     owner = RequestContext(OWNER_PRINCIPAL)
     recipient = Principal(PrincipalKind.manager, item.id)
+    # The route opens its own connection to the tmp_db file through the app's factory.
+    request = cast(
+        Request,
+        SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(conn_factory=partial(connect, str(_tmp_db_path(tmp_db))))
+            )
+        ),
+    )
 
     async def exercise() -> None:
         first = await send_message(system, tmp_db, clock, owner, recipient, "First")
@@ -77,7 +89,7 @@ def test_saved_model_and_null_effort_reach_reused_conversation(
         }
         assert (
             await api.put_manager_launch_configuration(
-                item.id, saved, tmp_db, RequestContext(CHIEF_PRINCIPAL), clock
+                item.id, saved, request, RequestContext(CHIEF_PRINCIPAL), clock
             )
             == saved
         )
@@ -102,7 +114,9 @@ def test_saved_model_and_null_effort_reach_reused_conversation(
         assert system.backend_model(first.conversation_id) == "gpt-6.1-sol"
         other_backend = {**saved, "employee_backend": "claude"}
         with pytest.raises(PlannerError, match="cannot change backend"):
-            await api.put_manager_launch_configuration(item.id, other_backend, tmp_db, owner, clock)
+            await api.put_manager_launch_configuration(
+                item.id, other_backend, request, owner, clock
+            )
         # The stand-in's first turn remains active. The changed choice waits in its queue.
         second = await send_message(system, tmp_db, clock, owner, recipient, "Next")
         assert second.conversation_id == first.conversation_id
@@ -139,7 +153,6 @@ def test_saved_model_and_null_effort_reach_reused_conversation(
             conversation_start.manager_resolve(tmp_db, latest),
             conversation_id=first.conversation_id,
             sender_label="Panels",
-            reply_requested=False,
             required_manager_id=item.id,
         )
         assert notice.conversation_id == first.conversation_id
@@ -148,7 +161,7 @@ def test_saved_model_and_null_effort_reach_reused_conversation(
         await api.put_manager_launch_configuration(
             item.id,
             {**saved, "employee_launch_model": "idle-steer-model"},
-            tmp_db,
+            request,
             RequestContext(CHIEF_PRINCIPAL),
             clock,
         )
@@ -167,6 +180,10 @@ def test_saved_model_and_null_effort_reach_reused_conversation(
         latest = data.read_manager(tmp_db, item.id).item
 
     asyncio.run(exercise())
+
+
+def _tmp_db_path(conn: Connection) -> Path:
+    return Path(next(row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"))
 
 
 def test_legacy_alias_is_actionable_and_disabled_choice_is_refused(tmp_db: Connection) -> None:

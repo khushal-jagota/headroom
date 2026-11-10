@@ -1,0 +1,7 @@
+[Unit]
+Description=Panels Worker CPU share
+
+[Slice]
+MemoryAccounting=yes
+CPUAccounting=yes
+CPUWeight=10

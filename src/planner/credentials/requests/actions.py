@@ -9,7 +9,7 @@ from typing import Literal, cast
 from uuid import uuid4
 
 from planner.conversation.events import ConversationEventPayload
-from planner.core.authctx import RequestContext, normalize_manager_identity
+from planner.core.authctx import RequestContext
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.credentials import actions as credential_actions
 from planner.credentials import data as credential_data
@@ -51,8 +51,6 @@ def origin_conversation(conn: sqlite3.Connection, ctx: RequestContext) -> str:
     elif principal.kind == PrincipalKind.manager:
         manager = manager_data.read_manager(conn, principal.id).item
         current = conversation_start.read_agent_conversation(conn, manager.manager_agent_key)
-    elif principal.kind == PrincipalKind.goal:
-        current = conversation_start.read_agent_conversation(conn, "goal_" + principal.id)
     else:
         current = None
     if current != origin:
@@ -73,14 +71,9 @@ def origin_conversation(conn: sqlite3.Connection, ctx: RequestContext) -> str:
         and identity.get("PLAN_TICKET_ID") == principal.id
         or principal.kind == PrincipalKind.chief
         and actor == "chief"
-        or principal.kind == PrincipalKind.goal
-        and actor == "goal"
-        and identity.get("PLAN_GOAL_ID") == principal.id
         or principal.kind == PrincipalKind.manager
-        and actor in {"manager", "sprint_item_supervisor"}
-        and normalize_manager_identity(
-            identity.get("PLAN_MANAGER_ID"), identity.get("PLAN_SPRINT_ITEM_ID")
-        )
+        and actor == "manager"
+        and identity.get("PLAN_MANAGER_ID")
         == principal.id
     )
     if not matches or identity.get("PLAN_CONVERSATION_ID", origin) != origin:

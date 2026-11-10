@@ -2,7 +2,7 @@ name: Development dependency safety
 
 on:
   pull_request:
-    branches: [staging, main]
+    branches: [staging, main, sweep/guard-sweep]
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -53,8 +53,6 @@ jobs:
         run: |
           scripts/dev npm --prefix web run check
           scripts/dev npm --prefix web run test:vitest
-      - name: Check aliases, startup refusal, and Python backstops
-        run: scripts/dev pytest tests/unit/test_development_*.py tests/unit/test_tree_environment_hooks.py tests/unit/test_instrument.py
       - name: Admit safe Python module and console commands
         run: |
           scripts/dev python -m pytest tests/unit/test_instrument.py

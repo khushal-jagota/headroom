@@ -18,7 +18,6 @@ from planner.conversation.events import (
     UserInputRequestedEventPayload,
 )
 from planner.conversation.lifecycle import LifecycleFact
-from planner.core.contracts import Principal
 
 if TYPE_CHECKING:
     from planner.conversation.storage import StoredConversationEvent
@@ -40,8 +39,6 @@ class TurnEndingContext:
     automatic_compaction: bool
     compaction_confirmed: bool
     automatic_notice: bool
-    prompt_senders: tuple[Principal, ...]
-    explicit_reply_recipients: tuple[Principal, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,8 +81,6 @@ class RunningTurn:
     pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
         default_factory=dict
     )
-    prompt_senders: dict[Principal, None] = field(default_factory=dict)
-    explicit_reply_recipients: set[Principal] = field(default_factory=set)
     automatic_notice: bool = False
     ended: bool = False
     callbacks_revoked: bool = False

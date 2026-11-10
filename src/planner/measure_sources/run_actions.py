@@ -12,7 +12,6 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import new_id
 from planner.datasets import data as datasets_data
 from planner.measure_sources import data
-from planner.measure_sources.authority import require_author
 from planner.measure_sources.contracts import (
     FailureCode,
     MeasureSource,
@@ -99,7 +98,6 @@ def request_run(
 ) -> SourceRun:
     with transaction(conn):
         source = data.read_source(conn, source_id)
-        require_author(conn, principal, source)
         revision, _ = _selected_script(source)
         if revision != expected_script_revision:
             raise PlannerError(ErrorCode.stale_claim, "selected source script changed")

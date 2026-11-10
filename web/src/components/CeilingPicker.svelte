@@ -88,7 +88,7 @@
       .map((option) => ({ value:option.value, name:option.label }))
   ]);
   let holders = $derived(holderOptionsFor(manager, holder).map((option) => ({
-    value: option.value, name: pendingStage ? (holderLabel ? holderLabel(holderFromValue(option.value,manager)) : option.label) : `${option.label}${option.detail ? ` · ${option.detail}` : ""}`, detail:pendingStage ? undefined : option.detail
+    value: option.value, name: pendingStage ? (holderLabel ? holderLabel(holderFromValue(option.value)) : option.label) : `${option.label}${option.detail ? ` · ${option.detail}` : ""}`, detail:pendingStage ? undefined : option.detail
   })));
   let rows = $derived((showing === "ceiling" ? ceilingOptions : holders) as readonly ListboxPickerItem[]);
   let draftHolderValue = $derived(holderValue(draftHolder ?? holder));
@@ -150,7 +150,7 @@
       if (holderTouched) return commit();
       return show("holder");
     }
-    draftHolder = holderFromValue(value, manager);
+    draftHolder = holderFromValue(value);
     holderTouched = true;
     // The approve row starts with no ceiling at all and cannot approve without one, so
     // the unanswered half is asked for rather than guessed. A held stage cannot be
@@ -233,18 +233,18 @@
   .document :global(.listbox-picker) { display:block; width:100%; }
   .document :global([data-scope-ceiling]) { display:block; width:fit-content; max-width:calc(100% + 24px); }
   .document :global(.listbox-picker-chevron) { display:inline-block; vertical-align:middle; width:6px; height:6px; margin-left:4px; font-size:0; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform:translateY(-2px) rotate(45deg); }
-  .document :global([data-scope-ceiling] b) { font-weight:600; color:var(--text-strong); }
+  .document :global([data-scope-ceiling] b) { font-weight:660; color:var(--text-strong); }
   .document :global(.listbox-picker-panel.rail) { width:404px; max-width:calc(100vw - 48px); grid-template-columns:168px minmax(0,1fr); border:0; border-radius:var(--radius-md); box-shadow:var(--shadow-float); background:var(--surface-2); }
   .document :global(.listbox-picker-panel.fitted) { grid-template-rows:auto minmax(0,1fr) auto; }
   .document :global(.picker-rail) { grid-column:1; grid-row:1 / span 3; background:var(--surface-recessed); border:0; padding:var(--space-2); }
   .document :global(.picker-rail-row) { font-family:var(--font-ui); padding:8px var(--space-2); border-radius:var(--radius-sm); white-space:normal; }
-  .document :global(.picker-rail-row-label) { font-size:11px; color:var(--text-faintest); }
+  .document :global(.picker-rail-row-label) { font-size:var(--type-small); color:var(--text-faintest); }
   .document :global(.picker-rail-row-detail) { max-width:none; font-size:13px; color:var(--text-default); white-space:normal; overflow:visible; }
   .document :global(.picker-rail-row.on) { background:var(--surface-2); }
-  .document-list-label { grid-column:2; grid-row:1; padding:14px 16px 4px; font-family:var(--font-ui); font-size:11px; font-weight:600; line-height:1.6; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faintest); }
+  .document-list-label { grid-column:2; grid-row:1; padding:14px 16px 4px; font-family:var(--font-ui); font-size:var(--type-small); font-weight:660; line-height:1.6; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faintest); }
   .document :global(.listbox-picker-list) { grid-column:2; grid-row:2; padding:0 var(--space-2); }
   .document :global(.listbox-picker-option) { font-family:var(--font-ui); font-size:13px; line-height:1.6; padding:7px var(--space-2); gap:var(--space-2); border-radius:var(--radius-sm); color:var(--text-faint); }
-  .document :global(.listbox-picker-option.on) { font-weight:600; color:var(--text-strong); }
+  .document :global(.listbox-picker-option.on) { font-weight:660; color:var(--text-strong); }
   .document :global(.listbox-picker-option.cursor) { background:transparent; background-image:var(--interaction-hover); color:var(--text-strong); }
   @media (max-width:480px) { .document :global(.listbox-picker-panel.rail) { grid-template-columns:40% minmax(0,1fr); } }
   .holder-detail { color:var(--text-faintest); font-size:var(--type-xs); overflow-wrap:anywhere; }

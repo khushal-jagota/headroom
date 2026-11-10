@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount, tick, untrack, type Snippet } from 'svelte';
+  import Button from "./Button.svelte";
+  import { onMount, untrack, type Snippet } from 'svelte';
   import { createQuery } from '@tanstack/svelte-query';
   import type { ReviewMessageItem } from '../lib/types';
   import { queries } from '../lib/queryCatalogue';
@@ -7,8 +8,7 @@
   import { navigationApplication } from '../lib/navigation/application.svelte';
   import { PlannerFetchError } from '../lib/api';
   import { mutateJson } from '../lib/mutate';
-  import { conversationOwnerImpact } from '../lib/workspaceNavigationImpact';
-  import { ticketCommandImpact } from '../lib/ticketNavigationImpact';
+
   import { readConversation, readEventsAfter, advanceOwnerRead, messageContentOf, type DeliveredMessage } from '../lib/conversation/wire';
   import { mintOutgoingMessage, recallOutgoingMessages, rememberOutgoingMessages, type OutgoingMessage } from '../lib/conversation/outgoing';
   import { readComposerDraft, writeComposerDraft } from '../lib/conversation/composerDraft';
@@ -25,9 +25,11 @@
   import SkeletonRegion from './SkeletonRegion.svelte';
   import ErrorLine from './ErrorLine.svelte';
 
-  let { item, onSkip, onResolved, onRendered, onBusy, footer, embedded=false }: {
+  let { item, onSkip, onResolved, onBusy, footer, decisionActions, embedded=false }: {
+    /** The queue's Skip / Open ticket for the Ticket this message belongs to, in the card's action row. */
+    decisionActions?:Snippet;
     embedded?:boolean; item:ReviewMessageItem; onSkip:()=>void; onResolved:(through:number)=>void;
-    onRendered?:()=>void; onBusy?:(busy:boolean)=>void; footer?:Snippet;
+    onBusy?:(busy:boolean)=>void; footer?:Snippet;
   } = $props();
   const navigation = navigationApplication()!;
   // The route keys this component by conversation, never by changing attention facts.
@@ -66,8 +68,6 @@
       if(destroyed)return;
       events=unreadOwnerMessages(rows,view.owner_read_through_sequence);
       loaded=true;
-      await tick();
-      onRendered?.();
       if(events.length===0 && !text && !files.length && !images.length && !attempt) onResolved?.(view.owner_read_through_sequence);
     } catch(problem) { if(!destroyed) error=problem; }
   }
@@ -129,12 +129,12 @@
       }
       const sending=attempt;
       const effective=navigation.state.effective;
-      const impact=item.owner_kind==='ticket' ? ticketCommandImpact(effective,item.owner_id,'conversation') : conversationOwnerImpact(effective?navigation.presentationFor(effective):undefined,item.owner_kind,item.owner_id);
+
       retryingUnknown=true;
-      const result=await navigation.runCommand(impact,responseMetadata=>mutateJson<DeliveredMessage>(reviewReplyEndpoint(item),{method:'POST',responseMetadata,body:{
+      const result=await mutateJson<DeliveredMessage>(reviewReplyEndpoint(item),{method:'POST',body:{
         conversation_id:conversationId,content:sending.content,sender_label:'owner',mode:'queue',sender_message_id:sending.messageId,
         sent_at_unix_milliseconds:sending.sentAtUnixMilliseconds,owner_read_through_sequence:sending.ownerReadThroughSequence
-      }}),'send review reply');
+      }});
       if(result.fate==='started' || result.fate==='injected' || result.fate==='queued') { await accepted(sending.ownerReadThroughSequence!); }
       else { if(result.fate!=='uncertain')await clearAttempt(); error=new Error(fateSentence(result) || 'The reply did not reach the agent.'); }
     } catch(problem){
@@ -145,16 +145,24 @@
 </script>
 
 <div bind:this={card} data-review-card data-review-item-type="message" data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
+  {#snippet ownActions()}
+    {#if embedded}<div class="review-ticket-decision-line review-ticket-decision-line--inline">
+      <Button variant="ghost" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
+    </div>{/if}
+    {@render decisionActions?.()}
+  {/snippet}
   {#if !embedded}
-  <div class="review-ticket-decision-line">
-    <button data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip &rsaquo;</button>
-    <a data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={event=>{if(busy)event.preventDefault();}}>Open conversation &rsaquo;</a>
+  <!-- Skip and Open conversation stand in the page's top band at the right, as staging. -->
+  <div class="review-eyebrow review-eyebrow--decisions">
+    <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions>
+      <Button variant="ghost" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>
+      <Button variant="ghost" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
+    </div>
   </div>
   <h1 class="review-ticket-title">{item.title}</h1>
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
-  {#if item.owner_kind !== "goal"}<div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>{/if}
+  <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>
   {/if}
-  {#if embedded}<div class="review-ticket-decision-line"><a data-open-conversation href={reviewMessageHref(item)}>Open conversation &rsaquo;</a></div>{/if}
   <SkeletonRegion shape="block" loading={!loaded && !error} loadingText="Loading messages...">
     {#if loaded}
       <div class="review-message-card">
@@ -164,22 +172,37 @@
         <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
           {disabled} sendDisabled={busy || !ready} sending={busy}
           sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>
-        <div class="review-read-row"><button data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</button></div>
+        <div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div><Button variant="ghost" class="review-card-main" data-review-mark-read disabled={busy || intakeBusy || !through || voiceActive} onclick={()=>void markRead()}>Mark read</Button></div>
         {#if error}<ErrorLine {error}/>{/if}
       </div>
-    {:else if error}<ErrorLine {error}/><button class="button button--quiet" onclick={()=>void load()}>Retry</button>{/if}
+    {:else if error}<ErrorLine {error}/><div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div><Button variant="secondary" class="review-card-main" onclick={()=>void load()}>Retry</Button></div>{/if}
   </SkeletonRegion>
+  <!-- Until the card has drawn, the actions wait below it rather than vanish. -->
+  {#if !loaded && !error}<div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div></div>{/if}
 </div>
 {@render footer?.()}
 
 <style>
+  /* Every button row sits at the right, the most important action furthest right: the actions
+     about the queue, 16px, then Mark read (or Retry). */
+  .review-card-utilities{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:var(--space-2);min-width:0}
+  .review-card-utilities :global(.review-ticket-decision-line){flex-wrap:wrap;justify-content:flex-end}
+  .review-read-row:has(:global(.review-card-main)) .review-card-utilities{margin-right:calc(var(--space-4) - var(--space-2))}
+  /* Skip and Open conversation stand in the page's top band (as staging, owner's choice); the
+     card's own row keeps Mark read at the right, and Open conversation when the card sits inside
+     a Ticket's item. */
+  .review-eyebrow--decisions{justify-content:flex-end}
+  /* On a desktop the quiet buttons' words line up with the column's edge; on a phone the column
+     has no room past its edge, so they stay inside it. */
+  .review-ticket-decision-line--top{padding:0;margin-right:calc(var(--space-3) * -1)}
+  @media (max-width:720px){.review-ticket-decision-line--top{margin-right:0}}
   .review-message-card{margin-top:var(--space-5);padding:var(--space-5);background:var(--surface-2);border-radius:var(--radius-lg)}
   .review-message-run{font-family:var(--font-ui);font-size:var(--type-md);line-height:1.68}
   .review-message-said+.review-message-said{position:relative;margin-top:var(--space-5);padding-top:var(--space-4)}
   .review-message-said+.review-message-said::before{content:"";position:absolute;inset-block-start:0;inset-inline-start:0;inline-size:var(--space-6);border-block-start:var(--border-hairline) solid var(--text-faintest);opacity:.55}
-  .review-recap-request{margin-top:var(--space-2);font-size:var(--type-sm)}
-  button:disabled{opacity:.5;cursor:default}
-  .review-read-row button:hover:not(:disabled){background-image:var(--interaction-hover);color:var(--text-strong)}
-  .review-read-row{margin-top:var(--space-3);margin-left:calc(var(--space-3) * -1)}
-  .review-read-row button{font:inherit;font-size:var(--type-sm);line-height:1.6;padding:8px 12px;border:0;border-radius:var(--radius-pill);background:none;color:var(--text-faint);cursor:pointer}
+  .review-recap-request{display:flex;justify-content:flex-end;margin-top:var(--space-2);font-size:var(--type-sm)}
+  /* Where the row does not fit, its buttons wrap at the right; none is ever cut off. Mark
+     read keeps staging's 37px height. */
+  .review-read-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:var(--space-2);margin-top:var(--space-3)}
+  .review-read-row :global(.review-card-main.button){height:auto;min-height:37px;line-height:1.6}
 </style>

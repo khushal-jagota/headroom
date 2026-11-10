@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import threading
 import time
 from dataclasses import replace
@@ -105,15 +106,28 @@ time.sleep(30)
     pid, descendant = json.loads(marker.read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
-    # The source's child is terminated too. Its orphaned exit status belongs to init.
-    status = Path(f"/proc/{descendant}/stat")
+    # The source's child is killed with its group, long before its own 30 s sleep ends.
+    # SIGKILL is delivered asynchronously, so wait for the exit rather than sample it.
+    # Its orphaned exit status belongs to init, which may already have reaped it.
+    assert _exits(descendant, within_seconds=5)
+
+
+def _exits(pid: int, *, within_seconds: float) -> bool:
+    """A zombie or a reaped PID has exited. A pidfd becomes readable when it exits."""
     try:
-        process_state = status.read_text().split()[2]
-    except FileNotFoundError:
-        pass  # Reaping can remove the process between an existence check and a read.
-    else:
-        assert process_state == "Z"
-    assert result.metrics.elapsed_milliseconds < 3000
+        descriptor = os.pidfd_open(pid)
+    except ProcessLookupError:
+        return True
+    try:
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except FileNotFoundError:
+            return True
+        if state == "Z":
+            return True
+        return bool(select.select([descriptor], [], [], within_seconds)[0])
+    finally:
+        os.close(descriptor)
 
 
 def test_cancel_before_and_during_execution(tmp_path: Path) -> None:

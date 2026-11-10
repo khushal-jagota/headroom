@@ -7,8 +7,8 @@ state, and process-local publication registrations share the same isolated lifet
 Tests whose subject is process ownership or special configuration keep using the
 function-scoped ``server_factory`` path. Browser contexts come from pytest-playwright's
 session ``browser``; the ``open_page`` / ``cli`` / ``api`` helpers drive the surfaces.
-Every Playwright wait carries an explicit ``timeout``; the only sleep is the worker-step
-readiness poll's 0.1s interval, which polls a condition inside a boot budget.
+Every Playwright wait carries an explicit ``timeout``. A server is ready at its first
+``/api/meta`` answer on a listener the fixture bound for it, with no boot budget.
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from playwright.sync_api import (
     sync_playwright,
 )
 from tests.e2e.harness import (
-    BOOT_BUDGET_S,
     FAKE_NOW,
     PLAN_BIN,
     REPO_ROOT,
@@ -37,6 +36,7 @@ from tests.e2e.harness import (
     JsonObject,
     ServerHandle,
 )
+from tests.support.fresh_schema_template import install_fresh_schema_template
 from tests.support.server_fixtures import (  # noqa: F401 - fixture registration
     _reusable_server,
     api,
@@ -50,7 +50,6 @@ from tests.support.server_fixtures import (
 )
 
 __all__ = [
-    "BOOT_BUDGET_S",
     "FAKE_NOW",
     "PLAN_BIN",
     "REPO_ROOT",
@@ -62,6 +61,10 @@ __all__ = [
 
 
 BROWSER_CHECK_FAILED = pytest.StashKey[bool]()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    install_fresh_schema_template()
 
 
 # Capture Linux's browser-cache location during collection, before test setup

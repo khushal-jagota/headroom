@@ -19,7 +19,6 @@ import type {
   PlanEntry,
   PromptDeliveryMode,
   PromptDeliveryRefusalReason,
-  Principal,
   UserInputAnswers,
   UserInputQuestion
 } from "./wire";
@@ -93,13 +92,6 @@ export type TranscriptRow =
     }
   | {
       key: string;
-      kind: "explicit_reply_missing";
-      sequence: number;
-      createdAt: number;
-      promptSender: Principal;
-    }
-  | {
-      key: string;
       kind: "tool_call";
       sequence: number;
       createdAt: number;
@@ -168,6 +160,7 @@ export type TranscriptRow =
   /** Where the backend cut the thread. Drawn as the seam it is, so a reader knows why
    *  what came before has gone rather than thinking the agent forgot. */
   | { key: string; kind: "context_compacted"; sequence: number; createdAt: number }
+  | { key: string; kind: "command_reply"; sequence: number; createdAt: number; replyText: string }
   | {
       key: string;
       kind: "turn_ended";
@@ -200,7 +193,8 @@ const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   running_turn_cannot_accept_steer: "the running turn cannot accept steering",
   message_cannot_be_steered: "this message content cannot be steered",
   backend_rejected_steer: "the backend rejected steering for this turn",
-  command_cannot_join_running_turn: "a command cannot join a turn that is already running"
+  command_cannot_join_running_turn: "a command cannot join a turn that is already running",
+  remote_steer_not_delivered: "the Mac did not take this steer in time"
 };
 
 export function refusalSentence(reason: PromptDeliveryRefusalReason, detail?: string | null): string {
@@ -377,15 +371,6 @@ export function transcriptRows(
           toOwner: event.kind === "message_to_owner"
         });
         break;
-      case "explicit_reply_missing":
-        rows.push({
-          key: `e${sequence}`,
-          kind: "explicit_reply_missing",
-          sequence,
-          createdAt,
-          promptSender: event.payload.prompt_sender
-        });
-        break;
       case "tool_call_started":
         toolCallRowIndex.set(event.payload.tool_call_id, rows.length);
         rows.push({
@@ -560,6 +545,15 @@ export function transcriptRows(
           createdAt
         });
         break;
+      case "command_reply":
+        rows.push({
+          key: `e${sequence}`,
+          kind: "command_reply",
+          sequence,
+          createdAt,
+          replyText: event.payload.reply_text
+        });
+        break;
       case "turn_ended":
         // Every ask still open belonged to the turn that just ended, so it ended too.
         killOpenAsks(rows, askRowIndex, "turn_ended");
@@ -609,20 +603,6 @@ export function transcriptRows(
   }
 
   return rows;
-}
-
-export function principalLabel(principal: Principal): string {
-  switch (principal.kind) {
-    case "owner": return "owner";
-    case "chief": return "Chief";
-    case "ticket": return `Ticket ${principal.id}`;
-    case "manager": return `Manager ${principal.id}`;
-    case "goal": return `Goal ${principal.id}`;
-  }
-}
-
-export function explicitReplyMissingSentence(principal: Principal): string {
-  return `No explicit message was sent to ${principalLabel(principal)}.`;
 }
 
 function newestCreatedAt(feed: ConversationFeed): number {
@@ -716,6 +696,18 @@ export function workedSentence(durationSeconds: number | null): string {
 export function stoppedSentence(durationSeconds: number | null): string {
   if (durationSeconds === null || durationSeconds <= 0) return "You stopped this response";
   return `You stopped after ${formatDuration(durationSeconds)}`;
+}
+
+/** Background work the agent started that outlived its turn, named by its own description. */
+export function backgroundWorkSentence(taskDescriptions: readonly string[]): string {
+  return `Background work running: ${taskDescriptions.join(", ")}`;
+}
+
+/** The background tasks a conversation shows: none while a turn runs or activity is unknown. */
+export function backgroundTasksAfterTheTurn<T>(
+  status: { turn_running: boolean | null; background_tasks: readonly T[] } | null | undefined
+): readonly T[] {
+  return status?.turn_running === false ? status.background_tasks : [];
 }
 
 /** The live counter on a turn that is still going. */

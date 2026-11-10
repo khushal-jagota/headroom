@@ -27,9 +27,11 @@ class LocaleBackendChildFactory:
     def retained_runs(self) -> tuple[RetainedBackendRun, ...]:
         return self.remote_factory.retained_runs()
 
-    def recover(self, reference: ChildReference) -> BackendChild | None:
+    def recover(
+        self, reference: ChildReference, *, event_sink: BackendEventSink | None = None
+    ) -> BackendChild | None:
         """Recover only retained authority, without allocation or native execution."""
-        return self.remote_factory.recover(reference)
+        return self.remote_factory.recover(reference, event_sink=event_sink)
 
     def __call__(
         self,

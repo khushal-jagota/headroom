@@ -6,10 +6,13 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 
 from planner.core import ticket_blocks
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
+from planner.goals import data as goals_data
+from planner.goals import views as goals_views
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.managers import data as managers_data
 from planner.managers.contracts import (
@@ -20,7 +23,7 @@ from planner.managers.contracts import (
 from planner.runtime import conversation_start
 from planner.tickets import derivation
 from planner.tickets.logic.recap import recap_preview
-from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.store import workflow_from_row
 
 # --- serializers ---------------------------------------------------------------
 
@@ -73,14 +76,13 @@ def manager_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
         (item_id,),
     ).fetchall()
     result: list[JsonDict] = []
-    registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     for r in rows:
         stage = str(r["stage"])
         facts = derivation.derive_ticket_facts(
             derivation.stored_facts_from_row(r, has_live_blocker=str(r["id"]) in blocked_ticket_ids)
         )
-        worker_type_definition = registry.require(str(r["worker_type"]))
+        worker_type_definition = workflow_from_row(r)
         gating_field = worker_type_definition.gating_field(stage)
         result.append(
             {
@@ -105,7 +107,7 @@ def manager_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                 "gating_field": gating_field,
                 "blocked": facts.blocked,
                 "employee_backend": str(r["employee_backend"]),
-                "worker_type": str(r["worker_type"]),
+                "worker_type": r["worker_type"],
             }
         )
     return result
@@ -155,15 +157,23 @@ def manager_workspace(conn: sqlite3.Connection, item_id: str) -> JsonDict:
         return result
 
 
-def manager_workspace_document(conn: sqlite3.Connection, item_id: str) -> ManagerWorkspaceDocument:
-    """Read only the selected document, without child, catalog, or attention reads."""
+def manager_workspace_document(
+    conn: sqlite3.Connection, item_id: str, now: datetime
+) -> ManagerWorkspaceDocument:
+    """Read the selected document and held goals in one snapshot, without catalogs."""
     with _read_snapshot(conn):
-        row = conn.execute("SELECT goal, recap FROM managers WHERE id=?", (item_id,)).fetchone()
+        row = conn.execute(
+            "SELECT goal, recap FROM managers WHERE id=?", (item_id,)
+        ).fetchone()
         if row is None:
             raise PlannerError(ErrorCode.not_found, "manager not found", {"id": item_id})
         return {
             "goal": str(row[0]),
             "recap": str(row[1]),
+            "goals": [
+                goals_views.goal_json(conn, goal, now)
+                for goal in goals_data.list_goals(conn, holder_id=item_id)
+            ],
         }
 
 

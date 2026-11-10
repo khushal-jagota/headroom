@@ -98,14 +98,14 @@
     color: var(--text-faint);
     font: inherit;
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     line-height: 1;
     padding: 0 var(--space-3);
     cursor: pointer;
   }
   button:hover { color: var(--text-strong); }
   button:focus-visible {
-    outline: var(--border-strong) solid var(--accent-bright);
+    outline: var(--focus-width) solid var(--focus-ring);
     outline-offset: -2px;
   }
   button[aria-checked="true"] {
@@ -123,7 +123,7 @@
     border-radius: var(--radius-pill);
     color: var(--text-faint);
     font-size: var(--type-sm);
-    font-weight: 500;
+    font-weight: var(--weight-small);
     line-height: 1.4;
   }
   .editable-segment[data-selected="true"] {

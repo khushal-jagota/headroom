@@ -32,6 +32,8 @@ def test_agent_uses_account_home_gui_and_stable_data_with_spaces(tmp_path: Path)
     )
     assert plist["EnvironmentVariables"]["PATH"].split(":")[0] == str(configuration.venv / "bin")
     assert plist["KeepAlive"] == {"SuccessfulExit": False}
+    # Foreground scheduling, so the lease is not deferred while agents build.
+    assert plist["ProcessType"] == "Interactive"
     automatic_triggers = {
         "WatchPaths",
         "QueueDirectories",

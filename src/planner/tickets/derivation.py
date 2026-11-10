@@ -22,8 +22,8 @@ from enum import StrEnum
 
 from planner.core import ticket_blocks
 from planner.tickets.contracts import TicketStatus, WorkerStepClaim
-from planner.worker_types.configuration import configured_worker_type_registry
-from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkerTypeDefinition
+from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkflowDefinition
+from planner.worker_types.store import workflow_from_row
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,10 +32,11 @@ class StoredTicketFacts:
 
     ticket_id: str
     stage: str
-    worker_type: str
+    worker_type: str | None
     worker_step_claim: WorkerStepClaim
     has_pending_proposal: bool
     has_live_blocker: bool
+    workflow: WorkflowDefinition | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,12 +83,12 @@ RESTS_PREDICATE = "t.worker_step_claim = 'none' AND t.pending_proposal IS NULL"
 
 
 def derive_ticket_facts(
-    stored: StoredTicketFacts, *, worker_type_definition: WorkerTypeDefinition | None = None
+    stored: StoredTicketFacts, *, worker_type_definition: WorkflowDefinition | None = None
 ) -> TicketFacts:
     ticket_status = derive_ticket_status(stored)
-    definition = worker_type_definition or configured_worker_type_registry().require(
-        stored.worker_type
-    )
+    definition = worker_type_definition or stored.workflow
+    if definition is None:
+        raise ValueError("Ticket facts require the saved workflow")
     gating_field = definition.gating_field(stored.stage)
     return TicketFacts(
         ticket_id=stored.ticket_id,
@@ -103,15 +104,16 @@ def agent_state(
     ticket_status: TicketStatus,
     *,
     stage: str,
-    turn_is_running: bool,
+    agent_is_working: bool,
     last_turn_failed: bool,
 ) -> AgentState:
     """Current activity, with a completed Ticket's failed turn kept as history.
 
-    A live turn outranks errors. An explicit failed claim stays an error at any Stage.
+    The agent is working while a turn runs or a background task it started is still
+    running. Work outranks errors. An explicit failed claim stays an error at any Stage.
     Only the fallback to conversation history stops once the Ticket is done.
     """
-    if turn_is_running:
+    if agent_is_working:
         return AgentState.working
     if ticket_status is TicketStatus.errored:
         return AgentState.errored
@@ -140,7 +142,8 @@ def stored_facts_from_row(row: sqlite3.Row, *, has_live_blocker: bool) -> Stored
     return StoredTicketFacts(
         ticket_id=str(row["id"]),
         stage=str(row["stage"]),
-        worker_type=str(row["worker_type"]),
+        worker_type=row["worker_type"],
+        workflow=workflow_from_row(row) if "workflow_json" in row.keys() else None,
         worker_step_claim=WorkerStepClaim(str(row["worker_step_claim"])),
         has_pending_proposal=row["pending_proposal"] is not None,
         has_live_blocker=has_live_blocker,
@@ -156,7 +159,7 @@ def load_ticket_facts(
     """
     if ticket_ids is not None and not ticket_ids:
         return {}
-    columns = "id, stage, worker_type, worker_step_claim, pending_proposal"
+    columns = "id, stage, worker_type, workflow_json, worker_step_claim, pending_proposal"
     if ticket_ids is None:
         rows = conn.execute(f"SELECT {columns} FROM tickets").fetchall()
     else:

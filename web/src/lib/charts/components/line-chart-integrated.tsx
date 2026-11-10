@@ -146,13 +146,21 @@ function TickLabel({ value, scale, height, format }: { value: number; scale: Sca
   </motion.span>;
 }
 
-/** Axis labels that fit: at most one per 76 pixels, counted back from the latest so the newest date always shows. */
+/** Axis labels that fit: at most one per 76 pixels, from the first point to the latest, so the
+ *  axis is dated from where the line starts to where it ends. The steps between labels are
+ *  equal whenever a step that divides the run leaves at least half the room filled; otherwise
+ *  they differ by one point at most. */
 function axisPicks(data: LineChartDatum[], width: number) {
   const labeled = data.flatMap((item, index) => item.axisLabel ? [index] : []);
   if (!width || !labeled.length) return [];
   const room = Math.max(2, Math.floor(width / 76));
-  const stride = Math.ceil(labeled.length / room);
-  return labeled.reverse().filter((_, rank) => rank % stride === 0).reverse();
+  if (labeled.length <= room) return labeled;
+  const run = labeled.length - 1;
+  let steps = room - 1;
+  for (let even = room - 1; even >= Math.ceil((room - 1) / 2); even -= 1) {
+    if (run % even === 0) { steps = even; break; }
+  }
+  return Array.from({ length: steps + 1 }, (_, rank) => labeled[Math.round(rank * run / steps)]!);
 }
 
 export function LineChart({ data, series, label, unit = "", height = 220, domain, formatValue, formatTick = value => compact.format(value), integerTicks = false, hiddenSeries, onActiveChange, onSelect, loading = false, emptyLabel = "No data for this range", categoryLabel = "Date", curve = "smooth", ref, className }: LineChartProps) {
@@ -407,13 +415,13 @@ export function LineChart({ data, series, label, unit = "", height = 220, domain
         onBlur={() => { pointerOrigin.current = null; setInspection(current => current?.source === "mouse" ? current : null); }}
         onFocus={event => { if (pointerOrigin.current === null && event.currentTarget.matches(":focus-visible") && !empty) setInspection(current => current ?? { source: "keyboard", index: last }); }}>
         <svg className={styles.svg} width="100%" height={height} aria-hidden="true" focusable="false">
-          <defs>{series.filter(line=>line.compareTo || line.datedComparisons).map(line=><linearGradient key={line.key} id={`${uid}-${line.key}-tone`} gradientUnits="userSpaceOnUse" x1="0%" x2="100%" y1="0%" y2="0%"/>)}<clipPath id={`${uid}-draw`} clipPathUnits="userSpaceOnUse"><rect ref={clip} x={-8} y={-16} width={0} height={height + 32} /></clipPath></defs>
+          <defs>{series.filter(line=>line.compareTo || line.datedComparisons).map(line=><linearGradient key={line.key} id={`${uid}-${line.key}-tone`} gradientUnits="userSpaceOnUse" x1="0%" x2="100%" y1="0%" y2="0%"/>)}{series.map((line, at) => <linearGradient key={`${line.key}-area`} id={`${uid}-${line.key}-area`} x1="0" x2="0" y1="0" y2="1"><stop offset="0" style={{ stopColor: colorOf(line, at), stopOpacity: .16 }} /><stop offset="1" style={{ stopColor: colorOf(line, at), stopOpacity: 0 }} /></linearGradient>)}<clipPath id={`${uid}-draw`} clipPathUnits="userSpaceOnUse"><rect ref={clip} x={-8} y={-16} width={0} height={height + 32} /></clipPath></defs>
           <AnimatePresence initial={false}>{ticks.slice(1).map(value => <Gridline key={value} value={value} scale={scale} height={height} />)}</AnimatePresence>
           <line className={styles.baseline} x1={0} x2="100%" y1={height - .5} y2={height - .5} />
           <line ref={crosshair} className={styles.crosshair} y1={TOP - 4} y2={height} />
           <g className={styles.series} clipPath={`url(#${uid}-draw)`}>
             {series.map((line, at) => <g key={line.key} ref={node => { if (node) groups.current.set(line.key, node); else groups.current.delete(line.key); }} style={{ "--series": colorOf(line, at) } as CSSProperties}>
-              {(line.area ?? at === 0) && <path ref={node => { if (node) areas.current.set(line.key, node); else areas.current.delete(line.key); }} className={styles.area} />}
+              {(line.area ?? at === 0) && <path ref={node => { if (node) areas.current.set(line.key, node); else areas.current.delete(line.key); }} className={styles.area} style={{ fill: `url(#${uid}-${line.key}-area)` }} />}
               <path ref={node => { if (node) lines.current.set(line.key, node); else lines.current.delete(line.key); }} data-line={line.key} className={styles.line} data-dashed={line.dashed || undefined} />
             </g>)}
           </g>

@@ -25,15 +25,11 @@ from planner.core.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 
-X_PLAN_GOAL_ID: Final = "X-Plan-Goal-ID"
-PLAN_GOAL_ID_SCOPE_KEY: Final = "planner.request_goal_id"
 X_PLAN_CONVERSATION_ID: Final = "X-Plan-Conversation-ID"
 PLAN_CONVERSATION_ID_SCOPE_KEY: Final = "planner.request_conversation_id"
 X_PLAN_ACTOR: Final = "X-Plan-Actor"
 X_PLAN_TICKET_ID: Final = "X-Plan-Ticket-ID"
 X_PLAN_MANAGER_ID: Final = "X-Plan-Manager-ID"
-X_PLAN_SPRINT_ITEM_ID: Final = "X-Plan-Sprint-Item-ID"
-PLAN_SPRINT_ITEM_ID_SCOPE_KEY: Final = "planner.request_sprint_item_id"
 PLAN_ACTOR_SCOPE_KEY: Final = "planner.request_actor"
 PLAN_TICKET_ID_SCOPE_KEY: Final = "planner.request_ticket_id"
 PLAN_MANAGER_ID_SCOPE_KEY: Final = "planner.request_manager_id"
@@ -53,31 +49,20 @@ def _normalize(raw: str | None) -> str | None:
     return stripped or None
 
 
-def normalize_manager_identity(current: str | None, legacy: str | None) -> str | None:
-    """Accept either issued identity generation, but never two different Managers."""
-    current, legacy = _normalize(current), _normalize(legacy)
-    if current is not None and legacy is not None and current != legacy:
-        raise PlannerError(ErrorCode.agent_forbidden, "conflicting Manager identity claims", {})
-    return current or legacy
-
-
 def _classify(
     actor: str | None,
     ticket_id: str | None = None,
     manager_id: str | None = None,
-    goal_id: str | None = None,
 ) -> RequestContext:
     normalized_ticket_id = _normalize(ticket_id)
     normalized_manager_id = _normalize(manager_id)
     if actor is None:
         return RequestContext(OWNER_PRINCIPAL)
-    if actor == "goal" and _normalize(goal_id) is not None:
-        return RequestContext(Principal(PrincipalKind.goal, str(_normalize(goal_id))))
     if actor == "chief":
         return RequestContext(CHIEF_PRINCIPAL)
     if actor == "worker" and normalized_ticket_id is not None:
         return RequestContext(Principal(PrincipalKind.ticket, normalized_ticket_id))
-    if actor in {"manager", "sprint_item_supervisor"} and normalized_manager_id is not None:
+    if actor == "manager" and normalized_manager_id is not None:
         return RequestContext(Principal(PrincipalKind.manager, normalized_manager_id))
     raise PlannerError(
         ErrorCode.agent_forbidden,
@@ -103,15 +88,8 @@ def request_context(request: Request) -> RequestContext:
         if PLAN_MANAGER_ID_SCOPE_KEY in request.scope
         else request.headers.get(X_PLAN_MANAGER_ID)
     )
-    legacy_manager_id = (
-        request.scope[PLAN_SPRINT_ITEM_ID_SCOPE_KEY]
-        if PLAN_SPRINT_ITEM_ID_SCOPE_KEY in request.scope
-        else request.headers.get(X_PLAN_SPRINT_ITEM_ID)
-    )
-    manager_id = normalize_manager_identity(manager_id, legacy_manager_id)
-    goal_id = request.scope.get(PLAN_GOAL_ID_SCOPE_KEY, request.headers.get(X_PLAN_GOAL_ID))
     classified = _classify(
-        _normalize(actor), _normalize(ticket_id), manager_id, _normalize(goal_id)
+        _normalize(actor), _normalize(ticket_id), manager_id
     )
     origin = request.scope.get(
         PLAN_CONVERSATION_ID_SCOPE_KEY, request.headers.get(X_PLAN_CONVERSATION_ID)
@@ -149,3 +127,13 @@ def require_owner(ctx: RequestContext) -> None:
         "this operation is available only to the owner",
         {"actor": principal_legacy_actor(ctx.principal)},
     )
+
+
+AUTHENTICATED_OWNER_SCOPE_KEY: Final = "planner.authenticated_owner"
+
+
+def require_authenticated_owner(request: Request) -> None:
+    """Device registration needs the deployed access boundary's owner identity."""
+    require_owner(request_context(request))
+    if request.scope.get(AUTHENTICATED_OWNER_SCOPE_KEY) is not True:
+        raise PlannerError(ErrorCode.agent_forbidden, "authenticated owner access is required", {})

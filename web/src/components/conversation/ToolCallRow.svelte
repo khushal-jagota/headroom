@@ -140,11 +140,10 @@
     transition: background var(--motion-fast) var(--motion-ease);
   }
   .c2-tool:hover { background-image: var(--interaction-hover); }
-  /* Details hang from the plain tool line, behind a rule. */
+  /* Details hang from the plain tool line, one step in. */
   .c2-tool-body {
     margin-inline-start: 0;
     padding: 0 0 var(--space-2) var(--space-3);
-    border-inline-start: var(--border-hairline) solid var(--border-color);
   }
   /* The cap is the point: an expanded row scrolls its own output rather than growing
      the thread by the length of whatever the tool happened to print. */

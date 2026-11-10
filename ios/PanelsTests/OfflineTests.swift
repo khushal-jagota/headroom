@@ -1,0 +1,413 @@
+import Foundation
+import SwiftData
+import Observation
+import SwiftData
+import os
+import XCTest
+@testable import Panels
+
+@MainActor final class OfflineTests: XCTestCase {
+    func testCacheEvictionCannotEvictDraftOrOutboxAndServerPartitionsSurviveReopen() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("test.store")
+        let store = LocalStore(url: url)
+        try store.put(server: "a", kind: "draft", id: "text", data: Data("Keep my words".utf8))
+        try store.put(server: "a", kind: "outbox", id: "send", data: Data("same identity".utf8))
+        for index in 0..<100 { try store.put(server: "a", kind: "cache", id: String(index), data: Data([1])) }
+        let reopened = LocalStore(url: url)
+        XCTAssertEqual(reopened.draft(server: "a", id: "text"), "Keep my words")
+        XCTAssertNil(reopened.draft(server: "b", id: "text"))
+        XCTAssertEqual(try reopened.records(server: "a", kind: "cache").count, LocalStore.cacheLimit)
+        XCTAssertEqual(try reopened.record(server: "a", kind: "outbox", id: "send")?.payload, Data("same identity".utf8))
+    }
+    func testBackgroundCacheRefreshesIdenticalPayloadAndReadsLatestAcrossContexts() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("test.store")
+        let store = LocalStore(url: url)
+        store.saveDraft("Keep", server: "a", id: "draft")
+        let revision = store.workRevision
+        try await store.cacheResponse(server: "a", id: "same", data: Data([1]), updated: Date(timeIntervalSince1970: 1))
+        XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.payload, Data([1]))
+        store.saveError = "Couldn’t save on this phone: temporary failure"
+        try await store.cacheResponse(server: "a", id: "same", data: Data([1]), updated: Date(timeIntervalSince1970: 3))
+        XCTAssertNil(store.saveError)
+        XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.updated, Date(timeIntervalSince1970: 3))
+        try await store.cacheResponse(server: "a", id: "same", data: Data([2]), updated: Date(timeIntervalSince1970: 4))
+        XCTAssertEqual(try store.record(server: "a", kind: "cache", id: "same")?.payload, Data([2]))
+        XCTAssertNil(try store.record(server: "b", kind: "cache", id: "same"))
+        XCTAssertEqual(store.workRevision, revision)
+        let reopened = LocalStore(url: url)
+        XCTAssertEqual(try reopened.record(server: "a", kind: "cache", id: "same")?.payload, Data([2]))
+        XCTAssertEqual(reopened.draft(server: "a", id: "draft"), "Keep")
+    }
+    func testBackgroundCacheEvictsByRefreshedAgeAndBytesWithoutTouchingWork() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        store.saveDraft("Keep", server: "a", id: "draft")
+        for index in 0..<LocalStore.cacheLimit {
+            try await store.cacheResponse(server: "a", id: String(index), data: Data([1]), updated: Date(timeIntervalSince1970: Double(index)))
+        }
+        try await store.cacheResponse(server: "a", id: "0", data: Data([1]), updated: Date(timeIntervalSince1970: 100))
+        try await store.cacheResponse(server: "b", id: "new", data: Data([1]), updated: Date(timeIntervalSince1970: 101))
+        XCTAssertNotNil(try store.record(server: "a", kind: "cache", id: "0"))
+        XCTAssertNil(try store.record(server: "a", kind: "cache", id: "1"))
+        try await store.cacheResponse(server: "b", id: "large", data: Data(repeating: 2, count: LocalStore.cacheByteLimit), updated: Date(timeIntervalSince1970: 102))
+        XCTAssertNil(try store.record(server: "a", kind: "cache", id: "0"))
+        XCTAssertNil(try store.record(server: "b", kind: "cache", id: "new"))
+        try await store.cacheResponse(server: "b", id: "too-large", data: Data(count: LocalStore.cacheByteLimit + 1))
+        XCTAssertNil(try store.record(server: "b", kind: "cache", id: "too-large"))
+        XCTAssertEqual(store.draft(server: "a", id: "draft"), "Keep")
+    }
+    func testCachedReadsAndPlainDraftsDoNotInvalidateOutgoingWorkButEnqueueAndRemovalDo() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let outbox = Outbox(store: store)
+        let changes = OSAllocatedUnfairLock(initialState: 0)
+        withObservationTracking { _ = outbox.entries("a") } onChange: { changes.withLock { $0 += 1 } }
+        try store.put(server: "a", kind: "cache", id: "read", data: Data([1]))
+        try store.put(server: "a", kind: "cache", id: "read", data: Data([2]))
+        try store.remove(server: "a", kind: "cache", id: "read")
+        XCTAssertEqual(changes.withLock { $0 }, 0)
+        let message = ConversationSend(conversationId: "c", content: [.init(text: "Keep this")], senderMessageId: "stable", sentAtUnixMilliseconds: 1)
+        let work = PendingWork(id: "stable", created: .now, kind: .message, owner: .chief, message: message)
+        try store.put(server: "a", kind: "outbox", id: work.id, data: JSONEncoder().encode(work), draft: ("draft", ""))
+        XCTAssertEqual(changes.withLock { $0 }, 1)
+        XCTAssertEqual(outbox.entries("a").map(\.id), ["stable"])
+        withObservationTracking { _ = outbox.entries("a") } onChange: { changes.withLock { $0 += 1 } }
+        try store.remove(server: "a", kind: "outbox", id: work.id)
+        XCTAssertEqual(changes.withLock { $0 }, 2)
+        XCTAssertTrue(outbox.entries("a").isEmpty)
+        // A key press saves the draft. It must not wake every saved-work observer.
+        withObservationTracking { _ = store.workRevision } onChange: { changes.withLock { $0 += 1 } }
+        store.saveDraft("Keep the typed words", server: "a", id: "text")
+        XCTAssertEqual(changes.withLock { $0 }, 2)
+        XCTAssertEqual(store.draft(server: "a", id: "text"), "Keep the typed words")
+    }
+    func testClearFinishedRemovesSettledWorkAtItsWindowInOneSaveAndKeepsTheRest() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let outbox = Outbox(store: store)
+        let now = Date(), day: TimeInterval = 24 * 60 * 60
+        func work(_ id: String, _ state: PendingWork.State, age: TimeInterval, completedAge: TimeInterval? = nil) -> PendingWork {
+            PendingWork(id: id, created: now.addingTimeInterval(-age), kind: .message, state: state, completed: completedAge.map { now.addingTimeInterval(-$0) })
+        }
+        let rows = [
+            work("old-sent", .sent, age: 3 * day, completedAge: day), work("recent-sent", .sent, age: 3 * day, completedAge: day - 60),
+            // Changed work never records completion, so its creation time counts.
+            work("old-changed", .changed, age: day), work("recent-changed", .changed, age: day - 60),
+            work("old-uncertain", .uncertain, age: 7 * day), work("recent-uncertain", .uncertain, age: 7 * day - 60),
+            work("failed", .failed, age: 30 * day), work("waiting", .waiting, age: 30 * day), work("sending", .sending, age: 30 * day),
+            work("queued", .serverQueued, age: 30 * day), work("recording", .recording, age: 30 * day),
+        ]
+        for row in rows { try outbox.save(row, server: "a") }
+        try outbox.save(work("other-server", .sent, age: 3 * day, completedAge: 2 * day), server: "b")
+        let revision = store.workRevision
+        outbox.clearFinished("a", now: now)
+        XCTAssertEqual(store.workRevision, revision + 1)
+        XCTAssertEqual(Set(outbox.entries("a").map(\.id)), ["recent-sent", "recent-changed", "recent-uncertain", "failed", "waiting", "sending", "queued", "recording"])
+        XCTAssertEqual(outbox.entries("b").map(\.id), ["other-server"])
+        outbox.clearFinished("a", now: now)
+        XCTAssertEqual(store.workRevision, revision + 1)
+    }
+    func testEnqueueAndComposerClearShareDurableSave() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("test.store")
+        let store = LocalStore(url: url)
+        store.saveDraft("Unsent", server: "a", id: "draft")
+        let message = ConversationSend(conversationId: "c", content: [.init(text: "Unsent")], senderMessageId: "stable", sentAtUnixMilliseconds: 123)
+        let work = PendingWork(id: "stable", created: .now, kind: .message, owner: .chief, message: message)
+        try store.put(server: "a", kind: "outbox", id: work.id, data: JSONEncoder().encode(work), draft: ("draft", ""))
+        let reopened = LocalStore(url: url)
+        XCTAssertEqual(reopened.draft(server: "a", id: "draft"), "")
+        let saved = try XCTUnwrap(Outbox(store: reopened).entries("a").first)
+        XCTAssertEqual(saved.message?.senderMessageId, "stable")
+        XCTAssertEqual(saved.message?.sentAtUnixMilliseconds, 123)
+        XCTAssertEqual(saved.displayText, "Unsent")
+    }
+}
+
+@MainActor final class OutboxRecoveryTests: XCTestCase {
+    private var directory: URL!
+    private var store: LocalStore!
+    private var api: APIClient!
+    private let server = "https://offline-test.invalid"
+    override func setUp() async throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfflineProtocol.self]
+        api = APIClient(baseURL: URL(string: server)!, session: URLSession(configuration: configuration))
+#if SWIFT_PACKAGE
+        let url = Bundle.module.url(forResource: "ticket-full", withExtension: "json", subdirectory: "Fixtures")!
+#else
+        let url = Bundle(for: Self.self).url(forResource: "ticket-full", withExtension: "json")!
+#endif
+        OfflineProtocol.state.reset(ticket: try Data(contentsOf: url))
+    }
+    override func tearDown() async throws { try? FileManager.default.removeItem(at: directory) }
+    /// Recent creation times, ordered by `at`. Older uncertain work is past its cleanup window.
+    private func message(_ id: String, at: TimeInterval = 1, readThrough: Int? = nil) -> PendingWork {
+        PendingWork(id: id, created: Date(timeIntervalSinceNow: at - 60), kind: .message, owner: .ticket("ticket"),
+            message: ConversationSend(conversationId: "conversation", content: [.init(text: id)], senderMessageId: id, sentAtUnixMilliseconds: Int64(at * 1000), ownerReadThroughSequence: readThrough))
+    }
+    func testWaitingMessagePostsWithoutReceiptOrHeldMessageReads() async throws {
+        let outbox = Outbox(store: store)
+        try outbox.save(message("new", readThrough: 12), server: server)
+
+        await outbox.drain(api: api)
+
+        XCTAssertEqual(OfflineProtocol.state.requests, ["POST /api/tickets/ticket/conversation/send"])
+        XCTAssertEqual(outbox.entries(server).first?.state, .sent)
+    }
+    func testSendingMessageChecksReceiptThenHeldMessageAndDoesNotReadmitServerQueue() async throws {
+        let outbox = Outbox(store: store)
+        var work = message("held", readThrough: 12)
+        work.state = .sending
+        try outbox.save(work, server: server)
+        OfflineProtocol.state.heldMessageID = "held"
+
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.entries(server).first?.state, .serverQueued)
+        await outbox.drain(api: api)
+
+        XCTAssertEqual(OfflineProtocol.state.requests, [
+            "GET /api/conversation/conversations/conversation/view/receipts",
+            "GET /api/conversation/conversations/conversation",
+            "GET /api/conversation/conversations/conversation/view/receipts"
+        ])
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
+        XCTAssertEqual(outbox.entries(server).first?.state, .serverQueued)
+    }
+    func testOfflineRelaunchDrainsInOrderOnceAndPreservesIdentity() async throws {
+        let outbox = Outbox(store: store)
+        try outbox.save(message("first"), server: server)
+        try outbox.save(message("second", at: 2), server: server)
+        OfflineProtocol.state.offline = true
+        await outbox.drain(api: api)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
+        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
+        OfflineProtocol.state.offline = false
+        await reopened.drain(api: api)
+        await reopened.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.writes, ["first", "second"])
+        XCTAssertEqual(reopened.entries(server).map(\.state), [.sent, .sent])
+    }
+    func testLostResponseReconcilesReceiptWithoutResending() async throws {
+        let outbox = Outbox(store: store)
+        try outbox.save(message("lost"), server: server)
+        OfflineProtocol.state.loseResponse = true
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.entries(server).first?.state, .uncertain)
+        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
+        await reopened.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.requests, [
+            "POST /api/tickets/ticket/conversation/send",
+            "GET /api/conversation/conversations/conversation/view/receipts"
+        ])
+        XCTAssertEqual(OfflineProtocol.state.writes, ["lost"])
+        XCTAssertEqual(reopened.entries(server).first?.state, .sent)
+    }
+    func testChangedProposalHoldsBothDecisionKindsAndKeepsGuidance() async throws {
+        let detail = try APIClient.decoder().decode(TicketDetail.self, from: OfflineProtocol.state.ticket)
+        let proposal = try XCTUnwrap(detail.pendingProposal)
+        let outbox = Outbox(store: store)
+        let approval = ReviewApproval(expectedProposalRevision: proposal.revision, editedBody: "Edit", nextCeiling: "done", nextHolder: .init(kind: "owner", id: "owner"))
+        try outbox.save(PendingWork(id: "approve", created: .now, kind: .approval, ticketID: detail.id, proposal: proposal, approval: approval), server: server)
+        try outbox.save(PendingWork(id: "return", created: .now, kind: .sendBack, ticketID: detail.id, proposal: proposal, guidance: "Keep these words"), server: server)
+        OfflineProtocol.state.bumpRevision()
+        await outbox.drain(api: api)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
+        XCTAssertEqual(outbox.entries(server).map(\.state), [.changed, .changed])
+        XCTAssertEqual(outbox.entries(server).last?.guidance, "Keep these words")
+    }
+    func testUnknownDecisionResponseNeverAutomaticallyReplays() async throws {
+        let detail = try APIClient.decoder().decode(TicketDetail.self, from: OfflineProtocol.state.ticket)
+        let outbox = Outbox(store: store)
+        try outbox.save(PendingWork(id: "return", created: .now, kind: .sendBack, ticketID: detail.id, proposal: detail.pendingProposal, guidance: "Change it"), server: server)
+        OfflineProtocol.state.loseResponse = true
+        await outbox.drain(api: api)
+        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
+        await reopened.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.writes.count, 1)
+        XCTAssertEqual(reopened.entries(server).first?.state, .uncertain)
+    }
+    func testTranscriptionPersistsDraftBeforeDeletingAudioAndDoesNotAppendTwice() async throws {
+        let file = "test-\(UUID()).m4a"
+        let url = LocalStore.directory.appendingPathComponent(file)
+        try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        store.saveDraft("Typed", server: server, id: "guidance")
+        let outbox = Outbox(store: store)
+        try outbox.save(PendingWork(id: "audio", created: .now, kind: .voice, audioFile: file, draftID: "guidance"), server: server)
+        await outbox.drain(api: api)
+        let reopened = LocalStore(url: directory.appendingPathComponent("test.store"))
+        await Outbox(store: reopened).drain(api: api)
+        XCTAssertEqual(reopened.draft(server: server, id: "guidance"), "Typed\n\nRecorded words")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(OfflineProtocol.state.writes, ["voice"])
+    }
+}
+
+private final class OfflineState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _offline = false
+    private var _loseResponse = false
+    private var _ticket = Data()
+    private var _writes: [String] = []
+    private var _requests: [String] = []
+    private var _heldMessageID: String?
+    private var receipts: Set<String> = []
+    var offline: Bool { get { lock.withLock { _offline } } set { lock.withLock { _offline = newValue } } }
+    var loseResponse: Bool { get { lock.withLock { _loseResponse } } set { lock.withLock { _loseResponse = newValue } } }
+    var heldMessageID: String? { get { lock.withLock { _heldMessageID } } set { lock.withLock { _heldMessageID = newValue } } }
+    var requests: [String] { lock.withLock { _requests } }
+    var ticket: Data { lock.withLock { _ticket } }
+    var writes: [String] { lock.withLock { _writes } }
+    func reset(ticket: Data) { lock.withLock { _ticket = ticket; _offline = false; _loseResponse = false; _writes = []; _requests = []; _heldMessageID = nil; receipts = [] } }
+    func bumpRevision() {
+        lock.withLock {
+            var value = try! JSONSerialization.jsonObject(with: _ticket) as! [String: Any]
+            var proposal = value["pending_proposal"] as! [String: Any]
+            proposal["revision"] = (proposal["revision"] as! Int) + 1
+            value["pending_proposal"] = proposal
+            _ticket = try! JSONSerialization.data(withJSONObject: value)
+        }
+    }
+    func response(_ request: URLRequest) throws -> Data {
+        try lock.withLock {
+            let path = request.url!.path
+            _requests.append("\(request.httpMethod ?? "GET") \(path)")
+            if _offline { throw URLError(.notConnectedToInternet) }
+            if path.hasSuffix("/receipts") {
+                return try JSONSerialization.data(withJSONObject: ["receipts": receipts.map { ["sender_message_id": $0, "fate": "prompt"] }])
+            }
+            if path == "/api/conversation/conversations/conversation", let id = _heldMessageID {
+                return try JSONSerialization.data(withJSONObject: ["backend_key": "codex", "held_prompts": [
+                    ["held_prompt_id": "held-1", "sender_message_id": id, "content": [["piece": "text", "text": "Held"]]]
+                ]])
+            }
+            if request.httpMethod != "POST" { return _ticket }
+            var data = request.httpBody ?? Data()
+            if let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
+            }
+            let body = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            let id = body["sender_message_id"] as? String ?? (path.hasSuffix("voice-transcriptions") ? "voice" : "decision")
+            _writes.append(id); receipts.insert(id)
+            if _loseResponse { _loseResponse = false; throw URLError(.networkConnectionLost) }
+            return Data((id == "voice" ? #"{"transcript":"Recorded words"}"# : #"{"conversation_id":"conversation","fate":"started"}"#).utf8)
+        }
+    }
+}
+private final class OfflineProtocol: URLProtocol, @unchecked Sendable {
+    static let state = OfflineState()
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "offline-test.invalid" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        do {
+            let data = try Self.state.response(request)
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() {}
+}
+
+@MainActor final class OfflinePresentationTests: XCTestCase {
+    func testPersistedRetryReplacesRefusedBubbleAfterModelRecreation() throws {
+        let api = APIClient(baseURL: URL(string: "https://retry-\(UUID().uuidString.lowercased()).invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        defer {
+            try? LocalStore.shared.remove(server: server, kind: "outbox", id: "new")
+            try? LocalStore.shared.remove(server: server, kind: "outbox", id: "old")
+        }
+        let old = PendingWork(id: "old", created: .now, kind: .message, state: .failed, owner: .chief,
+            message: ConversationSend(conversationId: "c", content: [.init(text: "Words")], senderMessageId: "old", sentAtUnixMilliseconds: 1))
+        var retry = PendingWork(id: "new", created: .now, kind: .message, owner: .chief,
+            message: ConversationSend(conversationId: "c", content: [.init(text: "Words")], senderMessageId: "new", sentAtUnixMilliseconds: 2))
+        retry.priorMessageIDs = ["old"]
+        try Outbox.shared.save(old, server: server)
+        try Outbox.shared.save(retry, server: server)
+        let model = ConversationModel()
+        model.restore(owner: .chief, api: api)
+        XCTAssertEqual(model.rows.count, 1)
+        XCTAssertEqual(model.rows.first?.id, "old")
+        XCTAssertEqual(model.rows.first?.text, "Words")
+    }
+}
+
+extension OfflineTests {
+    func testRequiredUpdateRetainsPendingIdentityAndDraftWithoutReplay() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let api = APIClient(baseURL: URL(string: "https://update-\(UUID().uuidString).invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        store.saveDraft("More unsent words", server: server, id: "draft")
+        let message = ConversationSend(conversationId: "c", content: [.init(text: "Pending words")], senderMessageId: "stable", sentAtUnixMilliseconds: 123)
+        let outbox = Outbox(store: store)
+        try outbox.save(PendingWork(id: "stable", created: .now, kind: .message, owner: .chief, message: message), server: server)
+        NativeBuildGate.requireUpdate(api.baseURL)
+        await outbox.drain(api: api)
+        let saved = try XCTUnwrap(outbox.entries(server).first)
+        XCTAssertEqual(saved.state, .waiting)
+        XCTAssertEqual(saved.message?.senderMessageId, "stable")
+        XCTAssertEqual(saved.message?.content.first?.text, "Pending words")
+        XCTAssertEqual(store.draft(server: server, id: "draft"), "More unsent words")
+    }
+}
+
+
+// Matches the app's original unversioned model. The entity keeps its LocalRecord
+// name, while the new model renames only the Core Data-colliding date property.
+private enum LegacyPhoneSchema {
+    @Model final class LocalRecord {
+        @Attribute(.unique) var key: String
+        var server: String
+        var kind: String
+        var payload: Data
+        var updated: Date
+        init(key: String, server: String, kind: String, payload: Data, updated: Date) {
+            self.key = key; self.server = server; self.kind = kind; self.payload = payload; self.updated = updated
+        }
+    }
+}
+
+extension OfflineTests {
+    func testLegacyStoreMigrationPreservesDraftAndPendingMessage() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("test.store")
+        let server = "https://legacy.invalid"
+        let message = ConversationSend(conversationId: "c", content: [.init(text: "Pending legacy words")], senderMessageId: "legacy-id", sentAtUnixMilliseconds: 123)
+        let work = PendingWork(id: "legacy-id", created: .now, kind: .message, owner: .chief, message: message)
+        do {
+            let schema = Schema([LegacyPhoneSchema.LocalRecord.self])
+            let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(url: url)])
+            let context = ModelContext(container)
+            context.autosaveEnabled = false
+            context.insert(LegacyPhoneSchema.LocalRecord(key: LocalStore.key(server, "draft", "draft"), server: server, kind: "draft", payload: Data("Legacy unsent draft".utf8), updated: .now))
+            context.insert(LegacyPhoneSchema.LocalRecord(key: LocalStore.key(server, "outbox", work.id), server: server, kind: "outbox", payload: try JSONEncoder().encode(work), updated: .now))
+            try context.save()
+        }
+        let migrated = LocalStore(url: url)
+        XCTAssertNil(migrated.saveError)
+        XCTAssertEqual(migrated.draft(server: server, id: "draft"), "Legacy unsent draft")
+        let pending = try XCTUnwrap(Outbox(store: migrated).entries(server).first)
+        XCTAssertEqual(pending.message?.senderMessageId, "legacy-id")
+        XCTAssertEqual(pending.message?.content.first?.text, "Pending legacy words")
+        migrated.saveDraft("Updated after migration", server: server, id: "draft")
+        let reopened = LocalStore(url: url)
+        XCTAssertEqual(reopened.draft(server: server, id: "draft"), "Updated after migration")
+    }
+}

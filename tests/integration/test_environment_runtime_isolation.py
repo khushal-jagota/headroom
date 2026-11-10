@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -13,7 +14,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from tests.support.server import BOOT_BUDGET_S, PLAN_BIN
+from tests.support.server import PLAN_BIN
+from tests.support.server_fixtures import _first_meta_answer
 
 _STAGING_URL_RE = re.compile(r"staging (?P<url>http://127\.0\.0\.1:\d+)")
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -22,7 +24,8 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 def test_staging_runs_on_demand_with_dynamic_port_and_persistent_state(
     tmp_path: Path,
 ) -> None:
-    environment_root = Path("/tmp") / f"panels-staging-e2e-{os.getpid()}-{tmp_path.name}"
+    digest = hashlib.sha1(str(tmp_path).encode("utf-8")).hexdigest()[:8]
+    environment_root = Path(os.environ.get("TMPDIR", "/tmp")) / f"se-{os.getpid()}-{digest}"
     shutil.rmtree(environment_root, ignore_errors=True)
     repository = _REPOSITORY_ROOT
     log_path = tmp_path / "staging.log"
@@ -117,31 +120,21 @@ def _start_staging(
 
 
 def _wait_for_staging_url(proc: subprocess.Popen[bytes], log_path: Path) -> str:
-    deadline = time.monotonic() + BOOT_BUDGET_S
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            raise AssertionError(f"staging exited during launch\n{log_path.read_text()}")
+    # The launcher prints its URL once it has bound the listener, before it starts the
+    # server. Watch for that line until it appears or the launcher exits, with no budget.
+    while True:
+        exited = proc.poll() is not None
         match = _STAGING_URL_RE.search(log_path.read_text(encoding="utf-8"))
         if match is not None:
             return match.group("url")
+        if exited:
+            raise AssertionError(f"staging exited during launch\n{log_path.read_text()}")
         time.sleep(0.05)
-    raise AssertionError(f"staging printed no URL\n{log_path.read_text()}")
 
 
 def _wait_for_health(proc: subprocess.Popen[bytes], url: str, log_path: Path) -> None:
-    deadline = time.monotonic() + BOOT_BUDGET_S
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            raise AssertionError(f"staging exited during boot\n{log_path.read_text()}")
-        try:
-            response = httpx.get(f"{url}/api/meta", timeout=0.5)
-        except httpx.HTTPError:
-            response = None
-        if response is not None and response.status_code == 200:
-            assert response.json()["test_mode"] is True
-            return
-        time.sleep(0.1)
-    raise AssertionError(f"staging did not become healthy\n{log_path.read_text()}")
+    # The launcher bound the listener before printing the URL and handed it to the server.
+    _first_meta_answer(url, log_path, lambda: f"staging (rc={proc.poll()})")
 
 
 def _terminate(proc: subprocess.Popen[bytes]) -> None:

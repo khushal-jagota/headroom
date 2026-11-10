@@ -488,11 +488,9 @@ def test_canceled_http_owner_write_still_delivers_before_a_racing_reset(
     async def exercise() -> None:
         await start(host)
         entered, release, reset_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        original = host.system.send_with_receipt
+        original = host.system.send
 
-        monkeypatch.setattr(
-            host.system, "send_with_receipt", gated_call(original, entered, release)
-        )
+        monkeypatch.setattr(host.system, "send", gated_call(original, entered, release))
         async with host.client() as client:
             request = request_body()
             await client.post("/api/credentials/requests", json=request, headers=HEADERS)
@@ -585,7 +583,6 @@ def test_request_transaction_and_receipt_companions_use_production_signal_admiss
         host = build(db, signal=signal)
         signal.initialize()
         binding.attach()
-        signal.coordinator.admit_runtime()
         conn = signal.connect()
         conn.close()
         try:
@@ -679,7 +676,7 @@ def test_owner_resolution_after_manager_deletion_is_refused_without_resurrecting
             ConversationStartRequest(
                 conversation_id="manager-origin",
                 model="gpt-6-sol",
-                role_materials=manager_role_materials(manager.id),
+                role_materials=manager_role_materials(manager.id, host.db_path.parent),
                 workspace_folder=host.db_path.parent,
             )
         )
@@ -738,7 +735,7 @@ def test_manager_deletion_waits_for_an_admitted_result_delivery(
             ConversationStartRequest(
                 conversation_id="manager-origin",
                 model="gpt-6-sol",
-                role_materials=manager_role_materials(manager.id),
+                role_materials=manager_role_materials(manager.id, host.db_path.parent),
                 workspace_folder=host.db_path.parent,
             )
         )
@@ -748,11 +745,9 @@ def test_manager_deletion_waits_for_an_admitted_result_delivery(
         )
         conn.commit()
         entered, release, deleting = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        original = host.system.send_with_receipt
+        original = host.system.send
 
-        monkeypatch.setattr(
-            host.system, "send_with_receipt", gated_call(original, entered, release)
-        )
+        monkeypatch.setattr(host.system, "send", gated_call(original, entered, release))
         async with host.client() as client:
             request = request_body()
             created = await client.post(

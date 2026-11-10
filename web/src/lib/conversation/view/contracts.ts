@@ -4,7 +4,7 @@ export const VIEW_PROJECTION_VERSION = 4;
 
 export type ConversationViewLens = "focus" | "full";
 
-export type ViewRowKind = "credential_request" | "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "explicit_reply_missing" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "turn_ended" | "turn_stopped";
+export type ViewRowKind = "credential_request" | "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" | "agent_message" | "tool_call" | "permission_ask" | "user_input" | "model_changed" | "token_usage" | "context_compacted" | "command_reply" | "turn_ended" | "turn_stopped";
 
 export type AskDeadReason = "turn_ended" | "no_ending_recorded";
 
@@ -40,7 +40,7 @@ export interface PromptRowBody {
   sent_at_unix_milliseconds: number;
 }
 
-export type PromptDeliveryRefusalReason = "no_such_conversation" | "backend_did_not_start" | "model_resolution_failed" | "session_did_not_load" | "write_to_backend_failed" | "no_running_turn_to_steer_into" | "backend_cannot_steer" | "command_cannot_join_running_turn" | "running_turn_changed_before_steer" | "running_turn_cannot_accept_steer" | "message_cannot_be_steered" | "backend_rejected_steer" | "backend_rejected_prompt";
+export type PromptDeliveryRefusalReason = "no_such_conversation" | "backend_did_not_start" | "model_resolution_failed" | "session_did_not_load" | "write_to_backend_failed" | "no_running_turn_to_steer_into" | "backend_cannot_steer" | "command_cannot_join_running_turn" | "remote_steer_not_delivered" | "running_turn_changed_before_steer" | "running_turn_cannot_accept_steer" | "message_cannot_be_steered" | "backend_rejected_steer" | "backend_rejected_prompt";
 
 export interface RefusedPromptRowBody {
   kind: "prompt_refused";
@@ -60,18 +60,6 @@ export interface AgentMessageRowBody {
   kind: "agent_message";
   content: Array<ViewMessagePiece>;
   to_owner: boolean;
-}
-
-export type PrincipalKind = "owner" | "chief" | "manager" | "goal" | "ticket";
-
-export interface Principal {
-  kind: PrincipalKind;
-  id: string;
-}
-
-export interface MissingReplyRowBody {
-  kind: "explicit_reply_missing";
-  prompt_sender: Principal;
 }
 
 export interface ToolCallRowBody {
@@ -162,6 +150,11 @@ export interface MarkerRowBody {
   kind: "context_compacted" | "turn_stopped";
 }
 
+export interface CommandReplyRowBody {
+  kind: "command_reply";
+  reply_text: string;
+}
+
 export interface RequestReplacement {
   credential_id: string;
   name: string;
@@ -206,7 +199,7 @@ export interface CredentialRequestRowBody {
   delivery: RequestDelivery | null;
 }
 
-export type ViewRowBody = CredentialRequestRowBody | PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | MissingReplyRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody;
+export type ViewRowBody = CredentialRequestRowBody | PromptRowBody | RefusedPromptRowBody | UndeliveredPromptRowBody | AgentMessageRowBody | ToolCallRowBody | PermissionRowBody | UserInputRowBody | ModelRowBody | UsageRowBody | TurnEndingRowBody | MarkerRowBody | CommandReplyRowBody;
 
 export interface ViewBodyReference {
   body_id: string;
@@ -340,7 +333,7 @@ export interface ViewRestTool {
   body: DeliveredRowBody;
 }
 
-export type ViewRestEvent = ViewRestText | ViewRestDelivery | ViewRestTool | MissingReplyRowBody | TurnEndingRowBody | MarkerRowBody;
+export type ViewRestEvent = ViewRestText | ViewRestDelivery | ViewRestTool | TurnEndingRowBody | MarkerRowBody;
 
 export interface ViewPlanProgress {
   total_count: number;
@@ -361,6 +354,12 @@ export interface ViewRestFacts {
   plan_progress: ViewPlanProgress;
 }
 
+/** A background task the agent started that is still live after its turn. */
+export interface ViewBackgroundTask {
+  task_id: string;
+  task_description: string;
+}
+
 export interface ConversationViewStatus {
   diagnostics_expired: boolean;
   runtime_epoch: string;
@@ -371,6 +370,8 @@ export interface ConversationViewStatus {
   turn_key: string | null;
   turn_running: boolean | null;
   stopped_without_ending: boolean;
+  /** Live background tasks, from the same record the sidebar's working signal reads. */
+  background_tasks: ViewBackgroundTask[];
   pending_permission: ViewRequestIdentity | null;
   pending_user_input: ViewRequestIdentity | null;
   plan: ViewBodyReference | null;

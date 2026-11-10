@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable
-from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
-from alembic import op
-from tests.unit.test_conversation_view_projection import FIXTURES, database
+from tests.support.conversation_view_database import FIXTURES, database
 
 from planner.conversation.events import (
     ConversationEventKind,
     conversation_event_payload_from_canonical_json,
 )
-from planner.conversation.retention.read import diagnostics_expired, sequence_expired
 from planner.conversation.storage import StoredConversationEvent
 from planner.conversation.views.api import _changes
 from planner.conversation.views.configuration import (
@@ -30,6 +28,7 @@ from planner.conversation.views.contracts import (
     ViewPageCursor,
 )
 from planner.conversation.views.live_output import ConversationViewLiveOutput
+from planner.conversation.views.omissions import diagnostics_expired, sequence_expired
 from planner.conversation.views.status import read_status
 from planner.conversation.views.storage import (
     ViewBodyChanged,
@@ -39,9 +38,8 @@ from planner.conversation.views.storage import (
     read_page,
     read_turn,
 )
-from planner.conversation.views.writer import append_projection
+from planner.conversation.views.writer import append_projection, rebuild_conversation_view
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.migrations.versions import owner_message_preview
 
 
 def event(sequence: int, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +101,25 @@ def test_closed_turn_does_not_page_its_thousand_hidden_tool_bodies() -> None:
         assert older["body_bytes"] <= 128 * 1024
 
 
+@pytest.mark.parametrize("lens", ["focus", "full"])
+def test_a_command_reply_is_on_the_timeline_in_both_lenses(lens: ConversationViewLens) -> None:
+    """Nothing else shows a command's reply, so Focus must show it as well as Full."""
+    reply = "Goal: ship the fix (active, 0 tokens, 0s)\nSecond line"
+    events = [
+        prompt(),
+        event(2, "command_reply", {"reply_text": reply}),
+        event(3, "turn_ended", {"ending": "completed", "error_summary": None}),
+    ]
+    with database(events) as conn:
+        page = read_page(conn, "fixture", lens)
+        rows = {item["key"]: item for item in page["items"] if item["kind"] == "row"}
+        assert rows["e2"]["row_kind"] == "command_reply"
+        assert rows["e2"]["body"] == {
+            "kind": "inline",
+            "value": {"kind": "command_reply", "reply_text": reply},
+        }
+
+
 def test_oversized_body_chunks_preserve_unicode_and_one_logical_markdown_document() -> None:
     text = "# Title\n\n```text\n" + "界🙂" * 40_000 + "\n```\n\n[reference]: /target\n"
     with database([prompt(), event(2, "agent_message", {"text": text})]) as conn:
@@ -129,12 +146,20 @@ def test_oversized_body_chunks_preserve_unicode_and_one_logical_markdown_documen
             read_body_chunk(conn, "fixture", reference, 0)
 
 
-def test_projection_writes_share_source_rollback_and_upgrade_matches_incremental(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def whole_view_projection(conn: sqlite3.Connection) -> dict[str, list[tuple[Any, ...]]]:
+    return {
+        table: sorted(
+            tuple(row) for row in conn.execute(f"SELECT * FROM conversation_view_{table}")
+        )
+        for table in ("state", "rows", "turns", "groups", "lookups")
+    }
+
+
+def test_projection_writes_share_source_rollback_and_rebuild_matches_incremental() -> None:
     with database(FIXTURES[0]["events"]) as conn:
         conn.commit()
         before = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
+        incremental = whole_view_projection(conn)
         encoded = json.dumps({"text": "Must roll back"})
         with pytest.raises(RuntimeError), conn:
             conn.execute(
@@ -169,15 +194,10 @@ def test_projection_writes_share_source_rollback_and_upgrade_matches_incremental
         # recover it from canonical events without changing row layout.
         conn.execute("UPDATE conversation_view_state SET projection_version=1")
         conn.execute("UPDATE conversation_view_rows SET rest_summary=NULL")
-        monkeypatch.setattr(
-            op,
-            "get_bind",
-            lambda: SimpleNamespace(connection=SimpleNamespace(driver_connection=conn)),
-        )
         conn.commit()
         stale = list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence"))
         with pytest.raises(RuntimeError, match="migration rollback"), conn:
-            owner_message_preview.upgrade()
+            rebuild_conversation_view(conn, "fixture")
             assert (
                 conn.execute("SELECT projection_version FROM conversation_view_state").fetchone()[0]
                 == VIEW_PROJECTION_VERSION
@@ -190,12 +210,13 @@ def test_projection_writes_share_source_rollback_and_upgrade_matches_incremental
         assert list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence")) == stale
         original_factory = conn.row_factory
         conn.row_factory = None
-        owner_message_preview.upgrade()
+        rebuild_conversation_view(conn, "fixture")
         assert conn.row_factory is None
         conn.row_factory = original_factory
         assert (
             list(conn.execute("SELECT * FROM conversation_view_rows ORDER BY sequence")) == before
         )
+        assert whole_view_projection(conn) == incremental
 
 
 def test_tail_names_scope_membership_and_removes_children_from_the_timeline() -> None:
@@ -681,3 +702,75 @@ def test_owner_preview_is_null_without_a_reply_and_private_in_latest_rest_event(
         }
         assert rest["latest_owner_message_preview"] == "Answer\n\nDetail"
         assert '"_owner_message_preview"' not in json.dumps(rest)
+
+
+def test_focus_shows_every_running_turn_head_and_keeps_only_heads_that_left_something() -> None:
+    """Focus heads follow the turn, not the visibility of the prompt that opened it.
+
+    The risk is the counter missing in Focus for turns the Chief or automation started,
+    and an ended turn's head lingering on an open pane after it loses its Focus place.
+    """
+
+    def chief_prompt(sequence: int) -> dict[str, Any]:
+        return event(
+            sequence,
+            "prompt",
+            {
+                "sender_label": "Chief",
+                "sender": {"kind": "chief", "id": "chief"},
+                "recipient": {"kind": "ticket", "id": "worker"},
+                "mode": "queue",
+                "text": "Next step",
+            },
+        )
+
+    ended = {"ending": "completed", "error_summary": None}
+    owner = {
+        "sender": {"kind": "ticket", "id": "worker"},
+        "recipient": {"kind": "owner", "id": "owner"},
+        "sender_label": "worker",
+    }
+    rows = [
+        chief_prompt(1),
+        event(2, "turn_ended", ended),
+        chief_prompt(3),
+        event(4, "message_to_owner", {**owner, "text": "Please decide"}),
+        event(5, "turn_ended", ended),
+        chief_prompt(6),
+    ]
+    timeline: ViewHistoryScope = {"kind": "timeline", "key": None}
+    with database(rows) as conn:
+        conn.execute("ALTER TABLE conversations ADD COLUMN latest_sequence INTEGER DEFAULT 6")
+        heads = [
+            item["key"]
+            for item in read_page(conn, "fixture", "focus")["items"]
+            if item["kind"] == "turn"
+        ]
+        assert heads == ["turn:e3", "turn:e6"]
+        running = read_turn(conn, "fixture", "turn:e6", "focus")
+        assert not running["settled"] and running["started_at_unix_milliseconds"] == 6_000
+        live = ConversationViewLiveOutput()
+        try:
+            status = read_status(conn, "fixture", "focus", live, running=True)
+            latest_turn = status["rest"]["latest_turn"]
+            assert latest_turn is not None and latest_turn["key"] == "turn:e6"
+            changes = _changes(
+                conn,
+                "fixture",
+                "focus",
+                0,
+                [
+                    {
+                        "scope": timeline,
+                        "first": {"sequence": 1, "slot": 1},
+                        "last": {"sequence": 6, "slot": 1},
+                    }
+                ],
+                status,
+            )
+            assert changes is not None
+            (main,) = changes["scope_changes"]
+            assert "turn:e1" in main["removed_keys"]
+            assert {"turn:e3", "turn:e6"} <= set(main["item_keys"])
+        finally:
+            live.close()

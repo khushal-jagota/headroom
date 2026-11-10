@@ -96,7 +96,6 @@ from planner.conversation.message_content import (
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.runtime_composition import (
     SignalRuntimeComposition,
-    bind_admission,
     transaction_control,
 )
 from planner.conversation.snapshot import (
@@ -112,8 +111,8 @@ from planner.core.config import load_config
 from planner.core.contracts import PlannerError, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.response_compression import (
-    CompressExceptEventStreams,
-    event_stream_route_patterns,
+    CompressExceptMarkedRoutes,
+    uncompressed_route_patterns,
 )
 from planner.files.logic.paths import conversation_files_root
 from planner.tickets import data as tickets_data
@@ -347,10 +346,6 @@ class _Harness:
             str(db_path),
             signal_coordinator=(
                 None if signal_composition is None else signal_composition.coordinator
-            ),
-            bind_signal_admission=None if signal_composition is None else bind_admission,
-            runtime_reconciliation_admission=(
-                None if signal_composition is None else signal_composition.initialization
             ),
             transaction_control_guard=None if signal_composition is None else transaction_control,
             **(store_options or {}),
@@ -1362,15 +1357,15 @@ def test_the_picture_reaches_the_backend_and_not_just_the_record(
     _run(exercise)
 
 
-def _compression_as_the_server_composes_it(app: FastAPI) -> CompressExceptEventStreams:
+def _compression_as_the_server_composes_it(app: FastAPI) -> CompressExceptMarkedRoutes:
     """The compression the server puts in front of this router, composed the same way.
 
     The server reads which routes are streams from the routers it includes, so the test
     reads them from the same router under the same prefix.
     """
-    return CompressExceptEventStreams(
+    return CompressExceptMarkedRoutes(
         app,
-        event_stream_patterns=event_stream_route_patterns(router.routes, CONVERSATION_PREFIX),
+        uncompressed_patterns=uncompressed_route_patterns(router.routes, CONVERSATION_PREFIX),
         minimum_size=1024,
         compresslevel=4,
     )
@@ -1791,4 +1786,34 @@ def test_executor_default_view_never_presents_placeholder_as_workspace(harness: 
             assert response.status_code == 200
             assert response.json()["workspace_folder"] is None
             assert response.json()["workspace_path_policy"] == "executor_default"
+    _run(exercise)
+
+
+def test_generic_send_records_authenticated_owner_despite_system_label_and_spoof_field(
+    harness: _Harness,
+) -> None:
+    """Request text and extra JSON cannot manufacture server-owned system provenance."""
+    from planner.conversation.events import PromptEventPayload
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "attention-owner")
+            response = await client.post(
+                "/api/conversation/conversations/attention-owner/send",
+                json={
+                    "content": [{"piece": "text", "text": "Human instruction"}],
+                    "sender_label": "Panels loop",
+                    "system_generated": True,
+                },
+            )
+            assert response.status_code == 200
+        prompts = [
+            event.payload
+            for event in await harness.store.read_events_after("attention-owner", 0)
+            if isinstance(event.payload, PromptEventPayload)
+        ]
+        assert len(prompts) == 1
+        assert prompts[0].sender == OWNER_PRINCIPAL
+        assert prompts[0].system_generated is False
+
     _run(exercise)

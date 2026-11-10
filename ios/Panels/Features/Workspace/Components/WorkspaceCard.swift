@@ -1,0 +1,120 @@
+import SwiftUI
+
+private enum WorkspaceCardRow: Identifiable {
+    case heading(WorkspaceSection)
+    case ticket(TicketSummary, WorkspaceSection)
+    var id: String {
+        switch self {
+        case .heading(let section): "heading:\(section.rawValue)"
+        case .ticket(let ticket, let section): "ticket:\(section.rawValue):\(ticket.id)"
+        }
+    }
+}
+
+struct WorkspaceCard: View {
+    let title: String
+    var project: String? = nil
+    var chief = false
+    let route: AppRoute
+    let signal: ConversationSignal?
+    let groups: [WorkspaceTicketGroup]
+    /// Active tickets beyond the rows this card loaded; the page shows them all.
+    var hiddenCount = 0
+    var goals: [GoalRecord] = []
+    let previewChanged: (Bool) -> Void
+    let open: (AppRoute) -> Void
+    @Environment(AppStore.self) private var store
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private static let chiefPortrait: UIImage? = Bundle.main.url(forResource: "workspace-chief", withExtension: "png")
+        .flatMap { UIImage(contentsOfFile: $0.path) }
+
+    private var rows: [WorkspaceCardRow] {
+        groups.flatMap { group in
+            [.heading(group.section)] + group.tickets.map { .ticket($0, group.section) }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            NavigationLink(value: route) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if !chief {
+                        HStack {
+                            Text(project ?? "").panelsProjectLabel().foregroundStyle(PanelsTheme.faint)
+                                .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            ConversationSignalMark(signal: signal)
+                        }
+                    }
+                    HStack(spacing: 10) {
+                        if chief, let portrait = Self.chiefPortrait {
+                            Image(uiImage: portrait).renderingMode(.original).resizable().scaledToFill()
+                                .frame(width: 28, height: 28).clipShape(RoundedRectangle(cornerRadius: 6))
+                                .accessibilityHidden(true)
+                        }
+                        Text(title).panelsScaledFont(size: 20, relativeTo: .title3, weight: .semibold)
+                            .foregroundStyle(signal?.messageForOwner == true ? PanelsTheme.strong : PanelsTheme.faint)
+                            .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if chief { ConversationSignalMark(signal: signal) }
+                    }
+                }.padding(.vertical, chief ? 8 : 0).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, chief ? -8 : 0)
+            .conversationAccessibility(label: [project, title].compactMap { $0 }.joined(separator: ", "), signal: signal)
+            .accessibilityIdentifier(chief ? "workspace-chief" : "workspace-orchestrator")
+            .modifier(WorkspaceContextMenu(route: route, title: title, parent: project, ticket: nil,
+                                           signal: signal, previewChanged: previewChanged, open: open))
+            if chief { WorkspaceGoals(holder: .chief, goals: goals, open: open).padding(.top, 12) }
+            else if case .orchestrator(let id) = route { WorkspaceGoals(holder: .manager(id), goals: goals, open: open).padding(.top, 12) }
+            ForEach(rows) { row in
+                switch row {
+                case .heading(let section):
+                    Text(section.title)
+                        .panelsScaledFont(size: 13, relativeTo: .caption, weight: .semibold)
+                        .foregroundStyle(PanelsTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(minHeight: 32)
+                        .padding(.horizontal, 16)
+                        .background(PanelsTheme.raised)
+                        .padding(.horizontal, -16)
+                        .padding(.top, section == groups.first?.section ? 16 : 8)
+                        .accessibilityAddTraits(.isHeader)
+                        .transition(.opacity)
+                case .ticket(let ticket, let section):
+                    NavigationLink(value: AppRoute.ticket(ticket.id)) {
+                        HStack(spacing: 12) {
+                            Text(ticket.title).panelsScaledFont(size: 16)
+                                .foregroundStyle(section.needsAttention || ticket.conversationSignal?.messageForOwner == true ? PanelsTheme.strong : PanelsTheme.faint)
+                                .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            TicketActivityMark(locale: ticket.locale, signal: ticket.conversationSignal, completed: ticket.stage == "done" || ticket.stage == "cancelled")
+                        }.frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspace-ticket-\(ticket.id)")
+                    .conversationAccessibility(label: ticket.title, signal: TicketMachine.signal(ticket.conversationSignal, locale: ticket.locale, health: store.executorHealth, completed: ticket.stage == "done" || ticket.stage == "cancelled"))
+                    .modifier(WorkspaceContextMenu(route: .ticket(ticket.id), title: ticket.title,
+                                                   parent: title, ticket: ticket, signal: ticket.conversationSignal,
+                                                   previewChanged: previewChanged, open: open))
+                    .transition(.opacity)
+                }
+            }
+            if hiddenCount > 0 {
+                NavigationLink(value: route) {
+                    Text("+\(hiddenCount) more").panelsScaledFont(size: 16).foregroundStyle(PanelsTheme.faint)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("workspace-more")
+            }
+        }
+        .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, groups.isEmpty ? 16 : 2)
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(PanelsTheme.border))
+    }
+}

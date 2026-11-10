@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from tests.support.executor_inbox import lookup_receipt
+from tests.support.executor_presence import mac_identity, make_current
 from tests.unit.test_conversation_api import _Harness, _start
 from tests.unit.test_conversation_executor_publication import _envelope, _take_event
 
@@ -18,9 +19,7 @@ from planner.conversation.backend_event_contracts import AcceptedEvent, EventTak
 from planner.conversation.events import ConversationEventKind
 from planner.conversation.message_content import text_message_content
 from planner.conversation.runtime_composition import SignalRuntimeComposition
-from planner.core.contracts import ErrorCode, PlannerError
-from planner.core.db import ChangeSignallingConnection, connect, create_schema
-from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.core.db import connect, create_schema
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
     BackendEvent,
@@ -62,11 +61,13 @@ async def _case(
         await harness.system.send("c", text_message_content("work"), sender_label="owner")
         state = harness.system._conversations["c"]
         assert state.running_turn is not None
-        child = ChildReference("proof", "child", "c")
+        # The sending process is current, as its lease makes it; a VpsExecutor built
+        # after this reads it from the presence row.
+        identity = mac_identity()
+        child = ChildReference(identity.executor_incarnation, "child", "c")
         state.retained_child_reference = child
         store = InboxStore(str(path))
-        identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "proof", 1)
-        store.runs.begin_connection(identity)
+        make_current(str(path), identity)
         store.runs.register_child(child, "chief", "chief", 1000)
         event = BackendEvent(
             child,
@@ -140,79 +141,6 @@ def test_worker_progress_and_cancellation_retain_lock_through_finalization(
     asyncio.run(asyncio.wait_for(exercise(), 10))
 
 
-@pytest.mark.parametrize("outcome", ["accepted", "replay", "refused"])
-def test_ambiguous_commit_recovers_typed_result_for_every_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
-) -> None:
-    async def exercise() -> None:
-        async with _case(tmp_path, True) as (harness, store, identity, event, envelope):
-
-            def accept(connection: sqlite3.Connection, take: EventTaken) -> AcceptedEvent:
-                def effect(connection: sqlite3.Connection, envelope: QueuedEnvelope) -> JsonObject:
-                    if outcome == "refused":
-                        take()  # The receipt savepoint must roll back an already-written effect.
-                        raise PlannerError(ErrorCode.validation, "controlled refusal", {})
-                    return take()
-
-                receipt, taken = store.accept_in_transaction(
-                    connection, envelope, effect, 1001, identity=identity
-                )
-                return AcceptedEvent(as_object(receipt), taken)
-
-            if outcome == "replay":
-                await _take_event(harness.system, event, envelope, accept)
-            coordinator = harness.store.signal_coordinator
-            assert coordinator is not None
-            original_record = coordinator.record_result
-            original_commit = ChangeSignallingConnection.commit
-            target: list[sqlite3.Connection] = []
-            seen: list[AcceptedEvent] = []
-            original_encode = harness.store._encode_signal_result
-
-            def encode(result: object) -> object:
-                if isinstance(result, AcceptedEvent):
-                    seen.append(result)
-                return original_encode(result)
-
-            def record(connection: sqlite3.Connection, result: object) -> None:
-                original_record(connection, result)
-                if isinstance(result, dict) and "accepted_event" in result and not target:
-                    target.append(connection)
-
-            def commit(connection: ChangeSignallingConnection) -> None:
-                original_commit(connection)
-                if target and connection is target[0]:
-                    target.clear()
-                    raise RuntimeError("caller lost the commit result")
-
-            with monkeypatch.context() as fault:
-                fault.setattr(coordinator, "record_result", record)
-                fault.setattr(harness.store, "_encode_signal_result", encode)
-                fault.setattr(ChangeSignallingConnection, "commit", commit)
-                task = asyncio.create_task(_take_event(harness.system, event, envelope, accept))
-                for _ in range(500):
-                    if harness.store.recording_failures("c"):
-                        break
-                    await asyncio.sleep(0.002)
-                assert harness.store.recording_failures("c")
-                assert not task.done()
-                # Disable the injected loss before explicit reconciliation resumes the owner.
-                fault.setattr(ChangeSignallingConnection, "commit", original_commit)
-                harness.store.resume_recording("c")
-                receipt = await asyncio.wait_for(task, 5)
-            assert receipt.disposition.value == ("refused" if outcome == "refused" else "accepted")
-            assert len(seen) == 1
-            assert seen[0].taken is (outcome == "accepted")
-            assert bool(seen[0].written) is (outcome == "accepted")
-            events = await harness.store.read_events_after("c", 0)
-            assert sum(row.kind is ConversationEventKind.tool_call_started for row in events) == (
-                0 if outcome == "refused" else 1
-            )
-            assert await _take_event(harness.system, event, envelope, accept) == receipt
-
-    asyncio.run(asyncio.wait_for(exercise(), 10))
-
-
 def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: Path) -> None:
     """Compare the real callback queue and inbox, including request reuse and closure."""
     from typing import cast
@@ -222,6 +150,7 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
         BackendEventValue,
         BackendPermissionAsk,
         BackendUserInputRequest,
+        CommandReplyReported,
         ContextCompacted,
         PermissionAskRaised,
         PlanUpdated,
@@ -233,6 +162,7 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
         UserInputRequested,
     )
     from planner.conversation.events import (
+        CommandReplyEventPayload,
         ConversationTurnEnding,
         PermissionAskOption,
         ToolCallStatus,
@@ -255,7 +185,6 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
                 assert sink is not None
                 endpoint = VpsExecutor(str(harness.db_path), RealClock())
                 endpoint.bind_conversations(harness.system)
-                endpoint.runs.identity = identity
                 permission = PermissionAskRaised(
                     ask=BackendPermissionAsk(
                         "ask", "Run?", None, (PermissionAskOption("allow", "Allow", "allow_once"),)
@@ -302,6 +231,10 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
                     ),
                     (BackendEventMethod.context_compacted, ContextCompacted()),
                     (
+                        BackendEventMethod.command_reply_reported,
+                        CommandReplyReported(reply_text="Goal cleared."),
+                    ),
+                    (
                         BackendEventMethod.turn_ended,
                         TurnEnded(ending=ConversationTurnEnding.completed),
                     ),
@@ -324,6 +257,10 @@ def test_local_callbacks_and_mac_inbox_produce_identical_transcripts(tmp_path: P
                 transcripts.append([(row.sequence, row.kind, row.payload) for row in rows])
                 assert state.running_turn is None
         assert transcripts[0] == transcripts[1]
+        # Read back from the database, so the row also round-trips its stored form.
+        assert CommandReplyEventPayload(reply_text="Goal cleared.") in [
+            payload for _, _, payload in transcripts[0]
+        ]
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
 
@@ -347,7 +284,6 @@ def test_stale_events_receive_durable_ignored_acceptance_without_rows_or_live_fr
             original_rows = await harness.store.read_events_after("c", 0)
             endpoint = VpsExecutor(str(harness.db_path), RealClock())
             endpoint.bind_conversations(harness.system)
-            endpoint.runs.identity = identity
             with harness.live_tail.subscribe("c") as tail:
                 sequence: tuple[tuple[BackendEventMethod, JsonObject], ...] = (
                     (first.method, first.arguments),

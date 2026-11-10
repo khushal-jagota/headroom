@@ -58,7 +58,7 @@ export function createArtifactOnThePage(host: {
       }
       cancelled = true;
       waitingOn?.disconnect();
-      target.focus();
+      target.focus({ preventScroll: true });
     }
     give();
     return () => {
@@ -82,13 +82,13 @@ export function createArtifactOnThePage(host: {
    * from, one press away from the words it was named in. */
   function giveTheKeyboardBack(had: HTMLElement | null): void {
     if (had?.isConnected && !had.closest("[inert]")) {
-      had.focus();
+      had.focus({ preventScroll: true });
       if (document.activeElement === had) return;
     }
     host
       .root()
       ?.querySelector<HTMLElement>("[data-conversation-rest-bar], [data-conversation-expand]")
-      ?.focus();
+      ?.focus({ preventScroll: true });
   }
 
   function show(file: ManagedFileTarget | null): void {

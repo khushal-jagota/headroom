@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useRef, useLayoutEffect } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
 import type { ChartBlock, MeasureValue, ChartProjection, GoalResponse } from '../goals/contracts';
 import { LineChart, type LineChartDatum, type LineChartSeries } from './components/line-chart-integrated';
 import { AnimatedCounter } from './components/animated-counter';
@@ -8,20 +7,24 @@ import { SupportingMetric } from './components/supporting-metric';
 import { Gauge } from './components/gauge';
 import { ProgressCard, TimeBudgetCard, AllocationCard, seriesColor } from './components/goal-indicators';
 import { Bars } from './components/bar-chart';
-import { motionTokens } from './lib/motion-tokens';
-import { chartData, chartHeadline, chartTone, comparisonText, readingSuffix, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, observationDetails, seriesKey, allocationData } from './presentation';
+import { chartData, chartHeadline, chartTone, comparisonText, readingSuffix, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, hasDateAxis, observationDetails, seriesKey, allocationData } from './presentation';
 import './theme.css';
 
 const colors = { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--text-muted)' };
+// A trend line keeps its per-reading status, drawn in calmer tones than the status text.
+const lineColors = { good: 'var(--chart-line-good)', bad: 'var(--chart-line-bad)', attention: 'var(--chart-line-attention)', neutral: colors.neutral };
 const C = { green: colors.good, blue: 'var(--accent-bright)', reference: 'var(--chart-reference)' };
-export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; projection?: ChartProjection; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean };
+export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; projection?: ChartProjection; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean; wide?: boolean };
 
-export function Range({ value, onChange, id, block, projection }: { value: string; onChange: (v: string) => void; id: string; block: ChartBlock; projection?: ChartProjection }) {
-  const reduce = useReducedMotion();
+/** Plot heights, as staging: a goal card's (compact) and every full chart's. */
+// A goal card's chart is a glance, not the page's main surface: 120px (the goal page keeps 216).
+const PLOT_HEIGHT = { compact: 120, regular: 216, wide: 216 };
+
+/** The period switch is the shared segmented control (app.css, .segmented), in React. */
+export function Range({ value, onChange, block, projection }: { value: string; onChange: (v: string) => void; id: string; block: ChartBlock; projection?: ChartProjection }) {
   const choices = (block.binding && projection?.kind === 'category' ? projection.ranges : block.ranges)?.map(r => [r.id, r.label]) ?? [['week', 'Week'], ['month', 'Month'], ['all', 'All time']];
-  return <div className="ranges" role="group" aria-label="Time range">{choices.map(([key, label]) => <button type="button" key={key} aria-pressed={value === key} onClick={() => onChange(key)}>
-    {key === value && <motion.span className="range-selection" layoutId={'range-' + id} transition={reduce ? { duration: 0 } : motionTokens.spring.snappy} />}
-    <span>{label}</span>
+  return <div className="ranges segmented" role="group" aria-label="Time range">{choices.map(([key, label]) => <button type="button" className="segmented-option" key={key} aria-pressed={value === key} onClick={() => onChange(key)}>
+    {label}
   </button>)}</div>;
 }
 
@@ -39,7 +42,7 @@ function CategoryNotes({ headline, projection, range }: { headline: ReturnType<t
   return details.length ? <details className="observation-details caption"><summary>Observation details</summary><ul>{details.map(detail => <li key={detail}>{detail}</li>)}</ul></details> : null;
 }
 
-export function GoalChart({ block, values, projection, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false, integrated = false }: GoalChartProps) {
+export function GoalChart({ block, values, projection, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false, integrated = false, wide = false }: GoalChartProps) {
   const [preferences, setPreferences] = useState(() => {
     const saved = readChartPreference(preferenceKey);
     return block.ranges?.length && !block.ranges.some(r => r.id === saved.range) ? { ...saved, range: block.ranges[0].id } : saved;
@@ -77,15 +80,15 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
     if (foldable && !preferences.expanded && focusInside.current) root.current?.querySelector<HTMLButtonElement>('.support-summary')?.focus();
   }, [foldable, preferences.expanded]);
 
-  const badColor = colors[block.below_target_tone ?? 'bad'];
+  const badColor = lineColors[block.below_target_tone ?? 'bad'];
   const latestReading = block.expectation ? undefined : data.at(-1)?.values;
   const datedComparisons = !!block.expectation || !!block.measure_id;
   const actualKey = block.measure_id ? 'actual' : authoredSeries[0] ? seriesKey(authoredSeries[0], 0) : 'actual';
   const categorySeries: LineChartSeries[] = authoredSeries.map((item, index) => ({ key: seriesKey(item, index), label: item.name, color: seriesColor(item, index), area: index === 0 }));
   const series: LineChartSeries[] = [
     ...(block.binding ? categorySeries : [
-    { key: actualKey, label: authoredSeries[0]?.name ?? 'Current', color: block.expectation ? colors[chartTone(block, summary.value, summary.target, summary.point, summary.categorySummary, summary.coverage_status)] : latestReading?.target === undefined ? C.blue : latestReading[actualKey] === undefined ? badColor : colors[chartTone(block, latestReading[actualKey], latestReading.target, undefined, undefined, data.at(-1)?.coverage_status)], area: true,
-      datedComparisons, neutralColor: colors.neutral, compareTo: !datedComparisons && data.some(d => d.values.target !== undefined) ? 'target' : undefined, higherIsBetter: block.direction !== 'atmost', goodColor: C.green, badColor },
+    { key: actualKey, label: authoredSeries[0]?.name ?? 'Current', color: block.expectation ? lineColors[chartTone(block, summary.value, summary.target, summary.point, summary.categorySummary, summary.coverage_status)] : latestReading?.target === undefined ? C.blue : latestReading[actualKey] === undefined ? badColor : lineColors[chartTone(block, latestReading[actualKey], latestReading.target, undefined, undefined, data.at(-1)?.coverage_status)], area: true,
+      datedComparisons, neutralColor: colors.neutral, compareTo: !datedComparisons && data.some(d => d.values.target !== undefined) ? 'target' : undefined, higherIsBetter: block.direction !== 'atmost', goodColor: lineColors.good, badColor },
     ...authoredSeries.slice(1).map((item, index) => ({ key: seriesKey(item, index + 1), label: item.name, area: false, color: seriesColor(item, index + 1) })),
     ]),
     ...(data.some(d => d.values.target !== undefined) ? [{ key: 'target', label: block.expectation ? 'Expected' : block.binding || block.reference?.length || block.aggregate === 'sum' ? 'Target' : `${formatTrimmedReading(block, displayBlock.target!)} ${block.target_label ?? (block.direction === 'atmost' ? 'limit' : 'target')}`, color: C.reference, dashed: true, area: false, curve: block.expectation ? 'linear' as const : undefined }] : []),
@@ -102,12 +105,15 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
       { from: Math.min(0, value), tone: block.direction === 'atmost' ? 'success' : 'danger', label: block.direction === 'atmost' ? 'Within limit' : 'Below target' },
       { from: displayBlock.target! + (block.direction === 'atmost' ? .00001 : 0), tone: block.direction === 'atmost' ? 'danger' : 'success', label: block.direction === 'atmost' ? 'Above limit' : 'On target' },
     ]} />;
-  else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} />;
+  else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} dateAxis={hasDateAxis(block, data, projection, preferences.range)} />;
   else if (block.kind === 'number') chart = null;
-  else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? 176 : 216)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
-  const plot = <>{chart}{compact && hasRange && <div className="chart-range-footer">{range}</div>}</>;
+  else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? PLOT_HEIGHT.compact : wide ? PLOT_HEIGHT.wide : PLOT_HEIGHT.regular)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
+  // The period switch stands where staging put it: at the top right of a full chart, and as
+  // one full-width row under the plot of a compact (card) chart.
+  const rangeOnTop = !compact;
+  const plot = <>{chart}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 
-  if (block.kind === 'binary') return <article className={`metric-card indicator-card completion-card ${integrated ? 'integrated-card' : ''}`}>{block.title && <div className="metric-top"><h2>{block.title}</h2></div>}<CompletionReading done={completed} tone={colors[status]} context={completed ? 'Completed' : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : 'Not done'} /></article>;
+  if (block.kind === 'binary') return <article className={`metric-card indicator-card completion-card ${integrated ? 'integrated-card' : ''}`}>{block.title && <div className="metric-top"><h2>{block.title}</h2></div>}<CompletionReading done={completed} tone={colors[status]} context={completed ? null : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : null} /></article>;
   if (foldable) {
     const visible = preferences.expanded ? headline : summary;
     const allocation = allocationData(data, authoredSeries, block.binding ? selectedRange : undefined, preferences.expanded ? activeKey : null);
@@ -116,7 +122,7 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
       open={preferences.expanded} onToggle={() => preference({ expanded: !preferences.expanded })}>{plot}<CategoryNotes headline={visible} projection={projection} range={preferences.range} /></SupportingMetric></section>;
   }
   return <article ref={root} {...trackFocus} className={`metric-card ${integrated ? 'integrated-card ' : ''}${compact ? 'compact ' : ''}${block.emphasis === 'hero' ? 'hero-card ' : ''}${block.kind === 'gauge' ? 'gauge-card ' : ''}${indicator || block.kind === 'progress' ? `indicator-card ${block.kind}-card` : ''}`}>
-    <div className="metric-top"><h2>{title}</h2>{!compact && hasRange && range}</div>
+    <div className="metric-top"><h2>{title}</h2>{rangeOnTop && hasRange && range}</div>
     {block.kind !== 'gauge' && !indicator && <div className="headline">
       {block.kind === 'progress' && <div className="caption">Completed</div>}
       <div className={block.kind === 'progress' ? 'meter-value' : 'metric-value'} data-current={value ?? 'missing'}>{counter(value)}{block.kind === 'progress' && displayBlock.target !== undefined && displayBlock.target > 0 && <span className="meter-denominator">of {formatReading(block, displayBlock.target)}</span>}</div>

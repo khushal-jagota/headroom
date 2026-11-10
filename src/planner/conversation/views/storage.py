@@ -10,7 +10,6 @@ from typing import Literal, cast
 
 from planner.conversation import events as event
 from planner.conversation.contracts import AnswerFate, ConversationBackendKey
-from planner.conversation.retention.read import sequence_expired
 from planner.conversation.views.configuration import (
     BODY_CHUNK_BYTES,
     HISTORY_PAGE_BODY_BYTES,
@@ -34,6 +33,7 @@ from planner.conversation.views.contracts import (
     ViewRowKind,
 )
 from planner.conversation.views.logic.bodies import row_body
+from planner.conversation.views.omissions import sequence_expired
 from planner.core.errors import ErrorCode, PlannerError
 
 
@@ -643,7 +643,15 @@ def scope_contains_item(
 ) -> bool:
     """Range membership alone cannot admit a hidden child or an unrelated expansion."""
     if kind == "turn":
-        return scope["kind"] == "timeline"
+        if scope["kind"] != "timeline":
+            return False
+        if lens == "full":
+            return True
+        head = conn.execute(
+            "SELECT focus_head FROM conversation_view_turns WHERE conversation_id=? AND turn_key=?",
+            (conversation_id, key),
+        ).fetchone()
+        return bool(head is not None and head[0])
     if kind == "work_group":
         row = conn.execute(
             "SELECT turn_key,ending_sequence FROM conversation_view_groups "

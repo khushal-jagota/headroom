@@ -6,7 +6,7 @@ export function deadlineTone(deadline:string|null|undefined,completed:boolean,to
  return deadline<today?'bad':deadline===today?'attention':'neutral';
 }
 export function deadlineColor(tone:GoalResponse['status']):string {
- return tone==='bad'?'var(--accent-error)':tone==='attention'?'var(--accent-attention)':tone==='good'?'var(--accent-done)':'var(--text-muted)';
+ return tone==='bad'?'var(--accent-error)':tone==='attention'?'var(--accent-attention)':tone==='good'?'var(--accent-done)':'inherit';
 }
 export function goalStatusText(goal:GoalResponse):string {
  if(goal.kind!=='binary')return goal.status==='good'?'On target':goal.status==='bad'?'Below target':'No readings';

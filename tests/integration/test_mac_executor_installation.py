@@ -77,7 +77,6 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
         "cli/main.py",
         "core/migrations/env.py",
         "core/migrations/script.py.mako",
-        "core/migrations/planning_retirement_cohort.json",
         "worker_types/shipped_worker_types.json",
         "py.typed",
         "skills/panels/SKILL.md",
@@ -114,7 +113,7 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
             """import importlib, json, sys, sysconfig
 from pathlib import Path
 names = (
-    'planner.executor.mac_service', 'planner.executor.app_transport', 'planner.executor.link_files',
+    'planner.executor.mac_service', 'planner.executor.app_transport', 'planner.executor.mac_http',
     'planner.executor.mac_outbox', 'planner.cli.main', 'aiohttp',
 )
 modules = {name: importlib.import_module(name) for name in names}
@@ -123,8 +122,8 @@ assert (
     == 'planner.executor.mac_service'
 )
 assert (
-    modules['planner.executor.link_files'].GenerationTransfers.__module__
-    == 'planner.executor.link_files'
+    modules['planner.executor.mac_http'].MacHttpClient.__module__
+    == 'planner.executor.mac_http'
 )
 sites = {Path(sysconfig.get_path(key)).resolve() for key in ('purelib', 'platlib')}
 for name, module in tuple(sys.modules.items()):
@@ -177,7 +176,7 @@ assert 'planner.core.db' not in sys.modules
     assert set(installed_origins) == {
         "planner.executor.mac_service",
         "planner.executor.app_transport",
-        "planner.executor.link_files",
+        "planner.executor.mac_http",
         "planner.executor.mac_outbox",
         "planner.cli.main",
         "aiohttp",
@@ -190,19 +189,15 @@ assert 'planner.core.db' not in sys.modules
             requests.append(self.path)
             assert self.headers["X-Plan-Actor"] == "worker"
             assert self.headers["X-Plan-Ticket-ID"] == "t_fixture"
-            response: dict[str, object]
-            if self.path == "/api/tickets/t_fixture/worker-self":
-                response = {
-                    "id": "t_fixture",
-                    "title": "Installed wheel",
-                    "worker_type": "coding",
-                    "field_values": {"brief": "Read from the isolated fixture."},
-                }
-            else:
-                assert self.path == "/api/worker-types"
-                response = {
-                    "worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]
-                }
+            # The Ticket carries its own saved workflow, so worker-self is the only read.
+            assert self.path == "/api/tickets/t_fixture/worker-self"
+            response: dict[str, object] = {
+                "id": "t_fixture",
+                "title": "Installed wheel",
+                "worker_type": "coding",
+                "field_values": {"brief": "Read from the isolated fixture."},
+                "workflow": {"fields": [{"id": "brief"}]},
+            }
             body = json.dumps(response).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -231,7 +226,7 @@ assert 'planner.core.db' not in sys.modules
         server.server_close()
         thread.join(timeout=5)
     assert json.loads(result.stdout)["header"]["title"] == "Installed wheel"
-    assert requests == ["/api/tickets/t_fixture/worker-self", "/api/worker-types"]
+    assert requests == ["/api/tickets/t_fixture/worker-self"]
     # The ordinary generated console supports executor commands.
     subprocess.run(
         [

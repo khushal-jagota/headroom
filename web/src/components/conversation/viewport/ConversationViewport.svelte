@@ -133,7 +133,9 @@
       if (owner === retirementOwner && wanted >= 0 && wanted <= thread.scrollHeight - thread.clientHeight + .01) moveTheThread(thread, wanted);
     } finally { correctingRetirement = false; rememberNavigationPosition(thread); }
   }
-  let jumpVisible = $state(false);
+  let newestLineOutOfSight = $state(false);
+  // Latest points down, so a newest line above the view does not call for it.
+  let newestLineBelowTheView = $state(false);
   let belowCount = $state(0);
   const newerHistory = $derived(reader?.pages.some(page => page.scope.kind === "timeline" && page.newer !== null) ?? false);
   const newerThanUnplacedAnchor = $derived.by(() => {
@@ -401,12 +403,22 @@
     withTheNewestLineBeforeTheWrite = false;
     if (threadElement) { retireReplySpace(threadElement); rememberNavigationPosition(threadElement); }
   }
-  async function travel(thread: HTMLDivElement, wanted: number, duration = CONVERSATION_MOVE_MS, current: () => boolean = () => true): Promise<boolean> {
+  // When the previous reply line was due to finish. Each line ends on the first frame
+  // at or after its due time, so a line that started then would lose that wait,
+  // and any late frame, on every line. A following line starts at this time instead.
+  let replyLineDue = -Infinity;
+  async function travel(thread: HTMLDivElement, wanted: number, duration = CONVERSATION_MOVE_MS, current: () => boolean = () => true, followsReplyLine = false): Promise<boolean> {
     const from = thread.scrollTop;
     if (Math.abs(wanted - from) < .5) return true;
-    return await conversationMotion(thread).move(positionMotion, fraction => {
+    const now = performance.now();
+    // Within one line's duration of the due time, this line continues the last one.
+    const start = followsReplyLine && now - replyLineDue < duration ? replyLineDue : now;
+    replyLineDue = followsReplyLine ? start + duration : -Infinity;
+    const completed = await conversationMotion(thread).move(positionMotion, fraction => {
         if (current()) moveTheThread(thread, from + (wanted - from) * fraction);
-      }, duration, undefined, true);
+      }, duration, undefined, true, start);
+    if (!completed) replyLineDue = -Infinity;
+    return completed;
   }
 
   function moveTheThread(thread: HTMLDivElement, wanted: number): void {
@@ -448,7 +460,8 @@
   function takeTheReading(reading: ThreadReading): void {
     countBelow();
     newestLineBottomPixels = reading.newestLineBottomPixels;
-    jumpVisible = !reading.newestLineIsInSight;
+    newestLineOutOfSight = !reading.newestLineIsInSight;
+    newestLineBelowTheView = reading.newestLineIsBelowTheView;
   }
 
   /** Is the reader with the newest line right now? Measured, never remembered. */
@@ -485,7 +498,7 @@
       manualReader = false;
       retirementOwner = null;
       withTheNewestLineBeforeTheWrite = true;
-    } else if (!manualReader) withTheNewestLineBeforeTheWrite = !jumpVisible;
+    } else if (!manualReader) withTheNewestLineBeforeTheWrite = !newestLineOutOfSight;
     rememberNavigationPosition(thread);
     saveLogicalAnchor(thread);
   }
@@ -832,7 +845,7 @@
             const line = last ? Number.parseFloat(getComputedStyle(last).lineHeight) : 24;
             const step = Math.min(distance, Number.isFinite(line) && line > 0 ? line : 24);
             const before = thread.scrollTop;
-            await travel(thread, Math.min(wanted, before + step), REPLY_LINE_MOVE_MS);
+            await travel(thread, Math.min(wanted, before + step), REPLY_LINE_MOVE_MS, undefined, true);
             const moved = Math.max(0, thread.scrollTop - before);
             liveArrivalPixels = moved < 0.5 ? 0 : Math.max(0, liveArrivalPixels - moved);
             const remaining = threadGeometry(thread, reservedSpaceElement).read(reservedSpacePixels).newestLineBottomPixels;
@@ -890,14 +903,15 @@
         if (sentMessageToPlace !== null && settledMessageIds.has(sentMessageToPlace)) sentMessageToPlace = null;
         else if (sentMessageToPlace !== null) dirty = true;
         takeTheReading(geometry.read(reservedSpacePixels));
-        jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels) && !followingMore;
+        newestLineOutOfSight = !geometry.newestLineIsInSight(newestLineBottomPixels) && !followingMore;
+        newestLineBelowTheView = geometry.newestLineIsBelowTheView(newestLineBottomPixels) && !followingMore;
         const finalRow = presentationRoots(thread).at(-1) ?? contentElement ?? thread;
         const latestPresented = intent?.cause !== 'restoration-fallback' || presentationReady(finalRow);
         const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && actualNewestIsHeld()
           && reservedSpacePixels === 0 && Math.abs(thread.scrollTop - Math.max(0, geometry.newestLineScrollTop(newestLineBottomPixels))) <= 1
-          && !jumpVisible && latestPresented;
+          && !newestLineOutOfSight && latestPresented;
         if (latestPlaced) { latestPending = false; manualReader = false; retirementOwner = null; }
-        withTheNewestLineBeforeTheWrite = !manualReader && (followingMore || !jumpVisible) && !latestPending && heldSent === null;
+        withTheNewestLineBeforeTheWrite = !manualReader && (followingMore || !newestLineOutOfSight) && !latestPending && heldSent === null;
         saveLogicalAnchor(thread);
         if (latestPlaced && intent !== null) {
           // Wait for Latest to leave the DOM before returning the keyboard to the thread.
@@ -1033,7 +1047,16 @@
             reservedSpacePixels = 0;
             retainedTopInset = null;
           }
+        } else if (textRestoration === null && reader !== null && viewAnchor !== null) {
+          // A transcript kept at the dock reopens where a fresh open would land: the saved
+          // line is placed by its text, as on entry.
+          textRestoration = {reader, anchor:copyViewReaderAnchor(viewAnchor), attempt:reader.restorationAttempt, demand:null, unsubscribe:null};
+          manualReader = true;
         }
+        // The thread was not drawn at rest, so it is shown only once it is placed.
+        settledOnOpening = false;
+        placementReady = false;
+        entryPresentationPending = true;
       }
       requestReconciliation();
     });
@@ -1116,7 +1139,7 @@
     ontouchmove={stopAutomaticTravel}
     onpointerdown={(event) => { if (event.target === event.currentTarget) stopAutomaticTravel(); }}
     onkeydown={(event) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) stopAutomaticTravel(); }}
-    data-more-below={jumpVisible || newerHistory ? "true" : "false"}
+    data-more-below={newestLineBelowTheView || newerHistory ? "true" : "false"}
   >
     <div class="chat-thread-content" data-conversation-content bind:this={contentElement}>
     {#if emptyState && rows.length === 0 && outgoingMessages.length === 0}
@@ -1153,7 +1176,7 @@
       ></div>
     {/if}
   </div>
-  {#if jumpVisible || newerHistory || newerThanUnplacedAnchor || latestPending || manualReader && reservedSpacePixels > 0}
+  {#if newestLineBelowTheView || newerHistory || newerThanUnplacedAnchor || latestPending}
     <button
       type="button"
       class="chat-jump"

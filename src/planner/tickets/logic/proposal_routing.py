@@ -7,7 +7,7 @@ from enum import StrEnum
 
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.tickets.logic import machine
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
 
 
 class ProposalRouteKind(StrEnum):
@@ -28,7 +28,7 @@ def route_proposal(
     stage: str,
     ceiling: str,
     holder: Principal,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> ProposalRoute:
     """Choose the proposal's action before its destination is persisted."""
     below_the_ceiling = not machine.at_or_beyond_ceiling(

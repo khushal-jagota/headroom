@@ -11,14 +11,16 @@ import asyncio
 import logging
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import closing
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
 from typing import cast
 
 import pytest
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import (
@@ -30,14 +32,13 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryUncertain,
 )
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.database_modules import attach
-from planner.runtime import worker_step_readiness
+from planner.runtime import conversation_start, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     MEMORY_LOSS_NOTICE,
 )
@@ -51,8 +52,12 @@ from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback, worker_restart
 from planner.tickets.contracts import Ticket, TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import TicketWorkflowDefinition
+from planner.worker_types.store import workflow_from_preset
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
+# A read transaction's plain BEGIN never waits for the write lock, so it is not here.
+_WRITING_STATEMENTS = ("INSERT", "UPDATE", "DELETE", "REPLACE", "BEGIN IMMEDIATE")
 BOUNDARY_HOUR = 5
 TODAY_DAY_ID = "day_2026-07-06"
 
@@ -76,9 +81,25 @@ class _World:
             create_schema(conn)
         self.clock = TestClock(FIXED_NOW)
         self.conversations = InMemoryConversationSystem()
+        self.writes_on_the_event_loop: list[str] = []
 
     def connect(self) -> sqlite3.Connection:
-        return connect(self.db_path)
+        """A connection that notes every write it makes on the event loop.
+
+        A test standing in for another writer, such as a Worker filing mid-restart, opens
+        its own connection with ``connect`` instead.
+        """
+        conn = connect(self.db_path)
+        conn.set_trace_callback(self._note_a_write_on_the_event_loop)
+        return conn
+
+    def _note_a_write_on_the_event_loop(self, statement: str) -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if statement.lstrip().upper().startswith(_WRITING_STATEMENTS):
+            self.writes_on_the_event_loop.append(statement)
 
     def ready_ticket(
         self,
@@ -88,11 +109,13 @@ class _World:
         worker_type: str = "coding",
         conversation_id: str | None = None,
         next_ceiling: str = "none",
+        workflow: TicketWorkflowDefinition | None = None,
     ) -> str:
         with closing(self.connect()) as conn:
             ticket = tickets_data.create_ticket(
                 conn,
                 worker_type=worker_type,
+                workflow=workflow,
                 title=title,
                 brief=brief,
                 principal=OWNER_PRINCIPAL,
@@ -180,13 +203,6 @@ class _World:
         with self.connect() as conn:
             return tickets_data.read_ticket(conn, ticket_id)
 
-    def skill_bindings(self) -> list[sqlite3.Row]:
-        with self.connect() as conn:
-            return conn.execute(
-                "SELECT sender_message_id, skill_role, binding_status "
-                "FROM worker_step_skill_bindings ORDER BY skill_role"
-            ).fetchall()
-
     def start_step(self, ticket_id: str) -> WorkerStepStartResult:
         return asyncio.run(
             start_ready_worker_step(
@@ -234,8 +250,11 @@ class _PauseKillConversationSystem(_RetirementDelegate):
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> _World:
-    return _World(tmp_path)
+def world(tmp_path: Path) -> Iterator[_World]:
+    world = _World(tmp_path)
+    yield world
+    # A write that waits on the SQLite lock on the event loop holds up every request.
+    assert world.writes_on_the_event_loop == []
 
 
 # --- the claim -----------------------------------------------------------------
@@ -316,7 +335,6 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert ticket_id in message
     assert "conv-refuse" in message
     assert "write_to_backend_failed" in message
-    assert world.skill_bindings() == []
 
 
 def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
@@ -345,7 +363,6 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
     assert ticket.worker_step_claim is WorkerStepClaim.errored
     assert ticket.ticket_status is TicketStatus.errored
     assert world.conversations.backend_prompt_writes("conv-uncertain") == ()
-    assert world.skill_bindings() == []
     with closing(world.connect()) as conn:
         assert worker_restart.require_restartable(conn, OWNER_PRINCIPAL, ticket_id).id == ticket_id
         uncertain_restart = asyncio.run(
@@ -402,7 +419,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
     assert world.start_step(ticket_id).started is True
 
     def complete_worker_step() -> None:
-        with world.connect() as other_conn:
+        with connect(world.db_path) as other_conn:
             tickets_data.file_current_proposal(
                 other_conn,
                 ticket_id,
@@ -433,7 +450,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
                 )
             )
 
-    assert raised.value.code is ErrorCode.already_running
+    assert raised.value.code is ErrorCode.validation
     ticket = world.ticket(ticket_id)
     assert ticket.pending_proposal is not None
     assert ticket.pending_proposal.body == "Completed while restart waited."
@@ -441,7 +458,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
     assert ticket.conversation_id == "conv-restart-race"
 
 
-def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _World) -> None:
+def test_restart_uses_the_current_errored_claim_generation_after_kill(world: _World) -> None:
     ticket_id = world.ready_ticket(conversation_id="conv-restart-error-race")
     world.start_conversation("conv-restart-error-race")
     assert world.start_step(ticket_id).started is True
@@ -453,11 +470,12 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
             expected_claim=claimed.worker_step_claim,
             expected_claim_revision=claimed.worker_step_claim_revision,
             now=world.clock.now_unix(),
+            error_reason="delivery uncertain",
         )
     admitted = world.ticket(ticket_id)
 
     def replace_errored_generation() -> None:
-        with world.connect() as other_conn:
+        with connect(world.db_path) as other_conn:
             assert tickets_data.release_worker_step_claim(
                 other_conn,
                 ticket_id,
@@ -469,35 +487,41 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
                 other_conn,
                 ticket_id,
                 now=world.clock.now_unix(),
+                error_reason="delivery uncertain",
             )
 
-    async def unexpected_start() -> WorkerStepStartResult:
-        raise AssertionError("a moved Ticket must not start another worker step")
+    async def start_current_step() -> WorkerStepStartResult:
+        return await start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=cast(ConversationSystem, world.conversations),
+            worker_type_registry=configured_worker_type_registry(),
+            now=world.clock.now_unix,
+        )
 
     with closing(world.connect()) as conn:
-        with pytest.raises(PlannerError) as raised:
-            asyncio.run(
-                worker_restart.restart_worker(
-                    cast(
-                        ConversationSystem,
-                        _MutateOnKillConversationSystem(
-                            world.conversations,
-                            replace_errored_generation,
-                        ),
+        result = asyncio.run(
+            worker_restart.restart_worker(
+                cast(
+                    ConversationSystem,
+                    _MutateOnKillConversationSystem(
+                        world.conversations,
+                        replace_errored_generation,
                     ),
-                    conn,
-                    OWNER_PRINCIPAL,
-                    ticket_id,
-                    start_worker_step=unexpected_start,
-                    now=world.clock.now_unix,
-                )
+                ),
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                start_worker_step=start_current_step,
+                now=world.clock.now_unix,
             )
+        )
 
-    assert raised.value.code is ErrorCode.already_running
+    assert result["started"] is True
     ticket = world.ticket(ticket_id)
-    assert ticket.worker_step_claim is WorkerStepClaim.errored
+    assert ticket.worker_step_claim is WorkerStepClaim.out
     assert ticket.worker_step_claim_revision > admitted.worker_step_claim_revision
-    assert ticket.conversation_id == "conv-restart-error-race"
+    assert ticket.conversation_id != "conv-restart-error-race"
 
 
 def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) -> None:
@@ -528,7 +552,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
             )
             await asyncio.wait_for(pausing.kill_started.wait(), timeout=1)
 
-            with world.connect() as worker_conn:
+            with connect(world.db_path) as worker_conn:
                 tickets_data.file_current_proposal(
                     worker_conn,
                     ticket_id,
@@ -560,7 +584,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
 
     restart_error, next_step = asyncio.run(run_race())
 
-    assert restart_error.code is ErrorCode.already_running
+    assert restart_error.code is ErrorCode.validation
     assert next_step.started is True
     ticket = world.ticket(ticket_id)
     assert ticket.stage == "needs_implementation"
@@ -625,6 +649,7 @@ def test_an_old_uncertain_delivery_cannot_error_a_newer_claim(world: _World) -> 
             expected_claim=first_claim.worker_step_claim,
             expected_claim_revision=first_claim.worker_step_claim_revision,
             now=4,
+            error_reason="delivery uncertain",
         )
 
     ticket = world.ticket(ticket_id)
@@ -658,6 +683,8 @@ class _UncertainConversationSystem(_RetirementDelegate):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         return PromptDeliveryUncertain()
@@ -766,7 +793,6 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     assert [write.sender_label for write in writes] == ["browser"]
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
     assert world.pending_revision_feedback(ticket_id) is False
-    assert {row["binding_status"] for row in world.skill_bindings()} == {"provisional"}
 
 
 class _QueueingConversationSystem(_RetirementDelegate):
@@ -796,6 +822,8 @@ class _QueueingConversationSystem(_RetirementDelegate):
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         owner_read_through_sequence: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
         recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         if not await self._system.is_running(self._conversation_id):
@@ -829,10 +857,32 @@ class _QueueingConversationSystem(_RetirementDelegate):
         return await self._system.has_pending_permission_ask(conversation_id)
 
 
+@pytest.mark.parametrize("custom", [False, True])
 def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_a_wake(
     world: _World,
+    custom: bool,
 ) -> None:
-    ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-mid-step")
+    workflow = (
+        replace(
+            workflow_from_preset(configured_worker_type_registry().require("coding")),
+            specialist_skill=None,
+            guidance="TICKET RECOVERY GUIDE",
+        )
+        if custom
+        else None
+    )
+    ticket_id = world.ready_ticket(
+        title="Ship it", conversation_id="conv-mid-step", workflow=workflow
+    )
+    if not custom:
+        # A preset Ticket keeps its specialist reference, and must still get its own guide.
+        with world.connect() as conn:
+            conn.execute(
+                "UPDATE tickets SET workflow_json=json_set(workflow_json, '$.guidance', ?) "
+                "WHERE id=?",
+                ("TICKET RECOVERY GUIDE", ticket_id),
+            )
+            conn.commit()
     world.start_conversation("conv-mid-step")
     assert world.start_step(ticket_id).started is True
     assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
@@ -857,7 +907,8 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
 
     notice = world.conversations.backend_prompt_writes("conv-mid-step")[1]
     assert MEMORY_LOSS_NOTICE in notice.text
-    assert "Re-read your Ticket with panels worker my-ticket brief," in notice.text
+    assert "Re-read your Ticket with panels worker my-ticket brief" in notice.text
+    assert "TICKET RECOVERY GUIDE" in notice.text
     assert f"part-way through a step on ticket {ticket_id}" in notice.text
     assert notice.mode is PromptDeliveryMode.queue
     # The step keeps its claim: the worker was never sent away, only told.
@@ -934,7 +985,7 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
     with closing(sqlite3.connect(world.db_path)) as raw:
         attach(raw)
         raw.execute("BEGIN")
-        raw.execute("UPDATE tickets SET worker_type='removed_worker' WHERE id=?", (broken,))
+        raw.execute("UPDATE tickets SET workflow_json='{}' WHERE id=?", (broken,))
         raw.commit()
     with closing(world.connect()) as conn:
         tickets_data.audit_ticket_registry_integrity(conn, startup=True)
@@ -1019,8 +1070,13 @@ def test_memory_loss_notice_cannot_start_a_worker_on_the_wrong_machine(world: _W
 @pytest.mark.parametrize("locale", ["vps", "macos"])
 def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: str) -> None:
     ticket_id = world.ready_ticket(title="Locale start")
+    own_guidance = "Guidance this Ticket copied, which its Worker type no longer holds."
     with world.connect() as conn:
-        conn.execute("UPDATE tickets SET locale=? WHERE id=?", (locale, ticket_id))
+        conn.execute(
+            "UPDATE tickets SET locale=?, workflow_json=json_set(workflow_json, '$.guidance', ?) "
+            "WHERE id=?",
+            (locale, own_guidance, ticket_id),
+        )
         conn.commit()
     started = world.start_step(ticket_id)
     ticket = world.ticket(ticket_id)
@@ -1028,7 +1084,12 @@ def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: s
         assert started.started
         assert ticket.worker_step_claim is WorkerStepClaim.out
         assert ticket.conversation_id is not None
-        assert len(world.conversations.backend_prompt_writes(ticket.conversation_id)) == 1
+        writes = world.conversations.backend_prompt_writes(ticket.conversation_id)
+        assert len(writes) == 1
+        # Risk: a preset Ticket's Worker reads the type's current skill, not its own copy.
+        assert own_guidance in writes[0].text
+        assert "Follow this Ticket’s workflow guide." in writes[0].text
+        assert "SKILL.md" not in writes[0].text
     else:
         assert not started.started
         assert ticket.worker_step_claim is WorkerStepClaim.none
@@ -1078,7 +1139,6 @@ def test_definite_start_failure_stays_failed_until_one_explicit_retry(
             failed = world.ticket(ticket_id)
             assert failed.ticket_status is TicketStatus.errored
             assert failed.conversation_id == "native-refusal-detail"
-            assert world.skill_bindings() == []
             rows = await harness.events(failed.conversation_id)
             refusals = [
                 r.payload for r in rows if isinstance(r.payload, PromptDeliveryRefusedEventPayload)
@@ -1088,6 +1148,15 @@ def test_definite_start_failure_stays_failed_until_one_explicit_retry(
             for _ in range(3):
                 assert not (await start()).started
                 assert world.ticket(ticket_id) == failed
+            # A Chief ticket stores no Manager. Its failed start still tells the Chief, once.
+            with closing(world.connect()) as conn:
+                wakes = conn.execute(
+                    "SELECT target_kind,target_id,summary FROM manager_wakes "
+                    "WHERE ticket_id=? AND source_kind='worker_error'",
+                    (ticket_id,),
+                ).fetchall()
+            assert [(w[0], w[1]) for w in wakes] == [("chief", "chief")]
+            assert "could not start (backend_did_not_start)" in wakes[0][2]
             assert harness.spawned_conversation_ids == ["native-refusal-detail"]
             assert (await retry())["delivery_fate"] == "refused"
             failed_retry = world.ticket(ticket_id)
@@ -1131,7 +1200,8 @@ def test_definite_start_failure_cannot_erase_a_newer_claim(
         expected_claim: WorkerStepClaim,
         expected_claim_revision: int,
         now: int,
-        notify_manager: bool = True,
+        error_reason: str,
+        notify_supervisor: bool = True,
     ) -> bool:
         previous = world.ticket(ticket_id)
         assert tickets_data.release_worker_step_claim(
@@ -1155,10 +1225,66 @@ def test_definite_start_failure_cannot_erase_a_newer_claim(
             expected_claim=expected_claim,
             expected_claim_revision=expected_claim_revision,
             now=now,
-            notify_manager=notify_manager,
+            error_reason=error_reason,
+            notify_supervisor=notify_supervisor,
         )
 
     monkeypatch.setattr(tickets_data, "mark_worker_step_claim_errored", race)
     assert world.start_step(ticket_id).delivery_fate == "refused"
     assert world.ticket(ticket_id) == newer[0]
     assert newer[0].worker_step_claim is WorkerStepClaim.out
+
+
+@pytest.mark.parametrize("first_sender", ["loop", "owner"])
+def test_custom_guidance_reaches_first_payload_but_not_later_stage(
+    world: _World, first_sender: str
+) -> None:
+    workflow = replace(
+        workflow_from_preset(configured_worker_type_registry().require("coding")),
+        specialist_skill=None,
+        guidance="CUSTOM KICKOFF GUIDE",
+    )
+    ticket_id = world.ready_ticket(workflow=workflow, next_ceiling="done")
+    if first_sender == "loop":
+        assert world.start_step(ticket_id).started
+    else:
+
+        async def owner_kickoff() -> None:
+            async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+                with closing(world.connect()) as conn:
+                    await conversation_start.send_to_ticket_conversation(
+                        cast(ConversationSystem, world.conversations),
+                        conn,
+                        ticket_id,
+                        text_message_content("First owner message"),
+                        conversation_id=None,
+                        sender_label="owner",
+                        sender=OWNER_PRINCIPAL,
+                        recipient=Principal(PrincipalKind.ticket, ticket_id),
+                        now=world.clock.now_unix(),
+                    )
+
+        asyncio.run(owner_kickoff())
+    conversation_id = world.ticket(ticket_id).conversation_id
+    assert conversation_id is not None
+    assert (
+        "CUSTOM KICKOFF GUIDE" in world.conversations.backend_prompt_writes(conversation_id)[0].text
+    )
+    first = world.conversations.backend_prompt_writes(conversation_id)[0].text
+    if first_sender == "owner":
+        assert first.endswith("owner:\nFirst owner message")
+        assert first.index("CUSTOM KICKOFF GUIDE") < first.index("owner:\nFirst owner message")
+    world.conversations.complete_running_turn(conversation_id)
+    with closing(world.connect()) as conn:
+        tickets_data.file_current_proposal(
+            conn,
+            ticket_id,
+            body="The changes.",
+            principal=Principal(PrincipalKind.ticket, ticket_id),
+            now=world.clock.now_unix(),
+        )
+    assert world.start_step(ticket_id).started
+    assert (
+        "CUSTOM KICKOFF GUIDE"
+        not in world.conversations.backend_prompt_writes(conversation_id)[1].text
+    )

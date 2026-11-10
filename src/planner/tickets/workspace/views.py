@@ -11,7 +11,7 @@ from planner.tickets import data
 from planner.tickets.integrity import diagnostic_projection, issue_for_ticket
 from planner.tickets.views import _coherent_read, blocker_summary_json, ticket_json
 from planner.tickets.workspace.contracts import WorkspaceFieldBody, WorkspaceTicket
-from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.store import workflow_from_row
 
 
 def workspace_ticket(conn: sqlite3.Connection, ticket_id: str) -> WorkspaceTicket:
@@ -20,9 +20,16 @@ def workspace_ticket(conn: sqlite3.Connection, ticket_id: str) -> WorkspaceTicke
         if issue is not None:
             return diagnostic_projection(conn, ticket_id, issue)
         ticket = data.read_ticket(conn, ticket_id)
-        definition = configured_worker_type_registry().require(ticket.worker_type)
+        definition = ticket.workflow
         gate = definition.gating_field(ticket.stage)
         detail = ticket_json(ticket, 0)
+        controls = dict(detail["workflow"])
+        controls.pop("guidance")
+        controls["stages"] = [
+            {key: value for key, value in stage.items() if key != "instructions"}
+            for stage in controls["stages"]
+        ]
+        detail["workflow"] = controls
         detail["field_values"] = {gate: ticket.field_values.get(gate, "")} if gate else {}
         detail["field_summaries"] = {
             str(row["field"]): {
@@ -45,17 +52,20 @@ def workspace_ticket(conn: sqlite3.Connection, ticket_id: str) -> WorkspaceTicke
 
 
 def field_revision(conn: sqlite3.Connection, ticket_id: str, field: str) -> str:
-    row = conn.execute("SELECT worker_type FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+    row = conn.execute("SELECT workflow_json FROM tickets WHERE id=?", (ticket_id,)).fetchone()
     if row is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
-    definition = configured_worker_type_registry().require(str(row[0]))
+    definition = workflow_from_row(row)
     # A type amendment closes removed fields to writes, but retains their text.
     # Read eligibility follows that stored key, not the current type's write gates.
-    if not definition.has_field(field) and conn.execute(
-        "SELECT 1 FROM tickets,json_each(tickets.field_values) "
-        "WHERE tickets.id=? AND key=?",
-        (ticket_id, field),
-    ).fetchone() is None:
+    if (
+        not definition.has_field(field)
+        and conn.execute(
+            "SELECT 1 FROM tickets,json_each(tickets.field_values) WHERE tickets.id=? AND key=?",
+            (ticket_id, field),
+        ).fetchone()
+        is None
+    ):
         raise PlannerError(ErrorCode.not_found, "Ticket field not found", {"field": field})
     row = conn.execute(
         "SELECT revision FROM ticket_workspace_fields WHERE ticket_id=? AND field=?",

@@ -1,4 +1,4 @@
-"""The scheduled, readiness, and notification loops one process owns."""
+"""The source, readiness, and notification loops one process owns."""
 
 from __future__ import annotations
 
@@ -11,14 +11,14 @@ from planner.conversation.contracts import ConversationSystem
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core import change_signal
 from planner.core.clock import Clock
-from planner.core.config import Config
+from planner.core.config import DB_BUSY_TIMEOUT_MS, SHUTDOWN_GRACE_SECONDS, Config
 from planner.manager_wakes.runtime import ManagerWakeLoop
+from planner.measure_sources.participants import SlotParticipant, SlotParticipantFactory
+from planner.measure_sources.registry import build_participants
+from planner.measure_sources.schedule_loop import SourceScheduleLoop
 from planner.notifications.runtime import NotificationLoop
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
-from planner.scheduled_tickets.participants import SlotParticipant, SlotParticipantFactory
-from planner.scheduled_tickets.registry import build_participants
-from planner.scheduled_tickets.runtime import ScheduledTicketLoop
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,13 +31,13 @@ class BackgroundLoops:
         worker_step_readiness_loop: WorkerStepReadinessLoop | None = None,
         lock_path: str | None = None,
         stop_waking_on_change: Callable[[], None] | None = None,
-        shutdown_grace_seconds: float = 30.0,
-        scheduled_ticket_loop: ScheduledTicketLoop | None = None,
+        shutdown_grace_seconds: float = SHUTDOWN_GRACE_SECONDS,
+        source_schedule_loop: SourceScheduleLoop | None = None,
         notification_loop: NotificationLoop | None = None,
         manager_wake_loop: ManagerWakeLoop | None = None,
     ) -> None:
         self.worker_step_readiness_loop = worker_step_readiness_loop
-        self.scheduled_ticket_loop = scheduled_ticket_loop
+        self.source_schedule_loop = source_schedule_loop
         self.notification_loop = notification_loop
         self.manager_wake_loop = manager_wake_loop
         self._lock_path = lock_path
@@ -53,7 +53,7 @@ class BackgroundLoops:
             raise RuntimeError("background loops cannot start twice or after stop")
         self._started = True
         for loop in (
-            self.scheduled_ticket_loop,
+            self.source_schedule_loop,
             self.worker_step_readiness_loop,
             self.notification_loop,
             self.manager_wake_loop,
@@ -97,7 +97,7 @@ class BackgroundLoops:
             except BaseException as error:
                 failures.append(error)
         for loop in (
-            self.scheduled_ticket_loop,
+            self.source_schedule_loop,
             self.notification_loop,
             self.manager_wake_loop,
             self.worker_step_readiness_loop,
@@ -130,11 +130,11 @@ def _prepare_scheduled_loop(
     *,
     workspace_admission: WorkspaceAdmission | None,
     participants: tuple[SlotParticipant, ...] | None = None,
-) -> ScheduledTicketLoop:
-    return ScheduledTicketLoop(
+) -> SourceScheduleLoop:
+    return SourceScheduleLoop(
         config.db_path,
         clock,
-        busy_timeout_ms=config.db_busy_timeout_ms,
+        busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
         participants=(
             build_participants(config, clock, workspace_admission=workspace_admission)
             if participants is None
@@ -155,8 +155,8 @@ def prepare_scheduled_loops(
     if not config.test_mode:
         raise ValueError("explicit participants are accepted only in test mode")
     return BackgroundLoops(
-        shutdown_grace_seconds=float(config.shutdown_grace_seconds),
-        scheduled_ticket_loop=_prepare_scheduled_loop(
+        shutdown_grace_seconds=float(SHUTDOWN_GRACE_SECONDS),
+        source_schedule_loop=_prepare_scheduled_loop(
             config,
             clock,
             workspace_admission=workspace_admission,
@@ -177,15 +177,15 @@ def prepare_background_loops(
 
     The readiness loop subscribes to the change signal, so any committed write asks it
     to look again instead of waiting out its periodic timer. Over-waking costs a
-    read-only re-run of readiness. The schedule loop remains clock-driven so each due
-    local-minute slot is evaluated through its durable occurrence identity.
+    read-only re-run of readiness. The source loop remains clock-driven so each due
+    collection is admitted through its durable run identity.
     """
     global _active
     if _active is not None:
         raise RuntimeError("background loops already running")
 
     worker_step_readiness_loop: WorkerStepReadinessLoop | None = None
-    scheduled_ticket_loop: ScheduledTicketLoop | None = None
+    source_schedule_loop: SourceScheduleLoop | None = None
     notification_loop: NotificationLoop | None = None
     manager_wake_loop: ManagerWakeLoop | None = None
     lock_path: str | None = None
@@ -197,12 +197,12 @@ def prepare_background_loops(
         _LOGGER.info("Background loops not started: another process holds the polling lock")
     else:
         candidate_loop: WorkerStepReadinessLoop | None = None
-        candidate_schedule_loop: ScheduledTicketLoop | None = None
+        candidate_source_loop: SourceScheduleLoop | None = None
         candidate_notification_loop: NotificationLoop | None = None
         candidate_manager_wake_loop: ManagerWakeLoop | None = None
         candidate_unsubscribe: Callable[[], None] | None = None
         try:
-            candidate_schedule_loop = _prepare_scheduled_loop(
+            candidate_source_loop = _prepare_scheduled_loop(
                 config,
                 clock,
                 workspace_admission=getattr(conversation_system, "workspace_admission", None),
@@ -212,14 +212,15 @@ def prepare_background_loops(
                 clock,
                 conversation_system=conversation_system,
                 asyncio_loop=asyncio_loop,
-                busy_timeout_ms=config.db_busy_timeout_ms,
+                busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
                 before_poll=before_readiness_poll,
             )
             candidate_notification_loop = NotificationLoop(
                 config.db_path,
                 clock,
                 canonical_origin=config.trusted_ingress_canonical_origin,
-                busy_timeout_ms=config.db_busy_timeout_ms,
+                apns_config=config.apns,
+                busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
                 workspace_admission=getattr(conversation_system, "workspace_admission", None),
             )
             candidate_manager_wake_loop = ManagerWakeLoop(
@@ -227,7 +228,7 @@ def prepare_background_loops(
                 clock,
                 conversation_system=conversation_system,
                 asyncio_loop=asyncio_loop,
-                busy_timeout_ms=config.db_busy_timeout_ms,
+                busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
                 workspace_admission=getattr(conversation_system, "workspace_admission", None),
             )
             candidate_notification_loop.reconcile_imported_state()
@@ -239,8 +240,8 @@ def prepare_background_loops(
                 candidate_loop,
                 config.dispatcher_lock_path,
                 candidate_unsubscribe,
-                shutdown_grace_seconds=float(config.shutdown_grace_seconds),
-                scheduled_ticket_loop=candidate_schedule_loop,
+                shutdown_grace_seconds=float(SHUTDOWN_GRACE_SECONDS),
+                source_schedule_loop=candidate_source_loop,
                 notification_loop=candidate_notification_loop,
                 manager_wake_loop=candidate_manager_wake_loop,
             )
@@ -255,7 +256,7 @@ def prepare_background_loops(
             raise
         else:
             worker_step_readiness_loop = candidate_loop
-            scheduled_ticket_loop = candidate_schedule_loop
+            source_schedule_loop = candidate_source_loop
             notification_loop = candidate_notification_loop
             manager_wake_loop = candidate_manager_wake_loop
             stop_waking_on_change = candidate_unsubscribe
@@ -265,8 +266,8 @@ def prepare_background_loops(
         worker_step_readiness_loop,
         lock_path,
         stop_waking_on_change,
-        shutdown_grace_seconds=float(config.shutdown_grace_seconds),
-        scheduled_ticket_loop=scheduled_ticket_loop,
+        shutdown_grace_seconds=float(SHUTDOWN_GRACE_SECONDS),
+        source_schedule_loop=source_schedule_loop,
         notification_loop=notification_loop,
         manager_wake_loop=manager_wake_loop,
     )
@@ -319,6 +320,6 @@ def start_background_loops(
             raise
         if not isinstance(startup_error, Exception):
             raise
-        loops = BackgroundLoops(shutdown_grace_seconds=float(config.shutdown_grace_seconds))
+        loops = BackgroundLoops(shutdown_grace_seconds=float(SHUTDOWN_GRACE_SECONDS))
         _active = loops
     return loops

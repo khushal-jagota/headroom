@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Final
+from dataclasses import dataclass, field
+from typing import Final, Literal
 
 from planner.core.contracts import Principal, PrincipalKind
 
 TICKET_NOTIFICATION_SUBJECT_KEY: Final = "tickets"
 MANAGER_NOTIFICATION_SUBJECT_KEY: Final = "managers"
+PANELS_NOTIFICATION_SUBJECT_KEY: Final = "panels"
+STALL_ALARM_NOTIFICATION_TYPE: Final = "stall_alarm"
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +25,8 @@ class NotificationType:
 class NotificationSubject:
     key: str
     label: str
-    principal_kind: PrincipalKind
+    # None for Panels itself, which is not a principal.
+    principal_kind: PrincipalKind | None
     notification_type_ids: tuple[str, ...]
 
 
@@ -58,6 +61,13 @@ NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
         "A worker turn or Ticket failed and needs attention.",
         True,
     ),
+    # Raised by the stall watchdog unit, not by an attention edge.
+    NotificationType(
+        STALL_ALARM_NOTIFICATION_TYPE,
+        "Stalled work",
+        "Panels work stopped moving and needs a look.",
+        True,
+    ),
 )
 NOTIFICATION_TYPE_BY_ID: Final[dict[str, NotificationType]] = {
     item.id: item for item in NOTIFICATION_TYPES
@@ -86,13 +96,16 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
         ("awaiting_reply", "awaiting_answer", "errored"),
     ),
     NotificationSubject(
-        "goals", "Goals", PrincipalKind.goal, ("awaiting_reply", "awaiting_answer", "errored")
-    ),
-    NotificationSubject(
         MANAGER_NOTIFICATION_SUBJECT_KEY,
         "Managers",
         PrincipalKind.manager,
         ("awaiting_reply", "awaiting_answer", "errored"),
+    ),
+    NotificationSubject(
+        PANELS_NOTIFICATION_SUBJECT_KEY,
+        "Panels",
+        None,
+        (STALL_ALARM_NOTIFICATION_TYPE,),
     ),
 )
 NOTIFICATION_SUBJECT_BY_KEY: Final[dict[str, NotificationSubject]] = {
@@ -162,3 +175,39 @@ class WebPushResult:
     delivered: bool
     expired: bool = False
     error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class APNsConfig:
+    key_path: str = field(repr=False)
+    key_id: str
+    team_id: str
+    bundle_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class APNsDevice:
+    device_id: str
+    device_token: str = field(repr=False)
+    bundle_id: str
+    environment: Literal["development", "production"]
+    registration_version: int
+    updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class PendingAPNsDelivery:
+    edge: EdgeKey
+    device: APNsDevice
+    intent: NotificationIntent
+    attempts: int
+    created_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class APNsResult:
+    delivered: bool
+    dead_token: bool = False
+    retryable: bool = False
+    error: str | None = None
+    invalidated_at_ms: int | None = None

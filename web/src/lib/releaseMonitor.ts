@@ -1,10 +1,7 @@
 import { writable } from "svelte/store";
 
-export const COMPOSITION_STATE_EVENT = "panels:composition-state";
-
 export type ReleaseSnapshot = {
   updateAvailable: boolean;
-  compositionActive: boolean;
   reloadRequested: boolean;
 };
 
@@ -33,7 +30,6 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
   const reload = options.reload ?? (() => window.location.reload());
   let snapshot: ReleaseSnapshot = {
     updateAvailable: false,
-    compositionActive: false,
     reloadRequested: false
   };
   let started = false;
@@ -50,12 +46,19 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     if (
       !reloadStarted &&
       snapshot.reloadRequested &&
-      snapshot.updateAvailable &&
-      !snapshot.compositionActive
+      snapshot.updateAvailable
     ) {
       reloadStarted = true;
       reload();
     }
+  }
+
+  function observeAppSha(appSha: string | null): void {
+    if (!options.bootSha || !appSha) return;
+    const updateAvailable = appSha !== options.bootSha;
+    if (!updateAvailable) reloadStarted = false;
+    publish({ updateAvailable, reloadRequested: updateAvailable ? snapshot.reloadRequested : false });
+    reloadIfReady();
   }
 
   function check(): Promise<boolean> {
@@ -76,7 +79,7 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
         }
         return options.bootSha === null;
       } catch {
-        // A failed check cannot authorize a mutation or disturb the current app.
+        // A failed update check leaves the current app unchanged.
         return false;
       } finally {
         checkInFlight = null;
@@ -90,13 +93,6 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     reloadIfReady();
   }
 
-  async function recheckThenReloadIfReady(): Promise<void> {
-    const activeCheck = checkInFlight;
-    if (activeCheck) await activeCheck;
-    await check();
-    reloadIfReady();
-  }
-
   function onVisibilityChange(): void {
     if (options.document.visibilityState === "visible") void checkThenReloadIfReady();
   }
@@ -105,17 +101,10 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     void checkThenReloadIfReady();
   }
 
-  function onCompositionState(event: Event): void {
-    const active = (event as CustomEvent<{ active?: unknown }>).detail?.active === true;
-    publish({ compositionActive: active });
-    if (!active) void recheckThenReloadIfReady();
-  }
-
   function start(): void {
     if (started) return;
     started = true;
     options.document.addEventListener("visibilitychange", onVisibilityChange);
-    options.document.addEventListener(COMPOSITION_STATE_EVENT, onCompositionState);
     options.window.addEventListener("pageshow", onPageShow);
     void check();
   }
@@ -124,7 +113,6 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     if (!started) return;
     started = false;
     options.document.removeEventListener("visibilitychange", onVisibilityChange);
-    options.document.removeEventListener(COMPOSITION_STATE_EVENT, onCompositionState);
     options.window.removeEventListener("pageshow", onPageShow);
   }
 
@@ -140,7 +128,7 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     return () => subscribers.delete(subscriber);
   }
 
-  return { start, stop, check, requestReload, subscribe };
+  return { start, stop, check, requestReload, subscribe, observeAppSha };
 }
 
 // One monitor for the whole app. ShellStatus is mounted once per breakpoint and both
@@ -148,7 +136,6 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
 // hold two independent reload requests.
 export const releaseState = writable<ReleaseSnapshot>({
   updateAvailable: false,
-  compositionActive: false,
   reloadRequested: false
 });
 
@@ -178,19 +165,14 @@ export function requestReleaseReload(): void {
   sharedMonitor?.requestReload();
 }
 
-/** Recheck on the write path. Never reload or discard the current page. */
-export async function checkReleaseBeforeMutation(): Promise<string | null> {
-  if (!sharedMonitor || !sharedBootSha) return null;
-  if (!await sharedMonitor.check()) {
-    throw new Error("Cannot confirm this page is current. Refresh page before making changes.");
-  }
-  return sharedBootSha;
-}
-
-/** One write preflight and version header for JSON, voice, and upload transports. */
+/** Attach the page version. The server rejects an outdated browser. */
 export async function mutationHeaders(headers?: HeadersInit): Promise<Record<string, string>> {
   const result = Object.fromEntries(new Headers(headers).entries());
-  const bootSha = await checkReleaseBeforeMutation();
-  if (bootSha) result["X-Panels-App-SHA"] = bootSha;
+  if (sharedBootSha) result["X-Panels-App-SHA"] = sharedBootSha;
   return result;
+}
+
+/** Reconciled update status supplies the running version without a second status read. */
+export function observeRunningAppSha(appSha: string | null): void {
+  sharedMonitor?.observeAppSha(appSha);
 }

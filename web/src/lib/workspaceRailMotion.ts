@@ -1,6 +1,15 @@
 import { tick } from "svelte";
 import { refreshWorkspaceRailSignals, stabilizeWorkspaceRail, type WorkspaceRail } from "./workspaceRail";
 import type { ViewWindow } from "./navigation/contracts";
+import type {GoalResponse} from "./goals/contracts";
+import {goalRailWindowShort} from "./goals/holders";
+
+export type GoalRailStructure = {
+  owner: {kind:"chief"|"manager";id:string};
+  sole: GoalResponse | null;
+  rows: GoalResponse[];
+  window: ViewWindow | undefined;
+};
 
 // The approved Glide timing: distance changes duration, never the easing.
 export const RAIL_MOTION = {
@@ -15,6 +24,7 @@ export const railMoveDuration = (distance: number) => Math.round(Math.max(RAIL_M
 export type WorkspaceRailPresentation = {
   rail: WorkspaceRail;
   settledOpen: boolean;
+  goalRails?: GoalRailStructure[];
   /** Keep the closing body mounted while the header acknowledges the click. */
   settledBodyOpen?: boolean;
   /** Metadata travels with its rows through hover freeze and the structural queue. */
@@ -61,6 +71,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
   capturePageRestoration: () => void = () => {}) {
   let pending: WorkspaceRailPresentation | null = null;
   let frozen = false;
+  // Hover holds structure still, except a goal window its own answer reports as short:
+  // the rows it is missing would otherwise wait for the pointer to leave.
+  const holding = () => frozen && !(read().goalRails ?? []).some((holder) => goalRailWindowShort(holder.window));
   let busy = false;
   let disposed = false;
   let manualOpen: boolean | null = null;
@@ -196,7 +209,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     });
   }
   async function drain(): Promise<void> {
-    if (busy || frozen || disposed || !pending) return;
+    if (busy || holding() || disposed || !pending) return;
     busy = true;
     const previous = read();
     const next = withFold({...pending, rail: stabilizeWorkspaceRail(pending.rail, previous.rail)}); pending = null;
@@ -214,6 +227,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
         for (const ticket of group.cards) remaining.add(`row:${ticket.id}`);
       }
     }
+    for (const holder of next.goalRails ?? []) {
+      for (const goal of holder.sole ? [holder.sole] : holder.rows) remaining.add(`row:${goal.id}`);
+    }
     if (next.settledOpen) for (const item of next.rail.settledItems) {
       remaining.add(`settled:${item.id}`);
 
@@ -223,7 +239,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     await Promise.all(exits.map(([, part]) => animate(part.node, [{ opacity: 1 }, { opacity: 0 }], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave)));
     if (disposed) return;
     // A pointer can arrive during an exit. Restore it, and defer the whole structure.
-    if (frozen) {
+    if (holding()) {
       pending ??= next;
       present(signalsOnly(pending));
       busy = false;
@@ -370,15 +386,15 @@ export function createRailMotionController(root: () => HTMLElement | null,
         directSettled = activeParents(read()) === activeParents(next) ? next : null;
         if (closingBody) closingBody = signalsOnly(next);
         const heldSection = manualOpen && !closingBody && directSettled ? holdSection() : null;
-        present(frozen ? signalsOnly(next) : read());
+        present(holding() ? signalsOnly(next) : read());
         if (heldSection) void tick().then(() => resizeSection(heldSection));
-      } else if (frozen) present(signalsOnly(next));
+      } else if (holding()) present(signalsOnly(next));
       void drain();
     },
     freeze(value: boolean) {
       frozen = value;
-      if (value && pending && !disposed) present(signalsOnly(pending));
-      if (!value) void drain();
+      if (holding() && pending && !disposed) present(signalsOnly(pending));
+      if (!holding()) void drain();
     },
     dispose() { ++sectionGeneration; root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("height"); root()?.removeAttribute("data-rail-motion-busy"); root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("overflow"); disposed = true; ++foldGeneration; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); clearCardSizes(); surfaces.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
   };

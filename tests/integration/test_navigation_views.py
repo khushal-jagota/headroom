@@ -115,22 +115,17 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     ) -> None:
         for index in (0, 3):
             query["windows"][index]["group"] = grouping
-        for current in (True, False):
-            _, content = read_content(conn, query, current=current)
-            for offset, identity in ((0, "t"), (3, "chief-ticket")):
-                blocked, answer, rail = content["windows"][offset : offset + 3]
-                assert [row["id"] for row in blocked["members"]] == (
-                    [] if current and answering else [identity]
-                )
-                assert [row["id"] for row in answer["members"]] == (
-                    [identity] if current and answering else []
-                )
-                assert (identity in {row["id"] for row in rail["members"]}) is in_rail
+        _, content = read_content(conn, query)
+        for offset, identity in ((0, "t"), (3, "chief-ticket")):
+            blocked, answer, rail = content["windows"][offset : offset + 3]
+            assert [row["id"] for row in blocked["members"]] == ([] if answering else [identity])
+            assert [row["id"] for row in answer["members"]] == ([identity] if answering else [])
+            assert (identity in {row["id"] for row in rail["members"]}) is in_rail
 
     # A claimed step with no running turn is still canonically Agent, even with
     # a dependency. An owner ceiling alone is not an owner-attention request.
     memberships()
-    _, content = read_content(conn, query, current=True)
+    _, content = read_content(conn, query)
     for row in content["records"]:
         if row["kind"] == "ticket" and row["id"] in ("t", "chief-ticket"):
             assert "integrity_error" not in row["value"]
@@ -141,7 +136,7 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     writer = host.mutation(Turn(), "blocked-working")
     writer.commit()
     memberships()
-    _, content = read_content(conn, query, current=True)
+    _, content = read_content(conn, query)
     attention = next(row for row in content["records"] if row["kind"] == "conversation")["value"]
     current_attention = attention["attention"]["current"]
     assert current_attention is not None and current_attention["signal"]["working"] is True
@@ -159,7 +154,7 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     )
     writer.commit()
     memberships()
-    _, content = read_content(conn, query, current=False)
+    _, content = read_content(conn, query)
     attention = next(row for row in content["records"] if row["kind"] == "conversation")["value"]
     assert attention["attention"]["durable"]["last_turn_failed"] is True
     conn.execute("BEGIN")
@@ -179,39 +174,40 @@ def test_blocked_windows_outrank_activity_but_keep_owner_attention(prepared: Hos
     conn.execute(
         "UPDATE tickets SET is_backlogged=0,pending_proposal=NULL WHERE id IN ('t','chief-ticket')"
     )
-    definition = json.loads(
-        conn.execute(
-            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
-        ).fetchone()[0]
-    )
-    implementation_stage = next(
-        stage for stage in definition["stages"] if stage["id"] == "needs_implementation"
-    )
-    implementation_stage["ownership_mode"] = "user"
-    conn.execute(
-        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
-        (json.dumps(definition),),
-    )
+    # Each Ticket owns its stages, so ownership changes in each Ticket's saved workflow.
+    workflows = {
+        str(row[0]): json.loads(row[1])
+        for row in conn.execute(
+            "SELECT id,workflow_json FROM tickets WHERE id IN ('t','chief-ticket')"
+        )
+    }
+
+    def set_implementation_owner(ownership_mode: str) -> None:
+        for ticket_id, workflow in workflows.items():
+            for stage in workflow["stages"]:
+                if stage["id"] == "needs_implementation":
+                    stage["ownership_mode"] = ownership_mode
+            conn.execute(
+                "UPDATE tickets SET workflow_json=? WHERE id=?",
+                (json.dumps(workflow), ticket_id),
+            )
+
+    set_implementation_owner("user")
     conn.commit()
     memberships(grouping="assigned")
     conn.execute("BEGIN")
-    implementation_stage["ownership_mode"] = "worker"
-    conn.execute(
-        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
-        (json.dumps(definition),),
-    )
+    set_implementation_owner("worker")
     conn.execute("DELETE FROM ticket_blocks WHERE blocking_ticket_id='blocker'")
     conn.commit()
     memberships(grouping="errored", in_rail=True)
     writer = host.mutation(Turn(), "unblocked-working")
     writer.commit()
-    # Current activity masks failed history; durable mode deliberately cannot.
-    for current, grouping in ((True, "agent"), (False, "errored")):
-        for index in (0, 3):
-            query["windows"][index]["group"] = cast(ViewGroup, grouping)
-        _, content = read_content(conn, query, current=current)
-        assert [row["id"] for row in content["windows"][0]["members"]] == ["t"]
-        assert [row["id"] for row in content["windows"][3]["members"]] == ["chief-ticket"]
+    # Current activity masks failed history.
+    for index in (0, 3):
+        query["windows"][index]["group"] = "agent"
+    _, content = read_content(conn, query)
+    assert [row["id"] for row in content["windows"][0]["members"]] == ["t"]
+    assert [row["id"] for row in content["windows"][3]["members"]] == ["chief-ticket"]
 
 
 def add_review_tickets(conn: sqlite3.Connection) -> None:
@@ -233,11 +229,10 @@ def assert_review_queue(conn: sqlite3.Connection, expected: set[str]) -> None:
     query["windows"] = [
         {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
     ]
-    for current in (True, False):
-        _, content = read_content(conn, query, current=current)
-        assert {item["id"] for item in content["windows"][0]["members"]} == expected
-        assert content["windows"][0]["total"] == len(expected)
-        assert content["counts"]["review"] == len(expected)
+    _, content = read_content(conn, query)
+    assert {item["id"] for item in content["windows"][0]["members"]} == expected
+    assert content["windows"][0]["total"] == len(expected)
+    assert content["counts"]["review"] == len(expected)
 
 
 def test_backlog_changes_review_membership_and_counts_without_removing_proposals(
@@ -352,39 +347,37 @@ def test_settled_update_order_pages_and_live_changes_preserve_active_order(tmp_p
             "child_filter": "all",
         }
         query["windows"] = [settled_window]
-        for current in (True, False):
-            _, first = read_content(conn, query, current=current)
-            assert [row["id"] for row in first["windows"][0]["members"]] == ["b", "c"]
-            page = {**query, "windows": [{**settled_window, "anchor": first["windows"][0]["next"]}]}
-            _, second = read_content(conn, cast(ViewRequest, page), current=current)
-            assert [row["id"] for row in second["windows"][0]["members"]] == ["d", "a"]
-            previous = {
-                **query,
-                "windows": [
-                    {
-                        **settled_window,
-                        "anchor": second["windows"][0]["previous"],
-                        "direction": "before",
-                    }
-                ],
-            }
-            _, back = read_content(conn, cast(ViewRequest, previous), current=current)
-            assert back["windows"][0]["members"] == first["windows"][0]["members"]
-            assert first["counts"]["settled"] == second["windows"][0]["total"] == 4
+        _, first = read_content(conn, query)
+        assert [row["id"] for row in first["windows"][0]["members"]] == ["b", "c"]
+        page = {**query, "windows": [{**settled_window, "anchor": first["windows"][0]["next"]}]}
+        _, second = read_content(conn, cast(ViewRequest, page))
+        assert [row["id"] for row in second["windows"][0]["members"]] == ["d", "a"]
+        previous = {
+            **query,
+            "windows": [
+                {
+                    **settled_window,
+                    "anchor": second["windows"][0]["previous"],
+                    "direction": "before",
+                }
+            ],
+        }
+        _, back = read_content(conn, cast(ViewRequest, previous))
+        assert back["windows"][0]["members"] == first["windows"][0]["members"]
+        assert first["counts"]["settled"] == second["windows"][0]["total"] == 4
         conn.execute("BEGIN")
         conn.execute("UPDATE managers SET updated_at=400 WHERE id='a'")
         conn.commit()
-        for current in (True, False):
-            _, changed = read_content(conn, query, current=current)
-            assert [row["id"] for row in changed["windows"][0]["members"]] == ["a", "b"]
-            manager = next(
-                row for row in changed["records"] if row["kind"] == "manager" and row["id"] == "a"
-            )
-            assert manager["value"]["updated_at"] == 400
-            query["windows"] = [{**settled_window, "section": "rail_parents"}]
-            _, active = read_content(conn, query, current=current)
-            assert [row["id"] for row in active["windows"][0]["members"]] == ["y", "x"]
-            query["windows"] = [settled_window]
+        _, changed = read_content(conn, query)
+        assert [row["id"] for row in changed["windows"][0]["members"]] == ["a", "b"]
+        manager = next(
+            row for row in changed["records"] if row["kind"] == "manager" and row["id"] == "a"
+        )
+        assert manager["value"]["updated_at"] == 400
+        query["windows"] = [{**settled_window, "section": "rail_parents"}]
+        _, active = read_content(conn, query)
+        assert [row["id"] for row in active["windows"][0]["members"]] == ["y", "x"]
+        query["windows"] = [settled_window]
 
 
 def test_signal_install_repairs_old_settled_records_order_and_cursors(tmp_path: Path) -> None:
@@ -403,7 +396,7 @@ def test_signal_install_repairs_old_settled_records_order_and_cursors(tmp_path: 
                 (created_at, updated_at, identity),
             )
         conn.commit()
-        before, content = read_content(conn, query, current=True)
+        before, content = read_content(conn, query)
         old_anchor = content["windows"][0]["next"]
     settled_section = section_key("settled", None)
     # Reproduce the prior build's persisted wire shape and creation-time ranks.
@@ -433,7 +426,7 @@ def test_signal_install_repairs_old_settled_records_order_and_cursors(tmp_path: 
             )
         } == {10, 20}
     with current_navigation_database(path) as reopened:
-        after, content = read_content(reopened, query, current=True)
+        after, content = read_content(reopened, query)
         assert after["epoch"] != before["epoch"]
         assert [row["id"] for row in content["windows"][0]["members"]] == ["b"]
         assert (
@@ -443,7 +436,7 @@ def test_signal_install_repairs_old_settled_records_order_and_cursors(tmp_path: 
             == 200
         )
         stale_query = {**query, "windows": [{**query["windows"][0], "anchor": old_anchor}]}
-        _, rebased = read_content(reopened, cast(ViewRequest, stale_query), current=True)
+        _, rebased = read_content(reopened, cast(ViewRequest, stale_query))
         assert rebased["windows"][0]["request"]["anchor"] is None
         assert rebased["windows"][0]["members"] == content["windows"][0]["members"]
 
@@ -457,7 +450,7 @@ def test_indexed_windows_counts_and_scope_eviction_are_atomic(tmp_path: Path) ->
         conn.commit()
         trace: list[str] = []
         conn.set_trace_callback(trace.append)
-        coverage, first = read_content(conn, descriptor(), current=True)
+        coverage, first = read_content(conn, descriptor())
         conn.set_trace_callback(None)
         window = first["windows"][0]
         assert window["total"] == 90
@@ -467,24 +460,24 @@ def test_indexed_windows_counts_and_scope_eviction_are_atomic(tmp_path: Path) ->
         assert all("WHERE kind=" in query for query in trace if "FROM navigation_records" in query)
         next_request = descriptor()
         next_request["windows"][0]["anchor"] = window["next"]
-        _, second = read_content(conn, next_request, current=True)
+        _, second = read_content(conn, next_request)
         assert [r["id"] for r in second["windows"][0]["members"]] == [
             f"t{i:03}" for i in range(30, 60)
         ]
         conn.execute("BEGIN")
         conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id='t000'")
         conn.commit()
-        later, changed = read_content(conn, descriptor(), current=True)
+        later, changed = read_content(conn, descriptor())
         assert int(later["revision"]) > int(coverage["revision"])
         assert changed["windows"][0]["total"] == 89
         assert changed["windows"][0]["members"][-1]["id"] == "t030"
         assert all(r["id"] != "t000" for r in changed["records"])
-        _, selected = read_content(conn, descriptor(selected="t000"), current=True)
+        _, selected = read_content(conn, descriptor(selected="t000"))
         assert any(r["id"] == "t000" for r in selected["records"])
         conn.execute("BEGIN")
         conn.execute("UPDATE tickets SET is_backlogged=0 WHERE id='t000'")
         conn.rollback()
-        assert read_content(conn, descriptor(), current=True)[1] == changed
+        assert read_content(conn, descriptor())[1] == changed
         plans = conn.execute(
             "EXPLAIN QUERY PLAN SELECT kind,id FROM navigation_view_memberships "
             "WHERE section_key=? AND profile=? AND locale=? "
@@ -502,7 +495,7 @@ def test_sequence_bookkeeping_changes_coverage_without_public_content(tmp_path: 
         add_ticket(conn, "t")
         conn.execute("UPDATE tickets SET conversation_id='c' WHERE id='t'")
         conn.commit()
-        before, first = read_content(conn, descriptor(), current=True)
+        before, first = read_content(conn, descriptor())
         conn.execute("BEGIN")
         conn.execute(
             "UPDATE conversations SET latest_sequence=latest_sequence+1,"
@@ -510,7 +503,7 @@ def test_sequence_bookkeeping_changes_coverage_without_public_content(tmp_path: 
             "WHERE conversation_id='c'"
         )
         conn.commit()
-        after, second = read_content(conn, descriptor(), current=True)
+        after, second = read_content(conn, descriptor())
         assert first == second
         assert int(after["revision"]) > int(before["revision"])
         footprint = json.loads(
@@ -545,7 +538,7 @@ def test_partial_index_failure_rolls_back_canonical_change(tmp_path: Path) -> No
         conn.execute("BEGIN")
         add_ticket(conn, "t")
         conn.commit()
-        before = read_content(conn, descriptor(), current=True)
+        before = read_content(conn, descriptor())
         conn.execute("BEGIN")
         conn.execute(
             "CREATE TEMP TRIGGER reject_view BEFORE INSERT ON navigation_view_changes "
@@ -557,7 +550,7 @@ def test_partial_index_failure_rolls_back_canonical_change(tmp_path: Path) -> No
         with pytest.raises(sqlite3.IntegrityError, match="view failure"):
             conn.commit()
         conn.rollback()
-        assert read_content(conn, descriptor(), current=True) == before
+        assert read_content(conn, descriptor()) == before
         assert conn.execute("SELECT title FROM tickets WHERE id='t'").fetchone()[0] == "t"
 
 
@@ -575,28 +568,20 @@ def test_hidden_historical_unread_counts_distinct_conversations(tmp_path: Path) 
         conn.execute("INSERT INTO conversation_events VALUES('new',1,'message_to_owner','{}',0)")
         conn.commit()
         query = descriptor(limit=0)
-        _, empty = read_content(conn, query, current=True)
+        _, empty = read_content(conn, query)
         assert empty["counts"]["unread"] == 2
         assert empty["windows"][0]["total"] == 2
         assert len(empty["records"]) == 1  # Chief, no hidden archive body.
         query["selected"] = {"kind": "ticket", "id": "a"}
         query["selected_conversation_id"] = "old"
-        _, selected = read_content(conn, query, current=True)
+        _, selected = read_content(conn, query)
         assert any(row["id"] == "old" for row in selected["records"])
-        _, durable = read_content(conn, query, current=False)
-        assert durable["counts"]["running_conversations"] is None
-        assert durable["counts"]["unread"] == 2
-        assert all(
-            row["value"]["attention"]["current"] is None
-            for row in durable["records"]
-            if row["kind"] == "conversation"
-        )
         conn.execute("BEGIN")
         conn.execute(
             "UPDATE conversations SET owner_read_through_sequence=1 WHERE conversation_id='new'"
         )
         conn.commit()
-        assert read_content(conn, query, current=True)[1]["counts"]["unread"] == 1
+        assert read_content(conn, query)[1]["counts"]["unread"] == 1
 
 
 def test_global_working_count_deduplicates_current_pointers_and_excludes_history(
@@ -607,17 +592,17 @@ def test_global_working_count_deduplicates_current_pointers_and_excludes_history
     conn = host.connect()
     activate(conn)
     query = descriptor(limit=0)
-    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 0
+    assert read_content(conn, query)[1]["counts"]["running_conversations"] == 0
 
     writer = host.mutation(Turn(), "global-count-start")
     writer.commit()
-    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+    assert read_content(conn, query)[1]["counts"]["running_conversations"] == 1
 
     # An unread owner message does not cancel a working turn.
     conn.execute("BEGIN")
     conn.execute("INSERT INTO conversation_events VALUES('c',1,'message_to_owner','{}',0)")
     conn.commit()
-    _, content = read_content(conn, query, current=True)
+    _, content = read_content(conn, query)
     assert content["counts"]["unread"] == 1
     assert content["counts"]["running_conversations"] == 1
     assert content["windows"][0]["members"] == []
@@ -625,29 +610,29 @@ def test_global_working_count_deduplicates_current_pointers_and_excludes_history
     conn.execute("BEGIN")
     conn.execute("INSERT INTO agents VALUES('chief_of_staff','c')")
     conn.commit()
-    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+    assert read_content(conn, query)[1]["counts"]["running_conversations"] == 1
 
     conn.execute("BEGIN")
     add_parent(conn, "manager")
     conn.execute("INSERT INTO agents VALUES('manager_manager','c')")
     conn.commit()
-    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+    assert read_content(conn, query)[1]["counts"]["running_conversations"] == 1
 
     conn.execute("BEGIN")
     conn.execute("INSERT INTO ticket_conversations VALUES('c','t')")
     conn.execute("UPDATE tickets SET conversation_id=NULL WHERE id='t'")
     conn.commit()
-    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+    assert read_content(conn, query)[1]["counts"]["running_conversations"] == 1
 
     conn.execute("BEGIN")
     conn.execute("DELETE FROM agents WHERE agent_key='chief_of_staff'")
     conn.commit()
-    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+    assert read_content(conn, query)[1]["counts"]["running_conversations"] == 1
 
     conn.execute("BEGIN")
     conn.execute("DELETE FROM agents WHERE agent_key='manager_manager'")
     conn.commit()
-    _, historical = read_content(conn, query, current=True)
+    _, historical = read_content(conn, query)
     assert historical["counts"]["running_conversations"] == 0
     assert historical["counts"]["unread"] == 1
     assert host.runtime.running_turn is not None
@@ -655,11 +640,11 @@ def test_global_working_count_deduplicates_current_pointers_and_excludes_history
     conn.execute("BEGIN")
     conn.execute("UPDATE tickets SET conversation_id='c' WHERE id='t'")
     conn.commit()
-    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 1
+    assert read_content(conn, query)[1]["counts"]["running_conversations"] == 1
 
     writer = host.mutation(None, "global-count-stop")
     writer.commit()
-    assert read_content(conn, query, current=True)[1]["counts"]["running_conversations"] == 0
+    assert read_content(conn, query)[1]["counts"]["running_conversations"] == 0
 
 
 def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _ActualBinding) -> None:
@@ -683,17 +668,13 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
         assert current["mode"] == "current"
         assert current["content"]["counts"]["unread"] == 1
         captured = asyncio.run(runtime.capture())
-        host.composition.coordinator.invalidate("publication_failed")
+        host.binding.close()
         with pytest.raises(DeliveryUnavailable):
             host.delivery.admission.validate(access)
         with pytest.raises(DeliveryUnavailable):
             asyncio.run(runtime.snapshot(query, captured=captured))
-        degraded, _ = asyncio.run(runtime.snapshot(query))
-        assert degraded["mode"] == "degraded"
-        assert degraded["projection_version"] == 7
-        assert degraded["authority"]["permit"] is None
-        assert degraded["content"]["counts"]["running_conversations"] is None
-        assert degraded["content"]["counts"]["unread"] == 1
+        with pytest.raises(DeliveryUnavailable):
+            asyncio.run(runtime.snapshot(query))
     finally:
         conn.close()
 
@@ -738,7 +719,7 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
             }
             for owner in ("o000", "o001", "o002")
         )
-        _, lean = read_content(conn, query, current=True)
+        _, lean = read_content(conn, query)
         expected_fields = {"title", "created_at", "updated_at", "settled", "conversation_id"}
         managers = [row for row in lean["records"] if row["kind"] == "manager"]
         assert len(managers) == 60
@@ -752,7 +733,7 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
             **query,
             "windows": [{**settled, "anchor": lean["windows"][0]["next"]}],
         }
-        _, tail = read_content(conn, page, current=True)
+        _, tail = read_content(conn, page)
         assert len(tail["windows"][0]["members"]) == 34
         assert tail["windows"][0]["next"] is None
         assert tail["windows"][0]["total"] == 94
@@ -770,15 +751,13 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
             }
 
         selected = {**query, "selected": {"kind": "manager", "id": "o003"}}
-        assert full_ids(read_content(conn, cast(ViewRequest, selected), current=True)[1]) == {
-            "o003"
-        }
+        assert full_ids(read_content(conn, cast(ViewRequest, selected))[1]) == {"o003"}
         selected_ticket = {
             **query,
             "selected": {"kind": "ticket", "id": "t"},
             "selected_conversation_id": "historical",
         }
-        _, selected_content = read_content(conn, cast(ViewRequest, selected_ticket), current=True)
+        _, selected_content = read_content(conn, cast(ViewRequest, selected_ticket))
         assert full_ids(selected_content) == {"o001"}
         assert any(row["id"] == "historical" for row in selected_content["records"])
 
@@ -797,11 +776,11 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
                 ],
             },
         )
-        _, unread_current = read_content(conn, ticket_unread, current=True)
+        _, unread_current = read_content(conn, ticket_unread)
         assert full_ids(unread_current) == {"o001"}
         assert unread_current["windows"][1]["total"] == 2
         ticket_unread["windows"][1]["anchor"] = unread_current["windows"][1]["next"]
-        _, unread_historical = read_content(conn, ticket_unread, current=True)
+        _, unread_historical = read_content(conn, ticket_unread)
         assert full_ids(unread_historical) == {"o001"}
         assert any(
             row["kind"] == "address" and row["value"]["conversation_id"] == "historical"
@@ -822,7 +801,7 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
                 {**settled, "section": "rail_parents", "limit": 1},
             ],
         }
-        _, promoted = read_content(conn, mixed, current=True)
+        _, promoted = read_content(conn, mixed)
         assert full_ids(promoted) == {"o000", "o001", "active"}
         assert len({(row["kind"], row["id"]) for row in promoted["records"]}) == len(
             promoted["records"]
@@ -831,7 +810,6 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
         _, reversed_content = read_content(
             conn,
             cast(ViewRequest, {**mixed, "windows": list(reversed(mixed["windows"]))}),
-            current=True,
         )
         assert reversed_content["records"] == promoted["records"]
         assert {window["window_id"]: window for window in reversed_content["windows"]} == {
@@ -859,14 +837,13 @@ def test_settled_promotion_charges_replacement_bytes_and_refuses_incomplete_depe
             "child_filter": "all",
         }
         query["windows"] = [settled, {**settled, "section": "unread"}]
-        _, complete = read_content(conn, query, current=True)
+        _, complete = read_content(conn, query)
         record_bytes = sum(len(compact(row).encode()) for row in complete["records"])
         # The budget has room for replacement deltas, but not a second full row.
         maximum_bytes = max(len(compact(complete).encode()), (record_bytes * 4 + 2) // 3)
         _, exact = read_content(
             conn,
             query,
-            current=True,
             config=replace(DEFAULT_CONFIG, maximum_records=5, maximum_bytes=maximum_bytes),
         )
         assert exact == complete
@@ -874,7 +851,7 @@ def test_settled_promotion_charges_replacement_bytes_and_refuses_incomplete_depe
             replace(DEFAULT_CONFIG, maximum_records=4),
             replace(DEFAULT_CONFIG, maximum_bytes=maximum_bytes - 200),
         ):
-            _, refused = read_content(conn, query, current=True, config=budget)
+            _, refused = read_content(conn, query, config=budget)
             assert len(refused["windows"][0]["members"]) == 1
             assert refused["windows"][1]["members"] == []
             assert refused["windows"][1]["total"] == 1
@@ -905,29 +882,27 @@ def test_byte_budget_shrinks_pages_fairly_and_overlap_keeps_cursor_neighbors(
             add_ticket(conn, f"t{index:03}")
         conn.commit()
         query = descriptor(limit=60)
-        # Both profiles share rows; distinct windows still reserve complete memberships.
+        # The windows share rows; distinct windows still reserve complete memberships.
         second: ViewWindowRequest = {**query["windows"][0], "group": "empty"}
         query["windows"].append(second)
-        _, content = read_content(
-            conn, query, current=True, config=replace(DEFAULT_CONFIG, maximum_records=15)
-        )
+        _, content = read_content(conn, query, config=replace(DEFAULT_CONFIG, maximum_records=15))
         assert len(content["records"]) <= 15
         assert all(2 <= len(window["members"]) < 60 for window in content["windows"])
         assert all(window["total"] == 100 for window in content["windows"])
         for limit in (2, 3, 5):
             first_request = descriptor(limit=limit)
-            _, first = read_content(conn, first_request, current=True)
+            _, first = read_content(conn, first_request)
             first_window = first["windows"][0]
             following = descriptor(limit=limit)
             following["windows"][0]["anchor"] = first_window["forward_overlap"]
-            _, next_page = read_content(conn, following, current=True)
+            _, next_page = read_content(conn, following)
             next_window = next_page["windows"][0]
             old = {row["id"] for row in first_window["members"]}
             new = {row["id"] for row in next_window["members"]}
             assert old & new and old != new
             following["windows"][0]["anchor"] = next_window["backward_overlap"]
             following["windows"][0]["direction"] = "before"
-            _, backward = read_content(conn, following, current=True)
+            _, backward = read_content(conn, following)
             assert old & {row["id"] for row in backward["windows"][0]["members"]}
 
 
@@ -939,25 +914,22 @@ def test_cursor_domain_rebase_empty_edge_and_all_count_scopes(tmp_path: Path) ->
             add_ticket(conn, f"t{index:03}")
         conn.commit()
         query = descriptor(limit=60)
-        _, first = read_content(conn, query, current=True)
+        _, first = read_content(conn, query)
         query["windows"][0]["anchor"] = first["windows"][0]["next"]
-        _, degraded = read_content(conn, query, current=False)
-        assert degraded["windows"][0]["request"]["anchor"] is None
-        assert degraded["windows"][0]["members"][0]["id"] == "t000"
         # Rebuild changes the source domain. A retained position safely starts at
         # the new domain's first page instead of making every retry unavailable.
         conn.execute("BEGIN")
         conn.execute("UPDATE navigation_meta SET epoch='replacement'")
         rebuild(conn)
         conn.commit()
-        _, rebased = read_content(conn, query, current=True)
+        _, rebased = read_content(conn, query)
         assert rebased["windows"][0]["request"]["anchor"] is None
         assert rebased["windows"][0]["members"][0]["id"] == "t000"
         query["windows"][0]["anchor"] = rebased["windows"][0]["next"]
         conn.execute("BEGIN")
         conn.execute("DELETE FROM tickets WHERE id >= 't060'")
         conn.commit()
-        _, edge = read_content(conn, query, current=True)
+        _, edge = read_content(conn, query)
         assert edge["windows"][0]["members"][0]["id"] == "t000"
         assert edge["windows"][0]["members"][-1]["id"] == "t059"
         assert edge["windows"][0]["next"] is None
@@ -968,7 +940,7 @@ def test_cursor_domain_rebase_empty_edge_and_all_count_scopes(tmp_path: Path) ->
             {**query["windows"][0], "owner": {"kind": "manager", "id": f"o{i}"}} for i in range(138)
         ]
         checked = request(query)
-        _, counts = read_content(conn, checked, current=True)
+        _, counts = read_content(conn, checked)
         assert len(counts["windows"]) == 138
         assert len(counts["records"]) == 1
 
@@ -1005,19 +977,18 @@ def test_mixed_review_window_preserves_order_count_and_unread_boundary(tmp_path:
         assert len(listed) == 32
         assert listed[0]["messages"][0]["conversation_id"] == "unread"
         assert listed[0]["waiting_since"] == 5
-        for current in (True, False):
-            _, content = read_content(conn, query, current=current)
-            window = content["windows"][0]
-            assert window["total"] == content["counts"]["review"] == 32
-            assert len(window["members"]) == 30
-            assert window["members"][0] == {"kind": "ticket", "id": "decision-00"}
-            query["windows"][0]["anchor"] = window["next"]
-            _, tail = read_content(conn, query, current=current)
-            assert [key["id"] for key in tail["windows"][0]["members"]] == [
-                "decision-30",
-                "decision-31",
-            ]
-            query["windows"][0]["anchor"] = None
+        _, content = read_content(conn, query)
+        window = content["windows"][0]
+        assert window["total"] == content["counts"]["review"] == 32
+        assert len(window["members"]) == 30
+        assert window["members"][0] == {"kind": "ticket", "id": "decision-00"}
+        query["windows"][0]["anchor"] = window["next"]
+        _, tail = read_content(conn, query)
+        assert [key["id"] for key in tail["windows"][0]["members"]] == [
+            "decision-30",
+            "decision-31",
+        ]
+        query["windows"][0]["anchor"] = None
         conn.execute("BEGIN")
         conn.execute(
             "UPDATE conversations SET owner_read_through_sequence=1 WHERE conversation_id='unread'"
@@ -1028,7 +999,7 @@ def test_mixed_review_window_preserves_order_count_and_unread_boundary(tmp_path:
         assert card["messages"][0]["waiting_since"] == 25
         assert card["waiting_since"] == 10
         assert listed[0] == card
-        _, partial = read_content(conn, query, current=True)
+        _, partial = read_content(conn, query)
         assert partial["counts"]["review"] == 32
         assert partial["windows"][0]["members"][0] == {"kind": "ticket", "id": "decision-00"}
         conn.execute("BEGIN")
@@ -1036,7 +1007,7 @@ def test_mixed_review_window_preserves_order_count_and_unread_boundary(tmp_path:
             "UPDATE conversations SET owner_read_through_sequence=2 WHERE conversation_id='unread'"
         )
         conn.commit()
-        _, finished = read_content(conn, query, current=True)
+        _, finished = read_content(conn, query)
         assert finished["counts"]["review"] == 32
         assert finished["counts"]["unread"] == 0
 
@@ -1072,15 +1043,12 @@ def test_review_canonical_address_transfers_and_retains_historical_conversation(
             assert len(items) == 1
             assert items[0]["ticket_id"] == owner
             assert items[0]["messages"][0]["recap"] == "Owner recap"
-            for current in (True, False):
-                _, content = read_content(conn, query, current=current)
-                assert content["review_summary"] == {"skipped": 1, "new": 0}
-                assert content["counts"]["review"] == content["counts"]["unread"] == 1
-                assert content["windows"][0]["total"] == 1
-                assert content["windows"][0]["members"] == [{"kind": "ticket", "id": owner}]
-                assert any(
-                    row["kind"] == "ticket" and row["id"] == owner for row in content["records"]
-                )
+            _, content = read_content(conn, query)
+            assert content["review_summary"] == {"skipped": 1, "new": 0}
+            assert content["counts"]["review"] == content["counts"]["unread"] == 1
+            assert content["windows"][0]["total"] == 1
+            assert content["windows"][0]["members"] == [{"kind": "ticket", "id": owner}]
+            assert any(row["kind"] == "ticket" and row["id"] == owner for row in content["records"])
 
         check("a")
         conn.execute("BEGIN")
@@ -1112,7 +1080,7 @@ def test_review_canonical_address_transfers_and_retains_historical_conversation(
             "UPDATE conversations SET owner_read_through_sequence=1 WHERE conversation_id='old'"
         )
         conn.commit()
-        _, read_message = read_content(conn, query, current=True)
+        _, read_message = read_content(conn, query)
         assert read_message["review_summary"] == {"skipped": 0, "new": 1}
 
 
@@ -1145,15 +1113,14 @@ def test_review_owner_state_reversals_preserve_unread_discovery(tmp_path: Path) 
             assert any(item["review_item_type"] == "ticket" for item in items) is ticket
             assert any(item.get("owner_kind") == "manager" for item in items) is manager
             assert any(item.get("owner_kind") == "chief" for item in items)
-            for current in (True, False):
-                _, content = read_content(conn, query, current=current)
-                assert content["counts"]["review"] == content["windows"][0]["total"] == total
-                assert content["counts"]["unread"] == 3
+            _, content = read_content(conn, query)
+            assert content["counts"]["review"] == content["windows"][0]["total"] == total
+            assert content["counts"]["unread"] == 3
             unread: ViewRequest = {
                 **query,
                 "windows": [{**query["windows"][0], "section": "unread"}],
             }
-            _, content = read_content(conn, unread, current=True)
+            _, content = read_content(conn, unread)
             assert len(content["windows"][0]["members"]) == 3
 
         check(3, True, True)
@@ -1226,11 +1193,11 @@ def test_review_ticket_closure_tracks_historical_constituents_without_rank_chang
         query["windows"] = [
             {**query["windows"][0], "section": "review", "owner": None, "child_filter": "all"}
         ]
-        _, before = read_content(conn, query, current=True)
+        _, before = read_content(conn, query)
         conn.execute("BEGIN")
         conn.execute("INSERT INTO conversation_events VALUES('old',1,'message_to_owner','{}',2)")
         conn.commit()
-        _, after = read_content(conn, query, current=True)
+        _, after = read_content(conn, query)
         assert (
             before["windows"][0]["members"]
             == after["windows"][0]["members"]
@@ -1255,11 +1222,11 @@ def test_review_ticket_closure_tracks_historical_constituents_without_rank_chang
             replace(DEFAULT_CONFIG, maximum_records=len(after["records"]) - 1),
             replace(DEFAULT_CONFIG, maximum_bytes=(record_bytes * 4 - 5) // 3),
         ):
-            _, refused = read_content(conn, query, current=True, config=budget)
+            _, refused = read_content(conn, query, config=budget)
             assert refused["windows"][0]["members"] == []
             assert refused["windows"][0]["total"] == refused["counts"]["review"] == 1
             assert [(row["kind"], row["id"]) for row in refused["records"]] == [("chief", "chief")]
-        _, restored = read_content(conn, query, current=True)
+        _, restored = read_content(conn, query)
         assert restored == after
 
 
@@ -1298,32 +1265,30 @@ def test_review_held_context_follows_excluded_canonical_owner_and_survives_read(
             assert address["value"]["conversation_id"] == "old"
             return str(address["value"]["owner_id"])
 
-        _, before = read_content(conn, query, current=True)
+        _, before = read_content(conn, query)
         assert context_owner(before) == "a"
         conn.execute("BEGIN")
         conn.execute("UPDATE tickets SET conversation_id='new' WHERE id='a'")
         conn.commit()
-        _, excluded = read_content(conn, query, current=True)
+        _, excluded = read_content(conn, query)
         assert excluded["windows"][0]["members"] == []
         assert excluded["counts"]["review"] == 0
         assert excluded["counts"]["unread"] == 1
         assert context_owner(excluded) == "b"
         with pytest.raises(DeliveryUnavailable, match="exceeds its budget"):
-            read_content(
-                conn, query, current=True, config=replace(DEFAULT_CONFIG, maximum_records=1)
-            )
+            read_content(conn, query, config=replace(DEFAULT_CONFIG, maximum_records=1))
         conn.execute("BEGIN")
         conn.execute(
             "UPDATE conversations SET owner_read_through_sequence=1 WHERE conversation_id='old'"
         )
         conn.commit()
-        _, cleared = read_content(conn, query, current=True)
+        _, cleared = read_content(conn, query)
         assert context_owner(cleared) == "b"
         assert cleared["counts"]["unread"] == 0
         conn.execute("BEGIN")
         conn.execute("DELETE FROM tickets WHERE id IN ('a','b')")
         conn.commit()
-        _, deleted = read_content(conn, query, current=True)
+        _, deleted = read_content(conn, query)
         assert deleted["review_context"] == [
             {"conversation_id": "old", "canonical_address_id": None}
         ]
@@ -1367,14 +1332,14 @@ def test_review_history_counts_ignore_gone_keys_and_do_not_consume_row_budget(
         ]
         query["review_priority_keys"] = query["review_skipped_keys"][:]
         query = request(query, config=replace(DEFAULT_CONFIG, maximum_requested_rows=1))
-        _, content = read_content(conn, query, current=True)
+        _, content = read_content(conn, query)
         assert content["review_summary"] == {"skipped": 1, "new": 1}
         assert content["windows"][0]["members"] == [{"kind": "ticket", "id": "active-b"}]
         assert {row["id"] for row in content["records"] if row["kind"] == "ticket"} == {"active-b"}
         conn.execute("BEGIN")
         conn.execute("UPDATE tickets SET pending_proposal=NULL WHERE id='active-a'")
         conn.commit()
-        _, cleared = read_content(conn, query, current=True)
+        _, cleared = read_content(conn, query)
         assert cleared["review_summary"] == {"skipped": 0, "new": 1}
         before = cast(ViewSnapshot, {"content": content, "content_version": digest(content)})
         after = cast(
@@ -1424,7 +1389,7 @@ def test_review_priority_order_binds_all_cursor_paths_but_not_live_history(tmp_p
         ]
         query["review_priority_keys"] = [{"kind": "ticket", "id": key} for key in "ab"]
         query["review_skipped_keys"] = query["review_priority_keys"][:]
-        _, content = read_content(conn, query, current=True)
+        _, content = read_content(conn, query)
         first = content["windows"][0]
         assert [item["id"] for item in first["members"]] == list("cdef")
 
@@ -1433,7 +1398,7 @@ def test_review_priority_order_binds_all_cursor_paths_but_not_live_history(tmp_p
                 **query,
                 "windows": [{**query["windows"][0], "anchor": anchor, "direction": direction}],
             }
-            return read_content(conn, request(follow), current=True)[1]
+            return read_content(conn, request(follow))[1]
 
         # Adding a skip during this pass changes exact summary only, keeping all cursors valid.
         query["review_skipped_keys"].append({"kind": "ticket", "id": "c"})

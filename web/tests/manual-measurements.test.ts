@@ -70,7 +70,7 @@ describe('manual measurement editing boundary', () => {
   });
 });
 
-import {createManualMeasurementExamples} from '../src/lib/dev/manualMeasurementExamples';
+import {createManualMeasurementExamples} from './support/manualMeasurementExamples';
 import {chartData} from '../src/lib/charts/presentation';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';

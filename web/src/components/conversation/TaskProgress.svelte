@@ -142,7 +142,7 @@
   .c2-rest-progress:hover,
   .c2-rest-progress:focus-visible { color: var(--text-strong); }
   .c2-rest-progress:focus-visible {
-    outline: var(--border-hairline) solid var(--accent-bright);
+    outline: var(--focus-width) solid var(--focus-ring);
     outline-offset: 2px;
   }
   .task-pop {

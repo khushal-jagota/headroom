@@ -61,6 +61,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 import warnings
 from base64 import b64encode
@@ -72,6 +73,7 @@ from typing import Any, Final, Protocol, cast
 
 from anyio.abc import Process
 from claude_agent_sdk import (
+    TERMINAL_TASK_STATUSES,
     AssistantMessage,
     CanUseToolShadowedWarning,
     ClaudeAgentOptions,
@@ -88,6 +90,9 @@ from claude_agent_sdk import (
     ResultMessage,
     StreamEvent,
     SystemMessage,
+    TaskNotificationMessage,
+    TaskStartedMessage,
+    TaskUpdatedMessage,
     TextBlock,
     ThinkingBlock,
     ToolPermissionContext,
@@ -97,6 +102,7 @@ from claude_agent_sdk import (
     UserMessage,
 )
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+from claude_agent_sdk._version import __version__ as claude_sdk_version
 from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 
 from planner.conversation.backends.contracts import (
@@ -111,7 +117,11 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendSteerUncertain,
+    BackendStreamEnded,
     BackendUserInputRequest,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
+    CommandReplyReported,
     ComposerCatalogReported,
     ContextCompacted,
     ModelThinkingHappened,
@@ -167,6 +177,8 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
+from planner.conversation.tool_shell_kill_priority import with_tool_shell_kill_priority
+from planner.conversation.worker_unit import WorkerUnit
 
 LOGGER = logging.getLogger("planner.conversation.backends.claude_agent_sdk")
 
@@ -187,6 +199,10 @@ TODO_WRITE_TOOL_NAME: Final = "TodoWrite"
 TRANSIENT_SESSION_ID_SYSTEM_SUBTYPES: Final[frozenset[str]] = frozenset(
     {"hook_started", "hook_progress", "hook_response"}
 )
+
+# The model name Claude Code puts on a message it wrote itself rather than asked the model
+# for. A command it answers locally, such as a refused ``/goal``, arrives this way.
+CLAUDE_SYNTHETIC_MESSAGE_MODEL: Final = "<synthetic>"
 
 # What the CLI calls a turn that somebody stopped. Anything else it reports is a turn that
 # ran and stopped on its own account.
@@ -232,6 +248,15 @@ REJECTED_COMMAND_LIFECYCLE_STATES: Final[frozenset[str]] = frozenset(
 # running, its closing receipt comes after its own result, and Panels puts no clock on work
 # Claude is doing. 15.0 seconds is what codex and hermes allow a wait of this kind.
 CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS: Final[float] = 15.0
+
+# Claude's word for the frame that carries every live background task after a change.
+BACKGROUND_TASKS_CHANGED_SUBTYPE: Final[str] = "background_tasks_changed"
+
+# How a task that left claude's live set ended when claude said nothing else about it.
+BACKGROUND_TASK_ENDED_UNREPORTED: Final[str] = "unreported"
+
+# How a task ends as activity when claude marks it ambient while it goes on running.
+BACKGROUND_TASK_BECAME_AMBIENT: Final[str] = "ambient"
 
 # Stop must not leave a queued steering command behind. A missing cancel receipt is a
 # failed cancellation, which makes the core discard this child and resume its session on
@@ -403,16 +428,64 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         super().__init__(prompt, options)
         self._cleanup_process: Process | None = None
         self._cleanup_started = False
+        self._worker_unit: WorkerUnit | None = None
+
+    def _build_command(self) -> list[str]:
+        command = super()._build_command()
+        if self._worker_unit is not None:
+            return list(self._worker_unit.argv(command))
+        return command
 
     async def connect(self) -> None:
         if self._cleanup_started:
             raise RuntimeError("a Claude transport cannot reconnect after cleanup")
-        await super().connect()
+        with_tool_shell_kill_priority(self._options.env)
+        # Use the role's explicit identity, never an inherited Worker identity.
+        if self._options.env.get("PLAN_TICKET_ID"):
+            environment = {
+                key: value for key, value in os.environ.items() if key != "CLAUDECODE"
+            }
+            environment.update({"CLAUDE_CODE_ENTRYPOINT": "sdk-py"})
+            environment.update(self._options.env)
+            environment["CLAUDE_AGENT_SDK_VERSION"] = claude_sdk_version
+            if self._cwd:
+                environment["PWD"] = self._cwd
+            if self._options.enable_file_checkpointing:
+                environment["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "true"
+            self._worker_unit = await WorkerUnit.create(
+                environment, Path(self._cwd or os.getcwd())
+            )
+            if self._worker_unit is not None:
+                self._options.env.update(self._worker_unit.environment)
+        try:
+            await super().connect()
+        except asyncio.CancelledError:
+            if self._worker_unit is not None:
+                await self._worker_unit.stop()
+            raise
+        except Exception:
+            if self._worker_unit is not None:
+                await self._worker_unit.stop()
+            raise
+
+    async def _read_messages_impl(self) -> AsyncIterator[dict[str, Any]]:
+        try:
+            async for message in super()._read_messages_impl():
+                yield message
+        except Exception:
+            if self._worker_unit is not None:
+                await self._worker_unit.stop()
+            raise
+        else:
+            if self._worker_unit is not None:
+                await self._worker_unit.stop()
 
     async def close(self) -> None:
         self._cleanup_started = True
         if self._cleanup_process is None:
             self._cleanup_process = self._process
+        if self._worker_unit is not None:
+            await self._worker_unit.stop()
         await super().close()
         if self._cleanup_process is not None and self._cleanup_process.returncode is None:
             raise RuntimeError("Claude process termination remains unconfirmed")
@@ -767,7 +840,10 @@ class _TurnInFlight:
     """The turn this child is running, and what it has half-said so far."""
 
     token: TurnToken
+    automatic_compaction: bool = False
     cancel_requested: bool = False
+    # Claude's own words, kept until the model works on or the turn completes.
+    command_replies: list[str] = field(default_factory=list)
     owned_steer_uuids: set[str] = field(default_factory=set)
     held_result: ResultMessage | None = None
     steer_settlement_watch: asyncio.Task[None] | None = None
@@ -806,6 +882,13 @@ class ClaudeAgentSdkBackendChild:
         self._standard_error: deque[str] = deque()
         self._asks_raised = 0
         self._available_command_names: frozenset[str] = frozenset()
+        # Claude's own live set of background tasks, as its last report gave it: task id
+        # to description. Each report replaces the whole set, so an end claude never
+        # announced cannot leave a task here.
+        self._live_background_tasks: dict[str, str] = {}
+        # How each live task ended, from claude's task_updated and task_notification
+        # frames, kept until the task leaves the live set.
+        self._live_background_task_endings: dict[str, str] = {}
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -915,7 +998,7 @@ class ClaudeAgentSdkBackendChild:
         if automatic_compaction or native_command:
             # Native controls retain their exact route and acknowledgment contract.
             asked = await self._query_argument(delivered_content)
-            self._turn = _TurnInFlight(token=turn_token)
+            self._turn = _TurnInFlight(token=turn_token, automatic_compaction=automatic_compaction)
             try:
                 await client.query(asked)
             except Exception as failed:
@@ -1239,6 +1322,7 @@ class ClaudeAgentSdkBackendChild:
     async def stop(self) -> None:
         """Close the exact child, retaining cleanup handles until each step succeeds."""
         self._wire_broken = True
+        self._forget_background_tasks()
         turn = self._turn
         self._turn = None
         self._last_ended_turn = None
@@ -1278,7 +1362,6 @@ class ClaudeAgentSdkBackendChild:
             cwd=str(resolved_start.workspace_folder),
             cli_path=self._launch.claude_executable,
             system_prompt=CLAUDE_CODE_SYSTEM_PROMPT,
-            settings='{"disableAllHooks":true}',
             model=resolved_start.model,
             effort=self._effort(resolved_start.reasoning_effort),
             permission_mode=_permission_mode(resolved_start.access),
@@ -1444,11 +1527,23 @@ class ClaudeAgentSdkBackendChild:
             await self._fail_the_running_turn(
                 self._with_the_standard_error(str(stream_failed))
             )
+            await self._report_the_stream_ended()
         else:
             self._wire_broken = True
             await self._fail_the_running_turn(
                 self._with_the_standard_error("the backend's message stream ended")
             )
+            await self._report_the_stream_ended()
+
+    async def _report_the_stream_ended(self) -> None:
+        """Say the child is gone. A stop the core asked for cancels the reader instead."""
+        self._forget_background_tasks()
+        await self._sink.report(None, BackendStreamEnded())
+
+    def _forget_background_tasks(self) -> None:
+        """Claude's live set belongs to one process, and starts empty in the next."""
+        self._live_background_tasks.clear()
+        self._live_background_task_endings.clear()
 
     async def _take_in(self, message: Message) -> None:
         """One piece of the agent's news, turned into what the core keeps or shows."""
@@ -1456,6 +1551,10 @@ class ClaudeAgentSdkBackendChild:
         if session_id is not None:
             await self._note_the_session_id(session_id)
         if self._wire_broken:
+            return
+        # Background tasks belong to the session, and their news usually arrives when no
+        # turn is running, so it is taken before anything that needs one.
+        if await self._take_in_background_task_news(message):
             return
         turn = self._turn
         if turn is None:
@@ -1485,6 +1584,63 @@ class ClaudeAgentSdkBackendChild:
                     "conversation %s: nothing to do with a %s",
                     self._resolved_start.conversation_id,
                     type(message).__name__,
+                )
+
+    async def _take_in_background_task_news(self, message: Message) -> bool:
+        """Follow claude's live set of background tasks. True when the message was that.
+
+        Claude reports the whole live set after every change, and that report is the only
+        source of which tasks are live: a task joins when it appears and leaves when it
+        is gone, whether or not its end was ever announced. Tasks claude marks ambient
+        are not activity and are left out. The task frames only say how a task ended.
+        """
+        if isinstance(message, TaskNotificationMessage | TaskUpdatedMessage):
+            task_status = message.status
+            if task_status in TERMINAL_TASK_STATUSES and (
+                message.task_id in self._live_background_tasks
+            ):
+                self._live_background_task_endings[message.task_id] = task_status
+            return True
+        if isinstance(message, TaskStartedMessage):
+            return True
+        if isinstance(message, SystemMessage) and message.subtype == (
+            BACKGROUND_TASKS_CHANGED_SUBTYPE
+        ):
+            await self._take_in_the_live_background_tasks(message.data.get("tasks"))
+            return True
+        return False
+
+    async def _take_in_the_live_background_tasks(self, reported: object) -> None:
+        live: dict[str, str] = {}
+        ambient: set[str] = set()
+        for task in reported if isinstance(reported, list) else ():
+            if not isinstance(task, dict):
+                continue
+            task_id, description = task.get("task_id"), task.get("description")
+            if not isinstance(task_id, str) or not isinstance(description, str):
+                continue
+            if task.get("ambient") is True:
+                ambient.add(task_id)
+            else:
+                live[task_id] = description
+        previous = self._live_background_tasks
+        self._live_background_tasks = live
+        for task_id in previous:
+            if task_id not in live:
+                task_status = self._live_background_task_endings.pop(
+                    task_id,
+                    BACKGROUND_TASK_BECAME_AMBIENT
+                    if task_id in ambient
+                    else BACKGROUND_TASK_ENDED_UNREPORTED,
+                )
+                await self._sink.report(
+                    None, BackgroundTaskEnded(task_id=task_id, task_status=task_status)
+                )
+        for task_id, description in live.items():
+            if task_id not in previous:
+                await self._sink.report(
+                    None,
+                    BackgroundTaskStarted(task_id=task_id, task_description=description),
                 )
 
     async def _note_the_session_id(self, session_id: str) -> None:
@@ -1561,6 +1717,11 @@ class ClaudeAgentSdkBackendChild:
             # A subagent talking inside a tool call. The tool call is the thing that
             # happened; its inner conversation is not the agent's message to anyone.
             return
+        if message.model == CLAUDE_SYNTHETIC_MESSAGE_MODEL:
+            self._keep_the_command_reply(turn, message)
+            return
+        # The model is working, so what Claude wrote before it was a reply, not an error.
+        await self._report_the_held_command_replies(turn)
         said: list[str] = []
         for block in message.content:
             match block:
@@ -1591,6 +1752,27 @@ class ClaudeAgentSdkBackendChild:
                 case _:
                     continue
         await self._complete_agent_message(turn, said)
+
+    def _keep_the_command_reply(self, turn: _TurnInFlight, message: AssistantMessage) -> None:
+        """Hold Claude's own words until the turn says whether they are a command's reply.
+
+        They are once the model goes on to work, as after ``/goal set``, or once the turn
+        completes. A failed turn already shows its error, which is the same text when
+        Claude writes an API error this way. An interrupted turn's ending is the news, and
+        one the core ended itself takes no later fact. Automatic compaction already records
+        whether it compacted. In those cases what was held is dropped.
+        """
+        if turn.automatic_compaction:
+            return
+        text = "".join(block.text for block in message.content if isinstance(block, TextBlock))
+        if text:
+            turn.command_replies.append(text)
+
+    async def _report_the_held_command_replies(self, turn: _TurnInFlight) -> None:
+        # Taken, not read: a second result racing a held one must not report them again.
+        replies, turn.command_replies = turn.command_replies, []
+        for reply_text in replies:
+            await self._sink.report(turn.token, CommandReplyReported(reply_text=reply_text))
 
     async def _on_assistant_message_after_turn(
         self, turn: _TurnInFlight, message: AssistantMessage
@@ -1740,6 +1922,7 @@ class ClaudeAgentSdkBackendChild:
                 turn, ConversationTurnEnding.failed, _result_error_summary(message)
             )
             return
+        await self._report_the_held_command_replies(turn)
         await self._end_turn(turn, ConversationTurnEnding.completed, None)
 
     async def _report_what_has_been_spent(

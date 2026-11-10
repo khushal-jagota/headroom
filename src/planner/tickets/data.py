@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import Protocol
@@ -50,7 +50,6 @@ from planner.tickets.contracts import (
     WorkerStepClaim,
 )
 from planner.tickets.integrity import TicketIntegrityError
-from planner.tickets.locale_configuration import require_locale_backend_compatibility
 from planner.tickets.logic import (
     admission,
     employee_configuration,
@@ -62,17 +61,19 @@ from planner.tickets.logic import (
 )
 from planner.tickets.logic.decisions import Decision
 from planner.tickets.logic.locale import resolve_ticket_locale
-from planner.worker_settings.service import (
-    read_worker_launch_defaults_for_ticket_creation,
-    read_worker_requires_macos,
-)
+from planner.worker_settings.contracts import ManagedWorkerLaunchDefaults
+from planner.worker_settings.service import read_worker_launch_defaults_for_ticket_creation
 from planner.worker_types.configuration import (
     ConfiguredWorkerRuntimeDefinitions,
     configured_worker_runtime_definitions,
-    configured_worker_type_registry,
 )
-from planner.worker_types.contracts import BRIEF_FIELD_ID, TicketTypeMigration, WorkerTypeDefinition
-from planner.worker_types.registry import WorkerTypeRegistry
+from planner.worker_types.contracts import (
+    BRIEF_FIELD_ID,
+    TicketWorkflowDefinition,
+    WorkflowDefinition,
+)
+from planner.worker_types.registry import WorkerTypeRegistry, validate_workflow
+from planner.worker_types.store import workflow_from_preset, workflow_from_row, workflow_to_json
 
 
 class _WorkerStepReadinessCheck(Protocol):
@@ -81,7 +82,7 @@ class _WorkerStepReadinessCheck(Protocol):
         conn: sqlite3.Connection,
         ticket: Ticket,
         *,
-        worker_type_definition: WorkerTypeDefinition,
+        worker_type_definition: WorkflowDefinition,
     ) -> bool: ...
 
 
@@ -101,21 +102,10 @@ def _principal_from_json(raw: str) -> Principal:
     return Principal(PrincipalKind(str(stored["kind"])), str(stored["id"]))
 
 
-def _validate_ceiling_holder(
-    conn: sqlite3.Connection, holder: Principal, *, ticket_id: str
-) -> None:
-    if holder == Principal(PrincipalKind.ticket, ticket_id):
-        raise PlannerError(
-            ErrorCode.validation,
-            "a Ticket cannot hold its own ceiling",
-            {"ticket_id": ticket_id},
-        )
-    table = {
-        PrincipalKind.ticket: "tickets",
-        PrincipalKind.manager: "managers",
-    }.get(holder.kind)
-    if table is None:
+def _validate_ceiling_holder(conn: sqlite3.Connection, holder: Principal) -> None:
+    if holder.kind is not PrincipalKind.manager:
         return
+    table = "managers"
     row = conn.execute(f"SELECT 1 FROM {table} WHERE id = ?", (holder.id,)).fetchone()
     if row is None:
         raise PlannerError(
@@ -134,7 +124,7 @@ def _validate_review_holder(
     manager_id: str | None,
 ) -> None:
     """Validate a selected or default address against the resulting assignment."""
-    _validate_ceiling_holder(conn, holder, ticket_id=ticket_id)
+    _validate_ceiling_holder(conn, holder)
     if not can_hold_review(holder, manager_kind=manager_kind, manager_id=manager_id):
         raise PlannerError(
             ErrorCode.validation,
@@ -228,7 +218,7 @@ def _validate_ticket_creation_placement(
 
 
 def requested_ticket_launch_configuration(
-    worker_type: str,
+    worker_type: str | None,
     *,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
@@ -238,9 +228,22 @@ def requested_ticket_launch_configuration(
 ) -> EmployeeLaunchConfiguration:
     """Read the creator's selection before current-model resolution."""
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
-    launch_defaults = read_worker_launch_defaults_for_ticket_creation(
-        runtime_definitions.worker_type_registry, worker_type
-    )
+    if worker_type is None:
+        if not employee_backend or not employee_launch_model or not employee_launch_model.strip():
+            raise PlannerError(
+                ErrorCode.validation,
+                "a custom Ticket without a preset requires an explicit backend and model",
+            )
+        # These defaults are the creator's explicit pair, never an implicit preset.
+        launch_defaults = ManagedWorkerLaunchDefaults(
+            employee_backend=require_conversation_backend_key(employee_backend),
+            employee_launch_model=employee_launch_model,
+            employee_launch_reasoning_effort=None,
+        )
+    else:
+        launch_defaults = read_worker_launch_defaults_for_ticket_creation(
+            runtime_definitions.worker_type_registry, worker_type
+        )
     launch_configuration = employee_configuration.launch_configuration_for_a_new_ticket(
         default_backend=launch_defaults.employee_backend,
         default_model=launch_defaults.employee_launch_model,
@@ -258,7 +261,7 @@ def requested_ticket_launch_configuration(
 def resolve_ticket_draft_context(
     conn: sqlite3.Connection,
     *,
-    worker_type: str,
+    worker_type: str | None,
     locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
@@ -274,8 +277,9 @@ def resolve_ticket_draft_context(
     """Resolve and validate every ordinary Ticket creation path before insertion."""
     admission.validate_deadline(deadline)
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
-    admission.require_creatable_worker_type(worker_type)
-    runtime_definitions.worker_type_registry.require(worker_type)
+    if worker_type is not None:
+        admission.require_creatable_worker_type(worker_type)
+        runtime_definitions.worker_type_registry.require(worker_type)
     launch_configuration = requested_ticket_launch_configuration(
         worker_type,
         employee_backend=employee_backend,
@@ -301,16 +305,7 @@ def resolve_ticket_draft_context(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 
-    project = (
-        conn.execute("SELECT requires_macos FROM projects WHERE id=?", (project_id,)).fetchone()
-        if project_id is not None
-        else None
-    )
-    resolved_locale = resolve_ticket_locale(
-        locale,
-        project_requires_macos=bool(project["requires_macos"]) if project is not None else False,
-        worker_requires_macos=read_worker_requires_macos(conn, worker_type),
-    )
+    resolved_locale = resolve_ticket_locale(locale)
     return ResolvedTicketCreationContext(resolved_locale, launch_configuration, project_id)
 
 
@@ -319,7 +314,7 @@ def resolve_ticket_creation_context(
     *,
     title: str,
     title_max_chars: int,
-    worker_type: str,
+    worker_type: str | None,
     locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
@@ -349,19 +344,15 @@ def resolve_ticket_creation_context(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         worker_runtime_definitions=worker_runtime_definitions,
     )
-    require_locale_backend_compatibility(
-        context.locale, context.launch_configuration.employee_backend
-    )
     return context
 
 
 def _row_to_ticket(
-    row: sqlite3.Row, *, worker_type_definition: WorkerTypeDefinition | None = None
+    row: sqlite3.Row, *, worker_type_definition: WorkflowDefinition | None = None
 ) -> Ticket:
-    worker_type = str(row["worker_type"])
-    worker_type_definition = worker_type_definition or configured_worker_type_registry().require(
-        worker_type
-    )
+    worker_type = None if row["worker_type"] is None else str(row["worker_type"])
+    workflow = workflow_from_row(row)
+    worker_type_definition = workflow
     stage = str(row["stage"])
     worker_type_definition.validate_ticket_position(
         stage, str(row["ceiling"]), allow_historical_terminal_ceiling=True
@@ -397,6 +388,7 @@ def _row_to_ticket(
         updated_at=row["updated_at"],
         pending_proposal_revision=int(row["pending_proposal_revision"]),
         worker_type=worker_type,
+        workflow=workflow,
         employee_backend=str(row["employee_backend"]),
         employee_launch_model=(
             str(row["employee_launch_model"]) if row["employee_launch_model"] is not None else None
@@ -414,6 +406,7 @@ _TICKET_STORED_COLUMNS = (
     "id",
     "title",
     "worker_type",
+    "workflow_json",
     "employee_backend",
     "employee_launch_model",
     "employee_launch_reasoning_effort",
@@ -470,7 +463,7 @@ def _load_ticket_and_worker_type_definition_for_write(
     *,
     worker_type_registry: WorkerTypeRegistry | None = None,
     startup_audit: bool = False,
-) -> tuple[Ticket, WorkerTypeDefinition]:
+) -> tuple[Ticket, WorkflowDefinition]:
     row = _ticket_row(conn, ticket_id)
     if not startup_audit:
         from planner.tickets.integrity import issue_for_ticket
@@ -478,15 +471,14 @@ def _load_ticket_and_worker_type_definition_for_write(
         issue = issue_for_ticket(conn, ticket_id)
         if issue is not None:
             raise issue
-    registry = worker_type_registry or configured_worker_type_registry()
-    worker_type_definition = registry.require(str(row["worker_type"]))
+    worker_type_definition = workflow_from_row(row)
     worker_type_definition.validate_ticket_position(
         str(row["stage"]),
         str(row["ceiling"]),
         allow_historical_terminal_ceiling=startup_audit,
     )
     ticket = _row_to_ticket(row, worker_type_definition=worker_type_definition)
-    _validate_ceiling_holder(conn, ticket.ceiling_holder, ticket_id=ticket.id)
+    _validate_ceiling_holder(conn, ticket.ceiling_holder)
     fields_codec.validate_state(
         ticket.field_values,
         ticket.pending_proposal,
@@ -511,7 +503,7 @@ def _seed_kickoff(
     stage: str,
     ceiling: str,
     settle: bool,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> tuple[str, TicketFieldValues, PendingTicketProposal | None]:
     ownership = machine.stage_ownership_mode(
         stage,
@@ -573,7 +565,7 @@ def _field_values_for_storage(
     ticket_id: str,
     values: TicketFieldValues,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> str:
     """Retain historical text while replacing the declared values inside the write transaction."""
     row = conn.execute("SELECT field_values FROM tickets WHERE id=?", (ticket_id,)).fetchone()
@@ -588,7 +580,7 @@ def _field_approvals_for_storage(
     ticket_id: str,
     approvals: TicketFieldApprovals,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> str:
     row = conn.execute("SELECT field_approvals FROM tickets WHERE id=?", (ticket_id,)).fetchone()
     assert row is not None
@@ -607,10 +599,10 @@ def _apply_decision(
 ) -> Ticket:
     new_stage = decision.stage
     new_ceiling = decision.ceiling
-    _validate_ceiling_holder(conn, decision.ceiling_holder, ticket_id=ticket.id)
+    _validate_ceiling_holder(conn, decision.ceiling_holder)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
     # this ticket's type before any SQL — the enforcement the removed DB CHECKs gave.
-    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    worker_type_definition = ticket.workflow
     worker_type_definition.validate_ticket_position(str(new_stage), str(new_ceiling))
     fields_codec.validate_state(
         decision.field_values,
@@ -686,10 +678,11 @@ def _write_worker_step_claim(
     worker_step_claim: WorkerStepClaim,
     now: int,
     *,
-    notify_manager: bool = True,
+    error_reason: str | None = None,
+    notify_supervisor: bool = True,
 ) -> None:
     before = conn.execute(
-        "SELECT worker_step_claim,worker_step_claim_revision,manager_id,title "
+        "SELECT worker_step_claim,worker_step_claim_revision,manager_kind,manager_id,title "
         "FROM tickets WHERE id=?",
         (ticket_id,),
     ).fetchone()
@@ -705,26 +698,37 @@ def _write_worker_step_claim(
         ),
     )
     if (
-        notify_manager
+        notify_supervisor
         and before is not None
         and str(before["worker_step_claim"]) != worker_step_claim.value
         and worker_step_claim is WorkerStepClaim.errored
-        and before["manager_id"] is not None
-        and conn.execute(
-            "SELECT 1 FROM managers WHERE id=?",
-            (before["manager_id"],),
-        ).fetchone()
-        is not None
     ):
-        manager_wakes_data.create_worker_error_wake(
-            conn,
-            manager_id=str(before["manager_id"]),
-            ticket_id=ticket_id,
-            claim_revision=int(before["worker_step_claim_revision"]) + 1,
-            ticket_title=str(before["title"]),
-            now=now,
-        )
+        assert error_reason is not None, "an errored claim that notifies needs its reason"
+        supervisor = _assigned_supervisor(conn, before)
+        if supervisor is not None:
+            manager_wakes_data.create_worker_error_wake(
+                conn,
+                target=supervisor,
+                ticket_id=ticket_id,
+                claim_revision=int(before["worker_step_claim_revision"]) + 1,
+                ticket_title=str(before["title"]),
+                error_reason=error_reason,
+                now=now,
+            )
     capture_ticket_attention(conn, ticket_id, now)
+
+
+def _assigned_supervisor(conn: sqlite3.Connection, ticket_row: sqlite3.Row) -> Principal | None:
+    """The Chief for a Chief ticket, its Manager otherwise; None if that Manager is gone."""
+    if str(ticket_row["manager_kind"]) == "chief":
+        return CHIEF_PRINCIPAL
+    manager_id = ticket_row["manager_id"]
+    if (
+        manager_id is None
+        or conn.execute("SELECT 1 FROM managers WHERE id=?", (manager_id,)).fetchone() is None
+    ):
+        return None
+    return Principal(PrincipalKind.manager, str(manager_id))
 
 
 def _give_back_worker_step_claim(
@@ -753,7 +757,6 @@ def write_ticket_conversation_start(
     model: str | None,
     reasoning_effort: str | None,
     now: int,
-    expected_configuration: EmployeeLaunchConfiguration | None = None,
 ) -> Ticket:
     """Link the started conversation without replacing the Ticket's requested intent.
 
@@ -848,7 +851,6 @@ def write_ticket_last_chosen_configuration(
     model: str | None,
     reasoning_effort: str | None,
     now: int,
-    expected_configuration: EmployeeLaunchConfiguration | None = None,
     employee_backend: str | None = None,
 ) -> bool:
     """Record the model and reasoning effort a Ticket's conversation now runs on.
@@ -865,10 +867,6 @@ def write_ticket_last_chosen_configuration(
     """
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        if expected_configuration is not None:
-            current = employee_launch_configuration(_load_ticket_for_write(conn, ticket_id))
-            if current != expected_configuration:
-                return False
         updated = conn.execute(
             "UPDATE tickets SET employee_backend=COALESCE(?,employee_backend), "
             "employee_launch_model = ?, "
@@ -910,7 +908,6 @@ def write_employee_configuration(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    expected_employee_configuration: EmployeeLaunchConfiguration,
     employee_backend: str,
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
@@ -930,12 +927,6 @@ def write_employee_configuration(
         require_enabled_model(conn, registered_backend, employee_launch_model)
         ticket = _load_ticket_for_write(conn, ticket_id)
         current = employee_launch_configuration(ticket)
-        if current != expected_employee_configuration:
-            raise PlannerError(
-                ErrorCode.already_running,
-                "Employee configuration changed while its options were loading",
-                {"ticket_id": ticket_id},
-            )
         candidate = EmployeeLaunchConfiguration(
             employee_backend=registered_backend,
             employee_launch_model=employee_launch_model,
@@ -994,7 +985,8 @@ def create_ticket(
     deadline: str | None = None,
     manager_id: str | None = None,
     manager_kind: str | None = None,
-    worker_type: str,
+    worker_type: str | None,
+    workflow: TicketWorkflowDefinition | None = None,
     locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
@@ -1006,7 +998,6 @@ def create_ticket(
     stated_ceiling: str | None = None,
     stated_holder: Principal | None = None,
 ) -> Ticket:
-    admission.require_creatable_worker_type(worker_type)
     manager_kind = manager_kind or ("manager" if manager_id else "chief")
     if manager_kind not in {"chief", "manager"} or (
         (manager_kind == "manager") != (manager_id is not None)
@@ -1015,7 +1006,21 @@ def create_ticket(
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
-    worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
+    if workflow is None:
+        if worker_type is None:
+            raise PlannerError(
+                ErrorCode.validation, "a Ticket requires a preset or custom workflow"
+            )
+        workflow = workflow_from_preset(
+            runtime_definitions.worker_type_registry.require(worker_type)
+        )
+    else:
+        validate_workflow(workflow)
+        if workflow.specialist_skill is not None:
+            raise PlannerError(
+                ErrorCode.validation, "a custom workflow cannot select a specialist skill"
+            )
+    worker_type_definition = workflow
     initial_stage = worker_type_definition.default_ceiling()
     default_ceiling = worker_type_definition.default_ceiling()
     ticket_id = new_id(ID_PREFIXES["ticket"])
@@ -1042,18 +1047,7 @@ def create_ticket(
         )
         launch_configuration = creation_context.launch_configuration
         project_id = creation_context.project_id
-        _validate_ceiling_holder(conn, ceiling_holder, ticket_id=ticket_id)
-        # The one rule, asked here where the write happens, exactly as edit_ticket asks
-        # it. Making a Ticket acts on nothing that exists, so nothing refuses that. The
-        # three things creation arrives with each act on something, and each is asked
-        # about separately: putting work under a Manager, and stating the two canonical
-        # values PATCH reserves for a caller above the Ticket.
-        if manager_id is not None:
-            authority.require_in_chain(conn, principal, authority.manager(manager_id))
-        if stated_ceiling is not None or stated_holder is not None:
-            authority.require_above_a_ticket_being_created(
-                conn, principal, ticket_id=ticket_id, parent_manager_id=manager_id
-            )
+        _validate_ceiling_holder(conn, ceiling_holder)
         _validate_review_holder(
             conn,
             ceiling_holder,
@@ -1088,19 +1082,20 @@ def create_ticket(
         values_json = fields_codec.values_to_json(initial_values)
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, worker_type, employee_backend, employee_launch_model, "
+            "id, title, worker_type, workflow_json, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, deadline, "
             "project_id, manager_id, manager_kind, "
             "recap, ceiling, ceiling_holder, "
             "conversation_id, field_values, field_approvals, pending_proposal, "
             "pending_proposal_revision, "
             "created_at, updated_at, locale) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
             "?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 title,
                 worker_type,
+                workflow_to_json(workflow),
                 launch_configuration.employee_backend,
                 launch_configuration.employee_launch_model,
                 launch_configuration.employee_launch_reasoning_effort,
@@ -1324,13 +1319,14 @@ def mark_worker_step_claim_errored(
     expected_claim: WorkerStepClaim,
     expected_claim_revision: int,
     now: int,
-    notify_manager: bool = True,
+    error_reason: str,
+    notify_supervisor: bool = True,
 ) -> bool:
     """Expose one failed claim, unless a later claim transition replaced it.
 
     An uncertain delivery cannot safely return a claim to readiness: the backend can
     have accepted the opener.  The errored claim leaves that uncertainty visible for
-    the existing Manager restart route.  The exact claim identity prevents an old
+    the existing supervisor restart route.  The exact claim identity prevents an old
     delivery result from overwriting a newer worker-step transition.
     """
     with _txn_without_nested_savepoint(conn):
@@ -1340,7 +1336,12 @@ def mark_worker_step_claim_errored(
         if ticket.worker_step_claim_revision != expected_claim_revision:
             return False
         _write_worker_step_claim(
-            conn, ticket_id, WorkerStepClaim.errored, now, notify_manager=notify_manager
+            conn,
+            ticket_id,
+            WorkerStepClaim.errored,
+            now,
+            error_reason=error_reason,
+            notify_supervisor=notify_supervisor,
         )
         return True
 
@@ -1371,10 +1372,13 @@ def mark_ticket_errored(
     ticket_id: str,
     *,
     now: int,
+    error_reason: str,
 ) -> Ticket:
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.errored, now)
+        _write_worker_step_claim(
+            conn, ticket_id, WorkerStepClaim.errored, now, error_reason=error_reason
+        )
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1475,7 +1479,6 @@ def accept_proposal(
     Ticket is addressed to once it moves on.
     """
     with _txn(conn):
-        authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
@@ -1505,6 +1508,16 @@ def accept_proposal(
             manager_id=ticket.manager_id,
         )
         updated = _apply_decision(conn, ticket, decision, now)
+        from planner.attention.history import record_approval
+
+        record_approval(
+            conn,
+            ticket_id=ticket_id,
+            field=field,
+            principal=principal,
+            method=TicketApprovalMethod.explicit_accept.value,
+            now=now,
+        )
         _give_back_worker_step_claim(conn, updated, now=now)
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -1544,7 +1557,6 @@ def require_reject(
     has_guidance: bool,
 ) -> Ticket:
     """Run every current authorization check without sending or writing."""
-    authority.require_above(conn, principal, authority.ticket(ticket_id))
     ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
         conn, ticket_id
     )
@@ -1569,7 +1581,6 @@ def reject_proposal(
     if message is not None:
         admission.validate_revision_guidance(message)
     with _txn(conn):
-        authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
@@ -1626,7 +1637,6 @@ def delete_ticket(
     is there.
     """
     with _txn(conn):
-        authority.require_above(conn, principal, authority.ticket(ticket_id))
         _load_ticket_for_write(conn, ticket_id)
         return delete_ticket_records(
             conn, ticket_id, now=now, even_while_running=even_while_running
@@ -1659,18 +1669,6 @@ def delete_ticket_records(
     ).fetchone()
     if ticket is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
-    held_elsewhere = conn.execute(
-        "SELECT id FROM tickets WHERE id != ? "
-        "AND json_extract(ceiling_holder, '$.kind') = 'ticket' "
-        "AND json_extract(ceiling_holder, '$.id') = ? ORDER BY id LIMIT 1",
-        (ticket_id, ticket_id),
-    ).fetchone()
-    if held_elsewhere is not None:
-        raise PlannerError(
-            ErrorCode.validation,
-            "ticket cannot be deleted while it holds another Ticket ceiling",
-            {"ticket_id": ticket_id, "held_ticket_id": str(held_elsewhere["id"])},
-        )
     if not even_while_running and str(ticket["worker_step_claim"]) == WorkerStepClaim.out.value:
         raise PlannerError(
             ErrorCode.already_running,
@@ -1707,6 +1705,10 @@ def delete_ticket_records(
                 conn, str(row["blocked_ticket_id"]), now, capture_attention=capture_attention
             )
 
+    # Deletion bypasses notification capture. End its interval before its identity goes.
+    from planner.attention.history import capture_gate
+
+    capture_gate(conn, ticket_id=ticket_id, active=False, now=now)
     conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
     for table in ("notification_attention_edges", "notification_attention_state"):
         conn.execute(
@@ -1752,7 +1754,7 @@ def _release_a_holder_the_move_left_below(
     capture_ticket_attention(conn, ticket_id, now)
 
 
-def _resolve_holder_name(conn: sqlite3.Connection, holder: Principal) -> str:
+def _resolve_principal_name(conn: sqlite3.Connection, holder: Principal) -> str:
     if holder.kind is PrincipalKind.owner:
         return "The user"
     if holder.kind is PrincipalKind.chief:
@@ -1776,9 +1778,9 @@ def _review_transfer_notice(
         after.title,
         before.ceiling_holder,
         new_holder,
-        _resolve_holder_name(conn, new_holder),
+        _resolve_principal_name(conn, new_holder),
         notify_previous_holder,
-        _resolve_holder_name(conn, actor) if moved_by_someone_else else None,
+        _resolve_principal_name(conn, actor) if moved_by_someone_else else None,
     )
 
 
@@ -1808,13 +1810,6 @@ def edit_ticket(
     admission.TICKET_FIELDS_ONLY_FROM_ABOVE are not, and need a caller above the Ticket.
     """
     with _txn(conn):
-        target = authority.ticket(ticket_id)
-        if set(edit) & admission.TICKET_FIELDS_ONLY_FROM_ABOVE:
-            authority.require_above(conn, principal, target)
-        else:
-            authority.require_above_or_self(conn, principal, target)
-        if admission.TICKET_FIELD_THAT_MOVES_THE_PARENT in edit or "manager" in edit:
-            authority.refuse_manager_re_parenting(principal, ticket_id)
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
@@ -2029,11 +2024,8 @@ def classify_ticket(
     principal: Principal,
     now: int,
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
-    admit: Callable[[], None] | None = None,
 ) -> Ticket:
     with _txn(conn):
-        if admit is not None:
-            admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         item = conn.execute(
             "SELECT project_id FROM managers WHERE id = ?", (manager_id,)
@@ -2070,11 +2062,8 @@ def unclassify_ticket(
     principal: Principal,
     now: int,
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
-    admit: Callable[[], None] | None = None,
 ) -> Ticket:
     with _txn(conn):
-        if admit is not None:
-            admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         item = conn.execute(
             "SELECT project_id FROM managers WHERE id = ?", (manager_id,)
@@ -2121,18 +2110,6 @@ def ticket_record_sha256(conn: sqlite3.Connection, ticket_id: str) -> str:
     ).hexdigest()
 
 
-def _require_record_sha256(
-    conn: sqlite3.Connection, ticket_id: str, expected_record_sha256: str | None
-) -> None:
-    if (
-        expected_record_sha256 is not None
-        and ticket_record_sha256(conn, ticket_id) != expected_record_sha256
-    ):
-        raise PlannerError(
-            ErrorCode.validation, "the Ticket changed; read it again before this action"
-        )
-
-
 def set_ticket_backlog(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -2140,13 +2117,10 @@ def set_ticket_backlog(
     is_backlogged: bool,
     principal: Principal,
     now: int,
-    expected_record_sha256: str | None = None,
 ) -> Ticket:
     """Defer automatic steps without taking ownership from any delivered turn."""
     with _txn(conn):
-        authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket, definition = _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
-        _require_record_sha256(conn, ticket_id, expected_record_sha256)
         if definition.is_terminal(ticket.stage):
             raise PlannerError(ErrorCode.validation, "terminal Tickets cannot change backlog state")
         if ticket.is_backlogged != is_backlogged:
@@ -2155,57 +2129,3 @@ def set_ticket_backlog(
                 (int(is_backlogged), now, ticket_id),
             )
         return _load_ticket_for_write(conn, ticket_id)
-
-
-def apply_worker_type_migrations(
-    conn: sqlite3.Connection,
-    migrations: tuple[TicketTypeMigration, ...],
-    *,
-    definition: WorkerTypeDefinition,
-    previous_definition: WorkerTypeDefinition | None,
-    now: int,
-) -> None:
-    """Apply an already validated amendment without settling fields or changing authority."""
-    if not conn.in_transaction:
-        raise RuntimeError("Worker type migrations require the definition save transaction")
-    for migration in migrations:
-        if (migration.old_stage, migration.old_ceiling) != (
-            migration.new_stage,
-            migration.new_ceiling,
-        ):
-            conn.execute(
-                "UPDATE tickets SET stage = ?, ceiling = ?, updated_at = ? WHERE id = ?",
-                (migration.new_stage, migration.new_ceiling, now, migration.ticket_id),
-            )
-        if migration.old_stage != migration.new_stage:
-            conn.execute(
-                "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ?",
-                (migration.ticket_id,),
-            )
-            revision_feedback.discard(conn, migration.ticket_id)
-        capture_ticket_attention(conn, migration.ticket_id, now, worker_type_definition=definition)
-
-    # Step context is one-use state, not history. Inspect every Ticket of this type:
-    # stale rows can refer to a removed Stage even when the Ticket itself did not move.
-    changed_steps = (
-        tuple(
-            stage.id
-            for stage in previous_definition.stages
-            if definition.is_known_stage(stage.id)
-            and (
-                stage.gating_field != definition.gating_field(stage.id)
-                or stage.ownership_mode != definition.stage_definition(stage.id).ownership_mode
-            )
-        )
-        if previous_definition is not None
-        else ()
-    )
-    changed_placeholders = ",".join("?" for _ in changed_steps)
-    for table in ("ticket_paired_stage_openers", "ticket_revision_feedback"):
-        changed_clause = f" OR {table}.stage IN ({changed_placeholders})" if changed_steps else ""
-        conn.execute(
-            f"DELETE FROM {table} WHERE EXISTS ("
-            f"SELECT 1 FROM tickets t WHERE t.id = {table}.ticket_id "
-            f"AND t.worker_type = ? AND ({table}.stage != t.stage{changed_clause}))",
-            (definition.worker_type, *changed_steps),
-        )

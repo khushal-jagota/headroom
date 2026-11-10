@@ -44,18 +44,15 @@ from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.runtime import conversation_start, worker_memory, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     compose_worker_step_prompt,
     mid_step_memory_loss_prompt,
 )
-from planner.skill_versions import (
-    bind_worker_step_skills,
-    delete_worker_step_skill_bindings,
-    settle_worker_step_skill_bindings,
-)
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
+from planner.tickets.derivation import RESTS_PREDICATE
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
 
@@ -63,8 +60,16 @@ _log = logging.getLogger(__name__)
 
 LOOP_SENDER_LABEL: Final = "loop"
 
+# Only a Ticket that readiness could accept is read in full. Readiness refuses a
+# backlogged Ticket, one whose status is not `empty`, and one at a terminal Stage, so the
+# query drops those first. It leaves the blocker and every other check to readiness.
 _CANDIDATE_SQL = (
-    "SELECT t.id FROM tickets t WHERE integrity_error_reason IS NULL ORDER BY t.updated_at, t.id"
+    "SELECT t.id FROM tickets t WHERE t.integrity_error_reason IS NULL "
+    "AND t.is_backlogged = 0 AND " + RESTS_PREDICATE + " "
+    "AND NOT EXISTS (SELECT 1 FROM json_each(t.workflow_json, '$.stages') stage "
+    "WHERE json_extract(stage.value, '$.id') = t.stage "
+    "AND json_extract(stage.value, '$.is_terminal')) "
+    "ORDER BY t.updated_at, t.id"
 )
 
 
@@ -147,8 +152,14 @@ async def _admitted_start_ready_worker_step(
     given back for other refusals, or when a failure occurred before a fate.
     A definite backend start failure stays errored for explicit recovery.
     An uncertain delivery stays visible as an errored claim for supervisor restart.
+
+    This runs on the server's event loop, whether the poll thread or a route set it going.
+    So the connection is opened and closed on a worker thread, and so is every write: the
+    claim, its release, the errored mark, and the feedback acknowledgement. The link lock,
+    the busy check, and the send stay on the loop, and the claim is still taken and given
+    back under the link lock.
     """
-    conn = connect_database()
+    conn = await run_on_worker_thread(connect_database)
     link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
     link_acquired = False
     try:
@@ -161,14 +172,15 @@ async def _admitted_start_ready_worker_step(
             # only for a collision that slipped between this check and the send.
             return WorkerStepStartResult(started=False)
 
-        worker_type_definition = worker_type_registry.require(ticket.worker_type)
+        worker_type_definition = ticket.workflow
         if not worker_step_readiness.is_ready_for_worker_step(
             conn,
             ticket,
             worker_type_definition=worker_type_definition,
         ):
             return WorkerStepStartResult(started=False)
-        claimed = tickets_data.claim_ticket_for_worker_step(
+        claimed = await run_on_worker_thread(
+            tickets_data.claim_ticket_for_worker_step,
             conn,
             ticket_id,
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
@@ -187,13 +199,13 @@ async def _admitted_start_ready_worker_step(
         )
         sender_message_id = worker_memory.new_worker_step_message_id()
 
-        def give_the_claim_back(*, opener_succeeded: bool = False) -> None:
+        def release_the_claim(*, opener_succeeded: bool, released_at: int) -> None:
             released = tickets_data.release_worker_step_claim(
                 conn,
                 ticket_id,
                 expected_claim=taken_claim,
                 expected_claim_revision=taken_claim_revision,
-                now=now(),
+                now=released_at,
             )
             if released and paired_opener and not opener_succeeded:
                 tickets_data.forget_user_stage_opener(
@@ -202,18 +214,15 @@ async def _admitted_start_ready_worker_step(
                     stage=claimed.stage,
                 )
 
-        def remove_tentative_bindings() -> None:
-            delete_worker_step_skill_bindings(conn, sender_message_id)
+        async def give_the_claim_back(*, opener_succeeded: bool = False) -> None:
+            await run_on_worker_thread(
+                release_the_claim, opener_succeeded=opener_succeeded, released_at=now()
+            )
 
         try:
             # Inside the guard: a lookup that raises must give the claim back, or the
             # Ticket sits out of `empty` with nothing running and nothing to re-claim it.
-            worker_type_definition = worker_type_registry.require(claimed.worker_type)
-            bind_worker_step_skills(
-                conn,
-                sender_message_id,
-                worker_type_definition.worker_profile.specialist_skill,
-            )
+            worker_type_definition = claimed.workflow
             conversation_id = claimed.conversation_id
             # Composed before anything is made: a failure here must not leave a conversation
             # behind, and the opener is what would have brought one into being.
@@ -249,8 +258,7 @@ async def _admitted_start_ready_worker_step(
                 ticket_id,
                 conversation_id,
             )
-            remove_tentative_bindings()
-            give_the_claim_back()
+            await give_the_claim_back()
             return WorkerStepStartResult(started=False)
 
         if isinstance(fate, PromptDeliveryRefused):
@@ -262,25 +270,25 @@ async def _admitted_start_ready_worker_step(
                 conversation_id,
                 fate.refusal_reason.value,
             )
-            remove_tentative_bindings()
             if (
                 not paired_opener
                 and fate.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
             ):
-                tickets_data.mark_worker_step_claim_errored(
+                await run_on_worker_thread(
+                    tickets_data.mark_worker_step_claim_errored,
                     conn,
                     ticket_id,
                     expected_claim=taken_claim,
                     expected_claim_revision=taken_claim_revision,
                     now=now(),
+                    error_reason=f"could not start ({fate.refusal_reason.value})",
                 )
             else:
-                give_the_claim_back()
+                await give_the_claim_back()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
         if isinstance(fate, PromptDeliverySuppressed):
-            remove_tentative_bindings()
-            give_the_claim_back()
+            await give_the_claim_back()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
         if isinstance(fate, PromptDeliveryUncertain):
@@ -288,12 +296,14 @@ async def _admitted_start_ready_worker_step(
             # permit an unsafe automatic replay. Keep it visible for the supervisor's
             # explicit restart route instead. A stale result must not replace a newer
             # claim that moved while the delivery was in flight.
-            marked_errored = tickets_data.mark_worker_step_claim_errored(
+            marked_errored = await run_on_worker_thread(
+                tickets_data.mark_worker_step_claim_errored,
                 conn,
                 ticket_id,
                 expected_claim=taken_claim,
                 expected_claim_revision=taken_claim_revision,
                 now=now(),
+                error_reason="delivery uncertain",
             )
             if marked_errored:
                 _log.error(
@@ -301,21 +311,15 @@ async def _admitted_start_ready_worker_step(
                     ticket_id,
                     conversation_id,
                 )
-            remove_tentative_bindings()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
-        if not isinstance(fate, PromptDeliveryQueued):
-            # The durable conversation record normally finalizes this in the same
-            # transaction as its prompt row. This idempotent update also supports the
-            # in-memory conversation system used by focused worker-step tests.
-            settle_worker_step_skill_bindings(conn, sender_message_id, delivered=True)
-
         if paired_opener:
-            give_the_claim_back(opener_succeeded=True)
+            await give_the_claim_back(opener_succeeded=True)
 
         if pending_revision_feedback is not None:
             try:
-                revision_feedback.acknowledge(
+                await run_on_worker_thread(
+                    revision_feedback.acknowledge,
                     conn,
                     ticket_id,
                     pending_revision_feedback.revision,
@@ -331,8 +335,7 @@ async def _admitted_start_ready_worker_step(
     finally:
         if link_acquired:
             link_lock.release()
-        if conn is not None:
-            conn.close()
+        await run_on_worker_thread(conn.close)
 
 
 async def tell_a_worker_it_lost_its_memory(
@@ -403,7 +406,6 @@ async def _admitted_tell_a_worker_it_lost_its_memory(
                     sender_label=LOOP_SENDER_LABEL,
                     mode=PromptDeliveryMode.queue,
                     sender_message_id=worker_memory.new_memory_notice_message_id(),
-                    reply_requested=False,
                     worker_type_registry=worker_type_registry,
                     now=now(),
                 )
@@ -463,7 +465,6 @@ class WorkerStepReadinessLoop:
         try:
             rows = conn.execute(_CANDIDATE_SQL).fetchall()
             ready_ticket_ids: list[str] = []
-            registry = configured_worker_type_registry()
             for row in rows:
                 try:
                     ticket = tickets_data.read_ticket(conn, str(row["id"]))
@@ -474,7 +475,7 @@ class WorkerStepReadinessLoop:
                         # every other ready Ticket in this pass.
                         continue
                     raise
-                worker_type_definition = registry.require(ticket.worker_type)
+                worker_type_definition = ticket.workflow
                 if not worker_step_readiness.is_ready_for_worker_step(
                     conn,
                     ticket,

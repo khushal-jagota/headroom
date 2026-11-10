@@ -12,6 +12,7 @@ DOM, never on a sleep.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 
 import httpx
@@ -24,12 +25,13 @@ RECAP_SEED = "Recap as it stood before anyone started typing."
 FIRST_HALF = " Composed the first half,"
 SECOND_HALF = " and the second half after the change."
 
-# Find the surface the composer scrolls inside, centre the composer in it, and keep both
-# for later: the same editor node must still hold the caret at the end, and its surface
-# must still be sitting at the same place.
+# Find the surface the composer scrolls inside, bring the composer to its top, and keep
+# both for later: the same editor node must still hold the caret at the end, and its
+# surface must still be sitting at the same place. The page header sits tight above the
+# recap, so centring the recap would not scroll; bringing it to the top always does.
 CAPTURE_COMPOSER = """selector => {
     const editor = document.querySelector(selector);
-    editor.scrollIntoView({ block: "center" });
+    editor.scrollIntoView({ block: "start" });
     let node = editor.parentElement;
     while (node) {
         const style = getComputedStyle(node);
@@ -93,12 +95,14 @@ def test_composing_survives_a_change_to_the_same_ticket(
 ) -> None:
     ticket_id = cli(
         server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Composer ticket before the change",
+        "ticket", "create", "--input-json", "-",
+        stdin=json.dumps({
+            "worker_type": "coding",
+            "title": "Composer ticket before the change",
+            "brief": "Agreed brief.",
+            "manager": {"kind": "chief", "id": "chief"},
+        }),
+        settle_brief=True,
     )["id"]
     _set_recap(server, ticket_id, RECAP_SEED)
 

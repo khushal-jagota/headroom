@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -15,6 +13,7 @@ from planner.core.contracts import JsonDict, PlannerError
 from planner.datasets.data import read_dataset
 from planner.goals import configuration as limits
 from planner.goals import data
+from planner.goals.calendar import server_calendar
 from planner.goals.category_reads import (
     category_projections,
     category_read_ranges,
@@ -24,10 +23,12 @@ from planner.goals.contracts import (
     Goal,
     GoalResponse,
     GoalsResponse,
+    PageReadingSubject,
     ScalarChartProjection,
 )
-from planner.goals.logic.completion import effective_completion
+from planner.goals.logic.completion import effective_completion, goal_completed
 from planner.goals.logic.documents import charts, dataset_ids, expectation_measure_ids, measure_ids
+from planner.goals.logic.outcomes import goal_outcome, outcome_summary
 from planner.goals.logic.projection import (
     projection_bounds,
     projection_point,
@@ -65,31 +66,26 @@ from planner.measures.logic.formulas import parse_formula
 def calendar_now(clock: Clock) -> datetime:
     now = clock.now()
     if isinstance(clock, RealClock):
-        # Resolve local calendar rules at the I/O edge, retaining DST transitions.
-        zone = os.environ.get("TZ")
-        if zone:
-            return now.astimezone(ZoneInfo(zone.removeprefix(":")))
-        with Path("/etc/localtime").open("rb") as stream:
-            return now.astimezone(ZoneInfo.from_file(stream))
+        return server_calendar(now)
     return now
 
 
 def goal_json(conn: sqlite3.Connection, goal: Goal, now: datetime) -> GoalResponse:
     today, midnight = calendar_projection(now)
-    agent = conn.execute(
-        "SELECT conversation_id FROM agents WHERE agent_key=?", (f"goal_{goal.id}",)
-    ).fetchone()
-    completed = effective_completion(
-        goal.binary_checked, goal.page, goal.primary_checklist_block_id
-    )
+    completed = goal_completed(goal)
     return {
         "id": goal.id,
+        "holder_kind": goal.holder_kind,
+        "holder_id": goal.holder_id,
         "project_id": goal.project_id,
         "title": goal.title,
         "why": goal.why,
         "kind": goal.kind,
         "active": goal.active,
         "completed": completed,
+        "completion_date": goal.completion_date,
+        "completion_rule": goal.completion_rule,
+        "outcome": goal_outcome(goal, today),
         "primary_checklist_block_id": goal.primary_checklist_block_id,
         "deadline": goal.deadline,
         "primary_chart": goal.primary_chart,
@@ -100,7 +96,6 @@ def goal_json(conn: sqlite3.Connection, goal: Goal, now: datetime) -> GoalRespon
         "employee_backend": goal.employee_backend,
         "employee_launch_model": goal.employee_launch_model,
         "employee_launch_reasoning_effort": goal.employee_launch_reasoning_effort,
-        "conversation_id": agent["conversation_id"] if agent else None,
         "status": goal_status(completed, goal.deadline, today)
         if goal.kind == "binary"
         else "neutral",
@@ -117,17 +112,23 @@ def list_json(
     project_id: str | None = None,
 ) -> GoalsResponse:
     today, midnight = calendar_projection(now)
+    all_goals = data.list_goals(conn)
     return {
         "goals": [
             goal_json(conn, row, now)
-            for row in data.list_goals(conn, active=active, project_id=project_id)
+            for row in all_goals
+            if (active is None or row.active == active)
+            and (project_id is None or row.project_id == project_id)
         ],
+        "outcome_summary": outcome_summary(all_goals, today),
         "status_date": today,
         "next_refresh_at": midnight,
     }
 
 
-def reading_calendar(conn: sqlite3.Connection, goal: Goal, now: datetime) -> tuple[str, int]:
+def reading_calendar(
+    conn: sqlite3.Connection, goal: Goal | PageReadingSubject, now: datetime
+) -> tuple[str, int]:
     today, midnight = calendar_projection(now)
     dates = [today]
     definitions = {
@@ -159,7 +160,7 @@ def _earliest_date(conn: sqlite3.Connection, identifier: str) -> str | None:
 
 def _formula_projections(
     conn: sqlite3.Connection,
-    goal: Goal,
+    goal: Goal | PageReadingSubject,
     now: datetime,
     first_date: str | None,
     last_date: str | None,
@@ -209,9 +210,7 @@ def _formula_projections(
     roots: set[MeasureDate] = set()
     for identifier, first, last in retained_ranges:
         length = (calendar_date(last) - calendar_date(first)).days + 1
-        check_goal_demand_count(
-            len(roots) + length, demand_limit=limits.MAX_DEMANDED_MEASURE_DATES
-        )
+        check_goal_demand_count(len(roots) + length, demand_limit=limits.MAX_DEMANDED_MEASURE_DATES)
         for day in date_range(first, last):
             roots.add(MeasureDate(identifier, day))
             check_goal_demand_count(len(roots), demand_limit=limits.MAX_DEMANDED_MEASURE_DATES)
@@ -304,7 +303,20 @@ def readings_json(
     last_date: str | None = None,
 ) -> JsonDict:
     with transaction(conn, read_only=True):
-        goal = data.read_goal(conn, goal_id)
+        return document_readings_json(
+            conn, data.read_goal(conn, goal_id), now, first_date=first_date, last_date=last_date
+        )
+
+
+def document_readings_json(
+    conn: sqlite3.Connection,
+    goal: Goal | PageReadingSubject,
+    now: datetime,
+    *,
+    first_date: str | None = None,
+    last_date: str | None = None,
+) -> JsonDict:
+    with transaction(conn, read_only=True):
         today, midnight = calendar_projection(now)
         # Named inputs enter the compatibility values from their category read.
         # Read direct scalar bindings here only once per distinct measure.
@@ -372,6 +384,7 @@ def readings_json(
                     values.append(asdict(value))
                     known_values.add(identity)
         if goal.kind == "binary":
+            # A binary completion reads the page alone; holder pages have no completion rule.
             status = goal_status(
                 effective_completion(
                     goal.binary_checked, goal.page, goal.primary_checklist_block_id

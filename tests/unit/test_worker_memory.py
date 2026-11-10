@@ -10,6 +10,7 @@ import pytest
 
 from planner.core.db import connect, create_schema
 from planner.runtime import worker_memory
+from planner.worker_types.store import read_definition, workflow_from_preset, workflow_to_json
 
 
 @pytest.fixture
@@ -54,9 +55,15 @@ def _add_ticket(
     conn.execute(
         "INSERT INTO tickets (id, worker_type, employee_backend, title, stage, "
         "ceiling, field_values, created_at, updated_at, worker_step_claim, "
-        "conversation_id) VALUES (?, 'coding', 'claude', ?, "
-        "'needs_implementation', 'done', '{}', 0, 0, ?, ?)",
-        (ticket_id, ticket_id, claim, conversation_id),
+        "conversation_id, workflow_json) VALUES (?, 'coding', 'claude', ?, "
+        "'needs_implementation', 'done', '{}', 0, 0, ?, ?, ?)",
+        (
+            ticket_id,
+            ticket_id,
+            claim,
+            conversation_id,
+            workflow_to_json(workflow_from_preset(read_definition(conn, "coding"))),
+        ),
     )
 
 

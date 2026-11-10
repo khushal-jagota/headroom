@@ -1,4 +1,4 @@
-"""Deployment status is a small time-sensitive projection of an external file."""
+"""Deployment status is a small time-sensitive projection of the update attempt record."""
 
 from __future__ import annotations
 
@@ -16,12 +16,9 @@ class DeploymentResources:
     ) -> ResourceSnapshot | None:
         if key != "/api/deployment-status":
             return None
-        projection = request.app.state.deployment_lifecycle_store.project(
-            request.app.state.config.app_sha
-        )
-        body = projection.to_public_dict()
-        # This bounded status tuple includes expiry and the current application's SHA.
-        # Capture it once: a concurrent file replacement cannot split body and version.
+        body = request.app.state.deployment_status()
+        # The body includes its display expiry and the running SHA. Capture it once:
+        # a concurrent record replacement cannot split body and version.
         return ResourceSnapshot(
             json.dumps(body, sort_keys=True, separators=(",", ":")), lambda: body
         )

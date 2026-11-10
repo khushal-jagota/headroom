@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from typing import Any
+from contextlib import closing
 
 from tests.unit.test_conversation_api import (
     CONVERSATION_PREFIX,
@@ -16,6 +15,7 @@ from tests.unit.test_conversation_api import (
 from tests.unit.test_conversation_api import (
     harness as harness,
 )
+from tests.unit.test_conversation_view_storage import whole_view_projection
 
 from planner.conversation.events import AgentMessageEventPayload
 from planner.conversation.message_content import text_message_content
@@ -143,56 +143,41 @@ def test_selected_body_stream_is_exact_and_obsolete_reference_is_409(harness: _H
     _run(exercise)
 
 
-def test_a_warm_view_request_opens_no_database_connection(harness: _Harness) -> None:
-    """Reads run on kept connections, and nothing may quietly start opening its own.
+def test_an_out_of_date_view_answers_upgrading_until_it_is_rebuilt(harness: _Harness) -> None:
+    """The client must tell "upgrading, try again" apart from a crash, on every door."""
+    from planner.conversation.views.api import VIEW_UPGRADING_DETAIL
+    from planner.conversation.views.rebuild import rebuild_one_conversation_view
 
-    This schema charges 2.39 ms for the first statement on a fresh connection against
-    0.022 ms on a kept one, because the connection loads eighty tables before it can plan
-    anything. Each of these requests used to pay that twice: once for its own read-only
-    connection and once for the read-write one that answered "does this conversation
-    exist" by reading the whole record.
-
-    No existing test can see this. Every assertion about a view request passes whether it
-    opened two connections or none, which is how it came to open two.
-    """
     harness.app.include_router(router, prefix=CONVERSATION_PREFIX)
-    opened: list[str] = []
-    doors: dict[str, Any] = {"managed": db.connect, "sqlite": sqlite3.connect}
-
-    def counting(name: str) -> Any:
-        def open_one(*args: Any, **kwargs: Any) -> Any:
-            opened.append(name)
-            return doors[name](*args, **kwargs)
-
-        return open_one
 
     async def exercise() -> None:
         async with harness.client() as client:
             await _start(client, "c")
-            await client.post(
-                f"{CONVERSATION_PREFIX}/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "Owner asks"}],
-                    "sender_label": "owner",
-                    "sender_message_id": "receipt-one",
-                },
+            await harness.store.append_event(
+                "c", AgentMessageEventPayload(content=text_message_content("Kept answer"))
             )
-            path = f"{CONVERSATION_PREFIX}/conversations/c/view"
-            # The pool opens its first connection on its first read, so warm it before
-            # counting: this is about what a request costs, not what a boot costs.
-            assert (await client.get(path)).status_code == 200
-
-            db.connect = counting("managed")
-            sqlite3.connect = counting("sqlite")
-            try:
-                assert (await client.get(path)).status_code == 200
-                assert opened == [], f"a warm view page opened {opened}"
-                receipts = await client.get(
-                    path + "/receipts", params={"message_ids": json.dumps(["receipt-one"])}
+            with db.connect(harness.runtime.database_path) as conn:
+                incremental = whole_view_projection(conn)
+                # An old view: an older version, and rows that differ from what the
+                # current writer makes. The rebuild must replace all of them.
+                conn.execute(
+                    "UPDATE conversation_view_state SET projection_version=?,plan_summary='old'",
+                    (VIEW_PROJECTION_VERSION - 1,),
                 )
-                assert receipts.status_code == 200
-                assert opened == [], f"a warm view request opened {opened}"
-            finally:
-                db.connect, sqlite3.connect = doors["managed"], doors["sqlite"]
+                for table in ("rows", "turns", "groups", "lookups"):
+                    conn.execute(f"DELETE FROM conversation_view_{table}")
+            path = f"{CONVERSATION_PREFIX}/conversations/c/view"
+            receipts = {"message_ids": json.dumps(["any"])}
+            for suffix, params in (("", {}), ("/tail", {}), ("/receipts", receipts)):
+                refused = await client.get(path + suffix, params=params)
+                assert refused.status_code == 409, suffix
+                assert refused.json()["detail"] == VIEW_UPGRADING_DETAIL
+            rebuild_one_conversation_view(harness.runtime.database_path, 5000, "c")
+            # Computed off to one side, then copied in: the same view the live writes made.
+            with closing(db.connect(harness.runtime.database_path)) as conn:
+                assert whole_view_projection(conn) == incremental
+            rebuilt = await client.get(path, params={"lens": "full"})
+            assert rebuilt.status_code == 200
+            assert "Kept answer" in rebuilt.text
 
     _run(exercise)

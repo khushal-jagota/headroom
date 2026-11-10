@@ -15,11 +15,11 @@ from sqlite3 import Connection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
-from tests.support.principals import OWNER_PRINCIPAL
-
-from planner.conversation.in_memory_conversation_system import (
+from tests.support.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
+from tests.support.principals import OWNER_PRINCIPAL
+
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -230,7 +230,6 @@ def test_owner_guidance_reaches_only_the_named_tickets_actual_backend_prompt(
             assert _conversation_id(db_path, other_ticket_id) is None
             writes = await subject.backend_writes(conversation_id)
             assert len(writes) == 1
-            assert writes[0].text.startswith("[Authenticated Panels reply requirement]\n")
             assert writes[0].text.endswith(f"owner:\n{text}")
             assert writes[0].text.count(text) == 1
             assert writes[0].sender_label == "owner"
