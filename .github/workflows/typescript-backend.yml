@@ -30,7 +30,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
-          .venv/bin/python -m pip install --editable .
+          .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
           scripts/dev npm --prefix web ci
           scripts/dev npm --prefix web run build
       - name: Python type check
