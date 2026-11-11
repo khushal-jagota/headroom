@@ -47,9 +47,13 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
         "import json,os,sys;"
         "from planner.core.config import load_config;"
         "config=load_config(os.environ['PLAN_CONFIG_PATH']);"
-        "keys=('PLAN_EXECUTOR_MODE','PLAN_EXECUTOR_VPS_SOCKET','PLAN_EXECUTOR_ID','PATH');"
+        "keys=('PLAN_EXECUTOR_MODE','PLAN_EXECUTOR_VPS_SOCKET','PLAN_EXECUTOR_ID',"
+        "'PLAN_APNS_UNSUPPORTED','PATH');"
         "print(json.dumps({'env':{key:os.environ[key] for key in keys if key in os.environ},"
         "'executor_id':config.executor_id,"
+        "'apns':None if config.apns is None else {"
+        "'key_path':config.apns.key_path,'key_id':config.apns.key_id,"
+        "'team_id':config.apns.team_id,'bundle_ids':config.apns.bundle_ids},"
         "'untrusted_pythonpath_present':'PYTHONPATH' in os.environ,'argv':sys.argv[1:]}))"
     )
     python.write_text(
@@ -102,6 +106,11 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
         "PLAN_EXECUTOR_MODE": "remote",
         "PLAN_EXECUTOR_VPS_SOCKET": "/poison/socket",
         "PLAN_EXECUTOR_ID": "poison-executor",
+        "PLAN_APNS_KEY_PATH": str(tmp_path / "secrets/synthetic-apns.p8"),
+        "PLAN_APNS_KEY_ID": "synthetic-key",
+        "PLAN_APNS_TEAM_ID": "synthetic-team",
+        "PLAN_APNS_BUNDLE_IDS": "com.example.panels,com.example.panels.test",
+        "PLAN_APNS_UNSUPPORTED": "must-not-pass",
     }
 
     def launch() -> subprocess.CompletedProcess[str]:
@@ -119,6 +128,13 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
     payload = json.loads(local.stdout)
     assert payload["argv"] == ["-m", "planner", "serve"]
     assert payload["executor_id"] is None
+    assert payload["apns"] == {
+        "key_path": environment["PLAN_APNS_KEY_PATH"],
+        "key_id": "synthetic-key",
+        "team_id": "synthetic-team",
+        "bundle_ids": ["com.example.panels", "com.example.panels.test"],
+    }
+    assert "PLAN_APNS_UNSUPPORTED" not in payload["env"]
     assert "PLAN_EXECUTOR_MODE" not in payload["env"]
     assert "PLAN_EXECUTOR_ID" not in payload["env"]
     assert "PLAN_EXECUTOR_VPS_SOCKET" not in payload["env"]
