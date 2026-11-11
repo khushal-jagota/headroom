@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-from playwright.sync_api import BrowserContext, Page, expect
+from playwright.sync_api import BrowserContext, Locator, Page, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.support.server_fixtures import signal_server as signal_server
 
@@ -685,6 +685,15 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     expect(title_editor).to_have_text("Owner title", timeout=WAIT_MS)
 
+    # The header preview reads saved titles independently of the focused page draft.
+    def preview_goal(goal_id: str) -> Locator:
+        page.locator(".manager-card.chief .identity").hover(timeout=WAIT_MS)
+        row = page.locator(
+            f'[data-rail-hover-panel].visible [data-manager-goal-id="{goal_id}"]'
+        )
+        expect(row).to_be_visible(timeout=WAIT_MS)
+        return row
+
     # An external revision reaches the mounted page without replacing a focused
     # draft. The later title-only save wins and preserves the remotely edited page.
     title_editor.fill("Unaccepted local title", timeout=WAIT_MS)
@@ -712,7 +721,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         )
         assert remote.is_success, remote.text
     expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
-    expect(page.locator(f'a[data-goal-id="{goal["id"]}"] .row-title')).to_have_text(
+    expect(preview_goal(str(goal["id"])).locator(".goal-title")).to_have_text(
         "Chief title", timeout=WAIT_MS
     )
     expect(page.locator("[data-goal-page]")).to_have_attribute(
@@ -735,7 +744,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert accepted_local["title"] == "Unaccepted local title"
     assert accepted_local["revision"] == remote.json()["revision"] + 1
     assert accepted_local["page"] == reordered
-    expect(page.locator(f'a[data-goal-id="{goal["id"]}"] .row-title')).to_have_text(
+    expect(preview_goal(str(goal["id"])).locator(".goal-title")).to_have_text(
         "Unaccepted local title", timeout=WAIT_MS
     )
     expect(page.locator("[data-goal-page]")).to_have_attribute(
@@ -757,7 +766,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         ["Outline", "First"],
     ]
 
-    # The rail must subscribe to another active goal, even while this one is selected.
+    # The holder preview must subscribe to another active goal while this one is selected.
     other = api.direct_post(
         server,
         "/api/goals",
@@ -768,9 +777,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
             "primary_checklist_block_id": None,
         },
     )
-    # Rail previews are proved by the goal-preview browser case. This connected host
-    # proves only that the page's own checklist control reaches the backend.
-    rail_checklist = page.locator(f'a[data-goal-id="{goal["id"]}"]')
+    # The connected host proves that page completion reaches the saved holder preview.
     with page.expect_response(
         lambda response: response.url.endswith(path) and response.request.method == "PATCH",
         timeout=WAIT_MS,
@@ -780,8 +787,9 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         ).click(timeout=WAIT_MS)
     assert checked.value.ok
     assert api.get(server, path)["completed"] is True
-    expect(rail_checklist.locator("small")).to_contain_text("Done", timeout=WAIT_MS)
-    rail_checklist.click(timeout=WAIT_MS)
+    completed_goal = preview_goal(str(goal["id"]))
+    expect(completed_goal.locator("small")).to_contain_text("Done", timeout=WAIT_MS)
+    completed_goal.click(timeout=WAIT_MS)
     expect(primary.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
     )
@@ -797,12 +805,11 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     )
     holder_conversation_id = other_message["conversation_id"]
     chief = page.locator("[data-chief-destination]")
-    rail_goal = page.locator(f'[data-goal-id="{other["id"]}"]')
     expect(chief.locator('[data-conversation-signal="working"]')).to_have_count(
         1, timeout=WAIT_MS
     )
     # Goals retain no independent conversation marks, even when their holder works.
-    expect(rail_goal.locator("[data-conversation-signal]")).to_have_count(0)
+    expect(preview_goal(str(other["id"])).locator("[data-conversation-signal]")).to_have_count(0)
     assert api.get(server, "/api/chief/conversation")["conversation_id"] == holder_conversation_id
     api.direct_post(
         server,
@@ -816,7 +823,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(chief.locator('[data-conversation-signal="message"]')).to_have_count(
         1, timeout=WAIT_MS
     )
-    expect(rail_goal.locator("[data-conversation-signal]")).to_have_count(0)
+    expect(preview_goal(str(other["id"])).locator("[data-conversation-signal]")).to_have_count(0)
     api.direct_post(server, f"/api/test/signals/{holder_conversation_id}/finish", {})
     # A browser message beside either goal reuses the holder's existing conversation.
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
@@ -919,7 +926,8 @@ def test_goal_delete_confirmation_persistence_and_open_artifact_cleanup(
     expect(other.get_by_text("Temporary goal artifact", exact=True)).to_have_count(0)
     expect(standalone.get_by_text("Goal not found.", exact=True)).to_be_visible(timeout=WAIT_MS)
     expect(standalone.locator("[data-ticket-artifact]")).to_have_count(0)
-    expect(page.locator(f'[data-goal-id="{goal["id"]}"]')).to_have_count(0)
+    expect(page.get_by_role("region", name="All goals", exact=True)).to_be_visible(timeout=WAIT_MS)
+    expect(page.get_by_role("link", name="Delete this temporary goal", exact=True)).to_have_count(0)
     page.reload()
     expect(page.get_by_role("region", name="All goals", exact=True)).to_be_visible(timeout=WAIT_MS)
     assert httpx.get(server.base + path, timeout=10).status_code == 404

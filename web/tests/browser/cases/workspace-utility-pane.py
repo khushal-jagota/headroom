@@ -2354,6 +2354,10 @@ def verify_selection_washes(page, url, fixture, evidence):
     assert ring_box and all(abs(ring_box[key] - item_box[key]) < 1.6 for key in ['x', 'y', 'width', 'height']), (ring_box, item_box)
     page.screenshot(path=str(evidence / 'selection-wash-keyboard.png'))
 
+    # This geometry proof explicitly exercises the optional sidebar rows.
+    # Default header tags and preview navigation belong to goal-preview.
+    previous_goal_rows = page.evaluate("localStorage.getItem('panels.goals-sidebar-rows')")
+    page.evaluate("localStorage.setItem('panels.goals-sidebar-rows', '1')")
     # Goals use the same selected-row geometry inside Chief, before its Workers.
     goal = {"id": "wash_goal", "title": "Ship the rail", "active": True, "completed": False,
             "kind": "binary", "holder_kind": "chief", "holder_id": None, "created_at": 1, "updated_at": 1,
@@ -2411,7 +2415,7 @@ def verify_selection_washes(page, url, fixture, evidence):
 
     # The hover wash is the box of the row that responds. A header's padding and a settled
     # row's padding are inside it, and the bubble's own inset is outside it. A Manager's only
-    # goal is its own goal row (redesign), so it is washed, lit and clicked as that row.
+    # goal uses the optional sidebar row, so its wash and clicks use that row.
     # Reduced motion lets the hover wash land in one frame.
     fixture["goals"] = [{**goal, "id": "wash_sole", "title": "Ship the second group", "holder_kind": "manager", "holder_id": "wash_b"}]
     page.reload(wait_until="domcontentloaded")
@@ -2473,6 +2477,10 @@ def verify_selection_washes(page, url, fixture, evidence):
     expect(page.locator('[data-settled-item="wash_settled"] .settled-title')).to_have_attribute("aria-current", "page")
     page.screenshot(path=str(evidence / 'hover-wash-rows.png'))
     fixture["goals"] = []
+    page.evaluate("""value => {
+        if (value === null) localStorage.removeItem('panels.goals-sidebar-rows');
+        else localStorage.setItem('panels.goals-sidebar-rows', value);
+    }""", previous_goal_rows)
     page.emulate_media(reduced_motion='no-preference')
     (evidence / 'selection-wash-proof.json').write_text(json.dumps({
         'seconds': round(time.perf_counter() - started, 3), 'newHosts': 0,
