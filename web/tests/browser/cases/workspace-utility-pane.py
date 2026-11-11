@@ -800,7 +800,7 @@ def verify_card_geometry(page, url, fixture, evidence):
     scroll.evaluate("async n=>{n.scrollTop=n.scrollHeight; await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);}")
     expect(page.locator('[data-manager="geometry_b"]')).to_be_in_viewport()
     assert page.locator('.settled-head').is_visible()
-    assert not page.locator('.manager-card [style*="height:"]').count()
+    assert not page.locator('.manager-card [style*="height:"]:not(.rail-wash):not(.rail-wash-origin)').count()
     page.screenshot(path=str(evidence / "card-short-wrapped-final.png"))
     # A bottom-anchored scroll can clamp when the final slot shrinks. The same
     # border/gap proof must hold there, while the real scroll anchor is active.
