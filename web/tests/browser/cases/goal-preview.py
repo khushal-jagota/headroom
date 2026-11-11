@@ -241,7 +241,8 @@ class GoalFixture:
             return
         if path == "/api/navigation/view/snapshot":
             source = self.navigation["navigation_response"](
-                {"managers": getattr(self, "managers", [])}, {"chief_of_staff": {"label": "Chief of Staff"}}
+                {"managers": getattr(self, "managers", [])},
+                {"chief_of_staff": {"label": "Chief of Staff"}}
             )
             source["snapshot"]["records"].extend(
                 {
@@ -3148,10 +3149,13 @@ def manager_goal_tags(browser, url):
             ("one", "One chart"), ("many", "Several goals"), ("none", "No goals")))
     ]
     fixture.goals["daily_quota"].update(holder_kind="manager", holder_id="one", status="good")
+    fixture.observations["daily_quota"][TODAY] = 20
     fixture.goals["binary"].update(holder_kind="manager", holder_id="many", status="bad")
     fixture.goals["checklist"].update(holder_kind="manager", holder_id="many", status="good")
-    fixture.goals["long"].update(title="Inbox zero weekly", status="attention", primary_checklist_block_id=None)
+    fixture.goals["long"].update(
+        title="Inbox zero weekly", status="attention", primary_checklist_block_id=None)
     context = browser.new_context(viewport={"width": 1280, "height": 900})
+    context.add_init_script("localStorage.setItem('panels.workspace.rail-width', '288')")
     page = context.new_page()
     page.set_default_timeout(5000)
     errors = []
@@ -3164,6 +3168,8 @@ def manager_goal_tags(browser, url):
     try:
         page.goto(url + "#/workspace", wait_until="domcontentloaded")
         expect(page.locator("a[data-goal-id]")).to_have_count(0)
+        rail_width = page.locator(".workspace-rail").bounding_box()["width"]
+        assert rail_width == 288, rail_width
         one = page.locator('[data-manager="one"]')
         many = page.locator('[data-manager="many"]')
         none = page.locator('[data-manager="none"]')
@@ -3202,6 +3208,15 @@ def manager_goal_tags(browser, url):
         }""")
         if output:
             page.screenshot(path=str(output / 'one-expanded.png'), animations='disabled')
+        page.set_viewport_size({'width': 1280, 'height': 480})
+        page.wait_for_function("""() => {
+          const p=document.querySelector('[data-rail-hover-panel].visible');
+          if(!p)return false; const r=p.getBoundingClientRect();
+          return r.top>=0 && r.bottom<=innerHeight;
+        }""")
+        if output:
+            page.screenshot(path=str(output / 'one-expanded-resized.png'), animations='disabled')
+        page.set_viewport_size({'width': 1280, 'height': 900})
         page.mouse.move(1100, 820)
         expect(panel).to_have_count(0)
         one.locator('.identity').hover()
@@ -3243,10 +3258,13 @@ def manager_goal_tags(browser, url):
         page.keyboard.press('Escape')
         expect(panel).to_have_count(0)
         # Restored header focus must not immediately reopen the dismissed panel.
-        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        page.evaluate(
+            '() => new Promise(resolve => '
+            'requestAnimationFrame(() => requestAnimationFrame(resolve)))')
         expect(panel).to_have_count(0)
         tag.click()
-        page.wait_for_function("location.hash.includes('binary') && !location.hash.includes('/managers/')")
+        page.wait_for_function(
+            "location.hash.includes('binary') && !location.hash.includes('/managers/')")
 
         # The actual setting restores the old row surface and removes preview goals.
         page.locator('.rail-utilities [aria-label="Settings"]').click()
@@ -3274,6 +3292,13 @@ def manager_goal_tags(browser, url):
         if output:
             page.screenshot(path=str(output / 'chief-checklist.png'), animations='disabled')
         assert errors == [], errors
+    except Exception:
+        if output:
+            page.screenshot(path=str(output / 'failure.png'), animations='disabled')
+            (output / 'failure.html').write_text(page.content())
+        raise
     finally:
         context.close()
-    print(f'manager goal header/preview pointer and settings: passed ({time.monotonic()-started:.2f}s)', flush=True)
+    print(
+        'manager goal header/preview pointer and settings: '
+        f'passed ({time.monotonic()-started:.2f}s, rail {rail_width}px)', flush=True)
