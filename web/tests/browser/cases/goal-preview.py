@@ -3256,7 +3256,7 @@ def manager_goal_tags(browser, url):
             page.screenshot(path=str(output / 'goal-slide-rest.png'), animations='disabled')
         tag.evaluate("""el => {
           window.goalSlideSamples = [];
-          el.addEventListener('transitionrun', event => {
+          el.addEventListener('transitionrun', function sampleSlide(event) {
             if (event.propertyName !== 'transform') return;
             const animation = el.getAnimations().find(a => a.transitionProperty === 'transform');
             const duration = animation.effect.getTiming().duration;
@@ -3270,6 +3270,8 @@ def manager_goal_tags(browser, url):
               duration,
             });
             for (const item of moving) item.play();
+            if (window.goalSlideSamples.length === 2)
+              el.removeEventListener('transitionrun', sampleSlide);
           });
         }""")
         one.locator('.identity').hover()
