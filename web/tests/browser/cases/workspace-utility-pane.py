@@ -399,6 +399,7 @@ def run(browser, urls):
     if os.environ.get("PANELS_BROWSER_VIDEO") == "1":
         capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
+    verify_card_background_motion(page, url, card_fixture, evidence)
     verify_empty_handoff(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
@@ -620,7 +621,21 @@ def verify_card_geometry(page, url, fixture, evidence):
         const rect = card.getBoundingClientRect(), title = card.querySelector('.item-title');
         const titleRect = title.getBoundingClientRect();
         const style = getComputedStyle(title);
-        return {top:rect.top,bottom:rect.bottom,height:rect.height,
+        for (const row of card.querySelectorAll('.worker-row.rail-travelling')) {
+          const r=row.getBoundingClientRect(), scroller=card.closest('.active-work-scroll').getBoundingClientRect();
+          const x=r.left+r.width/2,y=r.top+r.height/2;
+          if(y>scroller.top && y<scroller.bottom) {
+            const painted=document.elementFromPoint(x,y);
+            if(!row.contains(painted) || getComputedStyle(row).zIndex!=='2')
+              throw new Error('Travelling Worker must paint above other groups');
+          }
+        }
+        const bubble = getComputedStyle(card, '::before');
+        if (bubble.content === 'none' || bubble.zIndex !== '-2' ||
+            Math.abs(parseFloat(bubble.height)-rect.height) > 1 ||
+            getComputedStyle(card.parentElement, '::before').content !== 'none')
+          throw new Error('Bubble must share the animated card border: '+id);
+        return {bubbleHeight:parseFloat(bubble.height),top:rect.top,bottom:rect.bottom,height:rect.height,
           gap:next ? next.getBoundingClientRect().top-rect.bottom : null,
           titleHeight:titleRect.height,titleScale:titleRect.height/parseFloat(style.lineHeight),
           tickets:[...card.querySelectorAll('[data-ticket-id]')].map(n=>n.dataset.ticketId),
@@ -785,7 +800,7 @@ def verify_card_geometry(page, url, fixture, evidence):
     scroll.evaluate("async n=>{n.scrollTop=n.scrollHeight; await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);}")
     expect(page.locator('[data-manager="geometry_b"]')).to_be_in_viewport()
     assert page.locator('.settled-head').is_visible()
-    assert not page.locator('.manager-card [style*="height:"]').count()
+    assert not page.locator('.manager-card [style*="height:"]:not(.rail-wash):not(.rail-wash-origin)').count()
     page.screenshot(path=str(evidence / "card-short-wrapped-final.png"))
     # A bottom-anchored scroll can clamp when the final slot shrinks. The same
     # border/gap proof must hold there, while the real scroll anchor is active.
@@ -862,6 +877,91 @@ def verify_card_geometry(page, url, fixture, evidence):
         "method": "Real browser border boxes at normalized WAAPI progress; rapid changes use animation frames", "flows": proof,
     }, indent=2))
 
+
+
+
+def verify_card_background_motion(page, url, fixture, evidence):
+    """Reuse the App host to prove card exits, arrivals and reflow share a bubble.
+
+    Existing resize samples cover row changes, scrolling and reduced motion.
+    They did not check the painted layer or a whole card's opacity lifecycle.
+    """
+    started = time.perf_counter()
+    managers = [{"id": "bubble_"+str(i), "title": "Background travels with Manager "+str(i),
+                 "created_at": i+1, "settled": False, "tickets": []} for i in range(5)]
+    worker={"id":"bubble_worker","title":"Worker changes group during settle","manager_id":"bubble_4",
+            "worker_type":"coding","stage":"needs_implementation","ticket_status":"agent"}
+    managers[4]["tickets"]=[worker]
+    goal={"id":"bubble_goal","title":"Keep the rail together","active":True,"completed":False,
+          "kind":"binary","holder_kind":"manager","holder_id":"bubble_3","created_at":1,"updated_at":1,
+          "project_id":None,"why":"","deadline":None,"primary_chart":None,"primary_checklist_block_id":None,
+          "revision":0,"status":"attention","status_date":time.strftime("%Y-%m-%d"),
+          "next_refresh_at":int(time.time())+86400,"employee_backend":"codex","employee_launch_model":"",
+          "employee_launch_reasoning_effort":None,
+          "page":{"kind":"headroom.page","version":1,"title":"Approach","summary":"","blocks":[]}}
+    fixture.update(enabled=True, board={"managers": managers, "columns": []}, chief={"label": "Chief"},goals=[goal])
+    page.set_viewport_size({"width": 1100, "height": 700})
+    page.mouse.move(1000, 650)
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('[data-manager="bubble_4"]')).to_be_visible()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    page.evaluate("""() => {
+      window.__bubbleFrames=[];
+      window.__bubbleCapture=true;
+      const take=()=>{
+        const cards=[...document.querySelectorAll('.manager-card')];
+        window.__bubbleFrames.push(cards.map(card=>{
+          const r=card.getBoundingClientRect(), b=getComputedStyle(card,'::before');
+          const title=card.querySelector('.item-title').getBoundingClientRect();
+          const tint=getComputedStyle(card,'::after');
+          return {tint:tint.content,tintHeight:parseFloat(tint.height),tintZ:tint.zIndex,id:card.dataset.railMotion,top:r.top,bottom:r.bottom,height:r.height,
+            titleTop:title.top,titleBottom:title.bottom,
+            bubble:b.content,bubbleHeight:parseFloat(b.height),bubbleZ:b.zIndex,
+            slotBubble:getComputedStyle(card.parentElement,'::before').content,
+            opacity:+getComputedStyle(card).opacity,transform:getComputedStyle(card).transform};
+        }));
+        if(window.__bubbleCapture)requestAnimationFrame(take);
+      };take();
+    }""")
+    proof=[]
+
+    def change(name, mutate):
+        mutate()
+        page.evaluate("async () => {await window.__refreshNavigation();await new Promise(requestAnimationFrame);}")
+        # Pause the actual effects for a reviewable midpoint, then let them finish.
+        page.evaluate("""() => {
+          window.__bubbleEffects=document.getAnimations().filter(a=>a.effect && a.effect.getTiming().iterations!==Infinity);
+          window.__bubbleEffects.forEach(a=>{a.pause();a.currentTime=Number(a.effect.getTiming().duration)*.5;});
+        }""")
+        page.screenshot(path=str(evidence / ("bubble-"+name+"-midpoint.png")))
+        page.evaluate("window.__bubbleEffects.forEach(a=>a.play())")
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+        proof.append(name)
+
+    expect(page.locator('[data-manager="bubble_3"]')).to_have_attribute("data-goal-status", "attention")
+    change("settle-one", lambda: managers[0].update(settled=True))
+    change("reopen", lambda: managers[0].update(settled=False))
+    for i in range(3):
+        change("settle-sequence-"+str(i), lambda i=i: managers[i].update(settled=True))
+    change("settle-with-group-transfer", lambda: (managers[3].update(settled=True), worker.update(awaiting_approval=True)))
+    change("manager-arrives", lambda: managers.append({"id":"bubble_new", "title":"A new Manager and its bubble",
+                                                      "created_at":10,"tickets":[]}))
+    page.emulate_media(reduced_motion="reduce")
+    change("reduced-reopen", lambda: managers[0].update(settled=False))
+    page.emulate_media(reduced_motion="no-preference")
+    fixture["goals"]=[]
+    frames=page.evaluate("window.__bubbleCapture=false;window.__bubbleFrames")
+    for frame in frames:
+        for card in frame:
+            assert card["bubble"] != 'none' and card["slotBubble"] == 'none', card
+            assert card["bubbleZ"] == '-2' and abs(card["bubbleHeight"]-card["height"]) < 1, card
+            if card["tint"] != 'none':
+                assert card["tintZ"] == '-1' and abs(card["tintHeight"]-card["height"]) < 1, card
+            assert card["titleTop"] >= card["top"]-1 and card["titleBottom"] <= card["bottom"]+1, card
+    assert any(0 < card["opacity"] < 1 for frame in frames for card in frame), frames
+    assert any(card["transform"] != 'none' for frame in frames for card in frame), frames
+    (evidence / "bubble-motion-frames.json").write_text(json.dumps({
+        "seconds":round(time.perf_counter()-started,3),"newHosts":0,"flows":proof,"frames":frames},indent=2))
 
 
 def verify_empty_handoff(page, url, fixture, evidence):
@@ -2295,7 +2395,7 @@ def verify_focus_slide_fill(page, url, fixture):
         page.evaluate("""() => {
           window.__focusFill = {frames: [], done: false}; let count = 0;
           const take = () => {
-            const fill = document.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
+            const fill = document.querySelector('.rail-wash--item:not(.rail-wash--leaving):not([hidden])');
             const group = document.querySelector('[data-bucket-key="agent"]');
             if (fill && !fill.hidden && group) {
               const box = fill.getBoundingClientRect();
@@ -2352,7 +2452,7 @@ def verify_selection_washes(page, url, fixture, evidence):
         const target=document.querySelector(selector);
         if(!target)return {missing:true};
         const rect=n=>{if(!n)return null;const r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};};
-        const host=target.closest('.active-work-scroll,.settled-body,.rail-utilities');
+        const host=target.closest('.manager-card,.active-work-scroll,.settled-body,.rail-utilities');
         const group=target.closest('.manager-card');
         const item=host.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
         // Only the open item is lit: no layer marks the Manager the item sits in (owner).
@@ -2457,22 +2557,41 @@ def verify_selection_washes(page, url, fixture, evidence):
     page.mouse.move(1300, 950)
     row.hover()
     expect(page.locator('[data-manager="wash_a"] .settle')).to_have_css('opacity', '0')
-    hover = page.locator('.active-work-scroll > .rail-wash--hover:not(.rail-wash--leaving)')
+    hover = page.locator('[data-manager="wash_a"] > .rail-wash--hover:not(.rail-wash--leaving)')
     expect(hover).not_to_have_attribute('hidden', '')
+    wait_settled(page, ".rail-wash")
+    # A correct wash box can still hide behind an opaque card bubble. Compare a
+    # flat painted pixel with the same token composited above the bubble.
+    def painted_fill(layer):
+        box=layer.bounding_box()
+        clip={"x":int(box["x"]+3),"y":int(box["y"]+box["height"]/2),"width":1,"height":1}
+        actual=page.screenshot(clip=clip)
+        layer.evaluate("""(node,clip)=>{
+          const ref=document.createElement('div');ref.id='wash-paint-reference';
+          const fill=getComputedStyle(node).backgroundColor;
+          Object.assign(ref.style,{position:'fixed',left:clip.x+'px',top:clip.y+'px',width:'1px',height:'1px',
+            zIndex:'99999',background:`linear-gradient(${fill},${fill}),var(--rail-bubble-fill)`});
+          document.body.append(ref);
+        }""",clip)
+        expected=page.screenshot(clip=clip)
+        page.locator('#wash-paint-reference').evaluate("node=>node.remove()")
+        assert actual==expected, "The card bubble obscures the rail fill"
+    painted_fill(hover)
     row.click()
     # The fills are see-through: a click on the hovered row lights it at once and never shows the
     # hover fill (or a fading copy of it) under the selected one, which would flash brighter.
     page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
-    lit = page.evaluate("""() => { const host=document.querySelector('.active-work-scroll'); const item=host.querySelector(':scope > .rail-wash--item:not(.rail-wash--leaving)');
+    lit = page.evaluate("""() => { const host=document.querySelector('[data-manager=wash_a]'); const item=host.querySelector(':scope > .rail-wash--item:not(.rail-wash--leaving)');
       return {hover:[...host.querySelectorAll(':scope > .rail-wash--hover')].filter(n=>!n.hidden).length, itemOpacity:+getComputedStyle(item).opacity, itemHidden:item.hidden}; }""")
     assert lit == {"hover": 0, "itemOpacity": 1, "itemHidden": False}, lit
+    painted_fill(page.locator('[data-manager=wash_a] > .rail-wash--item:not(.rail-wash--leaving)'))
     page.mouse.move(1300, 950)
     selection_settled(selector)
     expect(hover).to_have_attribute('hidden', '')
     page.keyboard.press("Tab")
     row.focus()
     page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
-    ring = page.locator('.active-work-scroll > .rail-wash--focus')
+    ring = page.locator('[data-manager="wash_a"] > .rail-wash--focus')
     expect(ring).not_to_have_attribute('hidden', '')
     expect(row).to_have_css('outline-style', 'none')
     ring_box, item_box = ring.bounding_box(), sample(selector)['item']
@@ -2584,12 +2703,12 @@ def verify_selection_washes(page, url, fixture, evidence):
     def middle(box):
         return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
 
-    responds(hover_at('[data-manager="wash_a"] .identity', '.active-work-scroll', bottom_edge))
-    responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', left_edge))
-    responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', bottom_edge))
-    responds(hover_at(sole_row, '.active-work-scroll', left_edge))
-    responds(hover_at(sole_row, '.active-work-scroll', middle))
-    outside = hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', lambda box: (box["x"] + box["width"] / 2, box["y"] - 2))
+    responds(hover_at('[data-manager="wash_a"] .identity', '[data-manager="wash_a"]', bottom_edge))
+    responds(hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', left_edge))
+    responds(hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', bottom_edge))
+    responds(hover_at(sole_row, '[data-manager="wash_b"]', left_edge))
+    responds(hover_at(sole_row, '[data-manager="wash_b"]', middle))
+    outside = hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', lambda box: (box["x"] + box["width"] / 2, box["y"] - 2))
     assert not outside["hover"] and outside["hidden"], outside
     page.mouse.click(*left_edge(page.locator(sole_row).bounding_box()))
     expect(page.locator(sole_row)).to_have_attribute("aria-current", "page")
