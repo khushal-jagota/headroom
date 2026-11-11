@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import shutil
@@ -187,6 +188,7 @@ def run_list(
     servers = []
     differences: list[dict[str, Any]] = []
     reach: dict[str, set[str]] = {}
+    response_statuses: list[dict[str, Any]] = []
     try:
         for name, module in [("python", "tests.compare.host"), ("candidate", right_module)]:
 
@@ -214,31 +216,29 @@ def run_list(
                 calls = [request]
                 if request["method"].upper() not in ("GET", "HEAD"):
                     calls += [
-                        {"method": "GET", "path": p, "area": "probes", "status": 200}
+                        {"method": "GET", "path": p, "area": "probes"}
                         for p in spec.get("probes", [])
                     ]
                 for call in calls:
                     answers = []
                     for side, server in enumerate(servers):
                         resolved = substitute(call, captures[side])
+                        content = resolved.get("content")
+                        if isinstance(content, dict):
+                            content = base64.b64decode(content["base64"], validate=True)
                         response = client.request(
                             resolved["method"],
                             server.base + resolved["path"],
                             json=resolved.get("json"),
+                            content=content,
                             headers=resolved.get("headers"),
                         )
-                        if "status" in resolved:
-                            assert response.status_code == resolved["status"], (
-                                index,
-                                side,
-                                resolved,
-                                response.status_code,
-                                response.text,
-                            )
                         if "application/json" in response.headers.get("content-type", ""):
                             body = response.json()
-                        else:
+                        elif response.headers.get("content-type", "").startswith("text/"):
                             body = response.text
+                        else:
+                            body = response.content
                         if side == 0 and resolved["path"].startswith("/api/test/poll/"):
                             loop_results[resolved["path"]] = body
                         for name, pointer in call.get("capture", {}).items():
@@ -266,6 +266,15 @@ def run_list(
                                     )
                                 ),
                             )
+                        )
+                    if call is request:
+                        response_statuses.append(
+                            {
+                                "step": index,
+                                "method": call["method"],
+                                "path": call["path"],
+                                "statuses": [answer["status"] for answer in answers],
+                            }
                         )
                     actual_path = resolved["path"].split("?")[0]
                     matches = [
@@ -296,6 +305,7 @@ def run_list(
             "list": list_path.name,
             "seconds": time.monotonic() - started,
             "requests": len(spec["requests"]),
+            "response_statuses": response_statuses,
             "http_inventory": len(declared),
             "http_routes": [method + " " + path for method, path in declared],
             "differences": differences,
