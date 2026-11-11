@@ -178,7 +178,11 @@ def _start_server(
                 (
                     [sys.executable, "-m", server_module]
                     if server_module
-                    else [str(PLAN_BIN), "serve"]
+                    else (
+                        ["node", str(REPO_ROOT / "server/main.ts")]
+                        if os.environ.get("PANELS_TEST_SERVER_BACKEND") == "typescript"
+                        else [str(PLAN_BIN), "serve"]
+                    )
                 ),
                 cwd=str(REPO_ROOT),  # load-bearing: assets mount + config.yaml
                 env=env,

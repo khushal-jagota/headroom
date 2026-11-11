@@ -81,6 +81,17 @@ def run(browser, urls):
     metrics = MetricsFixture()
     metrics.append()
     metrics_calls = []
+    backend_updates = {"enabled": False, "hold": [], "calls": [], "fail_discovery": False, "mode": "succeeded", "unsupported": False}
+    backend_versions = {"claude": "2.1.1", "codex": "0.1.0"}
+
+    def backend_snapshots():
+        return [{"backend_key": key, "installed": True, "executable_path": f"/home/fixture/.local/bin/{key}",
+                 "version": version, "identity": None, "available_models": [], "reasoning_effort_options": [],
+                 "cached_usage": None, "diagnoses": [], "update_advisory": {
+                     "install_method": "npm_global", "update_command": None if backend_updates["unsupported"] and key == "codex" else f"npm install {key}@latest",
+                     "latest_version": None if backend_updates["unsupported"] and key == "codex" else {"claude": "2.1.2", "codex": "0.2.0"}[key],
+                     "update_available": True, "detail": "This installation needs a manual update."}}
+                for key, version in backend_versions.items()]
 
     fold = {"enabled": False, "count": 3, "overflow": False, "active_count": 1, "release_sha": "fixture-boot"}
     card_fixture = {"enabled": False}
@@ -91,6 +102,23 @@ def run(browser, urls):
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        if backend_updates["enabled"] and path == "/api/conversation/backends":
+            if backend_updates["fail_discovery"] and parse_qs(parts.query).get("refresh") == ["true"]:
+                route.fulfill(status=503, json={"detail": "Registry discovery failed"})
+            else:
+                route.fulfill(json={"backends": backend_snapshots()})
+            return
+        if backend_updates["enabled"] and path in {"/api/conversation/backends/claude/update", "/api/conversation/backends/codex/update"}:
+            assert route.request.method == "POST"
+            key = path.split("/")[-2]
+            backend_updates["calls"].append(key)
+            if key == "claude":
+                backend_updates["hold"].append(route)
+            else:
+                outcome = backend_updates["mode"]
+                route.fulfill(json={"outcome": outcome, "detail": "The installed version did not change." if outcome == "unchanged" else "The update command failed.",
+                                    "output_tail": "Controlled npm failure" if outcome == "failed" else ""})
+            return
         # The standalone artifact resolves its owner and launch settings. Keep these
         # exact: an unrelated ticket read must still fail this case's request guard.
         if route.request.method == "GET" and path == "/api/tickets" and parse_qs(parts.query) == {"detail": ["full"], "id": [artifact_owner["id"]]}:
@@ -180,7 +208,7 @@ def run(browser, urls):
             route.fulfill(json={"key": key, "epoch": "fixture", "revision": "1", "body": inner})
             return
         if path == "/api/updates":
-            route.fulfill(json={"state": "updating" if fold["release_sha"] == "fixture-boot" else "up_to_date", "allowed_actions": [],
+            route.fulfill(json={"state": "updating" if fold["release_sha"] == "fixture-boot" and not backend_updates["enabled"] else "up_to_date", "allowed_actions": [],
                                 "activity": "unknown", "available": None, "attempt": None, "app_sha": fold["release_sha"], "detail": None,
                                 "deadline_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600)), "mac_details": None})
             return
@@ -257,6 +285,65 @@ def run(browser, urls):
     pane.get_by_role("link", name="Notifications").click()
     page.wait_for_function("location.hash === '#/workspace/utility/settings/notifications?view=managers'")
     expect(rail).to_be_visible()
+
+    # Settings updates use the same routed shell and wire requests. The subprocess
+    # itself belongs to backend coverage. This browser boundary protects the click,
+    # per-backend busy state, outcome feedback, and refreshed installed version.
+    backend_started = time.monotonic()
+    backend_updates["enabled"] = True
+    pane.get_by_role("link", name="Backends", exact=True).click()
+    page.wait_for_function("location.hash === '#/workspace/utility/settings/backends?view=managers'")
+    # Reload proves the nested address and starts with an idle app-update fixture.
+    page.reload(wait_until="domcontentloaded")
+    settings = pane.locator('[data-backend-settings]')
+    claude = settings.locator('[data-backend="claude"]')
+    codex = settings.locator('[data-backend="codex"]')
+    expect(claude.locator('[data-installed]')).to_have_text('2.1.1')
+    expect(claude.locator('[data-latest]')).to_have_text('2.1.2')
+    expect(codex.locator('[data-latest]')).to_have_text('0.2.0')
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    evidence = Path(os.environ.get('PANELS_BACKEND_ARTIFACT_DIR', os.environ['PANELS_SIDEBAR_ARTIFACT_DIR']))
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(animations="disabled", path=str(evidence / 'backend-settings-desktop.png'))
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(settings).to_be_visible()
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_in_viewport()
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    page.screenshot(animations="disabled", path=str(evidence / 'backend-settings-mobile.png'))
+    page.set_viewport_size({"width": 1280, "height": 700})
+    claude.get_by_role('button', name='Update Claude').click()
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_disabled()
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    assert backend_updates["calls"] == ["claude"]
+    backend_versions["claude"] = "2.1.2"
+    backend_updates["hold"].pop().fulfill(json={"outcome": "succeeded", "detail": "Updated to 2.1.2.", "output_tail": ""})
+    expect(claude.get_by_role('status')).to_have_text('Updated to 2.1.2.')
+    expect(claude.locator('[data-installed]')).to_have_text('2.1.2')
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_enabled()
+    backend_updates["mode"] = "unchanged"
+    codex.get_by_role('button', name='Update Codex').click()
+    expect(codex.get_by_role('status')).to_have_text('The installed version did not change.')
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    backend_updates["mode"] = "failed"
+    codex.get_by_role('button', name='Update Codex').click()
+    expect(codex.get_by_role('alert')).to_have_text('The update command failed.')
+    codex.get_by_text('Update output', exact=True).click()
+    expect(codex.locator('pre')).to_have_text('Controlled npm failure')
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_enabled()
+    backend_updates["fail_discovery"] = True
+    settings.get_by_role('button', name='Refresh', exact=True).click()
+    expect(settings.get_by_role('alert').first).to_contain_text('Could not refresh backend versions.')
+    expect(claude.locator('[data-latest]')).to_have_text('Unavailable')
+    # Latest discovery does not prevent an otherwise supported update.
+    expect(claude.get_by_role('button', name='Update Claude')).to_be_enabled()
+    backend_updates["fail_discovery"] = False
+    backend_updates["unsupported"] = True
+    settings.get_by_role('button', name='Refresh', exact=True).click()
+    expect(codex.get_by_role('button', name='Update Codex')).to_be_disabled()
+    expect(codex.get_by_text('This installation needs a manual update.', exact=True)).to_be_visible()
+    page.screenshot(animations="disabled", path=str(evidence / 'backend-settings-errors.png'))
+    print(f"Backend Settings browser boundary: {time.monotonic() - backend_started:.2f}s", flush=True)
+    backend_updates["enabled"] = False
 
     # A row of the Config index is a link like any other, and it was never reported.
     page.goto(url + "#/workspace/utility/settings?view=managers", wait_until="domcontentloaded")

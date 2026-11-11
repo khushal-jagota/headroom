@@ -22,3 +22,4 @@ diagnostics/before/
 diagnostics/gates/
 diagnostics/dogfood/
 diagnostics/run-before-main/
+server/node_modules
