@@ -274,7 +274,9 @@ async def get_manager_workspace(
     address, and this is the read of it.
     """
     async with connection_off_the_loop(request) as conn:
-        result = await run_on_worker_thread(managers_views.manager_workspace, conn, item_id)
+        result = await run_on_worker_thread(
+            managers_views.manager_workspace, conn, item_id, calendar_now(clk)
+        )
         await add_work_attention(
             conn,
             conversations,
