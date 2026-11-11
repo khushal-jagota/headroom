@@ -15,7 +15,11 @@ import { registerCoreRoutes } from './core/routes.ts';
 import type { Changes } from './core/routes.ts';
 import { registerArea } from './core/authority/register.ts';
 import type { Area } from './core/authority/register.ts';
+import type { ConversationSystem } from './conversation/contracts.ts';
+import type { SignalNavigationAuthority } from './conversation/publication/authority.ts';
 export interface AppServices {
+    conversationSystem?: ConversationSystem;
+    signalAuthority?: SignalNavigationAuthority;
     database: Database;
     clock?: Clock;
     changes?: Changes;
@@ -32,6 +36,6 @@ export async function createApp(config: Config, services: AppServices): Promise<
     const root = configuredRoot ? resolve(configuredRoot === '~' ? homedir() : configuredRoot.startsWith('~/') ? join(homedir(), configuredRoot.slice(2)) : configuredRoot) : fileURLToPath(new URL('../', import.meta.url));
     await registerCoreRoutes(app, config, clock, changes, root, services.database);
     for (const area of services.areas ?? [])
-        registerArea(app, area, { database: services.database, config, clock });
+        registerArea(app, area, { database: services.database, config, clock, conversationSystem: services.conversationSystem, signalAuthority: services.signalAuthority });
     return app;
 }

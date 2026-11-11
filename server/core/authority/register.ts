@@ -5,7 +5,11 @@ import type { Clock } from "../clock.ts";
 import { requestContext } from "./identity.ts";
 import { requestAdmission } from "./intake.ts";
 import type { AdmissionDependencies } from "./intake.ts";
+import type { ConversationSystem } from '../../conversation/contracts.ts';
+import type { SignalNavigationAuthority } from '../../conversation/publication/authority.ts';
 export interface AreaServices {
+    conversationSystem?: ConversationSystem;
+    signalAuthority?: SignalNavigationAuthority;
     database: Database;
     config: Config;
     clock: Clock;

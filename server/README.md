@@ -64,3 +64,44 @@ This unit does not supply domain routes, schema migration, projection implementa
 The write door prepares each statement on every call. Measure this cost at gate 3 before any statement cache is added.
 
 Node 24 with npm 11 needs a development-guard change for npm's injected script environment keys. The current guarded alternatives above remain the launch route until that change lands. This unit does not change the guard policy.
+
+## Comparison host
+
+`node server/test_host.ts` starts the normal application with additional test-only route registrations. It requires `PLAN_TEST_MODE=1`. It uses the same database, locks, inherited listener, and shutdown path as `main.ts`.
+
+Each area adds one registration to the `testAreas` list in `test_host.ts`. Test routes do not enter the normal `areas` list.
+
+For a comparison list with `"conversation_system": "in_memory"`, the runner supplies `PLAN_COMPARE_CONVERSATION_SYSTEM=in_memory` to both hosts. The TS host creates one `InMemoryConversationSystem` for its test routes and all ordinary areas. Areas receive it as `services.conversationSystem`. The test endpoints start a conversation, send a message, read fake state, and complete a turn beneath `/api/test/in-memory-conversations`.
+
+Without this switch, the host does not register those endpoints or inject an in-memory system. Unit 15 supplies the real conversation system. Units 7 through 10 can then run their lists without the switch against the real core.
+
+## In-memory conversation instrument
+
+`conversation/contracts.ts` is the 15-member in-process conversation boundary.
+`conversation/in_memory_conversation_system.ts` mirrors the Python fake without database rows or agent output.
+Backend adapters implement `conversation/backends/contracts.ts`. Their 19 event classes and 11 exception classes follow the current Python source.
+Message content remains an ordered array of typed pieces. Runtime callers use `text_message_content` or the piece classes.
+
+Until the real core exists, navigation can use `idle_publication(publish)` from `conversation/publication/idle.ts` as the first commit step.
+It calls `publish(tx, conversation_id, attention)` for every stored conversation on that same transaction.
+Each attention value has all four marks false. Navigation owns its storage, installation metadata, and registration in `commitSteps`.
+The stand-in does not alter the fake's actual busy state and does not implement the real publication coordinator.
+
+`IdlePublicationAuthority` in `conversation/publication/authority.ts` supplies runtime permits for the idle source.
+Its constructor requires explicit `scope`, `runtime_epoch`, `installation_id`, and `delivery_session_id` values. Create it after readiness and runtime ownership are established. Its source permit keeps the Python fields and a numeric generation.
+The navigation adapter returns the generated `CurrentAuthority` wire shape with decimal-string generations.
+Call `invalidate('shutdown')` before shutdown and ownership release. Invalidation fences reads synchronously before it notifies subscribers.
+Subscriptions are one-shot and can unsubscribe. One failed subscriber does not prevent the others from receiving invalidation.
+A replacement installation creates a new instance. A persisted row never grants this runtime authority.
+
+The shared lifecycle also supplies `services.signalAuthority`, an idle publication authority, after it owns the runtime and opens the database. All areas share that instance. Shutdown invalidates its permits and notifies its watchers before the application closes or runtime ownership ends. Unit 15 replaces the idle source with the real coordinator.
+
+To compare the in-memory instrument against TypeScript, run:
+
+```sh
+scripts/dev pytest tests/compare/test_compare.py --compare-list tests/compare/lists/unit-06.json --compare-right-module tests.compare.ts_launcher
+```
+
+Lists for units 7 through 10 select both in-memory systems with `"conversation_system": "in_memory"`. Omit that setting when unit 15 supplies the real core. The comparison fixture passes the selection to both processes explicitly, rather than through ambient `PLAN_*` variables. The runner's default candidate remains Python for its reference calibration and existing CI job; `--compare-right-module tests.compare.ts_launcher` selects the TS comparison.
+
+The shared `startServer` lifecycle accepts `createSignalAuthority(database)` for the real coordinator or an isolated test source. Its default factory, `createIdlePublicationAuthority`, reuses the persisted source scope and creates fresh runtime, installation, and delivery identities. The lifecycle invokes the factory only after runtime ownership and database access are ready. Factories return the structural public authority interface, so replacement coordinators do not inherit the idle class.
