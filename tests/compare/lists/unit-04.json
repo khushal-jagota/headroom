@@ -58,6 +58,11 @@
     },
     {
       "method": "GET",
+      "path": "/api/ideas",
+      "area": "ideas"
+    },
+    {
+      "method": "GET",
       "path": "/api/projects?detail=summary&limit=1",
       "area": "projects"
     },
@@ -223,11 +228,6 @@
         "title": "Missing",
         "project_id": "missing"
       },
-      "area": "ideas"
-    },
-    {
-      "method": "GET",
-      "path": "/api/ideas",
       "area": "ideas"
     },
     {
