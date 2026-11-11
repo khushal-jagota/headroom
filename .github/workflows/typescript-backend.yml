@@ -29,8 +29,6 @@ jobs:
       - name: Install isolated dependencies
         run: |
           scripts/dev setup
-          scripts/dev npm --prefix web ci
-          scripts/dev npm --prefix agent_backends ci
           scripts/dev npm --prefix web run build
       - name: Python type check
         run: scripts/dev mypy
