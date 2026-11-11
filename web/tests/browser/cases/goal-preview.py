@@ -3148,6 +3148,9 @@ def manager_goal_tags(browser, url):
         for index, (key, title) in enumerate((
             ("one", "One chart"), ("many", "Several goals"), ("none", "No goals")))
     ]
+    fixture.managers[0]["project"] = (
+        "A long project name that must never overlap the goal tag or Settle"
+    )
     fixture.managers[2]["project"] = "A long project name that must never overlap the Settle action"
     fixture.goals["daily_quota"].update(holder_kind="manager", holder_id="one", status="good")
     fixture.observations["daily_quota"][TODAY] = 20
@@ -3182,6 +3185,137 @@ def manager_goal_tags(browser, url):
         expect(chief.get_by_role("button", name="Goals: At risk", exact=True)).to_be_visible()
         expect(chief.get_by_role("button", name=re.compile("Settle"))).to_have_count(0)
         panel = page.locator('[data-rail-hover-panel].visible')
+
+        # Native :has states and pseudo-element transitions need the rendered header.
+        # Reuse this host for the three status colors and the no-goal boundary.
+        haze_started = time.monotonic()
+        page.evaluate("location.hash='#/workspace/goal/daily_quota'")
+        expect(chief).not_to_have_class(re.compile(r'\bselected\b'))
+        page.mouse.move(1100, 820)
+
+        def haze_opacity(card, value):
+            page.wait_for_function(
+                "([card,value]) => getComputedStyle(card.parentElement,'::after').opacity===value",
+                arg=[card.element_handle(), value])
+
+        for card, token, percent in (
+                (one, '--accent-done', 7), (many, '--accent-error', 9),
+                (chief, '--accent-attention', 9)):
+            haze_opacity(card, '1')
+            assert card.evaluate("""(card, [token,percent]) => {
+              const slot=card.parentElement, haze=getComputedStyle(slot,'::after');
+              const expected=document.createElement('div');
+              const tint=`color-mix(in srgb,var(${token}) ${percent}%,transparent)`;
+              expected.style.backgroundImage=`linear-gradient(${tint},transparent 70px)`;
+              slot.append(expected);
+              const equal=haze.backgroundImage===getComputedStyle(expected).backgroundImage;
+              expected.remove();return equal;
+            }""", [token, percent])
+            card.locator('.identity').hover()
+            haze_opacity(card, '0')
+            page.mouse.move(1100, 820)
+            haze_opacity(card, '1')
+        assert none.evaluate(
+            "card => getComputedStyle(card.parentElement,'::after').content") == 'none'
+        if output:
+            page.locator('.workspace-rail').screenshot(path=str(output / 'haze-rest.png'))
+        for control in (one.locator('.item-head'),
+                        one.get_by_role('button', name='Goals: On track', exact=True)):
+            control.focus()
+            haze_opacity(one, '0')
+            control.blur()
+            haze_opacity(one, '1')
+        chief.locator('.item-head').click()
+        expect(chief).to_have_class(re.compile(r'\bselected\b'))
+        page.mouse.move(1100, 820)
+        chief.locator('.item-head').blur()
+        haze_opacity(chief, '0')
+        if output:
+            page.locator('.workspace-rail').screenshot(path=str(output / 'haze-selected.png'))
+        page.evaluate("location.hash='#/workspace/goal/daily_quota'")
+        haze_opacity(chief, '1')
+        page.emulate_media(reduced_motion='reduce')
+        one.locator('.identity').hover()
+        haze_opacity(one, '0')
+        assert one.evaluate(
+            "card => getComputedStyle(card.parentElement,'::after').transitionDuration") == '0s'
+        page.mouse.move(1100, 820)
+        haze_opacity(one, '1')
+        page.emulate_media(reduced_motion='no-preference')
+        elapsed = time.monotonic() - haze_started
+        print(f'manager haze native states: passed (+{elapsed:.2f}s)', flush=True)
+
+        # Existing endpoint checks missed the lost slide. Observe native transition
+        # interpolation, plus the text boundary during that same transition.
+        tag = one.locator('.goal-tag')
+        label = one.locator('.manager-eyebrow > span')
+        page.mouse.move(1100, 820)
+        expect(tag).to_have_css('transform', 'none')
+        rest = tag.bounding_box()
+        rest_label = label.bounding_box()
+        assert abs(rest['x'] - rest_label['x'] - rest_label['width'] - 8) < 1
+        if output:
+            page.screenshot(path=str(output / 'goal-slide-rest.png'), animations='disabled')
+        tag.evaluate("""el => {
+          window.goalSlideSamples = [];
+          el.addEventListener('transitionrun', function sampleSlide(event) {
+            if (event.propertyName !== 'transform') return;
+            const animation = el.getAnimations().find(a => a.transitionProperty === 'transform');
+            const duration = animation.effect.getTiming().duration;
+            const moving = [animation, ...el.parentElement.querySelector('span').getAnimations()];
+            for (const item of moving) { item.pause(); item.currentTime = duration / 2; }
+            const label = el.parentElement.querySelector('span').getBoundingClientRect();
+            const tag = el.getBoundingClientRect();
+            window.goalSlideSamples.push({
+              x: new DOMMatrixReadOnly(getComputedStyle(el).transform).m41,
+              gap: tag.left - label.right,
+              duration,
+            });
+            for (const item of moving) item.play();
+            if (window.goalSlideSamples.length === 2)
+              el.removeEventListener('transitionrun', sampleSlide);
+          });
+        }""")
+        one.locator('.identity').hover()
+        expect(tag).to_have_css('transform', 'matrix(1, 0, 0, 1, -60, 0)')
+        samples = page.evaluate('window.goalSlideSamples')
+        assert len(samples) == 1 and -60 < samples[0]['x'] < 0, samples
+        assert samples[0]['gap'] >= 7, samples
+        fast = tag.evaluate(
+            "el => parseFloat(getComputedStyle(el).getPropertyValue('--motion-fast'))"
+        )
+        assert samples[0]['duration'] == fast, (samples, fast)
+        active = tag.bounding_box()
+        assert abs(rest['x'] - active['x'] - 60) < 1, (rest, active)
+        assert label.bounding_box()['x'] + label.bounding_box()['width'] <= active['x']
+        action = one.locator('.settle').bounding_box()
+        assert active['x'] + active['width'] <= action['x'], (active, action)
+        if output:
+            page.screenshot(path=str(output / 'goal-slide-settle.png'), animations='disabled')
+        page.mouse.move(1100, 820)
+        expect(tag).to_have_css('transform', 'none')
+        samples = page.evaluate('window.goalSlideSamples')
+        assert len(samples) == 2 and -60 < samples[1]['x'] < 0, samples
+        assert samples[1]['gap'] >= 7, samples
+        # Keyboard focus uses the same endpoint and leaves Settle in the tab order.
+        tag.focus()
+        expect(tag).to_have_css('transform', 'matrix(1, 0, 0, 1, -60, 0)')
+        one.locator('.item-head').focus()
+        page.locator('[data-chief-destination]').first.focus()
+        expect(tag).to_have_css('transform', 'none')
+        chief_tag = chief.locator('.goal-tag')
+        chief_rest = chief_tag.bounding_box()
+        chief.locator('.identity').hover()
+        expect(chief_tag).to_have_css('transform', 'none')
+        assert chief_tag.bounding_box()['x'] == chief_rest['x']
+        page.mouse.move(1100, 820)
+        page.emulate_media(reduced_motion='reduce')
+        one.locator('.identity').hover()
+        expect(tag).to_have_css('transform', 'matrix(1, 0, 0, 1, -60, 0)')
+        assert tag.evaluate('el => el.getAnimations().length') == 0
+        page.mouse.move(1100, 820)
+        expect(tag).to_have_css('transform', 'none')
+        page.emulate_media(reduced_motion='no-preference')
 
         # Follow the owner path: enter the header to reveal Settle, then target
         # the action. Outside the header, its empty space belongs to the goal tag.
