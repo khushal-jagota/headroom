@@ -88,7 +88,7 @@ Each attention value has all four marks false. Navigation owns its storage, inst
 The stand-in does not alter the fake's actual busy state and does not implement the real publication coordinator.
 
 `IdlePublicationAuthority` in `conversation/publication/authority.ts` supplies runtime permits for the idle source.
-Create it after readiness and runtime ownership are established. Its source permit keeps the Python fields and a numeric generation.
+Its constructor requires explicit `scope`, `runtime_epoch`, `installation_id`, and `delivery_session_id` values. Create it after readiness and runtime ownership are established. Its source permit keeps the Python fields and a numeric generation.
 The navigation adapter returns the generated `CurrentAuthority` wire shape with decimal-string generations.
 Call `invalidate('shutdown')` before shutdown and ownership release. Invalidation fences reads synchronously before it notifies subscribers.
 Subscriptions are one-shot and can unsubscribe. One failed subscriber does not prevent the others from receiving invalidation.
@@ -103,3 +103,5 @@ scripts/dev pytest tests/compare/test_compare.py --compare-list tests/compare/li
 ```
 
 Lists for units 7 through 10 select both in-memory systems with `"conversation_system": "in_memory"`. Omit that setting when unit 15 supplies the real core. The comparison fixture passes the selection to both processes explicitly, rather than through ambient `PLAN_*` variables. The runner's default candidate remains Python for its reference calibration and existing CI job; `--compare-right-module tests.compare.ts_launcher` selects the TS comparison.
+
+The shared `startServer` lifecycle accepts `createSignalAuthority(database)` for the real coordinator or an isolated test source. Its default factory, `createIdlePublicationAuthority`, reuses the persisted source scope and creates fresh runtime, installation, and delivery identities. The lifecycle invokes the factory only after runtime ownership and database access are ready. Factories return the structural public authority interface, so replacement coordinators do not inherit the idle class.
