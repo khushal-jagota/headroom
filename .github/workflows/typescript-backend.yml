@@ -32,10 +32,7 @@ jobs:
           scripts/dev npm --prefix web run build
       - name: Python type check
         run: scripts/dev mypy
-      # Staging defect: the conversation contract is stale on the migration base.
-      # Remove this allowance when the staging repair merges into this branch.
-      - name: Check conversation contracts (staging repair pending)
-        continue-on-error: true
+      - name: Check conversation contracts
         run: .venv/bin/python scripts/generate_conversation_view_contracts.py --check
       - name: Check remaining generated contracts
         run: |
