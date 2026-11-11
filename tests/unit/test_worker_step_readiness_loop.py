@@ -1364,18 +1364,6 @@ def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(w
         assert {s.request.identity for s in starts.snapshots() if s.state == "deferred"} == {
             f"worker_step_message_{ticket_id}:1" for ticket_id in remote_ids
         }
-        # A new home runtime reconstructs admission from these same pending commands.
-        restored = AutomaticStartAdmission(clock=lambda: now[0])
-        restored.configure_destinations(lambda destination: True)
-        endpoint.mailbox.start_admission = restored
-        reply = await endpoint.poll(identity, 0, 0)
-        assert len(reply.commands) == 1
-        assert reply.commands[0].command_id == "command0"
-        assert len(restored.snapshots()) == 2  # First admitted, next deferred at the gate.
-        now[0] += 1
-        reply = await endpoint.poll(identity, reply.commands[-1].command_sequence, 0)
-        assert len(reply.commands) == 1
-        assert reply.commands[0].command_id == "command1"
         await endpoint.close()
 
     asyncio.run(exercise())

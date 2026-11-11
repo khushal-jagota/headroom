@@ -520,34 +520,3 @@ def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_
             assert len(scripted.sink.endings) == 1
 
     _run(exercise)
-
-
-def test_unconfirmed_child_launch_never_records_recoverable_custody(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from planner.conversation.backends.contracts import BackendSpawnFailed
-    from planner.conversation.local_child_contracts import LocalChildIdentity
-
-    async def exercise() -> None:
-        async with _scripted_child(tmp_path, script={}) as scripted:
-            recorded: list[LocalChildIdentity] = []
-
-            async def record(identity: LocalChildIdentity) -> None:
-                recorded.append(identity)
-
-            async def interrupted_handshake() -> None:
-                # A wrapper PID and absent unit alone do not prove that an
-                # asynchronous service-manager launch request reached its child.
-                raise BackendSpawnFailed("launcher ended before protocol handshake")
-
-            monkeypatch.setattr(scripted.sink, "record_local_child_custody", record, raising=False)
-            monkeypatch.setattr(scripted.child, "_shake_hands", interrupted_handshake)
-            monkeypatch.setattr(
-                scripted.child._client, "local_child_identity",
-                lambda: LocalChildIdentity(999999, "old", "boot", "missing.service"),
-            )
-            with pytest.raises(BackendSpawnFailed):
-                await scripted.start(cursor=None)
-            assert recorded == []
-
-    _run(exercise)

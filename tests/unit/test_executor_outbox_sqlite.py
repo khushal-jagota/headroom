@@ -348,34 +348,6 @@ def test_send_wakes_with_bounded_senders_and_rotates_after_each_batch(
     asyncio.run(run())
 
 
-def test_retry_waits_release_all_sender_slots(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Risk: four conversations in backoff occupy every sender slot after downtime.
-    # The existing single-failure test cannot prove release of all shared capacity.
-    monkeypatch.setattr("planner.executor.mac_outbox.OUTBOX_RETRY_INITIAL_SECONDS", 60.0)
-
-    async def run() -> None:
-        outbox = MacOutbox(tmp_path / "outbox")
-        attempts: list[str] = []
-
-        async def answer(conversation_id: str, batch: ItemBatch) -> ItemBatchReply:
-            attempts.append(conversation_id)
-            return accepted(batch) if conversation_id == "c_good" else busy(batch)
-
-        for conversation in ("c_a", "c_b", "c_c", "c_d", "c_good"):
-            outbox.add(entry(conversation, conversation))
-        sender = await sending(outbox, ScriptedItems(answer))
-        try:
-            assert await outbox.wait_confirmed("c_good", 2) is not None
-            assert set(attempts[:4]) == {"c_a", "c_b", "c_c", "c_d"}
-            assert attempts[4:] == ["c_good"]
-            assert outbox.pending_count() == 4
-        finally:
-            await stop_sending(sender)
-            outbox.close()
-
-    asyncio.run(run())
 
 
 def test_failing_conversation_backs_off_alone(

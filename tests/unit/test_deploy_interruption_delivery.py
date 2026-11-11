@@ -1072,3 +1072,104 @@ def test_admission_exempts_only_the_current_mac_processs_run(tmp_path: Path) -> 
     assert blocker(current.executor_incarnation, allow_restored=False) == owned
     # The replaced process's run still blocks, at admission too.
     assert blocker("replaced-incarnation", allow_restored=True) == owned
+
+
+def test_live_source_keeps_exact_claim_and_prevents_replacement(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    from planner.conversation.child_custody import process_identity, write_pending, write_started
+    from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
+
+    if sys.platform != "linux":
+        pytest.skip("Linux process birth evidence")
+    path = tmp_path / "home.db"
+    conn = connect(str(path))
+    create_schema(conn)
+    conn.close()
+    original = _Harness(path)
+
+    async def exercise() -> None:
+        await _start(original)
+        await original.store.reserve_turn("c")
+        _ticket(path)
+        # Only this test owns the source process. Its exact identity models a
+        # protocol-confirmed child that survives the home runtime.
+        source = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            identity = process_identity(source.pid)
+            assert identity is not None
+            with connect(str(path)) as db:
+                write_pending(db, "c", "source")
+                write_started(db, "c", "source", identity)
+                db.commit()
+            await original.system.shutdown()
+            restarted = _Harness(path)
+            try:
+                await run_automatic_recovery(restarted.system, restarted.store)
+                await restarted.system.send(
+                    "c", text_message_content("new work"), sender_label="owner"
+                )
+                assert source.poll() is None
+                assert restarted.spawned_conversation_ids == []
+                assert restarted.system.workspace_activity() == "unknown"
+                with connect(str(path)) as db:
+                    assert tuple(db.execute(
+                        "SELECT worker_step_claim,worker_step_claim_revision "
+                        "FROM tickets WHERE id='t'"
+                    ).fetchone()) == ("out", 7)
+            finally:
+                await restarted.system.shutdown()
+        finally:
+            if source.poll() is None:
+                source.terminate()
+                source.wait(timeout=5)
+            await original.system.shutdown()
+
+    _run(exercise)
+
+
+def test_ordinary_home_crash_recovers_once_with_durable_identity(tmp_path: Path) -> None:
+    from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
+
+    path = tmp_path / "home.db"
+    conn = connect(str(path))
+    create_schema(conn)
+    conn.close()
+    original = _Harness(path)
+
+    async def exercise() -> None:
+        await _start(original)
+        _ticket(path)
+        await original.system.send("c", text_message_content("work"), sender_label="owner")
+        # The existing harness stop proves that its child ended. No deployment
+        # manifest supplies the interruption, so startup must capture this turn.
+        await original.system.shutdown()
+        restarted = _Harness(path)
+        try:
+            await run_automatic_recovery(restarted.system, restarted.store)
+            writes = restarted.backend("c").written_texts()
+            assert len(writes) == 1
+            assert "Inspect the interrupted work" in writes[0]
+            with connect(str(path)) as db:
+                interruption_ids = tuple(db.execute(
+                    "SELECT interruption_id FROM deploy_interruptions"
+                ))
+                assert len(interruption_ids) == 1
+            await run_automatic_recovery(restarted.system, restarted.store)
+            assert len(restarted.backend("c").writes) == 1
+            await restarted.complete_turn("c")
+        finally:
+            await restarted.system.shutdown()
+        final = _Harness(path)
+        try:
+            await run_automatic_recovery(final.system, final.store)
+            assert final.spawned_conversation_ids == []
+            with connect(str(path)) as db:
+                assert tuple(db.execute(
+                    "SELECT interruption_id FROM deploy_interruptions"
+                )) == interruption_ids
+        finally:
+            await final.system.shutdown()
+
+    _run(exercise)

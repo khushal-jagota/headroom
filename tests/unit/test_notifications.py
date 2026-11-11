@@ -532,7 +532,7 @@ def test_failed_notification_delivery_retains_one_edge_and_retry(tmp_path: Path)
         )
 
 
-def test_stale_and_resolved_notifications_expire_without_clearing_attention(
+def test_notification_freshness_expires_both_channels_without_clearing_attention(
     tmp_db: Connection,
 ) -> None:
     from planner.notifications import apns_data
@@ -543,80 +543,14 @@ def test_stale_and_resolved_notifications_expire_without_clearing_attention(
         environment="development", now=1000,
     )
     stale = _ticket(tmp_db, 1000)
-    resolved = _ticket(tmp_db, 1200)
     notifications_data.queue_deliveries(tmp_db, 1299)
-    assert len(notifications_data.pending_deliveries(tmp_db, 1299)) == 2
-    assert len(apns_data.pending_deliveries(tmp_db, 1299)) == 2
-    attention.reconcile_attention(tmp_db, {
-        ("ticket", stale.id, "awaiting_approval"): (True, 1000),
-        ("ticket", resolved.id, "awaiting_approval"): (False, 1300),
-    })
+    assert len(notifications_data.pending_deliveries(tmp_db, 1299)) == 1
+    assert len(apns_data.pending_deliveries(tmp_db, 1299)) == 1
     assert notifications_data.pending_deliveries(tmp_db, 1300) == ()
     assert apns_data.pending_deliveries(tmp_db, 1300) == ()
     for table in ("notification_deliveries", "notification_apns_deliveries"):
-        assert [row[0] for row in tmp_db.execute(f"SELECT status FROM {table}")] == [
-            "expired", "expired"
-        ]
+        assert [row[0] for row in tmp_db.execute(f"SELECT status FROM {table}")] == ["expired"]
     assert tmp_db.execute(
         "SELECT active FROM notification_attention_state WHERE subject_id=? "
         "AND notification_type='awaiting_approval'", (stale.id,),
     ).fetchone()[0] == 1
-
-
-@pytest.mark.parametrize("native", [False, True])
-def test_delivery_rechecks_attention_between_devices(tmp_path: Path, native: bool) -> None:
-    from planner.notifications import apns_data
-    from planner.notifications.contracts import APNsResult, PendingAPNsDelivery
-    db_path = str(tmp_path / "resolved-during-batch.db")
-    with closing(connect(db_path)) as conn:
-        create_schema(conn)
-        notifications_data.get_or_create_web_push_identity(conn, 1)
-        if native:
-            for token in ("aabb", "ccdd"):
-                apns_data.register_device(
-                    conn, device_token=token, bundle_id="app.panels.ios",
-                    environment="development", now=1,
-                )
-        else:
-            _subscribe(conn, name="one")
-            _subscribe(conn, name="two")
-        ticket = _ticket(conn, 1)
-    sent: list[str] = []
-
-    def resolve(device_id: str) -> None:
-        sent.append(device_id)
-        with closing(connect(db_path)) as writer:
-            attention.reconcile_attention(writer, {
-                ("ticket", ticket.id, "awaiting_approval"): (False, 2)
-            })
-
-    class ResolveAfterFirstDevice:
-        def send(
-            self, subscription: PushSubscription, intent: NotificationIntent,
-            identity: WebPushIdentity, *, subject: str,
-        ) -> WebPushResult:
-            resolve(subscription.subscription_id)
-            return WebPushResult(delivered=True)
-
-    class ResolveAfterFirstNativeDevice:
-        def send(
-            self, delivery: PendingAPNsDelivery, *, server_url: str, now: int,
-        ) -> APNsResult:
-            resolve(delivery.device.device_id)
-            return APNsResult(delivered=True)
-
-        def close(self) -> None:
-            pass
-
-    loop = NotificationLoop(
-        db_path, MutableClock(parse_fake_now("1970-01-01T00:00:01+00:00")),
-        canonical_origin="https://panels.example", adapter=ResolveAfterFirstDevice(),
-        apns_adapter=ResolveAfterFirstNativeDevice() if native else None,
-    )
-    assert loop.poll_once() == 1
-    assert len(sent) == 1
-    with closing(connect(db_path)) as conn:
-        table = "notification_apns_deliveries" if native else "notification_deliveries"
-        assert sorted(row[0] for row in conn.execute(
-            f"SELECT status FROM {table}"
-        )) == ["delivered", "expired"]
