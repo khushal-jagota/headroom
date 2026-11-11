@@ -11,6 +11,7 @@ this one stops admission and exits with code 1, and launchd starts a fresh one.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from collections.abc import Callable
@@ -27,6 +28,7 @@ from planner.executor.mac_http import failure_name, lease_refusal_code
 from planner.executor.protocol import (
     ExecutorRefusal,
     LeaseRefused,
+    LeaseReply,
     LeaseRequest,
     MacLocalStatus,
 )
@@ -98,6 +100,8 @@ class MacLeaseLoop:
         self.runner, self.journal, self.updates = runner, journal, updates
         self.agent_processes = agent_processes
         self._replaced = replaced
+        self._next_workspace_cleanup = 0.0
+        self._workspace_cleanup_task: asyncio.Task[None] | None = None
 
     async def _request(self) -> LeaseRequest:
         backlog = await asyncio.to_thread(self.outbox.lease_backlog)
@@ -148,6 +152,15 @@ class MacLeaseLoop:
             return True
         self.presence.accepted()
         self.updates.offer(result.update)
+        # No cached clock or local Ticket list authorizes removal. An accepted lease
+        # carries the complete canonical lifetimes, including deleted identities.
+        loop = asyncio.get_running_loop()
+        if loop.time() >= self._next_workspace_cleanup and (
+            self._workspace_cleanup_task is None or self._workspace_cleanup_task.done()
+        ):
+            self._next_workspace_cleanup = loop.time() + 600
+            self._workspace_cleanup_task = asyncio.create_task(self._cleanup_workspaces(result))
+
         try:
             if cursor is not None and await asyncio.to_thread(
                 partial(
@@ -164,6 +177,14 @@ class MacLeaseLoop:
             _LOG.warning("lease follow-up failed error=%s", failure_name(error))
         return True
 
+    async def _cleanup_workspaces(self, result: LeaseReply) -> None:
+        try:
+            await self.runner.cleanup_workspaces(
+                result.ticket_workspaces, result.accepted_at_vps_ms // 1000
+            )
+        except Exception as error:
+            _LOG.warning("Ticket workspace cleanup failed error=%s", failure_name(error))
+
     async def _record_agents(self) -> None:
         """Record the agents' processes each lease interval, with or without the VPS, so
         a start that hangs while the link is down is still ended after a crash."""
@@ -176,9 +197,15 @@ class MacLeaseLoop:
 
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
-        while True:
-            started = loop.time()
-            if not await self.lease_once():
-                return
-            await self._record_agents()
-            await asyncio.sleep(max(0.0, started + LEASE_INTERVAL_SECONDS - loop.time()))
+        try:
+            while True:
+                started = loop.time()
+                if not await self.lease_once():
+                    return
+                await self._record_agents()
+                await asyncio.sleep(max(0.0, started + LEASE_INTERVAL_SECONDS - loop.time()))
+        finally:
+            if self._workspace_cleanup_task is not None:
+                self._workspace_cleanup_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._workspace_cleanup_task

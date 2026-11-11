@@ -443,3 +443,46 @@ def test_goal_files_reject_traversal_and_symlink_escapes_and_confine_html_naviga
         other_url = f"/files/goals/{other}/artifacts/site/next.html"
         assert client.put(other_url, json={"content": "another goal"}).status_code == 200
         assert client.get(other_url, headers=headers).status_code == 404
+
+
+def test_ticket_checkout_is_private_through_routes_aliases_and_catalog(tmp_path: Path) -> None:
+    """The new colocated checkout must never become a downloadable artifact."""
+    app, db_path = _make_app(tmp_path)
+    with connect(str(db_path)) as conn:
+        ticket = create_ticket(
+            conn, title="Private checkout", worker_type="coding", principal=OWNER_PRINCIPAL,
+            now=1, title_max_chars=200,
+        )
+    root = _ticket_root(db_path) / ticket.id
+    (root / "worktree").mkdir(parents=True)
+    (root / "worktree" / "secret.html").write_text("private source")
+    (root / ".panels-workspace.json").write_text('{"repository":"private"}')
+    (root / "artifacts").mkdir()
+    (root / "artifacts" / "index.html").write_text("public artifact")
+    (root / "artifacts" / "alias.html").symlink_to(root / "worktree" / "secret.html")
+    prefix = f"/files/tickets/{ticket.id}/"
+    # Already indexed links can predate the privacy rule or point through aliases.
+    with connect(str(db_path)) as conn:
+        for ordinal, relative in enumerate(("worktree/secret.html", "artifacts/alias.html")):
+            conn.execute(
+                "INSERT INTO ticket_artifact_links "
+                "(ticket_id,field_id,ordinal,href,target,origin,stem,parent,kind) "
+                "VALUES (?,?,?,?,?,NULL,?,?,?)",
+                (ticket.id, "brief", ordinal, prefix + relative, prefix + relative,
+                 "secret", "", "html"),
+            )
+        conn.commit()
+    with TestClient(app) as client:
+        for relative in ("worktree/secret.html", ".panels-workspace.json", "artifacts/alias.html"):
+            assert client.get(prefix + relative).status_code == 404
+        assert client.get(
+            prefix + "artifacts/alias.html",
+            headers={"X-Panels-Artifact-Root": prefix + "artifacts/index.html"},
+        ).status_code == 404
+        artifact = client.get(prefix + "artifacts/index.html")
+        assert artifact.status_code == 200 and artifact.text == "public artifact"
+        catalog = client.get(f"/api/artifact-catalog/ticket/{ticket.id}").json()
+        assert [entry["path"] for entry in catalog["entries"]] == ["artifacts/index.html"]
+        assert client.get(
+            f"/api/artifact-catalog/ticket/{ticket.id}", params={"directory": "worktree"}
+        ).json()["entries"] == []

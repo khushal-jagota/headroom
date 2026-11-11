@@ -93,7 +93,7 @@ Permission asks are always shown and always wait for an answer. Headroom does no
 
 ## The workspace for an agent
 
-Each conversation starts in one folder and keeps it through resume and restart. The folder is an explicit workspace when one is given, otherwise the Ticket's Project folder, otherwise the server's default workspace. A Mac Worker without an explicit workspace starts in the executor's own Panels workspace on the Mac, in its Project's folder there when it has a Project. The Chief and each Manager instead start in a home folder of their own, made on their first start: `data/files/chief/` for the Chief, and the Manager's files folder for a Manager, beside the `artifacts/` the owner sees. They keep their own notes, scratch files and rules there, and their role text names the server's default workspace, where the repositories are. A new configuration applies to new conversations. [Environments](environments.md) covers the server default.
+Each conversation starts in one folder and keeps it through resume and restart. A Worker starts in the Ticket's managed workspace. Panels creates its worktree from the project repository on the execution machine. A project without a repository gets an ordinary Ticket workspace. Workers prepare dependencies and local configuration themselves. The worktree and its sibling artifacts folder follow the lifetime in [Environments](environments.md#ticket-scratch). The Chief and each Manager instead start in a home folder of their own, made on their first start: `data/files/chief/` for the Chief, and the Manager's files folder for a Manager, beside the `artifacts/` the owner sees. They keep their own notes, scratch files and rules there, and their role text names the server's default workspace, where the repositories are. A new configuration applies to new conversations. [Environments](environments.md) covers the server default.
 
 ## What comes back out
 
@@ -118,4 +118,4 @@ The pane reads a stored view that is built from the notebook. When the app conne
 - `src/planner/runtime/conversation_start.py` and `runtime/workspaces.py`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
-_Last verified: 2026-11-11._
+_Last verified: 2026-11-12._

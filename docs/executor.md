@@ -28,7 +28,9 @@ Each Ticket has a locale, `vps` or `macos` (see [Tickets](tickets.md)). A `macos
 
 A Mac Ticket starts only while the Mac is present. Until then its step shows "Waiting for the Mac". A message or answer to an existing Mac conversation is stored, and the Mac receives it when it returns.
 
-All three backends can run on the Mac, in a Panels workspace inside the executor's data folder ([Conversations](conversations.md#the-workspace-for-an-agent)). The Mac fetches the prompt's files and skills from the VPS, and copies changed Ticket artifacts back. A Worker's `panels` writes enter the outbox, and the VPS applies them with the authority of the original run.
+All three backends can run on the Mac. Each Ticket uses its own workspace inside the executor's Ticket files folder ([Conversations](conversations.md#the-workspace-for-an-agent)). The Mac fetches the prompt's files and skills from the VPS, and copies changed Ticket artifacts back. It never transfers the private worktree or its dependencies. Panels creates that worktree from the local project repository. Workers handle dependency setup, pushes, and pull requests. A Worker's `panels` writes enter the outbox, and the VPS applies them with the authority of the original run.
+
+The VPS supplies authoritative Ticket lifecycle state with a successful lease. The Mac uses that state for the [seven-day file clock](environments.md#ticket-scratch). Before removal, it requests fresh permission for the exact expired workspace. Active native turns preserve their files. Idle sessions stop through the ordinary executor path before their workspace expires. Offline or incomplete local state never establishes that a Ticket ended. The clock covers Ticket folders and attributed legacy evidence. Shared project clones and extracted executor updates are outside it.
 
 ## Presence
 
@@ -120,4 +122,4 @@ Not yet proven:
 - `src/planner/environments/mac_executor.py` and `environments/mac_app/`: the LaunchAgent and signed app.
 - `scripts/executor_sleep_cycles.py`: the 100-cycle harness. `scripts/mac_sleep_test.py`: the real Mac sleep test.
 
-_Last verified: 2026-11-09._
+_Last verified: 2026-11-12._

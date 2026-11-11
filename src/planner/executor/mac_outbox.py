@@ -63,6 +63,7 @@ from planner.executor.protocol import (
     payload_child,
     type_adapter,
 )
+from planner.files.logic.paths import PRIVATE_TICKET_NAMES
 
 if TYPE_CHECKING:
     from planner.executor.contracts import MacFilesApi, MacHttpClient
@@ -251,6 +252,8 @@ class MacOutbox:
                 )
                 continue
             for entry in ordered:
+                if folder == root and entry.name in PRIVATE_TICKET_NAMES:
+                    continue
                 relative = Path(entry.path).relative_to(root).as_posix()
                 try:
                     source = contained_path(root, relative)

@@ -520,6 +520,12 @@ def test_ticket_index_skips_unchanged_sources_and_rechecks_racy_same_size_change
         path = root / str(index)
         path.write_bytes(b"old")
         os.utime(path, ns=(old_ns, old_ns))
+    # A Ticket checkout can contain credentials and large dependency trees. Neither
+    # the checkout nor its private ownership marker enters artifact capture.
+    private = root / "worktree" / "node_modules"
+    private.mkdir(parents=True)
+    (private / "secret.txt").write_text("private source")
+    (root / ".panels-workspace.json").write_text("private ownership")
     outbox = MacOutbox(tmp_path / "spool")
     first = outbox.add(entry("first"), ticket_id="t_one")
     assert len(first.file_dependencies) == 2

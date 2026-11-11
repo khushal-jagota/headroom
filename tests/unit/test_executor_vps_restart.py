@@ -56,6 +56,7 @@ from planner.conversation.logic.retained_turn import UndeliveredTurnPrompt
 from planner.conversation.message_content import message_content_text, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.db import connect, create_schema
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import ChildReference
 
 RECOVERY_TEXT = "Inspect the interrupted work and continue the current authorized step."
@@ -372,7 +373,7 @@ def _link_mac_tickets(db_path: Path, *conversation_ids: str) -> None:
             )
         # A compatible Mac process is known, so Mac Tickets may run.
         identity = {
-            "protocol_version": 22,
+            "protocol_version": PROTOCOL_VERSION,
             "application_revision": "test",
             "spool_format_version": 5,
             "executor_incarnation": "inc-2",

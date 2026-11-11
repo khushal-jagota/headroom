@@ -68,11 +68,19 @@ Explicit owner requests still apply.
   discussion.
 - Use sub agents properly. This means giving them autonomy, they are as intelligent as you are. Give them a goal and rough process, let them adapt their strategy to reach the goal, then evaluate their outputs yourself and with the user.
 
+### The Ticket workspace
+
+Panels creates the Ticket folder and its worktree before your turn starts. Use the workspace and artifact paths in your prompt. Keep code, dependencies, and scratch in `worktree/`. Put reviewable documents and evidence in the sibling `artifacts/` folder.
+
+Follow the repository instructions for dependency and environment setup. You still commit, push, open pull requests, run checks, and perform approved merges. Stop any services you start. Do not create or remove Ticket worktrees. Do not remove the Ticket folder at Consequences.
+
+Panels clears the folder seven days after the Ticket ends. Stage text and proposals remain, but file links expire. Before removal, Panels checks that the work is safe on a remote. Dirty files, unpublished commits, or failed Git inspection preserve the folder and require action. Panels never commits or pushes for you.
+
 ### Ticket-owned planning artifacts
 
 Ticket-owned artifacts are durable work products that make the work easier to understand. Use them to show work, explain systems and changes, etc. Create one where an artifact will improve understanding or help a user judge what is going on with less overwhelm. Prefer a self-contained HTML artifact over Markdown when either format can present the work. Use Markdown when the artifact is primarily plain text or HTML would not improve understanding.\
 \
-Store them in the live managed tree at `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/<relative-path>` and link them from the relevant proposal, implementation, or consequences as `/files/tickets/<ticket-id>/<relative-path>`. For example, write `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/artifacts/ui-plan.html` and link it as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never use `/home/vps/Coding/Panels/data/...`, a ticket worktree's `data/...`, or another path inferred from the current directory.
+Use the artifact directory in your Worker prompt. On the VPS, it is inside the live Ticket files tree. On the Mac, it is inside the executor’s local Ticket files tree, and Panels transfers public artifacts to the VPS. Link artifacts as `/files/tickets/<ticket-id>/artifacts/<relative-path>`. Keep scratch inside the supplied worktree. Do not infer artifact paths from the current directory.
 
 ### Preview servers you leave running
 

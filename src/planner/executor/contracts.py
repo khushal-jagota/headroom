@@ -45,6 +45,7 @@ from planner.executor.protocol import (
     ModelListRequest,
 )
 from planner.stalls.contracts import StallSource as StallSource
+from planner.ticket_workspaces.contracts import WorkspaceState
 
 # The Mac's spool/commands.sqlite3, format COMMAND_JOURNAL_FORMAT_VERSION. Every command
 # is recorded here before it runs, keyed by command_id, so a redelivered or restored
@@ -360,6 +361,8 @@ class MacHttpClient(Protocol):
     """
 
     async def lease(self, request: LeaseRequest) -> LeaseReply | LeaseRefused: ...
+
+    async def retire_workspace(self, state: WorkspaceState, *, replay: bool = False) -> bool: ...
 
     async def poll_commands(self, after: int, wait_seconds: float) -> MailboxPollReply: ...
 

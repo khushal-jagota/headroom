@@ -18,6 +18,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
+from planner.core.db import connect
 from planner.core.task_settlement import run_on_worker_thread, wait_for_settlement
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.catalog_relay import VpsCatalogRelay
@@ -45,6 +46,7 @@ from planner.executor.protocol import (
     LiveEventBatch,
     LiveReadRequest,
     MailboxPollReply,
+    WorkspaceRetirementReply,
     as_object,
     decode_event_arguments,
 )
@@ -52,7 +54,10 @@ from planner.executor.vps_files import InputFile, VpsFiles
 from planner.executor.vps_inbox import MacInbox
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService, UpdateCheck
+from planner.executor.vps_presence_store import require_current_incarnation_in_transaction
 from planner.executor.vps_runs import MacRuns
+from planner.ticket_workspaces.contracts import WorkspaceState
+from planner.ticket_workspaces.data import authorize_retirement, has_committed_retirement
 
 # GET-only Panels reads an agent on the Mac may make.
 _READABLE_PATHS = (
@@ -79,6 +84,7 @@ class VpsExecutor:
         application_revision: str = "unknown",
     ) -> None:
         self.db_path = db_path
+        self.clock = clock
         self.application_revision = application_revision
         self.mailbox = SqliteCommandMailbox(db_path)
         self.presence = MacPresenceService(
@@ -180,6 +186,34 @@ class VpsExecutor:
         return await self._owned_work(
             self.presence.accept_lease(request), answer_within=LEASE_SERVER_LIMIT_SECONDS
         )
+
+    async def retire_workspace(
+        self, identity: ExecutorIdentity, state: WorkspaceState, *, replay: bool = False
+    ) -> WorkspaceRetirementReply:
+        return await self._owned_work(
+            run_on_worker_thread(self._retire_workspace, identity, state, replay),
+            answer_within=LIVE_READ_SERVER_LIMIT_SECONDS,
+        )
+
+    def _retire_workspace(
+        self, identity: ExecutorIdentity, state: WorkspaceState, replay: bool
+    ) -> WorkspaceRetirementReply:
+        connection = connect(self.db_path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            require_current_incarnation_in_transaction(connection, identity.executor_incarnation)
+            authorized = (
+                has_committed_retirement(connection, state)
+                if replay
+                else authorize_retirement(connection, state, self.clock.now_unix())
+            )
+            connection.commit()
+            return WorkspaceRetirementReply(authorized)
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     async def refuse_old_websocket(self) -> None:
         """Route 10."""

@@ -18,7 +18,7 @@ import hashlib
 import sqlite3
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -177,6 +177,9 @@ def test_a_short_corrupt_or_foreign_upload_is_refused_and_leaves_nothing(
                 ErrorCode.agent_forbidden,
                 ErrorCode.agent_forbidden,
             )
+            for private_path in ("worktree/.env", ".panels-workspace.json"):
+                private = replace(_manifest(), relative_path=private_path)
+                assert await _refused(world.upload(_chunks(BYTES), private)) is ErrorCode.validation
             assert world.staged() == []
 
     asyncio.run(asyncio.wait_for(exercise(), 20))

@@ -66,6 +66,7 @@ from planner.executor.store import ExecutorStore, VpsDatabase, _invalid, _record
 from planner.executor.vps_agent_writes import AgentWrites
 from planner.executor.vps_presence_store import require_current_incarnation_in_transaction
 from planner.executor.vps_runs import MacRuns
+from planner.files.logic.paths import PRIVATE_TICKET_NAMES
 from planner.stalls.contracts import TrackedWaitKind
 from planner.stalls.registry import WAITS
 
@@ -226,6 +227,8 @@ class InboxStore(VpsDatabase):
             raise ValueError("invalid file length or digest")
         if manifest.scope is not FileScope.ticket:
             raise ValueError("Mac uploads must belong to a Ticket")
+        if manifest.relative_path.split("/", 1)[0] in PRIVATE_TICKET_NAMES:
+            raise ValueError("Ticket worktree is private")
         root = Path(self.db_path).resolve().parent / "files" / "tickets"
         return contained_path(root, f"{manifest.owner_id}/{manifest.relative_path}")
 

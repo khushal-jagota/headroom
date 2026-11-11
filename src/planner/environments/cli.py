@@ -121,33 +121,32 @@ def cleanup(apply: bool, as_json: bool) -> None:
         config, dependencies=dependencies.vps_status_dependencies
     )
     payload: dict[str, object] = {"dry_run": not apply, **inventory.as_dict()}
-    scratches: list[ticket_scratch.TicketScratch] = []
+    from planner.files.logic.paths import ticket_files_root
+    from planner.ticket_workspaces.cleanup import clean_for_database
+
     layout = ticket_scratch.layout_for(
         config.ticket_scratch_root, config.ticket_scratch_database, config.db_path
     )
-    if layout is not None:
-        states = ticket_scratch.read_ticket_states_from(config.db_path)
-        now = int(time.time())
-        scratches = ticket_scratch.collect_ticket_scratch(layout, states, now)
-        payload["ticket_scratch"] = [scratch.as_dict() for scratch in scratches]
-    scratch_result: ticket_scratch.ScratchResult | None = None
+    now = int(time.time())
+    scratch_result = clean_for_database(
+        config.db_path, now, extra_roots=layout.folders if layout else (), apply=apply
+    )
+    manifest_path = ticket_files_root(config.db_path).parent / "ticket-workspaces-cleanup.json"
+    payload["ticket_workspaces"] = json.loads(manifest_path.read_text())
+    payload["ticket_workspaces_result"] = {
+        "removed": scratch_result.removed, "skipped": scratch_result.skipped,
+    }
     if apply:
         payload["result"] = apply_cleanup_inventory(inventory).as_dict()
-        if layout is not None:
-            scratch_result = ticket_scratch.remove_ticket_scratch(layout, scratches, states, now)
-            payload["ticket_scratch_result"] = scratch_result.as_dict()
     if as_json:
         click.echo(json.dumps(payload, sort_keys=True))
         return
     click.echo("applied cleanup" if apply else "cleanup dry run")
     for candidate in inventory.candidates:
         click.echo(f"{candidate.kind}: {candidate.path}")
-    for scratch in scratches:
-        for entry in scratch.entries:
-            click.echo(f"ticket_scratch: {entry}")
-    if scratch_result is not None:
-        for kept in scratch_result.skipped:
-            click.echo(f"kept: {kept['path']} ({kept['reason']})")
+    click.echo(f"Ticket workspace inventory: {manifest_path}")
+    for kept in scratch_result.skipped:
+        click.echo(f"kept: {kept['path']} ({kept['reason']})")
 
 
 @environment.command("backup")

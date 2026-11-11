@@ -67,6 +67,7 @@ from planner.executor.protocol import (
     ReceiptDisposition,
     StartRun,
     StopRun,
+    WritePrompt,
     as_object,
     decode_command_arguments,
     decode_event_arguments,
@@ -191,6 +192,67 @@ def native_registry(
         yield registry, spool, native, start
     finally:
         spool.close()
+
+
+def test_workspace_cleanup_stops_idle_retained_child_but_preserves_an_active_turn(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gap: an idle native session survives Ticket end and otherwise defeats expiry."""
+    from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
+
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        assert isinstance(start.arguments, StartRun)
+        resolved = replace(
+            start.arguments.resolved_start,
+            role_materials=ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "t_01234567"),)),
+        )
+        start = replace(start, arguments=replace(start.arguments, resolved_start=resolved))
+        grants: list[WorkspaceState] = []
+        stops: list[bool] = []
+
+        async def grant(state: WorkspaceState) -> bool:
+            grants.append(state)
+            return True
+
+        async def stop() -> None:
+            stops.append(True)
+
+        monkeypatch.setattr(registry, "_retire_workspace", grant)
+        monkeypatch.setattr(native, "stop", stop)
+        assert (await registry.run(start)).disposition is CommandDisposition.succeeded
+        turn = TurnToken("turn", 1)
+        prompt = ChildCommand(
+            "prompt",
+            start.child,
+            ChildOperation.write_prompt,
+            turn,
+            WritePrompt(
+                content=text_message_content("work"),
+                sender_content=(),
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+            ),
+        )
+        assert (await registry.run(prompt)).disposition is CommandDisposition.succeeded
+        state = WorkspaceState("t_01234567", 1, False)
+        folder = registry.paths.artifacts / state.ticket_id
+        await registry.cleanup_workspaces((state,), RETENTION_SECONDS + 2)
+        assert folder.exists() and grants == stops == []
+        assert native.sink is not None
+        await native.sink.report(turn, TurnEnded(ending=ConversationTurnEnding.completed))
+        # A grant for another generation cannot retire this native child or folder.
+        other_generation = replace(state, generation=1)
+        await registry.cleanup_workspaces((other_generation,), RETENTION_SECONDS + 2)
+        assert folder.exists() and stops == []
+        await registry.cleanup_workspaces((state,), RETENTION_SECONDS + 2)
+        assert not folder.exists() and stops == [True] and grants == [other_generation, state]
+        proofs = [row for row in spool.pending() if row.kind is EnvelopeKind.child_stopped]
+        assert len(proofs) == 1
+        assert start.child.child_id not in registry._children
+
+    asyncio.run(run())
 
 
 def acknowledge_pending(spool: MacOutbox) -> None:
@@ -861,7 +923,10 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
                 received.append(resolved_start)
                 assert vendor_session_cursor == "retained-native-session"
                 assert resolved_start.role_materials is not None
-                assert resolved_start.role_materials.role_text == "worker"
+                assert resolved_start.role_materials.role_text.startswith("worker\n\n")
+                assert (
+                    "Panels owns this Ticket workspace" in resolved_start.role_materials.role_text
+                )
                 environment = dict(resolved_start.role_materials.identity_environment_variables)
                 generation_skills = Path(environment["PLAN_NATIVE_SKILLS_DIR"])
                 assert (generation_skills / "panels" / "SKILL.md").read_bytes() == (
@@ -926,14 +991,15 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         await remote.start(resolved, vendor_session_cursor="retained-native-session")
         assert received == constructed
         assert (paths.artifacts / "t_own" / "proof.txt").read_text() == "native artifact"
-        assert received[0].workspace_folder == workspace
+        ticket_workspace = paths.artifacts / "t_own" / "worktree"
+        assert received[0].workspace_folder == ticket_workspace
         assert received[0].workspace_path_policy is WorkspacePathPolicy.absolute
         if policy is WorkspacePathPolicy.executor_default:
             assert workspace.is_dir()
             assert not (mac_home / "projects" / "project_panels").exists()
-            marker = workspace / "retained.txt"
+            marker = ticket_workspace / "retained.txt"
             marker.write_text("keep")
-            for subfolder, expected in (
+            for subfolder, _expected in (
                 ("projects/project_panels", workspace),
                 (None, paths.workspace),
             ):
@@ -945,7 +1011,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
                     {"PLAN_TICKET_ID": "t_own"},
                     paths.skills,
                 )
-                assert localized.workspace_folder == expected.resolve()
+                assert localized.workspace_folder == ticket_workspace.resolve()
             assert marker.read_text() == "keep"
         assert received[0].role_materials is not None
         identity = dict(received[0].role_materials.identity_environment_variables)

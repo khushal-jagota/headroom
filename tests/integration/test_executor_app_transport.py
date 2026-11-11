@@ -49,7 +49,7 @@ from planner.core.response_compression import (
 from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_attempts import FileUpdateAttemptStore
-from planner.execution_configuration import SPOOL_FORMAT_VERSION
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.execution_identity import MAC_NEEDS_UPDATE, ChildReference, ExecutorIdentity
 from planner.executor.app_transport import build_executor_router
 from planner.executor.configuration import MAX_ITEM_BATCH_BYTES
@@ -73,12 +73,15 @@ from planner.executor.protocol import (
     MailboxPollReply,
     QueuedEnvelope,
     ReceiptDisposition,
+    WorkspaceRetirementReply,
+    WorkspaceRetirementRequest,
     as_object,
     decode_bounded,
     encode_bounded,
 )
 from planner.executor.update_contracts import MacUpdateCheck
 from planner.executor.vps_transport import VpsExecutor
+from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
 
 EXECUTOR_ID = "test-executor"
 SETTLES = 5.0
@@ -192,7 +195,7 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                 only_id = {"X-Panels-Executor-ID": EXECUTOR_ID}
                 work = only_id | {
                     "X-Panels-Executor-Incarnation": identity.executor_incarnation,
-                    "X-Panels-Executor-Protocol": "22",
+                    "X-Panels-Executor-Protocol": str(PROTOCOL_VERSION),
                 }
                 async with proxy.session_factory() as session:
 
@@ -282,6 +285,52 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                     assert lease_reply.mailbox_high_sequence == 0
                     assert lease_reply.update.target is None
                     assert endpoint.health().presence == "present"
+                    # Reuse this host to prove the destructive grant route requires
+                    # the current executor and returns its exact-generation decision.
+                    ended_at = int(time.time()) - RETENTION_SECONDS - 1
+                    with connect(db_path) as connection:
+                        connection.execute(
+                            "INSERT INTO ticket_workspace_lifecycle"
+                            "(ticket_id,ended_at,deleted) VALUES(?,?,1)",
+                            ("t_01234567", ended_at),
+                        )
+                    retirement = encode_bounded(
+                        WorkspaceRetirementRequest(WorkspaceState("t_01234567", ended_at, True))
+                    )
+                    status, body, _ = await call(
+                        "POST",
+                        "/api/executor/workspaces/retire",
+                        work | {"X-Panels-Executor-Incarnation": str(uuid4())},
+                        retirement,
+                    )
+                    assert (status, _error_code(body)) == (409, "executor_incarnation_not_current")
+                    status, body, _ = await call(
+                        "POST", "/api/executor/workspaces/retire", data=retirement
+                    )
+                    assert status == 200
+                    assert decode_bounded(body, WorkspaceRetirementReply).authorized
+                    with connect(db_path) as connection:
+                        connection.execute(
+                            "UPDATE ticket_workspace_lifecycle SET generation=1,ended_at=NULL,"
+                            "deleted=0 WHERE ticket_id='t_01234567'"
+                        )
+                    # A prior grant proves only an already detached generation. It
+                    # cannot authorize deletion of a reopened current Ticket folder.
+                    status, body, _ = await call(
+                        "POST", "/api/executor/workspaces/retire", data=retirement
+                    )
+                    assert status == 200
+                    assert not decode_bounded(body, WorkspaceRetirementReply).authorized
+                    replay = encode_bounded(
+                        WorkspaceRetirementRequest(
+                            WorkspaceState("t_01234567", ended_at, True), replay=True
+                        )
+                    )
+                    status, body, _ = await call(
+                        "POST", "/api/executor/workspaces/retire", data=replay
+                    )
+                    assert status == 200
+                    assert decode_bounded(body, WorkspaceRetirementReply).authorized
                     await asyncio.to_thread(
                         endpoint.runs.store.register_child, child, "ticket", "ticket-1", 1
                     )

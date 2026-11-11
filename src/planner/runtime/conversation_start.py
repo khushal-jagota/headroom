@@ -61,7 +61,7 @@ from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
 from planner.files.lifecycle import database_path
-from planner.files.logic.paths import chief_files_root, manager_files_root
+from planner.files.logic.paths import chief_files_root, manager_files_root, ticket_files_root
 from planner.projects import data as projects_data
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
@@ -194,16 +194,41 @@ def worker_resolve(
         workspace_folder=selected_workspace,
         workspace_path_policy=workspace_policy,
     )
+    from planner.ticket_workspaces.data import read_workspace_states
+
+    generation = read_workspace_states(conn)[ticket.id].generation
     values = replace(
         values,
         role_materials=replace(
             values.role_materials,
+            identity_environment_variables=values.role_materials.identity_environment_variables
+            + (("PLAN_TICKET_WORKSPACE_GENERATION", str(generation)),),
             role_text=values.role_materials.role_text
             + "\n\n[Ticket workflow guidance]\n"
             + render_workflow_guide(ticket.workflow)
             + "\n[/Ticket workflow guidance]",
         ),
     )
+    if ticket.locale != TicketLocale.macos:
+        artifact_folder = ticket_files_root(database_path(conn)) / ticket.id / "artifacts"
+        values = replace(
+            values,
+            role_materials=replace(
+                values.role_materials,
+                role_text=values.role_materials.role_text
+                + "\n\n[Panels-owned Ticket workspace]\n"
+                + f"Panels supplies this worktree: {selected_workspace}. "
+                + f"Put reviewable output in {artifact_folder}. "
+                + "Follow the repository setup instructions and install dependencies yourself. "
+                + "Use this worktree for code, dependencies, and scratch. "
+                + "Do not create or remove worktrees. Workers commit, push, open PRs, and merge "
+                + "through the approved repository route. Stop the processes you start. "
+                + "Panels removes the full Ticket folder seven days after the Ticket ends, "
+                + "unless unpublished work or a failed safety check prevents removal. "
+                + "This workspace instruction supersedes older instructions to create or "
+                + "remove your own worktree.\n[/Panels-owned Ticket workspace]",
+            ),
+        )
     if ticket.employee_launch_model is None or overrides.model is not None:
         require_enabled_model(conn, values.backend_key, values.model)
     return values
@@ -212,7 +237,13 @@ def worker_resolve(
 def _worker_workspace(
     conn: sqlite3.Connection, ticket: Ticket, explicit: Path | None
 ) -> tuple[Path, WorkspacePathPolicy]:
-    return workspace_for_project(conn, ticket.locale, ticket.project_id, explicit=explicit)
+    if ticket.locale == TicketLocale.macos:
+        # The executor resolves its own repository and Ticket root on the Mac.
+        return workspace_for_project(conn, ticket.locale, ticket.project_id, explicit=explicit)
+    return (
+        ticket_files_root(database_path(conn)) / ticket.id / "worktree",
+        WorkspacePathPolicy.home_relative,
+    )
 
 
 def workspace_for_project(
@@ -336,6 +367,26 @@ async def start_ticket_conversation(
     conversation that will never be spoken into, which is the whole of what this rule is
     against.
     """
+    if ticket.locale != TicketLocale.macos:
+        from planner.ticket_workspaces.filesystem import prepare_workspace
+
+        project_folder = (
+            projects_data.read_project(conn, ticket.project_id).folder_path
+            if ticket.project_id is not None
+            else None
+        )
+        workspace = await asyncio.to_thread(
+            prepare_workspace,
+            ticket_files_root(database_path(conn)) / ticket.id,
+            project_folder,
+            ticket.id,
+            generation=int(
+                dict(values.role_materials.identity_environment_variables).get(
+                    "PLAN_TICKET_WORKSPACE_GENERATION", "0"
+                )
+            ),
+        )
+        values = replace(values, workspace_folder=workspace)
     request = ConversationStartRequest(
         conversation_id=conversation_id,
         backend_key=values.backend_key,
@@ -562,6 +613,47 @@ async def _send_into_the_conversation_the_ticket_is_in(
     own values — and the value it keeps for a field this message did not change is read
     back now rather than taken from before the send, for the same reason.
     """
+    from planner.ticket_workspaces.data import ensure_workspace_generation
+
+    current = await run_on_worker_thread(ensure_workspace_generation, conn, ticket_id)
+    stored = conn.execute(
+        "SELECT identity_environment_variables FROM conversations WHERE conversation_id=?",
+        (sending_into,),
+    ).fetchone()
+    environment = dict(json.loads(stored[0])) if stored is not None else {}
+    old_generation = int(environment.get("PLAN_TICKET_WORKSPACE_GENERATION", "0"))
+    # Legacy sessions retain their original workspace until generation zero retires.
+    # No native session can resume inside a detached generation.
+    if current is not None and old_generation != current.generation:
+        if await system.is_running(sending_into):
+            raise PlannerError(
+                ErrorCode.already_running, "The retired workspace still has an active conversation"
+            )
+        await system.kill(sending_into)
+        await run_on_worker_thread(
+            tickets_data.clear_ticket_conversation_link,
+            conn,
+            ticket_id,
+            expected_conversation_id=sending_into,
+            now=now,
+        )
+        return await _make_a_conversation_and_send_into_it(
+            system,
+            conn,
+            tickets_data.read_ticket(conn, ticket_id),
+            content,
+            runs_under=runs_under,
+            sender_label=sender_label,
+            mode=mode,
+            owner_read_through_sequence=owner_read_through_sequence,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+            worker_type_registry=None,
+            now=now,
+            recording_receipt=recording_receipt,
+        )
     fate = await system.send(
         sending_into,
         content,
@@ -650,6 +742,9 @@ async def _make_a_conversation_and_send_into_it(
     for — and every one of those leaves the same half-made conversation as a refusal does.
     So the undo is on the way out, not on the answer.
     """
+    from planner.ticket_workspaces.data import ensure_workspace_generation
+
+    await run_on_worker_thread(ensure_workspace_generation, conn, ticket.id)
     making = created_conversation_id or new_conversation_id()
     values = worker_resolve(conn, ticket, runs_under, worker_type_registry=worker_type_registry)
     linked = await start_ticket_conversation(

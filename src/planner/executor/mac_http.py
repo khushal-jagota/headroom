@@ -38,6 +38,7 @@ from planner.executor.configuration import (
     EXECUTOR_PROTOCOL_HEADER,
     EXECUTOR_READS_PATH,
     EXECUTOR_UPLOAD_PATH,
+    EXECUTOR_WORKSPACE_RETIREMENT_PATH,
     FILE_TRANSFER_STALL_SECONDS,
     HTTP_CLOSE_TIMEOUT_SECONDS,
     HTTP_CONNECT_TIMEOUT_SECONDS,
@@ -74,9 +75,12 @@ from planner.executor.protocol import (
     LiveEventBatch,
     LiveReadRequest,
     MailboxPollReply,
+    WorkspaceRetirementReply,
+    WorkspaceRetirementRequest,
     decode_bounded,
     encode_bounded,
 )
+from planner.ticket_workspaces.contracts import WorkspaceState
 
 type MacLoop = Literal["lease", "poll", "outcomes", "items", "downloads", "reads", "live"]
 
@@ -249,6 +253,18 @@ class MacHttpClient:
             except ValueError:
                 pass
         raise _error(status, body)
+
+    async def retire_workspace(self, state: WorkspaceState, *, replay: bool = False) -> bool:
+        status, body = await self._json(
+            "reads",
+            "POST",
+            EXECUTOR_WORKSPACE_RETIREMENT_PATH,
+            timeout=LIVE_READ_TIMEOUT_SECONDS,
+            body=encode_bounded(WorkspaceRetirementRequest(state, replay)),
+        )
+        if status != 200:
+            raise _error(status, body)
+        return decode_bounded(body, WorkspaceRetirementReply).authorized
 
     async def poll_commands(self, after: int, wait_seconds: float) -> MailboxPollReply:
         status, body = await self._json(
