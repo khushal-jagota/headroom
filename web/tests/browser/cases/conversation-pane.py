@@ -4445,6 +4445,8 @@ def _chat_charts(browser, url):
                 for chart_index in range(3):
                     legend = chart_hosts.nth(chart_index).get_by_role("list", name="Chart legend")
                     expect(legend.locator("li")).to_have_text(["Panels", "Tools"])
+                    tops = legend.locator("li").evaluate_all("items=>items.map(item=>item.getBoundingClientRect().top)")
+                    assert abs(tops[0] - tops[1]) <= 1, tops
                 expect(chart_hosts.nth(3).locator(".snapshot-legend")).to_have_count(0)
                 # Read real canvas dataset colors and SVG strokes, not a duplicate palette.
                 assert page.evaluate("""() => [...document.querySelectorAll('[data-chat-chart-fixture] .goal-chart-host')].every(host => {
