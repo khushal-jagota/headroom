@@ -2684,7 +2684,7 @@ def score_table_layout(browser, url):
     """Score tables fit when they can, scroll with a pinned label column when not."""
     started = time.monotonic()
     context = browser.new_context(
-        viewport={"width": 1280, "height": 1400}, reduced_motion="reduce"
+        viewport={"width": 1280, "height": 1400}, reduced_motion="reduce", has_touch=True
     )
     page = context.new_page()
     page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
@@ -2750,6 +2750,14 @@ def score_table_layout(browser, url):
         scrolled = score_table_geometry(table)
         screenshot("ten-columns-scrolled.png")
         assert abs(scrolled["labelOffset"]) <= 1, scrolled
+        # Hidden column handles must remain behind the pinned first header.
+        assert table.locator('th[data-key="0"]').evaluate("""head => {
+            const rect = head.getBoundingClientRect();
+            for (let x = rect.left + 2; x < rect.right - 2; x += 4) {
+                if (!head.contains(document.elementFromPoint(x, rect.top + rect.height / 2))) return false;
+            }
+            return true;
+        }""")
         assert max(scrolled["spill"]) <= 0.5, scrolled
 
         # A narrower page keeps every column at its content and scrolls further.
@@ -2759,6 +2767,102 @@ def score_table_layout(browser, url):
         narrow = score_table_geometry(table)
         assert max(narrow["spill"]) <= 0.5, narrow
         assert narrow["scrolls"], narrow
+
+        resize_started = time.monotonic()
+        page.set_viewport_size({"width": 1280, "height": 1400})
+        table.evaluate("table => table.parentElement.scrollTo({left: 0})")
+        handle = table.get_by_role("separator", name="Resize Round 1 column", exact=True)
+        handle.scroll_into_view_if_needed()
+        before = score_table_geometry(table)["widths"]
+        sorted_before = table.locator("th[data-sorted]").get_attribute("data-key")
+        bounds = handle.bounding_box()
+        x, y = bounds["x"] + bounds["width"] / 2, bounds["y"] + bounds["height"] / 2
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x + 96, y + 60, steps=6)
+        page.mouse.up()
+        # Capture keeps the drag alive after the pointer leaves the header.
+        page.wait_for_function(
+            "table => table.querySelectorAll('th[data-key]')[1].getBoundingClientRect().width > 140",
+            arg=table.element_handle())
+        dragged = score_table_geometry(table)["widths"]
+        assert abs(dragged[1] - before[1] - 96) <= 1, (before, dragged)
+        assert all(abs(left - right) <= 1 for index, (left, right) in
+                   enumerate(zip(before, dragged, strict=True)) if index != 1), (before, dragged)
+        expect(table.locator("th[data-sorted]")).to_have_attribute("data-key", sorted_before)
+
+        handle.focus()
+        page.keyboard.press("ArrowRight")
+        after_key = float(handle.get_attribute("aria-valuenow"))
+        assert after_key > dragged[1], (after_key, dragged)
+        expect(handle).to_be_focused()
+        # Repeated left arrows reach the published minimum without moving focus.
+        for _ in range(40):
+            page.keyboard.press("ArrowLeft")
+        expect(handle).to_have_attribute("aria-valuenow", "80")
+        assert abs(score_table_geometry(table)["widths"][1] - 80) <= 1
+        # Touch sorting and the wider coarse resize edge share the same header.
+        table.get_by_role("button", name="Sort by Category", exact=True).tap()
+        expect(table.locator("th[data-sorted]")).to_have_attribute("data-key", "0")
+
+        # Chromium's touch input exercises pointer capture and touch-action together.
+        first_handle = table.get_by_role("separator", name="Resize Category column", exact=True)
+        first_handle.scroll_into_view_if_needed()
+        touch_before = score_table_geometry(table)["widths"][0]
+        bounds = first_handle.bounding_box()
+        x, y = bounds["x"] + bounds["width"] / 2, bounds["y"] + bounds["height"] / 2
+        touch = context.new_cdp_session(page)
+        touch.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        touch.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+        touch.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x + 40, "y": y}]})
+        touch.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        touch.detach()
+        page.wait_for_function(
+            "([table, width]) => table.querySelector('th[data-key]').getBoundingClientRect().width > width + 30",
+            arg=[table.element_handle(), touch_before])
+        saved = score_table_geometry(table)["widths"]
+        assert abs(saved[0] - touch_before - 40) <= 1, (saved, touch_before)
+        # CDP drag suppresses Chromium's next synthesized tap even on plain HTML.
+        # The earlier tap proves touch sorting. Check the coarse hit area after resize.
+        category_sort = table.get_by_role("button", name="Sort by Category, currently ascending", exact=True)
+        assert category_sort.evaluate("""button => {
+            const rect = button.getBoundingClientRect();
+            return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('button') === button;
+        }""")
+        category_sort.click()
+        expect(table.locator("th[data-sorted]")).to_have_attribute("aria-sort", "descending")
+        assert score_table_geometry(table)["widths"] == saved
+        assert fixture.writes == [], fixture.writes
+
+        # Reload restores this table without a shared document write.
+        page.reload(wait_until="domcontentloaded")
+        expect(table.get_by_role("separator", name="Resize Round 1 column", exact=True)).to_have_attribute("aria-valuenow", "80")
+        restored = score_table_geometry(table)["widths"]
+        assert all(abs(left - right) <= 1 for left, right in zip(saved, restored, strict=True)), (saved, restored)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_function("table => table.parentElement.clientWidth < 390", arg=table.element_handle())
+        assert table.evaluate("table => getComputedStyle(table).display") == "table"
+        assert table.evaluate("table => table.parentElement.scrollWidth > table.parentElement.clientWidth")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        screenshot("resized-phone.png")
+        page.set_viewport_size({"width": 1280, "height": 1400})
+        other = fixture.goal("goal_resizeother", "Other table page", 20)
+        other["page"]["blocks"] = [score_table(9)]
+        page.goto(url + "#/workspace/goal/goal_resizeother", wait_until="domcontentloaded")
+        other_table = page.locator('[data-goal-page="goal_resizeother"] [data-block="table"] table')
+        expect(other_table).to_have_attribute("data-fixed", "")
+        assert abs(score_table_geometry(other_table)["widths"][0] - saved[0]) > 20
+        page.goto(url + f"#/workspace/goal/{identity}", wait_until="domcontentloaded")
+        expect(table.get_by_role("separator", name="Resize Round 1 column", exact=True)).to_have_attribute("aria-valuenow", "80")
+        # A replacement block on the same page does not inherit its predecessor's widths.
+        goal["page"]["blocks"][-1]["id"] = "other-scores"
+        goal["revision"] += 1
+        fixture.version += 1
+        page.reload(wait_until="domcontentloaded")
+        expect(table).to_have_attribute("data-fixed", "")
+        assert abs(score_table_geometry(table)["widths"][0] - saved[0]) > 20
+        assert fixture.writes == [], fixture.writes
+        print(f"score table resize coverage: passed (+{time.monotonic() - resize_started:.2f}s)", flush=True)
         assert errors == [], errors
     finally:
         context.close()
