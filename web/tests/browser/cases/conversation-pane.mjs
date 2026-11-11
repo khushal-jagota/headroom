@@ -838,12 +838,14 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       reader={intentReader} rows={[]} lens="focus" running={false} />
   </div>
 {:else if readerOnly && readerPeek}
+  <QueryClientProvider client={queryClient}>
   <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <ManagerFrame bind:conversationState={readerState}>
       <p>Conversation document</p>
       {#snippet conversation()}<LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>{/snippet}
     </ManagerFrame>
   </div>
+  </QueryClientProvider>
 {:else if readerOnly}
   <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
@@ -957,12 +959,14 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     </section>
     </div>
   {:else}
+    <QueryClientProvider client={queryClient}>
     <ManagerFrame bind:conversationState
       openedFile={cardArtifact ? {kind:"ticket-file",ticketId:"t_cardmotion",path:"artifact.html"} : null}
       onOpenFile={() => artifactClicks += 1}>
       <button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button>
       {#snippet conversation()}{@render conversationPane()}{/snippet}
     </ManagerFrame>
+    </QueryClientProvider>
   {/if}
 </div>
 
