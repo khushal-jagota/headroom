@@ -685,7 +685,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     expect(title_editor).to_have_text("Owner title", timeout=WAIT_MS)
 
-    # The header preview reads saved titles independently of the focused page draft.
+    # Several goals use rows. The sole goal uses its accepted primary display.
     def preview_goal(goal_id: str) -> Locator:
         page.locator(".manager-card.chief .identity").hover(timeout=WAIT_MS)
         row = page.locator(
@@ -703,6 +703,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     current = api.get(server, path)
     reordered = current["page"]
     reordered["blocks"][1]["rows"].reverse()
+    reordered["blocks"][0]["title"] = "Chief checklist"
     with page.expect_response(
         lambda reply: (
             urlparse(reply.url).path == "/api/resource-body"
@@ -721,8 +722,19 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         )
         assert remote.is_success, remote.text
     expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
-    expect(preview_goal(str(goal["id"])).locator(".goal-title")).to_have_text(
-        "Chief title", timeout=WAIT_MS
+    # The preview reads the accepted checklist while the page retains its title draft.
+    page.locator(".manager-card.chief .identity").hover(timeout=WAIT_MS)
+    preview_checklist = page.locator(
+        '[data-rail-hover-panel].visible [data-block="checklist"]'
+    )
+    expect(preview_checklist).to_have_attribute("data-presentation", "smallest", timeout=WAIT_MS)
+    expect(
+        preview_checklist.get_by_role("heading", name="Chief checklist", exact=True)
+    ).to_be_visible(timeout=WAIT_MS)
+    accepted_items = remote.json()["page"]["blocks"][0]["items"]
+    accepted_done = sum(item["state"] == "done" for item in accepted_items)
+    expect(preview_checklist.get_by_role("progressbar")).to_have_attribute(
+        "aria-valuetext", f"{accepted_done} of {len(accepted_items)} done", timeout=WAIT_MS
     )
     expect(page.locator("[data-goal-page]")).to_have_attribute(
         "data-native-edit-proof", "retained", timeout=WAIT_MS
@@ -744,9 +756,6 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert accepted_local["title"] == "Unaccepted local title"
     assert accepted_local["revision"] == remote.json()["revision"] + 1
     assert accepted_local["page"] == reordered
-    expect(preview_goal(str(goal["id"])).locator(".goal-title")).to_have_text(
-        "Unaccepted local title", timeout=WAIT_MS
-    )
     expect(page.locator("[data-goal-page]")).to_have_attribute(
         "data-native-edit-proof", "retained", timeout=WAIT_MS
     )

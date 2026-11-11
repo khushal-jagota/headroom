@@ -399,6 +399,7 @@ def run(browser, urls):
     if os.environ.get("PANELS_BROWSER_VIDEO") == "1":
         capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
+    verify_empty_handoff(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
     verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
@@ -860,6 +861,130 @@ def verify_card_geometry(page, url, fixture, evidence):
         "seconds": round(time.perf_counter()-started, 3), "newHosts": 0,
         "method": "Real browser border boxes at normalized WAAPI progress; rapid changes use animation frames", "flows": proof,
     }, indent=2))
+
+
+
+def verify_empty_handoff(page, url, fixture, evidence):
+    """Prove temporal placement through real navigation, motion, marks, and Focus.
+
+    The existing App host supplies synthetic navigation frames. Pure timer tests
+    cannot prove which bucket the real row enters during the motion queue.
+    """
+    started = time.perf_counter()
+    ticket = {"id": "handoff_worker", "manager_id": None, "title": "Continue the next stage",
+              "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent",
+              "conversation_id": "handoff_conversation",
+              "conversation_signal": {"working": False, "message_for_owner": False}}
+    fixture.update(enabled=True, board={"managers": [], "columns": [{"cards": [ticket]}]}, chief={"label": "Chief"})
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.emulate_media(reduced_motion="no-preference")
+    page.mouse.move(1100, 800)
+    page.goto(url + "#/workspace/utility/settings", wait_until="domcontentloaded")
+    page.reload(wait_until="domcontentloaded")
+    focus = page.locator('.rail-foot').get_by_role("switch", name="Focus", exact=True)
+    if focus.get_attribute("aria-checked") == "true":
+        focus.click()
+    row = page.locator('[data-ticket-id="handoff_worker"]')
+    expect(row).to_be_visible()
+    wait_settled(page, '.workspace-rail')
+
+    def refresh():
+        page.evaluate("async () => { await window.__refreshNavigation(); await new Promise(requestAnimationFrame); }")
+
+    def bucket():
+        return row.evaluate("n => n.closest('[data-bucket-key]').dataset.bucketKey")
+
+    page.evaluate("""() => {
+      window.__handoffSamples = [];
+      window.__handoffObserver = new MutationObserver(() => {
+        const row = document.querySelector('[data-ticket-id="handoff_worker"]');
+        window.__handoffSamples.push({ms:performance.now(),
+          bucket:row?.closest('[data-bucket-key]')?.dataset.bucketKey,
+          status:row?.dataset.ticketStatus});
+      });
+      window.__handoffObserver.observe(document.querySelector('.workspace-rail'), {subtree:true,childList:true,attributes:true});
+    }""")
+    ticket.update(ticket_status="empty", stage="needs_consequences", title="Fresh stage facts during handoff")
+    refresh()
+    expect(row).to_have_attribute("data-ticket-status", "empty")
+    expect(row).to_have_attribute("data-ticket-stage", "needs_consequences")
+    expect(row).to_contain_text("Fresh stage facts during handoff")
+    assert bucket() == "agent"
+    page.screenshot(path=str(evidence / "handoff-short-retained.png"))
+    ticket.update(ticket_status="agent")
+    refresh()
+    wait_settled(page, '.workspace-rail')
+    assert bucket() == "agent"
+    assert all(sample.get("bucket") != "empty" for sample in page.evaluate("window.__handoffSamples"))
+
+    # A cleared approval retains its heading only. The mark uses fresh facts.
+    ticket.update(ticket_status="awaiting_approval", awaiting_approval=True)
+    refresh()
+    expect(row.locator('[data-approval-mark="owner"]')).to_be_visible()
+    wait_settled(page, '.workspace-rail')
+    ticket.update(ticket_status="empty", awaiting_approval=False)
+    refresh()
+    expect(row.locator('[data-approval-mark]')).to_have_count(0)
+    assert bucket() == "awaiting_approval"
+    page.screenshot(path=str(evidence / "handoff-cleared-approval.png"))
+    ticket.update(ticket_status="agent")
+    refresh()
+    wait_settled(page, '.workspace-rail')
+
+    # Focus filters the retained Agent placement with the fresh unread fact.
+    ticket["conversation_signal"]["message_for_owner"] = True
+    refresh()
+    focus.click()
+    expect(focus).to_have_attribute("aria-checked", "true")
+    expect(row).to_be_visible()
+    wait_settled(page, '.workspace-rail')
+    ticket.update(ticket_status="empty")
+    ticket["conversation_signal"]["message_for_owner"] = False
+    refresh()
+    expect(row).to_have_count(0)
+    ticket.update(ticket_status="agent")
+    refresh()
+    focus.click()
+    expect(row).to_be_visible()
+    wait_settled(page, '.workspace-rail')
+
+    # Reduced motion keeps the same grace. Repeated frames cannot renew it,
+    # and expiry must release placement while the pointer stays over the row.
+    page.emulate_media(reduced_motion="reduce")
+    row.hover()
+    ticket.update(ticket_status="empty")
+    refresh()
+    assert bucket() == "agent"
+    first_empty = page.evaluate("performance.now()")
+    refresh()
+    refresh()
+    page.wait_for_function("""() => document.querySelector('[data-ticket-id="handoff_worker"]')
+      ?.closest('[data-bucket-key]')?.dataset.bucketKey === 'empty'""", timeout=2500)
+    elapsed = page.evaluate("performance.now()") - first_empty
+    assert elapsed <= 1500, elapsed
+    page.screenshot(path=str(evidence / "handoff-persistent-empty.png"))
+    assert bucket() == "empty"
+    page.mouse.move(1100, 800)
+    ticket.update(ticket_status="agent")
+    refresh()
+    wait_settled(page, '.workspace-rail')
+
+    # Removing the incoming member cancels its timer and cannot restore it.
+    ticket.update(ticket_status="empty")
+    refresh()
+    assert bucket() == "agent"
+    fixture["board"]["columns"][0]["cards"].clear()
+    refresh()
+    expect(row).to_have_count(0)
+    page.evaluate("async () => { await new Promise(resolve => setTimeout(resolve, 1100)); }")
+    expect(row).to_have_count(0)
+    samples = page.evaluate("window.__handoffObserver.disconnect(); window.__handoffSamples")
+    (evidence / "handoff-browser-proof.json").write_text(json.dumps({
+        "seconds": round(time.perf_counter()-started, 3), "newHosts": 0,
+        "persistentEmptyObservedAfterMs": round(elapsed, 1), "samples": samples,
+        "boundary": "Synthetic navigation frames through the existing real App, rail motion, Focus, and row marks",
+    }, indent=2))
+    page.emulate_media(reduced_motion="no-preference")
 
 
 def capture_card_motion(browser, url, fixture, respond, evidence):

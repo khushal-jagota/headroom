@@ -3148,6 +3148,10 @@ def manager_goal_tags(browser, url):
         for index, (key, title) in enumerate((
             ("one", "One chart"), ("many", "Several goals"), ("none", "No goals")))
     ]
+    fixture.managers[0]["project"] = (
+        "A long project name that must never overlap the goal tag or Settle"
+    )
+    fixture.managers[2]["project"] = "A long project name that must never overlap the Settle action"
     fixture.goals["daily_quota"].update(holder_kind="manager", holder_id="one", status="good")
     fixture.observations["daily_quota"][TODAY] = 20
     fixture.goals["binary"].update(holder_kind="manager", holder_id="many", status="bad")
@@ -3182,6 +3186,137 @@ def manager_goal_tags(browser, url):
         expect(chief.get_by_role("button", name=re.compile("Settle"))).to_have_count(0)
         panel = page.locator('[data-rail-hover-panel].visible')
 
+        # Native :has states and pseudo-element transitions need the rendered header.
+        # Reuse this host for the three status colors and the no-goal boundary.
+        haze_started = time.monotonic()
+        page.evaluate("location.hash='#/workspace/goal/daily_quota'")
+        expect(chief).not_to_have_class(re.compile(r'\bselected\b'))
+        page.mouse.move(1100, 820)
+
+        def haze_opacity(card, value):
+            page.wait_for_function(
+                "([card,value]) => getComputedStyle(card.parentElement,'::after').opacity===value",
+                arg=[card.element_handle(), value])
+
+        for card, token, percent in (
+                (one, '--accent-done', 7), (many, '--accent-error', 9),
+                (chief, '--accent-attention', 9)):
+            haze_opacity(card, '1')
+            assert card.evaluate("""(card, [token,percent]) => {
+              const slot=card.parentElement, haze=getComputedStyle(slot,'::after');
+              const expected=document.createElement('div');
+              const tint=`color-mix(in srgb,var(${token}) ${percent}%,transparent)`;
+              expected.style.backgroundImage=`linear-gradient(${tint},transparent 70px)`;
+              slot.append(expected);
+              const equal=haze.backgroundImage===getComputedStyle(expected).backgroundImage;
+              expected.remove();return equal;
+            }""", [token, percent])
+            card.locator('.identity').hover()
+            haze_opacity(card, '0')
+            page.mouse.move(1100, 820)
+            haze_opacity(card, '1')
+        assert none.evaluate(
+            "card => getComputedStyle(card.parentElement,'::after').content") == 'none'
+        if output:
+            page.locator('.workspace-rail').screenshot(path=str(output / 'haze-rest.png'))
+        for control in (one.locator('.item-head'),
+                        one.get_by_role('button', name='Goals: On track', exact=True)):
+            control.focus()
+            haze_opacity(one, '0')
+            control.blur()
+            haze_opacity(one, '1')
+        chief.locator('.item-head').click()
+        expect(chief).to_have_class(re.compile(r'\bselected\b'))
+        page.mouse.move(1100, 820)
+        chief.locator('.item-head').blur()
+        haze_opacity(chief, '0')
+        if output:
+            page.locator('.workspace-rail').screenshot(path=str(output / 'haze-selected.png'))
+        page.evaluate("location.hash='#/workspace/goal/daily_quota'")
+        haze_opacity(chief, '1')
+        page.emulate_media(reduced_motion='reduce')
+        one.locator('.identity').hover()
+        haze_opacity(one, '0')
+        assert one.evaluate(
+            "card => getComputedStyle(card.parentElement,'::after').transitionDuration") == '0s'
+        page.mouse.move(1100, 820)
+        haze_opacity(one, '1')
+        page.emulate_media(reduced_motion='no-preference')
+        elapsed = time.monotonic() - haze_started
+        print(f'manager haze native states: passed (+{elapsed:.2f}s)', flush=True)
+
+        # Existing endpoint checks missed the lost slide. Observe native transition
+        # interpolation, plus the text boundary during that same transition.
+        tag = one.locator('.goal-tag')
+        label = one.locator('.manager-eyebrow > span')
+        page.mouse.move(1100, 820)
+        expect(tag).to_have_css('transform', 'none')
+        rest = tag.bounding_box()
+        rest_label = label.bounding_box()
+        assert abs(rest['x'] - rest_label['x'] - rest_label['width'] - 8) < 1
+        if output:
+            page.screenshot(path=str(output / 'goal-slide-rest.png'), animations='disabled')
+        tag.evaluate("""el => {
+          window.goalSlideSamples = [];
+          el.addEventListener('transitionrun', function sampleSlide(event) {
+            if (event.propertyName !== 'transform') return;
+            const animation = el.getAnimations().find(a => a.transitionProperty === 'transform');
+            const duration = animation.effect.getTiming().duration;
+            const moving = [animation, ...el.parentElement.querySelector('span').getAnimations()];
+            for (const item of moving) { item.pause(); item.currentTime = duration / 2; }
+            const label = el.parentElement.querySelector('span').getBoundingClientRect();
+            const tag = el.getBoundingClientRect();
+            window.goalSlideSamples.push({
+              x: new DOMMatrixReadOnly(getComputedStyle(el).transform).m41,
+              gap: tag.left - label.right,
+              duration,
+            });
+            for (const item of moving) item.play();
+            if (window.goalSlideSamples.length === 2)
+              el.removeEventListener('transitionrun', sampleSlide);
+          });
+        }""")
+        one.locator('.identity').hover()
+        expect(tag).to_have_css('transform', 'matrix(1, 0, 0, 1, -60, 0)')
+        samples = page.evaluate('window.goalSlideSamples')
+        assert len(samples) == 1 and -60 < samples[0]['x'] < 0, samples
+        assert samples[0]['gap'] >= 7, samples
+        fast = tag.evaluate(
+            "el => parseFloat(getComputedStyle(el).getPropertyValue('--motion-fast'))"
+        )
+        assert samples[0]['duration'] == fast, (samples, fast)
+        active = tag.bounding_box()
+        assert abs(rest['x'] - active['x'] - 60) < 1, (rest, active)
+        assert label.bounding_box()['x'] + label.bounding_box()['width'] <= active['x']
+        action = one.locator('.settle').bounding_box()
+        assert active['x'] + active['width'] <= action['x'], (active, action)
+        if output:
+            page.screenshot(path=str(output / 'goal-slide-settle.png'), animations='disabled')
+        page.mouse.move(1100, 820)
+        expect(tag).to_have_css('transform', 'none')
+        samples = page.evaluate('window.goalSlideSamples')
+        assert len(samples) == 2 and -60 < samples[1]['x'] < 0, samples
+        assert samples[1]['gap'] >= 7, samples
+        # Keyboard focus uses the same endpoint and leaves Settle in the tab order.
+        tag.focus()
+        expect(tag).to_have_css('transform', 'matrix(1, 0, 0, 1, -60, 0)')
+        one.locator('.item-head').focus()
+        page.locator('[data-chief-destination]').first.focus()
+        expect(tag).to_have_css('transform', 'none')
+        chief_tag = chief.locator('.goal-tag')
+        chief_rest = chief_tag.bounding_box()
+        chief.locator('.identity').hover()
+        expect(chief_tag).to_have_css('transform', 'none')
+        assert chief_tag.bounding_box()['x'] == chief_rest['x']
+        page.mouse.move(1100, 820)
+        page.emulate_media(reduced_motion='reduce')
+        one.locator('.identity').hover()
+        expect(tag).to_have_css('transform', 'matrix(1, 0, 0, 1, -60, 0)')
+        assert tag.evaluate('el => el.getAnimations().length') == 0
+        page.mouse.move(1100, 820)
+        expect(tag).to_have_css('transform', 'none')
+        page.emulate_media(reduced_motion='no-preference')
+
         # Follow the owner path: enter the header to reveal Settle, then target
         # the action. Outside the header, its empty space belongs to the goal tag.
         for card in (one, none):
@@ -3190,6 +3325,13 @@ def manager_goal_tags(browser, url):
             card.locator('.identity').hover()
             expect(settle).to_have_css('opacity', '1')
             settle.click(trial=True)
+            if card == none:
+                label = card.locator('.manager-eyebrow > span').bounding_box()
+                action = settle.bounding_box()
+                assert label['x'] + label['width'] <= action['x'], (label, action)
+                if output:
+                    page.screenshot(
+                        path=str(output / 'long-project-settle.png'), animations='disabled')
         one.get_by_role('button', name='Goals: On track', exact=True).focus()
         page.keyboard.press('Tab')
         expect(one.get_by_role('button', name='Settle One chart', exact=True)).to_be_focused()
@@ -3249,8 +3391,9 @@ def manager_goal_tags(browser, url):
         expect(panel.locator('.title')).to_contain_text('No goals')
         expect(panel.locator('[data-manager-goals]')).to_have_count(0)
         chief.locator('.identity').hover()
-        expect(panel.locator('[data-manager-goal-id]')).to_have_count(1)
-        expect(panel.locator('.support-summary')).to_have_count(0)
+        expect(panel.locator('[data-manager-goal-id]')).to_have_count(0)
+        expect(panel.locator('[data-chart-id="completion"] .completion-summary')).to_be_visible()
+        expect(panel.locator('.completion-summary')).to_contain_text('Inbox zero weekly')
 
         if output:
             page.screenshot(path=str(output / 'chief-binary.png'), animations='disabled')
@@ -3263,8 +3406,17 @@ def manager_goal_tags(browser, url):
         expect(panel.locator('.title')).to_contain_text('Several goals')
         expect(tag).to_be_focused()
         assert tag.evaluate('el => getComputedStyle(el).outlineStyle') != 'none'
+        panel.locator('[data-manager-goal-id="binary"]').focus()
         page.keyboard.press('Escape')
         expect(panel).to_have_count(0)
+        expect(tag).to_be_focused()
+        # A real preview row click dismisses the panel before the goal page opens.
+        one.locator('.item-head').focus()
+        tag.focus()
+        panel.locator('[data-manager-goal-id="binary"]').click()
+        expect(page.locator('[data-goal-page="binary"]')).to_be_visible()
+        expect(panel).to_have_count(0)
+        page.keyboard.press('Tab')
         one.locator('.item-head').focus()
         expect(panel.locator('.title')).to_contain_text('One chart')
         panel.get_by_role('button', name='Ask for a recap', exact=True).focus()
@@ -3275,7 +3427,10 @@ def manager_goal_tags(browser, url):
             '() => new Promise(resolve => '
             'requestAnimationFrame(() => requestAnimationFrame(resolve)))')
         expect(panel).to_have_count(0)
+        tag.focus()
+        expect(panel.locator('.title')).to_contain_text('Several goals')
         tag.click()
+        expect(panel).to_have_count(0)
         page.wait_for_function(
             "location.hash.includes('binary') && !location.hash.includes('/managers/')")
 
@@ -3284,26 +3439,100 @@ def manager_goal_tags(browser, url):
         setting = page.get_by_role('checkbox', name='Show goals in sidebar rows', exact=True)
         expect(setting).not_to_be_checked()
         setting.check()
+        expect(chief.get_by_text('All projects', exact=True)).to_have_count(0)
+        if output:
+            page.screenshot(path=str(output / 'chief-sidebar-rows.png'), animations='disabled')
         expect(page.locator('a[data-goal-id]')).not_to_have_count(0)
         expect(page.get_by_role('button', name=re.compile(r'^Goals: '))).to_have_count(0)
         expect(page.locator('.manager-card-slot[data-goal-status]')).to_have_count(0)
         many.locator('.identity').hover()
         expect(panel.locator('[data-manager-goals]')).to_have_count(0)
         setting.uncheck()
+        expect(chief.get_by_text('All projects', exact=True)).to_be_visible()
         expect(page.locator('a[data-goal-id]')).to_have_count(0)
         expect(many.get_by_role('button', name='Goals: Off track', exact=True)).to_be_visible()
         if output:
             page.screenshot(path=str(output / 'settings-default.png'), animations='disabled')
-        # The sole checklist uses a row too, without an extra chart or heading.
+        # A sole checklist reuses the compact summary, with real goal writes.
         fixture.goals['long'].update(
             title='Prepare the field guide', primary_checklist_block_id='delivery',
             page=copy.deepcopy(fixture.goals['checklist']['page']))
         page.reload(wait_until='domcontentloaded')
         chief.locator('.identity').hover()
-        expect(panel.locator('[data-manager-goal-id="long"]')).to_contain_text('1 of 2 done')
-        expect(panel.locator('.support-summary')).to_have_count(0)
+        checklist = panel.locator('[data-block="checklist"]')
+        expect(checklist).to_have_attribute('data-presentation', 'smallest')
+        expect(checklist).to_contain_text('Delivery')
+        expect(checklist).to_contain_text('1 of 2 done')
+        expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '1')
+        expect(panel.locator('[data-manager-goal-id]')).to_have_count(0)
         if output:
             page.screenshot(path=str(output / 'chief-checklist.png'), animations='disabled')
+        checklist.get_by_role('button', name='Show checklist', exact=True).click()
+        with page.expect_request('**/api/goals/long'):
+            checklist.get_by_role('checkbox', name='Publish guide', exact=True).click()
+        expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '2')
+        assert fixture.goals['long']['page']['blocks'][0]['items'][1]['state'] == 'done'
+        page.reload(wait_until='domcontentloaded')
+        chief.locator('.identity').hover()
+        expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '2')
+
+        # The same component also fits a Manager recap and a long expanded list.
+        fixture.goals['long'].update(holder_kind='manager', holder_id='none')
+        fixture.goals['long']['page']['blocks'][0]['items'] = [
+            {'id': f'item-{index}', 'label': f'Long item {index}', 'state': 'open'}
+            for index in range(30)
+        ]
+        fixture.goals['long']['completed'] = False
+        page.set_viewport_size({'width': 1280, 'height': 480})
+        page.reload(wait_until='domcontentloaded')
+        none.locator('.identity').hover()
+        expect(checklist).to_have_attribute('data-presentation', 'smallest')
+        expect(checklist).to_contain_text('0 of 30 done')
+        recap = panel.locator('[data-recap-text]')
+        expect(recap).to_be_visible()
+        # Enter the panel before expansion so the recap retains its visit budget.
+        checklist.hover()
+        recap_height = recap.bounding_box()['height']
+        checklist.get_by_role('button', name='Show checklist', exact=True).click()
+        expect(checklist).to_have_attribute('data-presentation', 'small')
+        page.wait_for_function("""() => {
+          const p=document.querySelector('[data-rail-hover-panel].visible');
+          if(!p)return false;
+          const r=p.getBoundingClientRect(), g=p.querySelector('[data-manager-goals]');
+          return r.top>=0 && r.bottom<=innerHeight && g.scrollHeight>g.clientHeight;
+        }""")
+        assert abs(recap.bounding_box()['height'] - recap_height) <= 1
+        recap_lines = recap.evaluate("el => getComputedStyle(el).getPropertyValue('--recap-lines')")
+        assert 0 <= int(recap_lines) <= 5
+        # The disclosure grows after the first overflowing frame. Scroll until
+        # the final item enters the actual clipped goals viewport.
+        last_item = checklist.get_by_role('checkbox', name='Long item 29', exact=True)
+        page.wait_for_function("""() => {
+          const g=document.querySelector('[data-rail-hover-panel].visible [data-manager-goals]');
+          g.scrollTop=g.scrollHeight;
+          const last=g.querySelector('[data-step="item-29"] [data-check]');
+          return last.getBoundingClientRect().bottom<=g.getBoundingClientRect().bottom;
+        }""")
+        expect(last_item).to_be_in_viewport()
+        if output:
+            page.screenshot(path=str(output / 'manager-long-checklist.png'), animations='disabled')
+        # Capture every numeric chart kind through this same single-goal host.
+        # This covers display dispatch without another connected fixture or host.
+        page.set_viewport_size({'width': 1280, 'height': 900})
+        for kind in ('line', 'bar', 'gauge', 'number', 'progress', 'time-budget', 'allocation'):
+            fixture.goals['daily_quota']['primary_chart'] = {
+                'type': 'chart', 'id': f'preview-{kind}', 'kind': kind,
+                'placement': 'primary', 'title': f'{kind} goal',
+                'measure_id': 'daily_quota', 'target': 20,
+            }
+            page.reload(wait_until='domcontentloaded')
+            one.locator('.identity').hover()
+            chart = panel.locator(f'[data-chart-id="preview-{kind}"]')
+            expect(chart).to_have_attribute('data-compact', 'true')
+            expect(chart.locator('.support-summary')).to_have_attribute('aria-expanded', 'false')
+            expect(panel.locator('[data-manager-goal-id]')).to_have_count(0)
+            if output:
+                page.screenshot(path=str(output / f'single-{kind}.png'), animations='disabled')
         assert errors == [], errors
     except Exception:
         if output:

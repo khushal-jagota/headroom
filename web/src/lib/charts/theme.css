@@ -129,4 +129,12 @@
     .compact .metric-value { height:28px; }
     .compact .missing-value { font-size:var(--type-page-title); }
   }
+
+  /* A yes-or-no summary uses the same title, reading, and status rhythm as a folded chart. */
+  .completion-summary { min-height:0; }
+  .completion-summary .completion-content { padding:0; }
+  .completion-summary .completion-headline { margin:var(--space-1) 0; min-height:30px; }
+  .completion-summary .completion-word { font-size:var(--type-page-title); line-height:30px; }
+  .completion-summary .completion-context { margin-top:var(--space-1); font-size:var(--type-small); line-height:18px; min-height:18px; }
+
 }
