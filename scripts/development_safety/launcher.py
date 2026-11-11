@@ -16,7 +16,7 @@ from development_safety.contracts import Diagnostic, SafetyRefusal
 from development_safety.scanner import check_paths, check_python, check_python_lookup, check_tree
 
 TREE = Path(__file__).resolve().parents[2]
-PACKAGES = ("web", "agent_backends")
+PACKAGES = ("web", "agent_backends", "server")
 # These do not redirect executable or dependency lookup. Unknown options fail closed.
 NPM_CONFIG = {
     "registry",
