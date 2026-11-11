@@ -5,7 +5,7 @@ A goal is an outcome Khushal wants by a date, with a page that shows how close i
 ## What a goal is made of
 
 - **The goal record.** Project, title, why it matters, deadline, and whether it is active.
-- **The page.** A flexible document in the shared page kit: text, checklists, tables, layouts, and charts. The page is a dashboard for Khushal. Steps are checklists and numbers are charts. Text adds context that the checklists and charts do not show.
+- **The page.** A flexible document in the shared page kit: text, checklists, tables, layouts, and charts. Table columns resize and retain their widths per page in this browser. Wide tables scroll within the page, including on phones. The page is a dashboard for Khushal. Steps are checklists and numbers are charts. Text adds context that the checklists and charts do not show.
 - **The main display.** One checkbox, one checklist, or one chart that stands for the goal in cards, the overview, and the rail.
 - **A completion rule.** What counts as done. See below.
 - **A file folder.** Notes, research, and evidence that the page can link to.
