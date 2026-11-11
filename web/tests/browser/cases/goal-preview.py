@@ -2388,25 +2388,19 @@ def native_goal_edits(browser, url):
                     )
             nested = goal.locator('[data-block="segmented"]')
             count = len(fixture.writes)
-            label = nested.get_by_role("textbox", name="View label: Evidence", exact=True)
+            expect(nested.get_by_role(
+                "textbox", name="View label: Evidence", exact=True
+            )).to_have_count(0)
+            tab = nested.get_by_role("tab", name="Evidence", exact=True)
             if phone:
-                label.tap()
-                label.press("ArrowLeft")
-                expect(
-                    nested.get_by_role("radio", name="Show Readiness view", exact=True)
-                ).to_have_attribute("aria-checked", "true")
-                label.press("Escape")
+                tab.tap()
             else:
-                page_text(label, "Proof", "native-views", ["views", 1, "label"])
-            selected_label = "Evidence" if phone else "Proof"
-            radio = nested.get_by_role("radio", name=f"Show {selected_label} view", exact=True)
-            if phone:
-                radio.tap()
-            else:
-                native_radio = nested.get_by_role("radio", name="Show Readiness view", exact=True)
-                native_radio.focus()
-                native_radio.press("ArrowRight")
-            expect(radio).to_have_attribute("aria-checked", "true")
+                first_tab = nested.get_by_role("tab", name="Readiness", exact=True)
+                first_tab.focus()
+                first_tab.press("ArrowRight")
+                expect(tab).to_be_focused()
+            expect(tab).to_have_attribute("aria-selected", "true")
+            assert len(fixture.writes) == count
             count = len(fixture.writes)
             table = nested.locator('[data-block="table"]').first
             sort = table.get_by_role("button", name="Sort by Name", exact=True)
@@ -2432,7 +2426,7 @@ def native_goal_edits(browser, url):
                 empty = nested.get_by_role("textbox", name="Table empty message", exact=True)
                 page_text(empty, "No evidence yet", "native-empty", ["empty_message"])
 
-            nested.get_by_role("radio", name="Show Readiness view", exact=True).click()
+            nested.get_by_role("tab", name="Readiness", exact=True).click()
             checklist = nested.locator('[data-block="checklist"]')
             if phone:
                 expect(checklist).to_have_attribute("data-presentation", "smallest")
@@ -3823,12 +3817,12 @@ def manager_text_readonly(browser, url):
                     doc.get_by_role("checkbox", name="Publish guide", exact=True).click()
                 expect(doc.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "2")
             else:
-                tabs = doc.get_by_role("radiogroup", name="Views")
-                tabs.get_by_role("radio", name="Notes", exact=True).click()
+                tabs = doc.get_by_role("tablist", name="Views")
+                tabs.get_by_role("tab", name="Notes", exact=True).click()
                 expect(
                     doc.get_by_text("The second view remains reachable.", exact=True)
                 ).to_be_visible()
-                tabs.get_by_role("radio", name="Notes", exact=True).press("ArrowLeft")
+                tabs.get_by_role("tab", name="Notes", exact=True).press("ArrowLeft")
                 expect(doc.get_by_role("table")).to_be_visible()
                 doc.get_by_role("button", name="Sort by Name", exact=True).click()
                 expect(doc.locator("tbody tr").first).to_contain_text("Alpha")
@@ -3841,6 +3835,129 @@ def manager_text_readonly(browser, url):
                     doc.get_by_text("The Manager purpose remains visible.", exact=True)
                 ).to_be_visible()
             expect(doc.locator('[contenteditable="true"]')).to_have_count(0)
+        # Reuse this Chief/App host: DOM mocks cannot prove clipped focus, overflow,
+        # actual underline transitions, or the section layout in the page column.
+        tab_started = time.monotonic()
+        original_views = copy.deepcopy(document["blocks"][1]["views"])
+        names = [
+            "All projects", "Panels", "Wren", "Write", "Atlas",
+            "Headroom", "Website", "Docs", "Infra",
+        ]
+        for width in (1280, 390):
+            page.set_viewport_size({"width": width, "height": 900})
+            for count in (4, 9):
+                views = [
+                    {"id": f"view-{index}", "label": name,
+                     "blocks": copy.deepcopy(original_views[index % 2]["blocks"])}
+                    for index, name in enumerate(names[:count])
+                ]
+                document["blocks"][1]["views"] = views
+                document["blocks"] = document["blocks"][:2] + [
+                    {"type": "segmented", "id": "standalone-tabs", "views": copy.deepcopy(views)}
+                ]
+                fixture.version += 1
+                page.goto(url + "#/workspace/chief-of-staff", wait_until="domcontentloaded")
+                page.reload(wait_until="domcontentloaded")
+                doc = page.locator(".manager-doc")
+                strips = doc.get_by_role("tablist", name="Views")
+                expect(strips).to_have_count(2)
+                for strip_index in range(2):
+                    strip = strips.nth(strip_index)
+                    tabs = strip.get_by_role("tab")
+                    expect(tabs).to_have_count(count)
+                    first, last = tabs.first, tabs.last
+                    expect(first).to_have_attribute("aria-selected", "true")
+                    expect(first).to_have_attribute("tabindex", "0")
+                    # Every placement supplies a real panel and a unique link.
+                    panel_id = first.get_attribute("aria-controls")
+                    panel = doc.locator(f'[id="{panel_id}"]')
+                    expect(panel).to_have_attribute("role", "tabpanel")
+                    expect(panel).to_have_attribute("aria-labelledby", first.get_attribute("id"))
+                    strip.evaluate("el => window.__tabStrip = el")
+                    ink = strip.locator(".ink")
+                    expect(ink).to_have_count(1)
+                    assert ink.evaluate("el => getComputedStyle(el).transitionDuration") == "0s"
+                    first.focus()
+                    first.press("ArrowLeft")
+                    expect(first).to_be_focused()
+                    first.press("End")
+                    expect(last).to_be_focused()
+                    expect(last).to_have_attribute("aria-selected", "true")
+                    expect(panel).to_have_attribute("aria-labelledby", last.get_attribute("id"))
+                    last.press("ArrowRight")
+                    expect(last).to_be_focused()
+                    # Manual scroll can hide the selected label. A boundary key
+                    # must restore it even when selection does not change.
+                    strip.evaluate("el => el.closest('.tabstrip-scroll').scrollLeft = 0")
+                    last.press("End")
+                    page.wait_for_function("""() => {
+                      const tab=window.__tabStrip.querySelector('[aria-selected="true"]');
+                      const a=tab.getBoundingClientRect();
+                      const b=tab.closest('.tabstrip-scroll').getBoundingClientRect();
+                      return a.left>=b.left-1 && a.right<=b.right+1;
+                    }""")
+                    last.press("Home")
+                    expect(first).to_be_focused()
+                    first.press("ArrowRight")
+                    expect(tabs.nth(1)).to_be_focused()
+                    expect(tabs.nth(1)).to_have_attribute("aria-selected", "true")
+                    page.wait_for_function("""() => {
+                      const strip=window.__tabStrip, ink=strip.querySelector('.ink');
+                      const tab=strip.querySelector('[aria-selected="true"]');
+                      return !ink.classList.contains('nomove') &&
+                        Math.abs(ink.getBoundingClientRect().width-tab.offsetWidth)<1;
+                    }""")
+                    assert ink.evaluate("el => getComputedStyle(el).transitionDuration") != "0s"
+                    assert strip.evaluate("el => el === window.__tabStrip"), (
+                        "selection replaced the tab strip"
+                    )
+                    expect(strip.locator('[tabindex="0"]')).to_have_count(1)
+                    tabs.last.click()
+                    expect(last).to_have_attribute("aria-selected", "true")
+                    # Fades must follow the actual clipped edge, not just a class.
+                    page.wait_for_function("""() => {
+                      const strip=window.__tabStrip.closest('.tabstrip');
+                      const scroll=strip.querySelector('.tabstrip-scroll');
+                      if(scroll.scrollWidth<=scroll.clientWidth+2)return true;
+                      return getComputedStyle(strip,'::before').opacity === '1' &&
+                        getComputedStyle(strip,'::after').opacity === '0';
+                    }""")
+                    # Selection must bring the last label inside the scroll viewport.
+                    page.wait_for_function("""() => {
+                      const tab=window.__tabStrip.querySelector('[aria-selected="true"]');
+                      const scroll=tab.closest('.tabstrip-scroll');
+                      const a=tab.getBoundingClientRect(),b=scroll.getBoundingClientRect();
+                      return a.left >= b.left-1 && a.right <= b.right+1;
+                    }""")
+                    assert first.evaluate("el => getComputedStyle(el).whiteSpace") == "nowrap"
+                    assert first.evaluate(
+                        "el => parseFloat(getComputedStyle(el).outlineOffset)"
+                    ) <= 0
+                    # Neither width nor the number of labels can overflow the page.
+                    assert doc.evaluate("el => el.getBoundingClientRect().right <= innerWidth + 1")
+                title = doc.get_by_text("Release overview", exact=True)
+                title_box = title.bounding_box()
+                assert strips.first.bounding_box()["y"] >= title_box["y"] + title_box["height"]
+                if output:
+                    page.screenshot(
+                        path=str(output / f"chief-tabs-{width}-{count}.png"), animations="disabled"
+                    )
+        touch = context.new_cdp_session(page)
+        touch.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        assert page.evaluate("matchMedia('(pointer: coarse)').matches")
+        assert strips.first.get_by_role("tab").first.evaluate(
+            "el => el.getBoundingClientRect().height"
+        ) == 44
+        touch.send("Emulation.setTouchEmulationEnabled", {"enabled": False})
+        page.emulate_media(reduced_motion="reduce")
+        ink = doc.locator(".ink").first
+        expect(ink).to_have_count(1)
+        assert ink.evaluate("el => getComputedStyle(el).transitionDuration") == "0s"
+        page.emulate_media(reduced_motion="no-preference")
+        print(
+            "Chief underline tabs on reused App host: passed "
+            f"(+{time.monotonic() - tab_started:.2f}s)", flush=True
+        )
         # A sole Manager-held goal routes to its Manager. A Chief-held copy opens
         # the separate Goal workspace with the same shared content and header.
         standalone = copy.deepcopy(goal)

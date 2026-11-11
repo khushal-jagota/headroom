@@ -6,9 +6,6 @@
 
   let { block, view }: { block: SectionBlock; view: Snippet<[Block[]]> } = $props();
 
-  let selected = $state("");
-  let views = $derived(block.views ?? []);
-  let current = $derived(views.find((item) => item.id === selected) ?? views[0]);
 </script>
 
 <section class="section" data-block="section">
@@ -17,25 +14,20 @@
       <div class="section-title" role="heading" aria-level="2"><PageText blockId={block.id} field="title" value={block.title} label="Section title" update={(current, raw) => current.type === "section" ? {...current, title: raw} : current} /></div>
       {#if block.summary}<div class="section-summary"><PageText blockId={block.id} field="summary" value={block.summary} label="Section summary" multiline update={(current, raw) => current.type === "section" ? {...current, summary: raw} : current} /></div>{/if}
     </div>
-    {#if block.views}
-      <div class="section-actions">
-        <PageSegmented blockId={block.id} views={block.views} bind:selected />
-      </div>
-    {/if}
   </header>
-  <div class="section-body">
-    {#if block.views && current}
-      {@render view(current.blocks)}
-    {:else if block.blocks}
-      {@render view(block.blocks ?? [])}
-    {/if}
-  </div>
+  {#if block.views}
+    <div class="section-tabs">
+      <PageSegmented blockId={block.id} views={block.views} body={view} />
+    </div>
+  {:else if block.blocks}
+    <div class="section-body">{@render view(block.blocks)}</div>
+  {/if}
 </section>
 
 <style>
   .section-header {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
     column-gap: var(--space-5);
     row-gap: var(--space-4);
@@ -61,19 +53,6 @@
     line-height: var(--leading-body);
     white-space: pre-wrap;
   }
-  .section-actions {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    justify-self: end;
-    align-self: start;
-  }
+  .section-tabs { min-width: 0; margin-top: var(--space-4); }
   .section-body { margin-top: var(--page-head-gap); }
-  @container page (max-width: 520px) {
-    .section-header { grid-template-columns: minmax(0, 1fr); }
-    .section-actions {
-      grid-column: 1;
-      grid-row: auto;
-      justify-self: start;
-    }
-  }
 </style>

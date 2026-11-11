@@ -27,7 +27,7 @@ Settings, VPS, Ideas, All goals, and Usage share the core page measure and title
 
 Some screens add layout rules in `assets/app.css`, keyed by a `data-screen` name. Most screens rely on the kit alone.
 
-Goal pages use a separate page kit for checklists, charts, tables, layouts, and text. It is owned by [Goals](goals.md).
+Goal pages use a separate page kit for checklists, charts, tables, layouts, and text. It is owned by [Goals](goals.md). This kit uses underline tabs with plain labels on Chief, Manager, and goal pages, below section headings or above standalone content.
 
 ## The conversation is the strictest screen
 
