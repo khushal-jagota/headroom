@@ -9,7 +9,7 @@
  import ErrorLine from '../ErrorLine.svelte';
  import GoalDeleteAction from './GoalDeleteAction.svelte';
 
- let {goal,mark,title}:{goal:GoalResponse;mark?:import('svelte').Snippet;title?:import('svelte').Snippet}=$props();
+ let {goal,mark,title,textEditable=true}:{goal:GoalResponse;mark?:import('svelte').Snippet;title?:import('svelte').Snippet;textEditable?:boolean}=$props();
  const projects=createQuery(()=>queries.projects());
  type Field='title'|'why'|'project_id'|'deadline'|'active';
  type Edit=InlineEditDraft & {dirty:boolean;node:HTMLInputElement|HTMLSelectElement|null;accepted:GoalResponse|null;editor:ReturnType<typeof createGoalEditor>|null};
@@ -114,8 +114,8 @@
   <GoalDeleteAction {goal}/>
  </div>
  {#each ['project_id','deadline','active'] as field}{@render failure(field as Field)}{/each}
- <h1 oninput={()=>{if(!title)editFields.title.dirty=true;}}>{#if title}{@render title()}{:else}<InlineEdit value={goal.title} draft={editFields.title} placeholder="Goal title…" ariaLabel="Goal title" onStart={()=>start(editFields.title,true)} onCancel={()=>discard(editFields.title,'title')} onSave={raw=>saveText(editFields.title,'title',raw)}/>{/if}</h1>
- <div class="why" oninput={()=>editFields.why.dirty=true}><InlineEdit value={goal.why} draft={editFields.why} multiline placeholder="Why this goal matters…" ariaLabel="Why this goal matters" onStart={()=>start(editFields.why,true)} onCancel={()=>discard(editFields.why,'why')} onSave={raw=>saveText(editFields.why,'why',raw)}/></div>
+ <h1 oninput={()=>{if(!title)editFields.title.dirty=true;}}>{#if title}{@render title()}{:else if !textEditable}{goal.title}{:else}<InlineEdit value={goal.title} draft={editFields.title} placeholder="Goal title…" ariaLabel="Goal title" onStart={()=>start(editFields.title,true)} onCancel={()=>discard(editFields.title,'title')} onSave={raw=>saveText(editFields.title,'title',raw)}/>{/if}</h1>
+ <div class="why" oninput={()=>editFields.why.dirty=true}>{#if textEditable}<InlineEdit value={goal.why} draft={editFields.why} multiline placeholder="Why this goal matters…" ariaLabel="Why this goal matters" onStart={()=>start(editFields.why,true)} onCancel={()=>discard(editFields.why,'why')} onSave={raw=>saveText(editFields.why,'why',raw)}/>{:else}<span class="why-text">{goal.why}</span>{/if}</div>
  {/each}
 </header>
 
@@ -150,6 +150,7 @@
  .signal{margin-left:auto;margin-right:calc(var(--space-1) - var(--button-pad-x))}
  h1{font-size:var(--type-page-title);font-weight:var(--weight-page-title);line-height:32px;letter-spacing:var(--tracking-page-title);margin:var(--space-1) 0 0;max-width:var(--page-measure);color:var(--tone-strong)}
  .why{font-size:var(--type-body);font-weight:var(--weight-body);line-height:var(--leading-body);color:var(--tone-primary);margin-top:var(--space-2);max-width:var(--page-prose-measure)}
+ .why-text{white-space:pre-wrap}
  .why :global(.ed){min-height:1.6em;white-space:pre-wrap}
  h1,.why{overflow-wrap:anywhere}
 

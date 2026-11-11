@@ -50,6 +50,8 @@ Khushal and Chief set the default backend, model, and reasoning for new Managers
 
 ## Where it shows up
 
+Manager and Chief pages display their text without owner edits. Agents still update the text through their tools. Charts, tables, checklists, and conversations retain their controls. Separate Goal pages retain text edits.
+
 The Workspace shows Chief first, then active Managers with their Tickets grouped by the attention they need, then the Settled fold. A Manager page has its header, recap, conversation, held goals, and its page document with its Tickets. A Manager with one goal is shown as that goal under its own name. See [Goals](goals.md). When a Manager or Chief page opens, its children list shows a placeholder until its own data arrives, then draws once. `panels manager` reaches the same records.
 
 ## Decisions that shape it
@@ -66,4 +68,4 @@ The Workspace shows Chief first, then active Managers with their Tickets grouped
 - `src/planner/worker_settings/`: Chief's own settings.
 - `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`: the screens.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-11._
