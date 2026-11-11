@@ -1963,7 +1963,24 @@ def ticket_request_help(
 
 
 _PUBLIC_COMMAND_HELP = {
-    ("send-message",): "Send one message to one existing Panels conversation.",
+    ("send-message",): (
+        "Send one message to one existing Panels conversation.\n\n"
+        "Messages support Markdown tables and inline charts. Put chart JSON in a "
+        "closed panels-chart fence. Use --body-file to preserve the fence and newlines. "
+        "Charts use inline snapshot numbers, not live measure or dataset bindings.\n\n"
+        "\b\n"
+        "```panels-chart\n"
+        '{"kind":"bar","series":[{"name":"PRs",'
+        '"points":[{"label":"Week 1","value":4}]}]}\n'
+        "```\n\n"
+        "Use kind bar or line. Add more named series for comparisons. "
+        "Optional fields: title, unit, format (prefix, suffix, decimals), and stacked "
+        "for bars. Values accept fractions and range from -9007199254740991 to "
+        "9007199254740991. Decimals must be an integer from 0 to 20. "
+        "Point labels must be unique within each series. "
+        "A null point value marks missing data. Invalid, unsupported, or "
+        "incomplete specs stay visible as code."
+    ),
     ("project", "list"): "List Projects as bounded summaries.",
     ("project", "show"): "Read one Project record or selected parts.",
     ("project", "create"): "Create one Project.",
