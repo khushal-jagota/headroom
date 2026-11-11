@@ -4,6 +4,7 @@ import { parseShellDestination } from "../src/lib/shellDestination";
 describe("persistent shell addresses", () => {
   it.each([
     ["#/config/chief-of-staff", "#/settings/config/chief-of-staff", "settings", { section: "config", roleKind: "agent", id: "chief_of_staff" }],
+    ["#/settings/backends", "#/settings/backends", "settings", { section: "backends", roleKind: "index" }],
     ["#/vps", "#/settings/vps", "settings", { section: "vps", roleKind: "index" }],
     ["#/workspace/goals", "#/goals", "goals", {}],
   ])("normalizes %s without losing its selection", (input, hash, name, params) => {

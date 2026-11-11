@@ -89,6 +89,8 @@ Agent processes run at a lower priority than the service, so builds cannot starv
 
 **Updates.** One press of Update covers both machines ([Deployment](deployment.md#the-card-and-the-mac)). If the new runtime does not lease in time, the supervisor reverts. The VPS accepts one protocol version; an older Mac is refused with "Mac needs update".
 
+Claude and Codex use the Mac's external CLI installations. A runtime update preserves that selection. It does not replace their versions with the copies inside the archive. An explicit external Claude executable remains an operator choice.
+
 The steps are in the [Mac executor installation runbook](../ops/mac-executor/installation.md).
 
 ## Decisions that shape it
@@ -120,4 +122,4 @@ Not yet proven:
 - `src/planner/environments/mac_executor.py` and `environments/mac_app/`: the LaunchAgent and signed app.
 - `scripts/executor_sleep_cycles.py`: the 100-cycle harness. `scripts/mac_sleep_test.py`: the real Mac sleep test.
 
-_Last verified: 2026-11-09._
+_Last verified: 2026-11-11._
