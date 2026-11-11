@@ -241,7 +241,8 @@ class GoalFixture:
             return
         if path == "/api/navigation/view/snapshot":
             source = self.navigation["navigation_response"](
-                {"managers": []}, {"chief_of_staff": {"label": "Chief of Staff"}}
+                {"managers": getattr(self, "managers", [])},
+                {"chief_of_staff": {"label": "Chief of Staff"}}
             )
             source["snapshot"]["records"].extend(
                 {
@@ -582,6 +583,7 @@ def touch_overlap(browser, url):
         viewport={"width": 390, "height": 700}, has_touch=True, is_mobile=True
     )
     page = context.new_page()
+    page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
     page.set_default_timeout(5000)
     fixture = GoalFixture()
     page.route("**/api/**", fixture.respond)
@@ -871,6 +873,7 @@ def agent_unit_spacing(browser, url):
             has_touch=phone, is_mobile=phone, reduced_motion="reduce",
         )
         page = context.new_page()
+        page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
         page.set_default_timeout(5000)
         errors = []
         page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
@@ -1115,6 +1118,7 @@ def manual_unit_spacing(browser, url):
             has_touch=phone, is_mobile=phone, reduced_motion="reduce",
         )
         page = context.new_page()
+        page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
         page.set_default_timeout(5000)
         errors = []
         page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
@@ -1534,6 +1538,7 @@ def authored_goal_presentation(browser, url):
             reduced_motion="reduce" if reduced else "no-preference",
         )
         page = context.new_page()
+        page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
         page.set_default_timeout(5000)
         fixture = goal_presentation_fixture()
         writes, errors = [], []
@@ -1714,9 +1719,11 @@ def authored_goal_presentation(browser, url):
 
 def run(browser, urls):
     started = time.monotonic()
+    manager_goal_tags(browser, urls[0])
     checklist_deadline_controls(browser, urls[0])
     fixture = GoalFixture()
     page = browser.new_page(viewport={"width": 1280, "height": 720})
+    page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
     page.set_default_timeout(5000)
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -1943,6 +1950,7 @@ def native_goal_edits(browser, url):
             reduced_motion="reduce",
         )
         page = context.new_page()
+        page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
         page.set_default_timeout(5000)
         fixture = NativeGoalEditFixture()
         errors = []
@@ -2678,6 +2686,7 @@ def score_table_layout(browser, url):
         viewport={"width": 1280, "height": 1400}, reduced_motion="reduce"
     )
     page = context.new_page()
+    page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
     page.set_default_timeout(5000)
     fixture = NativeGoalEditFixture()
     identity = "goal_wrapfixture"
@@ -2829,6 +2838,7 @@ def checklist_deadline_controls(browser, url):
             reduced_motion="reduce",
         )
         page = context.new_page()
+        page.add_init_script("localStorage.setItem('panels.goals-sidebar-rows', '1')")
         page.set_default_timeout(5000)
         fixture = ChecklistDeadlineFixture()
         errors = []
@@ -3116,3 +3126,179 @@ def checklist_deadline_controls(browser, url):
             json.dumps({"seconds": elapsed, "renders": receipts}, indent=2) + "\n"
         )
     print(f"checklist deadlines native desktop/phone: passed (+{elapsed:.2f}s)", flush=True)
+
+
+def manager_goal_tags(browser, url):
+    """Real header hit testing, chart reflow, and preference changes share the App host.
+
+    Pure status coverage cannot prove pointer travel across sibling controls, the
+    header/preview gap, native focus, or ResizeObserver placement after expansion.
+    """
+    started = time.monotonic()
+    fixture = GoalFixture()
+    keep = ("daily_quota", "binary", "checklist", "long")
+    fixture.goals = {key: fixture.goals[key] for key in keep}
+    fixture.managers = [
+        {"id": key, "title": title, "project_id": "project", "project": "Field guide",
+         "created_at": index + 1, "recap": "The next release awaits review. " * 20,
+         "tickets": [{"id": f"ticket_{key}", "manager_id": key,
+                      "title": f"Worker for {title}", "worker_type": "coding",
+                      "stage": "needs_implementation", "ticket_status": "agent",
+                      "recap": "Worker recap"}]}
+        for index, (key, title) in enumerate((
+            ("one", "One chart"), ("many", "Several goals"), ("none", "No goals")))
+    ]
+    fixture.goals["daily_quota"].update(holder_kind="manager", holder_id="one", status="good")
+    fixture.observations["daily_quota"][TODAY] = 20
+    fixture.goals["binary"].update(holder_kind="manager", holder_id="many", status="bad")
+    fixture.goals["checklist"].update(holder_kind="manager", holder_id="many", status="good")
+    fixture.goals["long"].update(
+        title="Inbox zero weekly", status="attention", primary_checklist_block_id=None)
+    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    context.add_init_script("localStorage.setItem('panels.workspace.rail-width', '288')")
+    page = context.new_page()
+    page.set_default_timeout(5000)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.route("**/api/**", fixture.respond)
+    output = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    if output:
+        output = Path(output) / "manager-goal-tags"
+        output.mkdir(parents=True, exist_ok=True)
+    try:
+        page.goto(url + "#/workspace", wait_until="domcontentloaded")
+        expect(page.locator("a[data-goal-id]")).to_have_count(0)
+        rail_width = page.locator(".workspace-rail").bounding_box()["width"]
+        assert rail_width == 288, rail_width
+        one = page.locator('[data-manager="one"]')
+        many = page.locator('[data-manager="many"]')
+        none = page.locator('[data-manager="none"]')
+        chief = page.locator('.manager-card.chief')
+        expect(one.get_by_role("button", name="Goals: On track", exact=True)).to_be_visible()
+        expect(many.get_by_role("button", name="Goals: Off track", exact=True)).to_be_visible()
+        expect(none.locator('[data-goal-status]')).to_have_count(0)
+        expect(chief.get_by_text("All projects", exact=True)).to_be_visible()
+        expect(chief.get_by_role("button", name="Goals: At risk", exact=True)).to_be_visible()
+        expect(chief.get_by_role("button", name=re.compile("Settle"))).to_have_count(0)
+        panel = page.locator('[data-rail-hover-panel].visible')
+
+        # Move the real pointer across eyebrow, name, and moving status tag.
+        for part in (one.locator('.manager-eyebrow > span').first,
+                     one.locator('.item-head'),
+                     one.get_by_role("button", name="Goals: On track", exact=True)):
+            box = part.bounding_box()
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=8)
+            expect(panel.locator('.title')).to_contain_text("One chart")
+            expect(panel.locator('[data-manager-goals]')).to_be_visible()
+        summary = panel.locator('.support-summary')
+        expect(summary).to_have_attribute('aria-expanded', 'false')
+        expect(summary).to_contain_text('Daily Quota')
+        expect(panel.get_by_role('button', name='Ask for a recap', exact=True)).to_be_visible()
+        if output:
+            page.screenshot(path=str(output / 'one-collapsed.png'), animations='disabled')
+        bounds = panel.bounding_box()
+        page.mouse.move(bounds['x'] + 24, bounds['y'] + 24, steps=8)
+        expect(panel).to_be_visible()
+        summary.click()
+        expect(summary).to_have_attribute('aria-expanded', 'true')
+        page.wait_for_function("""() => {
+          const p=document.querySelector('[data-rail-hover-panel].visible');
+          if(!p)return false; const r=p.getBoundingClientRect();
+          return r.top>=0 && r.bottom<=innerHeight;
+        }""")
+        if output:
+            page.screenshot(path=str(output / 'one-expanded.png'), animations='disabled')
+        page.set_viewport_size({'width': 1280, 'height': 480})
+        page.wait_for_function("""() => {
+          const p=document.querySelector('[data-rail-hover-panel].visible');
+          if(!p)return false; const r=p.getBoundingClientRect();
+          return r.top>=0 && r.bottom<=innerHeight;
+        }""")
+        if output:
+            page.screenshot(path=str(output / 'one-expanded-resized.png'), animations='disabled')
+        page.set_viewport_size({'width': 1280, 'height': 900})
+        page.mouse.move(1100, 820)
+        expect(panel).to_have_count(0)
+        one.locator('.identity').hover()
+        expect(panel.locator('.support-summary')).to_have_attribute('aria-expanded', 'true')
+
+        # A Ticket owns its own preview, with no Manager goals.
+        one.locator('[data-ticket-id="ticket_one"]').hover()
+        expect(panel.locator('.title')).to_contain_text('Worker for One chart')
+        expect(panel.locator('[data-manager-goals]')).to_have_count(0)
+        many.locator('.identity').hover()
+        expect(panel.locator('[data-manager-goal-id]')).to_have_count(2)
+        expect(panel.locator('.support-summary')).to_have_count(0)
+        expect(panel.locator('[data-manager-goal-id="checklist"]')).to_contain_text('1 of 2 done')
+        if output:
+            page.screenshot(path=str(output / 'many-goals.png'), animations='disabled')
+        none.locator('.identity').hover()
+        expect(panel.locator('.title')).to_contain_text('No goals')
+        expect(panel.locator('[data-manager-goals]')).to_have_count(0)
+        chief.locator('.identity').hover()
+        expect(panel.locator('[data-manager-goal-id]')).to_have_count(1)
+        expect(panel.locator('.support-summary')).to_have_count(0)
+
+        if output:
+            page.screenshot(path=str(output / 'chief-binary.png'), animations='disabled')
+
+        # Keyboard focus opens the same preview; Escape dismisses without navigation.
+        page.mouse.move(1100, 820)
+        page.keyboard.press('Tab')
+        tag = many.get_by_role('button', name='Goals: Off track', exact=True)
+        tag.focus()
+        expect(panel.locator('.title')).to_contain_text('Several goals')
+        expect(tag).to_be_focused()
+        assert tag.evaluate('el => getComputedStyle(el).outlineStyle') != 'none'
+        page.keyboard.press('Escape')
+        expect(panel).to_have_count(0)
+        one.locator('.item-head').focus()
+        expect(panel.locator('.title')).to_contain_text('One chart')
+        panel.get_by_role('button', name='Ask for a recap', exact=True).focus()
+        page.keyboard.press('Escape')
+        expect(panel).to_have_count(0)
+        # Restored header focus must not immediately reopen the dismissed panel.
+        page.evaluate(
+            '() => new Promise(resolve => '
+            'requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        expect(panel).to_have_count(0)
+        tag.click()
+        page.wait_for_function(
+            "location.hash.includes('binary') && !location.hash.includes('/managers/')")
+
+        # The actual setting restores the old row surface and removes preview goals.
+        page.locator('.rail-utilities [aria-label="Settings"]').click()
+        setting = page.get_by_role('checkbox', name='Show goals in sidebar rows', exact=True)
+        expect(setting).not_to_be_checked()
+        setting.check()
+        expect(page.locator('a[data-goal-id]')).not_to_have_count(0)
+        expect(page.get_by_role('button', name=re.compile(r'^Goals: '))).to_have_count(0)
+        expect(page.locator('.manager-card-slot[data-goal-status]')).to_have_count(0)
+        many.locator('.identity').hover()
+        expect(panel.locator('[data-manager-goals]')).to_have_count(0)
+        setting.uncheck()
+        expect(page.locator('a[data-goal-id]')).to_have_count(0)
+        expect(many.get_by_role('button', name='Goals: Off track', exact=True)).to_be_visible()
+        if output:
+            page.screenshot(path=str(output / 'settings-default.png'), animations='disabled')
+        # The sole checklist uses a row too, without an extra chart or heading.
+        fixture.goals['long'].update(
+            title='Prepare the field guide', primary_checklist_block_id='delivery',
+            page=copy.deepcopy(fixture.goals['checklist']['page']))
+        page.reload(wait_until='domcontentloaded')
+        chief.locator('.identity').hover()
+        expect(panel.locator('[data-manager-goal-id="long"]')).to_contain_text('1 of 2 done')
+        expect(panel.locator('.support-summary')).to_have_count(0)
+        if output:
+            page.screenshot(path=str(output / 'chief-checklist.png'), animations='disabled')
+        assert errors == [], errors
+    except Exception:
+        if output:
+            page.screenshot(path=str(output / 'failure.png'), animations='disabled')
+            (output / 'failure.html').write_text(page.content())
+        raise
+    finally:
+        context.close()
+    print(
+        'manager goal header/preview pointer and settings: '
+        f'passed ({time.monotonic()-started:.2f}s, rail {rail_width}px)', flush=True)

@@ -292,3 +292,16 @@ it('uses the supplied server date for deadline-only tones and gives saved comple
   'var(--accent-error)','var(--accent-attention)','var(--accent-done)','inherit',
  ]);
 });
+
+import {worstGoal,goalTagLabel} from '../src/lib/goals/railPresentation';
+it('opens the worst goal and ignores neutral goals in the status tag',()=>{
+ const goals=['neutral','good','attention','bad','bad'].map((status,index)=>({id:String(index),status}) as GoalResponse);
+ expect(worstGoal(goals)?.id).toBe('3');
+ expect(worstGoal(goals.slice(0,3))?.status).toBe('attention');
+ expect(worstGoal(goals.slice(0,2))?.status).toBe('good');
+ expect(worstGoal(goals.slice(0,1))).toBeNull();
+ expect(worstGoal([])).toBeNull();
+ expect(goalTagLabel('bad')).toBe('Off track');
+ expect(goalTagLabel('attention')).toBe('At risk');
+ expect(goalTagLabel('good')).toBe('On track');
+});

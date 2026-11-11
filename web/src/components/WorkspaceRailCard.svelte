@@ -15,9 +15,12 @@
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import WorkerRow from "./WorkerRow.svelte";
+  import type {GoalResponse} from "../lib/goals/contracts";
+  import {worstGoal} from "../lib/goals/railPresentation";
+  import {workspaceAddress} from "../lib/workspaceAddress";
   import ManagerEyebrow from "./ManagerEyebrow.svelte";
-  let { beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
-    beforeGroups?: Snippet;
+  let { goals = [], beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+    beforeGroups?: Snippet; goals?: GoalResponse[];
     suppressBackgroundPreview?: boolean;
     scrollCoordinator?:ScrollWindowCoordinator;scrollPublicationId?:number|null;
     navigationWindow?:ViewWindow;onWindow?:(anchor:string,direction:'before'|'after')=>void;onVisibility?:(id:string,visible:boolean)=>void;
@@ -26,6 +29,7 @@
     onSelect: () => void; onTicket: (id: string) => void; onSettle: () => void;
     onHover: (target: HTMLElement, immediate?: boolean) => void; onWorkerHover: (target: HTMLElement, ticket: WorkItemTicketFacts, immediate?: boolean) => void; onLeave: () => void;
   } = $props();
+  let tagGoal = $derived(worstGoal(goals));
   // Hidden rails have no measurable height. Svelte's slide reads "auto" as NaN there.
   function groupSlide(node: HTMLElement) {
     if (!node.getClientRects().length || !Number.isFinite(parseFloat(getComputedStyle(node).height))) return { duration: 0 };
@@ -50,13 +54,12 @@
   });
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
 </script>
-<div class="manager-card-slot">
+<div class="manager-card-slot" data-goal-status={tagGoal?.status}>
 <section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
   <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
   <div class="identity" onclick={(event) => { if (!(event.target as HTMLElement).closest('button, a')) { const head = event.currentTarget.querySelector<HTMLButtonElement>('.item-head'); head?.click(); } }} onpointerenter={(event) => { if (!suppressBackgroundPreview) input().pointerEnter(event); }} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => { if (!(event.target as HTMLElement).closest('button')) input().down(event); }} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()}>
-    <!-- The Chief belongs to no project, so its header is its name alone. -->
-    {#if !chief}<ManagerEyebrow {project} {title} rail {busy} {onSettle} />{/if}
-    <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={(event) => input().leave(event)}>
+    <ManagerEyebrow {project} {title} {chief} rail {busy} {onSettle} goal={tagGoal} onGoalFocus={(event)=>onHover((event.currentTarget as HTMLElement).closest('.identity') as HTMLElement,true)} onGoalBlur={(event)=>{if(!(event.relatedTarget instanceof Node)||!(event.currentTarget as HTMLElement).closest('.identity')?.contains(event.relatedTarget))onLeave();}} onGoal={()=>{if(tagGoal)window.location.hash=workspaceAddress({kind:'goal',id:tagGoal.id});}}/>
+    <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={(event) => {if (!(event.relatedTarget instanceof Node) || !event.currentTarget.closest(".identity")?.contains(event.relatedTarget)) input().leave(event);}} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={(event) => input().leave(event)}>
       <span class="item-title">{title}</span>
       <ConversationSignalMark {signal} {conversationId} />
     </button>
@@ -80,6 +83,9 @@
      so they show on it. */
   .manager-card-slot { position:relative; min-width:0; }
   .manager-card-slot::before { content:""; position:absolute; inset:0; z-index:-2; border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); pointer-events:none; }
+  .manager-card-slot[data-goal-status=bad]::before { background:linear-gradient(color-mix(in srgb,var(--accent-error) 9%,transparent),transparent 70px),var(--rail-bubble-fill); }
+  .manager-card-slot[data-goal-status=attention]::before { background:linear-gradient(color-mix(in srgb,var(--accent-attention) 9%,transparent),transparent 70px),var(--rail-bubble-fill); }
+  .manager-card-slot[data-goal-status=good]::before { background:linear-gradient(color-mix(in srgb,var(--accent-done) 7%,transparent),transparent 70px),var(--rail-bubble-fill); }
   :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--rail-block-gap); }
   /* Every Manager, the Chief included, is one block with the same parts in the same order:
      its header (the project eyebrow directly over the name, as one fill), its goals, then its

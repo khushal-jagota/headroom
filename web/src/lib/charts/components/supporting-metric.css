@@ -21,3 +21,9 @@
 .support-chart-body>figure figcaption{display:none}
 @media(max-width:650px){.support-chart-body .allocation-layout{gap:12px}.support-chart-body .ring-center{--text-3xl:32px}}
 @media(prefers-reduced-motion:reduce){.support-reveal{height:0!important;opacity:1!important}.support-disclosure[data-expanded=true]>.support-reveal{height:auto!important}}
+
+/* A supporting chart in a preview shares the preview surface and inset. */
+.integrated-supporting .support-disclosure{background:transparent;border:0;border-radius:0;padding:0}
+.integrated-supporting .support-summary{min-height:0;row-gap:var(--space-1);padding-top:2px}
+.integrated-supporting .support-reading{height:30px;line-height:30px}
+.integrated-supporting .support-chart-body{padding-top:var(--space-3)}
