@@ -3556,22 +3556,76 @@ def manager_text_readonly(browser, url):
     started = time.monotonic()
     fixture = GoalFixture()
     fixture.managers = [
-        {"id": "text", "title": "Release manager", "project_id": "project",
-         "project": "Field guide", "created_at": 1, "recap": "Release status stays visible.", "tickets": []},
-        {"id": "sole", "title": "Checklist manager", "project_id": "project",
-         "project": "Field guide", "created_at": 2, "recap": "Checklist status stays visible.", "tickets": []},
+        {
+            "id": "text",
+            "title": "Release manager",
+            "project_id": "project",
+            "project": "Field guide",
+            "created_at": 1,
+            "recap": "Release status stays visible.",
+            "tickets": [],
+        },
+        {
+            "id": "sole",
+            "title": "Checklist manager",
+            "project_id": "project",
+            "project": "Field guide",
+            "created_at": 2,
+            "recap": "Checklist status stays visible.",
+            "tickets": [],
+        },
     ]
     fixture.goals = {"checklist": fixture.goals["checklist"]}
     goal = fixture.goals["checklist"]
     goal.update(holder_kind="manager", holder_id="sole", why="Why the guide matters")
-    goal["page"]["blocks"].append({"type": "text", "id": "context", "text": "Guide background stays visible."})
-    document = {"kind": "headroom.page", "version": 1, "title": "Release plan", "summary": "", "blocks": [
-        {"type": "text", "id": "opening", "text": "Release guidance with a [documentation link](https://example.com/guide)."},
-        {"type": "section", "id": "plan", "title": "Release overview", "summary": "Saved context", "views": [
-            {"id": "status", "label": "Status", "blocks": [{"type": "table", "id": "status-table", "caption": "Release table", "columns": ["Name", "Count"], "rows": [["Beta", "2"], ["Alpha", "1"]]}]},
-            {"id": "notes", "label": "Notes", "blocks": [{"type": "text", "id": "notes-text", "text": "The second view remains reachable."}]},
-        ]},
-    ]}
+    goal["page"]["blocks"].append(
+        {"type": "text", "id": "context", "text": "Guide background stays visible."}
+    )
+    document = {
+        "kind": "headroom.page",
+        "version": 1,
+        "title": "Release plan",
+        "summary": "",
+        "blocks": [
+            {
+                "type": "text",
+                "id": "opening",
+                "text": "Release guidance with a [documentation link](https://example.com/guide).",
+            },
+            {
+                "type": "section",
+                "id": "plan",
+                "title": "Release overview",
+                "summary": "Saved context",
+                "views": [
+                    {
+                        "id": "status",
+                        "label": "Status",
+                        "blocks": [
+                            {
+                                "type": "table",
+                                "id": "status-table",
+                                "caption": "Release table",
+                                "columns": ["Name", "Count"],
+                                "rows": [["Beta", "2"], ["Alpha", "1"]],
+                            }
+                        ],
+                    },
+                    {
+                        "id": "notes",
+                        "label": "Notes",
+                        "blocks": [
+                            {
+                                "type": "text",
+                                "id": "notes-text",
+                                "text": "The second view remains reachable.",
+                            }
+                        ],
+                    },
+                ],
+            },
+        ],
+    }
     context = browser.new_context(viewport={"width": 1280, "height": 900})
     page = context.new_page()
     page.set_default_timeout(5000)
@@ -3588,18 +3642,44 @@ def manager_text_readonly(browser, url):
             mutations.append(path)
         if key.endswith("/workspace-content"):
             identity = key.split("/")[3]
-            result = {"goal": "The Manager purpose remains visible.", "recap": "Release status stays visible.",
-                      "goals": [goal] if identity == "sole" else []}
+            result = {
+                "goal": "The Manager purpose remains visible.",
+                "recap": "Release status stays visible.",
+                "goals": [goal] if identity == "sole" else [],
+            }
         elif key in ("/api/chief/page", "/api/managers/text/page", "/api/managers/sole/page"):
             result = {"page": document, "page_revision": 1}
         elif key.endswith("/page/readings"):
-            result = {"values": [], "sources": [], "charts": {}, "status_date": TODAY, "next_refresh_at": int(time.time()) + 86400}
+            result = {
+                "values": [],
+                "sources": [],
+                "charts": {},
+                "status_date": TODAY,
+                "next_refresh_at": int(time.time()) + 86400,
+            }
         elif key == "/api/workers/chief-of-staff/settings":
-            result = {"employee_id": "chief", "label": "Chief of Staff", "recap": "Chief status stays visible.", "skill": None,
-                      "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}}
+            result = {
+                "employee_id": "chief",
+                "label": "Chief of Staff",
+                "recap": "Chief status stays visible.",
+                "skill": None,
+                "launch_defaults": {
+                    "employee_backend": "codex",
+                    "employee_launch_model": None,
+                    "employee_launch_reasoning_effort": None,
+                },
+            }
         if result is not None:
-            route.fulfill(json={"key": key, "epoch": "readonly-fixture", "revision": str(fixture.version), "body": result}
-                          if path == "/api/resource-body" else result)
+            route.fulfill(
+                json={
+                    "key": key,
+                    "epoch": "readonly-fixture",
+                    "revision": str(fixture.version),
+                    "body": result,
+                }
+                if path == "/api/resource-body"
+                else result
+            )
             return
         fixture.respond(route)
 
@@ -3609,7 +3689,11 @@ def manager_text_readonly(browser, url):
     if output:
         output.mkdir(parents=True, exist_ok=True)
     try:
-        for identity, title in (("text", "Release manager"), ("chief-of-staff", "Chief of Staff"), ("sole", "Checklist manager")):
+        for identity, title in (
+            ("text", "Release manager"),
+            ("chief-of-staff", "Chief of Staff"),
+            ("sole", "Checklist manager"),
+        ):
             address = "chief-of-staff" if identity == "chief-of-staff" else f"manager/{identity}"
             page.goto(url + "#/workspace/" + address, wait_until="domcontentloaded")
             doc = page.locator(".manager-doc")
@@ -3620,7 +3704,9 @@ def manager_text_readonly(browser, url):
                 expect(doc.get_by_text("Why the guide matters", exact=True)).to_be_visible()
             if output:
                 page.screenshot(path=str(output / f"{identity}-after.png"), animations="disabled")
-            expect(doc.locator('[contenteditable="true"], [data-markdown-inline-edit], .ed')).to_have_count(0)
+            expect(
+                doc.locator('[contenteditable="true"], [data-markdown-inline-edit], .ed')
+            ).to_have_count(0)
             assert doc.locator("h1").evaluate("el => getComputedStyle(el).cursor") != "text"
             expect(doc.locator('h1 [role="textbox"], h1 [tabindex="0"]')).to_have_count(0)
             doc.locator("h1").click()
@@ -3635,15 +3721,21 @@ def manager_text_readonly(browser, url):
             else:
                 tabs = doc.get_by_role("radiogroup", name="Views")
                 tabs.get_by_role("radio", name="Notes", exact=True).click()
-                expect(doc.get_by_text("The second view remains reachable.", exact=True)).to_be_visible()
+                expect(
+                    doc.get_by_text("The second view remains reachable.", exact=True)
+                ).to_be_visible()
                 tabs.get_by_role("radio", name="Notes", exact=True).press("ArrowLeft")
                 expect(doc.get_by_role("table")).to_be_visible()
                 doc.get_by_role("button", name="Sort by Name", exact=True).click()
                 expect(doc.locator("tbody tr").first).to_contain_text("Alpha")
-                expect(doc.get_by_role("link", name="documentation link", exact=True)).to_have_attribute("href", "https://example.com/guide")
+                expect(
+                    doc.get_by_role("link", name="documentation link", exact=True)
+                ).to_have_attribute("href", "https://example.com/guide")
             if identity == "text":
                 doc.locator("[data-goal-band] summary").click()
-                expect(doc.get_by_text("The Manager purpose remains visible.", exact=True)).to_be_visible()
+                expect(
+                    doc.get_by_text("The Manager purpose remains visible.", exact=True)
+                ).to_be_visible()
             expect(doc.locator('[contenteditable="true"]')).to_have_count(0)
         # A sole Manager-held goal routes to its Manager. A Chief-held copy opens
         # the separate Goal workspace with the same shared content and header.
