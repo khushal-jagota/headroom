@@ -102,7 +102,7 @@
   .manager-card { box-sizing:border-box; position:relative; display:flex; flex-direction:column; padding:var(--rail-bubble-pad) var(--rail-bubble-pad) calc(var(--rail-bubble-pad) + 6px); border:0; isolation:isolate; z-index:1; }
   /* A header with nothing under it (the Chief with no goals or Tickets) ends at the same 4px as it begins. */
   .manager-card:not(.has-tickets):not(:has(:global(.goals-rail))) { padding-bottom:var(--rail-bubble-pad); }
-  .identity, .bucket, :global(.manager-card > .goals-rail) { position:relative; z-index:1; }
+  .identity, .bucket-label, .bucket :global(.worker-row), :global(.manager-card > .goals-rail) { position:relative; z-index:1; }
   .identity { box-sizing:border-box; display:flex; flex-direction:column; padding:var(--rail-head-pad) var(--rail-pad); border-radius:var(--radius-md); cursor:pointer; }
   /* The eyebrow's small line sits higher than a name, so its 3px of room is inside the fill: the fill keeps 4px from the card's top and the words stay where they were. */
   .identity:has(:global(.manager-eyebrow)) { padding-top:calc(var(--rail-head-pad) + 3px); }
@@ -124,7 +124,7 @@
   .bucket :global(.worker-row:focus-visible) { outline:none; }
   :global(.approved-rail .workspace-ticket-bucket .worker-row.rail-moving), :global(.approved-rail .bucket-label.rail-moving), :global(.approved-rail .manager-card.rail-moving) { position:relative; z-index:1; transition:none; background:none; outline:none; }
   :global(.approved-rail .manager-card.rail-moving:where(.selected)) { z-index:2; }
-  :global(.approved-rail .rail-travelling) { z-index:2; }
+  :global(.approved-rail .rail-travelling), :global(.approved-rail .workspace-ticket-bucket .worker-row.rail-travelling) { z-index:2; }
   :global(.approved-rail .manager-card.rail-travelling-card) { z-index:3; }
   /* A fixed goal preview stays inside this card's isolated layer. Raise its card above
      the dock only while the preview is open, so native taps reach its controls. */

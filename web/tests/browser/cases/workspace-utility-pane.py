@@ -2694,12 +2694,12 @@ def verify_selection_washes(page, url, fixture, evidence):
     def middle(box):
         return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
 
-    responds(hover_at('[data-manager="wash_a"] .identity', '.active-work-scroll', bottom_edge))
-    responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', left_edge))
-    responds(hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', bottom_edge))
-    responds(hover_at(sole_row, '.active-work-scroll', left_edge))
-    responds(hover_at(sole_row, '.active-work-scroll', middle))
-    outside = hover_at('[data-manager="wash_b"] .identity', '.active-work-scroll', lambda box: (box["x"] + box["width"] / 2, box["y"] - 2))
+    responds(hover_at('[data-manager="wash_a"] .identity', '[data-manager="wash_a"]', bottom_edge))
+    responds(hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', left_edge))
+    responds(hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', bottom_edge))
+    responds(hover_at(sole_row, '[data-manager="wash_b"]', left_edge))
+    responds(hover_at(sole_row, '[data-manager="wash_b"]', middle))
+    outside = hover_at('[data-manager="wash_b"] .identity', '[data-manager="wash_b"]', lambda box: (box["x"] + box["width"] / 2, box["y"] - 2))
     assert not outside["hover"] and outside["hidden"], outside
     page.mouse.click(*left_edge(page.locator(sole_row).bounding_box()))
     expect(page.locator(sole_row)).to_have_attribute("aria-current", "page")
