@@ -3182,6 +3182,19 @@ def manager_goal_tags(browser, url):
         expect(chief.get_by_role("button", name=re.compile("Settle"))).to_have_count(0)
         panel = page.locator('[data-rail-hover-panel].visible')
 
+        # Follow the owner path: enter the header to reveal Settle, then target
+        # the action. Outside the header, its empty space belongs to the goal tag.
+        for card in (one, none):
+            page.mouse.move(1100, 820)
+            settle = card.get_by_role('button', name=re.compile(r'^Settle '))
+            card.locator('.identity').hover()
+            expect(settle).to_have_css('opacity', '1')
+            settle.click(trial=True)
+        one.get_by_role('button', name='Goals: On track', exact=True).focus()
+        page.keyboard.press('Tab')
+        expect(one.get_by_role('button', name='Settle One chart', exact=True)).to_be_focused()
+        page.keyboard.press('Tab')
+
         # Move the real pointer across eyebrow, name, and moving status tag.
         for part in (one.locator('.manager-eyebrow > span').first,
                      one.locator('.item-head'),

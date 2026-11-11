@@ -483,7 +483,10 @@ def run(browser, urls):
             if artifact_dir:
                 Path(artifact_dir).mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(Path(artifact_dir) / "ceiling-contained-short-viewport.png"))
-            last.click()
+            # Keep this boundary on the keyboard path that scrolls to the final
+            # option. The choose() scenarios separately prove pointer selection.
+            expect(last).to_have_attribute("data-listbox-picker-active", "true")
+            page.get_by_role("listbox").press("Enter")
             expect(page.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
             check_containment()
         page.get_by_role("listbox").press("Escape")
