@@ -1,3 +1,4 @@
+import type { SignalNavigationAuthority } from './conversation/publication/authority.ts';
 import type { Area } from './core/authority/register.ts';
 import type { Database, CommitStep } from './core/database/index.ts';
 import { routes as projects } from './projects/routes.ts';
@@ -7,7 +8,7 @@ import { createNavigationRuntime } from './navigation/index.ts';
 import { idle_publication } from './conversation/publication/idle.ts';
 
 const navigation = createNavigationRuntime(idle_publication);
-export const initializeAreas = (database: Database): void => navigation.initialize(database);
+export const initializeAreas = (database: Database, authority: SignalNavigationAuthority): void => navigation.initialize(database, authority);
 export const closeAreas = (): void => navigation.close();
 
 /** Add one area registration here. Core has no area identity branches. */

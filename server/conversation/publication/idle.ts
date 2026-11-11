@@ -7,8 +7,10 @@ export function idle_attention(): ConversationAttention {
     return {signal: {working: false, message_for_owner: false}, awaiting_answer: false, last_turn_failed: false};
 }
 
+export type IdlePublicationCallback = (tx: TransactionSql, conversation_id: string, attention: ConversationAttention) => undefined;
+
 /** Navigation owns publication storage. This step supplies idle facts in its source transaction. */
-export function idle_publication(publish: (tx: TransactionSql, conversation_id: string, attention: ConversationAttention) => undefined): CommitStep {
+export function idle_publication(publish: IdlePublicationCallback): CommitStep {
     return tx => {
         for (const row of tx.all<{conversation_id: string}>('SELECT conversation_id FROM conversations ORDER BY conversation_id')) {
             const result: unknown = publish(tx, row.conversation_id, idle_attention());
