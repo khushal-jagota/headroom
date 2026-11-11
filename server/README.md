@@ -58,3 +58,9 @@ A step receives the same transaction capability as a state transition. It must n
 Set `PANELS_TEST_SERVER_BACKEND=typescript` to select this process in the existing server fixture. The fixture still creates the database through Python and passes its listener. Explicit Python test-host modules stay on Python. Unit 15 will connect its conversation host through this selection point.
 
 This unit does not supply domain routes, schema migration, projection implementations, conversation hosts, background loops, or deployment supervision. Existing tests that require those pieces remain unavailable on the foundation alone.
+
+## Known follow-ups
+
+The write door prepares each statement on every call. Measure this cost at gate 3 before any statement cache is added.
+
+Node 24 with npm 11 needs a development-guard change for npm's injected script environment keys. The current guarded alternatives above remain the launch route until that change lands. This unit does not change the guard policy.
