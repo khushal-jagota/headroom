@@ -341,6 +341,7 @@ def run_list(
                         servers[side] = _start_server(
                             server.db_path.parent, port=server.port,
                             server_module=modules[side],
+                            trusted_ingress_env=host_environment,
                             seed_db=partial(backup_database, snapshot),
                         )
                         snapshot.unlink()
