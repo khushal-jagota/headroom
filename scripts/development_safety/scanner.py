@@ -180,9 +180,11 @@ def _dependency_roots(roots: Sequence[Path]) -> list[Path]:
         ".venv",
         "web/node_modules",
         "agent_backends/node_modules",
+        "server/node_modules",
         "app/.venv",
         "app/web/node_modules",
         "app/agent_backends/node_modules",
+        "app/server/node_modules",
     )
     return [root / name for root in roots for name in names if (root / name).exists()]
 
@@ -230,9 +232,11 @@ def _external_dependency_targets(roots: Sequence[Path]) -> list[Path]:
         ".venv",
         "web/node_modules",
         "agent_backends/node_modules",
+        "server/node_modules",
         "app/.venv",
         "app/web/node_modules",
         "app/agent_backends/node_modules",
+        "app/server/node_modules",
     )
     dependencies = [root / name for root in roots for name in names if (root / name).exists()]
     resolved_dependencies = [_resolve(root) for root in dependencies]
@@ -420,7 +424,7 @@ def _admit(
         inventory = [
             root / name
             for root in roots
-            for name in ("app", ".venv", "web", "agent_backends", "node_modules")
+            for name in ("app", ".venv", "web", "agent_backends", "server", "node_modules")
             if (root / name).exists()
         ]
         _check_paths(paths, roots, mounts, inventory_roots=inventory, shallow_paths=shallow_paths)
