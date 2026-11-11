@@ -3249,8 +3249,9 @@ def manager_goal_tags(browser, url):
         expect(panel.locator('.title')).to_contain_text('No goals')
         expect(panel.locator('[data-manager-goals]')).to_have_count(0)
         chief.locator('.identity').hover()
-        expect(panel.locator('[data-manager-goal-id]')).to_have_count(1)
-        expect(panel.locator('.support-summary')).to_have_count(0)
+        expect(panel.locator('[data-manager-goal-id]')).to_have_count(0)
+        expect(panel.locator('[data-chart-id="completion"] .completion-summary')).to_be_visible()
+        expect(panel.locator('.completion-summary')).to_contain_text('Inbox zero weekly')
 
         if output:
             page.screenshot(path=str(output / 'chief-binary.png'), animations='disabled')
@@ -3294,16 +3295,77 @@ def manager_goal_tags(browser, url):
         expect(many.get_by_role('button', name='Goals: Off track', exact=True)).to_be_visible()
         if output:
             page.screenshot(path=str(output / 'settings-default.png'), animations='disabled')
-        # The sole checklist uses a row too, without an extra chart or heading.
+        # A sole checklist reuses the compact summary, with real goal writes.
         fixture.goals['long'].update(
             title='Prepare the field guide', primary_checklist_block_id='delivery',
             page=copy.deepcopy(fixture.goals['checklist']['page']))
         page.reload(wait_until='domcontentloaded')
         chief.locator('.identity').hover()
-        expect(panel.locator('[data-manager-goal-id="long"]')).to_contain_text('1 of 2 done')
-        expect(panel.locator('.support-summary')).to_have_count(0)
+        checklist = panel.locator('[data-block="checklist"]')
+        expect(checklist).to_have_attribute('data-presentation', 'smallest')
+        expect(checklist).to_contain_text('Delivery')
+        expect(checklist).to_contain_text('1 of 2 done')
+        expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '1')
+        expect(panel.locator('[data-manager-goal-id]')).to_have_count(0)
         if output:
             page.screenshot(path=str(output / 'chief-checklist.png'), animations='disabled')
+        checklist.get_by_role('button', name='Show checklist', exact=True).click()
+        with page.expect_request('**/api/goals/long'):
+            checklist.get_by_role('checkbox', name='Publish guide', exact=True).click()
+        expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '2')
+        assert fixture.goals['long']['page']['blocks'][0]['items'][1]['state'] == 'done'
+        page.reload(wait_until='domcontentloaded')
+        chief.locator('.identity').hover()
+        expect(checklist.get_by_role('progressbar')).to_have_attribute('aria-valuenow', '2')
+
+        # The same component also fits a Manager recap and a long expanded list.
+        fixture.goals['long'].update(holder_kind='manager', holder_id='none')
+        fixture.goals['long']['page']['blocks'][0]['items'] = [
+            {'id': f'item-{index}', 'label': f'Long item {index}', 'state': 'open'}
+            for index in range(30)
+        ]
+        fixture.goals['long']['completed'] = False
+        page.set_viewport_size({'width': 1280, 'height': 480})
+        page.reload(wait_until='domcontentloaded')
+        none.locator('.identity').hover()
+        expect(checklist).to_have_attribute('data-presentation', 'smallest')
+        expect(checklist).to_contain_text('0 of 30 done')
+        recap = panel.locator('[data-recap-text]')
+        expect(recap).to_be_visible()
+        # Enter the panel before expansion so the recap retains its visit budget.
+        checklist.hover()
+        recap_height = recap.bounding_box()['height']
+        checklist.get_by_role('button', name='Show checklist', exact=True).click()
+        expect(checklist).to_have_attribute('data-presentation', 'small')
+        page.wait_for_function("""() => {
+          const p=document.querySelector('[data-rail-hover-panel].visible');
+          if(!p)return false;
+          const r=p.getBoundingClientRect(), g=p.querySelector('[data-manager-goals]');
+          return r.top>=0 && r.bottom<=innerHeight && g.scrollHeight>g.clientHeight;
+        }""")
+        assert abs(recap.bounding_box()['height'] - recap_height) <= 1
+        assert 0 <= int(recap.evaluate("el => getComputedStyle(el).getPropertyValue('--recap-lines')")) <= 5
+        panel.locator('[data-manager-goals]').evaluate('el => el.scrollTop=el.scrollHeight')
+        expect(checklist.get_by_role('checkbox', name='Long item 29', exact=True)).to_be_in_viewport()
+        if output:
+            page.screenshot(path=str(output / 'manager-long-checklist.png'), animations='disabled')
+        # Capture every numeric chart kind through this same single-goal host.
+        # This covers display dispatch without another connected fixture or host.
+        page.set_viewport_size({'width': 1280, 'height': 900})
+        for kind in ('line', 'bar', 'gauge', 'number', 'progress', 'time-budget', 'allocation'):
+            fixture.goals['daily_quota']['primary_chart'] = {
+                'type': 'chart', 'id': f'preview-{kind}', 'kind': kind,
+                'placement': 'primary', 'title': f'{kind} goal',
+                'measure_id': 'daily_quota', 'target': 20,
+            }
+            page.reload(wait_until='domcontentloaded')
+            one.locator('.identity').hover()
+            chart = panel.locator(f'[data-chart-id="preview-{kind}"]')
+            expect(chart).to_have_attribute('data-compact', 'true')
+            expect(chart.locator('.support-summary')).to_have_attribute('aria-expanded', 'false')
+            expect(panel.locator('[data-manager-goal-id]')).to_have_count(0)
+            if output:
+                page.screenshot(path=str(output / f'single-{kind}.png'), animations='disabled')
         assert errors == [], errors
     except Exception:
         if output:
