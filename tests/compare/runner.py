@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 import shutil
@@ -18,6 +17,7 @@ from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home
 
 from planner.core.db import connect, create_schema
 
+# Unit-01's reached bare 32-hex values trace to UUID4, not content digests.
 ID = re.compile(
     r"(?<![a-zA-Z0-9])(?:(?:si|t|schedule|idea|run|credential|measure|dataset|source|source_run|"
     r"goal|block|chart)_[a-z0-9]{8}|claim_[a-z0-9]{12}|"
@@ -188,7 +188,6 @@ def run_list(
     servers = []
     differences: list[dict[str, Any]] = []
     reach: dict[str, set[str]] = {}
-    response_statuses: list[dict[str, Any]] = []
     try:
         for name, module in [("python", "tests.compare.host"), ("candidate", right_module)]:
 
@@ -216,29 +215,31 @@ def run_list(
                 calls = [request]
                 if request["method"].upper() not in ("GET", "HEAD"):
                     calls += [
-                        {"method": "GET", "path": p, "area": "probes"}
+                        {"method": "GET", "path": p, "area": "probes", "status": 200}
                         for p in spec.get("probes", [])
                     ]
                 for call in calls:
                     answers = []
                     for side, server in enumerate(servers):
                         resolved = substitute(call, captures[side])
-                        content = resolved.get("content")
-                        if isinstance(content, dict):
-                            content = base64.b64decode(content["base64"], validate=True)
                         response = client.request(
                             resolved["method"],
                             server.base + resolved["path"],
                             json=resolved.get("json"),
-                            content=content,
                             headers=resolved.get("headers"),
                         )
+                        if "status" in resolved:
+                            assert response.status_code == resolved["status"], (
+                                index,
+                                side,
+                                resolved,
+                                response.status_code,
+                                response.text,
+                            )
                         if "application/json" in response.headers.get("content-type", ""):
                             body = response.json()
-                        elif response.headers.get("content-type", "").startswith("text/"):
-                            body = response.text
                         else:
-                            body = response.content
+                            body = response.text
                         if side == 0 and resolved["path"].startswith("/api/test/poll/"):
                             loop_results[resolved["path"]] = body
                         for name, pointer in call.get("capture", {}).items():
@@ -266,15 +267,6 @@ def run_list(
                                     )
                                 ),
                             )
-                        )
-                    if call is request:
-                        response_statuses.append(
-                            {
-                                "step": index,
-                                "method": call["method"],
-                                "path": call["path"],
-                                "statuses": [answer["status"] for answer in answers],
-                            }
                         )
                     actual_path = resolved["path"].split("?")[0]
                     matches = [
@@ -305,7 +297,6 @@ def run_list(
             "list": list_path.name,
             "seconds": time.monotonic() - started,
             "requests": len(spec["requests"]),
-            "response_statuses": response_statuses,
             "http_inventory": len(declared),
             "http_routes": [method + " " + path for method, path in declared],
             "differences": differences,

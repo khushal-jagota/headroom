@@ -19,6 +19,7 @@
       "area": "projects",
       "method": "POST",
       "path": "/api/projects",
+      "status": 200,
       "json": {
         "name": "\u00c9clair 12",
         "summary": "Comparison project"
@@ -30,17 +31,20 @@
     {
       "area": "projects",
       "method": "GET",
-      "path": "/api/projects?detail=full"
+      "path": "/api/projects?detail=full",
+      "status": 200
     },
     {
       "area": "projects",
       "method": "GET",
-      "path": "/api/projects?detail=full&id=${project}"
+      "path": "/api/projects?detail=full&id=${project}",
+      "status": 200
     },
     {
       "area": "projects",
       "method": "PATCH",
       "path": "/api/projects/${project}",
+      "status": 200,
       "json": {
         "name": "\u00e9clair 2",
         "summary": "Updated summary"
@@ -50,6 +54,7 @@
       "area": "ideas",
       "method": "POST",
       "path": "/api/ideas",
+      "status": 200,
       "json": {
         "title": "Idea 10",
         "body": "Proposal text",
@@ -62,12 +67,14 @@
     {
       "area": "ideas",
       "method": "GET",
-      "path": "/api/ideas?project_id=${project}"
+      "path": "/api/ideas?project_id=${project}",
+      "status": 200
     },
     {
       "area": "worker_settings",
       "method": "GET",
       "path": "/api/worker-types/coding",
+      "status": 200,
       "capture": {
         "coding": ""
       }
@@ -76,27 +83,32 @@
       "area": "worker_settings",
       "method": "POST",
       "path": "/api/worker-types",
+      "status": 200,
       "json": "${coding}"
     },
     {
       "area": "worker_settings",
       "method": "GET",
-      "path": "/api/workers"
+      "path": "/api/workers",
+      "status": 200
     },
     {
       "area": "worker_settings",
       "method": "GET",
-      "path": "/api/workers/coding"
+      "path": "/api/workers/coding",
+      "status": 200
     },
     {
       "area": "worker_settings",
       "method": "GET",
-      "path": "/api/skills"
+      "path": "/api/skills",
+      "status": 200
     },
     {
       "area": "worker_settings",
       "method": "POST",
       "path": "/api/skills/apply",
+      "status": 200,
       "json": {
         "skills": [
           {
@@ -109,12 +121,14 @@
     {
       "area": "worker_settings",
       "method": "GET",
-      "path": "/api/skills/comparison-example"
+      "path": "/api/skills/comparison-example",
+      "status": 200
     },
     {
       "area": "worker_settings",
       "method": "PATCH",
       "path": "/api/skills/comparison-example",
+      "status": 200,
       "json": {
         "description": "Updated comparison description."
       }
@@ -123,6 +137,7 @@
       "area": "worker_settings",
       "method": "PATCH",
       "path": "/api/skills/comparison-example",
+      "status": 400,
       "json": {
         "description": "Refused change"
       },
@@ -135,6 +150,7 @@
       "area": "worker_settings",
       "method": "PATCH",
       "path": "/api/skills/comparison-example",
+      "status": 400,
       "json": {
         "description": "Refused change"
       },
@@ -147,6 +163,7 @@
       "area": "worker_settings",
       "method": "PATCH",
       "path": "/api/skills/comparison-example",
+      "status": 200,
       "json": {
         "description": "Chief approved change"
       },
@@ -157,12 +174,14 @@
     {
       "area": "worker_settings",
       "method": "GET",
-      "path": "/api/skills/stale"
+      "path": "/api/skills/stale",
+      "status": 200
     },
     {
       "area": "managers",
       "method": "POST",
       "path": "/api/managers",
+      "status": 200,
       "json": {
         "title": "Manager 12",
         "goal": "",
@@ -175,17 +194,20 @@
     {
       "area": "managers",
       "method": "GET",
-      "path": "/api/managers?detail=full"
+      "path": "/api/managers?detail=full",
+      "status": 200
     },
     {
       "area": "managers",
       "method": "GET",
-      "path": "/api/managers?detail=full&id=${manager}"
+      "path": "/api/managers?detail=full&id=${manager}",
+      "status": 200
     },
     {
       "area": "managers",
       "method": "PATCH",
       "path": "/api/managers/${manager}",
+      "status": 200,
       "json": {
         "title": "Manager 2",
         "recap": "A comparison Manager."
@@ -194,17 +216,20 @@
     {
       "area": "managers",
       "method": "GET",
-      "path": "/api/managers/${manager}/page"
+      "path": "/api/managers/${manager}/page",
+      "status": 200
     },
     {
       "area": "managers",
       "method": "GET",
-      "path": "/api/managers/launch-defaults"
+      "path": "/api/managers/launch-defaults",
+      "status": 200
     },
     {
       "area": "tickets",
       "method": "POST",
       "path": "/api/tickets",
+      "status": 200,
       "json": {
         "worker_type": "coding",
         "title": "Ticket 10",
@@ -220,12 +245,14 @@
       "area": "tickets",
       "method": "POST",
       "path": "/api/tickets/${ticket}/backlog",
+      "status": 200,
       "json": {}
     },
     {
       "area": "loops",
       "method": "POST",
       "path": "/api/test/set-now",
+      "status": 200,
       "json": {
         "now": "2026-07-04T12:00:01"
       }
@@ -234,6 +261,7 @@
       "area": "tickets",
       "method": "POST",
       "path": "/api/tickets",
+      "status": 200,
       "json": {
         "worker_type": "coding",
         "title": "Blocker 2",
@@ -247,42 +275,50 @@
       "area": "tickets",
       "method": "POST",
       "path": "/api/tickets/${blocker}/backlog",
+      "status": 200,
       "json": {}
     },
     {
       "area": "membership",
       "method": "PUT",
-      "path": "/api/collections/manager_tickets/${manager}/${ticket}"
+      "path": "/api/collections/manager_tickets/${manager}/${ticket}",
+      "status": 200
     },
     {
       "area": "membership",
       "method": "PUT",
-      "path": "/api/collections/blockers/${ticket}/${blocker}"
+      "path": "/api/collections/blockers/${ticket}/${blocker}",
+      "status": 200
     },
     {
       "area": "tickets",
       "method": "GET",
-      "path": "/api/tickets?detail=full&id=${ticket}"
+      "path": "/api/tickets?detail=full&id=${ticket}",
+      "status": 200
     },
     {
       "area": "membership",
       "method": "DELETE",
-      "path": "/api/collections/blockers/${ticket}/${blocker}"
+      "path": "/api/collections/blockers/${ticket}/${blocker}",
+      "status": 200
     },
     {
       "area": "membership",
       "method": "DELETE",
-      "path": "/api/collections/manager_tickets/${manager}/${ticket}"
+      "path": "/api/collections/manager_tickets/${manager}/${ticket}",
+      "status": 200
     },
     {
       "area": "membership",
       "method": "PUT",
-      "path": "/api/collections/manager_tickets/${manager}/${ticket}"
+      "path": "/api/collections/manager_tickets/${manager}/${ticket}",
+      "status": 200
     },
     {
       "area": "tickets",
       "method": "PATCH",
       "path": "/api/tickets/${ticket}",
+      "status": 200,
       "json": {
         "title": "Ticket 2",
         "recap": "Comparison recap"
@@ -292,6 +328,7 @@
       "area": "tickets",
       "method": "POST",
       "path": "/api/tickets/${ticket}/propose",
+      "status": 400,
       "json": {
         "body": "Refused proposal"
       }
@@ -300,6 +337,7 @@
       "area": "tickets",
       "method": "POST",
       "path": "/api/tickets/${ticket}/propose",
+      "status": 400,
       "json": {
         "body": "Refused proposal"
       },
@@ -311,6 +349,7 @@
       "area": "tickets",
       "method": "POST",
       "path": "/api/tickets/${ticket}/propose",
+      "status": 400,
       "json": {
         "body": "Refused proposal"
       },
@@ -323,18 +362,21 @@
       "area": "tickets",
       "method": "POST",
       "path": "/api/tickets/${ticket}/resume",
+      "status": 200,
       "json": {}
     },
     {
       "area": "loops",
       "method": "POST",
       "path": "/api/test/poll/readiness",
+      "status": 200,
       "json": {}
     },
     {
       "area": "tickets",
       "method": "GET",
       "path": "/api/tickets?detail=full&id=${ticket}",
+      "status": 200,
       "capture": {
         "conversation": "conversation_id"
       }
@@ -342,22 +384,26 @@
     {
       "area": "conversation",
       "method": "GET",
-      "path": "/api/conversation/conversations/${conversation}"
+      "path": "/api/conversation/conversations/${conversation}",
+      "status": 200
     },
     {
       "area": "conversation",
       "method": "GET",
-      "path": "/api/conversation/conversations/${conversation}/view"
+      "path": "/api/conversation/conversations/${conversation}/view",
+      "status": 200
     },
     {
       "area": "conversation",
       "method": "GET",
-      "path": "/api/conversation/conversations/${conversation}/events"
+      "path": "/api/conversation/conversations/${conversation}/events",
+      "status": 200
     },
     {
       "area": "tickets",
       "method": "GET",
       "path": "/api/tickets/${ticket}/worker-self",
+      "status": 200,
       "headers": {
         "X-Plan-Actor": "worker",
         "X-Plan-Ticket-ID": "${ticket}"
@@ -367,6 +413,7 @@
       "area": "tickets",
       "method": "POST",
       "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
       "json": {
         "body": "The comparison What Changes."
       },
@@ -378,12 +425,14 @@
     {
       "area": "tickets",
       "method": "GET",
-      "path": "/api/review"
+      "path": "/api/review",
+      "status": 200
     },
     {
       "area": "managers",
       "method": "PATCH",
       "path": "/api/managers/${manager}/settled",
+      "status": 200,
       "json": {
         "settled": true
       }
@@ -392,6 +441,7 @@
       "area": "managers",
       "method": "PATCH",
       "path": "/api/managers/${manager}/settled",
+      "status": 200,
       "json": {
         "settled": false
       }
@@ -400,24 +450,28 @@
       "area": "loops",
       "method": "POST",
       "path": "/api/test/poll/notifications",
+      "status": 200,
       "json": {}
     },
     {
       "area": "loops",
       "method": "POST",
       "path": "/api/test/poll/manager-wakes",
+      "status": 200,
       "json": {}
     },
     {
       "area": "loops",
       "method": "POST",
       "path": "/api/test/poll/sources",
+      "status": 200,
       "json": {}
     },
     {
       "area": "navigation",
       "method": "GET",
-      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D"
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "status": 200
     }
   ],
   "probes": [
