@@ -1,5 +1,6 @@
 import type { FastifyListenOptions } from 'fastify';
 import { areas, commitSteps } from './areas.ts';
+import { rebuildNavigation } from './navigation/index.ts';
 import { createApp } from './app.ts';
 import { loadConfig } from './core/config.ts';
 import { buildClock } from './core/clock.ts';
@@ -14,6 +15,7 @@ let database: ReturnType<typeof createDatabase> | undefined;
 try {
   const changes = new ChangeSignal();
   database = createDatabase(config.db_path, { commitSteps, onChange: () => changes.emit() });
+  database.write(rebuildNavigation, { changeSignal: 'silent' });
   if (!config.test_mode && config.dispatch_enabled) {
     dispatcher = acquireLock(config.dispatcher_lock_path);
   }

@@ -1,0 +1,338 @@
+{
+  "source_roots": [
+    "src/planner/projects/",
+    "src/planner/ideas/",
+    "src/planner/navigation/",
+    "src/planner/list_reads/",
+    "src/planner/resource_versions/"
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=full",
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "json": {
+        "name": "\u00c9clair 12",
+        "summary": "Comparison project"
+      },
+      "capture": {
+        "project": "id"
+      },
+      "area": "projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=full&id=${project}",
+      "area": "projects"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/projects/${project}",
+      "json": {
+        "name": "\u00e9clair 2",
+        "summary": "Updated summary"
+      },
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ideas",
+      "json": {
+        "title": "Idea 10",
+        "body": "Proposal text",
+        "project_id": "${project}"
+      },
+      "capture": {
+        "idea": "id"
+      },
+      "area": "ideas"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ideas?project_id=${project}",
+      "area": "ideas"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=summary&limit=1",
+      "area": "projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=summary&offset=999",
+      "area": "projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=summary&limit=0",
+      "area": "projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=summary&offset=-1",
+      "area": "projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=summary&id=${project}",
+      "area": "projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=full&limit=1",
+      "area": "projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=full&id=missing",
+      "area": "projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?",
+      "area": "projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=unknown",
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "json": {
+        "name": "\u00e9clair 2"
+      },
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "json": {
+        "name": ""
+      },
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "json": {
+        "name": "123"
+      },
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "json": {
+        "name": "123!"
+      },
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "json": {
+        "name": "Relative folder",
+        "folder_path": "relative"
+      },
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "json": {
+        "name": "Absolute folder",
+        "folder_path": "/tmp/port-project"
+      },
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "json": {
+        "name": "Bad folder",
+        "folder_path": 123
+      },
+      "area": "projects"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/projects/${project}",
+      "json": {},
+      "area": "projects"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/projects/${project}",
+      "json": {
+        "name": ""
+      },
+      "area": "projects"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/projects/${project}",
+      "json": {
+        "folder_path": null
+      },
+      "area": "projects"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/projects/${project}",
+      "json": {
+        "summary": "  Trimmed  "
+      },
+      "area": "projects"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/projects/missing",
+      "json": {
+        "summary": "no"
+      },
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ideas",
+      "json": {
+        "title": "No project"
+      },
+      "area": "ideas"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ideas",
+      "json": {
+        "title": "Mismatch",
+        "project": "Other",
+        "project_id": "${project}"
+      },
+      "area": "ideas"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ideas",
+      "json": {
+        "title": "Missing",
+        "project_id": "missing"
+      },
+      "area": "ideas"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ideas",
+      "area": "ideas"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ideas?project=Other",
+      "area": "ideas"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%5D",
+      "area": "resource-versions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%22/api/unregistered%22%2C%20%22/api/unregistered%22%5D",
+      "area": "resource-versions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/unregistered",
+      "area": "resource-body"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=broken",
+      "area": "resource-versions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%22invalid%22%5D",
+      "area": "resource-versions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-body?key=invalid",
+      "area": "resource-body"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=full",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      },
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      },
+      "json": {
+        "name": "Chief project"
+      },
+      "area": "projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      },
+      "json": {
+        "name": ""
+      },
+      "area": "projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "area": "navigation"
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%7D",
+      "area": "navigation"
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation/view/content?kind=project&identity=${project}&version=missing",
+      "area": "navigation"
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation/view/content?kind=ticket&identity=missing&version=missing",
+      "area": "navigation"
+    },
+    {
+      "kind": "stream",
+      "method": "GET",
+      "path": "/api/navigation/view/events?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "frames": 1,
+      "deadline_seconds": 5,
+      "area": "navigation"
+    },
+    {
+      "kind": "restart"
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D",
+      "area": "navigation"
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A60%7D%5D%7D"
+  ]
+}
