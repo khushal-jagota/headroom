@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {goalSidebarRows,setGoalSidebarRows} from "../lib/goals/sidebarRows.svelte";
   import ManagerHeader from "../components/ManagerHeader.svelte";
   import VpsPage from "../components/vps/VpsPage.svelte";
   import ConfigRoute from "./ConfigRoute.svelte";
@@ -21,6 +22,7 @@
       <a class="segmented-option" href={href(["vps"])} aria-current={section === "vps" ? "page" : undefined}>VPS</a>
     </nav>
   </div>
+  {#if section === "config" && roleKind === "index"}<label class="sidebar-goal-setting"><input type="checkbox" checked={goalSidebarRows.on} onchange={(event)=>setGoalSidebarRows(event.currentTarget.checked)}/>Show goals in sidebar rows</label>{/if}
   {#if section === "config"}<ConfigRoute {roleKind} {roleId} href={nestedHref(href, ["config"])} />
   {:else if section === "notifications"}<NotificationsRoute />
   <!-- VPS lives in Settings (owner); #/vps still opens the same page on its own. -->
@@ -31,6 +33,8 @@
   [data-settings] { width:100%; max-width:var(--page-measure); margin-inline:auto; padding-top:var(--page-top); }
   [data-settings] :global(.agents-page) { max-width:none; padding-inline:0; }
   .settings-vps :global(.screen[data-screen="vps"]) { padding-inline:0; padding-top:var(--page-block-gap); }
+  .sidebar-goal-setting { display:flex; align-items:center; gap:var(--space-2); margin-top:var(--space-5); font-size:var(--type-body); color:var(--tone-primary); }
+  .sidebar-goal-setting input { accent-color:var(--accent-bright); }
   .settings-head { margin-top:var(--space-5); }
   .settings-sections { display:flex; flex-wrap:wrap; gap:var(--space-1); min-width:0; }
   .settings-sections a { text-decoration:none; }

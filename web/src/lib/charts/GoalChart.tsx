@@ -6,6 +6,7 @@ import { CompletionReading } from './components/completion-reading';
 import { SupportingMetric } from './components/supporting-metric';
 import { Gauge } from './components/gauge';
 import { ProgressCard, TimeBudgetCard, AllocationCard, seriesColor } from './components/goal-indicators';
+import { SeriesLegend } from './components/series-legend';
 import { Bars } from './components/bar-chart';
 import { chartData, chartHeadline, chartTone, comparisonText, readingSuffix, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, hasDateAxis, observationDetails, seriesKey, allocationData } from './presentation';
 import './theme.css';
@@ -14,7 +15,7 @@ const colors = { good: 'var(--accent-done)', bad: 'var(--accent-error)', attenti
 // A trend line keeps its per-reading status, drawn in calmer tones than the status text.
 const lineColors = { good: 'var(--chart-line-good)', bad: 'var(--chart-line-bad)', attention: 'var(--chart-line-attention)', neutral: colors.neutral };
 const C = { green: colors.good, blue: 'var(--accent-bright)', reference: 'var(--chart-reference)' };
-export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; projection?: ChartProjection; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean; wide?: boolean };
+export type GoalChartProps = { block: ChartBlock; values: MeasureValue[]; projection?: ChartProjection; narrow: boolean; preferenceKey: string; completed?: boolean; status?: GoalResponse['status']; compact?: boolean; integrated?: boolean; wide?: boolean; chatSnapshot?: boolean };
 
 /** Plot heights, as staging: a goal card's (compact) and every full chart's. */
 // A goal card's chart is a glance, not the page's main surface: 120px (the goal page keeps 216).
@@ -42,9 +43,9 @@ function CategoryNotes({ headline, projection, range }: { headline: ReturnType<t
   return details.length ? <details className="observation-details caption"><summary>Observation details</summary><ul>{details.map(detail => <li key={detail}>{detail}</li>)}</ul></details> : null;
 }
 
-export function GoalChart({ block, values, projection, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false, integrated = false, wide = false }: GoalChartProps) {
+export function GoalChart({ block, values, projection, narrow, preferenceKey, completed = false, status = 'neutral', compact: small = false, integrated = false, wide = false, chatSnapshot = false }: GoalChartProps) {
   const [preferences, setPreferences] = useState(() => {
-    const saved = readChartPreference(preferenceKey);
+    const saved = chatSnapshot ? { range: 'all', expanded: false } : readChartPreference(preferenceKey);
     return block.ranges?.length && !block.ranges.some(r => r.id === saved.range) ? { ...saved, range: block.ranges[0].id } : saved;
   });
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -59,7 +60,7 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
   const { value, target } = headline;
   const displayBlock = useMemo(() => ({ ...block, target: block.binding || block.measure_id || block.expectation ? target : selectedTarget(block, preferences.range), domain: selectedDomain(block, preferences.range) }), [block, preferences.range, target]);
   const title = block.title ?? 'Reading';
-  const hasRange = !!block.binding || !!block.ranges?.length || !!block.measure_id && (block.kind === 'line' || block.kind === 'bar') || (block.kind === 'line' || block.kind === 'bar') && !block.stacked;
+  const hasRange = !chatSnapshot && (!!block.binding || !!block.ranges?.length || !!block.measure_id && (block.kind === 'line' || block.kind === 'bar') || (block.kind === 'line' || block.kind === 'bar') && !block.stacked);
   const indicator = block.kind === 'allocation' || block.kind === 'time-budget';
 
   function preference(patch: Partial<typeof preferences>) {
@@ -105,25 +106,25 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
       { from: Math.min(0, value), tone: block.direction === 'atmost' ? 'success' : 'danger', label: block.direction === 'atmost' ? 'Within limit' : 'Below target' },
       { from: displayBlock.target! + (block.direction === 'atmost' ? .00001 : 0), tone: block.direction === 'atmost' ? 'danger' : 'success', label: block.direction === 'atmost' ? 'Above limit' : 'On target' },
     ]} />;
-  else if (block.kind === 'bar') chart = <Bars block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} dateAxis={hasDateAxis(block, data, projection, preferences.range)} />;
+  else if (block.kind === 'bar') chart = <Bars showLegend={chatSnapshot} block={displayBlock} data={data} series={authoredSeries} compact={compact} activeKey={activeKey} onActive={setActive} projection={projection} range={preferences.range} dateAxis={hasDateAxis(block, data, projection, preferences.range)} />;
   else if (block.kind === 'number') chart = null;
   else chart = <LineChart data={data} series={series} label={title} height={block.plot_height ?? (compact ? PLOT_HEIGHT.compact : wide ? PLOT_HEIGHT.wide : PLOT_HEIGHT.regular)} domain={displayBlock.domain} integerTicks={hasCountAxis(block, projection, preferences.range)} formatValue={v => foldable ? formatTrimmedReading(block, v) : formatReading(block, v)} formatTick={v => formatAxisTick(block, v)} onActiveChange={(_, datum) => setActive(datum)} emptyLabel="No readings yet" />;
   // The period switch stands where staging put it: at the top right of a full chart, and as
   // one full-width row under the plot of a compact (card) chart.
   const rangeOnTop = !compact;
-  const plot = <>{chart}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
+  const plot = <>{chart}{chatSnapshot && block.kind === 'line' && <SeriesLegend series={series} />}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 
   if (block.kind === 'binary') return <article className={`metric-card indicator-card completion-card ${integrated ? 'integrated-card' : ''}`}>{block.title && <div className="metric-top"><h2>{block.title}</h2></div>}<CompletionReading done={completed} tone={colors[status]} context={completed ? null : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : null} /></article>;
   if (foldable) {
     const visible = preferences.expanded ? headline : summary;
     const allocation = allocationData(data, authoredSeries, block.binding ? selectedRange : undefined, preferences.expanded ? activeKey : null);
-    return <section ref={root} {...trackFocus}><SupportingMetric title={title} reading={block.kind === 'allocation' && visible.value !== undefined ? formatReading(block, visible.value) : counter(visible.value)}
+    return <section ref={root} {...trackFocus} className={integrated ? 'integrated-supporting' : undefined}><SupportingMetric title={title} reading={block.kind === 'allocation' && visible.value !== undefined ? formatReading(block, visible.value) : counter(visible.value)}
       status={<>{block.kind === 'allocation' && visible.value !== undefined ? <><span style={{ color: C.blue }}>{allocationSummary(allocation.series, allocation.reading, allocation.summary)}</span></> : <Comparison block={block} data={data} headline={visible} supporting />}</>}
       open={preferences.expanded} onToggle={() => preference({ expanded: !preferences.expanded })}>{plot}<CategoryNotes headline={visible} projection={projection} range={preferences.range} /></SupportingMetric></section>;
   }
   return <article ref={root} {...trackFocus} className={`metric-card ${integrated ? 'integrated-card ' : ''}${compact ? 'compact ' : ''}${block.emphasis === 'hero' ? 'hero-card ' : ''}${block.kind === 'gauge' ? 'gauge-card ' : ''}${indicator || block.kind === 'progress' ? `indicator-card ${block.kind}-card` : ''}`}>
     <div className="metric-top"><h2>{title}</h2>{rangeOnTop && hasRange && range}</div>
-    {block.kind !== 'gauge' && !indicator && <div className="headline">
+    {!chatSnapshot && block.kind !== 'gauge' && !indicator && <div className="headline">
       {block.kind === 'progress' && <div className="caption">Completed</div>}
       <div className={block.kind === 'progress' ? 'meter-value' : 'metric-value'} data-current={value ?? 'missing'}>{counter(value)}{block.kind === 'progress' && displayBlock.target !== undefined && displayBlock.target > 0 && <span className="meter-denominator">of {formatReading(block, displayBlock.target)}</span>}</div>
       {block.stacked ? <div className="comparison composition-summary">{authoredSeries.length} {block.total_label ?? 'categories'}</div> : <Comparison block={block} data={data} headline={headline} />}

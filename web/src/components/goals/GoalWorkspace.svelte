@@ -8,7 +8,7 @@
  import {goalQueries} from '../../lib/goals/queries';
  import {navigationApplication} from '../../lib/navigation/application.svelte';
  import {mutateJson} from '../../lib/mutate';
- import {fetchJson} from '../../lib/api';
+ import {fetchJson,PlannerFetchError} from '../../lib/api';
  import {queryClient} from '../../lib/queryClient';
  import {readBackends,type BackendSnapshot,type DeliveredMessage,type OwnerSendBody} from '../../lib/conversation/wire';
  import type {ConversationState} from '../../lib/conversation/conversationState';
@@ -20,7 +20,8 @@
  let {id,requestedConversationId=null,openedFile=null,onOpenFile}:{id:string;requestedConversationId?:string|null;openedFile?:ManagedFileTarget|null;onOpenFile?:(file:ManagedFileTarget|null)=>void}=$props();
  const navigation=navigationApplication();
  const detail=createQuery(()=>goalQueries.detail(id));
- let goal=$derived(detail.data),error=$state<unknown>(null);
+ let missing=$derived(detail.error instanceof PlannerFetchError&&detail.error.status===404);
+ let goal=$derived(missing?undefined:detail.data),error=$state<unknown>(null);
  $effect(()=>{if(goal)return refreshAtBoundary(goal.next_refresh_at,()=>void detail.refetch());});
  let holder=$derived(goal?.holder_kind==='manager'?{kind:'manager' as const,id:goal.holder_id!}:{kind:'chief' as const,id:'chief'});
  let shared=$derived(navigation?.selectors.effective?navigation.presentationFor(navigation.selectors.effective):null);
@@ -38,6 +39,7 @@
  $effect(()=>{void readBackends().then(value=>backends=value).catch(()=>undefined);});
  async function send(body:OwnerSendBody):Promise<DeliveredMessage>{const delivered=await mutateJson<DeliveredMessage>(`${conversationPath}/send`,{method:'POST',body});currentConversationId=delivered.conversation_id;return delivered;}
  async function reset(){await mutateJson(`${conversationPath}/reset`,{method:'POST'});selectedPastConversationId=null;currentConversationId=null;}
+ $effect(()=>{if(missing){conversationState='rest';if(openedFile)onOpenFile?.(null);}});
  let promoting=$state(false);
  async function makeManager(){
   if(!goal||promoting)return;
@@ -46,6 +48,9 @@
  }
  let holderLabel=$derived(holder.kind==='chief'?'Chief of Staff':navigation?.selectors.effective?navigation.presentationFor(navigation.selectors.effective).managersById.get(holder.id)?.title??'Manager':'Manager');
 </script>
+{#if missing}
+ <div class="goal-unavailable" data-goal-page={id}><p>Goal not found.</p><a href="#/goals">All goals</a></div>
+{:else}
 <ManagerFrame class="goal-workspace" bind:conversationState {openedFile} {onOpenFile}>
  <div class="goal-content" data-goal-page={id}>
  {#if goal}
@@ -56,6 +61,8 @@
  </div>
  {#snippet conversation()}<LiveConversation ownerLoading={!goal} bind:conversationState {conversationId} bind:selectedPastConversationId readOnly={selectedPastConversationId!==null} persistenceKey={`owner:${holder.kind}:${holder.id}`} label={holderLabel} composerPlaceholder={holder.kind==='manager'?'Message this manager…':'Message the Chief…'} bind:backends startValues={start.data??null} senderLabel="owner" sendMessage={send} onNewConversation={reset} historyOwner={holder.kind==='manager'?holder:undefined} uploadOwner={holder}/>{/snippet}
 </ManagerFrame>
+{/if}
 <style>
+.goal-unavailable{padding:var(--page-top) var(--space-6)}
 .goal-content{container-type:inline-size;max-width:var(--page-measure);margin:0 auto}
 </style>

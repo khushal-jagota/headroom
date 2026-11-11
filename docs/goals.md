@@ -45,13 +45,19 @@ Khushal, Chief, and the holding Manager all edit through one writer. Each edit a
 
 Khushal edits most text on the page in place. Checklist wording belongs to the holder. Checklist items can carry their own deadlines, which Khushal sets from the page. Item deadlines are colored, but they do not change the goal's own deadline or result.
 
+## Permanent deletion
+
+Khushal, Chief, and the holding Manager can permanently delete a goal. The goal page asks for confirmation. Agents confirm with `panels goal delete GOAL_ID --yes`.
+
+Deletion removes the goal, its page and files, and its own completion and outcome records. The goal leaves the hit-rate statistics, rail, and navigation. Open views stop showing the deleted goal. Other goals and their history stay intact. Shared measures, datasets, and their retained observations stay intact.
+
 ## Where it shows up
 
 - The **goal page**, with its holder's conversation beside it.
 - **Holder pages.** Chief and each Manager have a page in the same page kit, where Tickets is one of the blocks. A Manager with one goal is shown as that goal under the Manager's name, and both its Goal and Manager links open that page. A Manager with several goals shows goal cards. The Chief always shows its goals as cards, even when it holds only one. `panels goal make-manager` turns a Chief goal into a new Manager that holds it.
-- **Active goals** inside the Chief card in the rail. Hovering or holding a row opens a preview with the main display, which Khushal can check or edit from there.
+- **The rail header and preview.** A status tag summarizes the worst active goal status for that holder. Chief and each Manager keep their existing goals. The preview keeps the recap and adds a chart for one numeric goal, or rows for several goals, checklists, and yes-or-no goals. Settings can restore the goal rows in the sidebar instead.
 - **All goals**, a table of every goal, opened from Goals in the main navigation.
-- `panels goal` for agents: list, show, create, edit, read, and artifact commands. `panels goal schema` prints the accepted request shapes with examples, so agents read those before a write.
+- `panels goal` for agents: list, show, create, edit, delete, read, and artifact commands. `panels goal schema` prints the accepted request shapes with examples, so agents read those before a write.
 
 ## Decisions that shape it
 
@@ -66,4 +72,4 @@ Khushal edits most text on the page in place. Checklist wording belongs to the h
 - `src/planner/measures/` and `src/planner/datasets/`: the numbers that charts and rules read.
 - `web/src/components/goals/` and `web/src/lib/goals/`: the page, rail, previews, and overview.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-11._

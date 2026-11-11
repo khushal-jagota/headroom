@@ -1,5 +1,6 @@
 """Goal fact, page, and measure projection HTTP boundary."""
 
+from dataclasses import asdict
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body
@@ -82,3 +83,8 @@ def make_manager(goal_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk
         clock=clk,
     )
     return {"manager_id": manager_id, "goal": views.goal_json(conn, goal, views.calendar_now(clk))}
+
+
+@router.delete("/goals/{goal_id}")
+def delete_goal(goal_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> Any:
+    return asdict(actions.delete_goal(conn, goal_id, principal=ctx.principal, now=clk.now_unix()))

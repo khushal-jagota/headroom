@@ -7,6 +7,7 @@
  import {queries} from '../../lib/queryCatalogue';
  import InlineEdit from '../InlineEdit.svelte';
  import ErrorLine from '../ErrorLine.svelte';
+ import GoalDeleteAction from './GoalDeleteAction.svelte';
 
  let {goal,mark,title}:{goal:GoalResponse;mark?:import('svelte').Snippet;title?:import('svelte').Snippet}=$props();
  const projects=createQuery(()=>queries.projects());
@@ -110,6 +111,7 @@
    <select aria-label="State" value={editFields.active.value??String(goal.active)} disabled={editFields.active.saving} onfocus={()=>start(editFields.active,true)} onchange={e=>{input(editFields.active,e.currentTarget);void commit(editFields.active,'active',e.currentTarget);}} onkeydown={e=>keydown(e,editFields.active,'active')}><option value="true">Active</option><option value="false">Inactive</option></select>
   </span>
   <span class="signal">{@render mark?.()}</span>
+  <GoalDeleteAction {goal}/>
  </div>
  {#each ['project_id','deadline','active'] as field}{@render failure(field as Field)}{/each}
  <h1 oninput={()=>{if(!title)editFields.title.dirty=true;}}>{#if title}{@render title()}{:else}<InlineEdit value={goal.title} draft={editFields.title} placeholder="Goal title…" ariaLabel="Goal title" onStart={()=>start(editFields.title,true)} onCancel={()=>discard(editFields.title,'title')} onSave={raw=>saveText(editFields.title,'title',raw)}/>{/if}</h1>

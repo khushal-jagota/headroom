@@ -51,6 +51,22 @@ Every send returns a fate. The fate is about delivery, not about whether the mod
 
 What happens to a Worker step after each fate belongs to [Worker steps](worker-steps.md).
 
+## Charts in messages
+
+Chief, Manager, and Worker messages use the same Markdown surface. Ordinary Markdown tables already work. A closed `panels-chart` fence draws an inline bar or line chart with the shared goal chart plots. Chat charts omit range controls and the headline number. Charts with multiple series show a compact legend in the plot colors. The message supplies snapshot numbers, without a saved goal or a live measurement binding.
+
+For example, this message compares two repositories:
+
+````markdown
+```panels-chart
+{"kind":"bar","title":"Merged PRs per week","series":[{"name":"Panels","points":[{"label":"Week 1","value":4},{"label":"Week 2","value":7}]},{"name":"Website","points":[{"label":"Week 1","value":2},{"label":"Week 2","value":3}]}]}
+```
+````
+
+Use `"kind":"line"` for a line chart. The send-message help describes the supported options. Invalid, unsupported, or incomplete chart specs remain code, so a bad chart does not break its message. The Markdown sanitizer stays in place, and chart labels stay text. Editable Markdown retains the source fence.
+
+Values accept fractions between -9007199254740991 and 9007199254740991, inclusive. Null marks missing data. The `format.decimals` option accepts integers from 0 to 20. Point labels must be unique within each series.
+
 ## Lifecycle
 
 A conversation has at most one child process. Nothing runs after a server restart until the next send, except a Mac agent: it keeps working, and the restarted server takes over its turn, open asks included. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused.
@@ -102,4 +118,4 @@ The pane reads a stored view that is built from the notebook. When the app conne
 - `src/planner/runtime/conversation_start.py` and `runtime/workspaces.py`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
-_Last verified: 2026-11-09._
+_Last verified: 2026-11-11._

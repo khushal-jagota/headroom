@@ -848,3 +848,88 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     page.reload()
     page.wait_for_selector("[data-goal-page]", timeout=WAIT_MS)
     assert api.get(server, path)["page"]["blocks"][0]["items"][0]["state"] == "done"
+
+
+def test_goal_delete_confirmation_persistence_and_open_artifact_cleanup(
+    server: ServerHandle,
+    api: ApiHelper,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
+    """Prove confirmed deletion reaches storage and invalidates another mounted page.
+
+    The existing server and browser host cover the native confirmation, API write,
+    mounted resource refresh, and artifact unmount together. Mocked browser responses
+    cannot prove that deletion survives reload or reaches another open view.
+    """
+    project = api.direct_post(server, "/api/projects", {"name": "Goal deletion proof"})
+    holder = api.direct_post(
+        server, "/api/managers",
+        {"title": "Temporary goal holder", "project_id": project["id"]},
+    )
+    goal = api.direct_post(
+        server,
+        "/api/goals",
+        {
+            "project_id": project["id"],
+            "title": "Delete this temporary goal",
+            "holder_kind": "manager",
+            "holder_id": holder["id"],
+            "kind": "binary",
+            "primary_checklist_block_id": None,
+        },
+    )
+    path = f"/api/goals/{goal['id']}"
+    artifact_path = f"/files/goals/{goal['id']}/artifacts/note.md"
+    api.direct_put(server, artifact_path, {"content": "Temporary goal artifact"})
+    context = context_factory()
+    route = f"#/workspace/goal/{goal['id']}"
+    page = open_page(context, server, f"#/workspace/manager/{holder['id']}", ".goal-heading")
+    other = open_page(
+        context, server, route + f"?source=goal&goal={goal['id']}&path=artifacts%2Fnote.md",
+        ".goal-heading",
+    )
+    expect(other.get_by_text("Temporary goal artifact", exact=True)).to_be_visible(timeout=WAIT_MS)
+    # A separate network partition avoids HTTP/1 connection exhaustion from
+    # three tabs' long-lived change and navigation streams on the same origin.
+    standalone = context_factory().new_page()
+    standalone.goto(
+        server.base + f"/#/preview?source=goal&goal={goal['id']}&path=artifacts%2Fnote.md"
+    )
+    expect(standalone.get_by_text("Temporary goal artifact", exact=True)).to_be_visible(
+        timeout=WAIT_MS
+    )
+    page.once("dialog", lambda dialog: dialog.dismiss())
+    page.get_by_role("button", name="Delete goal", exact=True).click(timeout=WAIT_MS)
+    assert api.get(server, path)["id"] == goal["id"]
+    expect(page.get_by_role("button", name="Delete goal", exact=True)).to_be_enabled()
+    if proof := os.environ.get("PANELS_UI_PROOF_DIR"):
+        folder = Path(proof)
+        folder.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(folder / "goal-delete-before.png"), full_page=True)
+    page.once("dialog", lambda dialog: dialog.accept())
+    with page.expect_response(
+        lambda response: response.url.endswith(path) and response.request.method == "DELETE",
+        timeout=WAIT_MS,
+    ) as deleted:
+        page.get_by_role("button", name="Delete goal", exact=True).click(timeout=WAIT_MS)
+    assert deleted.value.ok, deleted.value.text()
+    expect(page).to_have_url(re.compile(r"#/goals$"), timeout=WAIT_MS)
+    expect(other.get_by_text("Goal not found.", exact=True)).to_be_visible(timeout=WAIT_MS)
+    expect(other.get_by_text("Temporary goal artifact", exact=True)).to_have_count(0)
+    expect(standalone.get_by_text("Goal not found.", exact=True)).to_be_visible(timeout=WAIT_MS)
+    expect(standalone.locator("[data-ticket-artifact]")).to_have_count(0)
+    expect(page.locator(f'[data-goal-id="{goal["id"]}"]')).to_have_count(0)
+    page.reload()
+    expect(page.get_by_role("region", name="All goals", exact=True)).to_be_visible(timeout=WAIT_MS)
+    assert httpx.get(server.base + path, timeout=10).status_code == 404
+    assert httpx.get(server.base + artifact_path, timeout=10).status_code == 404
+    if proof := os.environ.get("PANELS_UI_PROOF_DIR"):
+        page.screenshot(path=str(Path(proof) / "goal-delete-after.png"), full_page=True)
+        other.screenshot(path=str(Path(proof) / "goal-delete-open-view.png"), full_page=True)
+        standalone.screenshot(
+            path=str(Path(proof) / "goal-delete-standalone-artifact.png"), full_page=True
+        )
+    other.reload()
+    expect(other.get_by_text("Goal not found.", exact=True)).to_be_visible(timeout=WAIT_MS)
+    expect(other.get_by_role("button", name="Delete goal", exact=True)).to_have_count(0)

@@ -46,6 +46,58 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     finish:(index:number,admitted:boolean)=>intentLoads[index](admitted),
     swap:()=>{intentReader=makeIntentReader();},
     swapSynchronously:()=>flushSync(()=>{intentReader=makeIntentReader();})};
+  import PageChart from "../src/components/pageKit/PageChart.svelte";
+  import {Chart as BrowserChart} from "chart.js";
+  import {parseMarkdown} from "../src/lib/markdownPipeline";
+  const chartsOnly=new URLSearchParams(location.search).has("charts");
+  // The product currently ships dark tokens only. This fixture checks shared
+  // chart compatibility with a light host without adding a product theme.
+  if(chartsOnly && new URLSearchParams(location.search).get("chartTheme")==="light") {
+    const lightTokens={"surface-1":"#f7f7f7","surface-2":"#ffffff","surface-recessed":"#ededed",
+      "surface-input":"#e3e3e3","surface-input-hover":"#d8d8d8","surface-selected":"#d3d3d3","surface-raised":"#ffffff",
+      "tone-strong":"#151515","tone-primary":"#252525","tone-secondary":"#555555","tone-tertiary":"#666666",
+      "chart-surface":"#ffffff","chart-surface-raised":"#f1f1f1","chart-surface-muted":"#ededed",
+      "chart-grid":"#0000001a","chart-border-strong":"#00000024","chart-reference":"#777777"};
+    for(const [token,value] of Object.entries(lightTokens))document.documentElement.style.setProperty("--"+token,value);
+  }
+  const chartTicks=String.fromCharCode(96).repeat(3);
+  const chartFence=(value:unknown,close=true)=>[chartTicks+"panels-chart",JSON.stringify(value),...(close?[chartTicks]:[])].join("\n");
+  const chartSeries=[
+    {name:"Panels",points:[{label:"Week 1",value:3},{label:"Week 2",value:7},{label:"Week 3",value:5}]},
+    {name:"Tools",points:[{label:"Week 1",value:2},{label:"Week 2",value:4},{label:"Week 3",value:6}]}
+  ];
+  const chartSpec=(kind="bar",title="Merged PRs per week")=>({kind,title,series:chartSeries});
+  const chartExamples=[
+    chartFence({...chartSpec(),series:chartSeries.map((series,index)=>index===0?{...series,points:series.points.map((point,i)=>i===2?{...point,value:null}:point)}:series)}),
+    chartFence(chartSpec("line","Weekly trend")),
+    chartFence({...chartSpec("bar","Stacked PRs"),stacked:true}),
+    chartFence({...chartSpec("bar","Single series"),series:[chartSeries[0]]}),
+    [chartTicks+"panels-chart",'{"kind":"bar","series":false}',chartTicks].join("\n"),
+    "After the malformed chart."
+  ].join("\n\n");
+  let chartSource=$state(chartExamples);
+  let chartRows=$derived([{key:"chart-message",kind:"agent_message" as const,sequence:1,createdAt:1,toOwner:true,
+    content:[{piece:"text" as const,text:chartSource}]}]);
+  let chartEditor=$state<HTMLDivElement>();
+  let chartEditable:import("../src/lib/managedMarkdown").EditableManagedMarkdownSurface|null=null;
+  import {createManagedMarkdownSurface} from "../src/lib/managedMarkdown";
+  (window as any).__chatChartProbe={
+    copiedCharts:(source:string)=>{
+      const count=(nodes:import("../src/lib/markdown/contracts").MarkdownTreeNode[]):number=>nodes.reduce((total,node)=>total+(node.chart?1:0)+count(node.children??[]),0);
+      return count(parseMarkdown(source).children);
+    },
+    barColors:(canvas:HTMLCanvasElement)=>BrowserChart.getChart(canvas)?.data.datasets.map(item=>item.backgroundColor),
+    bars:()=>[...document.querySelectorAll<HTMLCanvasElement>('[data-chat-chart-fixture] canvas')].map(canvas=>{
+      const chart=BrowserChart.getChart(canvas);return {datasets:chart?.data.datasets.map(item=>({label:item.label,data:item.data})),stacked:chart?.options.scales?.x?.stacked};
+    }),
+    examples:()=>{chartSource=chartExamples;},
+    stream:(complete:boolean)=>{chartSource=chartFence(chartSpec("line","Streamed chart"),complete);},
+    unsafe:()=>{chartSource=chartFence(chartSpec("line",'<img src=x onerror="window.chartInjected=true">'));},
+    long:()=>{chartSource=chartFence(chartSpec("line","Long message chart"))+"\n\n"+Array.from({length:700},(_,index)=>"Paragraph "+index+" "+"Retained text. ".repeat(12)).join("\n\n");},
+    remove:()=>{chartSource="Chart removed.";},
+    editable:()=>{chartEditable??=createManagedMarkdownSurface(chartEditor!,{mode:"editable"});chartEditable.update(chartFence(chartSpec()));},
+    readEditable:()=>chartEditable?.read()
+  };
   const readerOnly=new URLSearchParams(window.location.search).has("reader");
   const readerPeek=new URLSearchParams(window.location.search).has("reader-peek");
   let readerState=$state<"opened"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":readerPeek?"opened":"opened");
@@ -755,7 +807,15 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
 </script>
 
-{#if machinesOnly}
+{#if chartsOnly}
+  <div data-chat-chart-fixture style="height:1100px;max-height:100dvh;width:min(760px, 100%);margin:auto;display:flex;flex-direction:column">
+    <ConversationPane conversationId="chat-chart-proof" conversationExists conversationState="opened" rows={chartRows} lens="full" running={false} />
+  </div>
+  <div data-goal-chart-comparison style="width:min(760px,100%);margin:auto">
+    <PageChart block={{type:'chart',id:'goal-comparison',kind:'bar',title:'Goal comparison',series:chartSeries}} values={[]} goalId="goal-comparison" narrow={false} />
+  </div>
+  <div bind:this={chartEditor} data-chat-chart-editor contenteditable="true"></div>
+{:else if machinesOnly}
   <QueryClientProvider client={queryClient}>
     <div style="height:750px;display:flex;flex-direction:column;max-width:700px;margin:auto">
       <WorkerRow title="Mac Worker" locale="macos" signal={{working:true,message_for_owner:false}} conversationId="machine-conversation" />
@@ -778,12 +838,14 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       reader={intentReader} rows={[]} lens="focus" running={false} />
   </div>
 {:else if readerOnly && readerPeek}
+  <QueryClientProvider client={queryClient}>
   <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <ManagerFrame bind:conversationState={readerState}>
       <p>Conversation document</p>
       {#snippet conversation()}<LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>{/snippet}
     </ManagerFrame>
   </div>
+  </QueryClientProvider>
 {:else if readerOnly}
   <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
@@ -897,12 +959,14 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     </section>
     </div>
   {:else}
+    <QueryClientProvider client={queryClient}>
     <ManagerFrame bind:conversationState
       openedFile={cardArtifact ? {kind:"ticket-file",ticketId:"t_cardmotion",path:"artifact.html"} : null}
       onOpenFile={() => artifactClicks += 1}>
       <button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button>
       {#snippet conversation()}{@render conversationPane()}{/snippet}
     </ManagerFrame>
+    </QueryClientProvider>
   {/if}
 </div>
 
