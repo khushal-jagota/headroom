@@ -1,5 +1,5 @@
 import type { FastifyListenOptions } from 'fastify';
-import { areas, commitSteps } from '../areas.ts';
+import { areas, commitSteps, initializeAreas, closeAreas } from '../areas.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from './config.ts';
 import { buildClock } from './clock.ts';
@@ -29,6 +29,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     const changes = new ChangeSignal();
     database = createDatabase(config.db_path, { commitSteps, onChange: () => changes.emit() });
     signalAuthority = (options.createSignalAuthority ?? createIdlePublicationAuthority)(database);
+    initializeAreas(database, signalAuthority);
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
@@ -37,6 +38,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     const close = () => {
       if (closing) return closing;
       signalAuthority?.invalidate('shutdown');
+      closeAreas();
       return closing = app.close().finally(() => {
         database?.close();
         dispatcher?.close();
@@ -59,6 +61,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     }
   } catch (error) {
     signalAuthority?.invalidate('shutdown');
+    closeAreas();
     database?.close();
     dispatcher?.close();
     ownership.close();
