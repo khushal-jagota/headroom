@@ -6,7 +6,7 @@ An open Headroom screen moves when the record moves, without a manual refresh. L
 
 - **The change signal.** Every ordinary database commit announces that something was written. The announcement names no record and carries no data.
 - **The change stream.** The browser hears the signal over one stream. It asks which of the resources mounted on screen have a new revision, and refetches only those. A body and its revision enter the browser's cache together, from one read.
-- **The navigation index.** The rail, Review membership and order, attention marks, and masthead signals are a derived index with its own feed. The browser requests the mounted scope and follows its snapshots and changes. The phone requests its own mounted scope and follows its stream the same way while it is in the foreground; each detail page reloads only when its own records in that view change. The signal speeds that feed up, and polling backs it.
+- **The navigation index.** The rail, Review membership and order, attention marks, and masthead signals are a derived index with its own feed. The browser requests the mounted scope and follows its snapshots and changes. The sidebar briefly keeps an existing Ticket in its previous Agent or approval group during an Empty handoff. Its facts stay current, and a persistent Empty wait appears after the bounded grace period. The phone requests its own mounted scope and follows its stream the same way while it is in the foreground; each detail page reloads only when its own records in that view change. The signal speeds that feed up, and polling backs it.
 - **The conversation tail.** Each open conversation pane has its own stream of the running turn's text and new rows. It does not wait for the shared signal.
 
 ```

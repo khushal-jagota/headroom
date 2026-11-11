@@ -23,6 +23,7 @@ export const railMoveDuration = (distance: number) => Math.round(Math.max(RAIL_M
 /** Rendered structure travels together, including independently discovered messages. */
 export type WorkspaceRailPresentation = {
   rail: WorkspaceRail;
+  handoffRetained?: ReadonlySet<string>;
   settledOpen: boolean;
   goalRails?: GoalRailStructure[];
   /** Keep the closing body mounted while the header acknowledges the click. */
@@ -212,7 +213,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     if (busy || holding() || disposed || !pending) return;
     busy = true;
     const previous = read();
-    const next = withFold({...pending, rail: stabilizeWorkspaceRail(pending.rail, previous.rail)}); pending = null;
+    let next = withFold({...pending, rail: stabilizeWorkspaceRail(pending.rail, previous.rail)}); pending = null;
     const directFold = () => manualOpen !== null && activeParents(previous) === activeParents(next);
     const railRoot = root();
     markBusy();
@@ -246,6 +247,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
       markBusy();
       return;
     }
+    // New input can supersede the destination while exits await their animations.
+    const newest = pending as WorkspaceRailPresentation | null;
+    if (newest) { next = withFold({...newest, rail:stabilizeWorkspaceRail(newest.rail, read().rail)}); pending = null; }
     // Exit fades preserve layout, but the user can scroll before they finish.
     // Measure that newer viewport before publication so FLIP does not undo it.
     const first = measure();
@@ -328,7 +332,13 @@ export function createRailMotionController(root: () => HTMLElement | null,
   }
   function signalsOnly(next: WorkspaceRailPresentation): WorkspaceRailPresentation {
     const current = read();
-    return {...current, rail:refreshWorkspaceRailSignals(current.rail, next.rail)};
+    const rail = refreshWorkspaceRailSignals(current.rail, next.rail);
+    const fresh = new Map([next.rail.chiefGroups, ...next.rail.items.map(item=>item.groups), ...next.rail.settledItems.map(item=>item.groups)]
+      .flatMap(groups=>groups.flatMap(group=>group.cards)).map(ticket=>[ticket.id,ticket]));
+    const groups = (value: typeof rail.chiefGroups) => value.map(group=>({...group,cards:group.cards.map(ticket=>
+      next.handoffRetained?.has(ticket.id) ? fresh.get(ticket.id) ?? ticket : ticket)}));
+    return {...current, handoffRetained:next.handoffRetained, rail:{...rail,chiefGroups:groups(rail.chiefGroups),
+      items:rail.items.map(item=>({...item,groups:groups(item.groups)})),settledItems:rail.settledItems.map(item=>({...item,groups:groups(item.groups)}))}};
   }
 
   async function setSettledOpen(open: boolean): Promise<void> {
@@ -379,9 +389,15 @@ export function createRailMotionController(root: () => HTMLElement | null,
   return {
     // A manual fold never waits for unrelated rail motion or a row hover.
     setSettledOpen(open: boolean) { void setSettledOpen(open); },
-    update(next: WorkspaceRailPresentation) {
+    update(next: WorkspaceRailPresentation, releasedHandoff = false) {
       if (disposed) return;
       pending = next;
+      if (next.handoffRetained?.size) present(signalsOnly(next));
+      if (releasedHandoff) {
+        // Expiry and cancellation release the grace even while hover or motion holds structure.
+        for (const animation of animations) animation.cancel();
+        present({...next,rail:stabilizeWorkspaceRail(next.rail,read().rail)});
+      }
       if (manualOpen !== null) {
         directSettled = activeParents(read()) === activeParents(next) ? next : null;
         if (closingBody) closingBody = signalsOnly(next);
