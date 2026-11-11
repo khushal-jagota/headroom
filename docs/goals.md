@@ -55,7 +55,7 @@ Deletion removes the goal, its page and files, and its own completion and outcom
 
 - The **goal page**, with its holder's conversation beside it.
 - **Holder pages.** Chief and each Manager have a page in the same page kit, where Tickets is one of the blocks. A Manager with one goal is shown as that goal under the Manager's name, and both its Goal and Manager links open that page. A Manager with several goals shows goal cards. The Chief always shows its goals as cards, even when it holds only one. `panels goal make-manager` turns a Chief goal into a new Manager that holds it.
-- **The rail header and preview.** A status tag summarizes the worst goal status. The preview keeps the recap and adds a chart for one numeric goal, or rows for several goals, checklists, and yes-or-no goals. Settings can restore the goal rows in the sidebar instead.
+- **The rail header and preview.** A status tag summarizes the worst active goal status for that holder. Chief and each Manager keep their existing goals. The preview keeps the recap and adds a chart for one numeric goal, or rows for several goals, checklists, and yes-or-no goals. Settings can restore the goal rows in the sidebar instead.
 - **All goals**, a table of every goal, opened from Goals in the main navigation.
 - `panels goal` for agents: list, show, create, edit, delete, read, and artifact commands. `panels goal schema` prints the accepted request shapes with examples, so agents read those before a write.
 
