@@ -514,3 +514,9 @@ class GoalReadingsResponse(TypedDict):
     values: list[MeasureValue]
     sources: list[SourceHealthSummary]
     charts: dict[str, ChartProjection]
+
+
+@dataclass(frozen=True)
+class GoalDeletion:
+    goal_id: str
+    title: str

@@ -9,10 +9,10 @@ from planner.conversation.contracts import ConversationSystem
 from planner.core.contracts import Principal
 from planner.core.task_settlement import run_on_worker_thread
 from planner.files.lifecycle import (
-    QuarantinedManagerFiles,
-    purge_quarantined_manager_files,
+    QuarantinedFiles,
+    purge_quarantined_files,
     quarantine_manager_files,
-    restore_quarantined_manager_files,
+    restore_quarantined_files,
 )
 from planner.managers import data as managers_data
 from planner.managers.contracts import Manager, ManagerDeletion
@@ -56,7 +56,7 @@ async def delete_manager(
             )
             if outcome is not None:
                 deleted, quarantined = outcome
-                await run_on_worker_thread(purge_quarantined_manager_files, quarantined)
+                await run_on_worker_thread(purge_quarantined_files, quarantined)
                 return deleted
 
 
@@ -78,7 +78,7 @@ def _unlink_killed_conversation(
 
 def _delete_manager_with_no_conversation(
     conn: sqlite3.Connection, item_id: str
-) -> tuple[ManagerDeletion, QuarantinedManagerFiles | None] | None:
+) -> tuple[ManagerDeletion, QuarantinedFiles | None] | None:
     """Delete the Manager in one transaction, or return None if a conversation linked late."""
     quarantined = None
     conn.execute("BEGIN IMMEDIATE")
@@ -93,6 +93,6 @@ def _delete_manager_with_no_conversation(
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
-        restore_quarantined_manager_files(quarantined)
+        restore_quarantined_files(quarantined)
         raise
     return deleted, quarantined

@@ -9,12 +9,19 @@ from dataclasses import asdict, replace
 from datetime import date
 from typing import Any, cast, get_type_hints
 
-from planner.core.contracts import ErrorCode, PlannerError, Principal
+from planner.core import authority
+from planner.core.contracts import CHIEF_PRINCIPAL, ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.datasets.data import read_dataset
 from planner.goals import data
 from planner.goals.calendar import server_date
-from planner.goals.contracts import GOAL_REQUIRED_TEXT, ChartBlock, Goal, GoalWriteFields
+from planner.goals.contracts import (
+    GOAL_REQUIRED_TEXT,
+    ChartBlock,
+    Goal,
+    GoalDeletion,
+    GoalWriteFields,
+)
 from planner.goals.logic.categories import validate_category_references
 from planner.goals.logic.completion import completion_date_after_edit, prepare_completion
 from planner.goals.logic.documents import (
@@ -258,3 +265,56 @@ def make_manager(
             now=clock.now_unix(),
         )
     return manager.id, accepted
+
+
+def delete_goal(
+    conn: sqlite3.Connection, goal_id: str, *, principal: Principal, now: int
+) -> GoalDeletion:
+    """Delete one goal and its private files, preserving shared measurement evidence."""
+    from planner.files.lifecycle import (
+        purge_quarantined_files,
+        quarantine_goal_files,
+        restore_quarantined_files,
+    )
+    from planner.measure_sources.actions import set_responsible
+
+    if conn.in_transaction:
+        raise PlannerError(ErrorCode.validation, "goal deletion needs its own transaction")
+    quarantined = None
+    try:
+        with transaction(conn):
+            current = data.read_goal(conn, goal_id)
+            authority.require_above(conn, principal, authority.goal(goal_id))
+            for source in conn.execute(
+                "SELECT id,responsibility_revision FROM measure_sources "
+                "WHERE responsible_goal_id=?",
+                (goal_id,),
+            ).fetchall():
+                set_responsible(
+                    conn,
+                    source["id"],
+                    CHIEF_PRINCIPAL,
+                    expected_responsibility_revision=source["responsibility_revision"],
+                    principal=principal,
+                    now=now,
+                )
+            quarantined = quarantine_goal_files(conn, goal_id)
+            for table in ("manager_wake_batches", "manager_wakes", "manager_wake_suppressions"):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE target_kind='goal' AND target_id=?", (goal_id,)
+                )
+            # APNs deliveries cascade from their attention edges.
+            for table in (
+                "notification_deliveries",
+                "notification_attention_edges",
+                "notification_attention_state",
+            ):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE subject_kind='goal' AND subject_id=?", (goal_id,)
+                )
+            conn.execute("DELETE FROM goals WHERE id=?", (goal_id,))
+    except BaseException:
+        restore_quarantined_files(quarantined)
+        raise
+    purge_quarantined_files(quarantined)
+    return GoalDeletion(goal_id=current.id, title=current.title)
