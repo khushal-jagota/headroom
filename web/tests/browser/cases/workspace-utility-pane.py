@@ -2386,7 +2386,7 @@ def verify_focus_slide_fill(page, url, fixture):
         page.evaluate("""() => {
           window.__focusFill = {frames: [], done: false}; let count = 0;
           const take = () => {
-            const fill = document.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
+            const fill = document.querySelector('.rail-wash--item:not(.rail-wash--leaving):not([hidden])');
             const group = document.querySelector('[data-bucket-key="agent"]');
             if (fill && !fill.hidden && group) {
               const box = fill.getBoundingClientRect();
@@ -2443,7 +2443,7 @@ def verify_selection_washes(page, url, fixture, evidence):
         const target=document.querySelector(selector);
         if(!target)return {missing:true};
         const rect=n=>{if(!n)return null;const r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};};
-        const host=target.closest('.active-work-scroll,.settled-body,.rail-utilities');
+        const host=target.closest('.manager-card,.active-work-scroll,.settled-body,.rail-utilities');
         const group=target.closest('.manager-card');
         const item=host.querySelector('.rail-wash--item:not(.rail-wash--leaving)');
         // Only the open item is lit: no layer marks the Manager the item sits in (owner).
@@ -2548,22 +2548,41 @@ def verify_selection_washes(page, url, fixture, evidence):
     page.mouse.move(1300, 950)
     row.hover()
     expect(page.locator('[data-manager="wash_a"] .settle')).to_have_css('opacity', '0')
-    hover = page.locator('.active-work-scroll > .rail-wash--hover:not(.rail-wash--leaving)')
+    hover = page.locator('[data-manager="wash_a"] > .rail-wash--hover:not(.rail-wash--leaving)')
     expect(hover).not_to_have_attribute('hidden', '')
+    wait_settled(page, ".rail-wash")
+    # A correct wash box can still hide behind an opaque card bubble. Compare a
+    # flat painted pixel with the same token composited above the bubble.
+    def painted_fill(layer):
+        box=layer.bounding_box()
+        clip={"x":int(box["x"]+box["width"]-10),"y":int(box["y"]+box["height"]/2),"width":1,"height":1}
+        actual=page.screenshot(clip=clip)
+        layer.evaluate("""(node,clip)=>{
+          const ref=document.createElement('div');ref.id='wash-paint-reference';
+          const fill=getComputedStyle(node).backgroundColor;
+          Object.assign(ref.style,{position:'fixed',left:clip.x+'px',top:clip.y+'px',width:'1px',height:'1px',
+            zIndex:'99999',background:`linear-gradient(${fill},${fill}),var(--rail-bubble-fill)`});
+          document.body.append(ref);
+        }""",clip)
+        expected=page.screenshot(clip=clip)
+        page.locator('#wash-paint-reference').evaluate("node=>node.remove()")
+        assert actual==expected, "The card bubble obscures the rail fill"
+    painted_fill(hover)
     row.click()
     # The fills are see-through: a click on the hovered row lights it at once and never shows the
     # hover fill (or a fading copy of it) under the selected one, which would flash brighter.
     page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
-    lit = page.evaluate("""() => { const host=document.querySelector('.active-work-scroll'); const item=host.querySelector(':scope > .rail-wash--item:not(.rail-wash--leaving)');
+    lit = page.evaluate("""() => { const host=document.querySelector('[data-manager=wash_a]'); const item=host.querySelector(':scope > .rail-wash--item:not(.rail-wash--leaving)');
       return {hover:[...host.querySelectorAll(':scope > .rail-wash--hover')].filter(n=>!n.hidden).length, itemOpacity:+getComputedStyle(item).opacity, itemHidden:item.hidden}; }""")
     assert lit == {"hover": 0, "itemOpacity": 1, "itemHidden": False}, lit
+    painted_fill(page.locator('[data-manager=wash_a] > .rail-wash--item:not(.rail-wash--leaving)'))
     page.mouse.move(1300, 950)
     selection_settled(selector)
     expect(hover).to_have_attribute('hidden', '')
     page.keyboard.press("Tab")
     row.focus()
     page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
-    ring = page.locator('.active-work-scroll > .rail-wash--focus')
+    ring = page.locator('[data-manager="wash_a"] > .rail-wash--focus')
     expect(ring).not_to_have_attribute('hidden', '')
     expect(row).to_have_css('outline-style', 'none')
     ring_box, item_box = ring.bounding_box(), sample(selector)['item']
