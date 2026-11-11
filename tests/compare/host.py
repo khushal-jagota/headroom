@@ -11,7 +11,8 @@ import concurrent.futures
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, fields, is_dataclass
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -19,11 +20,20 @@ import uvicorn
 from fastapi import FastAPI
 from tests.e2e.conversation_signals_server import NoInstalledBackends, ScriptedChild
 from tests.e2e.ticket_model_controls import TicketModelSnapshots
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
+from planner.conversation import contracts
 from planner.conversation.backends.contracts import BackendEventSink
 from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.message_content import (
+    MessageFile,
+    MessageImage,
+    MessageText,
+    message_content_from_stored,
+)
 from planner.core.clock import build_clock
 from planner.core.config import Config, load_config
+from planner.core.contracts import Principal
 from planner.core.db import connect
 from planner.core.server import create_app
 from planner.manager_wakes.runtime import ManagerWakeLoop
@@ -102,6 +112,89 @@ async def _drain(loop: AwaitedReadinessLoop | AwaitedManagerWakeLoop) -> None:
     loop.completed.clear()
 
 
+def _in_memory_snapshot(value: Any) -> Any:
+    if isinstance(value, (MessageText, MessageImage, MessageFile)):
+        kind = {MessageText: "text", MessageImage: "image", MessageFile: "file"}[type(value)]
+        return {"piece": kind, **asdict(value)}
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: _in_memory_snapshot(getattr(value, field.name)) for field in fields(value)
+        }
+    if isinstance(value, (tuple, list)):
+        return [_in_memory_snapshot(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _in_memory_snapshot(item) for key, item in value.items()}
+    return value
+
+
+def _in_memory_routes(app: FastAPI, system: InMemoryConversationSystem) -> None:
+    """Expose only the reference fake controls and observations to request lists."""
+
+    @app.post("/api/test/in-memory-conversations/start")
+    async def start(body: dict[str, Any]) -> dict[str, bool]:
+        values = dict(body)
+        if values.get("workspace_folder") is not None:
+            values["workspace_folder"] = Path(values["workspace_folder"])
+        if values.get("role_materials") is not None:
+            values["role_materials"] = contracts.ConversationRoleMaterials(
+                **values["role_materials"]
+            )
+        if values.get("backend_key") is not None:
+            values["backend_key"] = contracts.ConversationBackendKey(values["backend_key"])
+        if values.get("access") is not None:
+            values["access"] = contracts.ConversationAccess(values["access"])
+        if "workspace_path_policy" in values:
+            values["workspace_path_policy"] = contracts.WorkspacePathPolicy(
+                values["workspace_path_policy"]
+            )
+        await system.start_conversation(contracts.ConversationStartRequest(**values))
+        return {"started": True}
+
+    @app.post("/api/test/in-memory-conversations/{conversation_id}/send")
+    async def send(conversation_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        options = dict(body)
+        content = message_content_from_stored(options)
+        options.pop("text", None)
+        options.pop("content", None)
+        if "mode" in options:
+            options["mode"] = contracts.PromptDeliveryMode(options["mode"])
+        if "recovery_references" in options:
+            options["recovery_references"] = tuple(
+                contracts.DeploymentRecoveryReference(**value)
+                for value in options["recovery_references"]
+            )
+        for name in ("sender", "recipient"):
+            if options.get(name) is not None:
+                options[name] = Principal(**options[name])
+        fate = await system.send(conversation_id, content, **options)
+        names = {
+            contracts.PromptDeliveryStarted: "started",
+            contracts.PromptDeliveryQueued: "queued",
+            contracts.PromptDeliveryInjected: "injected",
+            contracts.PromptDeliveryRefused: "refused",
+            contracts.PromptDeliveryUncertain: "uncertain",
+            contracts.PromptDeliverySuppressed: "suppressed",
+        }
+        return {"fate": names[type(fate)], **asdict(fate)}
+
+    @app.get("/api/test/in-memory-conversations/{conversation_id}/state")
+    async def state(conversation_id: str) -> dict[str, Any]:
+        return {
+            "running": await system.is_running(conversation_id),
+            "workspace_activity": system.workspace_activity(),
+            "held_prompts": _in_memory_snapshot(await system.held_prompts(conversation_id)),
+            "observations": _in_memory_snapshot(system.observations(conversation_id)),
+            "backend_prompt_writes": _in_memory_snapshot(
+                system.backend_prompt_writes(conversation_id)
+            ),
+        }
+
+    @app.post("/api/test/in-memory-conversations/{conversation_id}/complete")
+    async def complete(conversation_id: str) -> dict[str, bool]:
+        system.complete_running_turn(conversation_id)
+        return {"complete": True}
+
+
 def build_app(config: Config) -> FastAPI:
     assert config.test_mode, "The comparison host requires test mode"
     clock = build_clock(config)
@@ -115,12 +208,20 @@ def build_app(config: Config) -> FastAPI:
     patch(
         "planner.conversation.snapshot.SubprocessBackendProbeEnvironment", NoInstalledBackends,
     ).start()
+    in_memory = (
+        InMemoryConversationSystem()
+        if os.environ.get("PLAN_COMPARE_CONVERSATION_SYSTEM") == "in_memory"
+        else None
+    )
     app = create_app(
         config,
         clock,
         lambda: connect(config.db_path),
         backend_child_factories_for_test={key: make_child for key in ConversationBackendKey},
+        conversation_system_for_test=in_memory,
     )
+    if in_memory is not None:
+        _in_memory_routes(app, in_memory)
     original_lifespan = app.router.lifespan_context
 
     @asynccontextmanager

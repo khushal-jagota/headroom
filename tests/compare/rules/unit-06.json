@@ -1,0 +1,34 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time."
+  },
+  "derived_tables": {
+    "navigation_meta": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_records": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_dependencies": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_root_records": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_dirty": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_journal": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_delivery_retention": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_signal_installation": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_signal_publications": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "signal_publication_meta": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "signal_publication_values": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "signal_publication_dirty": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "signal_publication_associations": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_view_meta": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_view_index": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_view_memberships": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_view_counts": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_view_current_conversations": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_view_unread_conversations": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_view_globals": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "navigation_view_changes": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "conversation_view_state": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "conversation_view_rows": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "conversation_view_turns": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "conversation_view_groups": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "conversation_view_lookups": "Unit 6 compares the in-memory contract through fake state, not navigation, view, or publication projections.",
+    "conversation_runtime_epoch": "The Python app starts its dormant real core and creates its process ownership epoch. Unit 6 has no real core or conversation rows. Unit 15 owns this lifecycle fence."
+  }
+}
