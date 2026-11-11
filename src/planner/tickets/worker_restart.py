@@ -11,6 +11,7 @@ import sqlite3
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from planner.conversation.child_custody import legacy_recovery_detail
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.start_admission import explicit_start
 from planner.core.contracts import Principal
@@ -168,9 +169,16 @@ async def _prepare_worker_restart(
                 killed_conversation_id
             )
             if not source_retirement_proven:
+                legacy_detail = await run_on_worker_thread(
+                    legacy_recovery_detail, conn, killed_conversation_id
+                )
                 raise PlannerError(
                     ErrorCode.validation,
-                    "source retirement is unresolved; executor or operator settlement is required",
+                    legacy_detail
+                    or (
+                        "source retirement is unresolved; "
+                        "executor or operator settlement is required"
+                    ),
                     {
                         "retirement_started": True,
                         "source_retired": None,

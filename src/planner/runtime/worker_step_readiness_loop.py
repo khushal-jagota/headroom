@@ -187,9 +187,7 @@ async def _admitted_start_ready_worker_step(
         ):
             return WorkerStepStartResult(started=False)
         if starts is not None:
-            automatic_identity = worker_memory.worker_step_message_id_for_claim(
-                ticket.id, ticket.worker_step_claim_revision + 1
-            )
+            automatic_identity = f"worker-preparation:{ticket.id}"
             if not starts.try_start(
                 StartRequest(
                     automatic_identity,
@@ -220,6 +218,17 @@ async def _admitted_start_ready_worker_step(
         sender_message_id = worker_memory.worker_step_message_id_for_claim(
             ticket.id, taken_claim_revision
         )
+        dispatch_admitted = True
+        if starts is not None and automatic_identity is not None:
+            dispatch_admitted = starts.transfer(
+                automatic_identity,
+                StartRequest(
+                    sender_message_id,
+                    "worker",
+                    "macos" if claimed.locale.value == "macos" else "home",
+                ),
+            )
+            automatic_identity = sender_message_id
 
         def release_the_claim(*, opener_succeeded: bool, released_at: int) -> None:
             released = tickets_data.release_worker_step_claim(
@@ -240,6 +249,10 @@ async def _admitted_start_ready_worker_step(
             await run_on_worker_thread(
                 release_the_claim, opener_succeeded=opener_succeeded, released_at=now()
             )
+
+        if not dispatch_admitted:
+            await give_the_claim_back()
+            return WorkerStepStartResult(started=False)
 
         try:
             # Inside the guard: a lookup that raises must give the claim back, or the
@@ -520,14 +533,10 @@ class WorkerStepReadinessLoop:
                 ):
                     continue
                 ready_ticket_ids.append(ticket.id)
-                ready_start_ids.add(
-                    worker_memory.worker_step_message_id_for_claim(
-                        ticket.id, ticket.worker_step_claim_revision + 1
-                    )
-                )
+                ready_start_ids.add(f"worker-preparation:{ticket.id}")
             starts = getattr(self._conversation_system, "start_admission", None)
             if starts is not None:
-                starts.retain_deferred(worker_memory.WORKER_STEP_MESSAGE_PREFIX, ready_start_ids)
+                starts.retain_deferred("worker-preparation:", ready_start_ids)
             return ready_ticket_ids
         finally:
             conn.close()

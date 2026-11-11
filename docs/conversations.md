@@ -81,7 +81,9 @@ New conversation ends the running turn, discards held work, and links a fresh co
 
 After a deploy or ordinary crash interrupts a session, an eligible conversation gets one inspection prompt through the ordinary send path. Headroom never replays uncertain actions. Recovery requires proof that the exact previous child stopped. The home records its identity before dispatch and checks its process birth, host boot, and Worker service where applicable.
 
-Missing evidence, a live child, or a failed inspection keeps the conversation fenced. This includes older records without child identity evidence. An unresolved owner never counts as an idle workspace. See [Deployment](deployment.md) and [Worker steps](worker-steps.md).
+Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace.
+
+After the first upgrade to child ownership records, older unresolved conversations need one owner-controlled reboot of the home. Restarting only Headroom does not clear them. Headroom first records the machine and its current boot without releasing their claims. A later boot on the same machine proves that the previous local agents stopped. The ordinary recovery path then resumes eligible work. A different machine or unreadable identity keeps the fence. An incomplete launch with unknown ownership follows the same reboot proof rule. A blocked send or Worker Restart explains the required home restart. See [Deployment](deployment.md) and [Worker steps](worker-steps.md).
 
 A restart of the Mac's executor process interrupts its turns the same way: once the Mac has sent everything it held for a conversation, that turn ends interrupted and gets the same one recovery prompt, which resumes the session in a fresh agent. A message the old process never fetched goes to the fresh agent instead, and nothing is interrupted. A steer the Mac does not take in time, or that later proves it never reached its turn, waits in the queue as the next message.
 

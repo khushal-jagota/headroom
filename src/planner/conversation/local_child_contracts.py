@@ -9,3 +9,9 @@ class LocalChildIdentity:
     birth: str
     boot: str
     unit: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LocalHostBootIdentity:
+    host: str
+    boot: str

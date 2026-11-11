@@ -300,12 +300,6 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
         "INSERT OR REPLACE INTO signal_publication_meta "
         "(singleton,scope,runtime_epoch,sequence) VALUES (1,'fixture','legacy-epoch',0)"
     )
-    # This legacy fixture creates no backend process. Record that positive proof
-    # explicitly; a genuinely missing legacy custody record remains fenced.
-    from planner.conversation.child_custody import write_pending, write_retired
-
-    write_pending(conn, "c", "fixture-never-launched")
-    write_retired(conn, "c", "fixture-never-launched")
     conn.commit()
     legacy = CapturedTurn(
         "c", 1, None, "legacy-epoch", "intent", "Interrupted worker", "unknown", None, None, None
@@ -339,7 +333,7 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
     conn.close()
 
     async def exercise() -> None:
-        for boot in range(2):
+        for _boot in range(2):
             current = _Harness(path)
             try:
                 assert current.spawned_conversation_ids == []
@@ -350,21 +344,21 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
                     assert accounts[0]["detail"] == "Rollback capture timed out"
                     entries = accounts[0]["entries"]
                 by_name = {entry["display_name"]: entry for entry in entries}
-                assert len(entries) == 3
+                assert len(entries) == 2
                 assert by_name["Reused legacy"]["recovery_state"] == "historical"
                 assert by_name["Candidate"]["conversation_id"] is None
                 assert by_name["Candidate"]["recovery_state"] == "historical"
-                assert by_name["Interrupted worker"]["recovery_state"] == (
-                    "awaiting_action" if boot == 0 else "resumed"
-                )
-                await current.system.send(
+                # The current source still lacks child retirement proof. Its matching
+                # capture waits, while unrelated historical evidence remains visible.
+                assert "Interrupted worker" not in by_name
+                from planner.conversation.contracts import PromptDeliveryRefused
+
+                refusal = await current.system.send(
                     "c", text_message_content("continue"), sender_label="owner"
                 )
-                wire = current.backend("c").written_texts()[0]
-                assert ("[Panels deployment interruption context]" in wire) == (boot == 0)
-                # Do not create a second real interruption while this test checks
-                # the historical attribution of the original legacy capture.
-                await current.complete_turn("c")
+                assert isinstance(refusal, PromptDeliveryRefused)
+                assert current.spawned_conversation_ids == []
+                assert current.system.workspace_activity() == "unknown"
             finally:
                 await current.system.shutdown()
 
@@ -1171,5 +1165,96 @@ def test_ordinary_home_crash_recovers_once_with_durable_identity(tmp_path: Path)
                 )) == interruption_ids
         finally:
             await final.system.shutdown()
+
+    _run(exercise)
+
+
+def test_legacy_upgrade_fence_resolves_after_proven_home_reboot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation import child_custody
+    from planner.conversation.contracts import PromptDeliveryRefused
+    from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
+    from planner.conversation.local_child_contracts import LocalHostBootIdentity
+
+    path = tmp_path / "upgrade.db"
+    conn = connect(str(path))
+    create_schema(conn)
+    conn.close()
+    original = _Harness(path)
+    current_host = LocalHostBootIdentity("this-home", "before-reboot")
+    monkeypatch.setattr(child_custody, "host_boot_identity", lambda: current_host)
+
+    async def exercise() -> None:
+        await _start(original)
+        _ticket(path)
+        await original.system.send("c", text_message_content("legacy work"), sender_label="owner")
+        await original.system.shutdown()
+        # Model the populated previous schema: it has the turn and its exact claim,
+        # but none of this migration's custody or dispatch records.
+        with connect(str(path)) as db:
+            db.execute("DROP TABLE conversation_child_custody")
+            db.execute("DROP TABLE worker_step_dispatch_intents")
+            db.execute("DROP TABLE automatic_start_bindings")
+            db.execute("DELETE FROM conversation_turn_occurrences WHERE conversation_id='c'")
+            db.execute(
+                "UPDATE alembic_version SET version_num='retire_executor_websocket_tables'"
+            )
+            db.commit()
+        upgrade = connect(str(path))
+        create_schema(upgrade)
+        upgrade.close()
+        first_boot = _Harness(path)
+        try:
+            await run_automatic_recovery(first_boot.system, first_boot.store)
+            assert first_boot.system.workspace_activity() == "unknown"
+            refusal = await first_boot.system.send(
+                "c", text_message_content("new work"), sender_label="owner"
+            )
+            assert isinstance(refusal, PromptDeliveryRefused)
+            assert first_boot.spawned_conversation_ids == []
+            assert await first_boot.store.legacy_recovery_detail("c") == (
+                "Previous-version ownership needs one full restart of this home; "
+                "restarting only the app does not clear it"
+            )
+            with connect(str(path)) as db:
+                assert tuple(db.execute(
+                    "SELECT worker_step_claim,worker_step_claim_revision FROM tickets WHERE id='t'"
+                ).fetchone()) == ("out", 7)
+                assert tuple(db.execute(
+                    "SELECT state,host,boot FROM conversation_child_custody "
+                    "WHERE conversation_id='c'"
+                ).fetchone()) == ("legacy_unknown", "this-home", "before-reboot")
+        finally:
+            await first_boot.system.shutdown()
+        # A process restart within this boot cannot manufacture termination proof.
+        same_boot = _Harness(path)
+        try:
+            assert same_boot.system.workspace_activity() == "unknown"
+            assert same_boot.spawned_conversation_ids == []
+        finally:
+            await same_boot.system.shutdown()
+        nonlocal current_host
+        current_host = LocalHostBootIdentity("this-home", "after-reboot")
+        after_reboot = _Harness(path)
+        try:
+            assert not after_reboot.store.blocked_local_conversations
+            await run_automatic_recovery(after_reboot.system, after_reboot.store)
+            assert len(after_reboot.backend("c").writes) == 1
+            assert "Inspect the interrupted work" in after_reboot.backend("c").written_texts()[0]
+            await run_automatic_recovery(after_reboot.system, after_reboot.store)
+            assert len(after_reboot.backend("c").writes) == 1
+            with connect(str(path)) as db:
+                assert db.execute("SELECT count(*) FROM deploy_interruptions").fetchone()[0] == 1
+            await after_reboot.complete_turn("c")
+            assert after_reboot.system.workspace_activity() == "idle"
+            admitted: list[bool] = []
+            assert await after_reboot.system.run_with_workspace_admission(
+                lambda: admitted.append(True), require_idle=True,
+            )
+            assert admitted == [True]
+        finally:
+            after_reboot.system.workspace_admission.reopen()
+            await after_reboot.system.shutdown()
 
     _run(exercise)

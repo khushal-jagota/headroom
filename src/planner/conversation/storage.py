@@ -257,6 +257,7 @@ class ConversationStore:
         self._busy_timeout_ms = busy_timeout_ms
         self._write_operations: set[asyncio.Task[object]] = set()
         self.blocked_local_conversations: set[str] = set()
+        self.legacy_blocked_details: dict[str, str] = {}
         # Loop time after which _write stops retrying SQLite contention, for a write a
         # sender will send again. None retries contention for as long as it lasts.
         self._contention_retry_until: ContextVar[float | None] = ContextVar(
@@ -305,7 +306,10 @@ class ConversationStore:
         self, conn: sqlite3.Connection, open_runs: Mapping[str, OpenRunTurn]
     ) -> None:
         conn.execute("BEGIN IMMEDIATE")
-        from planner.conversation.deploy_interruptions.contracts import CaptureManifest
+        from planner.conversation.deploy_interruptions.contracts import (
+            CapturedTurn,
+            CaptureManifest,
+        )
         from planner.environments.interruption_capture import read_unresolved_turns
         from planner.tickets import data as tickets_data
         from planner.tickets.contracts import WorkerStepClaim
@@ -329,6 +333,19 @@ class ConversationStore:
             turn for turn in read_unresolved_turns(conn)
             if turn.conversation_id not in open_runs
         )
+        # Older turns lack an immutable occurrence. Assign identity only, while
+        # exclusive runtime and database ownership prevent a concurrent reservation.
+        for turn in unresolved:
+            if turn.occurrence_id is None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO conversation_turn_occurrences VALUES (?,?,?,?)",
+                    (turn.conversation_id, turn.turn_number, uuid4().hex, turn.runtime_epoch),
+                )
+        unresolved = tuple(
+            turn for turn in read_unresolved_turns(conn)
+            if turn.conversation_id not in open_runs
+        )
+        child_custody.observe_unknown_owners(conn, unresolved)
         self.blocked_local_conversations = {
             turn.conversation_id
             for turn in unresolved
@@ -337,6 +354,11 @@ class ConversationStore:
                 conn, turn.conversation_id, turn.occurrence_id, turn.runtime_epoch
             )
         }
+        self.legacy_blocked_details = {}
+        for identity in self.blocked_local_conversations:
+            detail = child_custody.legacy_recovery_detail(conn, identity)
+            if detail is not None:
+                self.legacy_blocked_details[identity] = detail
         # Capture before restart destroys the old live facts. Missing identity is not
         # proof of termination, even after the previous runtime released its lock.
         for turn in unresolved:
@@ -349,7 +371,13 @@ class ConversationStore:
             if any(
                 captured.conversation_id == turn.conversation_id
                 and captured.turn_number == turn.turn_number
-                and captured.occurrence_id == turn.occurrence_id
+                and (
+                    captured.occurrence_id == turn.occurrence_id
+                    or (
+                        captured.occurrence_id is None
+                        and captured.runtime_epoch == turn.runtime_epoch
+                    )
+                )
                 for manifest in manifests for captured in manifest.turns
             ):
                 continue
@@ -368,7 +396,27 @@ class ConversationStore:
                 claim_error_reason="interrupted by a home crash",
                 ended_by="The home process interruption",
             )
-        interruption_data.reconcile(conn, manifests, self._integer_now())
+        # A deployment snapshot does not prove that an independently hosted local
+        # child stopped. Keep those immutable captures for the next proven recovery.
+        def capture_needs_proof(captured: CapturedTurn) -> bool:
+            return any(
+                source.conversation_id == captured.conversation_id
+                and source.turn_number == captured.turn_number
+                and (
+                    source.occurrence_id == captured.occurrence_id
+                    if captured.occurrence_id is not None
+                    else source.runtime_epoch == captured.runtime_epoch
+                )
+                for source in unresolved
+                if source.conversation_id in self.blocked_local_conversations
+            )
+
+        admitted_manifests = tuple(
+            replace(manifest, turns=tuple(
+                turn for turn in manifest.turns if not capture_needs_proof(turn)
+            )) for manifest in manifests
+        )
+        interruption_data.reconcile(conn, admitted_manifests, self._integer_now())
         ids = conn.execute(
             "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
             "WHERE status IN ('intent','running','pending','answering')"
@@ -396,6 +444,9 @@ class ConversationStore:
             for conversation_id, payloads in recovered_events.items():
                 self._insert_rows(conn, conversation_id, payloads)
         commit_without_change_signal(conn)
+
+    async def legacy_recovery_detail(self, conversation_id: str) -> str | None:
+        return self.legacy_blocked_details.get(conversation_id)
 
     async def record_child_custody(
         self,
