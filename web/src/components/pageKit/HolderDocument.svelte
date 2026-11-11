@@ -3,7 +3,7 @@
  import {createQuery} from '@tanstack/svelte-query';
  import type {GoalReadingsResponse} from '../../lib/goals/contracts';
  import type {ManagerPrincipal} from '../../lib/types';
- import {PAGE_HOLDER,PAGE_CONTEXT,type PageContext,type PageTextDraft} from '../../lib/pageKit/context';
+ import {PAGE_HOLDER,PAGE_CONTEXT,type PageContext} from '../../lib/pageKit/context';
  import {holderPageQuery,holderPagePath,createHolderEditor} from '../../lib/pageKit/holderEditing';
  import {jsonQuery} from '../../lib/queryCatalogue';
  import {createGoalRequestSessions} from '../../lib/goals/requestSessions';
@@ -19,7 +19,6 @@
  let ownerId=$derived(`holder:${holder.kind}:${holder.id}`);
  let editor=$derived(createHolderEditor(holder));
  const sessions=createGoalRequestSessions();
- const textDrafts = new Map<string, PageTextDraft>();
  setContext(PAGE_HOLDER,()=>holder);
  $effect(()=>{if(readings.data)return refreshAtBoundary(readings.data.next_refresh_at,()=>void readings.refetch());});
  setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
@@ -28,20 +27,7 @@
   readings:()=>readings.data,narrow:()=>narrow,sessions:()=>sessions,
  },{
   updateBlock:(id,update)=>editor.updateBlock(id,update),
-  manualSession:measureId=>sessions.manual(ownerId,measureId),
-  authorText:{
-   draft(blockId,field){
-    const key=JSON.stringify([ownerId,blockId,field]);
-    let draft=textDrafts.get(key);
-    if(!draft){const created=$state<PageTextDraft>({value:null,error:null,saving:false});draft=created;textDrafts.set(key,created);}
-    return draft;
-   },
-   begin(blockId){
-    if(!page.data)throw new Error('The page is not ready for this edit.');
-    const captured=createHolderEditor(holder);
-    return update=>captured.updateBlock(blockId,update);
-   }
-  }
+  manualSession:measureId=>sessions.manual(ownerId,measureId)
  }));
 </script>
 <div bind:clientWidth={width}>
