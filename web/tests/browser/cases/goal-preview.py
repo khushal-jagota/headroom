@@ -3645,9 +3645,14 @@ def manager_text_readonly(browser, url):
                 doc.locator("[data-goal-band] summary").click()
                 expect(doc.get_by_text("The Manager purpose remains visible.", exact=True)).to_be_visible()
             expect(doc.locator('[contenteditable="true"]')).to_have_count(0)
-        # Shared GoalContent and GoalHeader still author text on the separate Goal page.
-        page.goto(url + "#/workspace/goal/checklist", wait_until="domcontentloaded")
-        doc = page.locator('[data-goal-page="checklist"]')
+        # A sole Manager-held goal routes to its Manager. A Chief-held copy opens
+        # the separate Goal workspace with the same shared content and header.
+        standalone = copy.deepcopy(goal)
+        standalone.update(id="standalone", holder_kind="chief", holder_id=None)
+        fixture.goals["standalone"] = standalone
+        fixture.version += 1
+        page.goto(url + "#/workspace/goal/standalone", wait_until="domcontentloaded")
+        doc = page.locator('[data-goal-page="standalone"]')
         expect(doc.get_by_role("textbox", name="Goal title", exact=True)).to_be_visible()
         expect(doc.get_by_role("textbox", name="Why this goal matters", exact=True)).to_be_visible()
         expect(doc.locator('[data-block="text"] [contenteditable="true"]')).to_be_visible()
