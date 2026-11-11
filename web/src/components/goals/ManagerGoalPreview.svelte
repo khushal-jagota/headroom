@@ -9,7 +9,7 @@
  import PageChart from '../pageKit/PageChart.svelte';
  import GoalRowState from './GoalRowState.svelte';
  import {workspaceAddress} from '../../lib/workspaceAddress';
- let {goals}:{goals:GoalResponse[]}=$props();
+ let {goals,onDismiss}:{goals:GoalResponse[];onDismiss?:()=>void}=$props();
  const sessions=createGoalRequestSessions();
  let onlyGoal=$derived(goals.length===1?goals[0]:null);
  let display=$derived(resolveGoalPrimaryDisplay(onlyGoal));
@@ -23,7 +23,7 @@
 {:else if sole && chart}
  {#key sole.id}<PageChart block={{...chart,title:sole.title}} goalId={sole.id} values={readings.data?.values??[]} projection={readings.data?.charts?.[chart.id]} narrow supporting integrated compact status={sole.status} completed={sole.completed}/>{/key}
 {:else}
- <div class="goal-list">{#each goals as goal (goal.id)}<a class="goal" data-manager-goal-id={goal.id} href={workspaceAddress({kind:'goal',id:goal.id})}><span class="goal-title">{goal.title}</span><GoalRowState {goal} preview/></a>{/each}</div>
+ <div class="goal-list">{#each goals as goal (goal.id)}<a class="goal" onclick={onDismiss} data-manager-goal-id={goal.id} href={workspaceAddress({kind:'goal',id:goal.id})}><span class="goal-title">{goal.title}</span><GoalRowState {goal} preview/></a>{/each}</div>
 {/if}
 <style>
 .goal-list{display:flex;flex-direction:column;gap:0}

@@ -25,13 +25,16 @@
   .rail { line-height:16px; }
   .rail > span { min-width:0; overflow-wrap:anywhere; }
   .rail.has-goal > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .rail.has-goal:not(.chief) { column-gap:calc(60px + var(--space-2)); }
+  .rail.has-goal { display:grid; grid-template-columns:minmax(0,1fr) auto; }
+  .rail.has-goal .goal-tag { margin-left:0; }
+  :global(.manager-card .identity:hover) .rail.has-goal:not(.chief), :global(.manager-card .identity:focus-within) .rail.has-goal:not(.chief) { grid-template-columns:minmax(0,1fr) auto auto; }
   .rail.has-goal.chief > span { flex:1; }
-  .rail .settle { position:absolute; right:0; top:0; flex-shrink:0; opacity:0; pointer-events:none; }
+  .rail .settle { flex-shrink:0; opacity:0; pointer-events:none; }
+  .rail.has-goal .settle { display:none; }
+  :global(.manager-card .identity:hover) .rail.has-goal .settle, :global(.manager-card .identity:focus-within) .rail.has-goal .settle { display:inline-flex; }
   .rail .settle:focus-visible, :global(.manager-card .identity:hover) .settle, :global(.manager-card .identity:focus-within) .settle { pointer-events:auto; }
   .goal-tag { margin-left:auto; flex:none; white-space:nowrap; border:0; padding:0; background:none; font:inherit; font-variant-numeric:tabular-nums; cursor:pointer; transition:transform var(--motion-fast) var(--motion-ease); }
   .goal-tag[data-goal-status=bad]{color:var(--accent-error)}.goal-tag[data-goal-status=attention]{color:var(--accent-attention)}.goal-tag[data-goal-status=good]{color:var(--accent-done)}
-  :global(.manager-card .identity:hover) .rail:not(.chief) .goal-tag, :global(.manager-card .identity:focus-within) .rail:not(.chief) .goal-tag { transform:translateX(-60px); }
   .goal-tag:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:var(--focus-offset); border-radius:var(--radius-sm); }
   @media(prefers-reduced-motion:reduce){.goal-tag,.settle{transition:none}}
   :global(.manager-card .identity:hover) .settle, :global(.manager-card .identity:focus-within) .settle, .settle:focus-visible { opacity:1; }

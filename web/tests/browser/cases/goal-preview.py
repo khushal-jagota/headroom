@@ -3148,6 +3148,7 @@ def manager_goal_tags(browser, url):
         for index, (key, title) in enumerate((
             ("one", "One chart"), ("many", "Several goals"), ("none", "No goals")))
     ]
+    fixture.managers[2]["project"] = "A long project name that must never overlap the Settle action"
     fixture.goals["daily_quota"].update(holder_kind="manager", holder_id="one", status="good")
     fixture.observations["daily_quota"][TODAY] = 20
     fixture.goals["binary"].update(holder_kind="manager", holder_id="many", status="bad")
@@ -3190,6 +3191,13 @@ def manager_goal_tags(browser, url):
             card.locator('.identity').hover()
             expect(settle).to_have_css('opacity', '1')
             settle.click(trial=True)
+            if card == none:
+                label = card.locator('.manager-eyebrow > span').bounding_box()
+                action = settle.bounding_box()
+                assert label['x'] + label['width'] <= action['x'], (label, action)
+                if output:
+                    page.screenshot(
+                        path=str(output / 'long-project-settle.png'), animations='disabled')
         one.get_by_role('button', name='Goals: On track', exact=True).focus()
         page.keyboard.press('Tab')
         expect(one.get_by_role('button', name='Settle One chart', exact=True)).to_be_focused()
@@ -3264,8 +3272,17 @@ def manager_goal_tags(browser, url):
         expect(panel.locator('.title')).to_contain_text('Several goals')
         expect(tag).to_be_focused()
         assert tag.evaluate('el => getComputedStyle(el).outlineStyle') != 'none'
+        panel.locator('[data-manager-goal-id="binary"]').focus()
         page.keyboard.press('Escape')
         expect(panel).to_have_count(0)
+        expect(tag).to_be_focused()
+        # A real preview row click dismisses the panel before the goal page opens.
+        one.locator('.item-head').focus()
+        tag.focus()
+        panel.locator('[data-manager-goal-id="binary"]').click()
+        expect(page.locator('[data-goal-page="binary"]')).to_be_visible()
+        expect(panel).to_have_count(0)
+        page.keyboard.press('Tab')
         one.locator('.item-head').focus()
         expect(panel.locator('.title')).to_contain_text('One chart')
         panel.get_by_role('button', name='Ask for a recap', exact=True).focus()
@@ -3276,7 +3293,10 @@ def manager_goal_tags(browser, url):
             '() => new Promise(resolve => '
             'requestAnimationFrame(() => requestAnimationFrame(resolve)))')
         expect(panel).to_have_count(0)
+        tag.focus()
+        expect(panel.locator('.title')).to_contain_text('Several goals')
         tag.click()
+        expect(panel).to_have_count(0)
         page.wait_for_function(
             "location.hash.includes('binary') && !location.hash.includes('/managers/')")
 
@@ -3285,12 +3305,16 @@ def manager_goal_tags(browser, url):
         setting = page.get_by_role('checkbox', name='Show goals in sidebar rows', exact=True)
         expect(setting).not_to_be_checked()
         setting.check()
+        expect(chief.get_by_text('All projects', exact=True)).to_have_count(0)
+        if output:
+            page.screenshot(path=str(output / 'chief-sidebar-rows.png'), animations='disabled')
         expect(page.locator('a[data-goal-id]')).not_to_have_count(0)
         expect(page.get_by_role('button', name=re.compile(r'^Goals: '))).to_have_count(0)
         expect(page.locator('.manager-card-slot[data-goal-status]')).to_have_count(0)
         many.locator('.identity').hover()
         expect(panel.locator('[data-manager-goals]')).to_have_count(0)
         setting.uncheck()
+        expect(chief.get_by_text('All projects', exact=True)).to_be_visible()
         expect(page.locator('a[data-goal-id]')).to_have_count(0)
         expect(many.get_by_role('button', name='Goals: Off track', exact=True)).to_be_visible()
         if output:

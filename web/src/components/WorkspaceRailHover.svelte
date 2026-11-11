@@ -18,13 +18,13 @@
   /* ``recapTarget`` is the agent that can be asked for a fresh recap.
    * ``onKeepOpen`` and ``onLeave`` hand the panel the same hover intent the rows use, so
    * the pointer can cross the gap and press what is inside without the panel closing. */
-  let { goals = [], visible, instant, target, title, kicker, recap = "", worker = null, rail, signal = undefined, conversationId = null, recapTarget = null, onKeepOpen, onLeave, element = $bindable<HTMLDivElement | null>(null) }: {
+  let { goals = [], visible, instant, target, title, kicker, recap = "", worker = null, rail, signal = undefined, conversationId = null, recapTarget = null, onKeepOpen, onLeave, onDismiss, element = $bindable<HTMLDivElement | null>(null) }: {
     goals?: GoalResponse[]; visible: boolean; instant: boolean; target: HTMLElement | null; title: string; kicker: string;
     recap?: string; worker?: WorkItemTicketFacts | null;
     rail: HTMLElement | null; cards?: readonly WorkItemTicketFacts[];
     signal?: Partial<ConversationSignal>; conversationId?: string | null;
     recapTarget?: { kind: "ticket" | "manager" | "chief"; id: string } | null;
-    onKeepOpen?: () => void; onLeave?: () => void;
+    onKeepOpen?: () => void; onLeave?: () => void; onDismiss?: () => void;
     element?: HTMLDivElement | null;
   } = $props();
   let currentWorker = $derived(worker);
@@ -47,12 +47,12 @@
   // independent of the height that the budget itself produces.
   $effect(() => {
     recapText; stageSentence; title; kicker; goals; holdRecapHeight;
-    if (!visible || !element || !recapElement) return;
+    if (!visible || !element) return;
     const panel = element;
     const recapBox = recapElement;
     const budget = () => {
       const css = getComputedStyle(panel);
-      const recapCss = getComputedStyle(recapBox);
+      const recapCss = recapBox ? getComputedStyle(recapBox) : null;
       const px = (value: string) => Number.parseFloat(value) || 0;
       const edges = (style: CSSStyleDeclaration) => px(style.paddingTop) + px(style.paddingBottom) + px(style.borderTopWidth) + px(style.borderBottomWidth);
       const outerHeight = (child: Element) => {
@@ -61,21 +61,24 @@
       };
       // The ask shares the recessed block with the recap, so it is fixed content that
       // happens to sit inside the box being measured.
-      const ask = recapBox.querySelector("[data-request-recap]");
+      const ask = recapBox?.querySelector("[data-request-recap]");
       const fixed = [...panel.children].filter(child => child !== recapBox);
       if (ask) fixed.push(ask);
       const fixedHeight = fixed.reduce((height, child) => height + outerHeight(child), 0);
+      const recapEdges = recapCss ? edges(recapCss) + px(recapCss.marginTop) + px(recapCss.marginBottom) : 0;
       const goalsBox=panel.querySelector<HTMLElement>('[data-manager-goals]');
       if(goalsBox){
         const goalsCss=getComputedStyle(goalsBox);
         const otherFixedHeight=fixedHeight-outerHeight(goalsBox);
         // Keep the Ask action still while the pointer is inside. The recap slot
         // retains its visit height, so an expanded chart scrolls in the room left.
-        const heldRecapHeight=holdRecapHeight?(recapBox.querySelector('[data-recap-slot]')?.getBoundingClientRect().height??0):0;
-        goalsMaxHeight=Math.max(0,px(css.maxHeight)-edges(css)-otherFixedHeight-edges(recapCss)-px(recapCss.marginTop)-px(recapCss.marginBottom)-px(goalsCss.marginTop)-px(goalsCss.marginBottom)-heldRecapHeight);
+        const heldRecapHeight=holdRecapHeight?(recapBox?.querySelector('[data-recap-slot]')?.getBoundingClientRect().height??0):0;
+        goalsMaxHeight=Math.max(0,px(css.maxHeight)-edges(css)-otherFixedHeight-recapEdges-px(goalsCss.marginTop)-px(goalsCss.marginBottom)-heldRecapHeight);
       }
-      const available = px(css.maxHeight) - edges(css) - fixedHeight - edges(recapCss) - px(recapCss.marginTop) - px(recapCss.marginBottom);
-      recapLines = Math.min(RAIL_HOVER_RECAP_MAX_LINES, Math.max(0, Math.floor(available / px(recapCss.lineHeight))));
+      if (recapCss) {
+        const available = px(css.maxHeight) - edges(css) - fixedHeight - recapEdges;
+        recapLines = Math.min(RAIL_HOVER_RECAP_MAX_LINES, Math.max(0, Math.floor(available / px(recapCss.lineHeight))));
+      }
     };
     const observer = new ResizeObserver(budget);
     for (const child of panel.children) if (child !== recapBox) observer.observe(child);
@@ -160,7 +163,7 @@
       {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} variant="ghost" class="recap-ask" />{/if}
     </div>
   {/if}
-  {#if !worker && goals.length}<div class="manager-goals" style:max-height={goalsMaxHeight===null?undefined:`${goalsMaxHeight}px`} data-manager-goals><ManagerGoalPreview {goals}/></div>{/if}
+  {#if !worker && goals.length}<div class="manager-goals" style:max-height={goalsMaxHeight===null?undefined:`${goalsMaxHeight}px`} data-manager-goals><ManagerGoalPreview {goals} {onDismiss}/></div>{/if}
   {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
