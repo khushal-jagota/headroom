@@ -5,23 +5,30 @@ import { loadConfig } from './config.ts';
 import { buildClock } from './clock.ts';
 import { ChangeSignal } from './changes/index.ts';
 import { createDatabase } from './database/index.ts';
+import type { Database } from './database/index.ts';
 import { acquireRuntimeOwnership, acquireLock } from './locks/index.ts';
 
 import type { Area } from './authority/register.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
-import { createIdlePublicationAuthority, type IdlePublicationAuthority } from '../conversation/publication/authority.ts';
+import { createIdlePublicationAuthority } from '../conversation/publication/authority.ts';
+import type { SignalPublicationAuthority } from '../conversation/publication/authority.ts';
 
 /** Shared process lifecycle for the normal entry point and comparison host. */
-export async function startServer(options: { testAreas?: readonly Area[]; conversationSystem?: ConversationSystem } = {}): Promise<void> {
+export interface ServerOptions {
+  testAreas?: readonly Area[];
+  conversationSystem?: ConversationSystem;
+  createSignalAuthority?: (database: Database) => SignalPublicationAuthority;
+}
+export async function startServer(options: ServerOptions = {}): Promise<void> {
   const config = loadConfig();
   const ownership = acquireRuntimeOwnership(config.db_path);
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
-  let signalAuthority: IdlePublicationAuthority | undefined;
+  let signalAuthority: SignalPublicationAuthority | undefined;
   try {
     const changes = new ChangeSignal();
     database = createDatabase(config.db_path, { commitSteps, onChange: () => changes.emit() });
-    signalAuthority = createIdlePublicationAuthority(database);
+    signalAuthority = (options.createSignalAuthority ?? createIdlePublicationAuthority)(database);
     initializeAreas(database, signalAuthority);
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
