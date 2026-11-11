@@ -2564,7 +2564,7 @@ def verify_selection_washes(page, url, fixture, evidence):
     # flat painted pixel with the same token composited above the bubble.
     def painted_fill(layer):
         box=layer.bounding_box()
-        clip={"x":int(box["x"]+box["width"]-10),"y":int(box["y"]+box["height"]/2),"width":1,"height":1}
+        clip={"x":int(box["x"]+3),"y":int(box["y"]+box["height"]/2),"width":1,"height":1}
         actual=page.screenshot(clip=clip)
         layer.evaluate("""(node,clip)=>{
           const ref=document.createElement('div');ref.id='wash-paint-reference';
