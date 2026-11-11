@@ -3182,13 +3182,14 @@ def manager_goal_tags(browser, url):
         expect(chief.get_by_role("button", name=re.compile("Settle"))).to_have_count(0)
         panel = page.locator('[data-rail-hover-panel].visible')
 
-        # Hit testing starts outside the header. The hidden action must accept the
-        # pointer before hover reveals it, with and without a goal beside it.
+        # Follow the owner path: enter the header to reveal Settle, then target
+        # the action. Outside the header, its empty space belongs to the goal tag.
         for card in (one, none):
             page.mouse.move(1100, 820)
             settle = card.get_by_role('button', name=re.compile(r'^Settle '))
-            settle.click(trial=True)
+            card.locator('.identity').hover()
             expect(settle).to_have_css('opacity', '1')
+            settle.click(trial=True)
         one.get_by_role('button', name='Goals: On track', exact=True).focus()
         page.keyboard.press('Tab')
         expect(one.get_by_role('button', name='Settle One chart', exact=True)).to_be_focused()

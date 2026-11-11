@@ -27,7 +27,8 @@
   .rail.has-goal > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .rail.has-goal:not(.chief) { column-gap:calc(60px + var(--space-2)); }
   .rail.has-goal.chief > span { flex:1; }
-  .rail .settle { position:absolute; right:0; top:0; flex-shrink:0; opacity:0; }
+  .rail .settle { position:absolute; right:0; top:0; flex-shrink:0; opacity:0; pointer-events:none; }
+  .rail .settle:focus-visible, :global(.manager-card .identity:hover) .settle, :global(.manager-card .identity:focus-within) .settle { pointer-events:auto; }
   .goal-tag { margin-left:auto; flex:none; white-space:nowrap; border:0; padding:0; background:none; font:inherit; font-variant-numeric:tabular-nums; cursor:pointer; transition:transform var(--motion-fast) var(--motion-ease); }
   .goal-tag[data-goal-status=bad]{color:var(--accent-error)}.goal-tag[data-goal-status=attention]{color:var(--accent-attention)}.goal-tag[data-goal-status=good]{color:var(--accent-done)}
   :global(.manager-card .identity:hover) .rail:not(.chief) .goal-tag, :global(.manager-card .identity:focus-within) .rail:not(.chief) .goal-tag { transform:translateX(-60px); }
