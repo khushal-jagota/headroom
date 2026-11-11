@@ -54,8 +54,8 @@
   });
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
 </script>
-<div class="manager-card-slot" data-goal-status={tagGoal?.status}>
-<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
+<div class="manager-card-slot">
+<section use:visibility use:navigationScrollWindow={{window:navigationWindow,pageRestoration:scrollCoordinator ? {coordinator:scrollCoordinator,priority:'card',publicationId:scrollPublicationId,members:groups.flatMap(group=>group.cards.map(ticket=>ticket.id))} : undefined,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" data-rail-motion={`card:${id}`} class="manager-card" data-goal-status={tagGoal?.status} class:chief class:selected class:has-tickets={groups.length > 0} data-manager={chief ? undefined : id}>
   <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
   <div class="identity" onclick={(event) => { if (!(event.target as HTMLElement).closest('button, a')) { const head = event.currentTarget.querySelector<HTMLButtonElement>('.item-head'); head?.click(); } }} onpointerenter={(event) => { if (!suppressBackgroundPreview) input().pointerEnter(event); }} onpointerleave={(event) => input().leave(event)} onpointerdown={(event) => { if (!(event.target as HTMLElement).closest('button')) input().down(event); }} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()}>
     {#if !chief || showChiefEyebrow}<ManagerEyebrow {project} {title} {chief} rail {busy} {onSettle} goal={tagGoal} onGoalFocus={(event)=>onHover((event.currentTarget as HTMLElement).closest('.identity') as HTMLElement,true,event.currentTarget as HTMLElement)} onGoalBlur={(event)=>{if(!(event.relatedTarget instanceof Node)||!(event.currentTarget as HTMLElement).closest('.identity')?.contains(event.relatedTarget))onLeave();}} onGoal={()=>{if(tagGoal){onGoalNavigate?.();window.location.hash=workspaceAddress({kind:'goal',id:tagGoal.id});}}}/>{/if}
@@ -80,16 +80,16 @@
 <style>
   /* Each Manager is a bubble: the old sidebar colour, 12px corners, 8px from the next. The fill
      is drawn under the rail's selection and hover fills (which live in the list's own layer),
-     so they show on it. */
-  .manager-card-slot { position:relative; min-width:0; }
-  .manager-card-slot::before { content:""; position:absolute; inset:0; z-index:-2; border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); pointer-events:none; }
+     so they show on it. The card owns both layers so its motion carries the fill. */
+  .manager-card-slot { min-width:0; }
+  .manager-card::before { content:""; position:absolute; inset:0; z-index:-2; border-radius:var(--rail-bubble-radius); background:var(--rail-bubble-fill); pointer-events:none; }
   /* Only the status haze leaves during header interaction or selection. The bubble stays
      below it, and the rail's existing fills stay above it. */
-  .manager-card-slot[data-goal-status]::after { content:""; position:absolute; inset:0; z-index:-1; border-radius:var(--rail-bubble-radius); pointer-events:none; opacity:1; transition:opacity var(--motion-base) var(--motion-ease); }
-  .manager-card-slot[data-goal-status=bad]::after { background:linear-gradient(color-mix(in srgb,var(--accent-error) 9%,transparent),transparent 70px); }
-  .manager-card-slot[data-goal-status=attention]::after { background:linear-gradient(color-mix(in srgb,var(--accent-attention) 9%,transparent),transparent 70px); }
-  .manager-card-slot[data-goal-status=good]::after { background:linear-gradient(color-mix(in srgb,var(--accent-done) 7%,transparent),transparent 70px); }
-  .manager-card-slot:has(.identity:hover, .identity:focus-within, .manager-card.selected)::after { opacity:0; }
+  .manager-card[data-goal-status]::after { content:""; position:absolute; inset:0; z-index:-1; border-radius:var(--rail-bubble-radius); pointer-events:none; opacity:1; transition:opacity var(--motion-base) var(--motion-ease); }
+  .manager-card[data-goal-status=bad]::after { background:linear-gradient(color-mix(in srgb,var(--accent-error) 9%,transparent),transparent 70px); }
+  .manager-card[data-goal-status=attention]::after { background:linear-gradient(color-mix(in srgb,var(--accent-attention) 9%,transparent),transparent 70px); }
+  .manager-card[data-goal-status=good]::after { background:linear-gradient(color-mix(in srgb,var(--accent-done) 7%,transparent),transparent 70px); }
+  .manager-card:is(:has(.identity:hover, .identity:focus-within), .selected)::after { opacity:0; }
   :global(.manager-card-slot) + .manager-card-slot { margin-top:var(--rail-block-gap); }
   /* Every Manager, the Chief included, is one block with the same parts in the same order:
      its header (the project eyebrow directly over the name, as one fill), its goals, then its
@@ -129,6 +129,6 @@
      the dock only while the preview is open, so native taps reach its controls. */
   .manager-card:has(:global([data-goal-preview])) { z-index:5; }
   :global(.approved-rail .stage-mark.rail-moving) { background:transparent; outline:none; }
-  @media (prefers-reduced-motion:reduce) { :global(.approved-rail *) { transition:none!important; animation:none!important; } .manager-card-slot[data-goal-status]::after { transition:none; } }
+  @media (prefers-reduced-motion:reduce) { :global(.approved-rail *) { transition:none!important; animation:none!important; } .manager-card[data-goal-status]::after { transition:none; } }
   button:focus-visible { outline:none; }
 </style>

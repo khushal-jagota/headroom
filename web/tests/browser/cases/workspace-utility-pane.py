@@ -399,6 +399,7 @@ def run(browser, urls):
     if os.environ.get("PANELS_BROWSER_VIDEO") == "1":
         capture_card_motion(browser, url, card_fixture, respond, evidence)
     verify_card_geometry(page, url, card_fixture, evidence)
+    verify_card_background_motion(page, url, card_fixture, evidence)
     verify_empty_handoff(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
@@ -620,7 +621,12 @@ def verify_card_geometry(page, url, fixture, evidence):
         const rect = card.getBoundingClientRect(), title = card.querySelector('.item-title');
         const titleRect = title.getBoundingClientRect();
         const style = getComputedStyle(title);
-        return {top:rect.top,bottom:rect.bottom,height:rect.height,
+        const bubble = getComputedStyle(card, '::before');
+        if (bubble.content === 'none' || bubble.zIndex !== '-2' ||
+            Math.abs(parseFloat(bubble.height)-rect.height) > 1 ||
+            getComputedStyle(card.parentElement, '::before').content !== 'none')
+          throw new Error('Bubble must share the animated card border: '+id);
+        return {bubbleHeight:parseFloat(bubble.height),top:rect.top,bottom:rect.bottom,height:rect.height,
           gap:next ? next.getBoundingClientRect().top-rect.bottom : null,
           titleHeight:titleRect.height,titleScale:titleRect.height/parseFloat(style.lineHeight),
           tickets:[...card.querySelectorAll('[data-ticket-id]')].map(n=>n.dataset.ticketId),
@@ -862,6 +868,91 @@ def verify_card_geometry(page, url, fixture, evidence):
         "method": "Real browser border boxes at normalized WAAPI progress; rapid changes use animation frames", "flows": proof,
     }, indent=2))
 
+
+
+
+def verify_card_background_motion(page, url, fixture, evidence):
+    """Reuse the App host to prove card exits, arrivals and reflow share a bubble.
+
+    Existing resize samples cover row changes, scrolling and reduced motion.
+    They did not check the painted layer or a whole card's opacity lifecycle.
+    """
+    started = time.perf_counter()
+    managers = [{"id": "bubble_"+str(i), "title": "Background travels with Manager "+str(i),
+                 "created_at": i+1, "settled": False, "tickets": []} for i in range(5)]
+    worker={"id":"bubble_worker","title":"Worker changes group during settle","manager_id":"bubble_4",
+            "worker_type":"coding","stage":"needs_implementation","ticket_status":"agent"}
+    managers[4]["tickets"]=[worker]
+    goal={"id":"bubble_goal","title":"Keep the rail together","active":True,"completed":False,
+          "kind":"binary","holder_kind":"manager","holder_id":"bubble_3","created_at":1,"updated_at":1,
+          "project_id":None,"why":"","deadline":None,"primary_chart":None,"primary_checklist_block_id":None,
+          "revision":0,"status":"attention","status_date":time.strftime("%Y-%m-%d"),
+          "next_refresh_at":int(time.time())+86400,"employee_backend":"codex","employee_launch_model":"",
+          "employee_launch_reasoning_effort":None,
+          "page":{"kind":"headroom.page","version":1,"title":"Approach","summary":"","blocks":[]}}
+    fixture.update(enabled=True, board={"managers": managers, "columns": []}, chief={"label": "Chief"},goals=[goal])
+    page.set_viewport_size({"width": 1100, "height": 700})
+    page.mouse.move(1000, 650)
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator('[data-manager="bubble_4"]')).to_be_visible()
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    page.evaluate("""() => {
+      window.__bubbleFrames=[];
+      window.__bubbleCapture=true;
+      const take=()=>{
+        const cards=[...document.querySelectorAll('.manager-card')];
+        window.__bubbleFrames.push(cards.map(card=>{
+          const r=card.getBoundingClientRect(), b=getComputedStyle(card,'::before');
+          const title=card.querySelector('.item-title').getBoundingClientRect();
+          const tint=getComputedStyle(card,'::after');
+          return {tint:tint.content,tintHeight:parseFloat(tint.height),tintZ:tint.zIndex,id:card.dataset.railMotion,top:r.top,bottom:r.bottom,height:r.height,
+            titleTop:title.top,titleBottom:title.bottom,
+            bubble:b.content,bubbleHeight:parseFloat(b.height),bubbleZ:b.zIndex,
+            slotBubble:getComputedStyle(card.parentElement,'::before').content,
+            opacity:+getComputedStyle(card).opacity,transform:getComputedStyle(card).transform};
+        }));
+        if(window.__bubbleCapture)requestAnimationFrame(take);
+      };take();
+    }""")
+    proof=[]
+
+    def change(name, mutate):
+        mutate()
+        page.evaluate("async () => {await window.__refreshNavigation();await new Promise(requestAnimationFrame);}")
+        # Pause the actual effects for a reviewable midpoint, then let them finish.
+        page.evaluate("""() => {
+          window.__bubbleEffects=document.getAnimations().filter(a=>a.effect && a.effect.getTiming().iterations!==Infinity);
+          window.__bubbleEffects.forEach(a=>{a.pause();a.currentTime=Number(a.effect.getTiming().duration)*.5;});
+        }""")
+        page.screenshot(path=str(evidence / ("bubble-"+name+"-midpoint.png")))
+        page.evaluate("window.__bubbleEffects.forEach(a=>a.play())")
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+        proof.append(name)
+
+    expect(page.locator('[data-manager="bubble_3"]')).to_have_attribute("data-goal-status", "attention")
+    change("settle-one", lambda: managers[0].update(settled=True))
+    change("reopen", lambda: managers[0].update(settled=False))
+    for i in range(3):
+        change("settle-sequence-"+str(i), lambda i=i: managers[i].update(settled=True))
+    change("settle-with-group-transfer", lambda: (managers[3].update(settled=True), worker.update(awaiting_approval=True)))
+    change("manager-arrives", lambda: managers.append({"id":"bubble_new", "title":"A new Manager and its bubble",
+                                                      "created_at":10,"tickets":[]}))
+    page.emulate_media(reduced_motion="reduce")
+    change("reduced-reopen", lambda: managers[0].update(settled=False))
+    page.emulate_media(reduced_motion="no-preference")
+    fixture["goals"]=[]
+    frames=page.evaluate("window.__bubbleCapture=false;window.__bubbleFrames")
+    for frame in frames:
+        for card in frame:
+            assert card["bubble"] != 'none' and card["slotBubble"] == 'none', card
+            assert card["bubbleZ"] == '-2' and abs(card["bubbleHeight"]-card["height"]) < 1, card
+            if card["tint"] != 'none':
+                assert card["tintZ"] == '-1' and abs(card["tintHeight"]-card["height"]) < 1, card
+            assert card["titleTop"] >= card["top"]-1 and card["titleBottom"] <= card["bottom"]+1, card
+    assert any(0 < card["opacity"] < 1 for frame in frames for card in frame), frames
+    assert any(card["transform"] != 'none' for frame in frames for card in frame), frames
+    (evidence / "bubble-motion-frames.json").write_text(json.dumps({
+        "seconds":round(time.perf_counter()-started,3),"newHosts":0,"flows":proof,"frames":frames},indent=2))
 
 
 def verify_empty_handoff(page, url, fixture, evidence):

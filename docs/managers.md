@@ -42,7 +42,7 @@ When the event concerns Khushal rather than an agent, it reaches him through [Re
 
 ## Settlement
 
-Settling a Manager is a presentation control, and only Khushal may do it. A settled Manager leaves the active part of the Workspace rail and can be reopened from Settled. Its children keep running, their approvals stay in Review, and messages still work. Settled means "don't put new work here", not "stop".
+Settling a Manager is a presentation control, and only Khushal may do it. A settled Manager leaves the active part of the Workspace rail and can be reopened from Settled. Its children keep running, their approvals stay in Review, and messages still work. Settled means "don't put new work here", not "stop". Each rail card carries its background and goal tint with its words through movement, size changes, and fades.
 
 ## Launch setup
 

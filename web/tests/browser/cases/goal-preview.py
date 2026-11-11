@@ -3195,7 +3195,7 @@ def manager_goal_tags(browser, url):
 
         def haze_opacity(card, value):
             page.wait_for_function(
-                "([card,value]) => getComputedStyle(card.parentElement,'::after').opacity===value",
+                "([card,value]) => getComputedStyle(card,'::after').opacity===value",
                 arg=[card.element_handle(), value])
 
         for card, token, percent in (
@@ -3203,7 +3203,7 @@ def manager_goal_tags(browser, url):
                 (chief, '--accent-attention', 9)):
             haze_opacity(card, '1')
             assert card.evaluate("""(card, [token,percent]) => {
-              const slot=card.parentElement, haze=getComputedStyle(slot,'::after');
+              const slot=card, haze=getComputedStyle(card,'::after');
               const expected=document.createElement('div');
               const tint=`color-mix(in srgb,var(${token}) ${percent}%,transparent)`;
               expected.style.backgroundImage=`linear-gradient(${tint},transparent 70px)`;
@@ -3216,7 +3216,7 @@ def manager_goal_tags(browser, url):
             page.mouse.move(1100, 820)
             haze_opacity(card, '1')
         assert none.evaluate(
-            "card => getComputedStyle(card.parentElement,'::after').content") == 'none'
+            "card => getComputedStyle(card,'::after').content") == 'none'
         if output:
             page.locator('.workspace-rail').screenshot(path=str(output / 'haze-rest.png'))
         for control in (one.locator('.item-head'),
@@ -3238,7 +3238,7 @@ def manager_goal_tags(browser, url):
         one.locator('.identity').hover()
         haze_opacity(one, '0')
         assert one.evaluate(
-            "card => getComputedStyle(card.parentElement,'::after').transitionDuration") == '0s'
+            "card => getComputedStyle(card,'::after').transitionDuration") == '0s'
         page.mouse.move(1100, 820)
         haze_opacity(one, '1')
         page.emulate_media(reduced_motion='no-preference')
@@ -3444,7 +3444,7 @@ def manager_goal_tags(browser, url):
             page.screenshot(path=str(output / 'chief-sidebar-rows.png'), animations='disabled')
         expect(page.locator('a[data-goal-id]')).not_to_have_count(0)
         expect(page.get_by_role('button', name=re.compile(r'^Goals: '))).to_have_count(0)
-        expect(page.locator('.manager-card-slot[data-goal-status]')).to_have_count(0)
+        expect(page.locator('.manager-card[data-goal-status]')).to_have_count(0)
         many.locator('.identity').hover()
         expect(panel.locator('[data-manager-goals]')).to_have_count(0)
         setting.uncheck()
