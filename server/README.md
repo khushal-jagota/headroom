@@ -86,3 +86,12 @@ Until the real core exists, navigation can use `idle_publication(publish)` from 
 It calls `publish(tx, conversation_id, attention)` for every stored conversation on that same transaction.
 Each attention value has all four marks false. Navigation owns its storage, installation metadata, and registration in `commitSteps`.
 The stand-in does not alter the fake's actual busy state and does not implement the real publication coordinator.
+
+`IdlePublicationAuthority` in `conversation/publication/authority.ts` supplies runtime permits for the idle source.
+Create it after readiness and runtime ownership are established. Its source permit keeps the Python fields and a numeric generation.
+The navigation adapter returns the generated `CurrentAuthority` wire shape with decimal-string generations.
+Call `invalidate('shutdown')` before shutdown and ownership release. Invalidation fences reads synchronously before it notifies subscribers.
+Subscriptions are one-shot and can unsubscribe. One failed subscriber does not prevent the others from receiving invalidation.
+A replacement installation creates a new instance. A persisted row never grants this runtime authority.
+
+The shared lifecycle also supplies `services.signalAuthority`, an idle publication authority, after it owns the runtime and opens the database. All areas share that instance. Shutdown invalidates its permits and notifies its watchers before the application closes or runtime ownership ends. Unit 15 replaces the idle source with the real coordinator.
