@@ -28,7 +28,10 @@ jobs:
           node-version: '22'
       - name: Install isolated dependencies
         run: |
-          scripts/dev setup
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install --editable .
+          scripts/dev npm --prefix web ci
           scripts/dev npm --prefix web run build
       - name: Python type check
         run: scripts/dev mypy
