@@ -32,6 +32,7 @@ from uuid import uuid4
 
 from pydantic import JsonValue
 
+from planner.conversation import child_custody
 from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
@@ -80,6 +81,7 @@ from planner.conversation.lifecycle_storage import (
     read_facts,
     validate_runtime_ownership,
 )
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.logic.conversation_start_resolution import bind_conversation_origin
 from planner.conversation.logic.retained_turn import OpenRunTurn, facts_after_restart
 from planner.conversation.publication.coordinator import (
@@ -254,6 +256,7 @@ class ConversationStore:
         self._integer_now = integer_now
         self._busy_timeout_ms = busy_timeout_ms
         self._write_operations: set[asyncio.Task[object]] = set()
+        self.blocked_local_conversations: set[str] = set()
         # Loop time after which _write stops retrying SQLite contention, for a write a
         # sender will send again. None retries contention for as long as it lasts.
         self._contention_retry_until: ContextVar[float | None] = ContextVar(
@@ -302,13 +305,78 @@ class ConversationStore:
         self, conn: sqlite3.Connection, open_runs: Mapping[str, OpenRunTurn]
     ) -> None:
         conn.execute("BEGIN IMMEDIATE")
-        interruption_data.reconcile(conn, read_manifests(Path(self._db_path)), self._integer_now())
+        from planner.conversation.deploy_interruptions.contracts import CaptureManifest
+        from planner.environments.interruption_capture import read_unresolved_turns
+        from planner.tickets import data as tickets_data
+        from planner.tickets.contracts import WorkerStepClaim
+
+        # A prepared journal row commits with its exact claim revision. The dispatch
+        # boundary changes it before any send, so this is positive non-delivery proof.
+        for pending in conn.execute(
+            "SELECT d.ticket_id,d.claim_revision FROM worker_step_dispatch_intents d "
+            "JOIN tickets t ON t.id=d.ticket_id WHERE d.state='prepared' "
+            "AND t.worker_step_claim='out' AND t.worker_step_claim_revision=d.claim_revision"
+        ).fetchall():
+            tickets_data.release_worker_step_claim(
+                conn,
+                str(pending[0]),
+                expected_claim=WorkerStepClaim.out,
+                expected_claim_revision=int(pending[1]),
+                now=self._integer_now(),
+            )
+        manifests = read_manifests(Path(self._db_path))
+        unresolved = tuple(
+            turn for turn in read_unresolved_turns(conn)
+            if turn.conversation_id not in open_runs
+        )
+        self.blocked_local_conversations = {
+            turn.conversation_id
+            for turn in unresolved
+            if not child_custody.retirement_proven(conn, turn.conversation_id)
+            or not child_custody.occurrence_matches(
+                conn, turn.conversation_id, turn.occurrence_id, turn.runtime_epoch
+            )
+        }
+        # Capture before restart destroys the old live facts. Missing identity is not
+        # proof of termination, even after the previous runtime released its lock.
+        for turn in unresolved:
+            if turn.conversation_id in self.blocked_local_conversations:
+                continue
+            if not child_custody.occurrence_matches(
+                conn, turn.conversation_id, turn.occurrence_id, turn.runtime_epoch
+            ):
+                continue
+            if any(
+                captured.conversation_id == turn.conversation_id
+                and captured.turn_number == turn.turn_number
+                and captured.occurrence_id == turn.occurrence_id
+                for manifest in manifests for captured in manifest.turns
+            ):
+                continue
+            already = conn.execute(
+                "SELECT 1 FROM deploy_interruptions WHERE source_conversation_id=? "
+                "AND turn_number=? AND occurrence_id IS ?",
+                (turn.conversation_id, turn.turn_number, turn.occurrence_id),
+            ).fetchone()
+            if already is not None:
+                continue
+            identity = f"crash:{turn.runtime_epoch}:{turn.conversation_id}:{turn.turn_number}"
+            interruption_data.import_captured_turns(
+                conn,
+                CaptureManifest(identity, identity, self._integer_now(), "captured", None, (turn,)),
+                self._integer_now(),
+                claim_error_reason="interrupted by a home crash",
+                ended_by="The home process interruption",
+            )
+        interruption_data.reconcile(conn, manifests, self._integer_now())
         ids = conn.execute(
             "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
             "WHERE status IN ('intent','running','pending','answering')"
         ).fetchall()
         for row in ids:
             conversation_id = str(row[0])
+            if conversation_id in self.blocked_local_conversations:
+                continue
             facts = facts_after_restart(
                 read_facts(conn, conversation_id), open_runs.get(conversation_id)
             )
@@ -328,6 +396,37 @@ class ConversationStore:
             for conversation_id, payloads in recovered_events.items():
                 self._insert_rows(conn, conversation_id, payloads)
         commit_without_change_signal(conn)
+
+    async def record_child_custody(
+        self,
+        conversation_id: str,
+        generation: str,
+        identity: LocalChildIdentity | None = None,
+        *,
+        retired: bool = False,
+    ) -> None:
+        await self._write(
+            self._record_child_custody_sync, conversation_id, generation, identity, retired
+        )
+
+    def _record_child_custody_sync(
+        self,
+        conversation_id: str,
+        generation: str,
+        identity: LocalChildIdentity | None,
+        retired: bool,
+    ) -> None:
+        conn = self._connect()
+        try:
+            if retired:
+                child_custody.write_retired(conn, conversation_id, generation)
+            elif identity is None:
+                child_custody.write_pending(conn, conversation_id, generation)
+            else:
+                child_custody.write_started(conn, conversation_id, generation, identity)
+            commit_without_change_signal(conn)
+        finally:
+            conn.close()
 
     async def bind_interruption_delivery(
         self,
@@ -465,6 +564,8 @@ class ConversationStore:
                 "INSERT INTO conversation_turn_occurrences VALUES (?,?,?,?)",
                 (conversation_id, turn_number, uuid4().hex, str(epoch[0])),
             )
+            if conversation_id not in self.blocked_local_conversations:
+                child_custody.bind_current_turn(conn, conversation_id)
             apply_facts(
                 conn,
                 conversation_id,
@@ -1256,6 +1357,10 @@ class ConversationStore:
                         record.created_at,
                     ),
                 )
+                # A new conversation has no source process. The pre-spawn boundary
+                # replaces this receipt with launch_pending before a child can start.
+                child_custody.write_pending(conn, record.conversation_id, "never-started")
+                child_custody.write_retired(conn, record.conversation_id, "never-started")
                 if self.signal_coordinator is not None:
                     conn.commit()
             except sqlite3.IntegrityError as already_there:

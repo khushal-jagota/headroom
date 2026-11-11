@@ -63,7 +63,7 @@ The Mac saves each piece of output before it sends it. Each conversation sends i
 
 The VPS answers each batch quickly, with receipts or "retry later". A dropped request never cancels a save. If one conversation's items fail, only that conversation waits. One conversation never blocks another. An item from a replaced Mac process is refused, and the new process replays it.
 
-A file reaches the VPS before any item that refers to it, so a Ticket link never points at a missing file. Live text, thinking, and tool progress skip the outbox and are lost while the Mac is away. Finished messages and recorded events are saved and resent.
+The outbox sends a bounded number of conversations at once and rotates after each batch. A conversation in retry backoff leaves capacity for others. A file reaches the VPS before any item that refers to it, so a Ticket link never points at a missing file. Live text, thinking, and tool progress skip the outbox and are lost while the Mac is away. Finished messages and recorded events are saved and resent.
 
 ## Restarts
 

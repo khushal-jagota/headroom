@@ -43,6 +43,8 @@ from planner.conversation.backends.codex_app_server.login import (
     codex_home,
     logins_hold_the_same_credential,
 )
+from planner.conversation.child_custody import process_identity
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.tool_shell_kill_priority import with_tool_shell_kill_priority
 from planner.conversation.worker_unit import WorkerUnit, WorkerUnitError
 
@@ -237,6 +239,13 @@ class CodexAppServerClient:
             self._watch_for_the_child_ending(process),
             name=f"planner.conversation.codex.child.{self._description}",
         )
+
+    def local_child_identity(self) -> LocalChildIdentity | None:
+        """Read only after the adapter completes the child protocol handshake."""
+        if self._process is None:
+            return None
+        unit = self._worker_unit
+        return process_identity(self._process.pid, None if unit is None else unit.name)
 
     async def stop(self) -> None:
         """End the child: stop reading it, close its input, and make sure it is gone."""

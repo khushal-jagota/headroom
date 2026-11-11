@@ -124,6 +124,7 @@ from planner.conversation.backends.contracts import (
     ToolCallProgress as BackendToolCallProgress,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
+from planner.conversation.child_custody import process_identity
 from planner.conversation.contracts import (
     AnswerFate,
     ComposerCatalogEntry,
@@ -781,6 +782,11 @@ class HermesAcpBackendChild:
             # The process is running but it is not an ACP agent this can talk to, so there
             # is no live backend to write to — which is what a spawn failure names.
             raise BackendSpawnFailed(str(would_not_come_up)) from would_not_come_up
+        reporter = getattr(self._sink, "record_local_child_custody", None)
+        if reporter is not None:
+            identity = process_identity(process.pid)
+            if identity is not None:
+                await reporter(identity)
         return connection
 
     async def _create_session(

@@ -1287,3 +1287,38 @@ def test_executor_default_file_refuses_without_provider_construction(
         assert retained.read_text() == "retain"
 
     asyncio.run(run())
+
+
+def test_native_prompt_outcome_carries_positive_provider_acceptance(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run():
+        registry, _spool, native, start = native_registry
+        await registry.run(start)
+
+        async def accepted(*args, **kwargs):
+            return BackendPromptAccepted(True, agent_acceptance_proven=True)
+
+        monkeypatch.setattr(native, "write_prompt", accepted)
+        command = ChildCommand(
+            "accepted-prompt",
+            start.child,
+            ChildOperation.write_prompt,
+            TurnToken("c_one", 1),
+            decode_command_arguments(
+                ChildOperation.write_prompt,
+                {
+                    "content": encode_value(text_message_content("once")),
+                    "sender_content": encode_value(text_message_content("once")),
+                    "sender_label": "loop",
+                    "mode": "queue",
+                },
+            ),
+        )
+        outcome = await registry.run(command)
+        assert outcome.disposition is CommandDisposition.succeeded
+        assert outcome.result["agent_acceptance_proven"] is True
+        assert await registry.run(command) == outcome
+
+    asyncio.run(run())

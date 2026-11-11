@@ -3545,3 +3545,85 @@ def test_a_background_task_lost_with_its_session_is_told_to_the_agent(
             await system.shutdown()
 
     _run(exercise)
+
+
+def test_silent_provider_accepted_starts_release_capacity_without_turn_end(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.conversation.start_admission import AutomaticStartAdmission
+    from planner.conversation.start_admission.contracts import StartRequest
+
+    original = _FakeBackendChild.write_prompt
+
+    async def accepted(self, *args, **kwargs):
+        return replace(await original(self, *args, **kwargs), agent_acceptance_proven=True)
+
+    monkeypatch.setattr(_FakeBackendChild, "write_prompt", accepted)
+    now = [0.0]
+    admission = AutomaticStartAdmission(clock=lambda: now[0])
+    harness.system.start_admission = admission
+
+    async def exercise():
+        try:
+            for n in range(5):
+                conversation = f"silent-{n}"
+                await _start(harness, conversation)
+                sender = f"accepted-{n}"
+                assert admission.try_start(StartRequest(sender, "worker", "home"))
+                await harness.system.send(
+                    conversation,
+                    text_message_content("work"),
+                    sender_label="loop",
+                    sender_message_id=sender,
+                )
+                assert admission.snapshots() == ()
+                now[0] += 1
+            assert all([await harness.system.is_running(f"silent-{n}") for n in range(5)])
+        finally:
+            await harness.system.shutdown()
+
+    _run(exercise)
+
+
+def test_positive_child_retirement_clears_only_its_unknown_admission(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.conversation.backends.contracts import PromptWriteFailed
+    from planner.conversation.start_admission import AutomaticStartAdmission
+    from planner.conversation.start_admission.contracts import StartRequest
+
+    async def possible_emission(self, *args, **kwargs):
+        raise PromptWriteFailed("unknown after write")
+
+    monkeypatch.setattr(_FakeBackendChild, "write_prompt", possible_emission)
+    now = [0.0]
+    admission = AutomaticStartAdmission(clock=lambda: now[0])
+    harness.system.start_admission = admission
+
+    async def exercise():
+        await _start(harness, "unknown")
+        assert admission.try_start(StartRequest("old-unknown", "worker", "home"))
+        fate = await harness.system.send(
+            "unknown",
+            text_message_content("work"),
+            sender_label="loop",
+            sender_message_id="old-unknown",
+        )
+        assert isinstance(fate, PromptDeliveryUncertain)
+        assert len(admission.snapshots()) == 1
+        now[0] += 1
+        assert admission.try_start(StartRequest("new-source", "worker", "home"))
+        newer = TurnToken("different", 1)
+        admission.bind(("new-source",), newer)
+        admission.bind_source(newer, object())
+        await harness.system.kill("unknown")
+        assert [s.request.identity for s in admission.snapshots()] == ["new-source"]
+        with connect(str(harness.store._db_path)) as conn:
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM automatic_start_bindings WHERE identity='old-unknown'"
+                ).fetchone()[0]
+                == 0
+            )
+
+    _run(exercise)

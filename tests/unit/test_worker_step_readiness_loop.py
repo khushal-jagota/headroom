@@ -1288,3 +1288,94 @@ def test_custom_guidance_reaches_first_payload_but_not_later_stage(
         "CUSTOM KICKOFF GUIDE"
         not in world.conversations.backend_prompt_writes(conversation_id)[1].text
     )
+
+
+def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(world: _World):
+    # Existing readiness tests do not join shared admission with retained remote commands.
+    from tests.support.executor_presence import lease_request, mac_identity
+
+    from planner.conversation.start_admission import AutomaticStartAdmission
+    from planner.conversation.start_admission.contracts import StartRequest
+    from planner.execution_identity import ChildReference, TurnToken
+    from planner.executor.protocol import ChildCommand, ChildOperation, WritePrompt
+    from planner.executor.vps_transport import VpsExecutor
+
+    async def exercise():
+        endpoint = VpsExecutor(world.db_path, world.clock)
+        endpoint.presence.returned = None
+        identity = mac_identity()
+        await endpoint.lease(lease_request(identity))
+        now = [0.0]
+        present = [True]
+        starts = AutomaticStartAdmission(clock=lambda: now[0])
+        starts.configure_destinations(lambda destination: destination == "home" or present[0])
+        world.conversations.start_admission = starts
+        remote_ids = []
+        for number in range(3):
+            ticket_id = await asyncio.to_thread(world.ready_ticket, title=f"remote-{number}")
+            remote_ids.append(ticket_id)
+            conversation_id = f"remote-c{number}"
+            with closing(connect(world.db_path)) as conn:
+                conn.execute(
+                    "UPDATE tickets SET locale='macos',worker_step_claim='out',"
+                    "worker_step_claim_revision=1,conversation_id=? WHERE id=?",
+                    (conversation_id, ticket_id),
+                )
+            child = ChildReference(identity.executor_incarnation, f"child{number}", conversation_id)
+            endpoint.runs.store.register_child(child, "ticket", ticket_id, 1)
+            token = TurnToken(conversation_id, 1)
+            sender = f"worker_step_message_{ticket_id}:1"
+            assert starts.try_start(StartRequest(sender, "worker", "macos"))
+            starts.bind((sender,), token)
+            starts.persist_bindings(world.db_path, token)
+            await endpoint.mailbox.put_child_command(
+                ChildCommand(
+                    f"command{number}",
+                    child,
+                    ChildOperation.write_prompt,
+                    token,
+                    WritePrompt(
+                        content=text_message_content("work"),
+                        sender_content=text_message_content("work"),
+                        sender_label="loop",
+                        mode=PromptDeliveryMode.queue,
+                    ),
+                )
+            )
+            now[0] += 1
+        with closing(world.connect()) as conn:
+            commands = [tuple(row) for row in conn.execute("SELECT * FROM executor_commands")]
+        claims = [world.ticket(ticket_id) for ticket_id in remote_ids]
+        present[0] = False
+        home_id = await asyncio.to_thread(world.ready_ticket, title="home")
+        result = await start_ready_worker_step(
+            home_id,
+            connect_database=world.connect,
+            conversation_system=world.conversations,
+            worker_type_registry=configured_worker_type_registry(),
+            now=world.clock.now_unix,
+        )
+        assert result.started
+        with closing(world.connect()) as conn:
+            assert [
+                tuple(row) for row in conn.execute("SELECT * FROM executor_commands")
+            ] == commands
+        assert [world.ticket(ticket_id) for ticket_id in remote_ids] == claims
+        assert {s.request.identity for s in starts.snapshots() if s.state == "deferred"} == {
+            f"worker_step_message_{ticket_id}:1" for ticket_id in remote_ids
+        }
+        # A new home runtime reconstructs admission from these same pending commands.
+        restored = AutomaticStartAdmission(clock=lambda: now[0])
+        restored.configure_destinations(lambda destination: True)
+        endpoint.mailbox.start_admission = restored
+        reply = await endpoint.poll(identity, 0, 0)
+        assert len(reply.commands) == 1
+        assert reply.commands[0].command_id == "command0"
+        assert len(restored.snapshots()) == 2  # First admitted, next deferred at the gate.
+        now[0] += 1
+        reply = await endpoint.poll(identity, reply.commands[-1].command_sequence, 0)
+        assert len(reply.commands) == 1
+        assert reply.commands[0].command_id == "command1"
+        await endpoint.close()
+
+    asyncio.run(exercise())

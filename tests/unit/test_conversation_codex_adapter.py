@@ -59,7 +59,7 @@ def test_a_manager_wake_crosses_the_codex_adapter_with_its_sender_label(
         async with _scripted_child(tmp_path, script={"turns": [{"actions": []}]}) as scripted:
             await scripted.start(cursor=None)
             content = text_message_content("Review the manager wake.")
-            await scripted.child.write_prompt(
+            outcome = await scripted.child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
                 content,
                 sender_content=content,
@@ -68,6 +68,7 @@ def test_a_manager_wake_crosses_the_codex_adapter_with_its_sender_label(
                 model_change=None,
                 reasoning_effort_change=None,
             )
+            assert outcome.agent_acceptance_proven is True
             wire = json.dumps(scripted.sent("turn/start"))
             assert "Panels" in wire
             assert "Review the manager wake." in wire
@@ -517,5 +518,36 @@ def test_early_output_waits_for_start_response_and_stale_turn_does_not_bind(tmp_
             await scripted.sink.wait_for_the_turn_to_end()
             assert scripted.sink.agent_message_texts == ["early output"]
             assert len(scripted.sink.endings) == 1
+
+    _run(exercise)
+
+
+def test_unconfirmed_child_launch_never_records_recoverable_custody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.backends.contracts import BackendSpawnFailed
+    from planner.conversation.local_child_contracts import LocalChildIdentity
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={}) as scripted:
+            recorded: list[LocalChildIdentity] = []
+
+            async def record(identity: LocalChildIdentity) -> None:
+                recorded.append(identity)
+
+            async def interrupted_handshake() -> None:
+                # A wrapper PID and absent unit alone do not prove that an
+                # asynchronous service-manager launch request reached its child.
+                raise BackendSpawnFailed("launcher ended before protocol handshake")
+
+            monkeypatch.setattr(scripted.sink, "record_local_child_custody", record, raising=False)
+            monkeypatch.setattr(scripted.child, "_shake_hands", interrupted_handshake)
+            monkeypatch.setattr(
+                scripted.child._client, "local_child_identity",
+                lambda: LocalChildIdentity(999999, "old", "boot", "missing.service"),
+            )
+            with pytest.raises(BackendSpawnFailed):
+                await scripted.start(cursor=None)
+            assert recorded == []
 
     _run(exercise)

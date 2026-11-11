@@ -267,9 +267,30 @@ def test_a_vps_restart_adopts_the_running_mac_turn_live(
             assert await _turn_endings(restarted, "mac") == [ConversationTurnEnding.completed]
             assert not await restarted.system.is_running("mac")
             # The next message goes to the adopted child, not a fresh one.
-            sent = await restarted.system.send(
-                "mac", text_message_content("next"), sender_label="owner"
+            from planner.conversation.start_admission import AutomaticStartAdmission
+            from planner.conversation.start_admission.contracts import StartRequest
+
+            restarted.system.start_admission.configure_destinations(lambda destination: True)
+            assert restarted.system.start_admission.try_start(
+                StartRequest("reused-child-start", "worker", "macos")
             )
+            sent = await restarted.system.send(
+                "mac",
+                text_message_content("next"),
+                sender_label="owner",
+                sender_message_id="reused-child-start",
+            )
+            reference = runs.runs["mac"].reference
+            with connect(str(db_path)) as conn:
+                binding = conn.execute(
+                    "SELECT executor_incarnation,child_id FROM automatic_start_bindings "
+                    "WHERE identity='reused-child-start'"
+                ).fetchone()
+                assert tuple(binding) == (reference.executor_incarnation, reference.child_id)
+                restored = AutomaticStartAdmission()
+                restored.restore_bindings(conn, TurnToken("mac", 2))
+            restored.retire_remote(str(db_path), reference)
+            assert restored.snapshots() == ()
             assert isinstance(sent, PromptDeliveryStarted)
             assert restarted.spawned_conversation_ids == []
             assert restarted.backend("mac").written_texts() == ("next",)

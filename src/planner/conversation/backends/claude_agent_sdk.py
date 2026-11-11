@@ -143,6 +143,7 @@ from planner.conversation.backends.contracts import (
     VendorSessionCursorRebound,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
+from planner.conversation.child_custody import process_identity
 from planner.conversation.contracts import (
     AnswerFate,
     ComposerCatalogEntry,
@@ -163,6 +164,7 @@ from planner.conversation.events import (
     UserInputOption,
     UserInputQuestion,
 )
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.message_content import (
     ComposedMessageDoesNotContainSenderContent,
     MessageContent,
@@ -733,6 +735,14 @@ class _ObservedClaudeSdkClient:
         self._client = ClaudeSDKClient(options, transport=transport)
         self._transport = transport
 
+    def local_child_identity(self) -> LocalChildIdentity | None:
+        # Called after SDK initialization, so the service launch reached its child.
+        inner = self._transport._inner
+        if not isinstance(inner, _ClaudeCleanupTransport) or inner._process is None:
+            return None
+        unit = inner._worker_unit
+        return process_identity(inner._process.pid, None if unit is None else unit.name)
+
     async def connect(self) -> None:
         await self._client.connect()
 
@@ -931,6 +941,11 @@ class ClaudeAgentSdkBackendChild:
                 None, VendorSessionCursorRebound(vendor_session_cursor=minted_session_id)
             )
         await self._report_the_available_commands(client)
+        reporter = getattr(self._sink, "record_local_child_custody", None)
+        if reporter is not None and isinstance(client, _ObservedClaudeSdkClient):
+            identity = client.local_child_identity()
+            if identity is not None:
+                await reporter(identity)
 
     async def _report_the_available_commands(self, client: ClaudeSdkClient) -> None:
         """Tell the core what a person may type at this child, from its startup handshake.

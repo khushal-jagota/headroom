@@ -300,6 +300,12 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
         "INSERT OR REPLACE INTO signal_publication_meta "
         "(singleton,scope,runtime_epoch,sequence) VALUES (1,'fixture','legacy-epoch',0)"
     )
+    # This legacy fixture creates no backend process. Record that positive proof
+    # explicitly; a genuinely missing legacy custody record remains fenced.
+    from planner.conversation.child_custody import write_pending, write_retired
+
+    write_pending(conn, "c", "fixture-never-launched")
+    write_retired(conn, "c", "fixture-never-launched")
     conn.commit()
     legacy = CapturedTurn(
         "c", 1, None, "legacy-epoch", "intent", "Interrupted worker", "unknown", None, None, None
@@ -356,6 +362,9 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
                 )
                 wire = current.backend("c").written_texts()[0]
                 assert ("[Panels deployment interruption context]" in wire) == (boot == 0)
+                # Do not create a second real interruption while this test checks
+                # the historical attribution of the original legacy capture.
+                await current.complete_turn("c")
             finally:
                 await current.system.shutdown()
 
@@ -991,6 +1000,11 @@ def test_queued_recovery_wire_failure_records_existing_uncertainty_row(
         await original.store.reserve_turn("c")
         manifest = _capture(path)
         await original.system.shutdown()
+        # This case models a late capture after the old turn already settled.
+        # Otherwise generic crash recovery now admits that turn at startup itself.
+        with connect(str(path)) as conn:
+            conn.execute("UPDATE conversation_lifecycle_facts SET status='unavailable'")
+            conn.commit()
         restarted = _Harness(path)
         try:
             await restarted.system.send(

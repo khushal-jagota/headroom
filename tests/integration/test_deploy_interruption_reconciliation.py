@@ -183,6 +183,12 @@ def _interrupted_server(
             "('interrupted',1,'interrupted-occurrence','old-epoch')"
         )
         conn.execute("INSERT INTO conversation_runtime_epoch VALUES (1,'old-epoch')")
+        # This synthetic source never launched a process. Keep that positive
+        # evidence explicit so the test exercises delivery, not uncertain custody.
+        from planner.conversation.child_custody import write_pending, write_retired
+
+        write_pending(conn, "interrupted", "fixture-never-launched")
+        write_retired(conn, "interrupted", "fixture-never-launched")
         if ticket_owned:
             conn.execute(
                 "INSERT INTO projects(id,name,folder_path,created_at,updated_at) "

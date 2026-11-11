@@ -141,6 +141,7 @@ from planner.conversation.lifecycle import (
 )
 from planner.conversation.lifecycle_storage import read_facts
 from planner.conversation.live_tail import ConversationLiveTail
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.logic.backend_events import (
     interpret_backend_event,
     interpret_turn_ending,
@@ -167,6 +168,7 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.publication.mutations import PlainFieldMutation, SignalRuntimeMutation
+from planner.conversation.start_admission.contracts import StartRequest
 from planner.conversation.storage import (
     ConversationRecord,
     ConversationRecordNamesNoModel,
@@ -176,6 +178,8 @@ from planner.conversation.storage import (
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core import change_signal
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
+from planner.core.db import connect
+from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import ChildReference
 
 LOGGER = logging.getLogger("planner.conversation")
@@ -599,6 +603,11 @@ class SqliteProcessConversationSystem:
 
         self._backend_snapshots = backend_snapshots or BackendSnapshotService()
         self.machine_catalog: RemoteCatalogSource | None = None
+        from planner.conversation.start_admission import AutomaticStartAdmission
+
+        self.start_admission = AutomaticStartAdmission(clock=monotonic_now)
+        self._lost_task_notices: dict[str, tuple[_ConversationState, str]] = {}
+        self._lost_task_notice_drain: asyncio.Task[None] | None = None
         self._message_files = message_files
         # Nobody watching is the ordinary case for a system built without one: the record
         # is written exactly the same way, and there is simply nowhere to show it.
@@ -665,6 +674,8 @@ class SqliteProcessConversationSystem:
     def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
         """Inspect every live conversation; uncertain delivery never counts as idle."""
         if self._shutting_down or self.workspace_admission.closed:
+            return "unknown"
+        if self._store.blocked_local_conversations:
             return "unknown"
         if self.workspace_admission.active:
             return "busy"
@@ -1396,6 +1407,12 @@ class SqliteProcessConversationSystem:
                 or not retained.retirement_confirmed
             ):
                 return False
+            await run_on_worker_thread(
+                self.start_admission.retire_remote, self._store._db_path, reference
+            )
+            await run_on_worker_thread(
+                self.start_admission.retire_source, self._store._db_path, child
+            )
             await child.detach()
             if state.child is child:
                 state.child = None
@@ -2058,9 +2075,16 @@ class SqliteProcessConversationSystem:
                 state.child = None
                 if child is not None:
                     try:
+                        detached_sink = state.child_event_sink
                         await child.detach()
                         if not child.stop_outside_lock:
                             state.local_child_retirement_proven = True
+                            if isinstance(detached_sink, _CoreBackendEventSink):
+                                await self._store.record_child_custody(
+                                    state.record.conversation_id,
+                                    detached_sink.generation,
+                                    retired=True,
+                                )
                     except Exception:
                         state.child = child
                         state.child_is_quarantined = True
@@ -2765,6 +2789,40 @@ class SqliteProcessConversationSystem:
             await asyncio.shield(settle_recovery_exception())
             raise
 
+    async def confirm_remote_prompt_accepted(
+        self, reference: ChildReference, turn: TurnToken
+    ) -> None:
+        state = await self._conversation_state(reference.conversation_id)
+        if state is None or state.retained_child_reference != reference:
+            return
+        running = await self._hold_for_the_live_turn(state, turn)
+        if running is None:
+            return
+        try:
+            if state.retained_child_reference == reference:
+                await run_on_worker_thread(self.start_admission.accept, self._store._db_path, turn)
+        finally:
+            state.lock.release()
+
+    async def automatic_start_request(self, identity: str, conversation_id: str) -> StartRequest:
+        from planner.conversation.start_admission.contracts import StartRequest
+
+        def read_request() -> StartRequest:
+            conn = connect(self._store._db_path)
+            try:
+                row = conn.execute(
+                    "SELECT locale FROM tickets WHERE conversation_id=?", (conversation_id,)
+                ).fetchone()
+                return StartRequest(
+                    identity,
+                    "worker" if row is not None else "supervisor",
+                    "macos" if row is not None and row[0] == "macos" else "home",
+                )
+            finally:
+                conn.close()
+
+        return await run_on_worker_thread(read_request)
+
     def configure_machine_catalog(self, endpoint: RemoteCatalogSource | None) -> None:
         self.machine_catalog = endpoint
 
@@ -2790,10 +2848,17 @@ class SqliteProcessConversationSystem:
         """
         from planner.conversation.backend_state import BackendStateStore
 
+        self.start_admission.bind((message.sender_message_id for message in messages), turn_token)
+        await run_on_worker_thread(
+            self.start_admission.persist_bindings, self._store._db_path, turn_token
+        )
         requested_model = model_change or state.record.model
         if requested_model is not None and not BackendStateStore(
             self._store._db_path
         ).model_is_enabled(state.record.backend_key, requested_model):
+            await run_on_worker_thread(
+                self.start_admission.reject, self._store._db_path, turn_token
+            )
             return _PromptDeliveryAttempt(
                 refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
                 refusal_detail=f"Model {requested_model} is disabled",
@@ -2822,7 +2887,7 @@ class SqliteProcessConversationSystem:
             and reasoning_effort_change is None
             and state.record.reasoning_effort is not None
         )
-        return await self._write_on_child(
+        attempt = await self._write_on_child(
             state,
             turn_token,
             content=content,
@@ -2837,6 +2902,11 @@ class SqliteProcessConversationSystem:
             interruption_notice=interruption_notice,
             requires_exact_rebind=requires_exact_rebind,
         )
+        if attempt.refusal_reason is not None or attempt.suppression_reason is not None:
+            await run_on_worker_thread(
+                self.start_admission.reject, self._store._db_path, turn_token
+            )
+        return attempt
 
     async def _write_on_child(
         self,
@@ -2875,6 +2945,7 @@ class SqliteProcessConversationSystem:
                 model=model_change,
                 reasoning_effort=reasoning_effort_change,
                 reasoning_effort_is_set=reasoning_effort_is_set,
+                start_turn=turn_token,
             )
         except BackendSpawnFailed as error:
             return _PromptDeliveryAttempt(
@@ -2938,6 +3009,12 @@ class SqliteProcessConversationSystem:
         try:
             if requires_exact_rebind:
                 raise NeedsRebind("exact desired default or alias target requires a fresh child")
+            self.start_admission.bind_source(turn_token, attempted_child)
+            reference = state.retained_child_reference
+            if child_stops_outside_lock(attempted_child) and reference is not None:
+                await run_on_worker_thread(
+                    self.start_admission.bind_child, self._store._db_path, turn_token, reference
+                )
             accepted = await attempted_child.write_prompt(
                 turn_token,
                 wire_content,
@@ -2962,6 +3039,7 @@ class SqliteProcessConversationSystem:
                 refusal_detail=str(rejected),
             )
         except NeedsRebind as rebind:
+            self.start_admission.bind_source(turn_token, None)
             if check_delivery_owner is not None:
                 await self._discard_child(state, child)
                 return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
@@ -2997,6 +3075,10 @@ class SqliteProcessConversationSystem:
             raise
         if attempted_reservation is not None:
             attempted_reservation.prompt_accepted = True
+        if accepted.agent_acceptance_proven and state.child is attempted_child:
+            await run_on_worker_thread(
+                self.start_admission.accept, self._store._db_path, turn_token
+            )
         return _PromptDeliveryAttempt(
             messages=messages,
             automatic_notice=automatic_notice,
@@ -3939,6 +4021,7 @@ class SqliteProcessConversationSystem:
         model: str | None = None,
         reasoning_effort: str | None = None,
         reasoning_effort_is_set: bool = False,
+        start_turn: TurnToken | None = None,
     ) -> BackendChild:
         """The conversation's live child, spawned and bound on first need.
 
@@ -3976,6 +4059,13 @@ class SqliteProcessConversationSystem:
             if retained is None:
                 raise BackendSpawnFailed("Backend did not retain its run identity")
             state.retained_child_reference = retained.reference
+            if start_turn is not None:
+                await run_on_worker_thread(
+                    self.start_admission.bind_child,
+                    self._store._db_path,
+                    start_turn,
+                    retained.reference,
+                )
             state.delivery_uncertain = False
             if state.retirement_task is not None and state.retirement_task.done():
                 state.retirement_task = None
@@ -3987,6 +4077,8 @@ class SqliteProcessConversationSystem:
         self._ensure_backend_event_pump(state)
         start_reservation = state.reserved_turn
         state.local_child_retirement_proven = False
+        if not child_stops_outside_lock(child):
+            await self._store.record_child_custody(state.record.conversation_id, sink.generation)
         await child.start(
             resolved_start,
             vendor_session_cursor=state.record.vendor_session_cursor,
@@ -4029,6 +4121,7 @@ class SqliteProcessConversationSystem:
             state.child_is_quarantined = True
 
     async def _stop_child(self, state: _ConversationState, child: BackendChild) -> bool:
+        sink = state.child_event_sink
         try:
             await child.stop()
         except Exception:
@@ -4037,7 +4130,12 @@ class SqliteProcessConversationSystem:
                 state.record.conversation_id,
             )
             return False
+        await run_on_worker_thread(self.start_admission.retire_source, self._store._db_path, child)
         state.local_child_retirement_proven = True
+        if isinstance(sink, _CoreBackendEventSink) and not child_stops_outside_lock(child):
+            await self._store.record_child_custody(
+                state.record.conversation_id, sink.generation, retired=True
+            )
         # News still queued from the stopped child is not about any child that follows.
         state.child_event_sink = None
         await self._background_tasks_ended_with_child(state)
@@ -4064,40 +4162,49 @@ class SqliteProcessConversationSystem:
         self, state: _ConversationState, task_descriptions: tuple[str, ...]
     ) -> None:
         """Deliver one Panels prompt per lost task, queued behind any running turn."""
-        if task_descriptions:
-            self._settle_in_background(
-                state, self._deliver_lost_background_task_prompts(state, task_descriptions)
+        for description in task_descriptions:
+            identity = f"lost-background:{state.record.conversation_id}:{uuid4().hex}"
+            self._lost_task_notices[identity] = (state, description)
+        if self._lost_task_notices and (
+            self._lost_task_notice_drain is None or self._lost_task_notice_drain.done()
+        ):
+            self._lost_task_notice_drain = self._settle_in_background(
+                state, self._drain_lost_background_task_prompts()
             )
 
-    async def _deliver_lost_background_task_prompts(
-        self, state: _ConversationState, task_descriptions: tuple[str, ...]
-    ) -> None:
-        conversation_id = state.record.conversation_id
-        for task_description in task_descriptions:
-            try:
-                fate = await self.send(
-                    conversation_id,
-                    text_message_content(_lost_background_task_prompt(task_description)),
-                    sender_label=LOST_BACKGROUND_TASK_SENDER_LABEL,
-                    mode=PromptDeliveryMode.queue,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                LOGGER.exception(
-                    "conversation %s could not tell its agent that background task %r "
-                    "ended with its session",
-                    conversation_id,
-                    task_description,
-                )
-                continue
-            LOGGER.info(
-                "conversation background task lost with its session conversation_id=%s "
-                "task_description=%r fate=%s",
-                conversation_id,
-                task_description,
-                type(fate).__name__,
-            )
+    async def _drain_lost_background_task_prompts(self) -> None:
+        """One scanner retains deferred notices without a sleeping task per agent."""
+        while self._lost_task_notices:
+            for identity, (state, description) in tuple(self._lost_task_notices.items()):
+                if state.being_killed or self._shutting_down:
+                    self._lost_task_notices.pop(identity, None)
+                    self.start_admission.finish_unbound(identity)
+                    continue
+                conversation_id = state.record.conversation_id
+                request = await self.automatic_start_request(identity, conversation_id)
+                if not self.start_admission.try_start(request):
+                    continue
+                self._lost_task_notices.pop(identity, None)
+                try:
+                    fate = await self.send(
+                        conversation_id,
+                        text_message_content(_lost_background_task_prompt(description)),
+                        sender_label=LOST_BACKGROUND_TASK_SENDER_LABEL,
+                        mode=PromptDeliveryMode.queue,
+                        sender_message_id=identity,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    LOGGER.exception("Lost background task notice failed: %s", conversation_id)
+                    self.start_admission.finish_unbound(identity)
+                    continue
+                if isinstance(fate, (PromptDeliveryRefused, PromptDeliverySuppressed)):
+                    self.start_admission.finish(identity)
+                elif isinstance(fate, PromptDeliveryUncertain):
+                    self.start_admission.uncertain(identity)
+            if self._lost_task_notices:
+                await asyncio.sleep(self.start_admission.poll_delay(1.0))
 
     async def _cancel_child_turn(
         self, state: _ConversationState, child: BackendChild
@@ -4727,7 +4834,6 @@ class SqliteProcessConversationSystem:
                 from planner.conversation.deploy_interruptions.coordinator import (
                     close_run_and_record_mac_process_interruption,
                 )
-                from planner.core.task_settlement import run_on_worker_thread
 
                 await run_on_worker_thread(
                     close_run_and_record_mac_process_interruption,
@@ -4736,6 +4842,9 @@ class SqliteProcessConversationSystem:
                     replaced_by,
                     int(self._unix_time_now() * 1000),
                 )
+            await run_on_worker_thread(
+                self.start_admission.retire_remote, self._store._db_path, reference
+            )
             if state.running_turn is not None:
                 await self._end_turn(
                     state, state.running_turn, ConversationTurnEnding.interrupted, None
@@ -4987,6 +5096,7 @@ class SqliteProcessConversationSystem:
                 live = False
             agent_acted = live and token is not None
             if agent_acted:
+                await run_on_worker_thread(self.start_admission.accept, self._store._db_path, token)
                 state.last_touched_monotonic = self._monotonic_now()
             interpreted = (
                 interpret_backend_event(
@@ -5244,6 +5354,8 @@ class SqliteProcessConversationSystem:
                 return None
             state = _ConversationState(record=record)
             self._restore_retained_run(state)
+            if conversation_id in self._store.blocked_local_conversations:
+                state.child_is_quarantined = True
             with nullcontext() if self._signal is None else self._signal.runtime_registry():
                 self._conversations[conversation_id] = state
             return state
@@ -5474,6 +5586,12 @@ class _CoreBackendEventSink:
     def __init__(self, system: SqliteProcessConversationSystem, state: _ConversationState) -> None:
         self._system = system
         self._state = state
+        self.generation = uuid4().hex
+
+    async def record_local_child_custody(self, identity: LocalChildIdentity) -> None:
+        await self._system._store.record_child_custody(
+            self._state.record.conversation_id, self.generation, identity
+        )
 
     async def _publish_live_after_admission(
         self,
@@ -5486,6 +5604,9 @@ class _CoreBackendEventSink:
         try:
             if self._state.child_event_sink is not self:
                 return
+            await run_on_worker_thread(
+                self._system.start_admission.accept, self._system._store._db_path, turn_token
+            )
             if frame is None:
                 self._system._publish_model_thinking(self._state, turn_token)
             else:
@@ -5494,6 +5615,12 @@ class _CoreBackendEventSink:
             self._state.lock.release()
 
     async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
+        if turn is not None and self._state.child_event_sink is self:
+            running = self._state.running_turn
+            if running is not None and running.token == turn and not running.ended:
+                await run_on_worker_thread(
+                    self._system.start_admission.accept, self._system._store._db_path, turn
+                )
         if isinstance(event, AgentMessageCompleted):
             # Backend prose is runtime output, not an addressed notebook message.
             # The Mac still journals it for file capture and receipt acceptance.

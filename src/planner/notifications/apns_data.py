@@ -20,6 +20,7 @@ from planner.notifications.contracts import (
     NotificationIntent,
     PendingAPNsDelivery,
 )
+from planner.notifications.data import expire_stale_deliveries
 
 
 def register_device(
@@ -87,11 +88,7 @@ def queue_intent(
 
 
 def pending_deliveries(conn: sqlite3.Connection, now: int) -> tuple[PendingAPNsDelivery, ...]:
-    conn.execute(
-        "UPDATE notification_apns_deliveries SET status='expired' "
-        "WHERE status IN ('pending','retry') AND created_at <= ?",
-        (now - APNS_DELIVERY_TTL_SECONDS,),
-    )
+    expire_stale_deliveries(conn, now, native=True)
     rows = conn.execute(
         "SELECT d.*,s.device_token,s.bundle_id,s.environment,s.registration_version,s.updated_at "
         "FROM notification_apns_deliveries d JOIN notification_apns_devices s USING(device_id) "

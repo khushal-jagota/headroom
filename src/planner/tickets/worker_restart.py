@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from planner.conversation.contracts import ConversationSystem
+from planner.conversation.start_admission import explicit_start
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
@@ -116,7 +117,8 @@ async def restart_worker(
         now=now,
     )
     # Start obtains fresh read ownership, after mutation ownership ends.
-    start_result = await start_worker_step()
+    with explicit_start():
+        start_result = await start_worker_step()
     return await run_on_worker_thread(
         _restart_result,
         conn,
