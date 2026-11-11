@@ -1,3 +1,6 @@
+import type { Config } from './core/config.ts';
+import { initialize_worker_settings } from './worker_settings/startup.ts';
+import { routes as workerSettings } from './worker_settings/routes.ts';
 import type { SignalNavigationAuthority } from './conversation/publication/authority.ts';
 import type { Area } from './core/authority/register.ts';
 import type { Database, CommitStep } from './core/database/index.ts';
@@ -8,13 +11,17 @@ import { createNavigationRuntime } from './navigation/index.ts';
 import { idle_publication } from './conversation/publication/idle.ts';
 
 const navigation = createNavigationRuntime(idle_publication);
-export const initializeAreas = (database: Database, authority: SignalNavigationAuthority): void => navigation.initialize(database, authority);
+export const initializeAreas = (database: Database, authority: SignalNavigationAuthority, config: Config): void => {
+  initialize_worker_settings(database, config);
+  navigation.initialize(database, authority);
+};
 export const closeAreas = (): void => navigation.close();
 
 /** Add one area registration here. Core has no area identity branches. */
 export const areas: readonly Area[] = [
   { prefix: '/api', routes: projects },
   { prefix: '/api', routes: ideas },
+  { prefix: '/api', routes: workerSettings },
   { prefix: '/api', routes: resourceVersions },
   { prefix: '/api/navigation/view', routes: navigation.routes },
 ];
