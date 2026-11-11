@@ -4513,17 +4513,19 @@ def _chat_charts(browser, url):
         edited = page.evaluate("window.__chatChartProbe.readEditable()")
         assert "```panels-chart" in edited and '"title":"Edited chart"' in edited
         page.evaluate("window.__chatChartProbe.long()")
-        thread.evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+        # Large Markdown parses asynchronously. Navigate only after its windows exist,
+        # and use a reader gesture so automatic following yields to manual navigation.
+        groups = page.locator("[data-markdown-window]")
+        expect(groups).not_to_have_count(0)
+        thread.press("Control+Home")
         expect(page.get_by_role("heading", name="Long message chart", exact=True)).to_be_visible(timeout=10000)
-        expect(page.locator("[data-markdown-window]")).not_to_have_count(0)
         # Visit enough groups to exceed the shared four-view retention budget.
         # A direct jump retains the chart by design and does not prove eviction.
-        groups = page.locator("[data-markdown-window]")
         for index in range(1, 8):
             groups.nth(index).scroll_into_view_if_needed()
             expect(groups.nth(index).locator(":scope > *")).not_to_have_count(0)
         expect(chart_hosts).to_have_count(0, timeout=10000)
-        thread.evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+        thread.press("Control+Home")
         expect(page.get_by_role("heading", name="Long message chart", exact=True)).to_be_visible(timeout=10000)
         expect(chart_hosts).to_have_count(1)
         page.evaluate("window.__chatChartProbe.remove()")
