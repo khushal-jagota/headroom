@@ -239,7 +239,7 @@ def test_workspace_cleanup_stops_idle_retained_child_but_preserves_an_active_tur
         state = WorkspaceState("t_01234567", 1, False)
         folder = registry.paths.artifacts / state.ticket_id
         await registry.cleanup_workspaces((state,), RETENTION_SECONDS + 2)
-        assert folder.exists() and grants == stops == []
+        assert folder.exists() and not grants and not stops
         assert native.sink is not None
         await native.sink.report(turn, TurnEnded(ending=ConversationTurnEnding.completed))
         # A grant for another generation cannot retire this native child or folder.
