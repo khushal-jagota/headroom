@@ -2749,6 +2749,14 @@ def score_table_layout(browser, url):
         scrolled = score_table_geometry(table)
         screenshot("ten-columns-scrolled.png")
         assert abs(scrolled["labelOffset"]) <= 1, scrolled
+        # Hidden column handles must remain behind the pinned first header.
+        assert table.locator('th[data-key="0"]').evaluate("""head => {
+            const rect = head.getBoundingClientRect();
+            for (let x = rect.left + 2; x < rect.right - 2; x += 4) {
+                if (!head.contains(document.elementFromPoint(x, rect.top + rect.height / 2))) return false;
+            }
+            return true;
+        }""")
         assert max(scrolled["spill"]) <= 0.5, scrolled
 
         # A narrower page keeps every column at its content and scrolls further.
@@ -2792,6 +2800,9 @@ def score_table_layout(browser, url):
             page.keyboard.press("ArrowLeft")
         expect(handle).to_have_attribute("aria-valuenow", "80")
         assert abs(score_table_geometry(table)["widths"][1] - 80) <= 1
+        # Touch sorting and the wider coarse resize edge share the same header.
+        table.get_by_role("button", name="Sort by Category", exact=True).tap()
+        expect(table.locator("th[data-sorted]")).to_have_attribute("data-key", "0")
 
         # Chromium's touch input exercises pointer capture and touch-action together.
         first_handle = table.get_by_role("separator", name="Resize Category column", exact=True)
@@ -2810,9 +2821,15 @@ def score_table_layout(browser, url):
             arg=[table.element_handle(), touch_before])
         saved = score_table_geometry(table)["widths"]
         assert abs(saved[0] - touch_before - 40) <= 1, (saved, touch_before)
-        # The coarse resize target must leave the adjacent author sort button usable.
-        table.get_by_role("button", name="Sort by Category", exact=True).tap()
-        expect(table.locator("th[data-sorted]")).to_have_attribute("data-key", "0")
+        # CDP drag suppresses Chromium's next synthesized tap even on plain HTML.
+        # The earlier tap proves touch sorting. Check the coarse hit area after resize.
+        category_sort = table.get_by_role("button", name="Sort by Category, currently ascending", exact=True)
+        assert category_sort.evaluate("""button => {
+            const rect = button.getBoundingClientRect();
+            return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('button') === button;
+        }""")
+        category_sort.click()
+        expect(table.locator("th[data-sorted]")).to_have_attribute("aria-sort", "descending")
         assert score_table_geometry(table)["widths"] == saved
         assert fixture.writes == [], fixture.writes
 

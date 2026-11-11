@@ -937,7 +937,7 @@
     /* A table too wide to fit scrolls, and its label column stays in view. */
     table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) { position: sticky; left: 0; }
     .scroller[data-scrolled] table:not([data-selectable]) :is(th[data-key="0"], td[data-primary]) {
-      z-index: 3;
+      z-index: 5;
       box-shadow: inset calc(-1 * var(--border-hairline)) 0 var(--chart-grid);
     }
   }
