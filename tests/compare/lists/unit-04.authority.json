@@ -163,7 +163,7 @@
       "json": {
         "name": "Authority worker"
       },
-      "status": 403
+      "status": 400
     },
     {
       "method": "POST",
@@ -176,7 +176,7 @@
       "json": {
         "name": ""
       },
-      "status": 403
+      "status": 400
     },
     {
       "method": "GET",
@@ -219,7 +219,7 @@
       "json": {
         "name": "Authority manager"
       },
-      "status": 403
+      "status": 400
     },
     {
       "method": "POST",
@@ -232,7 +232,7 @@
       "json": {
         "name": ""
       },
-      "status": 403
+      "status": 400
     },
     {
       "method": "GET",
