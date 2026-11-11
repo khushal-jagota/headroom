@@ -3344,9 +3344,18 @@ def manager_goal_tags(browser, url):
           return r.top>=0 && r.bottom<=innerHeight && g.scrollHeight>g.clientHeight;
         }""")
         assert abs(recap.bounding_box()['height'] - recap_height) <= 1
-        assert 0 <= int(recap.evaluate("el => getComputedStyle(el).getPropertyValue('--recap-lines')")) <= 5
-        panel.locator('[data-manager-goals]').evaluate('el => el.scrollTop=el.scrollHeight')
-        expect(checklist.get_by_role('checkbox', name='Long item 29', exact=True)).to_be_in_viewport()
+        recap_lines = recap.evaluate("el => getComputedStyle(el).getPropertyValue('--recap-lines')")
+        assert 0 <= int(recap_lines) <= 5
+        # The disclosure grows after the first overflowing frame. Scroll until
+        # the final item enters the actual clipped goals viewport.
+        last_item = checklist.get_by_role('checkbox', name='Long item 29', exact=True)
+        page.wait_for_function("""() => {
+          const g=document.querySelector('[data-rail-hover-panel].visible [data-manager-goals]');
+          g.scrollTop=g.scrollHeight;
+          const last=g.querySelector('[data-step="item-29"] [data-check]');
+          return last.getBoundingClientRect().bottom<=g.getBoundingClientRect().bottom;
+        }""")
+        expect(last_item).to_be_in_viewport()
         if output:
             page.screenshot(path=str(output / 'manager-long-checklist.png'), animations='disabled')
         # Capture every numeric chart kind through this same single-goal host.
