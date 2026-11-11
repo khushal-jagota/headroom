@@ -363,6 +363,30 @@ describe("manager rail projection", () => {
       await flush();
       expect(presented.settledBodyOpen).toBe(false);
       expect(plays).toHaveLength(beforeReduced);
+      // Reuse this animation host to prove that an exit fade cannot publish stale Empty.
+      motion.dispose();
+      prefersReduced = false;
+      presented = {rail:buildWorkspaceRail([card("departing")]),settledOpen:false};
+      const heading = new Surface("heading:chief:agent");
+      const latestRoot = {...railRoot,querySelector:()=>null,querySelectorAll:()=>[
+        departing,...(presented.rail.chiefGroups.some(group=>group.key==='agent')?[heading]:[])
+      ]} as unknown as HTMLElement;
+      const published:string[]=[];
+      const latestMotion=createRailMotionController(()=>latestRoot,()=>presented,next=>{
+        presented=next;published.push(next.rail.chiefGroups[0]?.key ?? 'absent');
+      });
+      try {
+        const beforeExit=plays.length;
+        latestMotion.update({rail:buildWorkspaceRail([card("departing",{ticket_status:"empty"})]),settledOpen:false});
+        const exit=plays[beforeExit];
+        expect(exit.node).toBe('heading:chief:agent');
+        latestMotion.update({rail:buildWorkspaceRail([card("departing",{title:"Latest Agent"})]),settledOpen:false});
+        exit.finish(); await flush();
+        expect(published).not.toContain('empty');
+        expect(presented.rail.chiefGroups[0].cards[0].title).toBe('Latest Agent');
+        for(const play of plays.slice(beforeExit+1))play.finish();
+        await flush();
+      } finally {latestMotion.dispose();}
     } finally { motion.dispose(); vi.unstubAllGlobals(); }
   });
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createRailHandoffController } from "../lib/workspaceRailHandoff";
   import { workspaceRailWash } from "../lib/workspaceRailWash";
   import { viewWindow } from "../lib/navigation/views/owner";
   import { navigationScrollWindow } from "../lib/navigation/views/scrollWindow";
@@ -169,10 +170,17 @@
   let railElement = $state<HTMLElement | null>(null);
   const motion = createRailMotionController(() => railElement, () => presentation, (next) => presentation = next,
     () => scrollCoordinator.flush(), () => scrollCoordinator.captureBeforePublication());
+  const handoff = createRailHandoffController<WorkspaceRailPresentation>(() => presentation.rail, (next, expired) => motion.update(next, expired));
+  onDestroy(() => handoff.dispose());
   $effect(() => {
     const next = {rail:desiredRail, settledOpen:requestedSettledOpen,goalRails,
       scrollPublication:{publicationId:displayedPublication?.publicationId ?? null,windows:workspace?.viewWindows ?? []}};
-    untrack(() => motion.update(next));
+    const publication = displayedPublication;
+    const context = JSON.stringify([publication?.authority.permit.installation_id, publication?.authority.permit.runtime_epoch,
+      publication?.continuity.scope, publication?.continuity.epoch, publication?.view?.scopeGeneration]);
+    const contexts = new Map((workspace?.viewWindows ?? []).filter(window => window.request.section === 'rail_tickets')
+      .map(window => [window.request.owner?.id ?? 'chief', context + JSON.stringify(window.request)]));
+    untrack(() => handoff.update(next, contexts));
   });
   function freezeRows(event: PointerEvent, leaving: boolean): void {
     if (event.pointerType === "touch") return;
