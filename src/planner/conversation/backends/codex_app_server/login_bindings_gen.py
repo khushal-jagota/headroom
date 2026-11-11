@@ -3,14 +3,13 @@
 Regenerate with:
     python -m planner.conversation.backends.codex_app_server.generate_bindings --bundle login
 
-The pin these models were generated under:
+The source these models were generated from:
 
     bundle                 login
-    codex binary version   codex-cli 0.166.0
-    upstream openai/codex  rust-v0.166.0 = 6ff1e1ca3b30fc8b914720681fcf5fe62e95f856
+    codex binary version   codex-cli 0.167.1
     schema obtained by     codex app-server generate-json-schema --out <dir>
     from the dump's        codex_app_server_protocol.schemas.json
-    dump digest (sha256)   fbb89dbb6e314880223a84e24d8f0052f7cac429b41ed240c87d28fdf9ac7879
+    dump digest (sha256)   5659bd42e0c98046e79dbb11fb0c2d4078603b2aa45a0cf13d47ff04c7d4eff2
     pruned and vendored    schema/codex_app_server_protocol.login.subset.schema.json
     subset digest (sha256) a16252f6718e58c235efec970c4e7c259d93462e8519adc7ad91c0b78646d719
     definitions generated  8

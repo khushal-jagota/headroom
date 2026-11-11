@@ -68,7 +68,7 @@ python -m pip install -r requirements.txt
 python -m pip install --editable .
 
 npm ci --prefix web
-npm ci --prefix agent_backends
+scripts/dev npm --prefix agent_backends install
 npm run build --prefix web
 
 panels serve
@@ -79,7 +79,7 @@ Open [localhost:8767](http://127.0.0.1:8767). The server binds to loopback. Conf
 Before starting agent work, configure and authenticate the backend you intend to use:
 
 - **Codex:** install the `codex` CLI and make it available on `PATH`.
-- **Claude Code:** the backend dependencies install the tested CLI; `PLAN_CLAUDE_EXECUTABLE` can select another executable.
+- **Claude Code:** install the `claude` CLI and make it available on `PATH`. `PLAN_CLAUDE_EXECUTABLE` can select another executable.
 - **Hermes:** configure an installed Hermes environment with `PLAN_HERMES_PYTHON` pointing to its Python interpreter.
 
 Voice input uses Groq transcription; set `PLAN_GROQ_API_KEY` to enable it. This is separate from your agent subscription.

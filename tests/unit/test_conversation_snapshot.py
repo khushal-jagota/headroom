@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModel,
     ClaudeModelCatalog,
@@ -310,6 +312,58 @@ def _claude_update_command() -> tuple[str, ...]:
         USER_LOCAL_NPM_PREFIX,
         "@anthropic-ai/claude-code@latest",
     )
+
+
+@pytest.mark.parametrize("backend", [ConversationBackendKey.claude, ConversationBackendKey.codex])
+def test_updates_the_selected_user_local_installation(backend: ConversationBackendKey) -> None:
+    async def exercise() -> None:
+        machine = (
+            _installed_claude() if backend is ConversationBackendKey.claude else _installed_codex()
+        )
+        path = CLAUDE_PATH if backend is ConversationBackendKey.claude else CODEX_PATH
+        package = (
+            "@anthropic-ai/claude-code"
+            if backend is ConversationBackendKey.claude else "@openai/codex"
+        )
+        machine.real_paths[path] = f"{USER_LOCAL_NPM_PREFIX}/lib/node_modules/{package}/bin/cli"
+        command = (
+            "npm", "install", "--global", "--prefix", USER_LOCAL_NPM_PREFIX, package + "@latest"
+        )
+        machine.outcomes[command] = CommandOutcome(0, "installed", "")
+        machine.after_run[command] = lambda: machine.outcomes.__setitem__(
+            (path, "--version"), CommandOutcome(0, "9.0.0", "")
+        )
+        service = BackendSnapshotService(
+            machine, claude_model_catalog_probe=_claude_that_answers(),
+            codex_model_catalog_probe=_codex_that_answers(),
+        )
+        result = await service.update_backend(backend)
+        assert result.outcome == "succeeded"
+        assert result.detail == "Updated to 9.0.0."
+        assert command in machine.run_commands
+        assert (await service.snapshot(backend)).version == "9.0.0"
+
+    _run(exercise)
+
+
+def test_update_reports_no_change_or_failure_and_refuses_other_prefixes() -> None:
+    async def exercise() -> None:
+        machine = _installed_claude()
+        command = _claude_update_command()
+        machine.outcomes[command] = CommandOutcome(0, "already current", "")
+        service = BackendSnapshotService(machine, claude_model_catalog_probe=_claude_that_answers())
+        assert (await service.update_backend(ConversationBackendKey.claude)).outcome == "unchanged"
+        machine.outcomes[command] = CommandOutcome(1, "", "network failed")
+        failed = await service.update_backend(ConversationBackendKey.claude)
+        assert failed.outcome == "failed"
+        assert "network failed" in failed.output_tail
+        machine.writable_prefixes.clear()
+        before = machine.run_commands.count(command)
+        refused = await service.update_backend(ConversationBackendKey.claude)
+        assert refused.outcome == "failed"
+        assert machine.run_commands.count(command) == before
+
+    _run(exercise)
 
 
 # --- what a command that runs out of time leaves behind ------------------------------------

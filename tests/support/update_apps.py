@@ -39,10 +39,10 @@ def build_app(root: Path, sha: str, marker: str) -> Path:
         (root / "bin" / name).chmod(0o755)
     (root / "web" / "dist").mkdir(parents=True)
     (root / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
-    (root / "agent_backends" / "node_modules").mkdir(parents=True)
-    (root / "agent_backends" / "node_modules" / ".package-lock.json").write_text(
-        "{}\n", encoding="utf-8"
-    )
+    for package in ("@anthropic-ai/claude-code", "@openai/codex"):
+        metadata = root / "agent_backends/node_modules" / package / "package.json"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text('{"version": "test"}\n', encoding="utf-8")
     inventory = b'{"native_files": []}'
     contract = RuntimeContract("3.12.12", runtime_bytes_digest(inventory))
     (root / "runtime").mkdir()
