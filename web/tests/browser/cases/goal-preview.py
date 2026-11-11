@@ -3148,7 +3148,9 @@ def manager_goal_tags(browser, url):
         for index, (key, title) in enumerate((
             ("one", "One chart"), ("many", "Several goals"), ("none", "No goals")))
     ]
-    fixture.managers[0]["project"] = "A long project name that must never overlap the goal tag or Settle"
+    fixture.managers[0]["project"] = (
+        "A long project name that must never overlap the goal tag or Settle"
+    )
     fixture.managers[2]["project"] = "A long project name that must never overlap the Settle action"
     fixture.goals["daily_quota"].update(holder_kind="manager", holder_id="one", status="good")
     fixture.observations["daily_quota"][TODAY] = 20
@@ -3279,7 +3281,9 @@ def manager_goal_tags(browser, url):
         samples = page.evaluate('window.goalSlideSamples')
         assert len(samples) == 1 and -60 < samples[0]['x'] < 0, samples
         assert samples[0]['gap'] >= 7, samples
-        fast = tag.evaluate("el => parseFloat(getComputedStyle(el).getPropertyValue('--motion-fast'))")
+        fast = tag.evaluate(
+            "el => parseFloat(getComputedStyle(el).getPropertyValue('--motion-fast'))"
+        )
         assert samples[0]['duration'] == fast, (samples, fast)
         active = tag.bounding_box()
         assert abs(rest['x'] - active['x'] - 60) < 1, (rest, active)
