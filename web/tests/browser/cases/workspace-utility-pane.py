@@ -621,6 +621,15 @@ def verify_card_geometry(page, url, fixture, evidence):
         const rect = card.getBoundingClientRect(), title = card.querySelector('.item-title');
         const titleRect = title.getBoundingClientRect();
         const style = getComputedStyle(title);
+        for (const row of card.querySelectorAll('.worker-row.rail-travelling')) {
+          const r=row.getBoundingClientRect(), scroller=card.closest('.active-work-scroll').getBoundingClientRect();
+          const x=r.left+r.width/2,y=r.top+r.height/2;
+          if(y>scroller.top && y<scroller.bottom) {
+            const painted=document.elementFromPoint(x,y);
+            if(!row.contains(painted) || getComputedStyle(row).zIndex!=='2')
+              throw new Error('Travelling Worker must paint above other groups');
+          }
+        }
         const bubble = getComputedStyle(card, '::before');
         if (bubble.content === 'none' || bubble.zIndex !== '-2' ||
             Math.abs(parseFloat(bubble.height)-rect.height) > 1 ||
