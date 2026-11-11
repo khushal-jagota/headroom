@@ -95,3 +95,11 @@ Subscriptions are one-shot and can unsubscribe. One failed subscriber does not p
 A replacement installation creates a new instance. A persisted row never grants this runtime authority.
 
 The shared lifecycle also supplies `services.signalAuthority`, an idle publication authority, after it owns the runtime and opens the database. All areas share that instance. Shutdown invalidates its permits and notifies its watchers before the application closes or runtime ownership ends. Unit 15 replaces the idle source with the real coordinator.
+
+To compare the in-memory instrument against TypeScript, run:
+
+```sh
+scripts/dev pytest tests/compare/test_compare.py --compare-list tests/compare/lists/unit-06.json --compare-right-module tests.compare.ts_launcher
+```
+
+Lists for units 7 through 10 select both in-memory systems with `"conversation_system": "in_memory"`. Omit that setting when unit 15 supplies the real core. The comparison fixture passes the selection to both processes explicitly, rather than through ambient `PLAN_*` variables. The runner's default candidate remains Python for its reference calibration and existing CI job; `--compare-right-module tests.compare.ts_launcher` selects the TS comparison.

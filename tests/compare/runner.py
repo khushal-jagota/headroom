@@ -303,7 +303,19 @@ def run_list(
             def copy_seed(target: Path) -> None:
                 backup_database(seed, target)
 
-            servers.append(_start_server(root / name, seed_db=copy_seed, server_module=module))
+            host_environment = (
+                {"PLAN_COMPARE_CONVERSATION_SYSTEM": "in_memory"}
+                if spec.get("conversation_system") == "in_memory"
+                else {}
+            )
+            servers.append(
+                _start_server(
+                    root / name,
+                    seed_db=copy_seed,
+                    server_module=module,
+                    trusted_ingress_env=host_environment,
+                )
+            )
         norms = [Normalizer(rules, root / name) for name in ("python", "candidate")]
         captures: list[dict[str, Any]] = [dict(seed_captures), dict(seed_captures)]
         # Establish changed/unchanged baselines for opaque source columns.

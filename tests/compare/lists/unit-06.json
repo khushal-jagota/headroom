@@ -1,0 +1,154 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/conversation/",
+    "tests/support/in_memory_conversation_system.py"
+  ],
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "area": "conversation-in-memory",
+      "status": 200,
+      "json": {
+        "conversation_id": "comparison-conversation",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/comparison/workspace",
+        "role_materials": {
+          "role_text": "The shared role."
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/send",
+      "area": "conversation-in-memory",
+      "status": 200,
+      "json": {
+        "text": "First message",
+        "sender_label": "Owner",
+        "sender_message_id": "first-message",
+        "sent_at_unix_milliseconds": 1000
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/send",
+      "area": "conversation-in-memory",
+      "status": 200,
+      "json": {
+        "text": "Second message",
+        "sender_label": "Owner",
+        "sender_message_id": "second-message",
+        "sent_at_unix_milliseconds": 1001
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/send",
+      "area": "conversation-in-memory",
+      "status": 200,
+      "json": {
+        "text": "Third message",
+        "sender_label": "Owner",
+        "sender_message_id": "third-message",
+        "sent_at_unix_milliseconds": 1002
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/send",
+      "area": "conversation-in-memory",
+      "status": 200,
+      "json": {
+        "text": "Second message",
+        "sender_label": "Owner",
+        "sender_message_id": "second-message",
+        "sent_at_unix_milliseconds": 1001
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/state",
+      "area": "conversation-in-memory",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/complete",
+      "area": "conversation-in-memory",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/state",
+      "area": "conversation-in-memory",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/send",
+      "area": "conversation-in-memory",
+      "status": 200,
+      "json": {
+        "text": "Guidance",
+        "sender_label": "Owner",
+        "mode": "steer",
+        "sender_message_id": "guidance",
+        "sent_at_unix_milliseconds": 1003
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/send",
+      "area": "conversation-in-memory",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "image",
+            "stored_file_id": "picture",
+            "media_type": "image/png"
+          }
+        ],
+        "sender_label": "Owner",
+        "mode": "steer",
+        "sender_message_id": "picture-message",
+        "sent_at_unix_milliseconds": 1004
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/state",
+      "area": "conversation-in-memory",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/complete",
+      "area": "conversation-in-memory",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/state",
+      "area": "conversation-in-memory",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/complete",
+      "area": "conversation-in-memory",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/comparison-conversation/state",
+      "area": "conversation-in-memory",
+      "status": 200
+    }
+  ]
+}
