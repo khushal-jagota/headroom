@@ -53,7 +53,7 @@ What happens to a Worker step after each fate belongs to [Worker steps](worker-s
 
 ## Charts in messages
 
-Chief, Manager, and Worker messages use the same Markdown surface. Ordinary Markdown tables already work. A closed `panels-chart` fence draws an inline bar or line chart with the same appearance as a goal chart. The message supplies snapshot numbers, without a saved goal or a live measurement binding.
+Chief, Manager, and Worker messages use the same Markdown surface. Ordinary Markdown tables already work. A closed `panels-chart` fence draws an inline bar or line chart with the shared goal chart plots. Chat charts omit range controls and the headline number. Charts with multiple series show a compact legend in the plot colors. The message supplies snapshot numbers, without a saved goal or a live measurement binding.
 
 For example, this message compares two repositories:
 
