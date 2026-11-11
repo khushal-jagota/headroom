@@ -1,6 +1,6 @@
 # Navigation source registration
 
-The write door calls `navigationCommitStep` after the other projection steps. Startup calls `rebuildNavigation` through that same door before requests arrive. Python owns the schema and source triggers.
+Composition creates one runtime with `createNavigationRuntime(idle_publication)`. The write door calls its `publicationCommitStep` before its `navigationCommitStep`. Startup calls `runtime.initialize(database)` before requests arrive. This installs publication storage and rebuilds navigation through the same write door. Python owns the schema and source triggers.
 
 A later domain exports a `NavigationSource` and appends it to `navigationSources` in `index.ts`. Supply:
 
@@ -15,7 +15,11 @@ Add the domain's records and their mutations to its comparison list, with a snap
 
 Projects have no navigation window membership in Python. A Project-only snapshot therefore does not expose stored Project records. Its route comparison cannot prove each Project record's derivation independently. The result must retain this limitation.
 
-The conversation contract supplies `NavigationAuthority.capture`, `validate`, and `watch`. Watch revokes open streams and pending drains. Until composition binds that adapter with `configureNavigationAuthority`, snapshot and event routes return 503. Persisted records cannot grant live authority.
+`createNavigationRuntime` accepts a `PublicationFactory` from `navigation/contracts.ts`. The conversation unit's `idle_publication` factory supplies complete idle attention facts through a synchronous callback. It supplies no permit or storage. Navigation owns the installation, per-conversation revisions, batch cursor, runtime epoch, and delivery session. New or changed facts advance the stored cursor. Deleted conversations retain revisioned tombstones. Unchanged idle facts do not rewrite rows.
+
+`runtime.initialize(database)` captures the complete conversation set, commits a fresh installation, and then activates delivery authority. A failed transaction leaves delivery unavailable. The routes receive authority through `createRoutes(authority, sources)`, without shared global configuration. `capture` and `validate` check current runtime identity. `validateSnapshot` checks the installation identity inside the read transaction. `watch` revokes open streams and pending drains when `runtime.close()` ends authority. Composition must call `close` before it closes the app and database. Persisted records alone cannot grant live authority.
+
+This adapter proves the idle source only. It does not infer live attention, owner association effects, or producer availability changes. The real conversation core replaces the idle source integration and supplies proof for those transitions. It must retain installation checks and immediate delivery revocation.
 
 # Resource provider registration
 

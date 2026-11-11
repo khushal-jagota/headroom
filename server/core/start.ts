@@ -1,6 +1,5 @@
 import type { FastifyListenOptions } from 'fastify';
-import { areas, commitSteps } from '../areas.ts';
-import { rebuildNavigation } from '../navigation/index.ts';
+import { areas, commitSteps, initializeAreas, closeAreas } from '../areas.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from './config.ts';
 import { buildClock } from './clock.ts';
@@ -20,17 +19,21 @@ export async function startServer(options: { testAreas?: readonly Area[]; conver
   try {
     const changes = new ChangeSignal();
     database = createDatabase(config.db_path, { commitSteps, onChange: () => changes.emit() });
-    database.write(rebuildNavigation, { changeSignal: 'silent' });
+    initializeAreas(database);
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
     const app = await createApp(config, { database, changes, areas: [...areas, ...options.testAreas ?? []], clock: buildClock(config), conversationSystem: options.conversationSystem, workspaceAdmission: options.conversationSystem?.workspace_admission });
     let closing: Promise<void> | undefined;
-    const close = () => closing ??= app.close().finally(() => {
-      database?.close();
-      dispatcher?.close();
-      ownership.close();
-    });
+    const close = () => {
+      if (closing) return closing;
+      closeAreas();
+      return closing = app.close().finally(() => {
+        database?.close();
+        dispatcher?.close();
+        ownership.close();
+      });
+    };
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.once(signal, () => { void close().catch((error) => {
         console.error(error);
@@ -46,6 +49,7 @@ export async function startServer(options: { testAreas?: readonly Area[]; conver
       await app.listen({ host: '127.0.0.1', port: config.port });
     }
   } catch (error) {
+    closeAreas();
     database?.close();
     dispatcher?.close();
     ownership.close();
