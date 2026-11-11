@@ -6,6 +6,7 @@ A Manager is an agent that holds one direction and the Tickets that serve it. It
 
 - **A goal**: the sentence that says why this Manager exists. This is a field on the Manager, not a [goal](goals.md) with a deadline and a page.
 - **A recap**: the current status line. Each new recap replaces the old one.
+- **A page document**: the overview that the Manager keeps for Khushal, with text, checklists, charts, layouts, and Tickets.
 - **An optional project.** A Manager's project is also the effective project of its Tickets.
 - **Child Tickets**: the Tickets assigned to it.
 - **Artifacts** and **its own conversation**, on the ordinary [conversation system](conversations.md).
@@ -24,6 +25,8 @@ Chief is the special case. It is a global principal that stands above everything
 ## What a Manager does
 
 A Manager acts through the same routes as everyone else. It has no private API. [Authority](authority.md) limits it to its own record and its current children. It can create child Tickets, approve or send back their proposals, message them, delete them, and restart a Worker that errored. It cannot move a Ticket to another Manager. Only Khushal and Chief can.
+
+The Manager can edit its own page and held goal pages directly. Its plain goal field states its purpose. Artifacts hold supporting files. Neither replaces a page document.
 
 The owner, Chief, Managers, and Workers talk through Send Message, which delivers a real prompt into the recipient's conversation. Two Managers can message each other. That is speech, not authority over each other's Tickets.
 
@@ -52,7 +55,11 @@ Khushal and Chief set the default backend, model, and reasoning for new Managers
 
 Manager and Chief pages display their text without owner edits. Agents still update the text through their tools. Charts, tables, checklists, and conversations retain their controls. Separate Goal pages retain text edits.
 
-The Workspace shows Chief first, then active Managers with their Tickets grouped by the attention they need, then the Settled fold. A Manager page has its header, recap, conversation, held goals, and its page document with its Tickets. A Manager with one goal is shown as that goal under its own name. See [Goals](goals.md). When a Manager or Chief page opens, its children list shows a placeholder until its own data arrives, then draws once. `panels manager` reaches the same records.
+The Workspace shows Chief first, then active Managers with their Tickets grouped by the attention they need, then the Settled fold. A Manager page has its header, recap, conversation, and current work. If it holds exactly one goal, that goal's document appears under the Manager name. Otherwise, its own document appears with active held goals as cards.
+
+A Tickets block places the Workers within the document. Without that block, they appear below it. See [Goals](goals.md).
+
+`panels manager workspace` explains which document the browser displays and gives its edit command. `panels page` reads and edits Manager and Chief documents. `panels goal` edits a held goal's document. Their schema commands explain the accepted content. The plain purpose, recap, and artifacts remain separate.
 
 ## Decisions that shape it
 
