@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ManagerGoalPreview from "./goals/ManagerGoalPreview.svelte";
+  import type {GoalResponse} from "../lib/goals/contracts";
   import { skipPreviewTabStops } from "../lib/previewTabOrder";
   import MachineActivityMark from "./machines/MachineActivityMark.svelte";
   import MachineIdentity from "./machines/MachineIdentity.svelte";
@@ -16,8 +18,8 @@
   /* ``recapTarget`` is the agent that can be asked for a fresh recap.
    * ``onKeepOpen`` and ``onLeave`` hand the panel the same hover intent the rows use, so
    * the pointer can cross the gap and press what is inside without the panel closing. */
-  let { visible, instant, target, title, kicker, recap = "", worker = null, rail, signal = undefined, conversationId = null, recapTarget = null, onKeepOpen, onLeave, element = $bindable<HTMLDivElement | null>(null) }: {
-    visible: boolean; instant: boolean; target: HTMLElement | null; title: string; kicker: string;
+  let { goals = [], visible, instant, target, title, kicker, recap = "", worker = null, rail, signal = undefined, conversationId = null, recapTarget = null, onKeepOpen, onLeave, element = $bindable<HTMLDivElement | null>(null) }: {
+    goals?: GoalResponse[]; visible: boolean; instant: boolean; target: HTMLElement | null; title: string; kicker: string;
     recap?: string; worker?: WorkItemTicketFacts | null;
     rail: HTMLElement | null; cards?: readonly WorkItemTicketFacts[];
     signal?: Partial<ConversationSignal>; conversationId?: string | null;
@@ -40,10 +42,11 @@
   });
   let recapElement = $state<HTMLDivElement | null>(null);
   let recapLines = $state(1);
+  let goalsMaxHeight = $state<number | null>(null);
   // Measure the fixed content, never the clamped recap. This keeps the budget
   // independent of the height that the budget itself produces.
   $effect(() => {
-    recapText; stageSentence; title; kicker;
+    recapText; stageSentence; title; kicker; goals; holdRecapHeight;
     if (!visible || !element || !recapElement) return;
     const panel = element;
     const recapBox = recapElement;
@@ -62,6 +65,15 @@
       const fixed = [...panel.children].filter(child => child !== recapBox);
       if (ask) fixed.push(ask);
       const fixedHeight = fixed.reduce((height, child) => height + outerHeight(child), 0);
+      const goalsBox=panel.querySelector<HTMLElement>('[data-manager-goals]');
+      if(goalsBox){
+        const goalsCss=getComputedStyle(goalsBox);
+        const otherFixedHeight=fixedHeight-outerHeight(goalsBox);
+        // Keep the Ask action still while the pointer is inside. The recap slot
+        // retains its visit height, so an expanded chart scrolls in the room left.
+        const heldRecapHeight=holdRecapHeight?(recapBox.querySelector('[data-recap-slot]')?.getBoundingClientRect().height??0):0;
+        goalsMaxHeight=Math.max(0,px(css.maxHeight)-edges(css)-otherFixedHeight-edges(recapCss)-px(recapCss.marginTop)-px(recapCss.marginBottom)-px(goalsCss.marginTop)-px(goalsCss.marginBottom)-heldRecapHeight);
+      }
       const available = px(css.maxHeight) - edges(css) - fixedHeight - edges(recapCss) - px(recapCss.marginTop) - px(recapCss.marginBottom);
       recapLines = Math.min(RAIL_HOVER_RECAP_MAX_LINES, Math.max(0, Math.floor(available / px(recapCss.lineHeight))));
     };
@@ -148,6 +160,7 @@
       {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} variant="ghost" class="recap-ask" />{/if}
     </div>
   {/if}
+  {#if !worker && goals.length}<div class="manager-goals" style:max-height={goalsMaxHeight===null?undefined:`${goalsMaxHeight}px`} data-manager-goals><ManagerGoalPreview {goals}/></div>{/if}
   {#if worker && stageSentence}<div class="doing" data-machine-stage-unknown={unknownMac ? "true" : undefined}>{stageSentence}</div>{/if}
 </div>
 <style>
@@ -170,6 +183,7 @@
   .recap.no-space, .recap-text.no-room { display:none; }
   /* The ask lives inside the recessed block, under the line it replaces, at the right. */
   .recap :global(.recap-ask) { display:flex; justify-content:flex-end; margin-top:var(--space-2); font-size:var(--type-small); }
+  .manager-goals { margin-top:var(--space-3); overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; }
   .doing { margin-top:var(--space-3); font-size:var(--type-small); color:var(--tone-secondary); }
   @media (prefers-reduced-motion:reduce) { .rail-hover-panel { transition:none; transform:none; } }
 </style>

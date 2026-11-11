@@ -239,6 +239,7 @@
     hoverVisible = false; hoverGoalId = null; hoverIntentTarget = null; goalPreviewInput.clearTouch();
   });
   function enterHover(value: HoverIntent, immediate = false): void {
+    if (restoringGoalFocus) return;
     hoverIntentTarget = value.target;
     hover.enter(value, immediate);
   }
@@ -281,11 +282,11 @@
         && source instanceof HTMLElement && !goalHoverElement?.contains(source) && !hoverTarget?.contains(source)
         && !source.closest('input,textarea,select,[contenteditable="true"]')
         && !(event.key === ' ' && source.closest('button,summary,a'))) dismissHover();
-      if (event.key !== 'Escape' || !hoverVisible || !hoverGoalId || event.defaultPrevented) return;
+      if (event.key !== 'Escape' || !hoverVisible || event.defaultPrevented) return;
       event.preventDefault();
       const anchor = hoverTarget;
       dismissHover(); restoringGoalFocus = true;
-      if (anchor?.isConnected) anchor.focus({preventScroll:true});
+      if (anchor?.isConnected && !anchor.contains(document.activeElement)) anchor.focus({preventScroll:true});
       restoringGoalFocus = false;
     };
     const click = (event: MouseEvent) => goalPreviewInput.click(event);
