@@ -1718,6 +1718,7 @@ def authored_goal_presentation(browser, url):
 
 
 def run(browser, urls):
+    manager_text_readonly(browser, urls[0])
     started = time.monotonic()
     manager_goal_tags(browser, urls[0])
     checklist_deadline_controls(browser, urls[0])
@@ -3544,3 +3545,211 @@ def manager_goal_tags(browser, url):
     print(
         'manager goal header/preview pointer and settings: '
         f'passed ({time.monotonic()-started:.2f}s, rail {rail_width}px)', flush=True)
+
+
+def manager_text_readonly(browser, url):
+    """One App host proves text capability separation from native data controls.
+
+    Existing Goal editor tests do not cover the same content embedded in a Manager.
+    This uses the existing navigation/Goal fixture, without another server or host.
+    """
+    started = time.monotonic()
+    fixture = GoalFixture()
+    fixture.managers = [
+        {
+            "id": "text",
+            "title": "Release manager",
+            "project_id": "project",
+            "project": "Field guide",
+            "created_at": 1,
+            "recap": "Release status stays visible.",
+            "tickets": [],
+        },
+        {
+            "id": "sole",
+            "title": "Checklist manager",
+            "project_id": "project",
+            "project": "Field guide",
+            "created_at": 2,
+            "recap": "Checklist status stays visible.",
+            "tickets": [],
+        },
+    ]
+    fixture.goals = {"checklist": fixture.goals["checklist"]}
+    goal = fixture.goals["checklist"]
+    goal.update(holder_kind="manager", holder_id="sole", why="Why the guide matters")
+    goal["page"]["blocks"].append(
+        {"type": "text", "id": "context", "text": "Guide background stays visible."}
+    )
+    document = {
+        "kind": "headroom.page",
+        "version": 1,
+        "title": "Release plan",
+        "summary": "",
+        "blocks": [
+            {
+                "type": "text",
+                "id": "opening",
+                "text": "Release guidance with a [documentation link](https://example.com/guide).",
+            },
+            {
+                "type": "section",
+                "id": "plan",
+                "title": "Release overview",
+                "summary": "Saved context",
+                "views": [
+                    {
+                        "id": "status",
+                        "label": "Status",
+                        "blocks": [
+                            {
+                                "type": "table",
+                                "id": "status-table",
+                                "caption": "Release table",
+                                "columns": ["Name", "Count"],
+                                "rows": [["Beta", "2"], ["Alpha", "1"]],
+                            }
+                        ],
+                    },
+                    {
+                        "id": "notes",
+                        "label": "Notes",
+                        "blocks": [
+                            {
+                                "type": "text",
+                                "id": "notes-text",
+                                "text": "The second view remains reachable.",
+                            }
+                        ],
+                    },
+                ],
+            },
+        ],
+    }
+    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = context.new_page()
+    page.set_default_timeout(5000)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    mutations = []
+
+    def respond(route):
+        parts = urlsplit(route.request.url)
+        path = parts.path
+        key = parse_qs(parts.query).get("key", [path])[0]
+        result = None
+        if route.request.method not in ("GET", "HEAD"):
+            mutations.append(path)
+        if key.endswith("/workspace-content"):
+            identity = key.split("/")[3]
+            result = {
+                "goal": "The Manager purpose remains visible.",
+                "recap": "Release status stays visible.",
+                "goals": [goal] if identity == "sole" else [],
+            }
+        elif key in ("/api/chief/page", "/api/managers/text/page", "/api/managers/sole/page"):
+            result = {"page": document, "page_revision": 1}
+        elif key.endswith("/page/readings"):
+            result = {
+                "values": [],
+                "sources": [],
+                "charts": {},
+                "status_date": TODAY,
+                "next_refresh_at": int(time.time()) + 86400,
+            }
+        elif key == "/api/workers/chief-of-staff/settings":
+            result = {
+                "employee_id": "chief",
+                "label": "Chief of Staff",
+                "recap": "Chief status stays visible.",
+                "skill": None,
+                "launch_defaults": {
+                    "employee_backend": "codex",
+                    "employee_launch_model": None,
+                    "employee_launch_reasoning_effort": None,
+                },
+            }
+        if result is not None:
+            route.fulfill(
+                json={
+                    "key": key,
+                    "epoch": "readonly-fixture",
+                    "revision": str(fixture.version),
+                    "body": result,
+                }
+                if path == "/api/resource-body"
+                else result
+            )
+            return
+        fixture.respond(route)
+
+    page.route("**/api/**", respond)
+    evidence = os.environ.get("PANELS_READONLY_EVIDENCE_DIR")
+    output = Path(evidence) if evidence else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    try:
+        for identity, title in (
+            ("text", "Release manager"),
+            ("chief-of-staff", "Chief of Staff"),
+            ("sole", "Checklist manager"),
+        ):
+            address = "chief-of-staff" if identity == "chief-of-staff" else f"manager/{identity}"
+            page.goto(url + "#/workspace/" + address, wait_until="domcontentloaded")
+            doc = page.locator(".manager-doc")
+            expect(doc.locator("h1")).to_have_text(title)
+            if identity != "sole":
+                expect(doc.get_by_text("Release overview", exact=True)).to_be_visible()
+            else:
+                expect(doc.get_by_text("Why the guide matters", exact=True)).to_be_visible()
+            if output:
+                page.screenshot(path=str(output / f"{identity}-after.png"), animations="disabled")
+            expect(
+                doc.locator('[contenteditable="true"], [data-markdown-inline-edit], .ed')
+            ).to_have_count(0)
+            assert doc.locator("h1").evaluate("el => getComputedStyle(el).cursor") != "text"
+            expect(doc.locator('h1 [role="textbox"], h1 [tabindex="0"]')).to_have_count(0)
+            doc.locator("h1").click()
+            page.keyboard.press("Enter")
+            expect(doc.locator('[contenteditable="true"]')).to_have_count(0)
+            expect(doc.get_by_role("button", name="Ask for a recap", exact=True)).to_be_visible()
+            if identity == "sole":
+                # Structured completion remains writable in the read-only Manager.
+                with page.expect_request("**/api/goals/checklist"):
+                    doc.get_by_role("checkbox", name="Publish guide", exact=True).click()
+                expect(doc.get_by_role("progressbar")).to_have_attribute("aria-valuenow", "2")
+            else:
+                tabs = doc.get_by_role("radiogroup", name="Views")
+                tabs.get_by_role("radio", name="Notes", exact=True).click()
+                expect(
+                    doc.get_by_text("The second view remains reachable.", exact=True)
+                ).to_be_visible()
+                tabs.get_by_role("radio", name="Notes", exact=True).press("ArrowLeft")
+                expect(doc.get_by_role("table")).to_be_visible()
+                doc.get_by_role("button", name="Sort by Name", exact=True).click()
+                expect(doc.locator("tbody tr").first).to_contain_text("Alpha")
+                expect(
+                    doc.get_by_role("link", name="documentation link", exact=True)
+                ).to_have_attribute("href", "https://example.com/guide")
+            if identity == "text":
+                doc.locator("[data-goal-band] summary").click()
+                expect(
+                    doc.get_by_text("The Manager purpose remains visible.", exact=True)
+                ).to_be_visible()
+            expect(doc.locator('[contenteditable="true"]')).to_have_count(0)
+        # A sole Manager-held goal routes to its Manager. A Chief-held copy opens
+        # the separate Goal workspace with the same shared content and header.
+        standalone = copy.deepcopy(goal)
+        standalone.update(id="standalone", holder_kind="chief", holder_id=None)
+        fixture.goals["standalone"] = standalone
+        fixture.version += 1
+        page.goto(url + "#/workspace/goal/standalone", wait_until="domcontentloaded")
+        doc = page.locator('[data-goal-page="standalone"]')
+        expect(doc.get_by_role("textbox", name="Goal title", exact=True)).to_be_visible()
+        expect(doc.get_by_role("textbox", name="Why this goal matters", exact=True)).to_be_visible()
+        expect(doc.locator('[data-block="text"] [contenteditable="true"]')).to_be_visible()
+        assert mutations == ["/api/goals/checklist"], mutations
+        assert errors == [], errors
+    finally:
+        context.close()
+    print(f"Manager/Chief text boundary: passed (+{time.monotonic() - started:.2f}s)", flush=True)

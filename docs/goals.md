@@ -43,7 +43,7 @@ A missing value stays missing. Headroom does not show an older reading as curren
 
 Khushal, Chief, and the holding Manager all edit through one writer. Each edit applies to the current saved record. A failed edit retains its draft for an explicit retry. The holder changes the page, completion, and active state without an approval step. Goals have no Ticket stages.
 
-Khushal edits most text on the page in place. Checklist wording belongs to the holder. Checklist items can carry their own deadlines, which Khushal sets from the page. Item deadlines are colored, but they do not change the goal's own deadline or result.
+Khushal edits most text on a separate Goal page in place. On Manager and Chief pages, the same text is read-only. Checklist wording belongs to the holder. Checklist items can carry their own deadlines, which Khushal sets from the page. Item deadlines are colored, but they do not change the goal's own deadline or result.
 
 ## Permanent deletion
 

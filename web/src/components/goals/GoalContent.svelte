@@ -1,6 +1,6 @@
 <script lang="ts">
   import Button from '../Button.svelte';
- import {setContext} from 'svelte';
+ import {setContext,untrack} from 'svelte';
  import {createQuery} from '@tanstack/svelte-query';
  import {goalQueries} from '../../lib/goals/queries';
  import {createGoalEditor} from '../../lib/goals/editing';
@@ -15,7 +15,7 @@
  import PageChart from '../pageKit/PageChart.svelte';
  import PageChecklist from '../pageKit/PageChecklist.svelte';
  import ErrorLine from '../ErrorLine.svelte';
- let {goal}:{goal:GoalResponse}=$props();
+ let {goal,textEditable=true}:{goal:GoalResponse;textEditable?:boolean}=$props();
  let id=$derived(goal.id);
  const readings=createQuery(()=>goalQueries.readings(id));
  let width=$state(0),error=$state<unknown>(null);
@@ -40,9 +40,10 @@
    return update => captured.updateBlock(blockId, update);
   }
  };
+ // Each host fixes text authoring when this content mounts. Data controls stay available.
  setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
   goalId:()=>id,goal:()=>goal,readings:()=>readings.data,narrow:()=>narrow,sessions:()=>sessions,
- },{manualSession:measureId=>sessions.manual(id,measureId),updateBlock,authorText}));
+ },{manualSession:measureId=>sessions.manual(id,measureId),updateBlock,authorText:untrack(()=>textEditable)?authorText:undefined}));
  async function change(patch:GoalEditBody){try{await save(patch);error=null;}catch(e){error=e;}}
  let display=$derived(resolveGoalPrimaryDisplay(goal));
  let checklist=$derived(display.checklist);

@@ -53,6 +53,8 @@ Khushal and Chief set the default backend, model, and reasoning for new Managers
 
 ## Where it shows up
 
+Manager and Chief pages display their text without owner edits. Agents still update the text through their tools. Charts, tables, checklists, and conversations retain their controls. Separate Goal pages retain text edits.
+
 The Workspace shows Chief first, then active Managers with their Tickets grouped by the attention they need, then the Settled fold. A Manager page has its header, recap, conversation, and current work. If it holds exactly one goal, that goal's document appears under the Manager name. Otherwise, its own document appears with active held goals as cards.
 
 A Tickets block places the Workers within the document. Without that block, they appear below it. See [Goals](goals.md).
