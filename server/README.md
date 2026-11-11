@@ -64,3 +64,25 @@ This unit does not supply domain routes, schema migration, projection implementa
 The write door prepares each statement on every call. Measure this cost at gate 3 before any statement cache is added.
 
 Node 24 with npm 11 needs a development-guard change for npm's injected script environment keys. The current guarded alternatives above remain the launch route until that change lands. This unit does not change the guard policy.
+
+## Comparison host
+
+`node server/test_host.ts` starts the normal application with additional test-only route registrations. It requires `PLAN_TEST_MODE=1`. It uses the same database, locks, inherited listener, and shutdown path as `main.ts`.
+
+Each area adds one registration to the `testAreas` list in `test_host.ts`. Test routes do not enter the normal `areas` list.
+
+For a comparison list with `"conversation_system": "in_memory"`, the runner supplies `PLAN_COMPARE_CONVERSATION_SYSTEM=in_memory` to both hosts. The TS host creates one `InMemoryConversationSystem` for its test routes and all ordinary areas. Areas receive it as `services.conversationSystem`. The test endpoints start a conversation, send a message, read fake state, and complete a turn beneath `/api/test/in-memory-conversations`.
+
+Without this switch, the host does not register those endpoints or inject an in-memory system. Unit 15 supplies the real conversation system. Units 7 through 10 can then run their lists without the switch against the real core.
+
+## In-memory conversation instrument
+
+`conversation/contracts.ts` is the 15-member in-process conversation boundary.
+`conversation/in_memory_conversation_system.ts` mirrors the Python fake without database rows or agent output.
+Backend adapters implement `conversation/backends/contracts.ts`. Their 19 event classes and 11 exception classes follow the current Python source.
+Message content remains an ordered array of typed pieces. Runtime callers use `text_message_content` or the piece classes.
+
+Until the real core exists, navigation can use `idle_publication(publish)` from `conversation/publication/idle.ts` as the first commit step.
+It calls `publish(tx, conversation_id, attention)` for every stored conversation on that same transaction.
+Each attention value has all four marks false. Navigation owns its storage, installation metadata, and registration in `commitSteps`.
+The stand-in does not alter the fake's actual busy state and does not implement the real publication coordinator.
