@@ -46,6 +46,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     finish:(index:number,admitted:boolean)=>intentLoads[index](admitted),
     swap:()=>{intentReader=makeIntentReader();},
     swapSynchronously:()=>flushSync(()=>{intentReader=makeIntentReader();})};
+  import PageChart from "../src/components/pageKit/PageChart.svelte";
   import {Chart as BrowserChart} from "chart.js";
   import {parseMarkdown} from "../src/lib/markdownPipeline";
   const chartsOnly=new URLSearchParams(location.search).has("charts");
@@ -67,9 +68,10 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   ];
   const chartSpec=(kind="bar",title="Merged PRs per week")=>({kind,title,series:chartSeries});
   const chartExamples=[
-    chartFence(chartSpec()),
+    chartFence({...chartSpec(),series:chartSeries.map((series,index)=>index===0?{...series,points:series.points.map((point,i)=>i===2?{...point,value:null}:point)}:series)}),
     chartFence(chartSpec("line","Weekly trend")),
     chartFence({...chartSpec("bar","Stacked PRs"),stacked:true}),
+    chartFence({...chartSpec("bar","Single series"),series:[chartSeries[0]]}),
     [chartTicks+"panels-chart",'{"kind":"bar","series":false}',chartTicks].join("\n"),
     "After the malformed chart."
   ].join("\n\n");
@@ -84,6 +86,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       const count=(nodes:import("../src/lib/markdown/contracts").MarkdownTreeNode[]):number=>nodes.reduce((total,node)=>total+(node.chart?1:0)+count(node.children??[]),0);
       return count(parseMarkdown(source).children);
     },
+    barColors:(canvas:HTMLCanvasElement)=>BrowserChart.getChart(canvas)?.data.datasets.map(item=>item.backgroundColor),
     bars:()=>[...document.querySelectorAll<HTMLCanvasElement>('[data-chat-chart-fixture] canvas')].map(canvas=>{
       const chart=BrowserChart.getChart(canvas);return {datasets:chart?.data.datasets.map(item=>({label:item.label,data:item.data})),stacked:chart?.options.scales?.x?.stacked};
     }),
@@ -807,6 +810,9 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
 {#if chartsOnly}
   <div data-chat-chart-fixture style="height:1100px;max-height:100dvh;width:min(760px, 100%);margin:auto;display:flex;flex-direction:column">
     <ConversationPane conversationId="chat-chart-proof" conversationExists conversationState="opened" rows={chartRows} lens="full" running={false} />
+  </div>
+  <div data-goal-chart-comparison style="width:min(760px,100%);margin:auto">
+    <PageChart block={{type:'chart',id:'goal-comparison',kind:'bar',title:'Goal comparison',series:chartSeries}} values={[]} goalId="goal-comparison" narrow={false} />
   </div>
   <div bind:this={chartEditor} data-chat-chart-editor contenteditable="true"></div>
 {:else if machinesOnly}

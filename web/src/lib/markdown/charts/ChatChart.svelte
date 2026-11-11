@@ -19,7 +19,7 @@
 </script>
 
 <div class="chat-chart" bind:this={host}>
-  <PageChart {block} {narrow} values={[]} completed={false} status="neutral" goalId={identity} wide />
+  <PageChart {block} {narrow} values={[]} completed={false} status="neutral" goalId={identity} wide chatSnapshot />
 </div>
 
 <style>
