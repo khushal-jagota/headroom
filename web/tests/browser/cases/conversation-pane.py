@@ -4428,7 +4428,7 @@ def _chat_charts(browser, url):
         page.goto(url + "?charts=1", wait_until="domcontentloaded")
         thread = page.locator("[data-conversation-thread]")
         chart_hosts = page.locator("[data-chat-chart-fixture] .goal-chart-host")
-        expect(chart_hosts).to_have_count(3)
+        expect(chart_hosts).to_have_count(4)
         expect(page.get_by_text("After the malformed chart.", exact=True)).to_be_visible()
         expect(page.locator("pre code.language-panels-chart")).to_have_count(1)
         for width, label in [(1100, "desktop"), (390, "phone")]:
@@ -4436,18 +4436,49 @@ def _chat_charts(browser, url):
             for theme in ["light", "dark"]:
                 page.emulate_media(color_scheme=theme, reduced_motion="reduce")
                 page.goto(url + "?charts=1&chartTheme=" + theme, wait_until="domcontentloaded")
-                expect(chart_hosts).to_have_count(3)
+                expect(chart_hosts).to_have_count(4)
                 chart_hosts.nth(0).scroll_into_view_if_needed()
                 expect(page.get_by_role("heading", name="Merged PRs per week", exact=True)).to_be_visible()
                 expect(chart_hosts.nth(0).locator("canvas")).to_be_visible()
+                expect(chart_hosts.locator(".ranges")).to_have_count(0)
+                expect(chart_hosts.locator(".headline")).to_have_count(0)
+                for chart_index in range(3):
+                    legend = chart_hosts.nth(chart_index).get_by_role("list", name="Chart legend")
+                    expect(legend.locator("li")).to_have_text(["Panels", "Tools"])
+                expect(chart_hosts.nth(3).locator(".snapshot-legend")).to_have_count(0)
+                # Read real canvas dataset colors and SVG strokes, not a duplicate palette.
+                assert page.evaluate("""() => [...document.querySelectorAll('[data-chat-chart-fixture] .goal-chart-host')].every(host => {
+                  const items=[...host.querySelectorAll('.snapshot-legend li')];
+                  const canvas=host.querySelector('canvas');
+                  return items.every((item,index)=>{
+                    let plotted;
+                    if(canvas){
+                      plotted=window.__chatChartProbe.barColors(canvas)[index];
+                      if(Array.isArray(plotted))plotted=plotted[0];
+                      const sample=document.createElement('span');sample.style.color=plotted;host.append(sample);
+                      plotted=getComputedStyle(sample).color;sample.remove();
+                    }else plotted=getComputedStyle(host.querySelectorAll('[data-line]')[index]).stroke;
+                    return getComputedStyle(item).color===plotted;
+                  });
+                })"""), "Legend colors differ from plot colors"
                 bars = page.evaluate("window.__chatChartProbe.bars()")
-                assert bars[0]["datasets"] == [{"label": "Panels", "data": [3, 7, 5]}, {"label": "Tools", "data": [2, 4, 6]}], bars
+                assert bars[0]["datasets"] == [{"label": "Panels", "data": [3, 7, None]}, {"label": "Tools", "data": [2, 4, 6]}], bars
                 assert bars[0].get("stacked") is not True and bars[1]["stacked"] is True, bars
                 page.screenshot(path=str(output / f"chat-charts-{label}-{theme}.png"))
                 chart_hosts.nth(1).scroll_into_view_if_needed()
                 expect(page.get_by_role("heading", name="Weekly trend", exact=True)).to_be_visible()
                 assert chart_hosts.nth(1).locator("svg").count() > 0
                 page.screenshot(path=str(output / f"chat-line-{label}-{theme}.png"))
+                chart_hosts.nth(2).scroll_into_view_if_needed()
+                page.screenshot(path=str(output / f"chat-stacked-{label}-{theme}.png"))
+                chart_hosts.nth(3).scroll_into_view_if_needed()
+                page.screenshot(path=str(output / f"chat-single-{label}-{theme}.png"))
+                goal = page.locator("[data-goal-chart-comparison]")
+                goal.scroll_into_view_if_needed()
+                expect(goal.get_by_role("group", name="Time range")).to_be_visible()
+                expect(goal.locator(".headline .metric-value")).to_have_attribute("data-current", "5")
+                expect(goal.locator(".snapshot-legend")).to_have_count(0)
+                page.screenshot(path=str(output / f"goal-chart-{label}-{theme}.png"))
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "Charts overflow the phone page"
         page.locator("pre code.language-panels-chart").scroll_into_view_if_needed()
         page.screenshot(path=str(output / "chat-malformed-fallback.png"))
@@ -4460,7 +4491,7 @@ def _chat_charts(browser, url):
         }""")
         assert "```panels-chart" in copied and '"kind":"bar"' in copied
         assert "After the malformed chart." in copied
-        assert page.evaluate("source=>window.__chatChartProbe.copiedCharts(source)", copied) == 3
+        assert page.evaluate("source=>window.__chatChartProbe.copiedCharts(source)", copied) == 4
         page.evaluate("window.__chatChartProbe.stream(false)")
         expect(chart_hosts).to_have_count(0)
         expect(page.locator("pre code.language-panels-chart")).to_have_count(1)
