@@ -1,5 +1,6 @@
 /** Runtime authority for the temporary idle publication source. */
 import { randomUUID } from 'node:crypto';
+import type { Database } from '../../core/database/contracts.ts';
 import type { CurrentAuthority } from '../../../web/src/lib/navigation/contracts.ts';
 import { SignalUnavailable } from '../contracts.ts';
 import type { SignalAvailability, SignalInvalidation, SignalReadPermit } from '../contracts.ts';
@@ -11,7 +12,7 @@ function identity(): string { return randomUUID().replaceAll('-', ''); }
  * A new installation needs a new instance. Old permits never regain authority.
  */
 export class IdlePublicationAuthority {
-    private readonly scope = identity();
+    private readonly scope: string;
     private readonly runtime_epoch = identity();
     private readonly installation_id = identity();
     private readonly delivery_session_id = identity();
@@ -20,6 +21,8 @@ export class IdlePublicationAuthority {
     private reason: string | null = null;
     private closed = false;
     private readonly watchers = new Set<() => void>();
+
+    constructor(scope = identity()) { this.scope = scope; }
 
     signal_availability(): SignalAvailability {
         return {generation: this.generation, state: this.state, reason: this.reason};
@@ -95,3 +98,15 @@ export class IdlePublicationAuthority {
 
 /** Public delivery seam. Navigation owns the equivalent consumer interface. */
 export type SignalNavigationAuthority = Pick<IdlePublicationAuthority, 'capture' | 'validate' | 'watch'>;
+
+/** Retain Python's producer scope while each runtime gets a fresh epoch and installation. */
+export function createIdlePublicationAuthority(database: Database): IdlePublicationAuthority {
+    const scope = database.read(sql => sql.get<{scope: string}>(
+        'SELECT scope FROM signal_publication_meta WHERE singleton=1')?.scope);
+    const authority = new IdlePublicationAuthority(scope);
+    const permit = authority.capture_permit();
+    database.write(tx => {
+        tx.run('INSERT INTO signal_publication_meta(singleton,scope,runtime_epoch,sequence) VALUES(1,?,?,0) ON CONFLICT(singleton) DO UPDATE SET scope=excluded.scope,runtime_epoch=excluded.runtime_epoch,sequence=0', [permit.scope, permit.runtime_epoch]);
+    }, {changeSignal: 'silent'});
+    return authority;
+}

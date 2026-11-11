@@ -9,7 +9,7 @@ import { acquireRuntimeOwnership, acquireLock } from './locks/index.ts';
 
 import type { Area } from './authority/register.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
-import { IdlePublicationAuthority } from '../conversation/publication/authority.ts';
+import { createIdlePublicationAuthority, type IdlePublicationAuthority } from '../conversation/publication/authority.ts';
 
 /** Shared process lifecycle for the normal entry point and comparison host. */
 export async function startServer(options: { testAreas?: readonly Area[]; conversationSystem?: ConversationSystem } = {}): Promise<void> {
@@ -21,7 +21,7 @@ export async function startServer(options: { testAreas?: readonly Area[]; conver
   try {
     const changes = new ChangeSignal();
     database = createDatabase(config.db_path, { commitSteps, onChange: () => changes.emit() });
-    signalAuthority = new IdlePublicationAuthority();
+    signalAuthority = createIdlePublicationAuthority(database);
     initializeAreas(database, signalAuthority);
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
