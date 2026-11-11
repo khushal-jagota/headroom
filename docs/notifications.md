@@ -62,7 +62,8 @@ No Apple credentials means no native network calls and no claim of successful de
 The native bundle `com.khushaljagota.panels` has Push Notifications enabled under
 Blue Door Labs. Release signing requests production APNs.
 
-Set these environment inputs on the server before the owner deploys this change:
+The live service reads these settings from `~/.config/panels/panels-live.env`.
+Its launcher passes them to the server:
 
 - `PLAN_APNS_KEY_PATH`: the private `.p8` key file, outside source control.
 - `PLAN_APNS_KEY_ID`: the Apple key ID.
@@ -76,10 +77,10 @@ a login. `PUT /api/notifications/apns/devices` registers the device token, bundl
 after the operator removes the key. Tokens never appear in adapter logs.
 
 For TestFlight, use an Apple developer membership, an App Store Connect app with the
-matching bundle ID, push capability, and the production APNs environment. Enable
-`APNS_REGISTRATION_ENABLED` in the signed app after the server integration is ready.
+matching bundle ID, push capability, and the production APNs environment. Release builds for physical iPhones enable server registration by default.
+Debug and Simulator builds keep it disabled unless explicitly enabled.
 The `.p8` key stays on the server. It does not belong in the app or its build inputs.
-See [the native setup guide](../ios/NOTIFICATIONS.md) for the app settings.
+See [the native setup guide](../ios/NOTIFICATIONS.md) for private key setup, app settings, and the physical delivery check.
 
 The owner must deploy the server and install the new signed TestFlight build separately.
 Check native reads, an explicit owner action, foreground refresh, and conversation output.

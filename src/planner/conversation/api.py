@@ -881,8 +881,11 @@ async def put_model_enablement(
 
 
 @router.post("/backends/{backend_key}/update")
-async def update_backend(backend_key: ConversationBackendKey, runtime: Runtime) -> dict[str, Any]:
+async def update_backend(
+    backend_key: ConversationBackendKey, runtime: Runtime, ctx: Ctx
+) -> dict[str, Any]:
     """Run this backend's update, then look again and say which of three things happened."""
+    require_owner(ctx)
     return _update_result_json(await runtime.backend_snapshots.update_backend(backend_key))
 
 

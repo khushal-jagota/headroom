@@ -3,16 +3,15 @@
 Regenerate with:
     python -m planner.conversation.backends.codex_app_server.generate_bindings --bundle turn
 
-The pin these models were generated under:
+The source these models were generated from:
 
     bundle                 turn
-    codex binary version   codex-cli 0.166.0
-    upstream openai/codex  rust-v0.166.0 = 6ff1e1ca3b30fc8b914720681fcf5fe62e95f856
+    codex binary version   codex-cli 0.167.1
     schema obtained by     codex app-server generate-json-schema --out <dir>
     from the dump's        codex_app_server_protocol.schemas.json
-    dump digest (sha256)   fbb89dbb6e314880223a84e24d8f0052f7cac429b41ed240c87d28fdf9ac7879
+    dump digest (sha256)   5659bd42e0c98046e79dbb11fb0c2d4078603b2aa45a0cf13d47ff04c7d4eff2
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) 75b06e5882b59b0c6cac15cb1bd513a5e1805d74f9c7b8efd2f68011add2bc1b
+    subset digest (sha256) 5c3594143259a4a5e1c3838a0e3ef577e21c06908d9d89cd4e0d5f7bb3351128
     definitions generated  188
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
@@ -69,6 +68,7 @@ class InitializeCapabilities(BaseModel):
     mcpServerOpenaiFormElicitation: bool | None = None
     optOutNotificationMethods: list[str] | None = None
     requestAttestation: bool | None = False
+    requiredHumanApproval: bool | None = None
 
 
 class InitializeParams(BaseModel):
@@ -866,9 +866,14 @@ class LocalImageUserInput(BaseModel):
     type: Annotated[Literal["localImage"], Field(title="LocalImageUserInputType")]
 
 
-class AudioUserInput(BaseModel):
+class UrlUserInput1(BaseModel):
     type: Annotated[Literal["audio"], Field(title="AudioUserInputType")]
     url: str
+
+
+class FileIdUserInput1(BaseModel):
+    type: Annotated[Literal["audio"], Field(title="AudioUserInputType")]
+    fileId: str
 
 
 class LocalAudioUserInput(BaseModel):
@@ -1185,12 +1190,13 @@ class UserMessageThreadItem(BaseModel):
     content: list[
         TextUserInput
         | LocalImageUserInput
-        | AudioUserInput
         | LocalAudioUserInput
         | SkillUserInput
         | MentionUserInput
         | UrlUserInput
         | FileIdUserInput
+        | UrlUserInput1
+        | FileIdUserInput1
     ]
     id: str
     type: Annotated[Literal["userMessage"], Field(title="UserMessageThreadItemType")]
@@ -1373,12 +1379,13 @@ class TurnSteerParams(BaseModel):
     input: list[
         TextUserInput
         | LocalImageUserInput
-        | AudioUserInput
         | LocalAudioUserInput
         | SkillUserInput
         | MentionUserInput
         | UrlUserInput
         | FileIdUserInput
+        | UrlUserInput1
+        | FileIdUserInput1
     ]
     threadId: str
 
@@ -1406,7 +1413,7 @@ class CommandExecutionRequestApprovalParams(BaseModel):
     cwd: str | None = None
     environmentId: str | None = None
     itemId: str
-    kind: Literal["command", "writeStdin"] | None = "command"
+    kind: Literal["command", "writeStdin"] | Literal["humanCommand"] | None = "command"
     networkApprovalContext: NetworkApprovalContext | None = None
     proposedExecpolicyAmendment: list[str] | None = None
     proposedNetworkPolicyAmendments: list[NetworkPolicyAmendment] | None = None
@@ -1745,12 +1752,13 @@ class TurnStartParams(BaseModel):
     input: list[
         TextUserInput
         | LocalImageUserInput
-        | AudioUserInput
         | LocalAudioUserInput
         | SkillUserInput
         | MentionUserInput
         | UrlUserInput
         | FileIdUserInput
+        | UrlUserInput1
+        | FileIdUserInput1
     ]
     model: str | None = None
     outputSchema: Any | None = None

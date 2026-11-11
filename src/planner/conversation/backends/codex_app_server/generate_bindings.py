@@ -1,34 +1,9 @@
-"""Regenerate the codex app-server bindings from the binary Panels actually spawns.
+"""Regenerate Codex protocol bindings from the selected installed CLI.
 
-Codex's app-server protocol has no version negotiation and no capability probe, so the
-only thing standing between this adapter and a silent protocol change is a pin. The pin
-here is stronger than a repository commit: the JSON Schema is asked of the **installed
-codex binary** — the same one the adapter launches — with
-``codex app-server generate-json-schema``. The upstream tag that binary was cut from is
-recorded alongside it so a reader can go and diff the Rust.
-
-**There are two bundles, and each carries its own pin.** The turn bundle is everything
-the thread-and-turn adapter speaks. The login bundle is the five device-code sign-in
-messages. They retain separate pins so moving either protocol surface is an explicit choice.
-Both currently match the installed codex version.
-The two are safe to keep apart because their definitions do not overlap: the login closure
-shares no definition name with the turn subset, so neither bundle can silently redefine
-anything the other depends on. ``_refuse_overlapping_bundles`` checks that on every run.
-
-Three things come out of a bundle:
-
-- its vendored schema under ``schema/`` — the dump pruned to the definitions reachable from
-  the messages that bundle speaks. Vendoring the pruned document rather than the whole dump
-  keeps the diff readable: when a regeneration changes it, the change is in something we use.
-- its generated module — pydantic models for those definitions.
-- its pin, written into the generated file's header: binary version, upstream commit, how
-  the schema was obtained, and a canonical digest of the full dump the subset came from.
-
-Run it as ``python -m planner.conversation.backends.codex_app_server.generate_bindings``,
-optionally with ``--bundle turn`` or ``--bundle login``. A bundle refuses to regenerate
-against a codex whose version is not *its* pinned one, because a regeneration that silently
-moves the protocol is the failure this file exists to prevent. Moving a pin is a deliberate
-edit of that bundle's three constants below.
+The turn and login bundles contain only messages Panels uses. Their generated headers
+record the actual binary version and schema digests as provenance, not version constraints.
+Regeneration is an explicit source change. Qualification checks the installed CLI's
+protocol against these contracts without requiring a particular CLI version.
 """
 
 from __future__ import annotations
@@ -43,24 +18,6 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-# ---------------------------------------------------------------------------------------
-# The pins. Each bundle has three, and they change together, never one of them.
-# ---------------------------------------------------------------------------------------
-
-# What ``codex --version`` must print for the turn bundle to be the one that matches, and
-# the upstream tag that binary was cut from with its commit, so the Rust can be read.
-PINNED_CODEX_CLI_VERSION = "codex-cli 0.166.0"
-PINNED_UPSTREAM_TAG = "rust-v0.166.0"
-PINNED_UPSTREAM_COMMIT = "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856"
-
-# The same three for the login bundle. Its disjoint definitions retain a separate pin
-# even when both bundles target the same installed version.
-LOGIN_PINNED_CODEX_CLI_VERSION = "codex-cli 0.166.0"
-LOGIN_PINNED_UPSTREAM_TAG = "rust-v0.166.0"
-LOGIN_PINNED_UPSTREAM_COMMIT = "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856"
-
-# ---------------------------------------------------------------------------------------
 
 # The one file in the dump that holds everything: the version-agnostic surface at the top
 # level, and the whole v2 surface nested under a ``v2`` key.
@@ -180,12 +137,9 @@ LOGIN_SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
 
 @dataclass(frozen=True, slots=True)
 class Bundle:
-    """One independently pinned set of messages, its vendored schema and its models."""
+    """One set of messages, its vendored schema and its models."""
 
     name: str
-    pinned_codex_cli_version: str
-    pinned_upstream_tag: str
-    pinned_upstream_commit: str
     roots: tuple[tuple[str, str], ...]
     vendored_subset_schema_path: Path
     generated_bindings_path: Path
@@ -193,9 +147,6 @@ class Bundle:
 
 TURN_BUNDLE = Bundle(
     name="turn",
-    pinned_codex_cli_version=PINNED_CODEX_CLI_VERSION,
-    pinned_upstream_tag=PINNED_UPSTREAM_TAG,
-    pinned_upstream_commit=PINNED_UPSTREAM_COMMIT,
     roots=SCHEMA_ROOTS,
     vendored_subset_schema_path=VENDORED_SUBSET_SCHEMA_PATH,
     generated_bindings_path=GENERATED_BINDINGS_PATH,
@@ -203,9 +154,6 @@ TURN_BUNDLE = Bundle(
 
 LOGIN_BUNDLE = Bundle(
     name="login",
-    pinned_codex_cli_version=LOGIN_PINNED_CODEX_CLI_VERSION,
-    pinned_upstream_tag=LOGIN_PINNED_UPSTREAM_TAG,
-    pinned_upstream_commit=LOGIN_PINNED_UPSTREAM_COMMIT,
     roots=LOGIN_SCHEMA_ROOTS,
     vendored_subset_schema_path=LOGIN_VENDORED_SUBSET_SCHEMA_PATH,
     generated_bindings_path=LOGIN_GENERATED_BINDINGS_PATH,
@@ -229,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         "--bundle",
         default="all",
         choices=("all", *(bundle.name for bundle in BUNDLES)),
-        help="which independently pinned bundle to regenerate (default: all of them)",
+        help="which protocol bundle to regenerate (default: all of them)",
     )
     arguments = parser.parse_args(argv)
     try:
@@ -241,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def generate_bindings(*, codex_executable: str = "codex", bundle_name: str = "all") -> None:
-    """Ask each selected bundle's pinned binary for its schema, vendor it, write models."""
+    """Ask the selected binary for its schema, vendor it, and write models."""
     selected = (
         BUNDLES
         if bundle_name == "all"
@@ -250,17 +198,6 @@ def generate_bindings(*, codex_executable: str = "codex", bundle_name: str = "al
     if not selected:
         raise BindingGenerationFailed(f"no bundle named {bundle_name!r}")
     installed_version = _installed_codex_version(codex_executable)
-    for bundle in selected:
-        if installed_version != bundle.pinned_codex_cli_version:
-            raise BindingGenerationFailed(
-                f"the {bundle.name!r} bundle is pinned to "
-                f"{bundle.pinned_codex_cli_version!r} and the binary at "
-                f"{codex_executable!r} is {installed_version!r}. Regenerating against a "
-                "different binary changes what the adapter believes the protocol is, so "
-                "move that bundle's pin constants in this file deliberately and then run "
-                "it again. To regenerate only the bundle this binary matches, pass "
-                "--bundle with its name."
-            )
     with tempfile.TemporaryDirectory(prefix="codex-app-server-schema-") as scratch:
         dump = _dump_schema(codex_executable, Path(scratch))
         full_dump_digest = _canonical_digest(dump)
@@ -298,9 +235,7 @@ def generate_bindings(*, codex_executable: str = "codex", bundle_name: str = "al
 def _refuse_overlapping_bundles(pruned: dict[str, dict[str, Any]]) -> None:
     """Two bundles sharing a definition name would each claim to own that shape.
 
-    Separate pins are only safe while the bundles are disjoint. The moment two of them
-    reach the same definition, one bundle's pin silently decides what the other believes,
-    which is the whole failure the pins exist to prevent. It is refused rather than merged.
+    Separate generated modules must not disagree about a shared definition.
     """
     for name, subset in pruned.items():
         for other_name, other in pruned.items():
@@ -310,7 +245,7 @@ def _refuse_overlapping_bundles(pruned: dict[str, dict[str, Any]]) -> None:
             if shared:
                 raise BindingGenerationFailed(
                     f"the {name!r} and {other_name!r} bundles both reach "
-                    f"{', '.join(shared)}, so their separate pins would disagree about one "
+                    f"{', '.join(shared)}, so their separate modules would disagree about one "
                     "shape. Either keep them disjoint or generate them as one bundle."
                 )
 
@@ -490,12 +425,10 @@ def _generated_file_header(
             "    python -m planner.conversation.backends.codex_app_server.generate_bindings"
             f" --bundle {bundle.name}",
             "",
-            "The pin these models were generated under:",
+            "The source these models were generated from:",
             "",
             f"    bundle                 {bundle.name}",
             f"    codex binary version   {installed_version}",
-            f"    upstream openai/codex  {bundle.pinned_upstream_tag}"
-            f" = {bundle.pinned_upstream_commit}",
             "    schema obtained by     codex app-server generate-json-schema --out <dir>",
             f"    from the dump's        {FULL_SCHEMA_DUMP_FILE_NAME}",
             f"    dump digest (sha256)   {full_dump_digest}",

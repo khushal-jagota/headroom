@@ -195,6 +195,12 @@ def npm_command(tree: Path, args: Sequence[str], env: Mapping[str, str]) -> list
     if not node:
         refuse(destination, "executable lookup", "node is absent from PATH.")
     check_paths([Path(executable), Path(node)], environment=env)
+    # Backend CLIs track current releases; they have no repository lockfile.
+    if package == "agent_backends" and operation == "ci":
+        refuse(destination, "npm command grammar", "Backend CLIs have no lockfile. Use install.")
+    if package == "agent_backends" and operation == "install":
+        tail = ["--package-lock=false", "--save=false",
+                "@anthropic-ai/claude-code@latest", "@openai/codex@latest"]
     return [str(executable), "--prefix", str(destination), operation, *tail]
 
 
@@ -353,7 +359,10 @@ def setup(tree: Path, env: Mapping[str, str]) -> int:
         subprocess.run([python, *arguments], cwd=tree, env=install_environment, check=True)
     for package in PACKAGES:
         subprocess.run(
-            npm_command(tree, ["--prefix", package, "ci"], env),
+            npm_command(
+                tree, ["--prefix", package, "install" if package == "agent_backends" else "ci"],
+                env,
+            ),
             cwd=tree,
             env=install_environment,
             check=True,
