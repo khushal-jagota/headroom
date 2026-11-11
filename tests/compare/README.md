@@ -1,0 +1,89 @@
+# Backend comparison
+
+The runner sends one request list to Python and a candidate server on separate copies of one database. It compares responses, read probes, and source rows. Python is the reference.
+
+## Add an area
+
+Add two files with the same name:
+
+- `tests/compare/lists/unit-NN.json`
+- `tests/compare/rules/unit-NN.json`
+
+The runner and CI discover these files without a registry or runner change. Use the `unit-*.json` naming convention. Put the area's Python source directories in `source_roots` for CI selection. Branch updates run every list.
+
+Start the rule file from `rules/unit-01.json` to retain the shared metadata rules. Add only necessary area exceptions. Each exception must state its reason.
+
+A list contains requests, captures, and read probes:
+
+```json
+{
+  "source_roots": ["src/planner/example/"],
+  "requests": [
+    {
+      "area": "example",
+      "method": "POST",
+      "path": "/api/example",
+      "status": 200,
+      "json": {"name": "Example"},
+      "capture": {"example_id": "id"}
+    },
+    {
+      "area": "example",
+      "method": "GET",
+      "path": "/api/example/${example_id}",
+      "status": 200
+    }
+  ],
+  "probes": ["/api/example"]
+}
+```
+
+Replace the example routes with real area routes. Every request requires `status`. Both servers must return that status before their answers compare. Read probes require HTTP 200. Equal failures must not pass as successful calls.
+
+Use `headers` for caller identity and other request headers. For refused calls, the caller must exist. Create or select the caller first, then use its id. A nonexistent caller proves rejection of a nonexistent caller, not the intended authority rule. Do not copy the placeholder caller ids from Unit 1 into new authority proofs.
+
+Captures use dotted object paths and numeric array indices. An empty path captures the complete body. `${capture}` substitutes separately on each server. A complete-string substitution preserves the captured JSON type. Arrays retain order.
+
+The rule file contains reason maps:
+
+- `ignore`: exact `table.column` exceptions for source rows.
+- `tokens`: exact `table.column` counters or digests compared by change.
+- `response_ignore`: exact response paths, such as `body.events.*.created_at`.
+- `response_tokens`: exact response paths for counters or digests compared by change.
+- `derived_tables`: tables excluded from SQL comparison. Add probes for their public output.
+
+The `*` response path segment denotes an array item. It is not an arbitrary wildcard. Do not hide content digests as random ids. Give each wall-time field an explicit rule and reason.
+
+## Run a list
+
+From the repository root:
+
+```sh
+scripts/dev pytest tests/compare --compare-list tests/compare/lists/unit-NN.json --compare-report-dir /tmp/panels-comparison
+```
+
+Repeat `--compare-list` to select several lists. Without that option, pytest discovers every list. Four cheap oracle tests also run. Each report contains differences, route reach, source table counts, loop results, and the applied rules.
+
+## TypeScript host contract
+
+Select the TS launcher with:
+
+```sh
+scripts/dev pytest tests/compare --compare-list tests/compare/lists/unit-NN.json --compare-right-module tests.compare.ts_launcher
+```
+
+The launcher replaces itself with Node. Its default entry is `server/test_host.ts`. Set `PANELS_COMPARE_TS_ENTRY` to select another entry.
+
+That host must:
+
+- Accept the inherited listener from `PLAN_SERVER_LISTENER_FD`. Do not bind another port.
+- Use the fixture's database, fake clock, synthetic homes, logs, and other `PLAN_*` settings.
+- Serve `GET /api/meta` with HTTP 200 and `test_mode: true`.
+- Serve `/` with HTTP 200 and the `data-svelte-app` marker, as the shared fixture requires.
+- Expose the production routes and response shapes that the selected list calls.
+- Expose `/api/test/set-now` for clock changes and any existing test routes that the selected list uses.
+- Expose `POST /api/test/poll/readiness`, `/notifications`, `/manager-wakes`, and `/sources` under `/api/test/poll/`.
+- Return the Python host's loop response shapes: `ticket_ids`, `delivered` and `intents`, `batch_ids`, and `complete`, respectively.
+- Wait for each requested loop pass to finish. Use scripted agents and recording notification adapters. Do not start real providers or external sends.
+
+The TS host grows with the ported areas. A missing route is not a passing comparison. Unit 1 calibrates Python against Python and does not prove the TS host.

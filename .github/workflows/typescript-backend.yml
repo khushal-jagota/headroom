@@ -1,0 +1,73 @@
+name: TypeScript backend checkpoint
+
+on:
+  pull_request:
+    branches: [feature/typescript-backend]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [feature/typescript-backend]
+
+permissions:
+  contents: read
+
+jobs:
+  comparison:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install isolated dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
+          scripts/dev npm --prefix web ci
+          scripts/dev npm --prefix web run build
+      - name: Python type check
+        run: scripts/dev mypy
+      - name: Check conversation contracts
+        run: .venv/bin/python scripts/generate_conversation_view_contracts.py --check
+      - name: Check remaining generated contracts
+        run: |
+          .venv/bin/python scripts/generate_resource_browser_contracts.py --check
+          .venv/bin/python scripts/generate_navigation_browser_contracts.py --check
+          .venv/bin/python scripts/generate_ticket_workspace_contracts.py --check
+          .venv/bin/python scripts/generate_goal_browser_contracts.py --check
+      - name: Compare affected areas or every area after branch updates
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          selection=()
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            selection=(--base "$BASE_SHA")
+          fi
+          .venv/bin/python tests/compare/select_lists.py "${selection[@]}" > "$RUNNER_TEMP/comparison-lists"
+          mapfile -t lists < "$RUNNER_TEMP/comparison-lists"
+          if [[ ${#lists[@]} -eq 0 ]]; then
+            echo 'No comparison areas affected.'
+            exit 0
+          fi
+          arguments=()
+          for list in "${lists[@]}"; do
+            arguments+=(--compare-list "$list")
+          done
+          scripts/dev pytest tests/compare "${arguments[@]}" --compare-report-dir "$RUNNER_TEMP/comparison"
+      - name: Preserve comparison evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: comparison-evidence
+          path: ${{ runner.temp }}/comparison
+          if-no-files-found: ignore
