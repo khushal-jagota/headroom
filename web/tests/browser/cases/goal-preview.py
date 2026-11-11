@@ -3183,6 +3183,65 @@ def manager_goal_tags(browser, url):
         expect(chief.get_by_role("button", name=re.compile("Settle"))).to_have_count(0)
         panel = page.locator('[data-rail-hover-panel].visible')
 
+        # Native :has states and pseudo-element transitions need the rendered header.
+        # Reuse this host for the three status colors and the no-goal boundary.
+        haze_started = time.monotonic()
+        page.evaluate("location.hash='#/workspace/goal/daily_quota'")
+        expect(chief).not_to_have_class(re.compile(r'\bselected\b'))
+        page.mouse.move(1100, 820)
+
+        def haze_opacity(card, value):
+            page.wait_for_function(
+                "([card,value]) => getComputedStyle(card.parentElement,'::after').opacity===value",
+                arg=[card.element_handle(), value])
+
+        for card, token, percent in (
+                (one, '--accent-done', 7), (many, '--accent-error', 9),
+                (chief, '--accent-attention', 9)):
+            haze_opacity(card, '1')
+            assert card.evaluate("""(card, [token,percent]) => {
+              const slot=card.parentElement, haze=getComputedStyle(slot,'::after');
+              const expected=document.createElement('div');
+              const tint=`color-mix(in srgb,var(${token}) ${percent}%,transparent)`;
+              expected.style.backgroundImage=`linear-gradient(${tint},transparent 70px)`;
+              slot.append(expected);
+              const equal=haze.backgroundImage===getComputedStyle(expected).backgroundImage;
+              expected.remove();return equal;
+            }""", [token, percent])
+            card.locator('.identity').hover()
+            haze_opacity(card, '0')
+            page.mouse.move(1100, 820)
+            haze_opacity(card, '1')
+        assert none.evaluate(
+            "card => getComputedStyle(card.parentElement,'::after').content") == 'none'
+        if output:
+            page.locator('.workspace-rail').screenshot(path=str(output / 'haze-rest.png'))
+        for control in (one.locator('.item-head'),
+                        one.get_by_role('button', name='Goals: On track', exact=True)):
+            control.focus()
+            haze_opacity(one, '0')
+            control.blur()
+            haze_opacity(one, '1')
+        chief.locator('.item-head').click()
+        expect(chief).to_have_class(re.compile(r'\bselected\b'))
+        page.mouse.move(1100, 820)
+        chief.locator('.item-head').blur()
+        haze_opacity(chief, '0')
+        if output:
+            page.locator('.workspace-rail').screenshot(path=str(output / 'haze-selected.png'))
+        page.evaluate("location.hash='#/workspace/goal/daily_quota'")
+        haze_opacity(chief, '1')
+        page.emulate_media(reduced_motion='reduce')
+        one.locator('.identity').hover()
+        haze_opacity(one, '0')
+        assert one.evaluate(
+            "card => getComputedStyle(card.parentElement,'::after').transitionDuration") == '0s'
+        page.mouse.move(1100, 820)
+        haze_opacity(one, '1')
+        page.emulate_media(reduced_motion='no-preference')
+        elapsed = time.monotonic() - haze_started
+        print(f'manager haze native states: passed (+{elapsed:.2f}s)', flush=True)
+
         # Follow the owner path: enter the header to reveal Settle, then target
         # the action. Outside the header, its empty space belongs to the goal tag.
         for card in (one, none):
