@@ -176,6 +176,8 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     row.click()
     worker_hash = page.evaluate("location.hash")
     expect(page.locator(f'[data-screen="ticket"][data-ticket-id="{ticket["id"]}"]')).to_be_visible()
+    # Settle accepts pointer input only after the owner enters the header.
+    card.locator(".identity").hover()
     with page.expect_response(
         lambda response: (
             response.url.endswith(f"/api/managers/{item['id']}/settled")
