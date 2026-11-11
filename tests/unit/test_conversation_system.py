@@ -2890,6 +2890,7 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
 ) -> None:
     from datetime import UTC, datetime
 
+    from planner.conversation.start_admission import AutomaticStartAdmission
     from planner.core.clock import TestClock
     from planner.manager_wakes import data as wake_data
     from planner.manager_wakes.contracts import WakeBatch
@@ -2897,6 +2898,9 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
     from planner.managers import data as managers_data
     from planner.tickets import data as tickets_data
     from planner.tickets.contracts import TITLE_MAX_CHARS
+
+    admission_now = [0.0]
+    harness.system.start_admission = AutomaticStartAdmission(clock=lambda: admission_now[0])
 
     async def exercise() -> None:
         conn = connect(str(harness.db_path))
@@ -2991,6 +2995,7 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
             conn.close()
         release.set()
         assert not await old_delivery
+        admission_now[0] += 1.0  # A new automatic start needs the next pacing opportunity.
         assert await deliver(current_batch)
         assert len(harness.backends) == 2
         all_writes = [write for backend in harness.backends.values() for write in backend.writes]

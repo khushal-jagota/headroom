@@ -139,7 +139,9 @@ def test_mac_identity_uses_fixed_locale_and_rejects_unknown_boot(
         assert isinstance(environment, dict)
         calls.append(environment)
         if arguments[0].endswith("sysctl"):
-            stdout = "{ sec = 1730000000, usec = 123 } date in any locale" if valid_boot else "unknown"
+            stdout = (
+                "{ sec = 1730000000, usec = 123 } date in any locale" if valid_boot else "unknown"
+            )
         else:
             stdout = "Wed Nov 11 10:00:00 2026"
         return subprocess.CompletedProcess(arguments, 0, stdout, "")
