@@ -4,8 +4,8 @@
   },
   "response_tokens": {
     "body.coverage.revision": "Navigation revisions count commits. Compare continuity changes, not counter magnitude.",
-    "body.content_version": "The snapshot digest includes the ordering generation. Compare content-version changes.",
-    "body.ordering_generation": "TypeScript uses Intl.Collator under its own approved ordering generation."
+    "body.ordering_generation": "TypeScript uses Intl.Collator under its own approved ordering generation.",
+    "body.*.data.ordering_generation": "The initial SSE frame declares the same approved Intl.Collator generation as snapshots."
   },
   "derived_tables": {
     "navigation_meta": "Derived projection, compared through navigation and conversation read routes.",
@@ -28,6 +28,7 @@
     "navigation_view_current_conversations": "Derived projection, compared through navigation and conversation read routes.",
     "navigation_view_unread_conversations": "Derived projection, compared through navigation and conversation read routes.",
     "navigation_view_globals": "Derived projection, compared through navigation and conversation read routes.",
-    "navigation_view_changes": "Derived projection, compared through navigation and conversation read routes."
+    "navigation_view_changes": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_runtime_epoch": "Process startup recovery marker from the later conversation core. This unit has no interrupted turns and does not prove recovery."
   }
 }

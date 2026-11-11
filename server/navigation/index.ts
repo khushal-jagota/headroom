@@ -16,8 +16,7 @@ export function createNavigationRuntime(publicationFactory: PublicationFactory, 
     navigationCommitStep: navigation.finalize,
     initialize: publication.initialize,
     close: publication.close,
-    authority: publication.authority,
-    routes: createRoutes(publication.authority, sources),
+    routes: createRoutes(sources),
   };
 }
 export { createNavigationRegistry } from './data/registry.ts';

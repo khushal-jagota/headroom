@@ -87,3 +87,23 @@ That host must:
 - Wait for each requested loop pass to finish. Use scripted agents and recording notification adapters. Do not start real providers or external sends.
 
 The TS host grows with the ported areas. A missing route is not a passing comparison. Unit 1 calibrates Python against Python and does not prove the TS host.
+
+## Streams, restarts, and shared seed requests
+
+An SSE step reads the same route on both servers concurrently:
+
+```json
+{"kind":"stream","method":"GET","path":"/api/navigation/view/events?view=...","status":200,"frames":1,"deadline_seconds":5}
+```
+
+`frames` counts complete frames with a `data` field. Comments and heartbeat lines do not count. The runner compares HTTP status, selected headers, event names, parsed JSON data, and recognized `id` and `retry` values. Reconnection values persist across frames, as SSE specifies. Non-JSON data remains text. Each side has one total deadline, including headers and body reads. Both connections close after the frame count or deadline. A short stream, incomplete frame, or deadline before the required count fails even if both sides produce the same silence. Captures use the frame list as their body.
+
+A restart step stops and starts both hosts on their existing databases, ports, and host modules:
+
+```json
+{"kind":"restart"}
+```
+
+Captures survive the restart. The fixture bootstraps a database before launch, so the runner restores a SQLite backup after that bootstrap. This preserves the pre-restart rows for the server under comparison. The fake clock starts again at the fixture's configured time.
+
+A list can supply `seed_requests` before its ordinary `requests`. Each seed request has the same method, path, status, JSON, headers, and capture fields as an ordinary request. The runner replays them once against the default Python host and stops it. SQLite backups of that database then supply both sides. Seed captures are available on both sides. This can create real caller records without a partial TS server's unsupported creation routes. Seed requests do not count as compared route coverage. No direct seed row writes occur.

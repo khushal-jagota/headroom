@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import re
-import shutil
 import sqlite3
 import time
 from contextlib import closing
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -117,6 +119,91 @@ def substitute(value: Any, captures: dict[str, Any]) -> Any:
     return value
 
 
+def backup_database(source: Path, target: Path) -> None:
+    """Copy an isolated SQLite snapshot, including committed WAL content."""
+    with closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True)) as reader:
+        with closing(sqlite3.connect(target)) as writer:
+            reader.backup(writer)
+
+
+def capture_values(body: Any, call: dict[str, Any], captures: dict[str, Any]) -> None:
+    for name, pointer in call.get("capture", {}).items():
+        value = body
+        for part in pointer.split(".") if pointer else []:
+            value = value[int(part)] if isinstance(value, list) else value[part]
+        captures[name] = value
+
+
+async def stream_answer(base: str, call: dict[str, Any]) -> dict[str, Any]:
+    """Read complete SSE frames under one deadline, including response headers."""
+    count = call["frames"]
+    deadline = call["deadline_seconds"]
+    assert isinstance(count, int) and not isinstance(count, bool) and count > 0
+    assert (
+        isinstance(deadline, (int, float)) and not isinstance(deadline, bool)
+        and math.isfinite(deadline) and deadline > 0
+    )
+    frames: list[dict[str, Any]] = []
+    answer: dict[str, Any] = {}
+
+    async def consume() -> None:
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                call.get("method", "GET"), base + call["path"], headers=call.get("headers")
+            ) as response:
+                answer.update({
+                    "status": response.status_code,
+                    "headers": {h: response.headers[h] for h in HEADERS if h in response.headers},
+                    "body": frames,
+                })
+                assert response.status_code == call["status"], (call, response.status_code)
+                assert "text/event-stream" in response.headers.get("content-type", ""), call
+                fields: dict[str, str] = {}
+                reconnect: dict[str, str | int] = {}
+                data: list[str] = []
+                async for line in response.aiter_lines():
+                    if not line:
+                        if data:
+                            raw = "\n".join(data)
+                            try:
+                                payload: Any = json.loads(raw)
+                            except ValueError:
+                                payload = raw
+                            frames.append({
+                                "event": fields.get("event") or "message", "data": payload,
+                                **reconnect,
+                            })
+                            if len(frames) == count:
+                                return
+                        fields = {}
+                        data = []
+                    elif not line.startswith(":"):
+                        key, separator, value = line.partition(":")
+                        if separator and value.startswith(" "):
+                            value = value[1:]
+                        if key == "data":
+                            data.append(value)
+                        elif key == "event":
+                            fields[key] = value
+                        elif key == "id" and "\0" not in value:
+                            reconnect["id"] = value
+                        elif key == "retry" and re.fullmatch(r"[0-9]+", value):
+                            reconnect["retry"] = int(value)
+    try:
+        await asyncio.wait_for(consume(), timeout=deadline)
+    except TimeoutError:
+        pass
+    assert len(frames) == count, (
+        "stream did not deliver the required complete frames", call, len(frames), answer
+    )
+    return answer
+
+
+async def stream_answers(bases: list[str], calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    reads = [stream_answer(base, call) for base, call in zip(bases, calls, strict=True)]
+    return list(await asyncio.gather(*reads))
+
+
 def rows(path: Path, normalizer: Normalizer) -> dict[str, list[Any]]:
     with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
@@ -185,18 +272,40 @@ def run_list(
     with synthetic_home_environment(homes):
         with closing(connect(str(seed))) as conn:
             create_schema(conn)
+    seed_captures: dict[str, Any] = {}
+    if spec.get("seed_requests"):
+        seed_server = _start_server(
+            root / "seed-source", seed_db=lambda target: backup_database(seed, target),
+            server_module="tests.compare.host",
+        )
+        try:
+            with httpx.Client(timeout=30) as client:
+                for request in spec["seed_requests"]:
+                    call = substitute(request, seed_captures)
+                    response = client.request(
+                        call["method"], seed_server.base + call["path"],
+                        json=call.get("json"), headers=call.get("headers"),
+                    )
+                    assert response.status_code == call["status"], (
+                        call, response.status_code, response.text,
+                    )
+                    capture_values(response.json(), request, seed_captures)
+        finally:
+            _stop_server(seed_server)
+        backup_database(seed_server.db_path, seed)
     servers = []
+    modules = ["tests.compare.host", right_module]
     differences: list[dict[str, Any]] = []
     reach: dict[str, set[str]] = {}
     try:
-        for name, module in [("python", "tests.compare.host"), ("candidate", right_module)]:
+        for name, module in zip(("python", "candidate"), modules, strict=True):
 
             def copy_seed(target: Path) -> None:
-                shutil.copyfile(seed, target)
+                backup_database(seed, target)
 
             servers.append(_start_server(root / name, seed_db=copy_seed, server_module=module))
         norms = [Normalizer(rules, root / name) for name in ("python", "candidate")]
-        captures: list[dict[str, Any]] = [{}, {}]
+        captures: list[dict[str, Any]] = [dict(seed_captures), dict(seed_captures)]
         # Establish changed/unchanged baselines for opaque source columns.
         baselines = [
             rows(server.db_path, norm) for server, norm in zip(servers, norms, strict=True)
@@ -212,58 +321,72 @@ def run_list(
                 and not path.startswith("/api/test/")
             ]
             for index, request in enumerate(spec["requests"]):
+                if request.get("kind") == "restart":
+                    for side, server in enumerate(servers):
+                        _stop_server(server)
+                        snapshot = root / f"restart-{side}.db"
+                        backup_database(server.db_path, snapshot)
+                        servers[side] = _start_server(
+                            server.db_path.parent, port=server.port,
+                            server_module=modules[side],
+                            seed_db=partial(backup_database, snapshot),
+                        )
+                        snapshot.unlink()
+                    continue
                 calls = [request]
-                if request["method"].upper() not in ("GET", "HEAD"):
+                if (
+                    request.get("kind") != "stream"
+                    and request["method"].upper() not in ("GET", "HEAD")
+                ):
                     calls += [
                         {"method": "GET", "path": p, "area": "probes", "status": 200}
                         for p in spec.get("probes", [])
                     ]
                 for call in calls:
                     answers = []
+                    streamed = None
+                    if call.get("kind") == "stream":
+                        streamed = asyncio.run(stream_answers(
+                            [server.base for server in servers],
+                            [substitute(call, saved) for saved in captures],
+                        ))
                     for side, server in enumerate(servers):
                         resolved = substitute(call, captures[side])
-                        response = client.request(
-                            resolved["method"],
-                            server.base + resolved["path"],
-                            json=resolved.get("json"),
-                            headers=resolved.get("headers"),
-                        )
-                        if "status" in resolved:
-                            assert response.status_code == resolved["status"], (
-                                index,
-                                side,
-                                resolved,
-                                response.status_code,
-                                response.text,
-                            )
-                        if "application/json" in response.headers.get("content-type", ""):
-                            body = response.json()
+                        if streamed is not None:
+                            answer = streamed[side]
+                            body = answer["body"]
                         else:
-                            body = response.text
+                            response = client.request(
+                                resolved["method"],
+                                server.base + resolved["path"],
+                                json=resolved.get("json"),
+                                headers=resolved.get("headers"),
+                            )
+                            if "status" in resolved:
+                                assert response.status_code == resolved["status"], (
+                                    index, side, resolved, response.status_code, response.text,
+                                )
+                            if "application/json" in response.headers.get("content-type", ""):
+                                body = response.json()
+                            else:
+                                body = response.text
+                            answer = {
+                                "status": response.status_code,
+                                "headers": {
+                                    h: response.headers[h]
+                                    for h in HEADERS if h in response.headers
+                                },
+                                "body": body,
+                            }
                         if side == 0 and resolved["path"].startswith("/api/test/poll/"):
                             loop_results[resolved["path"]] = body
-                        for name, pointer in call.get("capture", {}).items():
-                            captured = body
-                            for part in pointer.split(".") if pointer else []:
-                                captured = (
-                                    captured[int(part)]
-                                    if isinstance(captured, list)
-                                    else captured[part]
-                                )
-                            captures[side][name] = captured
-                        answer = {
-                            "status": response.status_code,
-                            "headers": {
-                                h: response.headers[h] for h in HEADERS if h in response.headers
-                            },
-                            "body": body,
-                        }
+                        capture_values(body, call, captures[side])
                         answers.append(
                             norms[side].normalize(
                                 answer,
                                 str(
                                     norms[side].normalize(
-                                        resolved["method"] + " " + resolved["path"]
+                                        resolved.get("method", "GET") + " " + resolved["path"]
                                     )
                                 ),
                             )
@@ -272,7 +395,7 @@ def run_list(
                     matches = [
                         (method, path)
                         for method, path in declared
-                        if method == call["method"].upper()
+                        if method == call.get("method", "GET").upper()
                         and re.fullmatch(re.sub(r"\{[^}]+\}", "[^/]+", path), actual_path)
                     ]
                     if matches:

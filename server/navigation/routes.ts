@@ -9,6 +9,7 @@ import { compact } from './logic/json.ts';
 import { NavigationUnavailable } from './logic/errors.ts';
 import { jsonFailure } from '../core/http/json.ts';
 import { scalarQueries } from '../list_reads/http.ts';
+import { validateInstallation } from './publication.ts';
 import { snapshot } from './data/read.ts';
 function query(request: FastifyRequest, reply: FastifyReply, names: string[]): Record<string, string> | null {
   const values = scalarQueries(request.query as Record<string, unknown>);
@@ -35,7 +36,7 @@ function view(request: FastifyRequest, reply: FastifyReply): ViewRequest | null 
 function capture(authority: NavigationAuthority, sources: readonly NavigationSource[], services: AreaServices, value: ViewRequest): { current: CurrentViewSnapshot; token: CurrentAuthority } {
   let token: CurrentAuthority;
   try { token = authority.capture(); } catch (error) { throw new NavigationUnavailable((error as Error).message); }
-  const current = services.database.read(sql => { authority.validateSnapshot(sql, token); return snapshot(sql, value, token, sources); });
+  const current = services.database.read(sql => { validateInstallation(sql, token); return snapshot(sql, value, token, sources); });
   try { authority.validate(token); } catch (error) { throw new NavigationUnavailable((error as Error).message); }
   return { current, token };
 }
@@ -47,12 +48,14 @@ function difference(previous: CurrentViewSnapshot, current: CurrentViewSnapshot)
   const fresh = new Set(content.records.map(row => compact([row.kind, row.id])));
   return { ...common, event: 'patch', previous_coverage: previous.coverage, previous_content_version: previous.content_version, upserts: content.records.filter(row => old.get(compact([row.kind, row.id])) !== compact(row)), evictions: previous.content.records.filter(row => !fresh.has(compact([row.kind, row.id]))).map(({ kind, id }) => ({ kind, id })), windows: content.windows, counts: content.counts, review_context: content.review_context, review_summary: content.review_summary };
 }
-export function createRoutes(authority: NavigationAuthority, sources: readonly NavigationSource[]): FastifyPluginAsync<AreaServices> {
+export function createRoutes(sources: readonly NavigationSource[]): FastifyPluginAsync<AreaServices> {
 return async (app, services) => {
   const streams = new Set<() => void>();
   app.addHook('onClose', async () => { for (const close of streams) close(); });
   app.get('/snapshot', async (request, reply) => {
     const value = view(request, reply); if (!value) return;
+    const authority: NavigationAuthority | undefined = services.signalAuthority;
+    if (!authority) return reply.code(503).send({ detail: 'navigation view is unavailable' });
     try {
       const { current } = capture(authority, sources, services, value);
       return reply.header('cache-control', 'no-store').send(current);
@@ -60,6 +63,8 @@ return async (app, services) => {
   });
   app.get('/events', async (request, reply) => {
     const value = view(request, reply); if (!value) return;
+    const authority: NavigationAuthority | undefined = services.signalAuthority;
+    if (!authority) return reply.code(503).send({ detail: 'navigation view is unavailable' });
     let admitted: ReturnType<typeof capture>;
     try { admitted = capture(authority, sources, services, value); } catch (error) { if (!(error instanceof NavigationUnavailable)) throw error; return reply.code(503).send({ detail: 'navigation view is unavailable' }); }
     reply.hijack();

@@ -1,5 +1,4 @@
-/** Navigation storage and delivery permits for the injected conversation fact source. */
-import { randomUUID } from 'node:crypto';
+/** Navigation installation and storage for the injected conversation fact source. */
 import type { ConversationAttention, ConversationSignalPublicationV1, SignalBatch, SignalDeletion } from '../conversation/contracts.ts';
 import type { CommitStep, Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { CurrentAuthority } from '../../web/src/lib/navigation/contracts.ts';
@@ -15,42 +14,15 @@ function checkedAttention(value: ConversationAttention): void {
     throw new Error('Signal publication requires complete attention');
   }
 }
-/** The source callback supplies facts only. All revision and permit state lives here. */
+/** SQL installation checks run inside the same read snapshot as navigation content. */
+export function validateInstallation(sql: ReadSql, value: CurrentAuthority): void {
+  const installed = sql.get<Installation>('SELECT installation_id,scope,runtime_epoch,sequence FROM navigation_signal_installation WHERE singleton=1');
+  if (!installed || installed.installation_id !== value.permit.installation_id || installed.scope !== value.permit.scope || installed.runtime_epoch !== value.permit.runtime_epoch) throw new NavigationUnavailable('Signal navigation installation changed');
+}
+/** The source callback supplies facts. Producer identity comes from injected authority. */
 export function createNavigationPublication(factory: PublicationFactory, navigation: NavigationRegistry) {
-  const scope = randomUUID(), runtimeEpoch = randomUUID(), installationId = randomUUID();
-  const deliverySessionId = randomUUID().replaceAll('-', '');
-  let current = false, closed = false;
-  const generation = 1;
-  const watchers = new Set<() => void>();
-  function validate(value: CurrentAuthority): void {
-    if (!current || closed || value.delivery_session_id !== deliverySessionId
-        || value.availability.state !== 'current' || value.availability.reason !== null
-        || value.availability.generation !== String(generation)
-        || value.permit.scope !== scope || value.permit.runtime_epoch !== runtimeEpoch
-        || value.permit.installation_id !== installationId || value.permit.generation !== String(generation)) {
-      throw new NavigationUnavailable('navigation delivery generation changed');
-    }
-  }
-  function validateSnapshot(sql: ReadSql, value: CurrentAuthority): void {
-    const installed = sql.get<Installation>('SELECT installation_id,scope,runtime_epoch,sequence FROM navigation_signal_installation WHERE singleton=1');
-    if (!installed || installed.installation_id !== value.permit.installation_id || installed.scope !== value.permit.scope || installed.runtime_epoch !== value.permit.runtime_epoch) throw new NavigationUnavailable('Signal navigation installation changed');
-  }
-  const authority: NavigationAuthority = {
-    capture() {
-      const result: CurrentAuthority = {
-        delivery_session_id: deliverySessionId,
-        availability: { state: 'current', generation: String(generation), reason: null },
-        permit: { scope, runtime_epoch: runtimeEpoch, installation_id: installationId, generation: String(generation) },
-      };
-      validate(result);
-      return result;
-    },
-    validate, validateSnapshot,
-    watch(value, invalidate) {
-      validate(value); watchers.add(invalidate);
-      return () => { watchers.delete(invalidate); };
-    },
-  };
+  let installed: { authority: NavigationAuthority; token: CurrentAuthority } | undefined;
+  let closed = false;
   function collect(tx: TransactionSql): Map<string, ConversationAttention> {
     const values = new Map<string, ConversationAttention>();
     const source = factory((sourceTx, id, attention) => {
@@ -69,13 +41,15 @@ export function createNavigationPublication(factory: PublicationFactory, navigat
     if (actual.length !== values.size || actual.some(row => !values.has(row.conversation_id))) throw new Error('Signal snapshot is not the complete conversation set');
     return values;
   }
-  const put = (tx: TransactionSql, id: string, revision: number, attention: ConversationAttention | null) => {
+  const put = (tx: TransactionSql, runtimeEpoch: string, id: string, revision: number, attention: ConversationAttention | null) => {
     tx.run('INSERT OR REPLACE INTO navigation_signal_publications(conversation_id,runtime_epoch,conversation_revision,attention) VALUES(?,?,?,?)', [id, runtimeEpoch, String(revision), attention === null ? null : compact(attention)]);
   };
   const dirty = (tx: TransactionSql, id: string) => tx.run("INSERT OR IGNORE INTO navigation_dirty(kind,id) VALUES('navigation_signal_publications',?)", [id]);
   const commitStep: CommitStep = tx => {
     if (closed) throw new NavigationUnavailable('Signal publication is closed');
-    if (!current) return;
+    if (!installed) return;
+    installed.authority.validate(installed.token);
+    const { scope, runtime_epoch: runtimeEpoch, installation_id: installationId } = installed.token.permit;
     const installation = tx.get<Installation>('SELECT installation_id,scope,runtime_epoch,sequence FROM navigation_signal_installation WHERE singleton=1');
     if (!installation || installation.installation_id !== installationId || installation.scope !== scope || installation.runtime_epoch !== runtimeEpoch) throw new NavigationUnavailable('Signal navigation installation changed');
     const values = collect(tx);
@@ -87,12 +61,12 @@ export function createNavigationPublication(factory: PublicationFactory, navigat
       if (old?.attention === compact(attention)) continue;
       const revision = old ? Number(old.conversation_revision) + 1 : 0;
       replacements.push({ conversation_id: id, runtime_epoch: runtimeEpoch, conversation_revision: revision, attention });
-      put(tx, id, revision, attention); dirty(tx, id);
+      put(tx, runtimeEpoch, id, revision, attention); dirty(tx, id);
     }
     for (const [id, old] of previous) if (!values.has(id) && old.attention !== null) {
       const revision = Number(old.conversation_revision) + 1;
       deletions.push({ conversation_id: id, runtime_epoch: runtimeEpoch, conversation_revision: revision });
-      put(tx, id, revision, null); dirty(tx, id);
+      put(tx, runtimeEpoch, id, revision, null); dirty(tx, id);
     }
     if (replacements.length || deletions.length) {
       const before = Number(installation.sequence);
@@ -101,25 +75,25 @@ export function createNavigationPublication(factory: PublicationFactory, navigat
     }
   };
   return {
-    authority,
     commitStep,
-    initialize(database: Database): void {
-      if (closed || current) throw new Error('Signal navigation is already initialized or closed');
+    initialize(database: Database, authority: NavigationAuthority): void {
+      if (closed || installed) throw new Error('Signal navigation is already initialized or closed');
+      const token = authority.capture();
+      const { scope, runtime_epoch: runtimeEpoch, installation_id: installationId } = token.permit;
       database.write(tx => {
         tx.run('CREATE TABLE IF NOT EXISTS navigation_signal_installation(singleton INTEGER PRIMARY KEY CHECK(singleton=1),installation_id TEXT NOT NULL,scope TEXT NOT NULL,runtime_epoch TEXT NOT NULL,sequence TEXT NOT NULL,last_batch TEXT)');
         tx.run('CREATE TABLE IF NOT EXISTS navigation_signal_publications(conversation_id TEXT PRIMARY KEY,runtime_epoch TEXT NOT NULL,conversation_revision TEXT NOT NULL,attention TEXT)');
         const values = collect(tx);
         tx.run('DELETE FROM navigation_signal_publications');
-        for (const [id, attention] of values) put(tx, id, 0, attention);
+        for (const [id, attention] of values) put(tx, runtimeEpoch, id, 0, attention);
         tx.run('INSERT OR REPLACE INTO navigation_signal_installation(singleton,installation_id,scope,runtime_epoch,sequence,last_batch) VALUES(1,?,?,?,?,NULL)', [installationId, scope, runtimeEpoch, '0']);
         navigation.rebuild(tx);
       }, { changeSignal: 'silent' });
-      current = true;
+      authority.validate(token);
+      installed = { authority, token };
     },
     close(): void {
-      current = false; closed = true;
-      for (const watcher of [...watchers]) watcher();
-      watchers.clear();
+      closed = true; installed = undefined;
     },
   };
 }

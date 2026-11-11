@@ -1,0 +1,251 @@
+{
+  "source_roots": [
+    "src/planner/core/authority/",
+    "src/planner/projects/",
+    "src/planner/navigation/"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "json": {
+        "title": "Authority Manager",
+        "goal": "",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      },
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "json": {
+        "title": "Authority Worker",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Fixture caller"
+      },
+      "capture": {
+        "ticket": "id"
+      },
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/backlog",
+      "json": {},
+      "status": 200
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=full",
+      "headers": {},
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "headers": {},
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "headers": {},
+      "area": "authority",
+      "json": {
+        "name": "Authority owner"
+      },
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "headers": {},
+      "area": "authority",
+      "json": {
+        "name": ""
+      },
+      "status": 400
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%5D",
+      "headers": {},
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=full",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      },
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      },
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      },
+      "area": "authority",
+      "json": {
+        "name": "Authority chief"
+      },
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      },
+      "area": "authority",
+      "json": {
+        "name": ""
+      },
+      "status": 400
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%5D",
+      "headers": {
+        "X-Plan-Actor": "chief"
+      },
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=full",
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "area": "authority",
+      "json": {
+        "name": "Authority worker"
+      },
+      "status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "area": "authority",
+      "json": {
+        "name": ""
+      },
+      "status": 403
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%5D",
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects?detail=full",
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      },
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      },
+      "area": "authority",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      },
+      "area": "authority",
+      "json": {
+        "name": "Authority manager"
+      },
+      "status": 403
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      },
+      "area": "authority",
+      "json": {
+        "name": ""
+      },
+      "status": 403
+    },
+    {
+      "method": "GET",
+      "path": "/api/resource-versions?keys=%5B%5D",
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      },
+      "area": "authority",
+      "status": 200
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D"
+  ]
+}

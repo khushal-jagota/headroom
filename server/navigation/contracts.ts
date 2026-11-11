@@ -15,7 +15,6 @@ export interface NavigationSource {
 export interface NavigationAuthority {
   capture(): CurrentAuthority;
   validate(authority: CurrentAuthority): void;
-  validateSnapshot(sql: ReadSql, authority: CurrentAuthority): void;
   watch(authority: CurrentAuthority, invalidate: () => void): () => void;
 }
 export interface NavigationRegistry {

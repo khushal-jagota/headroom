@@ -1,6 +1,6 @@
 # Navigation source registration
 
-Composition creates one runtime with `createNavigationRuntime(idle_publication)`. The write door calls its `publicationCommitStep` before its `navigationCommitStep`. Startup calls `runtime.initialize(database)` before requests arrive. This installs publication storage and rebuilds navigation through the same write door. Python owns the schema and source triggers.
+Composition creates one runtime with `createNavigationRuntime(idle_publication)`. The write door calls its `publicationCommitStep` before its `navigationCommitStep`. Startup calls `runtime.initialize(database, signalAuthority)` before requests arrive. This installs publication storage and rebuilds navigation through the same write door. Python owns the schema and source triggers.
 
 A later domain exports a `NavigationSource` and appends it to `navigationSources` in `index.ts`. Supply:
 
@@ -15,9 +15,11 @@ Add the domain's records and their mutations to its comparison list, with a snap
 
 Projects have no navigation window membership in Python. A Project-only snapshot therefore does not expose stored Project records. Its route comparison cannot prove each Project record's derivation independently. The result must retain this limitation.
 
-`createNavigationRuntime` accepts a `PublicationFactory` from `navigation/contracts.ts`. The conversation unit's `idle_publication` factory supplies complete idle attention facts through a synchronous callback. It supplies no permit or storage. Navigation owns the installation, per-conversation revisions, batch cursor, runtime epoch, and delivery session. New or changed facts advance the stored cursor. Deleted conversations retain revisioned tombstones. Unchanged idle facts do not rewrite rows.
+`createNavigationRuntime` accepts a `PublicationFactory` from `navigation/contracts.ts`. The conversation unit's `idle_publication` factory supplies complete idle attention facts through a synchronous callback. Navigation owns installation storage, per-conversation revisions, and the stored batch cursor. New or changed facts advance that cursor. Deleted conversations retain revisioned tombstones. Unchanged idle facts do not rewrite rows.
 
-`runtime.initialize(database)` captures the complete conversation set, commits a fresh installation, and then activates delivery authority. A failed transaction leaves delivery unavailable. The routes receive authority through `createRoutes(authority, sources)`, without shared global configuration. `capture` and `validate` check current runtime identity. `validateSnapshot` checks the installation identity inside the read transaction. `watch` revokes open streams and pending drains when `runtime.close()` ends authority. Composition must call `close` before it closes the app and database. Persisted records alone cannot grant live authority.
+The conversation dependency supplies producer authority through `AreaServices.signalAuthority`. Its public interface supplies `capture`, `validate`, and `watch`. Navigation declares the equivalent consumer interface in its own contracts. It does not create producer identities, availability, generations, delivery sessions, or permits.
+
+`runtime.initialize(database, signalAuthority)` captures that producer's permit and commits an installation with the same scope, runtime epoch, and installation identity. It also rebuilds navigation. Failed startup does not admit requests. The routes receive the same dependency through area registration. A SQL installation check runs inside each navigation read transaction. The producer validates runtime authority before sends. Its watcher revokes open streams and pending drains on invalidation. Composition invalidates the producer before it closes navigation storage, the app, and the database. Persisted records alone cannot grant live authority.
 
 This adapter proves the idle source only. It does not infer live attention, owner association effects, or producer availability changes. The real conversation core replaces the idle source integration and supplies proof for those transitions. It must retain installation checks and immediate delivery revocation.
 

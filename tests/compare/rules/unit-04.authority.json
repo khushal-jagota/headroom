@@ -1,0 +1,33 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time."
+  },
+  "response_tokens": {
+    "body.coverage.revision": "Navigation revisions count commits. Compare continuity changes, not counter magnitude.",
+    "body.ordering_generation": "TypeScript uses Intl.Collator under its own approved ordering generation."
+  },
+  "derived_tables": {
+    "navigation_meta": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_records": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_dependencies": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_root_records": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_dirty": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_journal": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_delivery_retention": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_signal_installation": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_signal_publications": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_meta": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_values": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_dirty": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_associations": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_meta": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_index": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_memberships": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_counts": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_current_conversations": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_unread_conversations": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_globals": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_changes": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_runtime_epoch": "Process startup recovery marker from the later conversation core. This unit has no interrupted turns and does not prove recovery."
+  }
+}
