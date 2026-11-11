@@ -212,7 +212,8 @@ def test_parallel_suite_setup_and_evidence_keep_the_existing_native_and_mount_bo
     assert '"$hermes_source[acp]"' in hermes["run"]
     setup = steps["Prepare requested-source check environment"]["run"]
     for command in ("python3 -m venv .venv", "npm ci --prefix web",
-                    "npm ci --prefix agent_backends", "npm --prefix web run build"):
+                    "npm install --prefix agent_backends --package-lock=false",
+                    "npm --prefix web run build"):
         assert command in setup
     assert '"$GITHUB_WORKSPACE/scripts/deployment_codex.py" setup' in setup
     for name in ("pytest E2E at requested source", "Browser hosts at requested source"):

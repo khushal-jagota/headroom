@@ -78,8 +78,10 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
     python.chmod(0o755)
     (app / "web/dist").mkdir(parents=True)
     (app / "web/dist/index.html").write_text("instrument")
-    (app / "agent_backends/node_modules").mkdir(parents=True)
-    (app / "agent_backends/node_modules/.package-lock.json").write_text("{}")
+    for package in ("@anthropic-ai/claude-code", "@openai/codex"):
+        metadata = app / "agent_backends/node_modules" / package / "package.json"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text('{"version": "test"}')
     (app / "manifest.json").write_text(
         json.dumps(
             {
