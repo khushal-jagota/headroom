@@ -40,6 +40,7 @@ from planner.environments.cli import environment as environment_group
 from planner.executor.cli import executor_group
 from planner.goals.cli import goal as goal_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
+from planner.managers.page_cli import page as page_group
 from planner.measure_sources.cli import measure_source as measure_source_group
 from planner.measures.cli import measure as measure_group
 from planner.message_delivery.contracts import MessageDeliveryMode
@@ -289,6 +290,9 @@ def _manager_record(
     )
     header = {key: data[key] for key in header_keys if key in data}
     header["settled"] = data["settled"]
+    for key in ("page_revision", "page_character_count"):
+        if key in data:
+            header[key] = data[key]
     # The Manager's agent is part of the Manager record. It used to be a read of its
     # own, which returned these four values and nothing this read did not already carry.
     manager_data = data.get("manager")
@@ -431,6 +435,7 @@ main.add_command(executor_group)
 main.add_command(environment_group)
 main.add_command(credential_group)
 main.add_command(goal_group)
+main.add_command(page_group)
 main.add_command(measure_group)
 main.add_command(dataset_group)
 main.add_command(attention_group)
@@ -1418,6 +1423,9 @@ def manager() -> None:
 
     Choose an active Manager for new work. Reads expose the boolean settled key.
     An absent settled field does not establish that a Manager is active.
+
+    Read manager workspace ID for the visible page and its edit command.
+    Use panels page show|edit --manager ID for its own page document.
     """
 
 
@@ -1531,6 +1539,23 @@ def manager_show(item_id: str, part_names: str | None, as_json: bool) -> None:
         params={"detail": "full", "id": item_id},
     )
     header, parts = _manager_record(data)
+    requested = _record_parts(part_names, as_json)
+    if requested is None:
+        projection = project_record(header, parts, None)
+        projection["manifest"]["page"] = {"character_count": data.get("page_character_count", 0)}
+        projection["header"]["page_edit"] = f"panels page edit --manager {item_id}"
+        projection["header"]["visible_page"] = f"panels manager workspace {item_id}"
+        http.emit(projection, as_json, render_text(projection))
+    if requested is not None:
+        # Validate names before a protected read. Only the explicit page part fetches its body.
+        try:
+            project_record(header, {**parts, "page": part(None)}, requested)
+        except ValueError as exc:
+            http.fail_validation(str(exc), as_json)
+    if requested and "page" in requested:
+        saved = http.send("GET", f"/api/managers/{quote(item_id, safe='')}/page", as_json=as_json)
+        parts["page"] = part(saved["page"])
+        header["page_revision"] = saved["page_revision"]
     _emit_record(header, parts, part_names, as_json)
 
 
@@ -1610,7 +1635,32 @@ def manager_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
 def manager_workspace(item_id: str, as_json: bool) -> None:
     """Read this Manager, its artifacts, and its current child Tickets."""
     data = http.send("GET", f"/api/managers/{item_id}/workspace", as_json=as_json)
-    http.emit(data, as_json, f"{item_id} {len(data['tickets'])} current Tickets")
+    goals = data["goals"]
+    if len(goals) == 1:
+        goal = goals[0]
+        visible = (
+            f"Visible page: held goal {goal['title']} ({goal['id']}). "
+            "The Manager's own document is hidden.\n"
+            f"Read: panels goal show {goal['id']}\n"
+            f"Schema: panels goal schema edit\nEdit: panels goal edit {goal['id']}"
+        )
+    else:
+        visible = (
+            "Visible page: this Manager's own document.\n"
+            f"Read: panels page show --manager {item_id}\n"
+            f"Schema: panels page schema\nEdit: panels page edit --manager {item_id}"
+        )
+    human = (
+        f"{data['title']} ({item_id})\nPurpose: {data['goal']}\nRecap: {data['recap']}\n\n"
+        f"{visible}\nOwn page revision: {data['page_revision']}\n"
+        "Edits replace the complete document. Artifacts are supporting files.\n\n"
+        "Held goals:\n" + _lines(goals, lambda goal: f"{goal['id']} {goal['title']}")
+        + "\n\nArtifacts:\n" + _lines(data["artifacts"], lambda artifact: str(artifact["path"]))
+        + "\n\nTickets:\n" + _lines(
+            data["tickets"], lambda ticket: f"{ticket['id']} {ticket['title']} [{ticket['stage']}]"
+        )
+    )
+    http.emit(data, as_json, human)
 
 
 # The Manager's artifact subdirectory. These commands count paths from it, while the
@@ -2017,9 +2067,15 @@ _PUBLIC_COMMAND_HELP = {
     ("manager", "show"): (
         "Read one Manager record or selected parts, including the settled boolean. "
         "Settled Managers are finished destinations. Choose an active Manager "
-        "for new work. An absent settled field does not establish active state."
+        "for new work. An absent settled field does not establish active state. "
+        "Parts include goal, recap, and page. Read manager workspace ID to identify "
+        "the visible document before a page edit."
     ),
-    ("manager", "set"): "Change one Manager field.",
+    ("manager", "set"): (
+        "Change one plain Manager field. The goal field is its purpose, not its page. "
+        "Use panels manager workspace ID for the visible page and its edit command. "
+        "Use panels page edit --manager ID for its own page document."
+    ),
     ("manager", "delete"): "Permanently delete one empty Manager.",
     ("manager", "add-ticket"): "Classify one Ticket under one Manager.",
     (
@@ -2029,7 +2085,11 @@ _PUBLIC_COMMAND_HELP = {
     (
         "manager",
         "workspace",
-    ): "Read one Manager, its artifacts, and child Tickets.",
+    ): (
+        "Read one Manager's purpose, recap, held goals, artifacts, and child Tickets. "
+        "Identify the visible page and its exact read and edit commands. "
+        "Exactly one held goal supplies the page instead of the Manager document."
+    ),
     ("manager", "artifact", "list"): (
         "List openable artifact paths from the workspace. Index folders hide supporting files."
     ),

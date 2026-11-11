@@ -35,6 +35,10 @@ def manager_json(item: Manager) -> JsonDict:
         "settled": item.settled,
         "goal": item.goal,
         "recap": item.recap,
+        "page_revision": item.page_revision,
+        "page_character_count": (
+            len(json.dumps(item.page, ensure_ascii=False)) if item.page is not None else 0
+        ),
         "project_id": item.project_id,
         "project": item.project_name,
         "manager": {
@@ -137,7 +141,7 @@ def manager_detail(conn: sqlite3.Connection, item_id: str) -> JsonDict:
     return result
 
 
-def manager_workspace(conn: sqlite3.Connection, item_id: str) -> JsonDict:
+def manager_workspace(conn: sqlite3.Connection, item_id: str, now: datetime) -> JsonDict:
     """The smallest coherent read for the Manager workspace.
 
     Ticket writes remain on their canonical routes. This read only assembles the child
@@ -145,6 +149,8 @@ def manager_workspace(conn: sqlite3.Connection, item_id: str) -> JsonDict:
     """
     with _read_snapshot(conn):
         result = manager_detail(conn, item_id)
+        document = manager_workspace_document(conn, item_id, now)
+        result["goals"] = document["goals"]
         tickets = manager_tickets(conn, item_id)
         result.update(
             {

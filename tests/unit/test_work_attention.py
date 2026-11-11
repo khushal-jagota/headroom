@@ -100,7 +100,7 @@ def test_manager_children_carry_the_complete_attention_queue(tmp_path: Path) -> 
         (item.manager_agent_key,),
     )
     conn.commit()
-    item_row = manager_workspace(conn, item.id)
+    item_row = manager_workspace(conn, item.id, RealClock().now())
     record = ConversationStore(str(db_path))
     # Every child row and the Manager share one conversation projection.
     with patch.object(record, "attention_facts", wraps=record.attention_facts) as attention:
