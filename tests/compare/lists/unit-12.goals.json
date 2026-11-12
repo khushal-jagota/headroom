@@ -1,0 +1,1226 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/goals/"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Goal holder",
+        "project_id": "project_other",
+        "goal": ""
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Goal authority worker",
+        "project_id": "project_other",
+        "worker_type": "coding",
+        "brief": "Synthetic caller"
+      },
+      "capture": {
+        "worker": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 200,
+      "json": {
+        "title": "Chief navigation anchor",
+        "project_id": "project_other",
+        "kind": "binary",
+        "primary_checklist_block_id": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 200,
+      "json": {
+        "title": "Manager navigation anchor",
+        "project_id": "project_other",
+        "kind": "binary",
+        "primary_checklist_block_id": null,
+        "holder_kind": "manager",
+        "holder_id": "${manager}"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "measures",
+      "method": "POST",
+      "path": "/api/measures",
+      "status": 200,
+      "json": {
+        "project_id": "project_other",
+        "name": "Goal manual",
+        "unit": "items",
+        "origin": "manual",
+        "kind": "reading",
+        "timezone": "Europe/Berlin"
+      },
+      "capture": {
+        "measure": "id"
+      }
+    },
+    {
+      "area": "measures",
+      "method": "POST",
+      "path": "/api/measures/${measure}/manual-writes",
+      "status": 200,
+      "json": {
+        "request_id": "goal-seed-0",
+        "date": "2025-12-31",
+        "basis": "date",
+        "operation": "replace",
+        "value": -2.75,
+        "expected_definition_revision": 1,
+        "expected_write_revision": 0
+      }
+    },
+    {
+      "area": "measures",
+      "method": "POST",
+      "path": "/api/measures/${measure}/manual-writes",
+      "status": 200,
+      "json": {
+        "request_id": "goal-seed-1",
+        "date": "2026-01-01",
+        "basis": "date",
+        "operation": "replace",
+        "value": 3.0,
+        "expected_definition_revision": 1,
+        "expected_write_revision": 1
+      }
+    },
+    {
+      "area": "measures",
+      "method": "POST",
+      "path": "/api/measures/${measure}/manual-writes",
+      "status": 200,
+      "json": {
+        "request_id": "goal-seed-2",
+        "date": "2026-01-31",
+        "basis": "date",
+        "operation": "replace",
+        "value": 900719925474099312345,
+        "expected_definition_revision": 1,
+        "expected_write_revision": 2
+      }
+    },
+    {
+      "area": "measures",
+      "method": "POST",
+      "path": "/api/measures/${measure}/manual-writes",
+      "status": 200,
+      "json": {
+        "request_id": "goal-seed-3",
+        "date": "2026-02-01",
+        "basis": "date",
+        "operation": "replace",
+        "value": 3.125,
+        "expected_definition_revision": 1,
+        "expected_write_revision": 3
+      }
+    },
+    {
+      "area": "measures",
+      "method": "POST",
+      "path": "/api/measures",
+      "status": 200,
+      "json": {
+        "project_id": "project_other",
+        "name": "Goal formula",
+        "unit": "items",
+        "origin": "assembled",
+        "kind": "reading",
+        "timezone": "Europe/Berlin",
+        "formula": {
+          "op": "add",
+          "left": {
+            "op": "reference",
+            "measure_id": "${measure}",
+            "day_offset": 0
+          },
+          "right": {
+            "op": "constant",
+            "value": 0.125
+          }
+        }
+      },
+      "capture": {
+        "formula": "id"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:01:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 200,
+      "json": {
+        "project_id": "project_other",
+        "title": "Quantitative milestones",
+        "why": "Retained dated evidence",
+        "kind": "quantitative",
+        "completion_rule": {
+          "actual": {
+            "op": "reference",
+            "measure_id": "${measure}",
+            "day_offset": 0
+          },
+          "target": {
+            "op": "constant",
+            "value": 1.0
+          },
+          "direction": "atleast",
+          "first_date": "2025-12-31"
+        },
+        "deadline": "2026-07-08",
+        "primary_chart": {
+          "type": "chart",
+          "id": "primary",
+          "kind": "line",
+          "measure_id": "${measure}",
+          "target": 1.0,
+          "expectation": {
+            "op": "reference",
+            "measure_id": "${formula}",
+            "day_offset": 0
+          },
+          "format": {
+            "decimals": 3
+          }
+        }
+      },
+      "capture": {
+        "quant": "id"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_0": "content.windows"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/goals",
+      "status": 200
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/goals?active=true&project_id=project_other",
+      "status": 200
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/goals/${quant}",
+      "status": 200
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/goals/${quant}/readings?first_date=2025-12-31&last_date=2026-02-01",
+      "status": 200,
+      "capture": {
+        "quant_readings": ""
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:02:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "PATCH",
+      "path": "/api/goals/${quant}",
+      "status": 200,
+      "json": {
+        "title": "Revised quantitative milestone",
+        "why": "A retained Unicode note \u2603"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_1": "content.windows"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/resource-versions?keys=[\"/api/goals\",\"/api/goals/${quant}\"]",
+      "status": 200
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/goals",
+      "status": 200
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/goals/${quant}",
+      "status": 200
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:03:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 200,
+      "json": {
+        "title": "Checklist delivery",
+        "project_id": "project_other",
+        "kind": "binary",
+        "primary_checklist_block_id": "checks",
+        "page": {
+          "kind": "headroom.page",
+          "version": 1,
+          "title": "Delivery",
+          "summary": "Nested checklist",
+          "blocks": [
+            {
+              "type": "section",
+              "id": "section",
+              "title": "Work",
+              "blocks": [
+                {
+                  "type": "checklist",
+                  "id": "checks",
+                  "items": [
+                    {
+                      "id": "first",
+                      "label": "First milestone",
+                      "state": "open"
+                    },
+                    {
+                      "id": "second",
+                      "label": "Second milestone",
+                      "state": "done"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capture": {
+        "binary": "id"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_2": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:04:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "PATCH",
+      "path": "/api/goals/${binary}",
+      "status": 200,
+      "json": {
+        "page": {
+          "kind": "headroom.page",
+          "version": 1,
+          "title": "Delivery",
+          "summary": "Nested checklist",
+          "blocks": [
+            {
+              "type": "section",
+              "id": "section",
+              "title": "Work",
+              "blocks": [
+                {
+                  "type": "checklist",
+                  "id": "checks",
+                  "items": [
+                    {
+                      "id": "first",
+                      "label": "First milestone",
+                      "state": "done"
+                    },
+                    {
+                      "id": "second",
+                      "label": "Second milestone",
+                      "state": "done"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_3": "content.windows"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/goals/${binary}/readings",
+      "status": 200
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:05:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "PATCH",
+      "path": "/api/goals/${binary}",
+      "status": 200,
+      "json": {
+        "active": false
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_4": "content.windows"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/goals?active=false",
+      "status": 200
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:06:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals/${binary}/make-manager",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "promoted": "manager_id"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_5": "content.windows"
+      }
+    },
+    {
+      "area": "measures",
+      "method": "GET",
+      "path": "/api/managers/${promoted}/workspace-content",
+      "status": 200
+    },
+    {
+      "area": "measures",
+      "method": "GET",
+      "path": "/api/managers/${promoted}/page/readings",
+      "status": 200
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:07:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals/${binary}/make-manager",
+      "status": 400,
+      "json": {}
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_6": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:08:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "PATCH",
+      "path": "/api/goals/${quant}",
+      "status": 200,
+      "json": {
+        "holder_kind": "manager",
+        "holder_id": "${manager}"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_7": "content.windows"
+      }
+    },
+    {
+      "area": "measures",
+      "method": "GET",
+      "path": "/api/managers/${manager}/workspace-content",
+      "status": 200,
+      "capture": {
+        "held_goal_workspace": ""
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:09:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "title": "Refused new root",
+        "project_id": "project_other",
+        "kind": "binary",
+        "primary_checklist_block_id": null
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${worker}"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_8": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:10:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "title": "Refused new root",
+        "project_id": "project_other",
+        "kind": "binary",
+        "primary_checklist_block_id": null
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${manager}"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_9": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:11:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "title": "Missing display",
+        "project_id": "project_other"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_10": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:12:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "title": "Chief invalid display",
+        "project_id": "project_other"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_11": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:13:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "project_id": "project_other",
+        "title": "Quantitative milestones",
+        "why": "Retained dated evidence",
+        "kind": "quantitative",
+        "completion_rule": {
+          "actual": {
+            "op": "reference",
+            "measure_id": "${measure}",
+            "day_offset": 0
+          },
+          "target": {
+            "op": "constant",
+            "value": 1.0
+          },
+          "direction": "atleast",
+          "first_date": "2025-12-31"
+        },
+        "deadline": "2026-07-08",
+        "primary_chart": 3.0
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_12": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:14:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "project_id": "project_other",
+        "title": "Quantitative milestones",
+        "why": "Retained dated evidence",
+        "kind": "quantitative",
+        "completion_rule": {
+          "actual": {
+            "op": "reference",
+            "measure_id": "${measure}",
+            "day_offset": 0
+          },
+          "target": {
+            "op": "constant",
+            "value": 1.0
+          },
+          "direction": "atleast",
+          "first_date": "2025-12-31"
+        },
+        "deadline": "2026-07-08",
+        "primary_chart": {
+          "type": "chart",
+          "id": null,
+          "kind": "line",
+          "measure_id": "${measure}",
+          "target": 1.0,
+          "expectation": {
+            "op": "reference",
+            "measure_id": "${formula}",
+            "day_offset": 0
+          },
+          "format": {
+            "decimals": 3
+          }
+        }
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_13": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:15:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "project_id": "project_other",
+        "title": "Quantitative milestones",
+        "why": "Retained dated evidence",
+        "kind": "quantitative",
+        "completion_rule": {
+          "actual": {
+            "op": "reference",
+            "measure_id": "${measure}",
+            "day_offset": 0
+          },
+          "target": {
+            "op": "constant",
+            "value": 1.0
+          },
+          "direction": "atleast",
+          "first_date": "2025-12-31"
+        },
+        "deadline": "2026-07-08",
+        "primary_chart": {
+          "type": "chart",
+          "id": "primary",
+          "kind": "line",
+          "measure_id": "${measure}",
+          "target": 1.0,
+          "expectation": {
+            "op": "reference",
+            "measure_id": "${formula}",
+            "day_offset": 0
+          },
+          "format": {
+            "decimals": 3
+          },
+          "placement": null
+        }
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_14": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:16:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "project_id": "project_other",
+        "title": "Quantitative milestones",
+        "why": "Retained dated evidence",
+        "kind": "quantitative",
+        "completion_rule": {
+          "actual": {
+            "op": "reference",
+            "measure_id": "${measure}",
+            "day_offset": 0
+          },
+          "target": {
+            "op": "constant",
+            "value": 1.0
+          },
+          "direction": "atleast",
+          "first_date": "2025-12-31"
+        },
+        "deadline": "2026-07-08",
+        "primary_chart": {
+          "type": "chart",
+          "id": "primary",
+          "kind": "line",
+          "measure_id": "${measure}",
+          "target": 1.0,
+          "expectation": {
+            "op": "reference",
+            "measure_id": "${formula}",
+            "day_offset": 0
+          },
+          "format": {
+            "decimals": 3
+          }
+        },
+        "holder_kind": "manager",
+        "holder_id": 1
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_15": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:17:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "project_id": "project_other",
+        "title": "Quantitative milestones",
+        "why": "Retained dated evidence",
+        "kind": "quantitative",
+        "completion_rule": {
+          "actual": {
+            "op": "reference",
+            "measure_id": "${measure}",
+            "day_offset": 0
+          },
+          "target": {
+            "op": "constant",
+            "value": 1.0
+          },
+          "direction": "atleast",
+          "first_date": "2025-12-31"
+        },
+        "deadline": "2026-02-29",
+        "primary_chart": {
+          "type": "chart",
+          "id": "primary",
+          "kind": "line",
+          "measure_id": "${measure}",
+          "target": 1.0,
+          "expectation": {
+            "op": "reference",
+            "measure_id": "${formula}",
+            "day_offset": 0
+          },
+          "format": {
+            "decimals": 3
+          }
+        }
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_16": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:18:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "project_id": "project_other",
+        "title": "Quantitative milestones",
+        "why": "Retained dated evidence",
+        "kind": "quantitative",
+        "completion_rule": {
+          "actual": {
+            "op": "reference",
+            "measure_id": "${measure}",
+            "day_offset": 0
+          },
+          "target": {
+            "op": "constant",
+            "value": 1.0
+          },
+          "direction": "atleast",
+          "first_date": "2025-12-31"
+        },
+        "deadline": "bad",
+        "primary_chart": {
+          "type": "chart",
+          "id": "primary",
+          "kind": "line",
+          "measure_id": "${measure}",
+          "target": 1.0,
+          "expectation": {
+            "op": "reference",
+            "measure_id": "${formula}",
+            "day_offset": 0
+          },
+          "format": {
+            "decimals": 3
+          }
+        }
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_17": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:19:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "project_id": "project_other",
+        "title": "Quantitative milestones",
+        "why": "Retained dated evidence",
+        "kind": "quantitative",
+        "completion_rule": {
+          "actual": {
+            "op": "reference",
+            "measure_id": "${measure}",
+            "day_offset": 0
+          },
+          "target": {
+            "op": "constant",
+            "value": 1.0
+          },
+          "direction": "atleast",
+          "first_date": "2025-12-31"
+        },
+        "deadline": "20260701",
+        "primary_chart": {
+          "type": "chart",
+          "id": "primary",
+          "kind": "line",
+          "measure_id": "${measure}",
+          "target": 1.0,
+          "expectation": {
+            "op": "reference",
+            "measure_id": "${formula}",
+            "day_offset": 0
+          },
+          "format": {
+            "decimals": 3
+          }
+        }
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_18": "content.windows"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:20:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "POST",
+      "path": "/api/goals",
+      "status": 400,
+      "json": {
+        "project_id": "project_other",
+        "title": "Quantitative milestones",
+        "why": "Retained dated evidence",
+        "kind": "quantitative",
+        "completion_rule": {
+          "actual": {
+            "op": "reference",
+            "measure_id": "${measure}",
+            "day_offset": 0
+          },
+          "target": {
+            "op": "constant",
+            "value": 1.0
+          },
+          "direction": "atleast",
+          "first_date": "2025-12-31"
+        },
+        "deadline": 3.0,
+        "primary_chart": {
+          "type": "chart",
+          "id": "primary",
+          "kind": "line",
+          "measure_id": "${measure}",
+          "target": 1.0,
+          "expectation": {
+            "op": "reference",
+            "measure_id": "${formula}",
+            "day_offset": 0
+          },
+          "format": {
+            "decimals": 3
+          }
+        }
+      }
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_19": "content.windows"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/goals/${quant}/readings?first_date=2026-02-01&last_date=2026-01-01",
+      "status": 400
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/goals?active=bad",
+      "status": 422
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:21:00"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "DELETE",
+      "path": "/api/goals/${binary}",
+      "status": 200
+    },
+    {
+      "area": "navigation",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22goals%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A1}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_after_goal_write_20": "content.windows"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/goals/${binary}",
+      "status": 404
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/goals/${quant}/readings?first_date=2025-12-31&last_date=2026-02-01",
+      "status": 200
+    }
+  ],
+  "report_captures": [
+    "quant_readings",
+    "held_goal_workspace",
+    "navigation_after_goal_write_0",
+    "navigation_after_goal_write_1",
+    "navigation_after_goal_write_2",
+    "navigation_after_goal_write_3",
+    "navigation_after_goal_write_4",
+    "navigation_after_goal_write_5",
+    "navigation_after_goal_write_6",
+    "navigation_after_goal_write_7",
+    "navigation_after_goal_write_8",
+    "navigation_after_goal_write_9",
+    "navigation_after_goal_write_10",
+    "navigation_after_goal_write_11",
+    "navigation_after_goal_write_12",
+    "navigation_after_goal_write_13",
+    "navigation_after_goal_write_14",
+    "navigation_after_goal_write_15",
+    "navigation_after_goal_write_16",
+    "navigation_after_goal_write_17",
+    "navigation_after_goal_write_18",
+    "navigation_after_goal_write_19",
+    "navigation_after_goal_write_20"
+  ],
+  "candidate": "typescript"
+}
