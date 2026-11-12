@@ -21,6 +21,8 @@ proof instead invokes both CLIs through the guarded synthetic-host driver. It
 compares fresh Python output, not frozen help snapshots. An offline drift check compares
 the complete fresh Python declarations with `commands.ts` without writing repository
 files or starting another server. The exporter rejects unsupported parameter types.
+Command help uses `inspect.cleandoc`, as Click does before formatting. This preserves
+the printed contract across Python compiler versions without ignoring help changes.
 
 The TypeScript declaration file is the runtime authority. While Python remains in the
 migration, regenerate it from Python and check for drift. After Python removal, edit
