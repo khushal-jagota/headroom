@@ -49,12 +49,12 @@
 </script>
 
 <!-- The composer's field (ComposerField): the + attaches pictures and files, the mic speaks a
-     reply, and the arrow sends it, as Cmd/Ctrl+Enter does. -->
+     reply, and the arrow sends it, as Enter does (Shift+Enter adds a line). -->
 <div class="review-reply" bind:this={root} data-review-voice={voiceState.phase}>
   <input bind:this={fileInput} hidden type="file" multiple accept={`image/png,image/jpeg,image/gif,image/webp,${CONVERSATION_FILE_ACCEPT}`} onchange={()=>void attach(fileInput?.files??null)}/>
   <ComposerField bind:value={text} bind:input {placeholder} {label} {disabled} {held}
     inputAttributes={{'data-review-reply':''}}
-    onkeydown={event=>{if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();void submit();}}}
+    onsubmit={()=>void submit()}
     attach={{label:'Attach a file',onclick:()=>fileInput?.click(),attributes:{'data-review-attach':''}}}
     record={{label:'Speak a reply',disabled:!voiceSupported,onclick:()=>void voice?.startRecording(),attributes:{'data-voice-record':''}}}
     send={{label:sendLabel,ready:hasReply,sending,disabled:sendDisabled || intakeBusy || (!hasReply && !allowEmpty),onclick:()=>void submit(),attributes:{'data-review-send':''}}}
