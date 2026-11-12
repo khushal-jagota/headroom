@@ -508,6 +508,22 @@ def run_list(
         for table in sorted(set(snapshots[0]) | set(snapshots[1])):
             if snapshots[0].get(table) != snapshots[1].get(table):
                 differences.append({"table": table, "rows": [s.get(table) for s in snapshots]})
+        skill_files: list[dict[str, bytes]] = []
+        if spec.get("compare_skill_files") is True:
+            for server in servers:
+                skills = server.db_path.parent / "skills"
+                skill_files.append({
+                    path.relative_to(skills).as_posix(): path.read_bytes()
+                    for path in sorted(skills.rglob("*")) if path.is_file()
+                })
+            for name in sorted(set(skill_files[0]) | set(skill_files[1])):
+                contents = [files.get(name) for files in skill_files]
+                if contents[0] != contents[1]:
+                    differences.append({
+                        "skill_file": name,
+                        "bytes": [content.hex() if content is not None else None
+                                  for content in contents],
+                    })
         return {
             "list": list_path.name,
             "captures": {name: captures[0][name] for name in spec.get("report_captures", [])},
@@ -524,6 +540,7 @@ def run_list(
             ],
             "loop_results": loop_results,
             "rules": rules,
+            **({"skill_files": sorted(skill_files[0])} if skill_files else {}),
         }
     finally:
         for server in reversed(servers):
