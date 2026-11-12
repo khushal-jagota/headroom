@@ -30,6 +30,7 @@ from planner.core.db import (
     schema_migration_transaction,
     upgrade_schema_connection,
 )
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import MAC_NEEDS_UPDATE, ExecutorIdentity
 from planner.executor.logic.presence import judge_presence
 from planner.executor.protocol import LeaseRequest, as_object
@@ -165,7 +166,7 @@ def test_the_migrated_incarnation_passes_the_fence_until_a_new_process_leases(
         require_current_incarnation(path, REPLACED)
     assert refused.value.code is ErrorCode.executor_incarnation_not_current
 
-    successor = ExecutorIdentity(22, "new-release", 5, str(uuid4()))
+    successor = ExecutorIdentity(PROTOCOL_VERSION, "new-release", 5, str(uuid4()))
     lease = LeaseRequest(successor, 1, 0, 0, None, (), False, (), False)
     with closing(connect(path)) as conn:
         conn.execute("BEGIN IMMEDIATE")

@@ -430,7 +430,9 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
             (conversation_id,),
         ).fetchone()
         assert stored_workspace is not None
-        assert Path(str(stored_workspace["workspace_folder"])) == original_folder.resolve()
+        expected = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id)).workspace_folder
+        assert Path(str(stored_workspace["workspace_folder"])) == expected
+        assert expected.name == "worktree"
 
     asyncio.run(exercise())
 

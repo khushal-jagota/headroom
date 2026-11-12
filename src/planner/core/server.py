@@ -401,7 +401,7 @@ def create_app(
                     scratch_layout = ticket_scratch.layout_for(
                         config.ticket_scratch_root, config.ticket_scratch_database, config.db_path
                     )
-                    if scratch_layout is not None and not config.test_mode:
+                    if not config.test_mode:
                         ticket_scratch_task = asyncio.create_task(
                             _clean_ticket_scratch(scratch_layout)
                         )
@@ -482,18 +482,18 @@ def create_app(
                     if admitted:
                         await asyncio.to_thread(video_uploads.recover_and_cleanup)
 
-    async def _clean_ticket_scratch(layout: ticket_scratch.ScratchLayout) -> None:
-        already_kept: set[str] = set()
+    async def _clean_ticket_scratch(layout: ticket_scratch.ScratchLayout | None) -> None:
+        from planner.ticket_workspaces.cleanup import clean_for_database
+
         logger = logging.getLogger(__name__)
         while True:
             await asyncio.sleep(ticket_scratch.CLEANUP_INTERVAL_SECONDS)
             try:
                 result = await asyncio.to_thread(
-                    ticket_scratch.clean_finished_ticket_scratch,
-                    layout,
+                    clean_for_database,
                     config.db_path,
                     clock.now_unix(),
-                    already_kept,
+                    extra_roots=layout.folders if layout is not None else (),
                 )
             except Exception:
                 logger.exception("Ticket scratch cleanup failed")

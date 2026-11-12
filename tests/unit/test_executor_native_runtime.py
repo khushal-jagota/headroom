@@ -6,12 +6,13 @@ import asyncio
 import hashlib
 import json
 import os
+import subprocess
 import threading
 import time
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 from uuid import uuid4
 
 import pytest
@@ -67,6 +68,7 @@ from planner.executor.protocol import (
     ReceiptDisposition,
     StartRun,
     StopRun,
+    WritePrompt,
     as_object,
     decode_command_arguments,
     decode_event_arguments,
@@ -169,7 +171,12 @@ def native_registry(
         "test",
         None,
         ConversationRoleMaterials(
-            "worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t_one"))
+            "worker",
+            (
+                ("PLAN_ACTOR", "worker"),
+                ("PLAN_TICKET_ID", "t_one"),
+                ("PLAN_TICKET_WORKSPACE_MANAGED", "1"),
+            ),
         ),
         tmp_path,
         ConversationAccess.full,
@@ -191,6 +198,164 @@ def native_registry(
         yield registry, spool, native, start
     finally:
         spool.close()
+
+
+def test_legacy_native_resume_keeps_original_checkout_and_uncommitted_work(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An old native identity has no managed-workspace contract; resume its actual cwd."""
+
+    async def run() -> None:
+        registry, _, native, start = native_registry
+        original = tmp_path / "mac-home" / "projects" / "wren"
+        original.mkdir(parents=True)
+        subprocess.run(["git", "init", str(original)], check=True, capture_output=True)
+        source = original / "worker-change.txt"
+        source.write_text("uncommitted work")
+        registry.workspace_home = tmp_path / "mac-home"
+        assert isinstance(start.arguments, StartRun)
+        resolved = replace(
+            start.arguments.resolved_start,
+            role_materials=ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "t_one"),)),
+            workspace_folder=Path("/home/vps/projects/wren"),
+            workspace_path_policy=WorkspacePathPolicy.home_relative,
+        )
+        seen: list[Path] = []
+
+        async def resume(
+            resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+        ) -> None:
+            assert vendor_session_cursor == "legacy-session"
+            assert (resolved_start.workspace_folder / source.name).read_text() == "uncommitted work"
+            seen.append(resolved_start.workspace_folder)
+
+        monkeypatch.setattr(native, "start", resume)
+        start = replace(
+            start,
+            arguments=replace(
+                start.arguments,
+                resolved_start=resolved,
+                vendor_session_cursor="legacy-session",
+                workspace_home_relative="projects/wren",
+            ),
+        )
+        assert (await registry.run(start)).disposition is CommandDisposition.succeeded
+        assert seen == [original]
+        ticket_root = registry.paths.artifacts / "t_one"
+        assert not (ticket_root / "worktree").exists()
+        assert not (ticket_root / ".panels-workspace.json").exists()
+        assert source.read_text() == "uncommitted work"
+
+    asyncio.run(run())
+
+
+def test_same_ticket_starts_recheck_occupancy_after_workspace_lock(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+) -> None:
+    """Two starts can both pass the fast check while cleanup holds the local lock."""
+
+    async def run() -> None:
+        registry, _, native, start = native_registry
+        both_waiting = asyncio.Event()
+
+        class ObservedLock(asyncio.Lock):
+            waiting = 0
+
+            async def acquire(self) -> Literal[True]:
+                if self.locked():
+                    self.waiting += 1
+                    if self.waiting == 2:
+                        both_waiting.set()
+                return await super().acquire()
+
+        lock = ObservedLock()
+        registry._workspace_lock = lock
+        await lock.acquire()
+        other = replace(
+            start,
+            command_id="second-start",
+            child=replace(start.child, child_id=str(uuid4())),
+        )
+        first = asyncio.create_task(registry.run(start))
+        second = asyncio.create_task(registry.run(other))
+        try:
+            await asyncio.wait_for(both_waiting.wait(), timeout=5)
+        finally:
+            lock.release()
+        outcomes = await asyncio.gather(first, second)
+        assert [outcome.disposition for outcome in outcomes] == [
+            CommandDisposition.succeeded,
+            CommandDisposition.refused,
+        ]
+        assert native.starts == 1
+        assert len(registry._children) == 1
+
+    asyncio.run(run())
+
+
+def test_workspace_cleanup_stops_idle_retained_child_but_preserves_an_active_turn(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gap: an idle native session survives Ticket end and otherwise defeats expiry."""
+    from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
+
+    async def run() -> None:
+        registry, spool, native, start = native_registry
+        assert isinstance(start.arguments, StartRun)
+        resolved = replace(
+            start.arguments.resolved_start,
+            role_materials=ConversationRoleMaterials(
+                "worker",
+                (
+                    ("PLAN_TICKET_ID", "t_01234567"),
+                    ("PLAN_TICKET_WORKSPACE_MANAGED", "1"),
+                ),
+            ),
+        )
+        start = replace(start, arguments=replace(start.arguments, resolved_start=resolved))
+        grants: list[WorkspaceState] = []
+        stops: list[bool] = []
+
+        async def grant(state: WorkspaceState, workspace: object) -> bool:
+            grants.append(state)
+            return True
+
+        async def stop() -> None:
+            stops.append(True)
+
+        monkeypatch.setattr(registry, "_retire_workspace", grant)
+        monkeypatch.setattr(native, "stop", stop)
+        assert (await registry.run(start)).disposition is CommandDisposition.succeeded
+        turn = TurnToken("turn", 1)
+        prompt = ChildCommand(
+            "prompt",
+            start.child,
+            ChildOperation.write_prompt,
+            turn,
+            WritePrompt(
+                content=text_message_content("work"),
+                sender_content=(),
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+            ),
+        )
+        assert (await registry.run(prompt)).disposition is CommandDisposition.succeeded
+        state = WorkspaceState("t_01234567", 1, False)
+        folder = registry.paths.artifacts / state.ticket_id
+        await registry.cleanup_workspaces((state,), RETENTION_SECONDS + 2)
+        assert folder.exists() and not grants and not stops
+        assert native.sink is not None
+        await native.sink.report(turn, TurnEnded(ending=ConversationTurnEnding.completed))
+        await registry.cleanup_workspaces((state,), RETENTION_SECONDS + 2)
+        assert not folder.exists() and stops == [True] and grants == [state]
+        proofs = [row for row in spool.pending() if row.kind is EnvelopeKind.child_stopped]
+        assert len(proofs) == 1
+        assert start.child.child_id not in registry._children
+
+    asyncio.run(run())
 
 
 def acknowledge_pending(spool: MacOutbox) -> None:
@@ -861,7 +1026,10 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
                 received.append(resolved_start)
                 assert vendor_session_cursor == "retained-native-session"
                 assert resolved_start.role_materials is not None
-                assert resolved_start.role_materials.role_text == "worker"
+                assert resolved_start.role_materials.role_text.startswith("worker\n\n")
+                assert (
+                    "Panels owns this Ticket workspace" in resolved_start.role_materials.role_text
+                )
                 environment = dict(resolved_start.role_materials.identity_environment_variables)
                 generation_skills = Path(environment["PLAN_NATIVE_SKILLS_DIR"])
                 assert (generation_skills / "panels" / "SKILL.md").read_bytes() == (
@@ -893,6 +1061,7 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         )
         remote_identity = (
             ("PLAN_TICKET_ID", "t_own"),
+            ("PLAN_TICKET_WORKSPACE_MANAGED", "1"),
             ("PLAN_TICKET_FILES_DIR", str(vps_home / "files" / "tickets" / "t_own")),
             ("PLAN_EXECUTOR_ROOT", str(vps_home / "wrong-root")),
             ("PLAN_EXECUTOR_CHILD_ID", "forged-child"),
@@ -926,14 +1095,15 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
         await remote.start(resolved, vendor_session_cursor="retained-native-session")
         assert received == constructed
         assert (paths.artifacts / "t_own" / "proof.txt").read_text() == "native artifact"
-        assert received[0].workspace_folder == workspace
+        ticket_workspace = paths.artifacts / "t_own" / "worktree"
+        assert received[0].workspace_folder == ticket_workspace
         assert received[0].workspace_path_policy is WorkspacePathPolicy.absolute
         if policy is WorkspacePathPolicy.executor_default:
             assert workspace.is_dir()
             assert not (mac_home / "projects" / "project_panels").exists()
-            marker = workspace / "retained.txt"
+            marker = ticket_workspace / "retained.txt"
             marker.write_text("keep")
-            for subfolder, expected in (
+            for subfolder, _expected in (
                 ("projects/project_panels", workspace),
                 (None, paths.workspace),
             ):
@@ -942,10 +1112,10 @@ def test_native_start_localizes_vps_identity_and_home_relative_workspace(
                     reference,
                     "capability",
                     subfolder,
-                    {"PLAN_TICKET_ID": "t_own"},
+                    {"PLAN_TICKET_ID": "t_own", "PLAN_TICKET_WORKSPACE_MANAGED": "1"},
                     paths.skills,
                 )
-                assert localized.workspace_folder == expected.resolve()
+                assert localized.workspace_folder == ticket_workspace.resolve()
             assert marker.read_text() == "keep"
         assert received[0].role_materials is not None
         identity = dict(received[0].role_materials.identity_environment_variables)

@@ -15,7 +15,7 @@ All of them run as one Unix user, the existing `vps` account. They are separated
 
 - **Live.** The installed release from [Deployment](deployment.md), run by a systemd user service on loopback port 8767 behind the existing Tailscale Serve route. Only the verified service manager can stop it by signal. Workers never stop the server that hosts them. The interactive `panels` command on the host follows the installed app.
 - **Staging.** A foreground server from the source checkout with fake data that persists between runs. It runs only while someone needs it and has no service. `panels environment prepare`, `run`, and `reset` manage it.
-- **Ticket servers.** A Worker's own `panels serve` from its isolated git worktree, with every `PLAN_*` path pointing into that worktree. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends and removes its state at Consequences. Anything left behind is removed after the Ticket is done, as [Ticket scratch](#ticket-scratch) describes.
+- **Ticket servers.** A Worker's own `panels serve` from its isolated git worktree, with every `PLAN_*` path pointing into that worktree. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends. Panels owns the worktree and its later removal, as [Ticket scratch](#ticket-scratch) describes.
 - **A local checkout.** One source checkout, one Python environment, one loopback server, and one SQLite file under `data/`. It runs the source, not a sealed release. The install steps are in the repository README.
 
 Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the worktree and its `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
@@ -35,13 +35,21 @@ Live and staging launches rebuild the process environment from a fixed allowlist
 The user units in `ops/panels-environments/` cover the live service, the deployment runner (kept for one release, only for the [update bridge](deployment.md#the-one-release-bridge)), and two daily timers:
 
 - **Backup.** Takes a verified snapshot of live data with the installed app. See [Backups](backups.md).
-- **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized logs, removes expired backup temporaries, prunes old verified backups, and removes [Ticket scratch](#ticket-scratch) that the server pass left. It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
+- **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized logs, removes expired backup temporaries, prunes old verified backups, and runs the [Ticket file clock](#ticket-scratch). It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
 
 ## Ticket scratch
 
-Each Ticket keeps its worktrees in `repository-worktrees/<ticket-id>[-name]` and every other file that must outlive one Worker run in `task-tmp/<ticket-id>/`. Both sit under the folder named by `ticket_scratch_root`, which on the VPS is `~/projects/panels`. Older Workers also used `~/pct/<ticket-id>/`, `~/panels-session-evidence/<ticket-id>/`, and `worktrees/`. Each Worker run also gets its own temporary directory, which is removed when the run ends.
+Panels owns each Ticket's workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
 
-When `ticket_scratch_root` and `ticket_scratch_database` are set, and the server's own database is that database, the server checks every ten minutes for Tickets that are deleted, or done for at least ten minutes. It removes their entries in those folders, their worktrees anywhere else, and their branches that `origin/staging` already contains. It never removes work. It keeps an entry, and logs why, when a checkout inside it has uncommitted changes, has commits that no remote has, or belongs to a live Ticket. Unmerged branches stay. The daily cleanup does the same pass, and it checks kept entries again. The database check matters because a Ticket server can inherit the live configuration, and its own database counts every live Ticket as deleted.
+The checkout stays private. File access and artifact transfers exclude it, and backups already exclude the files tree. Development checks admit only the managed checkout while they continue to reject storage shared with the installed app. Projects without a repository use an ordinary Ticket workspace.
+
+Panels clears the complete Ticket folder seven days after the Ticket ends. The database keeps the end time and ownership after Ticket deletion. A reopened Ticket no longer qualifies. New activity on a Done Ticket starts a fresh seven-day wait. Grants belong to one physical workspace on one machine. Removal of a server mirror cannot displace the Mac checkout.
+
+Attached checkouts keep their local changes on resume. Cleanup detaches only the exact expired folder before slow deletion. Stop and backlog do not start the clock. Stage text and proposals survive, but links to deleted documents and evidence no longer work. Existing ended Tickets receive a full week from adoption because their historical end dates are unknown.
+
+Before removal, Panels checks that the Ticket is still ended and the work is safe on a remote. It never commits or pushes on a Worker's behalf. Uncommitted files, unpublished commits, or failed Git inspection preserve the folder and produce a report. Legacy scratch outside the Ticket files root remains in its original location for owner review. Worktrees with submodules also remain with an explicit reason. Ignored files, including environment files and local databases, expire with the folder.
+
+Tickets deleted before migration have no reliable end record, so their old folders remain for review. The Mac uses authoritative lifecycle state from the VPS, not absence from a local cache. See [Executor](executor.md).
 
 Renaming the account, moving host state, or changing Tailscale Serve is operator work outside this code.
 
@@ -58,9 +66,10 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 
 ## Code
 
+- `src/planner/ticket_workspaces/`: local workspace ownership, activity clocks, and safe removal.
 - `src/planner/environments/`: the registry, launch environments, status, and cleanup. `logic/validation.py` and `logic/launch_env.py` hold the rules.
 - `src/planner/core/config.py`: configuration and `PLAN_*` overrides. `src/planner/skill_sources.py`: the workspace skills link.
 - `src/planner/server_lifecycle/`: who may stop a server.
 - `ops/panels-environments/`: user units, timers, and the host wrapper.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-12._

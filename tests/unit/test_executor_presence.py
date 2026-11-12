@@ -54,6 +54,7 @@ from planner.executor.vps_presence_store import read_presence
 from planner.executor.vps_transport import VpsExecutor
 from planner.runtime.worker_step_readiness import worker_step_blocker
 from planner.stalls.contracts import TrackedWait, TrackedWaitKind
+from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
 from planner.tickets import locale_configuration
 from planner.tickets.contracts import TicketLocale
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -200,11 +201,21 @@ def test_an_accepted_lease_makes_the_mac_present_and_answers_its_update_and_curs
     async def exercise() -> None:
         async with _endpoint(_database(tmp_path)) as endpoint:
             endpoint.presence.update_check = lambda: check
+            with connect(endpoint.db_path) as connection:
+                connection.executemany(
+                    "INSERT INTO ticket_workspace_lifecycle(ticket_id,ended_at,deleted) "
+                    "VALUES(?,?,?)",
+                    (("t_01234567", None, 0), ("t_11234567", 100, 1)),
+                )
             identity = mac_identity()
             reply = await endpoint.lease(lease_request(identity, queue_depth=3))
             assert isinstance(reply, LeaseReply)
             assert reply.update is check and reply.mailbox_high_sequence == 0
             assert reply.away_after_seconds == 60
+            assert set(reply.ticket_workspaces) == {
+                WorkspaceState("t_01234567", None, False),
+                WorkspaceState("t_11234567", 100, True),
+            }
 
             # Health comes from memory: no database read on the loop.
             def no_database(path: str) -> sqlite3.Connection:
@@ -276,7 +287,7 @@ def test_a_version_refusal_never_grants_execution_and_is_written_only_when_it_ch
                 assert isinstance(await endpoint.lease(lease_request(old)), LeaseRefused)
                 assert stored_refusal_at() == first_at and signals == []
                 # Another reason is new evidence: written, and announced.
-                newer = replace(mac_identity(), protocol_version=23)
+                newer = replace(mac_identity(), protocol_version=24)
                 assert isinstance(await endpoint.lease(lease_request(newer)), LeaseRefused)
                 record = _read(path, read_presence)
                 assert record is not None and record.refusal is not None
@@ -321,16 +332,25 @@ def test_a_replaced_process_is_refused_at_the_lease_and_at_the_work_route_fence(
             assert isinstance(refused, LeaseRefused) and refused.refusal is None
             assert refused.error["code"] == ErrorCode.executor_incarnation_not_current.value
             assert endpoint.health().identity == current
+            # The grant rechecks the binding inside its own write transaction, even
+            # if this request passed the route fence before replacement.
+            with pytest.raises(PlannerError) as grant_refused:
+                await endpoint.retire_workspace(
+                    replaced,
+                    WorkspaceState("t_01234567", 1, True),
+                    WorkspaceIdentity("mac", "workspace"),
+                )
+            assert grant_refused.value.code is ErrorCode.executor_incarnation_not_current
 
             assert (
                 endpoint.require_current(
-                    incarnation_header=current.executor_incarnation, protocol_header="22"
+                    incarnation_header=current.executor_incarnation, protocol_header="23"
                 )
                 == current
             )
             for incarnation, protocol, code in (
-                (replaced.executor_incarnation, "22", ErrorCode.executor_incarnation_not_current),
-                (None, "22", ErrorCode.executor_incarnation_not_current),
+                (replaced.executor_incarnation, "23", ErrorCode.executor_incarnation_not_current),
+                (None, "23", ErrorCode.executor_incarnation_not_current),
                 (current.executor_incarnation, "21", ErrorCode.executor_version_refused),
                 (current.executor_incarnation, None, ErrorCode.executor_version_refused),
             ):

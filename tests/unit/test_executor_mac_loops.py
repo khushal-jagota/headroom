@@ -1,4 +1,4 @@
-"""The Mac's loops against a scripted VPS that follows the protocol-22 routes.
+"""The Mac's loops against a scripted VPS that follows the protocol-23 routes.
 
 Risks: one child's slow command stalls another child, or the poll; a prompt runs before
 its child's start; a replaced process keeps working; the cursor stays above a restored
@@ -83,6 +83,9 @@ from planner.executor.protocol import (
     MailboxPollReply,
     ReceiptDisposition,
     StopRun,
+    WorkspaceRegistrationRequest,
+    WorkspaceRetirementReply,
+    WorkspaceRetirementRequest,
     WritePrompt,
     decode_bounded,
     decode_command_arguments,
@@ -90,6 +93,7 @@ from planner.executor.protocol import (
     encode_value,
 )
 from planner.executor.update_contracts import MacUpdateCheck, MacUpdateTarget
+from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
 
 EXECUTOR_ID = "test-mac"
 
@@ -133,6 +137,8 @@ class VpsStub:
 
     mailbox: list[MailboxCommand] = field(default_factory=list)
     high_sequence: int | None = None  # None: the highest command in the mailbox.
+    workspace_states: tuple[WorkspaceState, ...] = ()
+    lease_time_ms: int = 1
     lease_refusal: LeaseRefused | None = None
     update: MacUpdateCheck = field(default_factory=lambda: MacUpdateCheck(1, None))
     poll_hold_seconds: float = 0.2
@@ -156,7 +162,7 @@ class VpsStub:
 
     def _check(self, request: web.Request) -> None:
         assert request.headers[EXECUTOR_ID_HEADER] == EXECUTOR_ID
-        assert request.headers[EXECUTOR_PROTOCOL_HEADER] == "22"
+        assert request.headers[EXECUTOR_PROTOCOL_HEADER] == str(PROTOCOL_VERSION)
         assert request.headers[EXECUTOR_INCARNATION_HEADER]
 
     async def lease(self, request: web.Request) -> web.Response:
@@ -168,8 +174,21 @@ class VpsStub:
         high = self.high_sequence
         if high is None:
             high = max((command.command_sequence for command in self.mailbox), default=0)
-        reply = LeaseReply(1, 60.0, self.update, high)
+        reply = LeaseReply(self.lease_time_ms, 60.0, self.update, high, self.workspace_states)
         return web.Response(body=encode_bounded(reply), content_type="application/json")
+
+    async def register_workspace(self, request: web.Request) -> web.Response:
+        self._check(request)
+        decode_bounded(await request.read(), WorkspaceRegistrationRequest)
+        return web.Response(status=204)
+
+    async def retire_workspace(self, request: web.Request) -> web.Response:
+        self._check(request)
+        requested = decode_bounded(await request.read(), WorkspaceRetirementRequest)
+        allowed = requested.state in self.workspace_states and requested.state.ended_at is not None
+        return web.Response(
+            body=encode_bounded(WorkspaceRetirementReply(allowed)), content_type="application/json"
+        )
 
     async def commands(self, request: web.Request) -> web.Response:
         self._check(request)
@@ -260,6 +279,8 @@ class VpsStub:
     def app(self) -> web.Application:
         app = web.Application()
         app.router.add_post("/api/executor/lease", self.lease)
+        app.router.add_post("/api/executor/workspaces/retire", self.retire_workspace)
+        app.router.add_post("/api/executor/workspaces/register", self.register_workspace)
         app.router.add_get("/api/executor/commands", self.commands)
         app.router.add_post("/api/executor/commands/outcomes", self.outcomes)
         app.router.add_post("/api/executor/conversations/{conversation_id}/items", self.post_items)
@@ -335,7 +356,13 @@ def start_command(child: ChildReference, workspace: Path, ticket_id: str) -> Chi
         ConversationBackendKey.codex,
         "test",
         None,
-        ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", ticket_id),)),
+        ConversationRoleMaterials(
+            "worker",
+            (
+                ("PLAN_TICKET_ID", ticket_id),
+                ("PLAN_TICKET_WORKSPACE_MANAGED", "1"),
+            ),
+        ),
         workspace,
         ConversationAccess.full,
     )
@@ -379,7 +406,19 @@ def test_each_child_runs_in_order_and_no_child_or_the_poll_waits_on_another(
     tmp_path: Path,
 ) -> None:
     async def run() -> None:
-        stub = VpsStub()
+        stub = VpsStub(
+            workspace_states=(
+                WorkspaceState("t_01234567", 1, True),
+                WorkspaceState("t_11234567", None, False),
+            ),
+            lease_time_ms=(RETENTION_SECONDS + 2) * 1000,
+        )
+        # Reuse this real HTTPS host to prove the canonical state reaches local
+        # cleanup: a tombstone expires, a live owner and an absent owner remain.
+        for ticket_id in ("t_01234567", "t_11234567", "t_21234567"):
+            folder = paths.artifacts / ticket_id
+            folder.mkdir(parents=True)
+            (folder / "proof.txt").write_text("Ticket content")
         async with serving(stub, tls[0]) as origin:
             mac = service(paths, origin, tls[1])
             calls: list[str] = []
@@ -412,6 +451,9 @@ def test_each_child_runs_in_order_and_no_child_or_the_poll_waits_on_another(
             running = asyncio.create_task(mac.run())
             try:
                 await until(lambda: f"prompt_{b.child_id}" in stub.results)
+                await until(lambda: not (paths.artifacts / "t_01234567").exists())
+                assert (paths.artifacts / "t_11234567" / "proof.txt").exists()
+                assert (paths.artifacts / "t_21234567" / "proof.txt").exists()
                 # A's start is still held: its prompt has not run, B's has, and the poll
                 # went on from the recorded cursor.
                 assert calls.count("a:prompt") == 0 and "b:prompt" in calls

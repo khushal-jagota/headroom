@@ -69,6 +69,8 @@ from planner.executor.vps_presence_store import (
     record_refusal,
 )
 from planner.stalls.contracts import TrackedWait, TrackedWaitKind
+from planner.ticket_workspaces.contracts import WorkspaceState
+from planner.ticket_workspaces.data import read_workspace_states
 
 LOGGER = logging.getLogger(__name__)
 
@@ -215,8 +217,19 @@ class MacPresenceService:
         if returned and self.returned is not None:
             self.returned()
         return LeaseReply(
-            now, MAC_AWAY_AFTER_SECONDS, await self._update_check(), self.mailbox.high_sequence()
+            now,
+            MAC_AWAY_AFTER_SECONDS,
+            await self._update_check(),
+            self.mailbox.high_sequence(),
+            await run_on_worker_thread(self._workspace_states),
         )
+
+    def _workspace_states(self) -> tuple[WorkspaceState, ...]:
+        connection = connect(self.db_path)
+        try:
+            return tuple(read_workspace_states(connection).values())
+        finally:
+            connection.close()
 
     async def _update_check(self) -> MacUpdateCheck:
         """The Mac's update target. An update channel that cannot answer now never fails

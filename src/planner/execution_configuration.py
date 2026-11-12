@@ -2,9 +2,9 @@
 
 from typing import Final
 
-# Protocol 22 is the mailbox transport over HTTPS. Protocol 21 was the WebSocket
-# session, and no Mac speaks both, so there is no older window.
-PROTOCOL_VERSION: Final = 22
+# Protocol 23 adds authoritative Ticket workspace lifetimes to accepted leases.
+# Both peers must understand the cleanup contract before they exchange work.
+PROTOCOL_VERSION: Final = 23
 MIN_SUPPORTED_PROTOCOL_VERSION: Final = PROTOCOL_VERSION
 SPOOL_FORMAT_VERSION: Final = 5
 # The Mac's spool/commands.sqlite3, kept apart from the outbox so the outbox format

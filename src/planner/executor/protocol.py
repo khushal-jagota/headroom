@@ -54,6 +54,7 @@ from planner.execution_identity import (
 )
 from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.executor.update_contracts import MacUpdateCheck
+from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -567,6 +568,36 @@ class LeaseReply:
     away_after_seconds: float
     update: MacUpdateCheck
     mailbox_high_sequence: int
+    # Complete canonical state, including deleted Ticket tombstones. Absence is never
+    # permission to delete local files. Times use the VPS clock, in seconds.
+    ticket_workspaces: tuple[WorkspaceState, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceRegistrationRequest:
+    """Bind an assigned native child to its actual local Ticket workspace."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    child: ChildReference
+    workspace: WorkspaceIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceRetirementRequest:
+    """A fresh current-folder grant, or proof of a prior detached-folder grant."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    state: WorkspaceState
+    workspace: WorkspaceIdentity
+    replay: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceRetirementReply:
+    """Authorization applies only to the exact physical workspace in the request."""
+
+    __pydantic_config__: ClassVar[ConfigDict] = _WIRE_CONFIG
+    authorized: bool
 
 
 @dataclass(frozen=True, slots=True)

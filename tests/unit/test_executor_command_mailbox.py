@@ -50,6 +50,7 @@ from planner.conversation.message_content import text_message_content
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.core.sse import close_open_change_streams
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
     CommandDisposition,
@@ -871,7 +872,8 @@ def test_a_vps_restart_keeps_the_mailbox_and_its_unproven_stops(tmp_path: Path) 
             restarted = VpsExecutor(world.endpoint.db_path, RealClock())
             try:
                 identity = restarted.require_current(
-                    incarnation_header=world.identity.executor_incarnation, protocol_header="22"
+                    incarnation_header=world.identity.executor_incarnation,
+                    protocol_header=str(PROTOCOL_VERSION),
                 )
                 reply = await restarted.poll(identity, 0, 0)
                 assert [command.operation.value for command in reply.commands] == [

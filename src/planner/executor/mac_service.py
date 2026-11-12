@@ -102,6 +102,9 @@ class MacService:
             files=self.files,
             live=self.live,
             agent_processes=self.agent_processes,
+            register_workspace=self.client.register_workspace,
+            retire_workspace=self.client.retire_workspace,
+            retirement_is_committed=partial(self.client.retire_workspace, replay=True),
         )
         handoff_path = os.environ.get(MAC_RUNTIME_HANDOFF_ENV)
         if handoff_path is not None:

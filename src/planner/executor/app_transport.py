@@ -41,6 +41,8 @@ from planner.executor.configuration import (
     EXECUTOR_PROTOCOL_HEADER,
     EXECUTOR_READS_PATH,
     EXECUTOR_UPLOAD_PATH,
+    EXECUTOR_WORKSPACE_REGISTRATION_PATH,
+    EXECUTOR_WORKSPACE_RETIREMENT_PATH,
     FILE_TRANSFER_STALL_SECONDS,
     MAX_COMMAND_OUTCOME_REPORT_BYTES,
     MAX_ENVELOPE_BYTES,
@@ -57,6 +59,8 @@ from planner.executor.protocol import (
     LeaseRequest,
     LiveEventBatch,
     LiveReadRequest,
+    WorkspaceRegistrationRequest,
+    WorkspaceRetirementRequest,
     decode_bounded,
     encode_bounded,
 )
@@ -202,6 +206,36 @@ def build_executor_router() -> APIRouter:
             return _error(error)
         if isinstance(reply, LeaseRefused):
             return _json(encode_bounded(reply), 409)
+        return _json(encode_bounded(reply))
+
+    @router.post(EXECUTOR_WORKSPACE_REGISTRATION_PATH)
+    async def register_workspace(request: Request) -> Response:
+        try:
+            endpoint, identity = current_for(request)
+            registration = _decode(
+                await _body(request, MAX_ENVELOPE_BYTES),
+                WorkspaceRegistrationRequest,
+                MAX_ENVELOPE_BYTES,
+            )
+            await endpoint.register_workspace(identity, registration)
+        except PlannerError as error:
+            return _error(error)
+        return Response(status_code=204)
+
+    @router.post(EXECUTOR_WORKSPACE_RETIREMENT_PATH)
+    async def retire_workspace(request: Request) -> Response:
+        try:
+            endpoint, identity = current_for(request)
+            retirement = _decode(
+                await _body(request, MAX_ENVELOPE_BYTES),
+                WorkspaceRetirementRequest,
+                MAX_ENVELOPE_BYTES,
+            )
+            reply = await endpoint.retire_workspace(
+                identity, retirement.state, retirement.workspace, replay=retirement.replay
+            )
+        except PlannerError as error:
+            return _error(error)
         return _json(encode_bounded(reply))
 
     @router.get(EXECUTOR_COMMANDS_PATH)

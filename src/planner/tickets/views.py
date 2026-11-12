@@ -15,7 +15,7 @@ from planner.core import ticket_blocks
 from planner.core.contracts import BlockerSummary, JsonDict, PrincipalKind
 from planner.files.lifecycle import database_path
 from planner.files.logic.listing import entries_as_json, fold_directory
-from planner.files.logic.paths import ticket_files_root
+from planner.files.logic.paths import PRIVATE_TICKET_NAMES, ticket_files_root
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.navigation import data as navigation_data
 from planner.navigation.review import review_message_items
@@ -394,7 +394,7 @@ def _ticket_artifacts(conn: sqlite3.Connection, ticket_id: str) -> list[dict[str
         return []
     if any(path.is_symlink() for path in (root, *root.parents)):
         return []
-    return entries_as_json(fold_directory(root))
+    return entries_as_json(fold_directory(root, excluded_names=PRIVATE_TICKET_NAMES))
 
 
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
