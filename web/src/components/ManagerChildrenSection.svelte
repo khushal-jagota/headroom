@@ -93,7 +93,7 @@
     <div class="manager-workspace-status-body">
       {#each items as ticket (ticket.id)}
         <div use:railPreview={onHover ? {show:(element, immediate) => onHover?.(element, ticket.id, immediate), leave:onLeave} : null}>
-          <WorkerRow agentHold={ticket} approval={groupKey === "awaiting_approval" ? "owner" : groupKey === "status_awaiting_approval" ? "agent" : null} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
+          <WorkerRow agentHold={ticket} approval={groupKey === "awaiting_approval" ? "owner" : groupKey === "status_awaiting_approval" ? "agent" : null} machineId={ticket.machine_id} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
             quiet={ticket.stage === "done"}
             href={workspaceAddress(principal.kind === "manager"
               ? { kind: "ticket", id: ticket.id, openedFromManagerId: principal.id } : { kind: "ticket", id: ticket.id })}

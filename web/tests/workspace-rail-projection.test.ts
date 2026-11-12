@@ -450,7 +450,7 @@ const sourceTicket:(TicketRecord & {value:import('../src/lib/navigation/contract
   updated_at:11,worker_step_claim_out:false,deadline:null,project_id:'project',manager_kind:'manager',
   manager_id:'item',conversation_id:'conversation',is_backlogged:false,ceiling:'needs_implementation',
   ceiling_holder:{kind:'owner',id:'owner'},gating_field:'implementation',proposal_field:null,proposal_revision:0,
-  proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'en'}};
+  proposal_created_at:null,stage_ownership:'worker',terminal:false,machine_id:'75a49e78-97de-4e28-8dc5-79646761c46f',locale:'en'}};
 const sourceRecords:NavigationRecord[]=[sourceTicket,conversation('conversation'),
   {kind:'manager',id:'item',value:{title:'Parent',recap:'Full parent recap.\n'+'Body continues. '.repeat(20),recap_preview:'Parent recap',created_at:1,updated_at:11,project_id:'project',settled:false,conversation_id:null}},
   {kind:'project',id:'project',value:{name:'Project'}},

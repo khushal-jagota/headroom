@@ -238,6 +238,8 @@ def _ticket_record(
         "title",
         "worker_type",
         "locale",
+        "machine_id",
+        "machine_name",
         "employee_backend",
         "employee_launch_model",
         "employee_launch_reasoning_effort",
@@ -921,6 +923,27 @@ def project_set(
     http.emit(data, as_json, f"{data['id']} {field} set")
 
 
+# --- machine ------------------------------------------------------------------
+
+
+@main.group("machine")
+def machine() -> None:
+    """Read named execution destinations."""
+
+
+@machine.command("list")
+@json_option
+def machine_list(as_json: bool) -> None:
+    """List stable destination identities and their current availability."""
+    data = http.send("GET", "/api/machines", as_json=as_json)
+    rows = [
+        f"{entry['machine_id']} {entry['name']} "
+        f"{'Available' if entry['available'] else 'Away'}"
+        for entry in data["machines"]
+    ]
+    http.emit(data, as_json, "\n".join(rows))
+
+
 # --- ticket -------------------------------------------------------------------
 
 
@@ -935,11 +958,27 @@ def ticket() -> None:
     required=True,
     help="Read one Ticket create object from this file, or - for standard input.",
 )
-@click.option("--locale", type=click.Choice(_LOCALES), default=None)
+@click.option(
+    "--machine-id",
+    default=None,
+    help="Destination identity from panels machine list. Defaults to the home.",
+)
+@click.option(
+    "--locale",
+    type=click.Choice(_LOCALES),
+    default=None,
+    help="Legacy alias for the original home or Mac.",
+)
 @json_option
-def ticket_create(input_json: str, locale: str | None, as_json: bool) -> None:
+def ticket_create(
+    input_json: str, machine_id: str | None, locale: str | None, as_json: bool
+) -> None:
     """Create one Ticket from one JSON object through the existing atomic writer."""
     body = _read_json_object(input_json, as_json, "Ticket create input")
+    if machine_id is not None:
+        if "machine_id" in body:
+            http.fail_validation("machine_id accepts one input source", as_json)
+        body["machine_id"] = machine_id
     if locale is not None:
         if "locale" in body:
             http.fail_validation("locale accepts one input source", as_json)

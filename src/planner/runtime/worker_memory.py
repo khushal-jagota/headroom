@@ -20,7 +20,6 @@ from uuid import uuid4
 
 from planner.conversation.contracts import HeldPrompt
 from planner.tickets import locale_configuration
-from planner.tickets.contracts import TicketLocale
 
 WORKER_STEP_MESSAGE_PREFIX: Final = "worker_step_message_"
 MEMORY_NOTICE_MESSAGE_PREFIX: Final = "worker_step_memory_notice_"
@@ -117,10 +116,10 @@ def _latest_answering_prompt_sequence(conn: sqlite3.Connection, conversation_id:
 def ticket_needs_memory_notice(conn: sqlite3.Connection, ticket_id: str) -> bool:
     """Check the automatic notice rule, without changing the next-wake memory rule."""
     row = conn.execute(
-        "SELECT conversation_id,locale FROM tickets WHERE id=? AND worker_step_claim='out'",
+        "SELECT conversation_id,machine_id FROM tickets WHERE id=? AND worker_step_claim='out'",
         (ticket_id,),
     ).fetchone()
-    if row is None or not locale_configuration.can_execute_locale(conn, TicketLocale(row[1])):
+    if row is None or not locale_configuration.can_execute_machine(conn, str(row[1])):
         return False
     conversation_id = row[0]
     if not conversation_holds_an_unanswered_memory_loss(conn, conversation_id):

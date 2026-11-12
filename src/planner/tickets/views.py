@@ -76,6 +76,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             specialist_skill=ticket.workflow.specialist_skill,
         ),
         "locale": ticket.locale.value,
+        "machine_id": ticket.machine_id,
         "employee_backend": ticket.employee_backend,
         "employee_launch_model": ticket.employee_launch_model,
         "employee_launch_reasoning_effort": ticket.employee_launch_reasoning_effort,
@@ -197,6 +198,7 @@ def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
         "id": str(row["id"]),
         "title": str(row["title"]),
         "locale": str(row["locale"]),
+        "machine_id": str(row["machine_id"]),
         "worker_type": row["worker_type"],
         "stage": str(row["stage"]),
         "ticket_status": ticket_status,
@@ -219,6 +221,7 @@ _SUMMARY_RECORD_COLUMNS = ", ".join(
     for name in (
         "title",
         "locale",
+        "machine_id",
         "worker_type",
         "stage",
         "is_backlogged",

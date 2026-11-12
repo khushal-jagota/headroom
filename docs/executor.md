@@ -24,7 +24,9 @@ The Mac opens every request. Each is a plain HTTPS request. No work depends on a
 
 ## Which work goes to the Mac
 
-Each Ticket has a locale, `vps` or `macos` (see [Tickets](tickets.md)). A `macos` Worker step gets an agent process on the Mac. VPS Tickets, the Chief, and Managers stay on the VPS. The VPS configuration names one executor ID. Without it, the VPS runs everything locally.
+Each Ticket names a stable machine destination (see [Tickets](tickets.md)). The home destination keeps direct execution. Only the original Mac destination uses the configured executor ID. Without that executor, its Tickets wait. They never run on the home. The Chief and Managers stay on the home. Legacy `vps` and `macos` values remain aliases for these original two destinations. The executor wire protocol stays at 23.
+
+Settings → Machines shows each destination’s availability, current Worker count, and Tickets that wait while it is away. Counts use existing conversation signals and Ticket ownership. An away machine has unknown activity. Display names, four icons, and eight colors do not enter routing or authority checks.
 
 A Mac Ticket starts only while the Mac is present. Until then its step shows "Waiting for the Mac". A message or answer to an existing Mac conversation is stored, and the Mac receives it when it returns.
 

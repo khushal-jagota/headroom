@@ -293,7 +293,10 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
     if executor_id is not None and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", executor_id) is None:
         raise PlannerError(ErrorCode.validation, "executor_id must name a logical executor")
 
-    db_path = _str_value(cfg, env, "db_path", "PLAN_DB_PATH", "data/planning.db")
+    from planner.platform_runtime.paths import installation_data_directory
+
+    data_directory = installation_data_directory(Path("."))
+    db_path = _str_value(cfg, env, "db_path", "PLAN_DB_PATH", str(data_directory / "planning.db"))
     credential_key_path = _str_value(
         cfg,
         env,
@@ -318,10 +321,16 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
         dispatcher_lock_path=_str_value(
-            cfg, env, "dispatcher_lock_path", "PLAN_DISPATCHER_LOCK_PATH", "data/dispatcher.lock"
+            cfg,
+            env,
+            "dispatcher_lock_path",
+            "PLAN_DISPATCHER_LOCK_PATH",
+            str(data_directory / "dispatcher.lock"),
         ),
-        logs_dir=_str_value(cfg, env, "logs_dir", "PLAN_LOGS_DIR", "data/logs"),
-        backup_dir=_str_value(cfg, env, "backup_dir", "PLAN_BACKUP_DIR", "data/backups"),
+        logs_dir=_str_value(cfg, env, "logs_dir", "PLAN_LOGS_DIR", str(data_directory / "logs")),
+        backup_dir=_str_value(
+            cfg, env, "backup_dir", "PLAN_BACKUP_DIR", str(data_directory / "backups")
+        ),
         voice_transcription_base_url=_str_value(
             cfg,
             env,

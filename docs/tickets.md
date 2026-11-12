@@ -10,7 +10,7 @@ A Ticket is one piece of work small enough to hand to a single AI Worker. It is 
 - **An assignment** to Chief or one ordinary Manager. This is who the work sits under.
 - **A conversation**, the Worker's only input. See [Conversations](conversations.md).
 - **A launch setup**: backend, model, and reasoning, copied from a selected preset or explicitly chosen for custom work, and fixed once the conversation exists.
-- **A locale**: the VPS or Khushal's Mac, chosen at creation.
+- **A machine**: a fixed execution destination, chosen at creation.
 - **Blockers**, other Tickets that must be Done before this one may start a step.
 - **A recap**, the Worker's short status for a person, and **artifacts**, the plans, documents, images, and prototypes the work produced.
 
@@ -68,7 +68,9 @@ Delete removes the Ticket's record and leaves its files. It is available from th
 
 ## Where the Worker runs
 
-The locale is chosen at creation and does not change. A VPS Ticket's agent runs on the VPS. A Mac Ticket's agent runs on the Mac, and starts only while the Mac is present (its lease is fresh). Either way the VPS keeps the record and decides when to start. See [Mac execution](executor.md).
+The machine destination is chosen at creation and never changes. It defaults to the home. Settings → Machines edits its name, icon, and color. These display edits never move work. The home runs its Workers directly. The original Mac destination uses the existing executor and waits while it is away. Chief and Managers stay on the home.
+
+The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. Machine enrollment and several concurrent executors remain later work. See [Mac execution](executor.md).
 
 ## Where it shows up
 

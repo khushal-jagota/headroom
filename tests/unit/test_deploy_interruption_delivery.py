@@ -223,11 +223,16 @@ def test_notice_actual_wire_receipt_and_fresh_worker_link(
                 after_manual_unknown = _Harness(path)
                 try:
                     await run_automatic_recovery(
-                        after_manual_unknown.system, after_manual_unknown.store,
+                        after_manual_unknown.system,
+                        after_manual_unknown.store,
                     )
-                    assert await after_manual_unknown.store.read_events_after(
-                        target, 0,
-                    ) == before_events
+                    assert (
+                        await after_manual_unknown.store.read_events_after(
+                            target,
+                            0,
+                        )
+                        == before_events
+                    )
                     assert after_manual_unknown.spawned_conversation_ids == []
                 finally:
                     await after_manual_unknown.system.shutdown()
@@ -367,7 +372,9 @@ def test_legacy_epoch_and_erased_candidate_keep_exact_historical_evidence(
 
 @pytest.mark.parametrize("rebind", [False, True])
 def test_suppressed_review_preserves_interruption_context_for_next_actual_send(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rebind: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rebind: bool,
 ) -> None:
     import asyncio
 
@@ -406,10 +413,14 @@ def test_suppressed_review_preserves_interruption_context_for_next_actual_send(
 
             monkeypatch.setattr(_FakeBackendChild, "start", delayed_start)
             restarted.backend("c").needs_rebind_once = rebind
-            sending = asyncio.create_task(restarted.system.send(
-                "c", text_message_content(message), sender_label="Chief",
-                sender_message_id=sender_id,
-            ))
+            sending = asyncio.create_task(
+                restarted.system.send(
+                    "c",
+                    text_message_content(message),
+                    sender_label="Chief",
+                    sender_message_id=sender_id,
+                )
+            )
             await entered.wait()
             _resolve_review(path, ticket_id)
             release.set()
@@ -418,9 +429,12 @@ def test_suppressed_review_preserves_interruption_context_for_next_actual_send(
             assert not await restarted.system.is_running("c")
             assert _entry(path) == before
             with connect(str(path)) as conn:
-                assert conn.execute(
-                    "SELECT count(*) FROM deploy_interruption_deliveries"
-                ).fetchone()[0] == 0
+                assert (
+                    conn.execute("SELECT count(*) FROM deploy_interruption_deliveries").fetchone()[
+                        0
+                    ]
+                    == 0
+                )
         finally:
             await restarted.system.shutdown()
 
@@ -430,8 +444,11 @@ def test_suppressed_review_preserves_interruption_context_for_next_actual_send(
         try:
             assert _entry(path) == before
             fate = await final.system.send(
-                "c", text_message_content("Inspect current work"), sender_label="Chief",
-                sender=CHIEF_PRINCIPAL, recipient=Principal(PrincipalKind.ticket, ticket_id),
+                "c",
+                text_message_content("Inspect current work"),
+                sender_label="Chief",
+                sender=CHIEF_PRINCIPAL,
+                recipient=Principal(PrincipalKind.ticket, ticket_id),
             )
             assert isinstance(fate, PromptDeliveryStarted)
             wire = final.backend("c").written_texts()[0]
@@ -442,9 +459,10 @@ def test_suppressed_review_preserves_interruption_context_for_next_actual_send(
             )
             assert _entry(path)["recovery_state"] == "resumed"
             with connect(str(path)) as conn:
-                assert [row[0] for row in conn.execute(
-                    "SELECT status FROM deploy_interruption_deliveries"
-                )] == ["started"]
+                assert [
+                    row[0]
+                    for row in conn.execute("SELECT status FROM deploy_interruption_deliveries")
+                ] == ["started"]
         finally:
             await final.system.shutdown()
 
@@ -470,8 +488,11 @@ def test_rebind_preserves_interruption_context_in_the_actual_backend_prompt(tmp_
             backend = restarted.backend("c")
             backend.needs_rebind_once = True
             fate = await restarted.system.send(
-                "c", text_message_content("Inspect after deploy"), sender_label="Chief",
-                sender=CHIEF_PRINCIPAL, recipient=Principal(PrincipalKind.ticket, "reviewer"),
+                "c",
+                text_message_content("Inspect after deploy"),
+                sender_label="Chief",
+                sender=CHIEF_PRINCIPAL,
+                recipient=Principal(PrincipalKind.ticket, "reviewer"),
             )
             assert isinstance(fate, PromptDeliveryStarted)
             assert backend.session_starts == 2
@@ -485,9 +506,10 @@ def test_rebind_preserves_interruption_context_in_the_actual_backend_prompt(tmp_
             assert backend.writes[0].sender_content == text_message_content("Inspect after deploy")
             assert _entry(path)["recovery_state"] == "resumed"
             with connect(str(path)) as conn:
-                assert [row[0] for row in conn.execute(
-                    "SELECT status FROM deploy_interruption_deliveries"
-                )] == ["started"]
+                assert [
+                    row[0]
+                    for row in conn.execute("SELECT status FROM deploy_interruption_deliveries")
+                ] == ["started"]
         finally:
             await restarted.system.shutdown()
 
@@ -496,7 +518,8 @@ def test_rebind_preserves_interruption_context_in_the_actual_backend_prompt(tmp_
 
 @pytest.mark.parametrize("owner", ["bare", "chief", "manager", "ticket"])
 def test_automatic_recovery_resumes_current_conversation_once(
-    tmp_path: Path, owner: Literal["bare", "chief", "manager", "ticket"],
+    tmp_path: Path,
+    owner: Literal["bare", "chief", "manager", "ticket"],
 ) -> None:
     """Boot recovery reaches the wire for every owner kind, including no Ticket."""
     from dataclasses import replace
@@ -527,7 +550,8 @@ def test_automatic_recovery_resumes_current_conversation_once(
             conn.commit()
         manifest = _capture(path, owner_id="t" if owner == "ticket" else None)
         turn = replace(
-            manifest.turns[0], original_status="running",
+            manifest.turns[0],
+            original_status="running",
             owner_kind="unknown" if owner == "bare" else owner,
             owner_id="t" if owner == "ticket" else "m" if owner == "manager" else None,
         )
@@ -544,9 +568,12 @@ def test_automatic_recovery_resumes_current_conversation_once(
             assert len(restarted.backend("c").writes) == 1
             if owner == "ticket":
                 with connect(str(path)) as conn:
-                    assert conn.execute(
-                        "SELECT worker_step_claim FROM tickets WHERE id='t'"
-                    ).fetchone()[0] == "out"
+                    assert (
+                        conn.execute(
+                            "SELECT worker_step_claim FROM tickets WHERE id='t'"
+                        ).fetchone()[0]
+                        == "out"
+                    )
         finally:
             await restarted.system.shutdown()
 
@@ -554,7 +581,8 @@ def test_automatic_recovery_resumes_current_conversation_once(
 
 
 def test_automatic_recovery_rechecks_ticket_gate_after_backend_start(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A Ticket finishing during slow startup cannot receive a stale recovery prompt."""
     import asyncio
@@ -575,9 +603,13 @@ def test_automatic_recovery_rechecks_ticket_gate_after_backend_start(
         await original.store.reserve_turn("c")
         _ticket(path)
         manifest = _capture(path, owner_id="t")
-        write_manifest(path, replace(
-            manifest, turns=(replace(manifest.turns[0], original_status="running"),),
-        ))
+        write_manifest(
+            path,
+            replace(
+                manifest,
+                turns=(replace(manifest.turns[0], original_status="running"),),
+            ),
+        )
         await original.system.shutdown()
         restarted = _Harness(path)
         entered, release = asyncio.Event(), asyncio.Event()
@@ -601,12 +633,16 @@ def test_automatic_recovery_rechecks_ticket_gate_after_backend_start(
             await recovering
             assert restarted.backend("c").writes == []
             with connect(str(path)) as conn:
-                assert conn.execute(
-                    "SELECT worker_step_claim FROM tickets WHERE id='t'"
-                ).fetchone()[0] != "out"
-                assert conn.execute(
-                    "SELECT count(*) FROM deploy_interruption_deliveries WHERE status='intent'"
-                ).fetchone()[0] == 0
+                assert (
+                    conn.execute("SELECT worker_step_claim FROM tickets WHERE id='t'").fetchone()[0]
+                    != "out"
+                )
+                assert (
+                    conn.execute(
+                        "SELECT count(*) FROM deploy_interruption_deliveries WHERE status='intent'"
+                    ).fetchone()[0]
+                    == 0
+                )
         finally:
             release.set()
             await restarted.system.shutdown()
@@ -638,9 +674,7 @@ def test_second_boot_does_not_replay_an_unknown_recovery_attempt(tmp_path: Path)
             # Simulate the hard-stop window after intent persisted and before settle.
             with connect(str(path)) as conn:
                 conn.execute("UPDATE deploy_interruption_deliveries SET status='intent'")
-                conn.execute(
-                    "UPDATE deploy_interruptions SET recovery_state='awaiting_action'"
-                )
+                conn.execute("UPDATE deploy_interruptions SET recovery_state='awaiting_action'")
                 sender_message_id = conn.execute(
                     "SELECT recovery_sender_message_id FROM deploy_interruption_deliveries"
                 ).fetchone()[0]
@@ -653,14 +687,14 @@ def test_second_boot_does_not_replay_an_unknown_recovery_attempt(tmp_path: Path)
                 # Its projection and sequence marker disappeared in the same interrupted
                 # commit. This leaves receipt intent with no prompt outcome at all.
                 for table in (
-                    "conversation_view_rows", "conversation_view_lookups",
-                    "conversation_view_groups", "conversation_view_turns",
+                    "conversation_view_rows",
+                    "conversation_view_lookups",
+                    "conversation_view_groups",
+                    "conversation_view_turns",
                     "conversation_view_state",
                 ):
                     conn.execute(f"DELETE FROM {table} WHERE conversation_id='c'")
-                conn.execute(
-                    "UPDATE conversations SET latest_sequence=0 WHERE conversation_id='c'"
-                )
+                conn.execute("UPDATE conversations SET latest_sequence=0 WHERE conversation_id='c'")
                 recovery = conn.execute(
                     "SELECT turn_number,occurrence_id,runtime_epoch FROM "
                     "conversation_turn_occurrences WHERE conversation_id='c' "
@@ -669,13 +703,30 @@ def test_second_boot_does_not_replay_an_unknown_recovery_attempt(tmp_path: Path)
                 conn.commit()
             # A deployment may capture the recovery turn itself while its wire
             # outcome is still uncertain. That new capture is not fresh work.
-            write_manifest(path, CaptureManifest(
-                "next-release", "next-stop", 124, "captured", None,
-                (CapturedTurn(
-                    "c", int(recovery[0]), str(recovery[1]), str(recovery[2]),
-                    "intent", "Interrupted recovery", "unknown", None, None, None,
-                ),),
-            ))
+            write_manifest(
+                path,
+                CaptureManifest(
+                    "next-release",
+                    "next-stop",
+                    124,
+                    "captured",
+                    None,
+                    (
+                        CapturedTurn(
+                            "c",
+                            int(recovery[0]),
+                            str(recovery[1]),
+                            str(recovery[2]),
+                            "intent",
+                            "Interrupted recovery",
+                            "unknown",
+                            None,
+                            None,
+                            None,
+                        ),
+                    ),
+                ),
+            )
         finally:
             await first.system.shutdown()
         second = _Harness(path)
@@ -690,12 +741,16 @@ def test_second_boot_does_not_replay_an_unknown_recovery_attempt(tmp_path: Path)
             assert await second.store.read_events_after("c", 0) == synthesized
             assert second.spawned_conversation_ids == []
             with connect(str(path)) as conn:
-                assert conn.execute(
-                    "SELECT recovery_state FROM deploy_interruptions WHERE capture_id='stop'"
-                ).fetchone()[0] == "unable_to_resume"
-                assert [row[0] for row in conn.execute(
-                    "SELECT status FROM deploy_interruption_deliveries"
-                )] == ["unknown"]
+                assert (
+                    conn.execute(
+                        "SELECT recovery_state FROM deploy_interruptions WHERE capture_id='stop'"
+                    ).fetchone()[0]
+                    == "unable_to_resume"
+                )
+                assert [
+                    row[0]
+                    for row in conn.execute("SELECT status FROM deploy_interruption_deliveries")
+                ] == ["unknown"]
         finally:
             await second.system.shutdown()
 
@@ -704,7 +759,9 @@ def test_second_boot_does_not_replay_an_unknown_recovery_attempt(tmp_path: Path)
 
 @pytest.mark.parametrize("delivery", ["refused", "unknown", "possible_emission"])
 def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delivery: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    delivery: str,
 ) -> None:
     """The owner's Chief chat retains a factual delivery failure without another surface."""
     from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
@@ -731,9 +788,18 @@ def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
             )
             conn.commit()
         manifest = _capture(path)
-        write_manifest(path, replace(manifest, turns=(replace(
-            manifest.turns[0], owner_kind="chief",
-        ),)))
+        write_manifest(
+            path,
+            replace(
+                manifest,
+                turns=(
+                    replace(
+                        manifest.turns[0],
+                        owner_kind="chief",
+                    ),
+                ),
+            ),
+        )
         await original.system.shutdown()
         restarted = _Harness(path)
         try:
@@ -755,7 +821,8 @@ def test_chief_automatic_recovery_failure_uses_existing_transcript_row(
             await run_automatic_recovery(restarted.system, restarted.store)
             events = await restarted.store.read_events_after("c", 0)
             payload_type = (
-                PromptDeliveryRefusedEventPayload if delivery == "refused"
+                PromptDeliveryRefusedEventPayload
+                if delivery == "refused"
                 else PromptDeliveryUncertainEventPayload
             )
             failures = [
@@ -791,26 +858,34 @@ def test_grouped_deployments_restore_one_ticket_claim_and_send_one_prompt(tmp_pa
         _ticket(path)
         manifest = _capture(path, owner_id="t")
         write_manifest(path, manifest)
-        write_manifest(path, replace(
-            manifest, deployment_id="other-release", capture_id="other-stop",
-        ))
+        write_manifest(
+            path,
+            replace(
+                manifest,
+                deployment_id="other-release",
+                capture_id="other-stop",
+            ),
+        )
         await original.system.shutdown()
         restarted = _Harness(path)
         try:
             await run_automatic_recovery(restarted.system, restarted.store)
             assert len(restarted.backend("c").writes) == 1
             with connect(str(path)) as conn:
-                assert tuple(conn.execute(
-                    "SELECT worker_step_claim,worker_step_claim_revision "
-                    "FROM tickets WHERE id='t'"
-                ).fetchone()) == ("out", 9)
+                assert tuple(
+                    conn.execute(
+                        "SELECT worker_step_claim,worker_step_claim_revision "
+                        "FROM tickets WHERE id='t'"
+                    ).fetchone()
+                ) == ("out", 9)
                 deliveries = conn.execute(
                     "SELECT status,restored_claim_revision FROM deploy_interruption_deliveries"
                 ).fetchall()
                 assert [tuple(row) for row in deliveries] == [("started", 9), ("started", 9)]
-                assert [row[0] for row in conn.execute(
-                    "SELECT recovery_state FROM deploy_interruptions"
-                )] == ["resumed", "resumed"]
+                assert [
+                    row[0]
+                    for row in conn.execute("SELECT recovery_state FROM deploy_interruptions")
+                ] == ["resumed", "resumed"]
         finally:
             await restarted.system.shutdown()
 
@@ -819,7 +894,8 @@ def test_grouped_deployments_restore_one_ticket_claim_and_send_one_prompt(tmp_pa
 
 @pytest.mark.parametrize("opener_admitted", [False, True])
 def test_user_owned_stage_recovers_only_its_already_admitted_opener(
-    tmp_path: Path, opener_admitted: bool,
+    tmp_path: Path,
+    opener_admitted: bool,
 ) -> None:
     """Recovery continues an existing paired opener without granting a new worker step."""
     from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
@@ -844,7 +920,8 @@ def test_user_owned_stage_recovers_only_its_already_admitted_opener(
             if opener_admitted:
                 conn.execute(
                     "INSERT INTO ticket_paired_stage_openers(ticket_id,stage,opened_at) "
-                    "VALUES ('t',?,1)", (stage,),
+                    "VALUES ('t',?,1)",
+                    (stage,),
                 )
             conn.commit()
         write_manifest(path, _capture(path, owner_id="t"))
@@ -855,13 +932,17 @@ def test_user_owned_stage_recovers_only_its_already_admitted_opener(
             assert len(restarted.backend("c").writes) == int(opener_admitted)
             with connect(str(path)) as conn:
                 claim, revision = conn.execute(
-                    "SELECT worker_step_claim,worker_step_claim_revision FROM tickets WHERE id='t'"
+                    "SELECT worker_step_claim,worker_step_claim_revision "
+                        "FROM tickets WHERE id='t'"
                 ).fetchone()
                 assert claim == ("none" if opener_admitted else "errored")
                 assert revision == (10 if opener_admitted else 8)
-                assert [tuple(row) for row in conn.execute(
-                    "SELECT stage FROM ticket_paired_stage_openers WHERE ticket_id='t'"
-                )] == ([(stage,)] if opener_admitted else [])
+                assert [
+                    tuple(row)
+                    for row in conn.execute(
+                        "SELECT stage FROM ticket_paired_stage_openers WHERE ticket_id='t'"
+                    )
+                ] == ([(stage,)] if opener_admitted else [])
         finally:
             await restarted.system.shutdown()
 
@@ -898,12 +979,16 @@ def test_restart_with_restored_ticket_claim_and_intent_never_resends(tmp_path: P
             await run_automatic_recovery(second.system, second.store)
             assert second.spawned_conversation_ids == []
             with connect(str(path)) as conn:
-                assert tuple(conn.execute(
-                    "SELECT worker_step_claim,worker_step_claim_revision FROM tickets WHERE id='t'"
-                ).fetchone()) == ("errored", 10)
-                assert conn.execute(
-                    "SELECT status FROM deploy_interruption_deliveries"
-                ).fetchone()[0] == "unknown"
+                assert tuple(
+                    conn.execute(
+                        "SELECT worker_step_claim,worker_step_claim_revision "
+                        "FROM tickets WHERE id='t'"
+                    ).fetchone()
+                ) == ("errored", 10)
+                assert (
+                    conn.execute("SELECT status FROM deploy_interruption_deliveries").fetchone()[0]
+                    == "unknown"
+                )
         finally:
             await second.system.shutdown()
 
@@ -912,7 +997,9 @@ def test_restart_with_restored_ticket_claim_and_intent_never_resends(tmp_path: P
 
 @pytest.mark.parametrize("newer_claim", [False, True])
 def test_cancelled_recovery_after_claim_restore_releases_only_exact_claim(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, newer_claim: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    newer_claim: bool,
 ) -> None:
     """Cancellation in the final pre-wire gap cannot leave the restored claim out."""
     import asyncio
@@ -941,13 +1028,14 @@ def test_cancelled_recovery_after_claim_restore_releases_only_exact_claim(
                 # the writer before reading, so this fixture cannot upgrade a stale
                 # WAL snapshot instead of installing the newer claim.
                 conn.execute("BEGIN IMMEDIATE")
-                assert tuple(conn.execute(
-                    "SELECT worker_step_claim,worker_step_claim_revision FROM tickets WHERE id='t'"
-                ).fetchone()) == ("out", 9)
-                if newer_claim:
+                assert tuple(
                     conn.execute(
-                        "UPDATE tickets SET worker_step_claim_revision=11 WHERE id='t'"
-                    )
+                        "SELECT worker_step_claim,worker_step_claim_revision "
+                        "FROM tickets WHERE id='t'"
+                    ).fetchone()
+                ) == ("out", 9)
+                if newer_claim:
+                    conn.execute("UPDATE tickets SET worker_step_claim_revision=11 WHERE id='t'")
                 conn.commit()
             finally:
                 conn.close()
@@ -962,13 +1050,23 @@ def test_cancelled_recovery_after_claim_restore_releases_only_exact_claim(
             await run_automatic_recovery(restarted.system, restarted.store)
             assert restarted.backend("c").writes == []
             with connect(str(path)) as conn:
-                assert tuple(conn.execute(
-                    "SELECT worker_step_claim,worker_step_claim_revision FROM tickets WHERE id='t'"
-                ).fetchone()) == (("out", 11) if newer_claim else ("errored", 10))
+                assert tuple(
+                    conn.execute(
+                        "SELECT worker_step_claim,worker_step_claim_revision "
+                        "FROM tickets WHERE id='t'"
+                    ).fetchone()
+                ) == (("out", 11) if newer_claim else ("errored", 10))
             events = await restarted.store.read_events_after("c", 0)
-            assert sum(isinstance(
-                event.payload, PromptDeliveryUncertainEventPayload,
-            ) for event in events) == 1
+            assert (
+                sum(
+                    isinstance(
+                        event.payload,
+                        PromptDeliveryUncertainEventPayload,
+                    )
+                    for event in events
+                )
+                == 1
+            )
         finally:
             await restarted.system.shutdown()
 
@@ -976,7 +1074,8 @@ def test_cancelled_recovery_after_claim_restore_releases_only_exact_claim(
 
 
 def test_queued_recovery_wire_failure_records_existing_uncertainty_row(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A busy conversation's eventual queued recovery uses the same failure surface."""
     from planner.conversation.deploy_interruptions import data as interruption_data
@@ -1002,7 +1101,9 @@ def test_queued_recovery_wire_failure_records_existing_uncertainty_row(
         restarted = _Harness(path)
         try:
             await restarted.system.send(
-                "c", text_message_content("current incoming work"), sender_label="owner",
+                "c",
+                text_message_content("current incoming work"),
+                sender_label="owner",
             )
             # Admit the captured interruption after ordinary work has already entered,
             # then model the coordinator's busy precheck becoming stale before send.
@@ -1020,7 +1121,8 @@ def test_queued_recovery_wire_failure_records_existing_uncertainty_row(
             await restarted.complete_turn("c")
             events = await restarted.store.read_events_after("c", 0)
             failures = [
-                event.payload for event in events
+                event.payload
+                for event in events
                 if isinstance(event.payload, PromptDeliveryUncertainEventPayload)
             ]
             assert len(failures) == 1
@@ -1108,10 +1210,12 @@ def test_live_source_keeps_exact_claim_and_prevents_replacement(tmp_path: Path) 
                 assert restarted.spawned_conversation_ids == []
                 assert restarted.system.workspace_activity() == "unknown"
                 with connect(str(path)) as db:
-                    assert tuple(db.execute(
-                        "SELECT worker_step_claim,worker_step_claim_revision "
-                        "FROM tickets WHERE id='t'"
-                    ).fetchone()) == ("out", 7)
+                    assert tuple(
+                        db.execute(
+                            "SELECT worker_step_claim,worker_step_claim_revision "
+                            "FROM tickets WHERE id='t'"
+                        ).fetchone()
+                    ) == ("out", 7)
                 # The same ordinary Stop action can now end only this exact
                 # recorded source after the no-false-release assertion above.
                 await restarted.system.kill("c")
@@ -1152,9 +1256,9 @@ def test_ordinary_home_crash_recovers_once_with_durable_identity(tmp_path: Path)
             assert len(writes) == 1
             assert "Inspect the interrupted work" in writes[0]
             with connect(str(path)) as db:
-                interruption_ids = tuple(db.execute(
-                    "SELECT interruption_id FROM deploy_interruptions"
-                ))
+                interruption_ids = tuple(
+                    db.execute("SELECT interruption_id FROM deploy_interruptions")
+                )
                 assert len(interruption_ids) == 1
             await run_automatic_recovery(restarted.system, restarted.store)
             assert len(restarted.backend("c").writes) == 1
@@ -1166,9 +1270,10 @@ def test_ordinary_home_crash_recovers_once_with_durable_identity(tmp_path: Path)
             await run_automatic_recovery(final.system, final.store)
             assert final.spawned_conversation_ids == []
             with connect(str(path)) as db:
-                assert tuple(db.execute(
-                    "SELECT interruption_id FROM deploy_interruptions"
-                )) == interruption_ids
+                assert (
+                    tuple(db.execute("SELECT interruption_id FROM deploy_interruptions"))
+                    == interruption_ids
+                )
         finally:
             await final.system.shutdown()
 
@@ -1194,12 +1299,13 @@ def test_legacy_upgrade_keeps_existing_update_recovery(tmp_path: Path) -> None:
         # The previous schema contains the live turn and its Update Now capture,
         # but no child custody records. Upgrade it without adding ownership proof.
         with connect(str(path)) as db:
+            db.execute("DROP TRIGGER tickets_legacy_machine")
+            db.execute("ALTER TABLE tickets DROP COLUMN machine_id")
+            db.execute("DROP TABLE machines")
             db.execute("DROP TABLE conversation_child_custody")
             db.execute("DROP TABLE worker_step_dispatch_intents")
             db.execute("DROP TABLE automatic_start_bindings")
-            db.execute(
-                "UPDATE alembic_version SET version_num='ticket_workspace_lifecycle'"
-            )
+            db.execute("UPDATE alembic_version SET version_num='ticket_workspace_lifecycle'")
             db.commit()
         upgrade = connect(str(path))
         create_schema(upgrade)
@@ -1209,13 +1315,16 @@ def test_legacy_upgrade_keeps_existing_update_recovery(tmp_path: Path) -> None:
         try:
             assert not restarted.store.blocked_local_conversations
             with connect(str(path)) as db:
-                assert db.execute(
-                    "SELECT count(*) FROM conversation_child_custody"
-                ).fetchone()[0] == 0
-                assert db.execute(
-                    "SELECT status FROM conversation_lifecycle_facts "
-                    "WHERE conversation_id='c' AND kind='turn'"
-                ).fetchone()[0] == "unavailable"
+                assert (
+                    db.execute("SELECT count(*) FROM conversation_child_custody").fetchone()[0] == 0
+                )
+                assert (
+                    db.execute(
+                        "SELECT status FROM conversation_lifecycle_facts "
+                        "WHERE conversation_id='c' AND kind='turn'"
+                    ).fetchone()[0]
+                    == "unavailable"
+                )
             await run_automatic_recovery(restarted.system, restarted.store)
             writes = restarted.backend("c").written_texts()
             assert len(writes) == 1

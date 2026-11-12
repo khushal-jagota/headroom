@@ -14,10 +14,10 @@ export function executorAnswerAvailable(
 }
 
 export function executorAnswerSentence(fate: "saved" | "applied" | "unconfirmed" | undefined): string | null {
-  if (fate === "saved") return "Answer saved on VPS; delivery to Mac is pending.";
-  if (fate === "applied") return "Answer applied on Mac.";
-  if (fate === "unconfirmed") return "Answer saved on VPS; the original Mac request is gone. Application is unconfirmed.";
+  if (fate === "saved") return "Answer saved at home; delivery to the machine is pending.";
+  if (fate === "applied") return "Answer applied on the machine.";
+  if (fate === "unconfirmed") return "Answer saved at home; the original machine request is gone. Application is unconfirmed.";
   return null;
 }
 
-export const EXECUTOR_ASK_UNCERTAIN = "This request is still pending. Its current availability on Mac is unknown.";
+export const EXECUTOR_ASK_UNCERTAIN = "This request is still pending. Its current availability on this machine is unknown.";

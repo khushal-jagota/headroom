@@ -89,6 +89,7 @@
 
   let {
     locale,
+    machineId,
     conversationId = null,
     ownerLoading = false,
     persistenceKey,
@@ -110,6 +111,7 @@
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     locale?: TicketLocale;
+    machineId?: string;
     conversationId?: string | null;
     /** The owner is still reading which conversation belongs here. */
     ownerLoading?: boolean;
@@ -167,6 +169,8 @@
       [locale, startValues?.workspace_folder, startValues?.workspace_path_policy], true), staleTime: 0});
   }
 
+  const machines = createQuery(() => ({...queries.machines(), enabled: !!machineId}), () => queryClient);
+  const destinationName = $derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "the machine");
   let remote = $derived(locale === "macos");
   const healthQuery = createQuery(() => ({...queries.executorHealth(), enabled:remote}), () => queryClient);
   let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
@@ -870,7 +874,7 @@
     try {
       const { fate } = await answerPermissionAsk(openedId, askId, optionId);
       askNote = fate !== "refused"
-        ? fate === "saved" ? "Answer saved on VPS; delivery to Mac is pending." : null
+        ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
         : "The backend did not take that answer. Cancelling the turn always works.";
       await refreshView();
     } catch (error) {
@@ -889,7 +893,7 @@
     try {
       const { fate } = await answerUserInput(openedId, requestId, answers);
       askNote = fate !== "refused"
-        ? fate === "saved" ? "Answer saved on VPS; delivery to Mac is pending." : null
+        ? fate === "saved" ? `Answer saved at home; delivery to ${destinationName} is pending.` : null
         : "The backend did not take those answers. You can try again or stop the turn.";
       await refreshView();
     } catch (error) {

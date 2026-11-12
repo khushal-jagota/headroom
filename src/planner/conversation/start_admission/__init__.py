@@ -20,6 +20,7 @@ from planner.conversation.start_admission.contracts import (
     StartSnapshot,
 )
 from planner.execution_identity import ChildReference, TurnToken
+from planner.machines.contracts import HOME_MACHINE_ID
 
 manual_start_exempt: ContextVar[bool] = ContextVar("manual_start_exempt", default=False)
 
@@ -60,7 +61,7 @@ class AutomaticStartAdmission:
         self._eligibility_sequence = 0
         self._requests: dict[str, _Reservation] = {}
         self._observed_turns: dict[str, int] = {}
-        self._reachable: Callable[[str], bool] = lambda destination: destination == "home"
+        self._reachable: Callable[[str], bool] = lambda destination: destination == HOME_MACHINE_ID
 
     def configure_destinations(self, reachable: Callable[[str], bool]) -> None:
         with self._lock:

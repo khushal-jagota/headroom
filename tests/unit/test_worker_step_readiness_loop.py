@@ -38,6 +38,7 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.database_modules import attach
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     MEMORY_LOSS_NOTICE,
@@ -1073,9 +1074,15 @@ def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: s
     own_guidance = "Guidance this Ticket copied, which its Worker type no longer holds."
     with world.connect() as conn:
         conn.execute(
-            "UPDATE tickets SET locale=?, workflow_json=json_set(workflow_json, '$.guidance', ?) "
+            "UPDATE tickets SET locale=?, machine_id=?, "
+            "workflow_json=json_set(workflow_json, '$.guidance', ?) "
             "WHERE id=?",
-            (locale, own_guidance, ticket_id),
+            (
+                locale,
+                ORIGINAL_MAC_MACHINE_ID if locale == "macos" else HOME_MACHINE_ID,
+                own_guidance,
+                ticket_id,
+            ),
         )
         conn.commit()
     started = world.start_step(ticket_id)
@@ -1315,7 +1322,9 @@ def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(
         now = [0.0]
         present = [True]
         starts = AutomaticStartAdmission(clock=lambda: now[0])
-        starts.configure_destinations(lambda destination: destination == "home" or present[0])
+        starts.configure_destinations(
+            lambda destination: destination == HOME_MACHINE_ID or present[0]
+        )
         world.conversations = AdmissionConversations(starts)
         remote_ids = []
         for number in range(3):
@@ -1324,7 +1333,8 @@ def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(
             conversation_id = f"remote-c{number}"
             with closing(connect(world.db_path)) as conn:
                 conn.execute(
-                    "UPDATE tickets SET locale='macos',worker_step_claim='out',"
+                    f"UPDATE tickets SET locale='macos',machine_id='{ORIGINAL_MAC_MACHINE_ID}',"
+                    "worker_step_claim='out',"
                     "worker_step_claim_revision=1,conversation_id=? WHERE id=?",
                     (conversation_id, ticket_id),
                 )
@@ -1332,7 +1342,7 @@ def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(
             endpoint.runs.store.register_child(child, "ticket", ticket_id, 1)
             token = TurnToken(conversation_id, 1)
             sender = f"worker_step_message_{ticket_id}:1"
-            assert starts.try_start(StartRequest(sender, "worker", "macos"))
+            assert starts.try_start(StartRequest(sender, "worker", ORIGINAL_MAC_MACHINE_ID))
             starts.bind((sender,), token)
             starts.persist_bindings(world.db_path, token)
             await endpoint.mailbox.put_child_command(

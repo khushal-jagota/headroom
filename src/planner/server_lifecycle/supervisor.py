@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import errno
-import fcntl
 import os
 import selectors
 import signal
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import Final
 
 from planner.core.config import load_config
+from planner.platform_runtime.selection import get_platform_adapter
 from planner.server_lifecycle.contracts import (
     SERVER_CONTROL_PROTOCOL_VERSION,
     ServerControlResponse,
@@ -91,7 +91,7 @@ class PortScopedServerLifecycleLease:
     def acquire(self) -> None:
         descriptor = os.open(self._path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            get_platform_adapter().lock_exclusive(descriptor, nonblocking=True)
         except OSError as exc:
             os.close(descriptor)
             if exc.errno in {errno.EACCES, errno.EAGAIN}:
@@ -104,7 +104,7 @@ class PortScopedServerLifecycleLease:
     def release(self) -> None:
         if self._descriptor is None:
             return
-        fcntl.flock(self._descriptor, fcntl.LOCK_UN)
+        get_platform_adapter().unlock(self._descriptor)
         os.close(self._descriptor)
         self._descriptor = None
 
@@ -230,21 +230,8 @@ class ServerSupervisor:
         environment["PLAN_SERVER_CONTROL_SOCKET"] = str(self._control_socket_path)
         original_mask = sorted(int(item) for item in self._signals.child_signal_mask)
         try:
-            listener_fd = environment.get("PLAN_SERVER_LISTENER_FD")
-            pass_fds = (int(listener_fd),) if listener_fd is not None else ()
-            self._application_child = subprocess.Popen(
-                [
-                    self._interpreter,
-                    "-c",
-                    "import os,signal,sys; "
-                    f"signal.pthread_sigmask(signal.SIG_SETMASK, {original_mask!r}); "
-                    "os.execv(sys.executable, [sys.executable, '-m', "
-                    "'planner.server_lifecycle.application'])",
-                ],
-                cwd=self._launch_root,
-                env=environment,
-                start_new_session=True,
-                pass_fds=pass_fds,
+            self._application_child = get_platform_adapter().spawn_application_child(
+                self._interpreter, self._launch_root, environment, original_mask
             )
         except OSError as exc:
             raise ServerLifecycleError(f"Could not start the Panels application: {exc}") from exc
@@ -363,12 +350,7 @@ class ServerSupervisor:
         if child.poll() is not None:
             self._drain_signal_pipe(self._signals.read_fd)
             return True
-        # Linux can expose a zombie before waitpid reports it after the supervisor resumes.
-        try:
-            process_state = Path(f"/proc/{child.pid}/stat").read_text().rpartition(") ")[2]
-        except OSError:
-            return False
-        if process_state.startswith("Z "):
+        if get_platform_adapter().process_is_zombie(child.pid):
             self._drain_signal_pipe(self._signals.read_fd)
             return True
         return False

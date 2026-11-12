@@ -88,6 +88,8 @@ from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
 from planner.ideas.api import router as ideas_router
 from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
+from planner.machines.api import router as machines_router
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
 from planner.measure_sources.participants import SlotParticipantFactory
@@ -337,7 +339,13 @@ def create_app(
                     )
                     remote_presence = executor_endpoint.presence
                     conversation.system.start_admission.configure_destinations(
-                        lambda destination: destination == "home" or remote_presence.is_present()
+                        lambda destination: (
+                            destination == HOME_MACHINE_ID
+                            or (
+                                destination == ORIGINAL_MAC_MACHINE_ID
+                                and remote_presence.is_present()
+                            )
+                        )
                     )
                     executor_endpoint.mailbox.start_admission = conversation.system.start_admission
                     await executor_endpoint.start()
@@ -433,15 +441,18 @@ def create_app(
                             participants_factory=slot_participants_for_test,
                         )
 
-                    from planner.environments.vps_metrics.collectors import LinuxCollector
                     from planner.environments.vps_metrics.data import Store
+                    from planner.platform_runtime.selection import get_platform_adapter
 
                     metrics_config = load_metrics_config()
                     metrics_path = store_path(config.db_path)
                     metrics = MetricsRuntime(
                         metrics_path,
                         Store(metrics_path, metrics_config),
-                        None if config.test_mode else LinuxCollector(metrics_config),
+                        (
+                            None if config.test_mode
+                            else get_platform_adapter().metrics_collector(metrics_config)
+                        ),
                         metrics_config,
                     )
                     app.state.vps_metrics = metrics
@@ -547,7 +558,12 @@ def create_app(
     # Only an installed release under <current_root>/app installs its own updates.
     installed_app = bool(config.app_sha) and _REPO_ROOT == current_root / "app"
     # The installer restarts the unit this server runs in, and nothing else.
-    service_unit = own_service_unit() if installed_app else None
+    from planner.platform_runtime.selection import get_platform_adapter
+
+    update_unavailable_reason = get_platform_adapter().update_unavailable_reason
+    service_unit = (
+        own_service_unit() if installed_app and update_unavailable_reason is None else None
+    )
     update_attempts = FileUpdateAttemptStore(attempt_path(data_directory))
     import_legacy_request(update_attempts, data_directory, config.app_sha)
     update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
@@ -569,6 +585,7 @@ def create_app(
         current_app_sha=config.app_sha,
         health_url=f"http://{HOST}:{config.port}/api/health",
         service_unit=service_unit or "",
+        unavailable_reason=update_unavailable_reason,
         prepare_mac_update=app.state.mac_updates.prepare,
         mac_phase=app.state.mac_updates.phase,
         mac_reported_at=app.state.mac_updates.reported_at,
@@ -603,6 +620,7 @@ def create_app(
     for domain_router in (
         updates_router,
         tickets_router,
+        machines_router,
         ticket_workspace_router,
         resource_versions_router,
         artifact_catalog_router,

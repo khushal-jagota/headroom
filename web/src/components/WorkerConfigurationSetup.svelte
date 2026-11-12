@@ -1,8 +1,8 @@
 <script lang="ts">
   import { queries } from "../lib/queryCatalogue";
   import type { ConversationStartValues } from "../lib/conversation/wire";
-  import { machineName, type TicketLocale } from "../lib/ticketMachines";
-  import MachineSymbol from "./machines/MachineSymbol.svelte";
+  import { type TicketLocale } from "../lib/ticketMachines";
+  import MachineIdentity from "./machines/MachineIdentity.svelte";
   import SkeletonRegion from "./SkeletonRegion.svelte";
   import { createEmployeeConfigurationEditor } from "../lib/conversation/employeeConfigurationEditor.svelte";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
@@ -12,6 +12,7 @@
 
   let {
     destination,
+    machineId,
     locked = false,
     workspace,
     ticketId,
@@ -21,6 +22,7 @@
     onSave
   }: {
     destination?: TicketLocale;
+    machineId?: string;
     locked?: boolean;
     workspace?: ConversationStartValues | null;
     ticketId: string;
@@ -48,7 +50,7 @@
   data-employee-configuration-reasoning={editor.selected.employee_launch_reasoning_effort ?? ""}
 >
   <span class="employee-configuration-key">runs on</span>
-  {#if destination}<span class="machine" aria-label={`Runs on ${machineName(destination)}`}><MachineSymbol locale={destination} />{machineName(destination)}</span>{/if}
+  {#if destination}<MachineIdentity locale={destination} {machineId} showName />{/if}
   <UnifiedModelPicker
     view={editor.picker}
     bind:snapshots={editor.backends}
@@ -89,7 +91,6 @@
 
 <style>
   .employee-configuration-setup { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .machine { display:inline-flex; align-items:center; gap:var(--space-2); }
   .employee-configuration-key {
     color: var(--text-muted); font-family: var(--font-mono); font-size: var(--type-xs);
   }

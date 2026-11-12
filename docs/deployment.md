@@ -33,6 +33,10 @@ The host supplies the glibc loader and a short named list of system libraries, N
 
 Actual Claude and Codex conversations use owner-maintained CLIs outside the release. App installation does not change those versions. SDK dependencies keep their API pins, while CLI qualification checks the protocol that Panels uses instead of an exact version number. These checks cannot guarantee compatibility with every future CLI update. See [Conversations](conversations.md) for the owner update controls.
 
+The platform adapter owns the Linux service identity, independent installer launch, and installer source. The copied installer stays self-contained and uses only the standard library. It keeps the same stop, swap, start, health, and rollback sequence.
+
+The update barrier remains separate work. Current updates close admission and take any schema backup before the installer stops the service. A later change must join confirmed child retirement, acknowledged-result settlement, and the snapshot before it can claim no-loss rollback. A queue drain alone does not prove process retirement.
+
 ## How an install happens
 
 **Getting ready.** On its usual one-minute check, the server looks for the newest successful publication from `main`. For a release it is not running, it streams the archive to disk, checks its fingerprint against the receipt once, and unpacks it beside the live app on the same disk. It checks that the unpacked release names itself as the receipt does and that the host meets its runtime contract, and keeps the matching Mac runtime. Only then does the card show **Update available**. A failed download or check is tried again on the next pass and never shows as an error. Only one waiting release is kept.
@@ -99,8 +103,8 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 
 - `.github/workflows/deploy.yml`: publication, the install rehearsal, and the bridge `adopt` job. `recover-private-route.yml`: route repair.
 - `src/planner/environments/update_provider.py`: reading publications and streaming downloads. `update_service.py`, `update_api.py`: getting ready, the press, and the card's state.
-- `src/planner/environments/update_attempts.py`: the attempt record. `update_install.py`: the schema and backup decision and the installer's start. `update_installer.py`: the installer.
-- `src/planner/environments/runtime_packaging.py`, `runtime_contracts.py`, `runtime_admission.py`, and `scripts/runtime_target_proof.py`: the private runtime and host contract.
+- `src/planner/environments/update_attempts.py`: the attempt record. `update_install.py`: the schema and backup decision and the installer's start. `src/planner/platform_runtime/linux/update_installer.py`: the standalone installer.
+- `src/planner/platform_runtime/`: shared contracts and selection, with Linux native packaging, contract validation, and service operations. `src/planner/environments/runtime_admission.py` and `scripts/runtime_target_proof.py` coordinate runtime proof.
 - `src/planner/environments/mac_updates.py`: the Mac target and its progress.
 - `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the card.
 - `scripts/dev`, `scripts/development_safety/`: the worktree guard.

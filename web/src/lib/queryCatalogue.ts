@@ -50,6 +50,7 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 }
 
 export const queries = {
+  machines: () => ({...jsonQuery<import("./machines/contracts").MachinesResponse>(["machines"], "/api/machines"), refetchInterval: MACHINE_HEALTH_POLL_MS, retry: false}),
   backends: (refresh = false) => queryOptions<BackendSnapshot[]>({
     queryKey: ["backends"], queryFn: () => readBackends(refresh), staleTime: Infinity, retry: false
   }),

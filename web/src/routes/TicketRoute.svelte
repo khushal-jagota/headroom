@@ -3,7 +3,7 @@
   import MacStatus from "../components/machines/MacStatus.svelte";
   import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
   import MachineIdentity from "../components/machines/MachineIdentity.svelte";
-  import { machineName } from "../lib/ticketMachines";
+
   import { onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
@@ -336,7 +336,7 @@
           <div class="worker-eyebrow page-eyebrow page-band-place" data-ticket-identity>
             <!-- Where the Ticket runs leads the line, as its icon alone; the machine's name is
                  the mark's accessible name and tooltip. -->
-            <span class="worker-machine" title={`Runs on ${machineName(masthead.locale)}`}><MachineIdentity locale={masthead.locale} /></span>
+            <span class="worker-machine"><MachineIdentity machineId={masthead.machine_id} locale={masthead.locale} showName /></span>
             <span data-project-fact>{masthead.project || "No project"}</span>
             <span class="page-eyebrow-sep" aria-hidden="true">·</span>
             <span data-ticket-type>{mastheadTypeLabel}</span>
@@ -356,7 +356,7 @@
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
               /></h1>
-              <span class="ticket-title-mark"><MachineActivityMark working={false} agentHold={detail} locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} /></span>
+              <span class="ticket-title-mark"><MachineActivityMark machineId={masthead.machine_id} working={false} agentHold={detail} locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} /></span>
             </div>
             <RecapSlot>
             {#snippet children()}
@@ -381,7 +381,7 @@
             <!-- What became of an ask for a recap reads under the recap, as staging. -->
             {#if recapNote}<p class="ticket-recap-note" role="status" data-request-recap-note>{recapNote}</p>{/if}
           </div>
-          {#if masthead.locale === "macos"}<MacStatus health={machineHealth.isError ? undefined : machineHealth.data} ticket={{ticket_status: detail.ticket_status, locale: masthead.locale, conversation_signal: masthead.conversation_signal}} />{/if}
+          {#if masthead.locale === "macos"}<MacStatus machineId={masthead.machine_id} health={machineHealth.isError ? undefined : machineHealth.data} ticket={{ticket_status: detail.ticket_status, locale: masthead.locale, conversation_signal: masthead.conversation_signal}} />{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
               <span class="ticket-blocker-heading">Blocked by</span>
@@ -409,7 +409,7 @@
           {#snippet kickoffContextRow()}
             {#if detail.employee_configuration_editable}
               {#key JSON.stringify([stableId, detail.locale, conversationStartValues.data?.workspace_folder, conversationStartValues.data?.workspace_path_policy])}
-              <WorkerConfigurationSetup destination={detail.locale} ticketId={stableId} employeeBackend={detail.employee_backend}
+              <WorkerConfigurationSetup destination={detail.locale} machineId={masthead.machine_id} ticketId={stableId} employeeBackend={detail.employee_backend}
                 employeeLaunchModel={detail.employee_launch_model} employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
                 workspace={conversationStartValues.data}
                 onSave={saveEmployeeConfiguration} />
@@ -502,7 +502,7 @@
         data-conversation-layer-host
       >
         <div class="conversation-column">
-          <LiveConversation locale={masthead.locale}
+          <LiveConversation machineId={masthead.machine_id} locale={masthead.locale}
             bind:conversationState
             conversationId={shownConversationId}
             bind:selectedPastConversationId
@@ -533,7 +533,7 @@
   .ticket-title-row { display:block; margin-top:var(--space-1); }
   .ticket-recap-note { margin:var(--space-2) 0 0; color:var(--tone-tertiary); font-size:var(--type-small); line-height:18px; }
   .worker-machine { display:inline-flex; align-items:center; margin-right:6px; color:var(--tone-tertiary); }
-  .worker-machine :global(.machine-identity) { width:14px; height:14px; color:inherit; }
+
   /* The title and a fixed 16px mark column, centred on the title's first line. */
   /* As staging: the title, then its marks right after its words. */
   .ticket-title { display:flex; align-items:flex-start; gap:var(--space-3); }

@@ -44,6 +44,7 @@ export interface TicketValue {
   gating_field: string | null;
   terminal: boolean;
   locale: string;
+  machine_id: string;
 }
 
 export interface NavigationTicketIntegrityIssue {
@@ -64,6 +65,7 @@ export interface BrokenTicketValue {
   manager_id: string | null;
   conversation_id: string | null;
   locale: string;
+  machine_id: string;
   updated_at: number;
   created_at: number;
   is_backlogged: boolean;
@@ -395,6 +397,7 @@ export interface ViewTicketValue {
   gating_field: string | null;
   terminal: boolean;
   locale: string;
+  machine_id: string;
   recap_reference: ViewContentReference | null;
 }
 
@@ -412,6 +415,7 @@ export interface ViewBrokenTicketValue {
   manager_id: string | null;
   conversation_id: string | null;
   locale: string;
+  machine_id: string;
   updated_at: number;
   created_at: number;
   is_backlogged: boolean;
