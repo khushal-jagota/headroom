@@ -12,6 +12,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from planner.skill_sources import (
+    account_skill_homes,
+    account_skill_provisioning_conflict,
+    panels_skill_root,
+)
+
 SOURCE = Path(__file__).resolve().parents[1]
 
 
@@ -44,7 +50,15 @@ def write_home(
     for name in ("data", "logs", "agents", "workspaces"):
         (root / name).mkdir(mode=0o700)
     config = root / "data/config.yaml"
-    config.write_text(json.dumps({"workspace_root": str(root / "workspaces")}) + "\n")
+    config.write_text(
+        json.dumps(
+            {
+                "workspace_root": str(root / "workspaces"),
+                "provision_account_skills": not isolated_providers,
+            }
+        )
+        + "\n"
+    )
     config.chmod(0o600)
     environment = {
         "HOME": str(Path.home()),
@@ -76,6 +90,19 @@ def write_home(
         else:
             configured = os.environ.get(variable) or str(Path.home() / folder)
         environment[variable] = str(Path(configured).expanduser().resolve())
+    if not isolated_providers:
+        seed_names = tuple(
+            sorted(
+                path.name
+                for path in panels_skill_root().iterdir()
+                if path.is_dir() and (path / "SKILL.md").is_file()
+            )
+        )
+        conflict = account_skill_provisioning_conflict(
+            root / "data", account_skill_homes(environment), skill_names=seed_names
+        )
+        if conflict is not None:
+            print(f"Warning: {conflict}")
     common: dict[str, object] = {
         "WorkingDirectory": str(source),
         "EnvironmentVariables": environment,

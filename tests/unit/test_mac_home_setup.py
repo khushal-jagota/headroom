@@ -8,9 +8,11 @@ from pathlib import Path
 import pytest
 from scripts.mac_home_setup import write_home
 
+from planner.core.config import load_config
+
 
 def test_service_and_backup_keep_one_record_with_space_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # No existing test covers generated launchd jobs. A wrong backup source or
     # shell-split interpreter could silently omit the running home's record.
@@ -24,7 +26,24 @@ def test_service_and_backup_keep_one_record_with_space_paths(
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setenv("PLAN_HERMES_HOME", str(hermes_home))
+    warning = (
+        "Only one Panels instance can own account skills per OS account. Use a separate OS account."
+    )
+    monkeypatch.setattr(
+        "scripts.mac_home_setup.account_skill_provisioning_conflict",
+        lambda *args, **kwargs: warning,
+    )
     write_home(root, source, "com.panels.test", 9876, "a" * 40)
+    assert f"Warning: {warning}" in capsys.readouterr().out
+    config_path = str(root / "data/config.yaml")
+    assert load_config(config_path, env={}).provision_account_skills is True
+    assert (
+        load_config(
+            config_path, env={"PLAN_PROVISION_ACCOUNT_SKILLS": "0"}
+        ).provision_account_skills
+        is False
+    )
+    assert load_config(str(tmp_path / "absent.yaml"), env={}).provision_account_skills is None
     home = plistlib.loads((root / "agents/com.panels.test.plist").read_bytes())
     backup = plistlib.loads((root / "agents/com.panels.test.backup.plist").read_bytes())
     environment = home["EnvironmentVariables"]
@@ -58,6 +77,11 @@ def test_service_and_backup_keep_one_record_with_space_paths(
     isolated = plistlib.loads((isolated_root / "agents/com.panels.isolated.plist").read_bytes())[
         "EnvironmentVariables"
     ]
+    assert (
+        load_config(str(isolated_root / "data/config.yaml"), env={}).provision_account_skills
+        is False
+    )
+    assert capsys.readouterr().out == ""
     for variable, folder in (
         ("CODEX_HOME", "codex"),
         ("CLAUDE_CONFIG_DIR", "claude"),
@@ -68,13 +92,16 @@ def test_service_and_backup_keep_one_record_with_space_paths(
         assert list(provider.iterdir()) == []
 
 
-def test_existing_root_is_not_reconfigured(tmp_path: Path) -> None:
+def test_existing_root_is_not_reconfigured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Regeneration must not repoint an existing home's service and backup paths.
     source = tmp_path / "source"
     interpreter = source / ".venv/bin/python"
     interpreter.parent.mkdir(parents=True)
     interpreter.touch()
     root = tmp_path / "state"
+    monkeypatch.setattr(
+        "scripts.mac_home_setup.account_skill_provisioning_conflict", lambda *args, **kwargs: None
+    )
     write_home(root, source, "com.panels.test", 9876, "a" * 40)
     plist = root / "agents/com.panels.test.plist"
     original = plist.read_bytes()

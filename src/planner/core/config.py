@@ -75,6 +75,8 @@ class Config:
     # Both unset: no Ticket scratch is ever removed.
     ticket_scratch_root: Path | None = None
     ticket_scratch_database: str | None = None
+    # None preserves installed-release provisioning. Source home setup selects explicitly.
+    provision_account_skills: bool | None = None
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -297,6 +299,9 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
 
     data_directory = installation_data_directory(Path("."))
     db_path = _str_value(cfg, env, "db_path", "PLAN_DB_PATH", str(data_directory / "planning.db"))
+    account_skills = cfg.get("provision_account_skills")
+    if "PLAN_PROVISION_ACCOUNT_SKILLS" in env:
+        account_skills = env["PLAN_PROVISION_ACCOUNT_SKILLS"]
     credential_key_path = _str_value(
         cfg,
         env,
@@ -306,6 +311,11 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
     )
     return Config(
         db_path=db_path,
+        provision_account_skills=(
+            None
+            if account_skills is None
+            else _parse_bool(account_skills, "provision_account_skills")
+        ),
         workspace_root=_workspace_root_value(cfg, env),
         ticket_scratch_root=_existing_directory_value(
             cfg, env, "ticket_scratch_root", "PLAN_TICKET_SCRATCH_ROOT"

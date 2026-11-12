@@ -3,6 +3,8 @@
 This path runs one Panels home in your graphical login session. The Mac holds its record.
 Logout stops the home. Sleep makes it unreachable. Tailscale supplies remote HTTPS access.
 This slice has no release install, update, previews, metrics, maintenance schedule, or watchdog schedule.
+One Panels instance can own the account skills in one OS account.
+Use a separate OS account for another instance, including an executor with a different record.
 
 ## Prepare the source
 
@@ -50,18 +52,18 @@ It retains explicitly configured `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and `PLAN_HE
 Without those variables, it uses `~/.codex`, `~/.claude`, and `~/.hermes`.
 If you use custom provider folders, export their existing paths before the setup command.
 
-The source home currently projects managed skills under `$PANELS_ROOT/workspaces/.agents/skills`.
-Local Ticket Workers start under `$PANELS_ROOT/data/files/tickets/` and do not receive that projection.
-A Worker can read another instance's account skills, or find no Panels skills at all.
-The install is not yet a usable Worker home until its own skill authority reaches the actual Worker context.
-Source startup does not provision account-wide skill links in the shared provider homes.
-For a coexistence check, use the canonical provider home and compare the live executor's setup and skills before and after.
-Do not copy `auth.json` or change login, provider configuration, or global skill links for that check.
+The source home sets `provision_account_skills: true` and provisions its own managed skills into the native provider homes.
+This is the same account-wide skill delivery that an installed Linux home uses.
+Setup and startup check existing Panels skill links before any account skill write.
+If another instance owns those links, setup prints a warning and startup repeats it.
+The server can still start, but its Workers cannot own their skills until you use a separate OS account.
+Neither setup nor startup replaces the other instance's account links.
 
 For a disposable test, add `--isolated-providers` to the setup command.
 This explicit test option creates empty provider folders under the state root. It does not create a login.
-For one real Codex Worker in that test, set only its home plist's `CODEX_HOME` to the existing canonical provider directory.
-Use that directory directly. Do not copy or symlink credentials, perform a second login, or provision account-wide skills.
+It sets `provision_account_skills: false` and does not provision account-wide skills.
+A test can read another instance's existing skills. This exception is for tests only and does not establish its own skill authority.
+Do not copy or symlink credentials, perform a second login, or change an existing executor's skill setup for a test.
 
 For Hermes, add `PLAN_HERMES_PYTHON` to the home plist's environment with its installed interpreter path.
 See the repository README for provider prerequisites. Select the provider in Panels before the first Worker.
@@ -145,6 +147,7 @@ Set only the explicit scratch paths below. Keep dispatch disabled and test mode 
   PLAN_SERVER_LIFECYCLE_LEASE_PATH="$PANELS_RESTORE/lifecycle.lock" \
   PLAN_SERVER_CONTROL_SOCKET= \
   PLAN_APP_SHA="$(git rev-parse HEAD)" \
+  PLAN_PROVISION_ACCOUNT_SKILLS=0 \
   PLAN_PORT=8768 PLAN_DISPATCH_ENABLED=0 PLAN_TEST_MODE=1 \
   .venv/bin/python -m planner serve
 )
