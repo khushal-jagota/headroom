@@ -65,6 +65,14 @@ class InspectionContext:
     host: LocalHostBootIdentity
 
 
+@dataclass(frozen=True, slots=True)
+class ProcessObservation:
+    stable: dict[int, WorkerProcess]
+    children: dict[int, list[WorkerProcess]]
+    sessions: dict[int, list[WorkerProcess]]
+    latest_sessions: dict[int, list[WorkerProcess]]
+
+
 class WorkerProcessPrimitives(Protocol):
     owns_isolated_session_members: bool
 

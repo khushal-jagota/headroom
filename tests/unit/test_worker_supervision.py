@@ -24,8 +24,12 @@ from planner.worker_supervision.contracts import WorkerProcess
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native priority and pidfd cleanup proof")
-def test_launch_priority_and_recorded_detached_tool_cleanup(tmp_path: Path) -> None:
+def test_launch_priority_and_recorded_detached_tool_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """One real launch proves priority before exec and custody after a tool detaches."""
+
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.1)
 
     async def run() -> None:
         hostile = tmp_path / "ticket-code"
@@ -143,6 +147,9 @@ class _Primitives:
     def snapshot(self, deadline: float) -> dict[int, WorkerProcess]:
         return self.table
 
+    def prepare_launch(self) -> None:
+        pass
+
     def is_absent(self, process: WorkerProcess, deadline: float) -> bool:
         current = self.table.get(process.pid)
         return current is None or current.birth != process.birth or current.zombie
@@ -201,6 +208,8 @@ def test_stop_deadline_retains_uncertainty(tmp_path: Path, monkeypatch: pytest.M
 
     clock = Clock()
     monkeypatch.setattr("planner.worker_supervision.time", clock)
+    monkeypatch.setattr("planner.worker_supervision.observation.time", clock)
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0)
     monkeypatch.setattr("planner.worker_supervision.records.time", clock)
     phase_times: list[float] = []
     original_signal = native.signal
@@ -554,6 +563,8 @@ def test_refused_signal_waits_for_fresh_absence(
 
     timer = SimpleNamespace(monotonic=lambda: clock[0], sleep=settles)
     monkeypatch.setattr("planner.worker_supervision.time", timer)
+    monkeypatch.setattr("planner.worker_supervision.observation.time", timer)
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0)
     monkeypatch.setattr("planner.worker_supervision.records.time", timer)
     result = stop_record(path)
     assert result.complete
@@ -677,6 +688,8 @@ def test_reconciliation_finishes_later_ticket_after_first_ticket_stays_uncertain
         monotonic=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)
     )
     monkeypatch.setattr("planner.worker_supervision.time", timer)
+    monkeypatch.setattr("planner.worker_supervision.observation.time", timer)
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0)
     monkeypatch.setattr("planner.worker_supervision.records.time", timer)
     monkeypatch.setattr("planner.worker_supervision.get_platform_adapter", lambda: _Adapter(native))
     monkeypatch.setattr(native, "host_boot", host)
@@ -732,6 +745,8 @@ def test_batch_filters_healthy_sources_and_gives_each_record_a_fresh_budget(
 
     timer = SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda seconds: None)
     monkeypatch.setattr("planner.worker_supervision.time", timer)
+    monkeypatch.setattr("planner.worker_supervision.observation.time", timer)
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0)
     monkeypatch.setattr("planner.worker_supervision.records.time", timer)
     monkeypatch.setattr("planner.worker_supervision.get_platform_adapter", lambda: _Adapter(native))
     monkeypatch.setattr(native, "host_boot", host)
@@ -770,3 +785,501 @@ def test_linux_claims_late_isolated_session_member_and_signals_exact_process(
     assert any(
         item["pid"] == 30 and item["birth"] == "late" for item in records.read(path)["processes"]
     )
+
+
+def test_shared_round_indexes_once_and_retains_only_changed_custody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """More Workers cannot multiply inventories, indexes, or unchanged journal writes."""
+    import threading
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext
+
+    table = {pid: WorkerProcess(pid, str(pid), 1, pid, pid) for pid in range(20, 1520)}
+    native = _Primitives(table)
+    context = InspectionContext(native, native.host_boot(time.monotonic() + 1))
+    snapshots = 0
+    indexes = 0
+    writes = 0
+    original_index = observation.index_processes
+    original_write = records.write
+
+    def snapshot(deadline: float) -> dict[int, WorkerProcess]:
+        nonlocal snapshots
+        snapshots += 1
+        return table
+
+    def index(
+        table: dict[int, WorkerProcess],
+    ) -> tuple[dict[int, list[WorkerProcess]], dict[int, list[WorkerProcess]]]:
+        nonlocal indexes
+        indexes += 1
+        return original_index(table)
+
+    def write(path: Path, value: dict[str, object]) -> None:
+        nonlocal writes
+        writes += 1
+        original_write(path, value)
+
+    supervisors = []
+    for number in range(20):
+        path = tmp_path / (f"{number:032x}.json")
+        root = table[20 + number]
+        records.write(
+            path,
+            {
+                "version": 1,
+                "ticket_id": str(number),
+                "host": "host",
+                "boot": "boot",
+                "root": asdict(root),
+                "processes": [asdict(root)],
+                "isolated": True,
+                "state": "running",
+                "unattributed_session_members": [],
+            },
+        )
+        supervisor = object.__new__(WorkerSupervisor)
+        supervisor.path = path
+        supervisor._lock = threading.Lock()
+        supervisor._end = threading.Event()
+        supervisors.append(supervisor)
+    monkeypatch.setattr(native, "snapshot", snapshot)
+    monkeypatch.setattr(observation, "index_processes", index)
+    monkeypatch.setattr("planner.worker_supervision.index_processes", index)
+    monkeypatch.setattr(records, "write", write)
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.01)
+    observer = observation.SharedProcessObserver(lambda deadline: context)
+    finished = threading.Event()
+    delivered = 0
+
+    def callback(supervisor: WorkerSupervisor) -> observation.ObservationCallback:
+        def apply(context: InspectionContext | None, pair: object) -> None:
+            nonlocal delivered
+            from planner.worker_supervision.contracts import ProcessObservation
+
+            assert isinstance(pair, ProcessObservation)
+            supervisor._observe_periodic(context, pair)
+            delivered += 1
+            if delivered == len(supervisors):
+                for member in supervisors:
+                    observer.unregister(member.path)
+                finished.set()
+
+        return apply
+
+    # A busy journal must not prevent the other nineteen records from observation.
+    with records.locked(supervisors[0].path, time.monotonic() + 1):
+        for supervisor in supervisors:
+            observer.register(supervisor.path, callback(supervisor))
+        thread = observer._thread
+        assert thread is not None
+        try:
+            assert finished.wait(1)
+        finally:
+            for supervisor in supervisors:
+                observer.unregister(supervisor.path)
+            thread.join(1)
+    assert not thread.is_alive()
+    assert snapshots == 2 and indexes == 2 and writes == 0
+    child = WorkerProcess(1600, "child", 21, 21, 21)
+    table[child.pid] = child
+    pair = observation.capture_observation(context, time.monotonic() + 1)
+    for supervisor in supervisors:
+        supervisor._observe_periodic(context, pair)
+    assert snapshots == 4 and indexes == 4 and writes == 1
+    assert records.read(supervisors[1].path)["processes"][-1] == asdict(child)
+
+
+def test_shared_observer_retires_and_restarts_without_repeated_host_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last stop releases the thread, while each active lifetime shares host evidence."""
+    import threading
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext
+
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.01)
+    context = InspectionContext(_Primitives({}), LocalHostBootIdentity("host", "boot"))
+    host_calls = 0
+    rounds = 0
+    observed = threading.Event()
+
+    def factory(deadline: float) -> InspectionContext:
+        nonlocal host_calls
+        host_calls += 1
+        return context
+
+    def callback(context: InspectionContext | None, pair: object) -> None:
+        nonlocal rounds
+        rounds += 1
+        if rounds >= 2:
+            observed.set()
+
+    observer = observation.SharedProcessObserver(factory)
+    path = tmp_path / "worker"
+    observer.register(path, callback)
+    thread = observer._thread
+    assert thread is not None
+    try:
+        assert observed.wait(1)
+        assert host_calls == 1
+    finally:
+        observer.unregister(path)
+        thread.join(1)
+    assert not thread.is_alive() and observer._thread is None
+    observed.clear()
+    observer.register(path, callback)
+    replacement = observer._thread
+    assert replacement is not None and replacement is not thread
+    try:
+        assert observed.wait(1)
+        assert host_calls == 2
+    finally:
+        observer.unregister(path)
+        replacement.join(1)
+    assert not replacement.is_alive()
+
+
+def test_stop_cannot_leave_a_registration_after_concurrent_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stop and the first observation share a fence against a retained dead callback."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    supervisor = object.__new__(WorkerSupervisor)
+    supervisor.path = tmp_path / "worker"
+    supervisor._lock = threading.Lock()
+    supervisor._end = threading.Event()
+    entered = threading.Event()
+    release = threading.Event()
+    registered: set[Path] = set()
+
+    def observe(path: Path, deadline: float) -> None:
+        entered.set()
+        assert release.wait(1)
+
+    monkeypatch.setattr("planner.worker_supervision._observe", observe)
+    monkeypatch.setattr(
+        "planner.worker_supervision._process_observer",
+        SimpleNamespace(
+            register=lambda path, callback: registered.add(path),
+            unregister=lambda path: registered.discard(path),
+        ),
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        start = pool.submit(supervisor._start_observing)
+        assert entered.wait(1)
+        stop = pool.submit(supervisor._stop_observing)
+        release.set()
+        start.result(timeout=1)
+        stop.result(timeout=1)
+    assert supervisor._end.is_set() and not registered
+    supervisor._start_observing()
+    assert not registered
+
+
+def test_shared_observer_isolates_callback_failures_and_limits_record_error_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A corrupt record cannot end shared observation or flood the server log."""
+    import logging
+    import threading
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext
+
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.01)
+    context = InspectionContext(_Primitives({}), LocalHostBootIdentity("host", "boot"))
+    observer = observation.SharedProcessObserver(lambda deadline: context)
+    paths = [tmp_path / name for name in ("bad-index.json", "bad-depth.json", "healthy.json")]
+    calls = [0, 0, 0]
+    finished = threading.Event()
+
+    def bad_index(context: InspectionContext | None, pair: object) -> None:
+        calls[0] += 1
+        if calls[0] == 2:
+            raise ValueError("different record failure")
+        raise IndexError("invalid record index")
+
+    def bad_depth(context: InspectionContext | None, pair: object) -> None:
+        calls[1] += 1
+        raise RecursionError("invalid record depth")
+
+    def healthy(context: InspectionContext | None, pair: object) -> None:
+        calls[2] += 1
+        if calls[2] == 3:
+            for path in paths:
+                observer.unregister(path)
+            finished.set()
+
+    with caplog.at_level(logging.ERROR, logger=observation.__name__):
+        with observer._condition:
+            for path, callback in zip(paths, (bad_index, bad_depth, healthy), strict=True):
+                observer.register(path, callback)
+            thread = observer._thread
+        assert thread is not None
+        try:
+            assert finished.wait(1)
+        finally:
+            for path in paths:
+                observer.unregister(path)
+            thread.join(1)
+    assert calls == [3, 3, 3]
+    assert not thread.is_alive()
+    errors = [record for record in caplog.records if record.name == observation.__name__]
+    assert len(errors) == 3
+    assert str(paths[0]) in errors[0].getMessage()
+    assert str(paths[1]) in errors[1].getMessage()
+    assert str(paths[0]) in errors[2].getMessage()
+    assert errors[0].exc_info is not None and errors[0].exc_info[0] is IndexError
+    assert errors[1].exc_info is not None and errors[1].exc_info[0] is RecursionError
+    assert errors[2].exc_info is not None and errors[2].exc_info[0] is ValueError
+
+
+def test_register_restarts_a_retained_dead_observer_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retained thread handle cannot permanently suppress observation of new Workers."""
+    import threading
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext
+
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.01)
+    context = InspectionContext(_Primitives({}), LocalHostBootIdentity("host", "boot"))
+    observer = observation.SharedProcessObserver(lambda deadline: context)
+    old_path = tmp_path / "old.json"
+    new_path = tmp_path / "new.json"
+    calls: set[Path] = set()
+    finished = threading.Event()
+
+    def callback(path: Path) -> observation.ObservationCallback:
+        def apply(context: InspectionContext | None, pair: object) -> None:
+            calls.add(path)
+            if len(calls) == 2:
+                observer.unregister(old_path)
+                observer.unregister(new_path)
+                finished.set()
+
+        return apply
+
+    dead_thread = threading.Thread(target=lambda: None)
+    dead_thread.start()
+    dead_thread.join(1)
+    assert not dead_thread.is_alive()
+    observer._thread = dead_thread
+    observer._callbacks[old_path] = callback(old_path)
+    observer.register(new_path, callback(new_path))
+    replacement = observer._thread
+    assert replacement is not None and replacement is not dead_thread
+    try:
+        assert finished.wait(1)
+    finally:
+        observer.unregister(old_path)
+        observer.unregister(new_path)
+        replacement.join(1)
+    assert not replacement.is_alive()
+
+
+def test_stop_observations_share_only_upcoming_pairs_and_preserve_each_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A late cleanup request needs new evidence, and a short leader cannot cancel its peer."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext
+
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0.1)
+    native = _Primitives({})
+    context = InspectionContext(native, LocalHostBootIdentity("cohort-host", "boot"))
+    broker = observation.FreshProcessObservations()
+    key = (type(native), context.host)
+    entered = threading.Event()
+    release = threading.Event()
+    snapshots = 0
+    expire_next = False
+
+    def snapshot(deadline: float) -> dict[int, WorkerProcess]:
+        nonlocal snapshots, expire_next
+        snapshots += 1
+        result = native.table.copy()
+        if snapshots == 1:
+            entered.set()
+            assert release.wait(1)
+        if expire_next:
+            expire_next = False
+            time.sleep(max(0, deadline - time.monotonic()))
+            raise TimeoutError("The leader's inventory budget expired")
+        return result
+
+    monkeypatch.setattr(native, "snapshot", snapshot)
+
+    def await_pending(count: int) -> None:
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            with broker._condition:
+                if len(broker._pending.get(key, ())) == count:
+                    return
+            time.sleep(0.001)
+        pytest.fail("Fresh observation requests did not reach their cohort")
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        first = pool.submit(broker.capture, context, time.monotonic() + 2)
+        await_pending(1)
+        second = pool.submit(broker.capture, context, time.monotonic() + 2)
+        await_pending(2)
+        assert entered.wait(1)
+        late = pool.submit(broker.capture, context, time.monotonic() + 2)
+        await_pending(1)
+        child = WorkerProcess(30, "late-child", 1, 30, 20)
+        native.table[child.pid] = child
+        release.set()
+        first_pair = first.result(timeout=1)
+        assert second.result(timeout=1) is first_pair
+        late_pair = late.result(timeout=1)
+        assert late_pair is not first_pair
+        assert child.pid not in first_pair.stable
+        assert late_pair.stable[child.pid] == child
+        assert snapshots == 4
+
+        expire_next = True
+        short = pool.submit(broker.capture, context, time.monotonic() + 0.3)
+        await_pending(1)
+        expired_peer = pool.submit(broker.capture, context, time.monotonic() + 0.15)
+        await_pending(2)
+        longer = pool.submit(broker.capture, context, time.monotonic() + 2)
+        await_pending(3)
+        with pytest.raises(TimeoutError, match="inspection deadline"):
+            expired_peer.result(timeout=1)
+        with pytest.raises(TimeoutError, match="leader's inventory budget"):
+            short.result(timeout=1)
+        assert longer.result(timeout=1).stable[child.pid] == child
+        assert snapshots == 7
+    assert not broker._pending and not broker._capturing
+
+
+def test_concurrent_stops_leave_the_default_executor_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Long cleanup cannot queue another Stop or database work behind its TERM grace."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from planner.worker_supervision.contracts import CleanupResult
+
+    native = _Primitives({20: WorkerProcess(20, "old", 10, 20, 20)})
+    monkeypatch.setattr("planner.worker_supervision.get_platform_adapter", lambda: _Adapter(native))
+    monkeypatch.setattr(config, "STOP_OBSERVATION_BATCH_SECONDS", 0)
+    original = _record(tmp_path)
+    entered: set[Path] = set()
+    entered_lock = threading.Lock()
+    both_entered = threading.Event()
+    release = threading.Event()
+
+    def cleanup(path: Path, **kwargs: object) -> CleanupResult:
+        with entered_lock:
+            entered.add(path)
+            if len(entered) == 2:
+                both_entered.set()
+        assert release.wait(1), "Long cleanup used the shared executor"
+        return CleanupResult(True, "Fake recorded processes ended")
+
+    monkeypatch.setattr("planner.worker_supervision.stop_record", cleanup)
+
+    async def run() -> None:
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
+        supervisors = []
+        for number in range(2):
+            path = tmp_path / f"{number:032x}.json"
+            records.write(path, records.read(original))
+            supervisor = object.__new__(WorkerSupervisor)
+            supervisor.path = path
+            supervisor._lock = threading.Lock()
+            supervisor._end = threading.Event()
+            supervisors.append(supervisor)
+        tasks = [asyncio.create_task(supervisor.stop()) for supervisor in supervisors]
+        try:
+            # This probe also needs the shared executor. It must run while both
+            # long cleanup calls remain held in their own transient executors.
+            async def wait_for_cleanups() -> None:
+                while not both_entered.is_set():
+                    await asyncio.sleep(0.001)
+
+            await asyncio.wait_for(wait_for_cleanups(), 0.5)
+            assert (
+                await asyncio.wait_for(asyncio.to_thread(lambda: "available"), 0.5) == "available"
+            )
+        finally:
+            release.set()
+            results = await asyncio.gather(*tasks)
+        assert all(result.complete for result in results)
+
+    asyncio.run(run())
+
+
+def test_shared_observer_retries_an_unexpected_inventory_error_on_the_same_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unexpected inventory failure cannot abandon existing Worker registrations."""
+    import logging
+    import threading
+
+    from planner.worker_supervision import observation
+    from planner.worker_supervision.contracts import InspectionContext, ProcessObservation
+
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.01)
+    native = _Primitives({})
+    context = InspectionContext(native, LocalHostBootIdentity("host", "boot"))
+    observer = observation.SharedProcessObserver(lambda deadline: context)
+    path = _record(tmp_path)
+    supervisor = object.__new__(WorkerSupervisor)
+    supervisor.path = path
+    supervisor._lock = threading.Lock()
+    supervisor._end = threading.Event()
+    failed_callbacks = 0
+    finished = threading.Event()
+    callback_threads = []
+    snapshots = 0
+
+    def snapshot(deadline: float) -> dict[int, WorkerProcess]:
+        nonlocal snapshots
+        snapshots += 1
+        if snapshots == 1:
+            raise IndexError("unexpected process inventory shape")
+        return native.table
+
+    def callback(context: InspectionContext | None, pair: ProcessObservation | None) -> None:
+        nonlocal failed_callbacks
+        supervisor._observe_periodic(context, pair)
+        if pair is None:
+            failed_callbacks += 1
+            assert records.read(path)["observation_error"] == "A process observation failed"
+            return
+        assert "observation_error" not in records.read(path)
+        callback_threads.append(threading.current_thread())
+        observer.unregister(path)
+        finished.set()
+
+    monkeypatch.setattr(native, "snapshot", snapshot)
+    with caplog.at_level(logging.ERROR, logger=observation.__name__):
+        observer.register(path, callback)
+        thread = observer._thread
+        assert thread is not None
+        try:
+            assert finished.wait(1)
+        finally:
+            observer.unregister(path)
+            thread.join(1)
+    assert not thread.is_alive()
+    assert snapshots == 3 and failed_callbacks == 1
+    assert callback_threads == [thread]
+    errors = [record for record in caplog.records if record.name == observation.__name__]
+    assert len(errors) == 1 and "shared pass" in errors[0].getMessage()
+    assert errors[0].exc_info is not None and errors[0].exc_info[0] is IndexError
