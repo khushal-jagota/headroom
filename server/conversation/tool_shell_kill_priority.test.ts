@@ -20,13 +20,21 @@ it.skipIf(process.platform !== 'linux')(
         [
           '-c',
           'read -r score < /proc/self/oom_score_adj; printf "%s\\n" "$score"; ' +
-            '/bin/bash -c \'read -r score < /proc/self/oom_score_adj; printf "%s\\n" "$score"\'',
+            'nested_score=$(/bin/bash -c \'read -r score < /proc/self/oom_score_adj; printf "%s\\n" "$score"\'); ' +
+            'printf "%s\\n" "$nested_score"; ' +
+            'if [[ "$score" != 1000 || "$nested_score" != 1000 ]]; then ' +
+            'readable=no; if [[ -r "$BASH_ENV" ]]; then readable=yes; fi; ' +
+            'printf "BASH_ENV=%q readable=%s uid=%s euid=%s\\n" "$BASH_ENV" "$readable" "$UID" "$EUID" >&2; ' +
+            'printf "1000\\n" > /proc/self/oom_score_adj; write_status=$?; ' +
+            'read -r after_write < /proc/self/oom_score_adj; ' +
+            'printf "self_write_status=%s score_after_write=%s\\n" "$write_status" "$after_write" >&2; ' +
+            'fi',
         ],
         { cwd: directory, env: environment, encoding: 'utf8', timeout: 5000 },
       );
       expect(child.error).toBeUndefined();
       expect(child.status).toBe(0);
-      expect(child.stdout).toBe('1000\n1000\n');
+      expect(child.stdout, child.stderr).toBe('1000\n1000\n');
       expect(readFileSync('/proc/self/oom_score_adj', 'utf8')).toBe(before);
     } finally {
       rmSync(directory, { recursive: true, force: true });

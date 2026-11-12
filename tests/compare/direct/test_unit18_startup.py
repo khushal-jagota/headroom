@@ -12,7 +12,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -82,7 +82,7 @@ def _node_environment(root: Path) -> dict[str, str]:
     return environment
 
 
-def _node(spec: dict[str, Any], root: Path) -> dict[str, Any]:
+def _node(spec: dict[str, Any], root: Path) -> dict[str, Any] | list[dict[str, Any]]:
     input_path = root / "input.json"
     input_path.write_text(json.dumps(spec))
     result = subprocess.run(
@@ -105,7 +105,7 @@ def _node(spec: dict[str, Any], root: Path) -> dict[str, Any]:
         timeout=30,
         check=True,
     )
-    return json.loads(result.stdout)
+    return cast(dict[str, Any] | list[dict[str, Any]], json.loads(result.stdout))
 
 
 def test_unit18_containment_bytes(
@@ -254,7 +254,7 @@ def test_unit18_cli_version_errors(
         {"name": "spawn-refused", "stdout": "", "exit_code": 0, "failure": "spawn"},
         {"name": "probe-timeout", "stdout": "", "exit_code": 0, "failure": "timeout"},
     ]
-    spec = {
+    spec: dict[str, Any] = {
         "operation": "versions",
         "cases": cases,
         "executable": "/synthetic/unit18/claude",
