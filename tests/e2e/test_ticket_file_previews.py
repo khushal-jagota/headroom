@@ -469,7 +469,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         "The artifact is ready", timeout=WAIT_MS
     )
     expect(page.locator("[data-conversation-rest-line]")).to_have_text(
-        re.compile(r"^Working(?: · .+)?$"), timeout=WAIT_MS
+        re.compile(r"^Working(?: · [0-9]+(?:s|m(?: [0-9]+s)?))?$"), timeout=WAIT_MS
     )
     if evidence:
         page.screenshot(path=str(Path(evidence) / "chief-working-unread.png"), full_page=True)

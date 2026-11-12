@@ -739,8 +739,6 @@ class SqliteProcessConversationSystem:
                 ids = await self._store.workspace_conversation_ids(ticket_id, identity)
                 for conversation_id in ids:
                     await self.kill(conversation_id)
-                    if not await self.retirement_is_confirmed(conversation_id):
-                        return "Local child retirement is not proven"
                 return await run_on_worker_thread(operation)
             except Exception:
                 LOGGER.exception("Local workspace retirement failed")
@@ -1338,26 +1336,6 @@ class SqliteProcessConversationSystem:
                 state.child_is_quarantined = False
         return CleanupResult(True, "Recorded Worker cleanup is complete")
 
-    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
-        """Require an actual cleanup receipt or proof that no source ever started."""
-        state = await self._conversation_state(conversation_id)
-        if state is None:
-            return False
-        retained = self._retained_run(state)
-        remote_receipt = retained is not None and retained.retirement_confirmed
-        async with state.lock:
-            return (
-                state.child is None
-                and state.retained_child_reference is None
-                and not state.child_is_quarantined
-                and (state.retirement_task is None or state.retirement_task.done())
-                and (
-                    remote_receipt
-                    or state.local_child_retirement_proven
-                    or state.local_preparation_cancelled
-                )
-            )
-
     async def kill(self, conversation_id: str) -> None:
         state = await self._conversation_state(conversation_id)
         if state is None:
@@ -1393,7 +1371,8 @@ class SqliteProcessConversationSystem:
                 if result is None:
                     raise PlannerError(
                         ErrorCode.retry_later,
-                        await self._store.recorded_source_block_reason(conversation_id),
+                        f"{await self._store.recorded_source_block_reason(conversation_id)} "
+                        "Recheck Worker cleanup.",
                     )
                 state.local_child_retirement_proven = result == "retired"
                 state.local_preparation_cancelled = result == "undelivered"
@@ -1408,14 +1387,28 @@ class SqliteProcessConversationSystem:
                     and await self._store.has_recorded_source(conversation_id)):
                 if not await self._store.retire_idle_recorded_source(conversation_id):
                     raise PlannerError(
-                        ErrorCode.retry_later, "The recorded Worker cleanup is not proven."
+                        ErrorCode.retry_later,
+                        "The recorded Worker cleanup is not proven. Recheck Worker cleanup.",
                     )
                 state.local_child_retirement_proven = True
-            if state.child_is_quarantined:
-                raise PlannerError(
-                    ErrorCode.retry_later,
-                    "The previous agent did not stop. Keep this conversation until it stops.",
-                )
+            retained = self._retained_run(state)
+            remote_receipt = retained is not None and retained.retirement_confirmed
+            async with state.lock:
+                if (
+                    state.child is not None
+                    or state.retained_child_reference is not None
+                    or state.child_is_quarantined
+                    or (state.retirement_task is not None and not state.retirement_task.done())
+                    or not (
+                        remote_receipt
+                        or state.local_child_retirement_proven
+                        or state.local_preparation_cancelled
+                    )
+                ):
+                    raise PlannerError(
+                        ErrorCode.retry_later,
+                        "The old Worker is not proven ended. Recheck Worker cleanup.",
+                    )
         finally:
             try:
                 # A task the killed child reported on its way out is dropped too. Shutdown
@@ -1426,6 +1419,9 @@ class SqliteProcessConversationSystem:
                     )
             finally:
                 state.being_killed = False
+        # A new message can arrive while the old child stops. Only its proven
+        # retirement permits that message to start a successor child.
+        await self._drain_held_prompts(state)
 
     async def _kill_owned(self, state: _ConversationState) -> None:
         state.last_touched_monotonic = self._monotonic_now()
@@ -1457,7 +1453,6 @@ class SqliteProcessConversationSystem:
         cleanup = state.retirement_task
         if cleanup is not None and not cleanup.done():
             await asyncio.shield(cleanup)
-        await self._drain_held_prompts(state)
 
     async def _kill_initial_delivery(self, state: _ConversationState) -> bool:
         """Own local disposition without waiting for an unacknowledged native operation."""
@@ -2399,7 +2394,8 @@ class SqliteProcessConversationSystem:
             # Held if anything at all is going on, and held if anything is already
             # waiting: a message that arrived later never runs earlier.
             if (
-                state.child_is_quarantined
+                state.being_killed
+                or state.child_is_quarantined
                 or state.phase is not _ConversationPhase.idle
                 or state.held_prompts
                 or state.late_steers
@@ -2456,6 +2452,7 @@ class SqliteProcessConversationSystem:
             message.sender_message_id,
             eligible=(
                 state.phase is _ConversationPhase.idle
+                and not state.being_killed
                 and not state.child_is_quarantined
                 and not state.late_steers
                 and not any(m.delivery_uncertain for m in state.held_prompts)
@@ -2520,7 +2517,7 @@ class SqliteProcessConversationSystem:
         try:
             try:
                 running = state.running_turn
-                if state.child_is_quarantined or any(
+                if state.being_killed or state.child_is_quarantined or any(
                     held.delivery_uncertain for held in state.held_prompts
                 ):
                     return self._hold_prompt(state=state, message=message)
@@ -2623,7 +2620,9 @@ class SqliteProcessConversationSystem:
         try:
             running = state.running_turn
             child = state.child
-            if (
+            if state.being_killed:
+                queued = self._hold_prompt(state=state, message=message)
+            elif (
                 not state.child_is_quarantined
                 and state.phase is _ConversationPhase.idle
                 and not state.held_prompts
@@ -3854,7 +3853,8 @@ class SqliteProcessConversationSystem:
 
         async with state.lock:
             if (
-                state.child_is_quarantined
+                state.being_killed
+                or state.child_is_quarantined
                 or state.phase is not _ConversationPhase.idle
                 or not state.held_prompts
                 or any(held.delivery_uncertain for held in state.held_prompts)
@@ -6028,6 +6028,7 @@ class SqliteProcessConversationSystem:
     def _mark_eligible_held(self, state: _ConversationState) -> None:
         if (
             state.phase not in (_ConversationPhase.idle, _ConversationPhase.draining)
+            or state.being_killed
             or state.child_is_quarantined
             or not state.held_prompts
             or state.late_steers
@@ -6052,6 +6053,7 @@ class SqliteProcessConversationSystem:
         state.phase = phase
         if (
             phase not in (_ConversationPhase.idle, _ConversationPhase.draining)
+            or state.being_killed
             or state.child_is_quarantined
         ):
             self._deprioritize_held(state)

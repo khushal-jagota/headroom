@@ -153,8 +153,11 @@ def test_an_upload_lands_verified_in_staging_and_the_item_naming_it_installs_it(
                 assert target.read_bytes() == BYTES  # Installed before the effect.
                 return {}
 
+            published = await asyncio.to_thread(
+                store.publish_file_dependencies, item, world.identity
+            )
             receipt = await asyncio.to_thread(
-                store.accept, item, effect, now_ms(), identity=world.identity
+                store.accept, item, effect, now_ms(), identity=world.identity, published=published
             )
             assert receipt.disposition is ReceiptDisposition.accepted
             assert target.read_bytes() == BYTES and world.staged() == []

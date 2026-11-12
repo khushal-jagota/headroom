@@ -211,9 +211,6 @@ class _LinkWatchingConversationSystem:
     async def recheck_worker_cleanup(self, ticket_id: str) -> CleanupResult:
         return CleanupResult(True, "No retained Worker processes")
 
-    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
-        return await self._system.retirement_is_confirmed(conversation_id)
-
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)
 

@@ -847,13 +847,6 @@ class ConversationSystem(Protocol):
         """Discard one held message, or return false if it is no longer held."""
         ...
 
-    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
-        """Whether this conversation's exact child is proven stopped or never started.
-
-        A disconnect, a queued stop, or an interrupted transcript is not proof.
-        """
-        ...
-
     async def kill(self, conversation_id: str) -> None:
         """Kill this conversation's activity outright: stop the running turn AND discard
         every held message. Nothing runs afterwards until someone sends again.
@@ -867,14 +860,16 @@ class ConversationSystem(Protocol):
         turn's interruption is recorded as an event, and so is the discard of each held
         message, because text a caller handed over must never disappear without a trace.
 
-        There is nothing to return. If the conversation is idle with nothing held, or
-        the id names no conversation, nothing happens.
+        There is nothing to return. If the conversation is idle with nothing held and
+        no retained source, or the id names no conversation, nothing happens.
 
         An initial remote delivery is also cancellable while its start or prompt lacks
         an outcome. Shutdown suppresses a provably untransmitted prompt; possible
-        transmission retains uncertain delivery. The local operation can finish before
-        native termination is confirmed. The original child remains quarantined until
-        its ordinary stop succeeds; no later prompt runs beside uncertain native work.
+        transmission retains uncertain delivery. Success requires proof that the old
+        child ended or never started. If cleanup remains uncertain, kill raises
+        retry_later and asks for a Worker cleanup recheck. Callers retain the old
+        ownership and conversation link after refusal. The original child stays
+        quarantined until its ordinary stop succeeds. No later prompt runs beside it.
         Cancellation does not undo effects that an accepted operation already produced.
         """
         ...

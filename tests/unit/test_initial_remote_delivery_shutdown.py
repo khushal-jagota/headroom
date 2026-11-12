@@ -370,7 +370,7 @@ def test_kill_withdraws_a_stalled_initial_input_without_a_round_trip(
             assert await asyncio.to_thread(entered.wait, 5)
             kill_started.set()
             # The Mac never polls, so withdrawal cannot prove native retirement.
-            with pytest.raises(PlannerError, match="previous agent did not stop"):
+            with pytest.raises(PlannerError, match="Recheck Worker cleanup"):
                 await asyncio.wait_for(system.kill("c_killed"), 5)
             kill_returned.set()
             assert await asyncio.to_thread(inserted.wait, 5)
@@ -382,7 +382,9 @@ def test_kill_withdraws_a_stalled_initial_input_without_a_round_trip(
             )
             # Recorded as never sent: the Mac must get nothing that could send it, and
             # the start was withdrawn on the VPS without asking the Mac.
-            polled = await endpoint.poll(identity, 0, 0)
+            # Retirement is owned asynchronously after the nonblocking refusal.
+            # Wait for its exact Stop command instead of a task-scheduling turn.
+            polled = await endpoint.poll(identity, 0, 5)
             assert [command.operation.value for command in polled.commands] == ["stop"]
             start = tmp_db.execute(
                 "SELECT state,json_extract(outcome_json,'$.child_outcome.result.reason') "

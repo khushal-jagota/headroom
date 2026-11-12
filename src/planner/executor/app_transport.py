@@ -14,6 +14,7 @@ import base64
 import binascii
 import os
 import re
+from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
@@ -150,6 +151,16 @@ def _decode[T](body: bytes, value_type: type[T], limit: int) -> T:
         raise PlannerError(ErrorCode.validation, f"malformed executor request: {error}") from error
 
 
+def _lease_refusal(refusal: LeaseRefused) -> Response:
+    try:
+        body = encode_bounded(refusal)
+    except ProtocolRefused:
+        if refusal.update is None:
+            raise
+        body = encode_bounded(replace(refusal, update=None))
+    return _json(body, 409)
+
+
 def build_executor_router() -> APIRouter:
     from planner.core.trusted_ingress import require_executor_ingress
 
@@ -211,13 +222,13 @@ def build_executor_router() -> APIRouter:
                 ) from error
             refusal = await endpoint.refuse_lease_version(identity)
             if refusal is not None:
-                return _json(encode_bounded(refusal), 409)
+                return _lease_refusal(refusal)
             lease_request = _decode(body, LeaseRequest, MAX_ENVELOPE_BYTES)
             reply = await endpoint.lease(lease_request)
         except PlannerError as error:
             return _error(error)
         if isinstance(reply, LeaseRefused):
-            return _json(encode_bounded(reply), 409)
+            return _lease_refusal(reply)
         return _json(encode_bounded(reply))
 
     @router.post(EXECUTOR_WORKSPACE_STATES_PATH)

@@ -47,9 +47,11 @@ from planner.conversation.backends.codex_app_server.login import (
     codex_home,
     logins_hold_the_same_credential,
 )
+from planner.conversation.backends.task_ending import end_task
 from planner.conversation.child_custody import process_identity
 from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.worker_scratch import WorkerScratch
+from planner.core.task_settlement import run_on_worker_thread
 from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
@@ -250,7 +252,7 @@ class CodexAppServerClient:
                 await supervisor.spawned(process.pid)
                 await supervisor.started(process.pid)
             if custody_reporter is not None:
-                identity = self.local_child_identity()
+                identity = await run_on_worker_thread(self.local_child_identity)
                 if identity is None:
                     raise CodexChildWouldNotStart("Cannot establish the Codex process identity")
                 await custody_reporter(identity)
@@ -298,11 +300,13 @@ class CodexAppServerClient:
     async def stop(self) -> None:
         """End the child: stop reading it, close its input, and make sure it is gone."""
         self._wire_broken = True
-        for task in (self._reader, self._standard_error_reader, self._child_watcher):
+        for what, task in (
+            ("the reader", self._reader),
+            ("the stderr reader", self._standard_error_reader),
+            ("the child watcher", self._child_watcher),
+        ):
             if task is not None:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+                await end_task(task, what=f"codex {self._description}: {what}", logger=LOGGER)
         self._reader = None
         self._standard_error_reader = None
         self._child_watcher = None

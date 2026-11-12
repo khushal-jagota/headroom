@@ -214,7 +214,6 @@ class _ConversationState:
     armed_backend_start_failure: bool = False
     armed_session_load_failure: bool = False
     armed_backend_write_failure: bool = False
-    retirement_proven: bool = False
     has_delivered_prompt: bool = False
 
 
@@ -645,10 +644,6 @@ class InMemoryConversationSystem:
     async def recheck_worker_cleanup(self, ticket_id: str) -> CleanupResult:
         return CleanupResult(True, "No retained Worker processes")
 
-    async def retirement_is_confirmed(self, conversation_id: str) -> bool:
-        state = self._conversations.get(conversation_id)
-        return state is not None and (state.retirement_proven or state.backend_session is None)
-
     async def kill(self, conversation_id: str) -> None:
         state = self._conversations.get(conversation_id)
         if state is None:
@@ -670,7 +665,6 @@ class InMemoryConversationSystem:
             )
         if state.running_turn is not None:
             self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
-        state.retirement_proven = True
 
     async def is_running(self, conversation_id: str) -> bool:
         state = self._conversations.get(conversation_id)
@@ -889,7 +883,6 @@ class InMemoryConversationSystem:
         self, state: _ConversationState
     ) -> _InMemoryBackendSession | PromptDeliveryRefusalReason:
         session = state.backend_session
-        state.retirement_proven = False
         if session is not None:
             return session
         if state.armed_backend_start_failure:

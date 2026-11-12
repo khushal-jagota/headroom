@@ -448,7 +448,6 @@ def test_recheck_retires_idle_custody_after_parent_crash_without_a_turn(
             ).fetchone()[0] == "retired"
         assert harness.backend("idle_child").stops == 0
         await harness.system.kill("idle_child")
-        assert await harness.system.retirement_is_confirmed("idle_child")
 
         # The same explicit action must settle a crashed unknown turn as well as
         # idle custody, after fresh proof. It must never signal or start work.

@@ -187,12 +187,69 @@ def test_failed_start_keeps_handle_until_native_cleanup_succeeds(
             assert len(children) == 1
             assert children[0] is harness.system._conversations['c'].child
             assert children[0] is not None
+            with pytest.raises(PlannerError, match='Recheck Worker cleanup') as refusal:
+                await harness.system.kill('c')
+            assert refusal.value.code.value == 'retry_later'
+            assert harness.system._conversations['c'].child_is_quarantined
+            assert len(children) == 1
             monkeypatch.setattr(children[0], 'stop', AsyncMock())
             await harness.system.kill('c')
-            assert await harness.system.retirement_is_confirmed('c')
+            assert await harness.store.recorded_source_retirement_proven('c')
         finally:
             if children:
                 assert children[0] is not None
                 monkeypatch.setattr(children[0], 'stop', AsyncMock())
             await harness.system.shutdown()
+    asyncio.run(exercise())
+
+
+def test_missing_host_boot_identity_refuses_before_backend_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown host cannot leave an unrecoverable pending fence after a crash."""
+    from unittest.mock import AsyncMock
+
+    from tests.unit.test_conversation_system import _start
+
+    from planner.conversation.contracts import PromptDeliveryRefusalReason, PromptDeliveryRefused
+    from planner.conversation.events import PromptDeliveryRefusedEventPayload
+    from planner.core.db import connect, create_schema
+
+    db_path = str(tmp_path / "home.db")
+    conn = connect(db_path)
+    create_schema(conn)
+    conn.close()
+    starts = []
+
+    def wrapper(factory):  # type: ignore[no-untyped-def]
+        def create(**kwargs):  # type: ignore[no-untyped-def]
+            child = factory(**kwargs)
+            start = AsyncMock(wraps=child.start)
+            monkeypatch.setattr(child, "start", start)
+            starts.append(start)
+            return child
+        return create
+
+    async def exercise() -> None:
+        harness = _Harness(Path(db_path), factory_wrapper=wrapper)
+        try:
+            monkeypatch.setattr(child_custody, "host_boot_identity", lambda: None)
+            await _start(harness)
+            result = await harness.system.send(
+                "c", text_message_content("work"), sender_label="owner",
+            )
+            assert isinstance(result, PromptDeliveryRefused)
+            assert result.refusal_reason is PromptDeliveryRefusalReason.backend_did_not_start
+            assert len(starts) == 1
+            starts[0].assert_not_awaited()
+            failures = [event.payload for event in await harness.events("c")
+                        if isinstance(event.payload, PromptDeliveryRefusedEventPayload)]
+            assert failures[0].refusal_detail is not None
+            assert "host and boot identity" in failures[0].refusal_detail
+            with connect(db_path) as conn:
+                row = conn.execute("SELECT state FROM conversation_child_custody").fetchone()
+                assert row[0] == "retired"
+        finally:
+            await harness.system.shutdown()
+
     asyncio.run(exercise())

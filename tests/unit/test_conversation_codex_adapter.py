@@ -14,7 +14,9 @@ transcript of what it was sent — lives in
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -596,8 +598,25 @@ def test_selective_codex_reads_preserve_strict_identities_outcomes_and_permissio
     assert completed.turn.error.message == "provider refused"
 
 
-def test_native_identity_reaches_custody_before_protocol_initialization(tmp_path: Path) -> None:
+def test_native_identity_reaches_custody_before_protocol_initialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The real scripted child proves that custody precedes the first handshake write."""
+    import threading
+
+    from planner.conversation.child_custody import process_identity
+
+    loop_thread = threading.get_ident()
+    probe = process_identity
+
+    def inspect(pid):  # type: ignore[no-untyped-def]
+        assert threading.get_ident() != loop_thread
+        return probe(pid)
+
+    monkeypatch.setattr(
+        "planner.conversation.backends.codex_app_server.client.process_identity", inspect,
+    )
+
     async def exercise() -> None:
         identities = []
         async with _scripted_child(tmp_path, script={}) as scripted:
@@ -608,4 +627,37 @@ def test_native_identity_reaches_custody_before_protocol_initialization(tmp_path
             await scripted.start(cursor=None)
             assert len(identities) == 1
             assert identities[0].pid > 0
+
+    _run(exercise)
+
+
+def test_a_child_whose_reader_died_with_an_error_still_stops(tmp_path: Path) -> None:
+    """A task that died raises its error on every await, so stop() once never got past it.
+
+    The reader died of a database lock during an outage. Every later stop hit the same
+    dead task, never reached the process, and the conversation kept trying to stop it.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={"turns": []}) as scripted:
+            await scripted.start(cursor=None)
+            client = scripted.child._client
+            process = client._process
+            assert process is not None and process.returncode is None
+            assert client._reader is not None
+            client._reader.cancel()
+            await asyncio.gather(client._reader, return_exceptions=True)
+
+            async def died_of_a_lock() -> None:
+                raise sqlite3.OperationalError("database is locked")
+
+            client._reader = asyncio.create_task(died_of_a_lock())
+            await asyncio.gather(client._reader, return_exceptions=True)
+
+            await scripted.child.stop()
+
+            assert process.returncode is not None
+            assert client._process is None
+            assert client._reader is None
+
     _run(exercise)

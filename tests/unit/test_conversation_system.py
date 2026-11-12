@@ -1470,8 +1470,11 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
 # --- killing a conversation's activity ----------------------------------------------------
 
 
+@pytest.mark.parametrize("mode", [
+    PromptDeliveryMode.queue, PromptDeliveryMode.send_now, PromptDeliveryMode.steer,
+])
 def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
-    harness: _Harness,
+    harness: _Harness, mode: PromptDeliveryMode,
 ) -> None:
     """A kill holds the conversation still, so a send either loses its message to the
     kill or starts a turn — never waits behind a queue nothing will ever drain."""
@@ -1490,7 +1493,7 @@ def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
             harness.system.send(
                 "c",
                 text_message_content("sent during the kill"),
-                sender_label="owner",
+                sender_label="owner", mode=mode,
             )
         )
         for _ in range(_SCHEDULING_TURNS_TO_LET_THE_QUEUE_CATCH_UP):
@@ -3733,6 +3736,37 @@ def test_automatic_queue_releases_slots_and_coalesces_one_dispatch_permit(
         assert backend.sender_message_counts[-1] == 2
         assert all(identity in backend.writes[-1].text for identity in identities[2:])
         assert await harness.system.held_prompts("supervisor") == ()
+
+        # A supervisor held while Kill proves the old source is also ineligible.
+        # Otherwise its rank can block an unrelated Worker despite free capacity.
+        stopped, release_kill = asyncio.Event(), asyncio.Event()
+        kill_owned = harness.system._kill_owned
+
+        async def pause_after_stop(state):  # type: ignore[no-untyped-def]
+            await kill_owned(state)
+            stopped.set()
+            await release_kill.wait()
+
+        monkeypatch.setattr(harness.system, "_kill_owned", pause_after_stop)
+        killing = asyncio.create_task(harness.system.kill("supervisor"))
+        try:
+            await asyncio.wait_for(stopped.wait(), 2)
+            now[0] += 1.0
+            identity = "supervisor-during-kill"
+            assert gate.try_start(StartRequest(identity, "supervisor", HOME_MACHINE_ID))
+            assert isinstance(await harness.system.send(
+                "supervisor", text_message_content(identity), sender_label="Panels",
+                sender_message_id=identity,
+            ), PromptDeliveryQueued)
+            now[0] += 1.0
+            worker = "worker-during-kill"
+            assert gate.try_start(StartRequest(worker, "worker", HOME_MACHINE_ID))
+            gate.finish(worker)
+            now[0] += 1.0
+        finally:
+            release_kill.set()
+            await killing
+        assert backend.sender_written_texts()[-1] == identity
 
     _run(exercise)
 

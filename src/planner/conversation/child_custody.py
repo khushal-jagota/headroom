@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from uuid import UUID
 
+from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.local_child_contracts import LocalChildIdentity, LocalHostBootIdentity
 from planner.executor.configuration import ORPHAN_AGENT_TERMINATION_GRACE_SECONDS
 
@@ -254,8 +255,20 @@ def stop_recorded_child(identity: LocalChildIdentity, host: str | None) -> bool:
         return False
 
 
+def write_never_started(conn: sqlite3.Connection, conversation_id: str) -> None:
+    """A new conversation has no child whose host identity needs proof."""
+    conn.execute(
+        "INSERT INTO conversation_child_custody(conversation_id,generation,state) "
+        "VALUES (?,'never-started','retired')",
+        (conversation_id,),
+    )
+    bind_current_turn(conn, conversation_id)
+
+
 def write_pending(conn: sqlite3.Connection, conversation_id: str, generation: str) -> None:
     current = host_boot_identity()
+    if current is None or not current.host or not current.boot:
+        raise BackendSpawnFailed("Cannot establish the host and boot identity before agent startup")
     conn.execute(
         "INSERT INTO conversation_child_custody(conversation_id,generation,state,host,boot) "
         "VALUES (?,?,'launch_pending',?,?) ON CONFLICT(conversation_id) DO UPDATE SET "
@@ -264,8 +277,8 @@ def write_pending(conn: sqlite3.Connection, conversation_id: str, generation: st
         (
             conversation_id,
             generation,
-            None if current is None else current.host,
-            None if current is None else current.boot,
+            current.host,
+            current.boot,
         ),
     )
     bind_current_turn(conn, conversation_id)

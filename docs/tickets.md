@@ -56,7 +56,9 @@ A Ticket stores one control fact, the worker-step claim: at rest, out, or errore
 
 The navigation index stores each Ticket's derived status with its other facts, in the same transaction as each write. Ticket and Manager list reads take status from there instead of deriving it again for every Ticket. See [Live screens](live-updates.md).
 
-An errored claim stops automatic progress. Restarting the Worker is the explicit repair.
+An errored claim stops automatic progress. Restart the Worker for explicit repair. A restart first kills the Ticket's conversation. After a successful kill, it unlinks the conversation, gives back any claim, and starts a fresh step. The claim does not determine whether a restart can proceed. A revision also starts in a fresh conversation, with only its feedback.
+
+If cleanup cannot establish that the old Worker ended, restart refuses before the claim, conversation link, or launch settings change. Use Recheck Worker cleanup before another restart. A user-owned Stage refuses, because a restart there would end the user's discussion and start nothing. A Mac Ticket refuses while the Mac is away, because the kill cannot reach it.
 
 ## Backlog and delete
 

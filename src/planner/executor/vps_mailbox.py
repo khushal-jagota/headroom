@@ -267,22 +267,24 @@ class SqliteCommandMailbox:
                 # The native cancel targets the child's current turn. Keep that turn
                 # beside its immutable wire command so a retry stays idempotent and a
                 # later turn cannot acquire this cancel's withdrawal authority.
-                row = connection.execute(
-                    "SELECT turn_number FROM mac_runs WHERE conversation_id=? "
-                    "AND executor_incarnation=? AND child_id=?",
+                # A held start can precede its prompt commit. mac_runs still names
+                # the previous turn there, while the binding names this pending start.
+                bound = connection.execute(
+                    "SELECT turn_number FROM automatic_start_bindings WHERE conversation_id=? "
+                    "AND executor_incarnation=? AND child_id=? "
+                    "ORDER BY turn_number DESC LIMIT 1",
                     (child.conversation_id, child.executor_incarnation, child.child_id),
                 ).fetchone()
-                if row is not None and row[0]:
-                    turn_number = int(row[0])
+                if bound is not None:
+                    turn_number = int(bound[0])
                 else:
-                    bound = connection.execute(
-                        "SELECT turn_number FROM automatic_start_bindings WHERE conversation_id=? "
-                        "AND executor_incarnation=? AND child_id=? "
-                        "ORDER BY turn_number DESC LIMIT 1",
+                    row = connection.execute(
+                        "SELECT turn_number FROM mac_runs WHERE conversation_id=? "
+                        "AND executor_incarnation=? AND child_id=?",
                         (child.conversation_id, child.executor_incarnation, child.child_id),
                     ).fetchone()
-                    if bound is not None:
-                        turn_number = int(bound[0])
+                    if row is not None and row[0]:
+                        turn_number = int(row[0])
             placed = self._insert(
                 connection,
                 MailboxCommand(0, command.command_id, now, child_command=command),
@@ -427,9 +429,13 @@ class SqliteCommandMailbox:
             facts: dict[str, tuple[LifecycleFact, ...]] = {}
             answered: list[MailboxCommand] = []
             moved_conversations: set[str] = set()
+            withdrawn_ids: set[str] = set()
+            withdrawn_turns: set[TurnToken] = set()
             budget = MAX_MAILBOX_POLL_BYTES - _POLL_REPLY_OVERHEAD_BYTES
             for sequence, text, state, conversation_id in rows:
                 command = _mailbox_command(text)
+                if command.command_id in withdrawn_ids:
+                    continue
                 if conversation_id in moved_conversations:
                     continue
                 if state == MailboxCommandState.waiting.value:
@@ -469,17 +475,12 @@ class SqliteCommandMailbox:
                     self.start_admission.restore_bindings(connection, start_turn)
                     if not self.start_admission.allow_dispatch(start_turn):
                         if self._later_control_stops_delivery(connection, command, start_turn):
-                            result = settlement_result(
-                                command,
-                                CommandDisposition.refused,
-                                CommandSettlementReason.delivery_withdrawn,
+                            withdrawn = self._withdraw_held_delivery(
+                                connection, command, start_turn, now,
                             )
-                            connection.execute(
-                                "UPDATE executor_commands SET state='withdrawn',outcome_json=?,"
-                                "finished_at_ms=? WHERE command_id=? AND state='waiting'",
-                                (_json(result), now, command.command_id),
-                            )
-                            settled.append((command, result))
+                            withdrawn_ids.update(item.command_id for item, _result in withdrawn)
+                            withdrawn_turns.add(start_turn)
+                            settled.extend(withdrawn)
                             continue
                         if not self._has_later_control(connection, command):
                             break
@@ -500,12 +501,58 @@ class SqliteCommandMailbox:
                 answered.append(command)
             # Delivery and fetch-time expiry change nothing a screen shows.
             commit_without_change_signal(connection)
+            if self.start_admission is not None:
+                for turn in withdrawn_turns:
+                    self.start_admission.observe(turn)
             return MailboxPollReply(tuple(answered)), settled
         except BaseException:
             connection.rollback()
             raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _withdraw_held_delivery(
+        connection: sqlite3.Connection, delivery: MailboxCommand, turn: TurnToken, now: int,
+    ) -> list[tuple[MailboxCommand, CommandResult]]:
+        """Withdraw an exact pending turn before its admission binding disappears.
+
+        A start and its prompt can occupy separate poll pages. Settle both together,
+        or the prompt could bypass admission after the start releases its binding.
+        Previously delivered rows remain untouched.
+        """
+        child = delivery.child_command
+        assert child is not None
+        settled = []
+        for (text,) in connection.execute(
+            "SELECT command_json FROM executor_commands WHERE conversation_id=? "
+            "AND executor_incarnation=? AND child_id=? AND state='waiting' "
+            "AND operation IN ('start','write_prompt') ORDER BY command_sequence",
+            (child.child.conversation_id, child.child.executor_incarnation, child.child.child_id),
+        ).fetchall():
+            command = _mailbox_command(text)
+            candidate = command.child_command
+            assert candidate is not None
+            if candidate.turn != turn and not (
+                isinstance(child.arguments, StartRun) and isinstance(candidate.arguments, StartRun)
+            ):
+                continue
+            result = settlement_result(
+                command, CommandDisposition.refused, CommandSettlementReason.delivery_withdrawn,
+            )
+            connection.execute(
+                "UPDATE executor_commands SET state='withdrawn',outcome_json=?,finished_at_ms=? "
+                "WHERE command_id=? AND state='waiting'",
+                (_json(result), now, command.command_id),
+            )
+            settled.append((command, result))
+        connection.execute(
+            "DELETE FROM automatic_start_bindings WHERE conversation_id=? AND turn_number=? "
+            "AND executor_incarnation=? AND child_id=?",
+            (turn.conversation_id, turn.turn_number,
+             child.child.executor_incarnation, child.child.child_id),
+        )
+        return settled
 
     @staticmethod
     def _later_control_stops_delivery(

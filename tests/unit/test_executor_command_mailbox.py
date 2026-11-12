@@ -1064,6 +1064,7 @@ def _saturated_start_admission() -> AutomaticStartAdmission:
 
 async def _put_deferred_start(
     world: _World, gate: AutomaticStartAdmission, child: ChildReference, folder: Path,
+    *, turn_number: int = 1,
 ) -> MacRemoteChild:
     from tests.unit.test_executor_native_runtime import canonical_snapshot
 
@@ -1076,7 +1077,7 @@ async def _put_deferred_start(
     from planner.conversation.start_admission.contracts import StartRequest
     from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
-    turn = TurnToken(child.conversation_id, 1)
+    turn = TurnToken(child.conversation_id, turn_number)
     assert not gate.try_start(
         StartRequest(child.conversation_id, "worker", ORIGINAL_MAC_MACHINE_ID)
     )
@@ -1159,6 +1160,11 @@ def test_recovered_stop_withdraws_held_start_beyond_the_first_poll_page(tmp_path
                     "cancel_running_turn", "stop",
                 ]
                 assert world.rows()[:2] == [("start", "withdrawn"), ("write_prompt", "withdrawn")]
+                assert all(snapshot.request.identity != "c" for snapshot in gate.snapshots())
+                with connect(world.endpoint.db_path) as connection:
+                    assert connection.execute(
+                        "SELECT 1 FROM automatic_start_bindings WHERE conversation_id='c'"
+                    ).fetchone() is None
                 assert ("steer", "withdrawn") in world.rows()
                 stop = commands[-1]
                 outcome = CommandOutcome(
@@ -1183,8 +1189,11 @@ def test_recovered_stop_withdraws_held_start_beyond_the_first_poll_page(tmp_path
     asyncio.run(exercise())
 
 
-def test_cancel_withdraws_only_its_exact_held_initial_turn(tmp_path: Path) -> None:
-    """A cancel without a wire turn needs a durable turn, never a child-wide wildcard."""
+@pytest.mark.parametrize("with_prompt", [False, True])
+def test_cancel_withdraws_only_its_exact_held_initial_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_prompt: bool,
+) -> None:
+    """A resumed start uses its pending turn and releases admission across poll pages."""
     from planner.executor.protocol import CancelTurn, ChildCommand, ChildOperation
 
     async def exercise() -> None:
@@ -1192,9 +1201,17 @@ def test_cancel_withdraws_only_its_exact_held_initial_turn(tmp_path: Path) -> No
             _running_turn(world.endpoint.db_path)
             gate = _saturated_start_admission()
             world.endpoint.mailbox.start_admission = gate
-            await _put_deferred_start(world, gate, world.child, tmp_path)
+            with connect(world.endpoint.db_path) as connection:
+                connection.execute("UPDATE mac_runs SET turn_number=1 WHERE conversation_id='c'")
+            initial = await _put_deferred_start(
+                world, gate, world.child, tmp_path, turn_number=2,
+            )
+            if with_prompt:
+                await _prompt(initial, TurnToken("c", 2))
+            # Start and prompt occupy separate pages, without a second backend or host.
+            monkeypatch.setattr(vps_mailbox, "MAX_MAILBOX_POLL_COMMANDS", 1)
             wrong_turn = ChildCommand("wrong-turn", world.child, ChildOperation.cancel_running_turn,
-                                      TurnToken("c", 2), CancelTurn())
+                                      TurnToken("c", 3), CancelTurn())
             await world.endpoint.mailbox.put_child_command(wrong_turn)
             assert (await world.poll()).commands == ()
             assert world.rows()[:1] == [("start", "waiting")]
@@ -1203,8 +1220,21 @@ def test_cancel_withdraws_only_its_exact_held_initial_turn(tmp_path: Path) -> No
             placed = await world.endpoint.mailbox.put_child_command(cancel)
             # Retry remains idempotent even though the mailbox records an inferred turn.
             assert await world.endpoint.mailbox.put_child_command(cancel) == placed
-            reply = await world.poll()
-            assert [command.command_id for command in reply.commands] == ["wrong-turn", "cancel"]
+            commands: list[MailboxCommand] = []
+            after = 0
+            for _ in range(3):
+                reply = await world.poll(after)
+                commands.extend(reply.commands)
+                if reply.commands:
+                    after = reply.commands[-1].command_sequence
+            assert [command.command_id for command in commands] == ["wrong-turn", "cancel"]
             assert world.rows()[:1] == [("start", "withdrawn")]
+            if with_prompt:
+                assert world.rows()[1] == ("write_prompt", "withdrawn")
+            assert all(snapshot.request.identity != "c" for snapshot in gate.snapshots())
+            with connect(world.endpoint.db_path) as connection:
+                assert connection.execute(
+                    "SELECT 1 FROM automatic_start_bindings WHERE conversation_id='c'"
+                ).fetchone() is None
 
     asyncio.run(exercise())
