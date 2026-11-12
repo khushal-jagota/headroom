@@ -72,10 +72,10 @@ export function fixture_path(database: Database): string {
 }
 
 let serial = 0;
-export function fixture(): Database {
+export function fixture(options: Parameters<typeof createDatabase>[1] = {}): Database {
   const path = join(root, `test-${serial++}.sqlite`);
   copyFileSync(seed, path);
-  const db = createDatabase(path);
+  const db = createDatabase(path, options);
   db.read(load_worker_runtime_definitions);
   databases.push(db);
   databasePaths.set(db, path);
