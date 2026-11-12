@@ -147,7 +147,7 @@ Missing symbols or failed calls must refuse the operation. A path-based fallback
 | `unlinkat(int,const char*,int)` | Correct zero flags, retained-parent cleanup, and missing-entry/error behavior |
 | `renameat(int,const char*,int,const char*)` | Retained source/target parents, atomic publication, and failure cleanup |
 | `fsync(int)` | Directory flushes, error propagation, and successful commits on the selected native filesystem |
-| `fcntl(int,int,...)` with `F_FULLFSYNC=51` | Variadic Darwin ABI, strict full-flush success, and refusal without a weaker fallback |
+| `fcntl(int,int,...)` with `F_FULLFSYNC=51` and explicit `int` zero | Variadic Darwin ABI and defined third slot, strict full-flush success, and refusal without a weaker fallback |
 | `flock(int,int)` | Exclusive/nonblocking/unlock flags, contention refusal, crash release, and interrupted-call behavior |
 | `getpwnam` and Darwin `passwd` layout | Field offsets, pointer decoding, named-user expansion, and missing-account refusal |
 | Packaged Koffi addon | arm64 Mach-O architecture, pinned addon load from the relocated package, and no extra native library |

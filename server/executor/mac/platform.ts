@@ -96,7 +96,7 @@ export function sync_file_descriptor(descriptor: number): void {
   sync_directory_descriptor(descriptor);
   if (native_platform() === 'darwin') {
     const fcntl = native('int fcntl(int fd, int command, ...)');
-    checked('fcntl(F_FULLFSYNC)', () => fcntl(descriptor, 51));
+    checked('fcntl(F_FULLFSYNC)', () => fcntl(descriptor, 51, 'int', 0));
   }
 }
 export function flock_descriptor(
