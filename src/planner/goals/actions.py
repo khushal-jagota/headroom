@@ -33,6 +33,7 @@ from planner.goals.logic.documents import (
     prepare_document,
     validate_chart,
 )
+from planner.goals.logic.revisions import document_edit
 from planner.goals.rule_evaluation import evaluate_completion_date, parse_completion_rule
 from planner.measures.contracts import MeasureOrigin
 from planner.measures.data import read_definitions, read_measure, transaction
@@ -222,6 +223,7 @@ def update_goal(
 ) -> Goal:
     with transaction(conn):
         current = data.read_goal(conn, goal_id)
+        body = document_edit(body, current.revision)
         try:
             accepted = replace(
                 _accepted(conn, current, body, now=now),

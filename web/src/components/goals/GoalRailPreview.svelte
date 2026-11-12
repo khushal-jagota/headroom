@@ -50,7 +50,7 @@
   binarySubmissionError=null;
   const session=binarySession;
   if(!session)return;
-  try{await session.run({completed},()=>editor.write({completed}));}
+  try{await session.run({completed},()=>editor.write({completed,expected_revision:goal.revision}));}
   catch(error){if(!session.current)binarySubmissionError=error;}
  }
  let left=$state(0),top=$state(0),availableBottom=$state<number|null>(null);

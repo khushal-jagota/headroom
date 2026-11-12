@@ -53,7 +53,7 @@
       await session.run(command, () => editor(capturedBlockId, block => {
         if (block.type !== 'checklist' || !block.items.some(candidate => candidate.id === capturedItemId)) throw new Error('This checklist item no longer exists.');
         return { ...block, items: block.items.map(candidate => candidate.id === capturedItemId ? { ...candidate, deadline: command.deadline } : candidate) };
-      }));
+      }, command.revision));
     } catch (error) {
       // Submitted failures remain in the parent-owned receipt after unmount.
       if (!session.current) admissionError = error;

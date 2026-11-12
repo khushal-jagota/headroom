@@ -31,7 +31,8 @@ EDIT = RequestGuidance(
         "Select exactly one holder: panels page show|edit --manager ID or --chief. "
         "The selector names the target, not your identity. Existing authority still applies.",
         "Read the saved document before an edit. Send the required object {page: DOCUMENT} "
-        "to panels page edit on stdin. This schema describes CLI input. The existing HTTP "
+        "to panels page edit on stdin. Include optional expected_revision from page_revision "
+        "to refuse a stale edit. This schema describes CLI input. The existing HTTP "
         "page writer retains its own admission and document validation.",
         "The page value replaces the entire document. Preserve unrelated blocks, item "
         "states, and existing IDs. Send {page: null} to clear the holder document. "

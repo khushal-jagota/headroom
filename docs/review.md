@@ -13,7 +13,7 @@ Items about one Ticket share a card. A card is as old as its oldest item. Messag
 
 Review reads other records. Membership and order come from the navigation index, which tracks attention without a read of every conversation. Actions use the ordinary writers: decisions use the proposal resolver, replies use Send Message, and read marks update the conversation. Each action clears only what that card showed. The next card is whatever is now oldest.
 
-The proposal on a card is the same approval surface as on the Ticket page. Both keep one note box beside Approve and Send it back. The note goes with either decision. Skipping a card defers it for this visit only.
+The proposal on a card is the same approval surface as on the Ticket page. Both keep one note box beside Approve and Send it back. The note goes with either decision. Both decisions use the displayed proposal revision, so a replacement proposal cannot receive the old decision. Skipping a card defers it for this visit only.
 
 An approval note must reach the Worker before approval proceeds. The browser keeps its message identity for that exact proposal across revisits and reloads. If delivery is uncertain, another Approve checks the same message without duplicate delivery. A confirmed note stays confirmed if approval itself fails.
 

@@ -1,0 +1,28 @@
+{
+  "approve": {
+    "edited_body": "Edited proposal\n\nWith context.",
+    "expected_proposal_revision": 15,
+    "next_ceiling": "needs_implementation",
+    "next_holder": {
+      "kind": "owner",
+      "id": "owner"
+    }
+  },
+  "send_back": {
+    "message": "Clarify the transition.",
+    "expected_proposal_revision": 15
+  },
+  "ticket_approve": {
+    "edited_body": "Edited proposal\n\nWith context.",
+    "expected_proposal_revision": 15,
+    "next_ceiling": "needs_implementation",
+    "next_holder": {
+      "kind": "owner",
+      "id": "owner"
+    }
+  },
+  "ticket_send_back": {
+    "message": "Workspace guidance",
+    "expected_proposal_revision": 15
+  }
+}

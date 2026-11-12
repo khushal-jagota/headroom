@@ -403,14 +403,18 @@ def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicke
     return body
 
 
-def _marshal_accept(raw: JsonDict) -> AcceptBody:
+def _expected_proposal_revision(raw: JsonDict) -> int | None:
     revision = raw.get("expected_proposal_revision")
     if revision is not None and (type(revision) is not int or revision <= 0):
         raise PlannerError(
             ErrorCode.validation, "expected_proposal_revision must be a positive integer", {}
         )
+    return revision
+
+
+def _marshal_accept(raw: JsonDict) -> AcceptBody:
     return AcceptBody(
-        expected_proposal_revision=revision,
+        expected_proposal_revision=_expected_proposal_revision(raw),
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
         next_holder=raw.get("next_holder"),
@@ -1078,12 +1082,16 @@ def reject_ticket_proposal(
     clk: Clk,
 ) -> JsonDict:
     """Send a parked proposal back, with guidance for the executing agent or without."""
-    body = RejectionBody(message=body_opt_str(raw, "message"))
+    body = RejectionBody(
+        message=body_opt_str(raw, "message"),
+        expected_proposal_revision=_expected_proposal_revision(raw),
+    )
     now = clk.now_unix()
     ticket = tickets_actions.reject_ticket_proposal(
         conn,
         ticket_id,
         message=body["message"],
+        expected_proposal_revision=body["expected_proposal_revision"],
         ctx=ctx,
         clock=clk,
     )

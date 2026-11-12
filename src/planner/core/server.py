@@ -122,6 +122,7 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.not_found: 404,
     ErrorCode.diagnostic_expired: 410,
     ErrorCode.stale_claim: 409,
+    ErrorCode.revision_conflict: 409,
     ErrorCode.already_running: 409,
     ErrorCode.gateway_offline: 503,
     ErrorCode.skill_save_incomplete: 500,

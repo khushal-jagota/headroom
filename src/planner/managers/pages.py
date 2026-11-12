@@ -11,6 +11,7 @@ from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.core.ids import new_id
 from planner.goals.contracts import PageDocument, PageReadingSubject
 from planner.goals.logic.documents import prepare_document
+from planner.goals.logic.revisions import document_edit
 from planner.measures.data import transaction
 
 
@@ -30,6 +31,9 @@ def write_page(
     conn: sqlite3.Connection, manager_id: str | None, body: dict[str, Any], *, principal: Principal
 ) -> dict[str, Any]:
     with transaction(conn):
+        body = document_edit(body, read_page(conn, manager_id)["page_revision"])
+        if set(body) != {"page"}:
+            raise PlannerError(ErrorCode.validation, "provide exactly the page field")
         try:
             page = (
                 None

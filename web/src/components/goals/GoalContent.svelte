@@ -24,8 +24,8 @@
  setContext(PAGE_HOLDER,()=>goal.holder_kind==='manager'?{kind:'manager',id:goal.holder_id!}:{kind:'chief',id:'chief'});
  const sessions=createGoalRequestSessions();
  let editor=$derived(createGoalEditor(id));
- function save(patch:GoalEditBody){return editor.write(patch);}
- function updateBlock(blockId:string,update:Parameters<typeof editor.updateBlock>[1]){return editor.updateBlock(blockId,update);}
+ function save(patch:GoalEditBody){return editor.write({...patch,expected_revision:goal.revision});}
+ function updateBlock(blockId:string,update:Parameters<typeof editor.updateBlock>[1],revision?:number){return editor.updateBlock(blockId,update,revision);}
  const textDrafts = new Map<string, PageTextDraft>();
  const authorText: NonNullable<PageContext['authorText']> = {
   draft(blockId, field) {
@@ -37,7 +37,8 @@
   begin(blockId) {
    const ownerId = goal.id;
    const captured = createGoalEditor(ownerId);
-   return update => captured.updateBlock(blockId, update);
+   const revision = goal.revision;
+   return update => captured.updateBlock(blockId, update, revision);
   }
  };
  // Each host fixes text authoring when this content mounts. Data controls stay available.
