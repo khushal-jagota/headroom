@@ -1,6 +1,11 @@
 """The legacy POSIX source-server path survives unavailable native home features."""
 
 import asyncio
+import logging
+import sqlite3
+import threading
+import time
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -11,6 +16,9 @@ from planner.environments.update_attempts import FileUpdateAttemptStore, UpdateC
 from planner.environments.update_contracts import UpdateAttempt
 from planner.environments.update_service import UpdateService
 from planner.environments.vps_metrics.config import MetricsConfig
+from planner.environments.vps_metrics.data import Store
+from planner.environments.vps_metrics.runtime import MetricsRuntime
+from planner.environments.vps_status import VpsStatusDependencies, _resources_section
 from planner.platform_runtime.contracts import UnsupportedPlatformError
 from planner.platform_runtime.selection import get_platform_adapter
 from planner.previews.contracts import PreviewError
@@ -19,6 +27,7 @@ from planner.previews.contracts import PreviewError
 def test_legacy_posix_preserves_lifecycle_and_refuses_native_home_features(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     adapter = get_platform_adapter("darwin")
     assert adapter.capture_shutdown_policy().mode == "dogfood"
@@ -40,8 +49,46 @@ def test_legacy_posix_preserves_lifecycle_and_refuses_native_home_features(
     inspector = adapter.preview_inspector()
     with pytest.raises(PreviewError, match="unavailable"):
         inspector.discover(9876, tmp_path)
-    with pytest.raises(UnsupportedPlatformError, match="Resource collection is unavailable"):
-        adapter.metrics_collector(MetricsConfig()).collect(include_slow=False)
+    config = MetricsConfig(idle_seconds=0.02, active_seconds=0.02, activity_check_seconds=0.005)
+    metrics_path = tmp_path / "metrics.sqlite3"
+    metrics_store = Store(metrics_path, config)
+    recorded_twice = threading.Event()
+    failures = 0
+    record_failure = metrics_store.record_failure
+
+    def record_unavailable(now: float, reason: str, cadence_seconds: float) -> None:
+        nonlocal failures
+        record_failure(now, reason, cadence_seconds)
+        failures += 1
+        if failures >= 2:
+            recorded_twice.set()
+
+    monkeypatch.setattr(metrics_store, "record_failure", record_unavailable)
+    runtime = MetricsRuntime(
+        metrics_path,
+        metrics_store,
+        adapter.metrics_collector(config),
+        config,
+    )
+    with caplog.at_level(logging.WARNING, logger="planner.environments.vps_metrics.runtime"):
+        try:
+            runtime.start()
+            assert recorded_twice.wait(3), "unavailable collector did not complete two passes"
+            assert runtime._thread is not None and runtime._thread.is_alive()
+            with closing(sqlite3.connect(metrics_path)) as connection:
+                collection = metrics_store.latest(connection, time.time())["collection"]
+            assert collection["availability"] == "unavailable"
+            assert "Resource collection is unavailable" in (collection["reason"] or "")
+        finally:
+            asyncio.run(runtime.stop(deadline=time.monotonic() + 2))
+    assert not any(
+        record.name == "planner.environments.vps_metrics.runtime"
+        and record.levelno >= logging.WARNING
+        for record in caplog.records
+    )
+    resources = _resources_section(VpsStatusDependencies(platform_name=lambda: "Darwin"))
+    assert resources["state"] == "unavailable"
+    assert resources["summary"] == "resource collection is unavailable on macOS"
     with pytest.raises(UnsupportedPlatformError, match="Home updates are unavailable"):
         adapter.own_service_unit()
     with pytest.raises(UnsupportedPlatformError, match="Home updates are unavailable"):
