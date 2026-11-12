@@ -49,12 +49,12 @@ class LocaleBackendChildFactory:
                 row = conn.execute(
                     "SELECT machine_id FROM tickets WHERE id=?", (ticket_id,)
                 ).fetchone()
-                if row is None or row["machine_id"] not in {
+                if row is not None and row["machine_id"] not in {
                     HOME_MACHINE_ID,
                     ORIGINAL_MAC_MACHINE_ID,
                 }:
                     raise ValueError("Ticket destination has no execution route")
-                remote = row["machine_id"] == ORIGINAL_MAC_MACHINE_ID
+                remote = row is not None and row["machine_id"] == ORIGINAL_MAC_MACHINE_ID
             finally:
                 conn.close()
         factory = self.remote_factory if remote else self.local_factory

@@ -12,6 +12,8 @@ from typing import cast
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy import event
+from sqlalchemy.engine import Connection, Engine
 from tests.unit.test_executor_locale_admission import mac_ticket
 
 from planner.conversation.backends.contracts import BackendChildFactory, RetainedBackendChildFactory
@@ -21,6 +23,7 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     ResolvedConversationStart,
 )
+from planner.core import db as database
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import (
     connect,
@@ -53,7 +56,7 @@ def _create(conn: sqlite3.Connection, **kwargs: str) -> object:
 
 
 def test_populated_legacy_move_preserves_executor_authority(
-    tmp_db: sqlite3.Connection, tmp_path: Path
+    tmp_db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Use real Ticket fixtures for the old required columns, then run the actual revision.
     _create(tmp_db, locale="vps")
@@ -63,6 +66,8 @@ def test_populated_legacy_move_preserves_executor_authority(
         upgrade_schema_connection(migration, "local_child_custody")
     with closing(sqlite3.connect(path)) as conn:
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         attach(conn)
         columns = [str(row[1]) for row in conn.execute("PRAGMA table_info(tickets)")]
         for row in tmp_db.execute("SELECT * FROM tickets"):
@@ -129,8 +134,57 @@ def test_populated_legacy_move_preserves_executor_authority(
         )
         spool.commit()
     spool_before = (spool_root / DATABASE_NAME).read_bytes()
-    with closing(connect(path)) as conn:
+    # Back up an FK-enabled old database, then use the server's real upgrade door
+    # on that independent fixture copy. The migration engine owns its FK setting.
+    copy_path = str(tmp_path / "upgrade-copy.db")
+    migration_states: list[tuple[int, bool]] = []
+    engine_factory = database._migration_engine
+
+    def traced_engine(db_path: str, busy_timeout_ms: int) -> Engine:
+        engine = engine_factory(db_path, busy_timeout_ms)
+
+        @event.listens_for(engine, "before_cursor_execute")
+        def capture_alter(
+            connection: Connection,
+            cursor: sqlite3.Cursor,
+            statement: str,
+            parameters: object,
+            context: object,
+            executemany: bool,
+        ) -> None:
+            if statement.startswith("ALTER TABLE tickets ADD COLUMN machine_id"):
+                migration_states.append(
+                    (
+                        int(cursor.connection.execute("PRAGMA foreign_keys").fetchone()[0]),
+                        cursor.connection.in_transaction,
+                    )
+                )
+
+        return engine
+
+    monkeypatch.setattr(database, "_migration_engine", traced_engine)
+    with closing(connect(path)) as source, closing(connect(copy_path)) as conn:
+        assert source.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert source.execute("PRAGMA foreign_key_check").fetchall() == []
+        source.backup(conn)
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+            "local_child_custody"
+        )
+        assert dict(conn.execute("SELECT locale,count(*) FROM tickets GROUP BY locale")) == {
+            "vps": 1,
+            "macos": 1,
+        }
         create_schema(conn)
+        assert migration_states == [(0, True)]
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert source.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+            "local_child_custody"
+        )
+        assert "machine_id" not in {
+            row["name"] for row in source.execute("PRAGMA table_info(tickets)")
+        }
         assert dict(conn.execute("SELECT locale,machine_id FROM tickets")) == {
             "vps": HOME_MACHINE_ID,
             "macos": ORIGINAL_MAC_MACHINE_ID,
