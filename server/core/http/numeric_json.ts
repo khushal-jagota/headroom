@@ -32,25 +32,30 @@ export class JsonNumber {
     return rawJSON(number_token(this));
   }
 }
-function python_float(value: number): string {
+function python_float(value: number, pydantic = false): string {
+  if (pydantic && !Number.isFinite(value))
+    throw Object.assign(new Error('Out of range float values are not JSON compliant'), {
+      name: 'ValueError',
+    });
   if (Number.isNaN(value)) return 'NaN';
   if (!Number.isFinite(value)) return value < 0 ? '-Infinity' : 'Infinity';
   if (Object.is(value, -0)) return '-0.0';
   const magnitude = Math.abs(value);
   let raw =
-    magnitude !== 0 && (magnitude < 1e-4 || magnitude >= 1e16)
+    magnitude !== 0 && (magnitude < (pydantic ? 1e-5 : 1e-4) || magnitude >= 1e16)
       ? value.toExponential()
       : String(value);
-  if (raw.includes('e'))
-    raw = raw.replace(
-      /e([+-]?)(\d+)$/,
-      (_, sign: string, digits: string) => 'e' + (sign || '+') + digits.padStart(2, '0'),
-    );
-  else if (!raw.includes('.')) raw += '.0';
+  if (raw.includes('e')) {
+    if (!pydantic)
+      raw = raw.replace(
+        /e([+-]?)(\d+)$/,
+        (_, sign: string, digits: string) => 'e' + (sign || '+') + digits.padStart(2, '0'),
+      );
+  } else if (!raw.includes('.')) raw += '.0';
   return raw;
 }
-function number_token(value: JsonNumber): string {
-  return value.kind === 'integer' ? String(value.integer) : python_float(value.value);
+function number_token(value: JsonNumber, pydantic = false): string {
+  return value.kind === 'integer' ? String(value.integer) : python_float(value.value, pydantic);
 }
 export function parse_numeric_json(text: string): unknown {
   return (JSON.parse as NativeParse)(text, (_key, value, context) => {
@@ -90,9 +95,29 @@ type PythonJSONOptions = {
 export function stringify_python_json(value: unknown, options: PythonJSONOptions = {}): string {
   return stringify_json(value, options, 0);
 }
-function stringify_json(value: unknown, options: PythonJSONOptions, depth: number): string {
+/** Compact Pydantic JSON for finite numeric documents, without wire-shape validation. */
+export function stringify_pydantic_json(value: unknown): string {
+  return stringify_json(value, { compact: true }, 0, true);
+}
+function stringify_json(
+  value: unknown,
+  options: PythonJSONOptions,
+  depth: number,
+  pydantic = false,
+): string {
   const separator = options.compact ? ',' : ', ';
   const text = (item: string): string => {
+    if (pydantic)
+      for (let index = 0; index < item.length; index++) {
+        const code = item.charCodeAt(index);
+        if (code >= 0xd800 && code <= 0xdbff) {
+          const next = item.charCodeAt(++index);
+          if (next >= 0xdc00 && next <= 0xdfff) continue;
+        } else if (code < 0xdc00 || code > 0xdfff) continue;
+        throw Object.assign(new Error('invalid Unicode surrogate in JSON string'), {
+          name: 'PydanticSerializationError',
+        });
+      }
     const encoded = JSON.stringify(item);
     return options.ensure_ascii
       ? encoded.replace(
@@ -101,10 +126,12 @@ function stringify_json(value: unknown, options: PythonJSONOptions, depth: numbe
         )
       : encoded;
   };
-  if (value instanceof JsonNumber) return number_token(value);
+  if (value instanceof JsonNumber) return number_token(value, pydantic);
   if (typeof value === 'bigint') return String(value);
   if (typeof value === 'number')
-    return Number.isInteger(value) ? String(BigInt(value)) : python_float(value);
+    return Number.isInteger(value) && !(pydantic && Object.is(value, -0))
+      ? String(BigInt(value))
+      : python_float(value, pydantic);
   const container = (open: string, close: string, parts: string[]): string => {
     if (options.indent === undefined || parts.length === 0)
       return open + parts.join(separator) + close;
@@ -123,7 +150,7 @@ function stringify_json(value: unknown, options: PythonJSONOptions, depth: numbe
     return container(
       '[',
       ']',
-      value.map((item) => stringify_json(item, options, depth + 1)),
+      value.map((item) => stringify_json(item, options, depth + 1, pydantic)),
     );
   if (value !== null && typeof value === 'object') {
     const entries = Object.entries(value);
@@ -142,7 +169,9 @@ function stringify_json(value: unknown, options: PythonJSONOptions, depth: numbe
       '}',
       entries.map(
         ([key, item]) =>
-          text(key) + (options.compact ? ':' : ': ') + stringify_json(item, options, depth + 1),
+          text(key) +
+          (options.compact ? ':' : ': ') +
+          stringify_json(item, options, depth + 1, pydantic),
       ),
     );
   }

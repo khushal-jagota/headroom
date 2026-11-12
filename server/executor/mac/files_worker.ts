@@ -1,7 +1,8 @@
 /** This owned thread serializes file operations and retains directory capabilities. */
-import { closeSync } from 'node:fs';
+import { closeSync, readdirSync } from 'node:fs';
 import { parentPort } from 'node:worker_threads';
 import * as files from './file_worker_operations.ts';
+import { sync_directory_descriptor, unlink_relative } from './platform.ts';
 import type {
   FileOperationResults,
   FileWorkerError,
@@ -20,6 +21,19 @@ function execute(
   message: Exclude<FileWorkerRequest, { operation: 'stop' }>,
 ): FileOperationResults[keyof FileOperationResults] {
   switch (message.operation) {
+    case 'capture_file': {
+      const [source, handle, checked_ns] = message.arguments;
+      return files.capture_file(source, descriptor(handle), checked_ns);
+    }
+    case 'sweep_directory': {
+      const [handle, path, retained] = message.arguments;
+      const names = readdirSync(path);
+      if (!names.length) return;
+      const keep = new Set(retained);
+      for (const name of names) if (!keep.has(name)) unlink_relative(descriptor(handle), name);
+      sync_directory_descriptor(descriptor(handle));
+      return;
+    }
     case 'file_digest':
       return files.file_digest(...message.arguments);
     case 'verified_version':

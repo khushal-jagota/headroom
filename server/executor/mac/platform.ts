@@ -1,7 +1,7 @@
 /** The Mac executor's only bridge to operating-system-specific paths and libc calls. */
-import { constants } from 'node:fs';
+import { constants, openSync, closeSync, fstatSync } from 'node:fs';
 import { constants as os_constants, homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import { getSystemErrorName } from 'node:util';
 import { isMainThread } from 'node:worker_threads';
 import koffi from 'koffi';
@@ -96,7 +96,7 @@ export function sync_file_descriptor(descriptor: number): void {
   sync_directory_descriptor(descriptor);
   if (native_platform() === 'darwin') {
     const fcntl = native('int fcntl(int fd, int command, ...)');
-    checked('fcntl(F_FULLFSYNC)', () => fcntl(descriptor, 51));
+    checked('fcntl(F_FULLFSYNC)', () => fcntl(descriptor, 51, 'int', 0));
   }
 }
 export function flock_descriptor(
@@ -119,6 +119,86 @@ export function flock_descriptor(
 }
 export const directory_open_flags =
   constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+
+/** Shared retained-inode walk. Creation/full flush remains worker-only. */
+export function open_directory_descriptor(
+  path: string,
+  options: { create?: boolean } = {},
+): number {
+  if (options.create && isMainThread)
+    throw new Error('Executor directory creation requires the owned files worker.');
+  if (path.includes('\0'))
+    throw Object.assign(new Error('embedded null byte'), { name: 'ValueError' });
+  if (path.split('/').includes('..'))
+    throw Object.assign(new Error('unsafe directory component'), { name: 'ValueError' });
+  const raw = path.split('/');
+  const parts = (isAbsolute(path) ? raw : [...process.cwd().split('/'), ...raw]).filter(
+    (part) => part !== '' && part !== '.',
+  );
+  let descriptor = openSync('/', directory_open_flags);
+  try {
+    for (const part of parts) {
+      if (options.create)
+        try {
+          mkdir_relative(descriptor, part);
+          sync_file_descriptor(descriptor);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        }
+      const child = open_relative(descriptor, part, directory_open_flags);
+      const previous = descriptor;
+      descriptor = child;
+      closeSync(previous);
+    }
+    return descriptor;
+  } catch (error) {
+    closeSync(descriptor);
+    throw error;
+  }
+}
+/** The SQLite owner retains this lease independently of file-worker lifetime. */
+export function acquire_process_lock(root: string): { close(): void } {
+  const parent = open_directory_descriptor(root);
+  let lock: number | undefined;
+  try {
+    lock = open_relative(
+      parent,
+      'lock',
+      constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      0o666,
+    );
+    if (!fstatSync(lock).isFile()) throw new Error('outbox lock is not regular file');
+    if (!flock_descriptor(lock, 'try-exclusive'))
+      throw Object.assign(new Error('outbox is already owned'), {
+        code: 'EAGAIN',
+        name: 'BlockingIOError',
+      });
+  } catch (error) {
+    if (lock !== undefined) {
+      const failed = lock;
+      lock = undefined;
+      closeSync(failed);
+    }
+    throw error;
+  } finally {
+    try {
+      closeSync(parent);
+    } catch (error) {
+      if (lock !== undefined) closeSync(lock);
+      throw error;
+    }
+  }
+  const descriptor = lock!;
+  let closed = false;
+  return {
+    close() {
+      if (!closed) {
+        closeSync(descriptor);
+        closed = true;
+      }
+    },
+  };
+}
 
 export function default_executor_root(home: string): string {
   return join(home, 'Library', 'Application Support', 'Panels', 'executor-typescript');

@@ -372,3 +372,11 @@ TypeScript opens artifact sources with `O_NONBLOCK`, then requires a regular fil
 A FIFO therefore refuses instead of blocking the event loop before that check, as Python can do.
 Large copy, hash, and strict flush operations run in an owned worker with the shared shutdown deadline.
 The file formats, hashes, and successful publication behavior retain the Python contract.
+
+## Mac outbox cleanup after commit
+
+The Manager required this correction during the Mac slice 2 review on November 12, 2026.
+Python can reject a successful capture callback after its append commits, when the final blob sweep fails.
+A caller without a fixed submission ID can then retry and queue the same output twice as new.
+TypeScript logs that cleanup failure and retains the callback result. A later sweep retries blob cleanup.
+The durable append and receipt behavior otherwise retain Python's contract.
