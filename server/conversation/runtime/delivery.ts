@@ -83,9 +83,10 @@ async function ensure_child(
   // Retained remote child ownership belongs to the executor unit.
   if (child.stop_outside_lock)
     throw new BackendSpawnFailed('Backend did not retain its run identity');
+  state.local_child_retirement_proven = false;
   await child.start(resolved, { vendor_session_cursor: state.record.vendor_session_cursor });
   if (host.shutting_down || state.reserved_turn !== reservation) {
-    await stop_child(state, child);
+    await host.discard_child(state, child);
     throw new DeliveryCancelled();
   }
   state.child = child;
@@ -185,7 +186,7 @@ export async function deliver_prompt(
   const decisions = await decide();
   let survivors = batch.filter((_message, index) => decisions[index].suppression_reason === null);
   if (survivors.length === 0) {
-    await stop_child(state, child);
+    await host.discard_child(state, child);
     return result({
       suppression_reason:
         decisions.find((decision) => decision.suppression_reason)?.suppression_reason ?? null,
@@ -233,7 +234,7 @@ export async function deliver_prompt(
       if (state.child !== child) throw new DeliveryCancelled();
       state.child_is_quarantined = true;
     });
-    if (!(await stop_child(state, child)))
+    if (!(await host.discard_child(state, child)))
       return result({ refusal_reason: R.write_to_backend_failed });
     owned(host, state, reservation);
     try {
@@ -243,7 +244,7 @@ export async function deliver_prompt(
       const repeated = await decide();
       survivors = batch.filter((_message, index) => repeated[index].suppression_reason === null);
       if (survivors.length === 0) {
-        await stop_child(state, child);
+        await host.discard_child(state, child);
         return result({
           suppression_reason:
             repeated.find((decision) => decision.suppression_reason)?.suppression_reason ?? null,
@@ -258,7 +259,7 @@ export async function deliver_prompt(
       return await write(child);
     } catch (next) {
       if (next instanceof PromptWriteFailed) throw next;
-      await stop_child(state, child);
+      await host.discard_child(state, child);
       if (next instanceof NeedsRebind)
         return result({
           refusal_reason: R.write_to_backend_failed,
@@ -269,7 +270,7 @@ export async function deliver_prompt(
     } finally {
       if (rebound && !same_turn(state.reserved_turn?.token ?? null, reservation.token)) {
         // The replacement belongs only to this exact admitted delivery.
-        await stop_child(state, child);
+        await host.discard_child(state, child);
       }
     }
   }
