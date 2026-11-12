@@ -1,5 +1,6 @@
 import { notificationTestArea } from './notifications/testing.ts';
 /** Comparison composition. Each area appends its test-only route registration here. */
+import { managerWakeTestArea } from './manager_wakes/testing.ts';
 import { readinessTestRoutes } from './runtime/testing.ts';
 import type { Area } from './core/authority/register.ts';
 import { startServer } from './core/start.ts';
@@ -49,6 +50,7 @@ await startServer({
   testAreas: (context): readonly Area[] => [
     readinessTestRoutes,
     notificationTestArea,
+    managerWakeTestArea({ ...context, assert_database_owned: context.require_runtime_ownership }),
     ...(conversationSystem
       ? inMemoryConversationRoutes(conversationSystem)
       : scriptedConversationControls(context, registry)),

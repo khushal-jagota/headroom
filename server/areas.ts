@@ -1,3 +1,8 @@
+import { ManagerWakeLoop } from './manager_wakes/runtime.ts';
+import type { OwnedAreaContext } from './core/authority/register.ts';
+import { routes as managers } from './managers/routes.ts';
+import { routes as messageDelivery } from './message_delivery/routes.ts';
+import { configure_manager_resources } from './managers/resource_versions.ts';
 import { routes as notifications } from './notifications/routes.ts';
 import { initialize_notifications } from './notifications/data.ts';
 import { buildClock } from './core/clock.ts';
@@ -39,6 +44,7 @@ export const initializeAreas = (
   initialize_worker_settings(database, config);
   configure_conversation_start(database, config);
   configure_chief_resources(config);
+  configure_manager_resources(clock);
   conversation.initialize(database, config, { integer_now: () => clock.nowUnix() });
   navigation.initialize(database, authority);
 };
@@ -53,6 +59,8 @@ export const closeAreas = async (): Promise<void> => {
 
 /** Add one area registration here. Core has no area identity branches. */
 export const areas: readonly Area[] = [
+  { prefix: '/api', routes: managers },
+  { prefix: '/api', routes: messageDelivery },
   { prefix: '/api', routes: notifications },
   { prefix: '/api', routes: tickets },
   { prefix: '/api', routes: conversation_routes },
@@ -70,3 +78,34 @@ export const commitSteps: readonly CommitStep[] = [
   artifactLinks,
   navigation.navigationCommitStep,
 ];
+
+/** The lifecycle composer opts into production loops at this composition point. */
+export interface AreaLoopOptions {
+  managerWakes?: boolean;
+}
+export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOptions = {}) {
+  let wakes: ManagerWakeLoop | undefined;
+  let unsubscribe: (() => void) | undefined;
+  if (options.managerWakes) {
+    context.assert_database_owned();
+    if (!context.conversationSystem) throw new Error('Manager wakes require a conversation system');
+    wakes = new ManagerWakeLoop({
+      database: context.database,
+      clock: context.clock,
+      conversation_system: context.conversationSystem,
+      assert_database_owned: context.assert_database_owned,
+      workspace_context: {
+        db_path: context.config.db_path,
+        workspace_root: context.config.workspace_root,
+      },
+    });
+    unsubscribe = context.changes.subscribe(() => wakes?.wake());
+    wakes.start(context.config.tick_seconds);
+  }
+  return {
+    async stop(options: { deadline?: number } = {}): Promise<void> {
+      unsubscribe?.();
+      await wakes?.stop(options);
+    },
+  };
+}
