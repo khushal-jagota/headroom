@@ -39,6 +39,6 @@ extension APIClient: IdeasServing {
 }
 
 enum IdeasResources {
-    static let ideas = ResourceRegistration<IdeasResponse>(key: "/api/ideas", versioned: false)
+    static let ideas = ResourceRegistration<IdeasResponse>(key: "/api/ideas", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
     static let projects = ResourceRegistration<IdeaProjectsResponse>(key: "/api/projects?detail=full", versioned: false)
 }

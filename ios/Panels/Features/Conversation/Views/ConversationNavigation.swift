@@ -324,6 +324,9 @@ struct ConversationThread: View {
                                 }
                                 if row.item?.body?.reference != nil, let item = row.item, model.expandedBodies[item.key] == nil {
                                     Button("Read message") { Task { await model.loadBody(item, using: store.client) } }
+                                    if let error = model.bodyErrors[item.key] {
+                                        Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
+                                    }
                                 } else if !row.text.isEmpty { Text(.init(row.text)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
                                 if !row.attachments.isEmpty { ConversationAttachmentTray(pieces: row.attachments) }
                                 if let note = row.note, note != "Sent" {
@@ -518,8 +521,8 @@ struct ConversationDetailSmokeView: View {
         NavigationStack {
             List {
                 NavigationLink("Ticket fixture") { TicketView(ticketID: "t_02zd37tz") }
-                NavigationLink("Orchestrator fixture") { OrchestratorView(managerID: "si_4chgag3w") }
-                NavigationLink("Chief fixture") { ChiefView() }
+                NavigationLink("Orchestrator fixture") { RouteDestination(route: .orchestrator("si_4chgag3w")) }
+                NavigationLink("Chief fixture") { RouteDestination(route: .chief) }
             }.panelsScreen()
         }
     }

@@ -140,12 +140,14 @@ struct AllowanceWindow: Decodable, Sendable {
 extension APIClient {
     func usage(days: Int, now: Date = .now, timeZone: TimeZone = .current) async throws -> UsageSummary {
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
-        let format = DateFormatter(); format.calendar = calendar; format.timeZone = timeZone
-        format.locale = Locale(identifier: "en_US_POSIX"); format.dateFormat = "yyyy-MM-dd"
+        func day(_ date: Date) -> String {
+            let parts = calendar.dateComponents([.year, .month, .day], from: date)
+            return String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
+        }
         let start = calendar.date(byAdding: .day, value: -(days - 1), to: now)!
         let wire: RecordedUsageSummary = try await get("/api/conversation/usage/summary", query: [
-            .init(name: "sinceDay", value: format.string(from: start)),
-            .init(name: "untilDay", value: format.string(from: now)),
+            .init(name: "sinceDay", value: day(start)),
+            .init(name: "untilDay", value: day(now)),
             .init(name: "timeZone", value: timeZone.identifier), .init(name: "resolution", value: "day")])
         guard wire.contractVersion == 5 else { throw APIError(status: 0, message: "Usage format changed. Update the app to read it.") }
         return UsageSummary(wire, days: days)
@@ -208,15 +210,17 @@ enum UsageResources {
     static let backends = ResourceRegistration<UsageBackends>(key: "/api/conversation/backends", versioned: false)
     static func summary(days: Int, now: Date = .now, timeZone: TimeZone = .current) -> ResourceRegistration<RecordedUsageSummary> {
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
-        let format = DateFormatter(); format.calendar = calendar; format.timeZone = timeZone
-        format.locale = Locale(identifier: "en_US_POSIX"); format.dateFormat = "yyyy-MM-dd"
+        func day(_ date: Date) -> String {
+            let parts = calendar.dateComponents([.year, .month, .day], from: date)
+            return String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
+        }
         let start = calendar.date(byAdding: .day, value: -(days - 1), to: now)!
         var parts = URLComponents()
         parts.path = "/api/conversation/usage/summary"
-        parts.queryItems = [.init(name: "sinceDay", value: format.string(from: start)),
-                            .init(name: "untilDay", value: format.string(from: now)),
+        parts.queryItems = [.init(name: "sinceDay", value: day(start)),
+                            .init(name: "untilDay", value: day(now)),
                             .init(name: "timeZone", value: timeZone.identifier), .init(name: "resolution", value: "day")]
-        return ResourceRegistration(key: parts.string!, versioned: false, decode: { data in
+        return ResourceRegistration(key: parts.string!, versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds, decode: { data in
             let wire = try APIClient.decoder().decode(RecordedUsageSummary.self, from: data)
             guard wire.contractVersion == 5 else { throw APIError(status: 0, message: "Usage format changed. Update the app to read it.") }
             return wire

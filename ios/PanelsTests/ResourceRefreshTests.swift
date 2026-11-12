@@ -41,6 +41,31 @@ import XCTest
         XCTAssertTrue(store.errors.isEmpty)
     }
 
+    func testHealthFailureDoesNotCoverSuccessfulOrdinaryReads() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.healthFailure = .cannotFindHost }
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        await store.refresh()
+        XCTAssertNotNil(store.chief)
+        XCTAssertTrue(store.errors.isEmpty)
+        XCTAssertTrue(store.resources.handle(ChiefResources.executorHealth).failure?.isServerUnreachable == true)
+        XCTAssertFalse(store.serverUnreachable, "Health remains diagnostic while navigation and settings succeed")
+    }
+
+    func testVersionedLiveTransportDoesNotDoubleNetworkFailures() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.failure = .timedOut }
+        let api = APIClient(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let shared = ResourceOwner(api: api)
+        let handle = shared.handle(ChiefResources.settings)
+        await handle.refresh()
+        XCTAssertNotNil(handle.error)
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths }, ["/api/resource-body"], "A timeout gets one request, not another ordinary GET")
+        RefreshProtocol.state.withLock { $0.paths = []; $0.failure = nil; $0.supportsVersions = false }
+        await handle.refresh()
+        XCTAssertEqual(handle.value?.label, "Chief 1")
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths }, ["/api/resource-body", "/api/workers/chief-of-staff/settings"], "Only explicit unsupported endpoints use fallback")
+        shared.stop()
+    }
+
     func testRefreshReadsOneScopedViewAndSettingsFollowVersions() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture() }
         let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
@@ -80,6 +105,7 @@ import XCTest
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths.filter { $0 == "/api/resource-body" }.count }, 2)
         // Failed probes / unsupported version API preserve ordinary reads.
         RefreshProtocol.state.withLock { $0.paths = []; $0.supportsVersions = false }
+        chief.entry.lastAttempt = .distantPast; deployment.entry.lastAttempt = .distantPast
         await store.readSettings(probing: true)
         XCTAssertTrue(store.errors.isEmpty)
         XCTAssertTrue(RefreshProtocol.state.withLock { $0.paths.contains("/api/workers/chief-of-staff/settings") })
@@ -106,7 +132,7 @@ import XCTest
         XCTAssertEqual(store.presentation?.ticketsById["B"]?.title, "B\u{2028}two", "A line separator inside a frame does not split it")
         XCTAssertNotNil(store.managerStamp("m"))
         // Persist the reduced patch, not the initial frame. Restoration grants no runtime authority.
-        store.saveNavigationDisplay()
+        await store.saveNavigationDisplay()
         await LocalStore.shared.flushCache()
         let restored = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
         XCTAssertEqual(restored.view?.contentVersion, "2")
@@ -204,6 +230,7 @@ private struct RefreshFixture {
     var epoch = "initial"
     var supportsVersions = true
     var failure: URLError.Code?
+    var healthFailure: URLError.Code?
     var sections: [String] = []
     static var authority: [String: Any] { ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()], "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]] }
     static func coverage(_ revision: String) -> [String: Any] {
@@ -282,6 +309,7 @@ private struct RefreshFixture {
     mutating func response(_ url: URL) throws -> Data {
         paths.append(url.path)
         if let failure { throw URLError(failure) }
+        if url.path == "/api/executor/health", let healthFailure { throw URLError(healthFailure) }
         if url.path == "/api/navigation/view/snapshot" {
             let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "view" }!.value!
             let request = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as! [String: Any]
@@ -294,15 +322,16 @@ private struct RefreshFixture {
                             "windows": Self.windows(windows), "counts": Self.counts, "review_context": [], "review_summary": ["skipped": 0, "new": 0]]] as [String: Any])
         }
         if url.path == "/api/resource-versions" {
-            if !supportsVersions { throw URLError(.unsupportedURL) }
+            if !supportsVersions { throw APIError(status: 404, message: "Not Found") }
             return try JSONSerialization.data(withJSONObject: ["epoch": epoch, "resources": ["/api/workers/chief-of-staff/settings", "/api/deployment-status"].map { ["key": $0, "revision": revision] }])
         }
         let key = url.path == "/api/resource-body" ? URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!.first!.value! : url.path
-        if url.path == "/api/resource-body", !supportsVersions { throw URLError(.unsupportedURL) }
+        if url.path == "/api/resource-body", !supportsVersions { throw APIError(status: 404, message: "Not Found") }
         let body: Any
         switch key {
         case "/api/workers/chief-of-staff/settings": body = ["future_field": "preserved", "employee_id": "chief", "label": "Chief " + revision, "recap": "", "skill": ["name": "chief", "description": "", "markdown_body": ""], "launch_defaults": ["employee_backend": "codex"]] as [String: Any]
         case "/api/deployment-status": body = ["state": "idle"]
+        case "/api/executor/health": body = ["mode": "remote", "connection_state": "ready"]
         default: throw URLError(.unsupportedURL)
         }
         return try JSONSerialization.data(withJSONObject: url.path == "/api/resource-body" ? ["epoch": epoch, "key": key, "revision": revision, "body": body] : body)
@@ -345,6 +374,10 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
+        } catch let error as APIError {
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: error.status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(error.message.utf8))
+            client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     override func stopLoading() { stopped.withLock { $0 = true } }
@@ -356,7 +389,8 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
     private func owner(_ fixture: OwnerTransport) -> ResourceOwner {
         ResourceOwner(api: APIClient(baseURL: URL(string: "https://owner.invalid")!), transport: ResourceTransport(
             versions: { _, keys in await fixture.probe(keys) },
-            read: { api, key, _ in try await fixture.read(api.baseURL.absoluteString, key) }))
+            read: { api, key, _ in try await fixture.read(api.baseURL.absoluteString, key) }),
+            cacheStore: LocalStore(url: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("owner.store")))
     }
     private func until(_ condition: @escaping () async -> Bool) async throws {
         for _ in 0..<200 {
@@ -376,9 +410,10 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
         try await until { await transport.count == 1 }
         XCTAssertTrue(one.entry === two.entry, "Two screens share the same accepted entry")
         await transport.setRevision("2")
-        await owner.reconcile()
-        XCTAssertEqual(two.value, "2")
+        await owner.reconcile(waitForReads: false)
         await transport.finishFirst()
+        await one.refresh()
+        XCTAssertEqual(two.value, "2")
         try await Task.sleep(for: .milliseconds(10))
         XCTAssertEqual(one.value, "2", "A canceled V1 body cannot replace the V2 body")
         let keys = await transport.readKeys
@@ -456,6 +491,144 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertNotNil(invalid.error)
         XCTAssertTrue(invalid.isStale, "An undecodable body cannot acquire freshness")
     }
+    /// Risks: body getters used to decode on main, and identical bodies republished.
+    /// One real owner host proves decode placement/count and stable lookup cost.
+    func testDecodesOnceOffMainRetainsTypedValueAndSkipsUnchangedPublication() async throws {
+        let shared = owner(OwnerTransport())
+        let state = OSAllocatedUnfairLock(initialState: (count: 0, main: false))
+        let registration = ResourceRegistration<String>(key: "/api/typed-cost", decode: { data in
+            state.withLock { $0.count += 1; $0.main = $0.main || Thread.isMainThread }
+            return try JSONDecoder().decode(String.self, from: data)
+        })
+        let handle = shared.handle(registration)
+        await handle.refresh()
+        let publication = handle.entry.publication
+        let started = ContinuousClock.now
+        for _ in 0..<10_000 {
+            XCTAssertTrue(shared.handle(registration) === handle)
+            XCTAssertEqual(handle.value, "1")
+        }
+        print("RESOURCE_HANDLE_LOOKUP_10000 \(started.duration(to: .now))")
+        await handle.refresh()
+        XCTAssertEqual(handle.entry.publication, publication)
+        XCTAssertEqual(state.withLock { $0.count }, 1)
+        XCTAssertFalse(state.withLock { $0.main })
+        shared.stop()
+    }
+
+    /// A body can hang while version probes and an independent short-lived lookup
+    /// remain live. The probe records a target instead of canceling the caller.
+    func testOneShotSurvivesProbeAndProbeDoesNotWaitForHungBody() async throws {
+        let transport = OwnerTransport(); await transport.holdFirst()
+        let shared = owner(transport)
+        let read = Task { try await shared.read(ResourceRegistration<String>(key: "/api/one-shot")) }
+        try await until { await transport.count == 1 }
+        await transport.setRevision("2")
+        let start = ContinuousClock.now
+        await shared.reconcile(waitForReads: false)
+        let probeDuration = start.duration(to: .now)
+        print("RESOURCE_PROBE_WITH_HELD_BODY \(probeDuration)")
+        XCTAssertLessThan(probeDuration, .milliseconds(100))
+        await transport.finishFirst()
+        let value = try await read.value
+        XCTAssertEqual(value, "2")
+        let count = await transport.count
+        XCTAssertEqual(count, 2, "Only the obsolete response needs one follow-up")
+        shared.stop()
+    }
+
+    func testLaterProbeDuringDecodeCannotPublishObsoleteBody() async throws {
+        let transport = OwnerTransport(), gate = DispatchSemaphore(value: 0)
+        let decoding = OSAllocatedUnfairLock(initialState: false)
+        let shared = owner(transport)
+        let registration = ResourceRegistration<String>(key: "/api/decode-race", decode: { data in
+            if data == Data("\"1\"".utf8) {
+                decoding.withLock { $0 = true }
+                gate.wait()
+            }
+            return try JSONDecoder().decode(String.self, from: data)
+        })
+        let lookup = Task { try await shared.read(registration) }
+        try await until { decoding.withLock { $0 } }
+        await transport.setRevision("2")
+        await shared.reconcile(waitForReads: false)
+        gate.signal()
+        let value = try await lookup.value
+        XCTAssertEqual(value, "2")
+        XCTAssertEqual(shared.handle(registration).entry.publication, 1, "The obsolete decode never publishes")
+        shared.stop()
+    }
+
+    func testAutomaticOutageRetriesAreBoundedAndManualRetryRemainsImmediate() async throws {
+        let transport = OwnerTransport(); await transport.failReads()
+        let shared = owner(transport)
+        let handle = shared.handle(ResourceRegistration<String>(key: "/api/offline", versioned: false, signalRefreshInterval: 30))
+        handle.acquire(); defer { handle.release(); shared.stop() }
+        await handle.refresh()
+        let count = await transport.count
+        for _ in 0..<20 { await shared.reconcile(includeUnversioned: true) }
+        let automaticCount = await transport.count
+        XCTAssertEqual(automaticCount, count, "Repeated wakes and reconnects honor the failed-read backoff")
+        XCTAssertGreaterThan(handle.entry.retryAt.timeIntervalSinceNow, 25)
+        await handle.refresh()
+        let manualCount = await transport.count
+        XCTAssertEqual(manualCount, count + 1, "A person can retry without waiting for the automatic timer")
+    }
+
+    func testObservedNewRevisionMarksRetainedBodyStaleWithoutRepublishingEqualBytes() async throws {
+        let transport = OwnerTransport()
+        let actual = owner(transport)
+        let handle = actual.handle(ResourceRegistration<String>(key: "/api/stale-until-admitted"))
+        handle.acquire(); defer { handle.release(); actual.stop() }
+        await handle.refresh()
+        let publication = handle.entry.publication
+        XCTAssertFalse(handle.isStale)
+        await transport.setRevision("2"); await transport.setBody("1"); await transport.holdFirst()
+        await actual.reconcile(waitForReads: false)
+        try await until { await transport.count == 2 }
+        XCTAssertTrue(handle.isStale, "A known changed revision revokes freshness while its body is pending")
+        XCTAssertEqual(handle.value, "1")
+        await transport.finishFirst(); await handle.refresh()
+        XCTAssertFalse(handle.isStale)
+        XCTAssertEqual(handle.entry.revision, "2")
+        XCTAssertEqual(handle.entry.publication, publication, "Equal accepted bytes retain the typed value and publication")
+    }
+
+    func testPlainSignalFallbackIsTrailingBoundedAndCatalogsStayQuiet() async throws {
+        let transport = OwnerTransport()
+        let actual = owner(transport)
+        let volatile = actual.handle(ResourceRegistration<String>(key: "/api/volatile", versioned: false, signalRefreshInterval: 0.05))
+        let catalog = actual.handle(ResourceRegistration<String>(key: "/api/catalog", versioned: false))
+        volatile.acquire(); catalog.acquire()
+        defer { volatile.release(); catalog.release(); actual.stop() }
+        await volatile.refresh(); await catalog.refresh()
+        let count = await transport.count
+        await transport.setRevision("2")
+        await actual.reconcile()
+        let immediateCount = await transport.count
+        XCTAssertEqual(immediateCount, count, "An early change queues one trailing fallback")
+        try await until { volatile.value == "2" }
+        XCTAssertEqual(catalog.value, "1", "A catalog without signal demand waits for mount/reconnect/manual refresh")
+        let finalCount = await transport.count
+        XCTAssertEqual(finalCount, count + 1)
+    }
+
+    func testTerminalFailureDiscardsBodyButTransientFailureRetainsIt() async throws {
+        let transport = OwnerTransport()
+        let actual = owner(transport)
+        let handle = actual.handle(ResourceRegistration<String>(key: "/api/terminal", discardOnFailure: {
+            ($0 as? APIError)?.message.hasPrefix("Broken Ticket:") == true
+        }))
+        await handle.refresh()
+        XCTAssertEqual(handle.value, "1")
+        await transport.failReads(); await handle.refresh()
+        XCTAssertEqual(handle.value, "1")
+        await transport.failTerminal(); await handle.refresh()
+        XCTAssertNil(handle.value)
+        XCTAssertNotNil(handle.error)
+        actual.stop()
+    }
+
     func testSharedReadDeduplicatesAndPublishesAcceptedMutation() async throws {
         let transport = OwnerTransport(); await transport.holdFirst()
         let owner = owner(transport)
@@ -475,10 +648,12 @@ private actor OwnerTransport {
     var count = 0
     var readKeys: [String] = []
     private var revision = "1"
+    private var body: String?
     private var revisions: [String: String] = [:]
     private var hold = false
     private var delay = false
     private var failure = false
+    private var terminal = false
     private var active = 0
     var maxConcurrent = 0
     var probeBatches: [[String]] = []
@@ -487,7 +662,9 @@ private actor OwnerTransport {
     func holdFirst() { hold = true }
     func delayReads() { delay = true }
     func failReads() { failure = true }
+    func failTerminal() { terminal = true }
     func setRevision(_ value: String) { revision = value }
+    func setBody(_ value: String) { body = value }
     func setRevision(_ value: String, keys: [String]) { for key in keys { revisions[key] = value } }
     func clearReads() { readKeys = [] }
     func probe(_ keys: [String]) -> ResourceVersions {
@@ -498,10 +675,11 @@ private actor OwnerTransport {
         count += 1; readKeys.append(key)
         active += 1; maxConcurrent = max(maxConcurrent, active)
         defer { active -= 1 }
+        if terminal { throw APIError(status: 400, message: "Broken Ticket: invalid") }
         if failure { throw URLError(.timedOut) }
         if delay { try? await Task.sleep(for: .milliseconds(20)) }
         let revision = revisions[key] ?? revision
-        let result = ResourceRead(data: Data("\"\(revision)\"".utf8), epoch: "epoch", revision: revision)
+        let result = ResourceRead(data: Data("\"\(body ?? revision)\"".utf8), epoch: "epoch", revision: revision)
         if hold { hold = false; saved = result; return await withCheckedContinuation { first = $0 } }
         return result
     }

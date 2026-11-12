@@ -4,13 +4,14 @@ struct GoalView: View {
     let goalID: String
     var openConversationID: String? = nil
     @Environment(AppStore.self) private var store
+    let editOwner: PageSessionRoute
     @State private var session: PageSession?
     var body: some View {
         Group {
             if let session {
                 GoalDetailContent(session: session, openConversationID: openConversationID)
             } else { ScreenLoadingView(title: "goal") }
-        }.task(id: store.baseURL) { session = PageSession.session(id: goalID, api: store.client, resources: store.resources) }
+        }.task(id: "\(store.baseURL):\(goalID)") { session = editOwner.goal(goalID, api: store.client, resources: store.resources) }
     }
 }
 private struct GoalDetailContent: View {
@@ -117,6 +118,10 @@ private struct GoalHolderConversation: ViewModifier {
         let value = conversationHandle?.value
         return holder.kind == .chief ? value?["conversation_id"].string : value?["manager"]["conversation_id"].string
     }
+    private var holderStamp: String {
+        guard let holder = session.goal?.holder else { return "" }
+        return (holder.kind == .chief ? store.chiefStamp() : store.managerStamp(holder.id ?? "")) ?? ""
+    }
     func body(content: Content) -> some View {
         Group {
             if let holder = session.goal?.holder {
@@ -125,7 +130,7 @@ private struct GoalHolderConversation: ViewModifier {
                     refreshError: conversationHandle?.error ?? session.readError, retry: { await session.refresh(); await conversationHandle?.refresh() })
                     .id(holder)
             } else { content }
-        }.task(id: "\(store.baseURL):\(String(describing: session.goal?.holder))") { await load() }
+        }.task(id: "\(store.baseURL):\(String(describing: session.goal?.holder)):\(holderStamp)") { await load() }
     }
     private func load() async {
         guard let holder = session.goal?.holder else { return }

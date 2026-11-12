@@ -678,6 +678,110 @@ import XCTest
         XCTAssertEqual(visibleExpansion.items.last?.key, "row-26")
     }
 
+    func testOversizedDeferredExpansionKeepsItsRowAndEarlierHistory() async throws {
+        let service = ConversationStub(fate: "started")
+        var referenceRow: [String: Any] = ["kind": "row", "key": "large", "source_sequence": 9,
+            "body": ["kind": "deferred", "reference": ["body_id": "large", "version": "v1", "byte_count": 700_000, "media_type": "application/json"]]]
+        referenceRow["order"] = ["sequence": 9, "slot": 0]
+        await service.setSnapshot(Self.snapshot([Self.item("earlier", kind: "agent_message", text: "Earlier words"), referenceRow]))
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        await model.refresh(using: service, transcript: true)
+        model.setVisibleRows(["large"])
+        let target = try XCTUnwrap(model.items.last)
+        let body = try APIClient.decoder().decode(ConversationBody.self, from: JSONSerialization.data(withJSONObject:
+            ["kind": "agent_message", "content": [["piece": "text", "text": String(repeating: "x", count: 700_000)]]]))
+        await service.setBody(body)
+        await model.loadBody(target, using: service)
+        XCTAssertEqual(model.items.map(\.key), ["earlier", "large"])
+        XCTAssertNotNil(model.items.last?.body?.reference)
+        XCTAssertNil(model.expandedBodies["large"])
+        XCTAssertEqual(model.error, "Message is too large. Open it on the web.")
+        XCTAssertEqual(model.bodyErrors["large"], model.error)
+        let retained = ConversationRetention.retain(model.items, bodies: ["large": body], visible: ["large"], preferOlder: false)
+        XCTAssertEqual(retained.items.map(\.key), ["earlier", "large"])
+        XCTAssertNil(retained.bodies["large"])
+    }
+
+    func testTailReconnectPreservesPendingHistoryAndBodyReads() async throws {
+        let service = ConversationStub(fate: "started")
+        let model = ConversationModel(); model.conversationID = "conv_1"
+        let snapshot = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(("{\"page\":" + Self.page + ",\"status\":{\"authority\":\"current\",\"rest\":{\"plan_progress\":{}}}}").utf8))
+        // The fixture decoder uses snake case, as the server does.
+        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+        await service.setSnapshot(String(decoding: try encoder.encode(snapshot), as: UTF8.self))
+        await model.refresh(using: service, transcript: true)
+        await service.setPage(ConversationPage(items: [try APIClient.decoder().decode(ConversationItem.self, from: JSONSerialization.data(withJSONObject: Self.item("older", kind: "agent_message", text: "Older words")))], older: nil))
+        await service.holdPage()
+        let pageRead = Task { await model.loadOlder(using: service) }
+        while !(await service.pageHeld) { await Task.yield() }
+        let old = model.beginTail(); model.endTail(generation: old)
+        _ = model.beginTail()
+        await service.releasePage()
+        await pageRead.value
+        XCTAssertEqual(model.items.first?.key, "older")
+        let target = try XCTUnwrap(model.items.first { $0.key == "row-2" })
+        let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"agent_message","content":[{"piece":"text","text":"Expanded words"}]}"#.utf8))
+        await service.setBody(body); await service.holdBody()
+        let bodyRead = Task { await model.loadBody(target, using: service) }
+        while !(await service.bodyHeld) { await Task.yield() }
+        let previous = model.beginTail(); model.endTail(generation: previous)
+        _ = model.beginTail()
+        await service.releaseBody()
+        await bodyRead.value
+        XCTAssertEqual(model.expandedBodies[target.key]?.text, "Expanded words")
+        XCTAssertNil(model.error)
+    }
+
+    func testHistoryScopesEvictInactiveLeastRecentScopeAfterTwenty() {
+        var history = ConversationHistoryScopes()
+        let timeline = ConversationCursor.Scope(kind: "timeline", key: nil)
+        XCTAssertTrue(history.admit(timeline, keys: ["latest"], visibleKeys: ["visible"], active: timeline).isEmpty)
+        var discarded: Set<String> = []
+        for index in 1...20 {
+            discarded.formUnion(history.admit(.init(kind: "turn", key: String(index)), keys: [index == 1 ? "visible" : "row-\(index)"], visibleKeys: ["visible"], active: timeline))
+        }
+        XCTAssertEqual(history.count, 20)
+        XCTAssertEqual(discarded, ["row-2"])
+        XCTAssertTrue(history.scopes.contains(timeline))
+        XCTAssertTrue(history.scopes.contains(.init(kind: "turn", key: "1")))
+        _ = history.admit(.init(kind: "turn", key: "3"), keys: ["row-3"], visibleKeys: ["visible"], active: timeline)
+        let next = history.admit(.init(kind: "work_group", key: "new"), keys: ["new"], visibleKeys: ["visible"], active: timeline)
+        XCTAssertEqual(next, ["row-4"])
+        XCTAssertEqual(history.count, 20)
+    }
+
+    func testRetentionHostCostAtTheReaderBudget() throws {
+        func measure(_ label: String, count: Int, characters: Int) throws {
+            let body = try APIClient.decoder().decode(ConversationBody.self, from: JSONSerialization.data(withJSONObject:
+                ["kind": "agent_message", "content": [["piece": "text", "text": String(repeating: "x", count: characters)]]]))
+            let rows = (0..<count).map { index in ConversationItem(kind: "row", key: "cost-\(index)", senderMessageId: nil,
+                turnKey: nil, sourceSequence: index, body: .init(kind: "inline", value: body, reference: nil)) }
+            let encoder = JSONEncoder()
+            var cold: [Double] = [], warm: [Double] = []
+            for _ in 0..<30 {
+                var sizes: [String: Int] = [:]
+                let start = ContinuousClock.now
+                _ = ConversationRetention.retain(rows, bodies: [:], visible: ["cost-0"], preferOlder: false) { key, value in
+                    let count = (try? encoder.encode(value).count) ?? 0; sizes[key] = count; return count
+                }
+                cold.append(Self.milliseconds(start.duration(to: .now)))
+                let next = ContinuousClock.now
+                _ = ConversationRetention.retain(rows, bodies: [:], visible: ["cost-0"], preferOlder: false) { key, _ in sizes[key] ?? 0 }
+                warm.append(Self.milliseconds(next.duration(to: .now)))
+            }
+            func report(_ phase: String, _ values: [Double]) {
+                let sorted = values.sorted()
+                print("RETENTION_HOST_COST \(label) \(phase) samples=\(sorted.count) p50_ms=\(sorted[15]) p95_ms=\(sorted[28]) max_ms=\(sorted[29])")
+            }
+            report("cold-admission", cold); report("unchanged-tail", warm)
+        }
+        try measure("300-items-480KB", count: 300, characters: 1_600)
+        try measure("4-large-bodies-520KB", count: 4, characters: 130_000)
+    }
+    private static func milliseconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) * 1_000 + Double(duration.components.attoseconds) / 1_000_000_000_000_000
+    }
+
     private static func item(_ id: String, kind: String, text: String, sender: String? = nil) -> [String: Any] {
         var item: [String: Any] = ["kind": "row", "key": id, "body": ["kind": "inline", "value": ["kind": kind, "content": [["piece": "text", "text": text]]]]]
         if let sender { item["sender_message_id"] = sender }
@@ -707,6 +811,17 @@ private actor ConversationStub: ConversationServing {
     var senderID = ""
     var snapshot: String?
     var page: ConversationPage?
+    var body: ConversationBody?
+    var pausePage = false, pauseBody = false
+    var pageContinuation: CheckedContinuation<Void, Never>?
+    var bodyContinuation: CheckedContinuation<Void, Never>?
+    var pageHeld: Bool { pageContinuation != nil }
+    var bodyHeld: Bool { bodyContinuation != nil }
+    func holdPage() { pausePage = true }
+    func releasePage() { pageContinuation?.resume(); pageContinuation = nil }
+    func holdBody() { pauseBody = true }
+    func releaseBody() { bodyContinuation?.resume(); bodyContinuation = nil }
+    func setBody(_ value: ConversationBody) { body = value }
     func setPage(_ value: ConversationPage) { page = value }
     var receipt: String?
     var liveReads = 0
@@ -733,8 +848,14 @@ private actor ConversationStub: ConversationServing {
         let json = #"{"page":{"items":[{"kind":"row","key":"row-1","sender_message_id":"SENDER","body":{"kind":"inline","value":{"kind":"prompt","content":[{"piece":"text","text":"Hello"}]}}}],"older":null},"status":{"authority":"current","turn_running":true,"rest":{"latest_happened":null,"latest_tool":{"kind":"tool_call","title":"Reading the code"},"permission_title_excerpt":null,"plan_progress":{"current_text_excerpt":null}}}}"#.replacingOccurrences(of: "SENDER", with: senderID)
         return try APIClient.decoder().decode(ConversationSnapshot.self, from: Data((snapshot ?? json).utf8))
     }
-    func conversationPage(_ id: String, cursor: ConversationCursor) async throws -> ConversationPage { if let page { return page }; throw URLError(.unsupportedURL) }
-    func conversationBody(_ id: String, reference: ConversationBodyReference) async throws -> ConversationBody { throw URLError(.unsupportedURL) }
+    func conversationPage(_ id: String, cursor: ConversationCursor) async throws -> ConversationPage {
+        if pausePage { pausePage = false; await withCheckedContinuation { pageContinuation = $0 } }
+        if let page { return page }; throw URLError(.unsupportedURL)
+    }
+    func conversationBody(_ id: String, reference: ConversationBodyReference) async throws -> ConversationBody {
+        if pauseBody { pauseBody = false; await withCheckedContinuation { bodyContinuation = $0 } }
+        if let body { return body }; throw URLError(.unsupportedURL)
+    }
 }
 private final class ConversationRequestStub: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var request: URLRequest?

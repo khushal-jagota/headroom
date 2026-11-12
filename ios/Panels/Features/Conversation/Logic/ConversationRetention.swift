@@ -3,6 +3,7 @@ import Foundation
 enum ConversationRetention {
     static let itemLimit = 300
     static let inlineByteLimit = 512 * 1024
+    static let historyScopeLimit = 20
 
     struct Result {
         let items: [ConversationItem]
@@ -26,7 +27,9 @@ enum ConversationRetention {
         // Nonvisible expansions use only the remaining budget.
         for key in expanded.keys.sorted(by: { visible.contains($0) && !visible.contains($1) }) {
             let size = expanded[key].map { count("expanded:" + key, $0) } ?? 0
-            if !visible.contains(key), bytes + size > inlineByteLimit { expanded[key] = nil }
+            // A deferred body can exceed the reader budget. Reject that decoded
+            // expansion without charging it or evicting its row and neighbors.
+            if size > inlineByteLimit || (!visible.contains(key) && bytes + size > inlineByteLimit) { expanded[key] = nil }
             else { bytes += size; sizes[key, default: 0] += size }
         }
         var removedOldest = false, removedNewest = false
@@ -52,4 +55,38 @@ struct ConversationDisplaySnapshot: Codable, Sendable {
     let lens: String
     let page: ConversationPage
     let status: ConversationStatus
+}
+
+/// The server cursor names a history scope. Keep the same scope identity here,
+/// and discard only reusable display when an inactive scope leaves the budget.
+struct ConversationHistoryScopes {
+    private struct Entry { var keys: Set<String>; var use: Int }
+    private var entries: [ConversationCursor.Scope: Entry] = [:]
+    private var sequence = 0
+    var count: Int { entries.count }
+    var scopes: Set<ConversationCursor.Scope> { Set(entries.keys) }
+
+    mutating func admit(_ scope: ConversationCursor.Scope, keys: Set<String>, visibleKeys: Set<String>, active: ConversationCursor.Scope) -> Set<String> {
+        sequence += 1
+        let previous = entries[scope]?.keys ?? []
+        entries[scope] = Entry(keys: previous.union(keys), use: sequence)
+        var removed: Set<String> = []
+        while entries.count > ConversationRetention.historyScopeLimit {
+            let victim = entries.filter { key, entry in key != active && entry.keys.isDisjoint(with: visibleKeys) }
+                .min { $0.value.use < $1.value.use }?.key
+            guard let victim else {
+                // All existing scopes are visible. Do not admit another scope.
+                removed.formUnion(entries.removeValue(forKey: scope)?.keys ?? [])
+                break
+            }
+            removed.formUnion(entries.removeValue(forKey: victim)?.keys ?? [])
+        }
+        return removed.subtracting(entries.values.reduce(into: Set<String>()) { $0.formUnion($1.keys) })
+    }
+    mutating func retain(_ keys: Set<String>) {
+        for scope in entries.keys {
+            entries[scope]?.keys.formIntersection(keys)
+            if entries[scope]?.keys.isEmpty == true { entries[scope] = nil }
+        }
+    }
 }

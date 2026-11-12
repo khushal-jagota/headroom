@@ -81,6 +81,12 @@ actor ResponseCacheWriter {
         }
     }
 
+    func read(server: String, id: String) throws -> Data? {
+        let context = ModelContext(container); context.autosaveEnabled = false
+        let key = LocalStore.key(server, "cache", id)
+        return try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first?.payload
+    }
+
     func put(server: String, id: String, data: Data, updated: Date) throws {
         guard data.count <= LocalStore.cacheByteLimit else { return }
         try beforeWrite?()

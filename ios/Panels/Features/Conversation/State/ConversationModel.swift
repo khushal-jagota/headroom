@@ -35,22 +35,38 @@ import UniformTypeIdentifiers
             status = saved.status
             items = saved.page.items; older = saved.page.older
             loadedLens = lens; loadedConversationID = id; pageProjectionVersion = saved.page.projectionVersion
+            admitHistoryScope(saved.page.scope ?? .init(kind: "timeline", key: nil), keys: Set(items.map(\.key)))
             retainDisplay()
             rememberRows(items.map(\.id))
         }
         syncOutbox(savedWork: savedWork)
     }
     private var readerGeneration = 0
+    private var tailGeneration = 0
+    private var historyScopes = ConversationHistoryScopes()
+    private struct DisplayWrite: Sendable {
+        let snapshot: ConversationDisplaySnapshot
+        let server: String
+        let id: String
+        let generation: Int
+    }
+    @ObservationIgnored private var displayEncodingTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingDisplayWrite: DisplayWrite?
     private var pageProjectionVersion: Int?
     private var currentRemoteKeys: Set<String> = []
     private var visibleRows: Set<String> = []
     private var lastDisplaySave = Date.distantPast
     private var displayByteSizes: [String: (body: ConversationBody, count: Int)] = [:]
+    @ObservationIgnored private let displayByteEncoder = JSONEncoder()
     private var replaceHistoryOnSnapshot = false
     private(set) var hasNewerHistory = false
 
     private func invalidateReader() {
         readerGeneration += 1
+        tailGeneration += 1
+        pendingDisplayWrite = nil
+        bodyErrors = [:]
+        historyScopes = ConversationHistoryScopes()
         currentRemoteKeys = []; tailCoverage = nil; tailFirstOrder = nil
         if let current = status { status = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: current.rest) }
     }
@@ -62,10 +78,31 @@ import UniformTypeIdentifiers
         replaceHistoryOnSnapshot = true
         await refresh(using: service, transcript: true)
     }
+    private func admitHistoryScope(_ scope: ConversationCursor.Scope, keys: Set<String>) {
+        let discarded = historyScopes.admit(scope, keys: keys, visibleKeys: visibleRows,
+            active: .init(kind: "timeline", key: nil))
+        guard !discarded.isEmpty else { return }
+        items.removeAll { discarded.contains($0.key) }
+        expandedBodies = expandedBodies.filter { !discarded.contains($0.key) }
+    }
+    /// Compute unseen inline sizes before admission, without serializing on main.
+    private func bodySizes(for incoming: [ConversationItem]) async -> [String: (body: ConversationBody, count: Int)] {
+        var unseen: [String: ConversationBody] = [:]
+        for item in incoming {
+            guard let body = item.body?.value else { continue }
+            let key = "inline:" + item.key
+            if displayByteSizes[key]?.body != body { unseen[key] = body }
+        }
+        guard !unseen.isEmpty else { return [:] }
+        return await Task.detached(priority: .utility) { [unseen] in
+            let encoder = JSONEncoder()
+            return unseen.mapValues { body in (body: body, count: (try? encoder.encode(body).count) ?? 0) }
+        }.value
+    }
     private func retainDisplay(preferOlder: Bool = false) {
         let retained = ConversationRetention.retain(items, bodies: expandedBodies, visible: visibleRows, preferOlder: preferOlder) { [self] key, body in
             if let previous = displayByteSizes[key], previous.body == body { return previous.count }
-            let count = (try? JSONEncoder().encode(body).count) ?? 0
+            let count = (try? displayByteEncoder.encode(body).count) ?? 0
             displayByteSizes[key] = (body, count)
             return count
         }
@@ -77,6 +114,8 @@ import UniformTypeIdentifiers
         items = retained.items; expandedBodies = retained.bodies
         let keys = Set(items.map(\.key))
         currentRemoteKeys.formIntersection(keys)
+        bodyErrors = bodyErrors.filter { keys.contains($0.key) }
+        historyScopes.retain(keys)
         displayByteSizes = displayByteSizes.filter { key, _ in
             if key.hasPrefix("inline:") { return keys.contains(String(key.dropFirst(7))) }
             return retained.bodies[String(key.dropFirst(9))] != nil
@@ -92,9 +131,26 @@ import UniformTypeIdentifiers
         let stale = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: status.rest)
         let saved = ConversationDisplaySnapshot(schema: 1, conversationID: id, lens: lens.rawValue,
             page: ConversationPage(items: items, older: older, projectionVersion: pageProjectionVersion), status: stale)
-        guard let data = try? JSONEncoder().encode(saved) else { return }
-        LocalStore.shared.enqueueCacheResponse(server: LocalStore.server(api.baseURL), id: displayID(id), data: data)
+        let write = DisplayWrite(snapshot: saved, server: LocalStore.server(api.baseURL), id: displayID(id), generation: readerGeneration)
         lastDisplaySave = .now
+        if displayEncodingTask != nil { pendingDisplayWrite = write }
+        else { encodeDisplay(write) }
+    }
+    /// One encode plus one replaceable pending snapshot. Encoding runs off main,
+    /// then the reader generation decides whether its bytes can enter the cache.
+    private func encodeDisplay(_ write: DisplayWrite) {
+        displayEncodingTask = Task { [weak self] in
+            let data = await Task.detached(priority: .utility) { try? JSONEncoder().encode(write.snapshot) }.value
+            guard let self else { return }
+            if let data, write.generation == self.readerGeneration {
+                LocalStore.shared.enqueueCacheResponse(server: write.server, id: write.id, data: data)
+            }
+            self.displayEncodingTask = nil
+            if let pending = self.pendingDisplayWrite {
+                self.pendingDisplayWrite = nil
+                self.encodeDisplay(pending)
+            }
+        }
     }
 
     func syncOutbox(savedWork: [PendingWork]? = nil) {
@@ -117,6 +173,7 @@ import UniformTypeIdentifiers
     var lens: ConversationLens = .focus { didSet { if oldValue != lens { invalidateReader() } } }
     var items: [ConversationItem] = [] { didSet { if oldValue != items { projectionRevision += 1 } } }
     var expandedBodies: [String: ConversationBody] = [:] { didSet { if oldValue != expandedBodies { projectionRevision += 1 } } }
+    private(set) var bodyErrors: [String: String] = [:]
     var status: ConversationStatus?
     var hasUnread = false
     private var readThroughSequence = 0
@@ -337,10 +394,11 @@ import UniformTypeIdentifiers
         guard !Task.isCancelled, let id = conversationID else { return }
         let requestedLens = lens
         let generation = readerGeneration
+        let streamGeneration = tailGeneration
         do {
             let snapshot = try await service.conversationSnapshot(id, lens: requestedLens, transcript: transcript)
             guard generation == readerGeneration else { return }
-            try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, generation: generation, using: service)
+            try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, generation: generation, streamGeneration: streamGeneration, using: service)
             error = nil
         } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription } }
     }
@@ -351,14 +409,16 @@ import UniformTypeIdentifiers
     private var tailCoverage: Int?
     private var tailFirstOrder: ConversationCursor.Order?
     @discardableResult func beginTail() -> Int {
-        readerGeneration += 1
+        tailGeneration += 1
         tailCoverage = nil; tailFirstOrder = nil
         currentRemoteKeys = []
-        return readerGeneration
+        return tailGeneration
     }
     func endTail(generation: Int) {
-        guard generation == readerGeneration else { return }
-        invalidateReader()
+        guard generation == tailGeneration else { return }
+        tailGeneration += 1
+        tailCoverage = nil; tailFirstOrder = nil
+        if let current = status { status = ConversationStatus(authority: "stale", turnRunning: nil, liveOutput: nil, rest: current.rest) }
         saveDisplay(force: true)
     }
 
@@ -369,20 +429,20 @@ import UniformTypeIdentifiers
     /// The server marks the window invalidated with every removed row; that removal is
     /// applied here, as the web applies it, and the stream stays open.
     func applyTail(_ frame: ConversationTailFrame, transcript: Bool = true, generation suppliedGeneration: Int? = nil, using service: any ConversationServing) async -> Bool {
-        let generation = suppliedGeneration ?? readerGeneration
-        guard generation == readerGeneration, let id = conversationID else { return false }
+        let generation = suppliedGeneration ?? tailGeneration
+        guard generation == tailGeneration, let id = conversationID else { return false }
         let requestedLens = lens
         switch frame {
         case .reset: return false
         case .snapshot(let snapshot):
             do {
-                try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, generation: generation, using: service)
-                guard generation == readerGeneration, id == conversationID, lens == requestedLens else { return false }
+                try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, generation: readerGeneration, streamGeneration: generation, using: service)
+                guard generation == tailGeneration, id == conversationID, lens == requestedLens else { return false }
                 tailCoverage = snapshot.coverage?.throughSequence
                 tailFirstOrder = snapshot.page.items.first?.order
                 error = nil
                 return true
-            } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription }; return false }
+            } catch { if !Task.isCancelled, generation == tailGeneration { self.error = error.localizedDescription }; return false }
         case .changes(let changes):
             guard let coverage = tailCoverage, changes.fromSequence == coverage, changes.lens == requestedLens.rawValue,
                   changes.removedKeys.count > 0 || !changes.invalidatedScopes.contains(where: { $0.kind == "timeline" }),
@@ -390,8 +450,10 @@ import UniformTypeIdentifiers
                   changes.status.runtimeEpoch == status?.runtimeEpoch else { return false }
             do {
                 let (liveText, receipts) = try await lightReads(changes.status, id: id, transcript: transcript, using: service)
+                let sizes = transcript ? await bodySizes(for: changes.upserts) : [:]
                 try Task.checkCancellation()
-                guard generation == readerGeneration, id == conversationID, lens == requestedLens, tailCoverage == coverage else { return false }
+                guard generation == tailGeneration, id == conversationID, lens == requestedLens, tailCoverage == coverage else { return false }
+                displayByteSizes.merge(sizes) { _, new in new }
                 if status != changes.status { status = changes.status }
                 if !transcript {
                     applyReceipts(receipts)
@@ -430,17 +492,20 @@ import UniformTypeIdentifiers
                 saveDisplay()
                 error = nil
                 return true
-            } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription }; return false }
+            } catch { if !Task.isCancelled, generation == tailGeneration { self.error = error.localizedDescription }; return false }
         }
     }
 
     // MARK: Shared admission
 
     /// One coherent snapshot, from an explicit read or the open tail.
-    private func admit(_ snapshot: ConversationSnapshot, id: String, lens requestedLens: ConversationLens, transcript: Bool, generation: Int, using service: any ConversationServing) async throws {
+    private func admit(_ snapshot: ConversationSnapshot, id: String, lens requestedLens: ConversationLens, transcript: Bool, generation: Int, streamGeneration: Int? = nil, using service: any ConversationServing) async throws {
         let (liveText, receipts) = try await lightReads(snapshot.status, id: id, transcript: transcript, using: service)
+        let sizes = transcript ? await bodySizes(for: snapshot.page.items) : [:]
         try Task.checkCancellation()
-        guard generation == readerGeneration, id == conversationID, lens == requestedLens else { return }
+        guard generation == readerGeneration, streamGeneration == nil || streamGeneration == tailGeneration,
+              id == conversationID, lens == requestedLens else { return }
+        displayByteSizes.merge(sizes) { _, new in new }
         if status != snapshot.status { status = snapshot.status }
         if transcript {
             pageProjectionVersion = snapshot.page.projectionVersion ?? snapshot.page.older?.projectionVersion
@@ -455,6 +520,7 @@ import UniformTypeIdentifiers
             } else { nextItems = snapshot.page.items; older = snapshot.page.older }
             if items != nextItems { items = nextItems }
             currentRemoteKeys.formUnion(snapshot.page.items.map(\.key))
+            admitHistoryScope(snapshot.page.scope ?? .init(kind: "timeline", key: nil), keys: Set(snapshot.page.items.map(\.key)))
             retainDisplay()
             reconcileItems()
         }
@@ -536,8 +602,10 @@ import UniformTypeIdentifiers
         defer { loadingOlder = false }
         do {
             let page = try await service.conversationPage(id, cursor: cursor)
+            let sizes = await bodySizes(for: page.items)
             try Task.checkCancellation()
             guard generation == readerGeneration, cursor.lens == lens.rawValue, id == conversationID else { return }
+            displayByteSizes.merge(sizes) { _, new in new }
             let keys = Set(items.map(\.key))
             let earlier = page.items.filter { !keys.contains($0.key) }
             items.insert(contentsOf: earlier, at: 0)
@@ -546,6 +614,7 @@ import UniformTypeIdentifiers
             older = page.older
             pageProjectionVersion = page.projectionVersion ?? cursor.projectionVersion
             currentRemoteKeys.formUnion(page.items.map(\.key))
+            admitHistoryScope(page.scope ?? cursor.scope, keys: Set(page.items.map(\.key)))
             retainDisplay(preferOlder: true)
             saveDisplay()
         } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription } }
@@ -558,6 +627,17 @@ import UniformTypeIdentifiers
             let body = try await service.conversationBody(id, reference: reference)
             guard !Task.isCancelled, generation == readerGeneration, id == conversationID, requestedLens == lens,
                   items.contains(where: { $0.key == item.key && $0.body?.reference == reference }) else { return }
+            let bytes = await Task.detached(priority: .utility) { try? JSONEncoder().encode(body).count }.value
+            guard !Task.isCancelled, generation == readerGeneration, id == conversationID, requestedLens == lens,
+                  items.contains(where: { $0.key == item.key && $0.body?.reference == reference }) else { return }
+            guard let bytes, bytes <= ConversationRetention.inlineByteLimit else {
+                let message = "Message is too large. Open it on the web."
+                bodyErrors[item.key] = message
+                error = message
+                return
+            }
+            bodyErrors[item.key] = nil
+            displayByteSizes["expanded:" + item.key] = (body, bytes)
             expandedBodies[item.key] = body
             retainDisplay()
         } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription } }

@@ -47,15 +47,22 @@ screens acquire handles for their documents. A payload-free change signal probes
 active keys and reads changed bodies. Each body carries its own epoch and revision.
 Generation checks reject late responses after a newer probe or server change.
 Explicit refresh and confirmed writes reconcile affected reads immediately.
+Typed decoding and response-cache reads run off the main actor. Handles reuse
+accepted decoded values, and identical response bytes do not republish content.
 Foreground return and reconnect reconcile active demand. Domain deadlines cover
 calendar changes without a database write.
 
 Goals, their readings, holder pages, and catalogs use this owner. Local edits and
-manual commands remain separate from accepted responses. Goal details use the
+manual commands remain separate from accepted responses. A route owns unfinished
+Goal and holder edits above replaceable child views until Save or explicit discard.
+Charts keep previous accepted readings, marked stale, while a newer projection loads.
+Goal details use the
 addressed document revision; lists retain their shared revision. Readings also
 retain shared measure and calendar dependencies, including datasets and formulas.
 Ticket, Chief, Manager, settings, and deployment details use domain registrations.
-Unversioned reads retain explicit active fallbacks. Artifact inventory still reads
+Unversioned reads use their scoped navigation stamps where available. Volatile
+unversioned reads retain a bounded signal fallback. Failed automatic reads back off;
+explicit retry remains immediate. Artifact inventory still reads
 on selection; previews retain Reload. Metrics retain their foreground sampling.
 
 Inactive resource responses have count, byte, and age bounds. The serial cache
@@ -64,11 +71,14 @@ Restored responses remain stale. Cache errors do not clear durable user-work err
 Drafts and commands stay outside this replaceable queue.
 
 Navigation and conversation owners checkpoint admitted display at five-second
-intervals during updates and on background entry. Restored display stays stale and never supplies
+intervals during updates and on background entry. Checkpoint encoding runs off the
+main actor. Restored display stays stale and never supplies
 stream coverage or read credit. Conversation display retains at most 300 items
 and 512 KiB of inline and expanded bodies. Visible rows keep their neighborhood.
 Older paging remains available; Latest returns to the current edge after trimming.
-Collapsed conversations request status without transcript content.
+Collapsed conversations request status without transcript content. The connection
+cover cancels conversation dictation and keeps text already saved in the composer.
+Review voice capture instead preserves its recording for recovery.
 
 The view code lives in `Core/Navigation`. The wire subset is hand-written Codable,
 pinned to projection 7 and wire 3, and ignores fields the server adds. Ticket,

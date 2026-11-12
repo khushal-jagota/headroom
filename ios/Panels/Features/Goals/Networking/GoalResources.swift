@@ -12,12 +12,12 @@ enum GoalResources {
         .init(key: "/api/goals/\(id)/readings", nextRefreshAt: { $0.nextRefreshAt })
     }
     static func holderConversation(_ holder: GoalHolder) -> ResourceRegistration<GoalJSON> {
-        .init(key: holder.kind == .chief ? "/api/chief/conversation" : "/api/managers/\(holder.id!)/workspace", versioned: false)
+        .init(key: holder.kind == .chief ? "/api/chief/conversation" : "/api/managers/\(holder.id!)/workspace", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
     }
     static func holder(_ holder: GoalHolder) -> ResourceRegistration<HolderPage> {
-        .init(key: holder.pagePath, versioned: holder.kind == .chief)
+        .init(key: holder.pagePath, versioned: holder.kind == .chief, signalRefreshInterval: ResourceLimits.fallbackSeconds)
     }
     static func holderReadings(_ holder: GoalHolder) -> ResourceRegistration<GoalReadings> {
-        .init(key: holder.pagePath + "/readings", versioned: false, nextRefreshAt: { $0.nextRefreshAt })
+        .init(key: holder.pagePath + "/readings", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds, nextRefreshAt: { $0.nextRefreshAt })
     }
 }

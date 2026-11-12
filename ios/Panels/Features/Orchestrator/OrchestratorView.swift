@@ -2,6 +2,7 @@ import SwiftUI
 
 struct OrchestratorView: View {
     let managerID: String
+    let editOwner: PageSessionRoute
     var openConversationID: String?
     @Environment(AppStore.self) private var store
     private var resource: ResourceHandle<ManagerDetail> { store.resources.handle(ManagerResources.detail(managerID)) }
@@ -26,7 +27,7 @@ struct OrchestratorView: View {
                     }
                 }
                 if let detail {
-                    HolderContent(holder: .manager(managerID))
+                    HolderContent(holder: .manager(managerID), editOwner: editOwner)
                     VStack(spacing: 0) {
                         Divider().overlay(PanelsTheme.border)
                         ArtifactsRow(owner: ArtifactOwner(kind: .manager, id: managerID), count: detail.artifacts.count)
@@ -39,6 +40,7 @@ struct OrchestratorView: View {
         .conversationNavigation(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .resourceDemand(resource)
         .resourceDemand(contentResource)
+        .task(id: store.baseURL.absoluteString + (store.managerStamp(managerID) ?? "")) { await resource.refresh() }
         .navigationDemand("manager:\(managerID)", selected: .manager(managerID), windows: [NavigationScope.children(of: .manager(managerID))])
         .panelsRefreshable { await load() }
         .screenLoadState("orchestrator", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }

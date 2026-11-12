@@ -105,6 +105,7 @@ import SwiftData
             }
         }
     }
+    func cachedResponse(server: String, id: String) async -> Data? { try? await cacheWriter?.read(server: server, id: id) }
     func flushCache() async { await cacheWriter?.flush() }
 
     func put(server: String, kind: String, id: String, data: Data, draft: (String, String)? = nil) throws {

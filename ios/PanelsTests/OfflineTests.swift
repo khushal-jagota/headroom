@@ -81,7 +81,11 @@ import XCTest
                                         read: { _, _, _ in throw URLError(.timedOut) })
         let restored = ResourceOwner(api: api, transport: failing, cacheStore: store)
         let handle = restored.handle(ResourceRegistration<String>(key: key))
-        XCTAssertEqual(handle.value, "Live content")
+        XCTAssertNil(handle.value, "Acquiring a cold handle does not fetch or decode saved data on main")
+        handle.acquire(); handle.release()
+        await handle.entry.restoring?.value
+        XCTAssertEqual(handle.value, "Live content", "A quick departure cannot strand async cache restoration")
+        XCTAssertNil(handle.entry.restoring)
         XCTAssertTrue(handle.isStale)
         do {
             let _: String = try await restored.read(ResourceRegistration<String>(key: key))

@@ -158,6 +158,73 @@ import XCTest
         XCTAssertNil(sessions.session("manual", server: api.baseURL))
         XCTAssertNotNil(sessions.session("pending", server: api.baseURL), "Membership never discards an unresolved command")
     }
+    /// Replaceable child views ask their parent route for the same edit owner.
+    /// List membership coverage does not prove document/holder acquisition or server isolation.
+    func testRouteOwnerReusesDocumentAndHolderEditsAcrossChildRecreation() async throws {
+        GoalProtocol.state.reset(try goal())
+        let api = client(), resources = ResourceOwner(api: client()), route = PageSessionRoute()
+        var child: PageSession? = route.goal("g", api: api, resources: resources)
+        weak var retained = child
+        child?.textDrafts["title"] = GoalTextDraft(text: "Unfinished", revision: 5)
+        let block = try json(#"{"measure_id":"m","manual":{"model":"daily_quota"}}"#)
+        let editor = try XCTUnwrap(child).manual(block)
+        editor.draft = "12"
+        editor.accept(try APIClient.decoder().decode(GoalManualState.self, from: Data(GoalProtocolState.manualState.utf8)))
+        await editor.write(value: 12)
+        await child?.save(["title": .string("Unfinished")], revision: 5)
+        child = nil // The old document view and its local state disappear.
+        let replacement = route.goal("g", api: api, resources: resources)
+        XCTAssertTrue(replacement === retained)
+        XCTAssertEqual(replacement.textDrafts["title"]?.text, "Unfinished")
+        XCTAssertTrue(replacement.hasPendingEdit)
+        XCTAssertTrue(replacement.manual(block) === editor)
+        XCTAssertNotNil(editor.pending)
+        let holder = route.holder(.manager("holder-test"), api: api, resources: resources)
+        holder.textDrafts["block"] = GoalTextDraft(text: "Holder draft", revision: 4)
+        XCTAssertTrue(route.holder(.manager("holder-test"), api: api, resources: resources) === holder)
+        let otherAPI = APIClient(baseURL: URL(string: "https://other.example")!)
+        let other = route.goal("g", api: otherAPI, resources: ResourceOwner(api: otherAPI))
+        XCTAssertFalse(other === replacement)
+        XCTAssertTrue(route.goal("g", api: api, resources: resources) === replacement)
+        XCTAssertEqual(route.retainedCount, 2, "Only the two dirty sessions survive selection changes")
+        replacement.textDrafts = [:]; await replacement.discard(); await editor.discard()
+        holder.textDrafts = [:]
+        route.prune()
+        XCTAssertEqual(route.retainedCount, 1, "Clean inactive sessions do not accumulate")
+    }
+    /// An accepted document can advance before its separate readings endpoint succeeds.
+    /// Preserve the prior projection through both the revision gap and a failed refresh.
+    func testReadingsStayVisibleAndStaleUntilCurrentRevisionArrives() async throws {
+        GoalProtocol.state.reset(try goal())
+        GoalProtocol.state.setReadings(revision: 5)
+        let api = client()
+        // Model a supported coherent envelope. The older-server fallback intentionally
+        // lacks a revision stamp and remains stale, even after a successful body read.
+        let transport = ResourceTransport(versions: { _, _ in throw URLError(.unsupportedURL) }, read: { api, key, _ in
+            ResourceRead(data: try await api.responseData(key).0, epoch: "goal-test", revision: "accepted")
+        })
+        let session = PageSession(id: "g", api: api, goal: try goal(), resources: ResourceOwner(api: api, transport: transport))
+        await session.refresh()
+        XCTAssertEqual(session.readings?.revision, 5)
+        XCTAssertFalse(session.readingsAreStale)
+        GoalProtocol.state.conflictGoal()
+        await session.refresh()
+        XCTAssertEqual(session.goal?.revision, 9)
+        XCTAssertEqual(session.readings?.revision, 5)
+        XCTAssertEqual(session.readings?.charts["chart"]?["current"].number, 12)
+        XCTAssertTrue(session.readingsAreStale)
+        GoalProtocol.state.setReadings(revision: 9, fails: true)
+        await session.refresh()
+        XCTAssertEqual(session.readings?.revision, 5)
+        XCTAssertEqual(session.readings?.charts["chart"]?["current"].number, 12)
+        XCTAssertTrue(session.readingsAreStale)
+        XCTAssertNotNil(session.readError)
+        GoalProtocol.state.setReadings(revision: 9)
+        await session.refresh()
+        XCTAssertEqual(session.readings?.revision, 9)
+        XCTAssertFalse(session.readingsAreStale)
+        XCTAssertNil(session.readError)
+    }
     func testIndependentRefreshCannotClearSubmittedTextAndConfirmedSavePreservesNewerTyping() async throws {
         GoalProtocol.state.reset(try goal()); GoalProtocol.state.acceptGoalWrites()
         let session = PageSession(id: "g", api: client(), goal: try goal())
@@ -401,13 +468,16 @@ private final class GoalProtocolState: @unchecked Sendable {
     private var holderRevision = 4
     private var document: GoalJSON = .null
     private var acceptsGoalWrites = false
+    private var readingsRevision = 9
+    private var readingsFail = false
+    func setReadings(revision: Int, fails: Bool = false) { lock.lock(); defer { lock.unlock() }; readingsRevision = revision; readingsFail = fails }
     var delaysAcceptedWrites: Bool { lock.lock(); defer { lock.unlock() }; return acceptsGoalWrites }
     func acceptGoalWrites() { lock.lock(); defer { lock.unlock() }; acceptsGoalWrites = true }
     func requests() -> [String] { lock.lock(); defer { lock.unlock() }; return recordedRequests.compactMap { $0.url?.path } }
     func lastRequest() -> URLRequest? { lock.lock(); defer { lock.unlock() }; return recordedRequests.last }
     func patchRequests() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return recordedRequests.filter { $0.httpMethod == "PATCH" } }
     static let manualState = #"{"measure_id":"m","definition_revision":1,"write_revision":1,"timezone":"UTC","current_date":"2026-11-04","date":"2026-11-04","observation":{"value":5},"latest_observation":{"value":5}}"#
-    func reset(_ value: GoalRecord) { lock.lock(); defer { lock.unlock() }; goal = value; goalWrites = []; encodedGoalWrites = []; commands = []; recordedRequests = []; acceptsGoalWrites = false; holderRevision = 4; document = value.page }
+    func reset(_ value: GoalRecord) { lock.lock(); defer { lock.unlock() }; goal = value; goalWrites = []; encodedGoalWrites = []; commands = []; recordedRequests = []; acceptsGoalWrites = false; readingsRevision = 9; readingsFail = false; holderRevision = 4; document = value.page }
     func conflictGoal() {
         lock.lock(); defer { lock.unlock() }
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -431,6 +501,8 @@ private final class GoalProtocolState: @unchecked Sendable {
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         let path = request.url!.path
         recordedRequests.append(request)
+        // This domain fixture exercises the ordinary endpoints. It does not serve envelopes.
+        if path == "/api/resource-body" { return (404, Data(#"{"error":{"message":"Resource endpoint unavailable"}}"#.utf8)) }
         if path == "/api/projects" { return (200, Data(#"{"projects":[{"id":"project_personal","name":"Personal"}]}"#.utf8)) }
         if path == "/api/chief/conversation" { return (200, Data(#"{"conversation_id":"chief-current"}"#.utf8)) }
         if path == "/api/managers/holder-test/workspace" {
@@ -485,7 +557,10 @@ private final class GoalProtocolState: @unchecked Sendable {
             }
             return (409, Data(#"{"error":{"message":"Goal changed; refresh before editing"}}"#.utf8))
         }
-        if path.hasSuffix("/readings") { return (200, Data(#"{"goal_id":"g","revision":9,"status":"attention","status_date":"2026-11-04","next_refresh_at":1793836800,"values":[],"sources":[],"charts":{}}"#.utf8)) }
+        if path.hasSuffix("/readings") {
+            if readingsFail { throw URLError(.timedOut) }
+            return (200, Data("{\"goal_id\":\"g\",\"revision\":\(readingsRevision),\"status\":\"attention\",\"status_date\":\"2026-11-04\",\"next_refresh_at\":1793836800,\"values\":[],\"sources\":[],\"charts\":{\"chart\":{\"current\":12}}}".utf8))
+        }
         return (200, try encoder.encode(goal))
     }
 }

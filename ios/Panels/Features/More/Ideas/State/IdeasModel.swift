@@ -75,6 +75,7 @@ import Observation
 
     @discardableResult func capture(using service: any IdeasServing) async -> Bool {
         guard canCapture else { return false }
+        let submittedTitle = title, submittedDetail = detail, submittedProjectID = projectID
         let capture = IdeaCapture(
             title: title.trimmingCharacters(in: .whitespacesAndNewlines),
             body: detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : detail,
@@ -89,6 +90,7 @@ import Observation
             readGeneration += 1
             if let api = service as? APIClient {
                 guard draftServer == LocalStore.server(api.baseURL) else { return true }
+                clearSubmittedDraft(title: submittedTitle, detail: submittedDetail, projectID: submittedProjectID)
                 resourceOwner?.invalidate([IdeasResources.ideas.key])
                 await ideaResource?.refresh()
                 guard draftServer == LocalStore.server(api.baseURL) else { return true }
@@ -96,13 +98,18 @@ import Observation
                 standaloneIdeas.removeAll { $0.id == idea.id }
                 standaloneIdeas.insert(idea, at: 0)
                 standaloneHasLoaded = true
+                clearSubmittedDraft(title: submittedTitle, detail: submittedDetail, projectID: submittedProjectID)
             }
-            title = ""; detail = ""; projectID = nil
             return true
         } catch {
             if let api = service as? APIClient, draftServer != LocalStore.server(api.baseURL) { return false }
             captureError = error.localizedDescription
             return false
         }
+    }
+
+    private func clearSubmittedDraft(title: String, detail: String, projectID: String?) {
+        guard self.title == title, self.detail == detail, self.projectID == projectID else { return }
+        self.title = ""; self.detail = ""; self.projectID = nil
     }
 }

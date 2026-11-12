@@ -14,7 +14,7 @@ struct GoalTextSubmission: Sendable {
     let revision: Int
 }
 
-/// Hosts share accepted goal or holder-page data and unfinished commands for this server.
+/// A route owns unfinished edits and reads shared accepted Goal or holder-page data.
 /// Goal writes stay outside the message outbox: no automatic replay.
 @MainActor @Observable final class PageSession {
     static func session(id: String, api: APIClient, initial: GoalRecord? = nil, resources: ResourceOwner? = nil) -> PageSession {
@@ -31,9 +31,11 @@ struct GoalTextSubmission: Sendable {
     var statusDate: String? { goal?.statusDate ?? readings?.statusDate }
     var hasContent: Bool { holder == nil ? goal != nil : holderPage != nil }
     var goal: GoalRecord? { goalHandle?.value }
-    var readings: GoalReadings? {
-        guard let value = readingsHandle.value, value.revision >= revision else { return nil }
-        return value
+    var readings: GoalReadings? { readingsHandle.value }
+    /// Retain the last accepted projection while its document advances or a refresh fails.
+    var readingsAreStale: Bool {
+        guard let readings else { return false }
+        return readings.revision < revision || readingsHandle.isStale || readingsHandle.error != nil
     }
     private(set) var busy = false
     var readError: String? { goalHandle?.error ?? holderHandle?.error ?? readingsHandle.error }
@@ -178,6 +180,31 @@ struct GoalTextSubmission: Sendable {
         return goals.compactMap { session($0.id, server: api.baseURL) }
     }
     func prune() { sessions = sessions.filter { selected.contains($0.key) || $0.value.hasUnfinishedEdits } }
+}
+
+/// The route owns this object above replaceable document views. Clean previous
+/// selections disappear immediately; unfinished edits stay until Save or discard.
+@MainActor @Observable final class PageSessionRoute {
+    let goals = PageSessionCollection()
+    private var sessions: [String: PageSession] = [:]
+    private var selected: String?
+    func goal(_ id: String, api: APIClient, resources: ResourceOwner) -> PageSession {
+        resolve("goal:" + id, api: api) { PageSession.session(id: id, api: api, resources: resources) }
+    }
+    func holder(_ holder: GoalHolder, api: APIClient, resources: ResourceOwner) -> PageSession {
+        resolve("holder:" + holder.pagePath, api: api) { PageSession.holder(holder, api: api, resources: resources) }
+    }
+    private func resolve(_ id: String, api: APIClient, create: () -> PageSession) -> PageSession {
+        let key = LocalStore.server(api.baseURL) + ":" + id
+        selected = key
+        let session = sessions[key] ?? create()
+        sessions[key] = session
+        prune()
+        return session
+    }
+    var unfinishedKeys: [String] { sessions.keys.filter { sessions[$0]?.hasUnfinishedEdits == true }.sorted() }
+    var retainedCount: Int { sessions.count }
+    func prune() { sessions = sessions.filter { $0.key == selected || $0.value.hasUnfinishedEdits } }
 }
 
 struct GoalChartPreference: Equatable { var range = "month"; var expanded = false }

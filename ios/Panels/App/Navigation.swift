@@ -13,28 +13,31 @@ enum AppRoute: Hashable {
 
 struct RouteDestination: View {
     let route: AppRoute
+    @State private var goalEdits = PageSessionRoute()
     var body: some View {
         // Roots use the system default. Hide here for every detail route and
         // its pushed children; root visibility overrides compete with this rule.
         destination.toolbar(.hidden, for: .tabBar)
+            .onChange(of: goalEdits.unfinishedKeys) { _, _ in goalEdits.prune() }
+            .onChange(of: goalEdits.goals.unfinishedKeys) { _, _ in goalEdits.goals.prune() }
     }
 
     @ViewBuilder private var destination: some View {
         switch route {
         case .goals: AllGoalsView()
-        case .goal(let id): GoalView(goalID: id)
-        case .chief: ChiefView()
+        case .goal(let id): GoalView(goalID: id, editOwner: goalEdits)
+        case .chief: ChiefView(editOwner: goalEdits)
         case .conversation(let owner, let id):
             switch owner {
             case .goal: ContentUnavailableView("Goal conversation retired", systemImage: "bubble.left", description: Text("Open the goal to talk to its holder."))
-            case .chief: ChiefView(openConversationID: id)
-            case .manager(let managerID): OrchestratorView(managerID: managerID, openConversationID: id)
+            case .chief: ChiefView(editOwner: goalEdits, openConversationID: id)
+            case .manager(let managerID): OrchestratorView(managerID: managerID, editOwner: goalEdits, openConversationID: id)
             case .ticket(let ticketID): TicketView(ticketID: ticketID, openConversationID: id)
             case .goal:
                 Color.clear.panelsScreen()
                     .conversationNavigation(owner: owner, conversationID: id, openConversationID: id)
             }
-        case .orchestrator(let id): OrchestratorView(managerID: id)
+        case .orchestrator(let id): OrchestratorView(managerID: id, editOwner: goalEdits)
         case .ticket(let id): TicketView(ticketID: id)
         case .artifact(let owner, let path, let title): ArtifactViewerView(owner: owner, path: path, title: title)
         case .ideas: IdeasView()

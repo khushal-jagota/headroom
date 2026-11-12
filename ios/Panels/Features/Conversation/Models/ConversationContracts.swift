@@ -24,13 +24,14 @@ struct ConversationPage: Codable, Sendable {
     let items: [ConversationItem]
     let older: ConversationCursor?
     var projectionVersion: Int? = nil
+    var scope: ConversationCursor.Scope? = nil
 }
 struct ConversationCursor: Codable, Sendable {
     let projectionVersion: Int
     let lens: String
     let scope: Scope
     let order: Order
-    struct Scope: Codable, Sendable { let kind: String; let key: String? }
+    struct Scope: Codable, Hashable, Sendable { let kind: String; let key: String? }
     struct Order: Codable, Equatable, Sendable { let sequence: Int; let slot: Int }
 }
 struct ConversationItem: Equatable, Codable, Identifiable, Sendable {

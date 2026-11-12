@@ -101,17 +101,19 @@ private struct GoalPeek: View {
 /// Existing Chief and Manager pages share goals, authored blocks and Tickets.
 struct HolderContent: View {
     let holder: GoalHolder
+    let editOwner: PageSessionRoute
     @Environment(AppStore.self) private var store
     @State private var goalsHandle: ResourceHandle<GoalsResponse>?
     @State private var projectsHandle: ResourceHandle<GoalJSON>?
     private var goals: [GoalRecord] { goalsHandle?.value?.goals ?? [] }
     private var nextRefreshAt: Double? { goalsHandle?.value?.nextRefreshAt }
     private var projects: [GoalJSON] { projectsHandle?.value?["projects"].array ?? [] }
-    @State private var sessions = PageSessionCollection()
+    private var sessions: PageSessionCollection { editOwner.goals }
     private var soleSession: PageSession? { sole.flatMap { sessions.session($0.id, server: store.baseURL) } }
     private var visibleGoals: [GoalRecord] { sole.map { [$0] } ?? held.filter(\.active) }
     @State private var error: String?
     @State private var pageSession: PageSession?
+    private var holderStamp: String { (holder.kind == .chief ? store.chiefStamp() : store.managerStamp(holder.id ?? "")) ?? "" }
     private var held: [GoalRecord] { holder.goals(in: goals) }
     private var sole: GoalRecord? { holder.kind == .manager ? holder.soleGoal(in: goals) : nil }
     var body: some View {
@@ -140,7 +142,8 @@ struct HolderContent: View {
                 if !PageDocumentPresentation.hasTickets(pageSession?.page?["blocks"].array ?? []) { HolderTickets(holder: holder) }
             }
             if let error { LoadErrorView(message: error) { await load() } }
-        }.task(id: store.baseURL) { await follow() }
+        }.task(id: "\(store.baseURL):\(holder.pagePath)") { await follow() }
+            .task(id: "\(store.baseURL):\(holderStamp)") { await pageSession?.refresh() }
             .task(id: "\(store.baseURL):\(visibleGoals.map(\.id))") {
                 sessions.update(visibleGoals, api: store.client, resources: store.resources)
             }
@@ -150,7 +153,7 @@ struct HolderContent: View {
     private func follow() async {
         let list = store.resources.handle(GoalResources.list), projects = store.resources.handle(GoalResources.projects)
         goalsHandle = list; projectsHandle = projects
-        let session = PageSession.holder(holder, api: store.client, resources: store.resources); pageSession = session
+        let session = editOwner.holder(holder, api: store.client, resources: store.resources); pageSession = session
         list.acquire(); projects.acquire(); session.acquire()
         defer { list.release(); projects.release(); session.release() }
         await load()

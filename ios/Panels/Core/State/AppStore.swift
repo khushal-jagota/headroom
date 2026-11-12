@@ -28,7 +28,7 @@ import Observation
     var errors: [String: ServerReadFailure] = [:]
     var serverUnreachable: Bool {
         errors.values.contains { $0.isServerUnreachable } || chiefResource.failure?.isServerUnreachable == true ||
-            deploymentResource.failure?.isServerUnreachable == true || healthResource.failure?.isServerUnreachable == true
+            deploymentResource.failure?.isServerUnreachable == true
     }
     var isLoading = false
     /// The view stream's health: "Following changes" once the current stream delivered
@@ -98,8 +98,10 @@ import Observation
     /// The reduced current display is replaceable. It never supplies a stream base.
     private var pendingDisplays: [String: ViewSnapshot] = [:]
     private var displaySaveTask: Task<Void, Never>?
+    private var displayEncodingTask: Task<Void, Never>?
     private var lastDisplaySave = Date.distantPast
     private var displayGeneration = 0
+    private var displayCheckpointSequence = 0
     private func savedViewID(_ name: String) -> String { baseURL.absoluteString + "/api/navigation/view/snapshot#" + name }
 
     private func restore() {
@@ -117,25 +119,44 @@ import Observation
         pendingDisplays["latest"] = snapshot
         if snapshot.window("rail_parents") != nil { pendingDisplays["workspace"] = snapshot }
         let delay = max(0, DisplayCacheConfiguration.checkpointInterval - Date().timeIntervalSince(lastDisplaySave))
-        if delay == 0 { saveNavigationDisplay(); return }
         guard displaySaveTask == nil else { return }
         let generation = displayGeneration
         displaySaveTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             guard let self, generation == self.displayGeneration else { return }
             self.displaySaveTask = nil
-            self.saveNavigationDisplay()
+            await self.saveNavigationDisplay()
         }
     }
-    func saveNavigationDisplay() {
+    func saveNavigationDisplay() async {
         displaySaveTask?.cancel(); displaySaveTask = nil
-        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
-        for (name, snapshot) in pendingDisplays {
-            guard let data = try? encoder.encode(snapshot.savedDisplay) else { continue }
-            LocalStore.shared.enqueueCacheResponse(server: LocalStore.server(baseURL), id: savedViewID(name), data: data)
+        // An explicit checkpoint also waits for the automatic checkpoint already
+        // in progress, so a following disk barrier includes its admitted bytes.
+        await displayEncodingTask?.value
+        let displays = pendingDisplays
+        guard !displays.isEmpty else { return }
+        pendingDisplays = [:]; lastDisplaySave = .now
+        displayCheckpointSequence += 1
+        let sequence = displayCheckpointSequence, generation = displayGeneration
+        let server = LocalStore.server(baseURL)
+        let ids = displays.keys.reduce(into: [String: String]()) { $0[$1] = savedViewID($1) }
+        let task = Task { [weak self] in
+            let encoded = await Task.detached(priority: .utility) {
+                let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+                return displays.compactMap { name, snapshot -> (String, Data)? in
+                    guard let data = try? encoder.encode(snapshot.savedDisplay) else { return nil }
+                    return (name, data)
+                }
+            }.value
+            guard let self, generation == self.displayGeneration, sequence == self.displayCheckpointSequence else { return }
+            for (name, data) in encoded {
+                guard let id = ids[name] else { continue }
+                LocalStore.shared.enqueueCacheResponse(server: server, id: id, data: data)
+            }
         }
-        if !pendingDisplays.isEmpty { lastDisplaySave = .now }
-        pendingDisplays = [:]
+        displayEncodingTask = task
+        await task.value
+        if sequence == displayCheckpointSequence { displayEncodingTask = nil }
     }
 
     // MARK: Scope
@@ -247,7 +268,10 @@ import Observation
         hasRun = true
         defer {
             chief.release(); deployment.release(); health.release()
-            if runGeneration == generation { saveNavigationDisplay(); resources.stop(); running = false; viewConsumer = nil; streamRequest = nil }
+            if runGeneration == generation {
+                Task { await saveNavigationDisplay() }
+                resources.stop(); running = false; viewConsumer = nil; streamRequest = nil
+            }
         }
         await followView()
     }

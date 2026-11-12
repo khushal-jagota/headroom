@@ -28,10 +28,10 @@ extension APIClient {
 }
 
 enum ChiefResources {
-    static let roster = ResourceRegistration<ChiefRoster>(key: "/api/workers", versioned: false)
+    static let roster = ResourceRegistration<ChiefRoster>(key: "/api/workers", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
     static let settings = ResourceRegistration<ChiefDetail>(key: "/api/workers/chief-of-staff/settings")
     static let deployment = ResourceRegistration<DeploymentStatus>(key: "/api/deployment-status")
-    static let executorHealth = ResourceRegistration<ExecutorHealth>(key: "/api/executor/health", versioned: false)
+    static let executorHealth = ResourceRegistration<ExecutorHealth>(key: "/api/executor/health", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
 }
 
 enum HolderTicketResources {

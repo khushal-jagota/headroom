@@ -8,10 +8,13 @@ supplies neither stream coverage nor read credit. Fresh streams establish their
 own authority. Navigation and conversation owners checkpoint during updates and
 on background entry.
 
-Screens restore saved responses before fresh reads. New responses apply immediately,
+Saved responses can supply display while fresh reads run. New responses apply immediately,
 including changes that move rows. If the server cannot be reached, a Tailscale
 reminder covers the current screen with Try again. The underlying routes keep
 unfinished Goal and holder edits. Covered conversations earn no read credit.
+The cover stops Review voice capture and preserves its recording for recovery.
+Conversation dictation follows the existing cancellation behavior: the cover discards
+the in-progress dictation session. Text already committed to the composer remains saved.
 Retry or return to the app reads again. Other failed refreshes keep successful
 content visible. With no saved response, rough blocks appear after 300 milliseconds.
 

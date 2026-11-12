@@ -16,5 +16,5 @@ extension APIClient: FeedbackServing {
 }
 
 enum FeedbackResources {
-    static let notes = ResourceRegistration<FeedbackResponse>(key: "/api/feedback", versioned: false)
+    static let notes = ResourceRegistration<FeedbackResponse>(key: "/api/feedback", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
 }

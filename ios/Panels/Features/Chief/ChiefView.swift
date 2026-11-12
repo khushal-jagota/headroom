@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ChiefView: View {
+    let editOwner: PageSessionRoute
     var openConversationID: String?
     @Environment(AppStore.self) private var store
     private var resource: ResourceHandle<ChiefRoster> { store.resources.handle(ChiefResources.roster) }
@@ -17,13 +18,14 @@ struct ChiefView: View {
                     AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: store.chiefSignal ?? chief?.conversationSignal)
                     AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "", target: Principal(kind: "chief", id: "chief"), refresh: { await load(); await store.refresh() }, actions: actions)
                 }
-                if chief != nil { HolderContent(holder: .chief) }
+                if chief != nil { HolderContent(holder: .chief, editOwner: editOwner) }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
         .conversationNavigation(owner: .chief, conversationID: nil, title: chief?.label ?? "Chief of Staff", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .resourceDemand(resource)
+        .task(id: store.baseURL.absoluteString + (store.chiefStamp() ?? "")) { await resource.refresh() }
         .navigationDemand("chief", windows: [NavigationScope.children(of: .chief)])
         .panelsRefreshable { await load() }
         .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }
@@ -76,6 +78,7 @@ struct HolderTickets: View {
             }
         }
         .resourceDemand(allHandles)
+        .task(id: store.baseURL.absoluteString + ((holder.kind == .chief ? store.chiefStamp() : store.managerStamp(holder.id!)) ?? "")) { await load() }
         if let error { LoadErrorView(message: error) { await load() } }
     }
 
