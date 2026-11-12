@@ -207,3 +207,11 @@ export class DurableCodexLoginRejection {
     );
   }
 }
+
+/** Use the same durable generation memory for cards, sign-in, and backend factories. */
+export function create_durable_codex_login_rejection(
+  database: Database,
+  now: () => Date = () => new Date(),
+): import('./snapshot/provider_contracts.ts').CodexLoginRejectionMemory {
+  return new DurableCodexLoginRejection(database, now);
+}

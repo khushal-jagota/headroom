@@ -278,3 +278,9 @@ TypeScript bounds ask withdrawal before shutdown to two seconds. When that bound
 client stop breaks the wire and stops and joins the owned child. Python waits for the
 withdrawal without this bound. The bound prevents a parked ask or blocked write from
 holding process cleanup open.
+
+## Codex sign-in admission after shutdown
+
+The migration Manager required this safety difference in the Part 3 source review. TypeScript closes sign-in admission when shutdown begins. Later or queued starts fail with `CodexSignInUnavailable`. Python permits a later start on the same service instance.
+
+The production provider set also closes catalog and usage admission, aborts its owned probes, and joins them before shutdown completes. Snapshot environment cleanup and sign-in cleanup both run even if either fails. An aggregate error retains their failures. These ownership requirements come from the Ticket Brief and Manager review.
