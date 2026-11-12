@@ -67,7 +67,7 @@ async function answer_request(
   const { pending, attempt, request_fact, token } = reserved;
   let fate: AnswerFate;
   try {
-    fate = await pending.write(attempt.identity, token);
+    fate = await host.native_operation(() => pending.write(attempt.identity, token));
   } catch (error) {
     if (!pending.write_failed(error)) throw error;
     fate = AnswerFate.refused;

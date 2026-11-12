@@ -73,7 +73,11 @@ import { MODEL_THINKING_PULSE_INTERVAL_SECONDS } from './runtime/configuration.t
 import { take_backend_event } from './runtime/backend_events.ts';
 import * as controls from './runtime/controls.ts';
 import * as answers from './runtime/answers.ts';
-import { acquire_after_steers, acquire_settled } from './runtime/synchronization.ts';
+import {
+  acquire_after_steers,
+  acquire_settled,
+  contention_only_write,
+} from './runtime/synchronization.ts';
 import type { LockLease } from './runtime/synchronization.ts';
 import {
   automatic_compaction_is_due,
@@ -142,6 +146,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   readonly conversations = new Map<string, ConversationState>();
   shutting_down = false;
   private shutdown_task: Promise<void> | null = null;
+  private readonly shutdown_controller = new AbortController();
+  private readonly native_waiters = new Set<() => void>();
   private idle_janitor: IdleChildJanitor | null = null;
   constructor(options: ConversationCoreOptions) {
     for (const key of Object.values(ConversationBackendKey)) {
@@ -193,30 +199,56 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   ): Promise<T> {
     let failures = 0;
     let tracked: import('./runtime/contracts.ts').TrackedSaveRetry | null = null;
-    const task = this.options.store.settle_recording(state.record.conversation_id, () => {
-      try {
-        return (this.options.save_attempt ?? save_attempt)(
-          state.record.conversation_id,
-          work,
-          mutations,
-        );
-      } catch (error) {
-        const code =
-          error !== null && typeof error === 'object' && 'code' in error ? error.code : null;
-        if (
-          !(typeof code === 'string' && code.startsWith('SQLITE_BUSY')) &&
-          !(error instanceof Error && error.name === 'AbortError')
-        ) {
-          failures += 1;
-          const detail = `Stuck at write ${failures}`;
-          if (tracked) tracked.set_detail(detail);
-          else
-            tracked = this.options.track_save_retry?.(state.record.conversation_id, detail) ?? null;
+    const task = this.options.store.settle_recording(
+      state.record.conversation_id,
+      () => {
+        try {
+          return (this.options.save_attempt ?? save_attempt)(
+            state.record.conversation_id,
+            work,
+            mutations,
+          );
+        } catch (error) {
+          const code =
+            error !== null && typeof error === 'object' && 'code' in error ? error.code : null;
+          if (
+            !(typeof code === 'string' && code.startsWith('SQLITE_BUSY')) &&
+            !(error instanceof Error && error.name === 'AbortError')
+          ) {
+            failures += 1;
+            const detail = `Stuck at write ${failures}`;
+            if (tracked) tracked.set_detail(detail);
+            else
+              tracked =
+                this.options.wait_registry?.track(
+                  'vps_save_retrying',
+                  state.record.conversation_id,
+                  { detail, conversation_id: state.record.conversation_id },
+                ) ?? null;
+          }
+          throw error;
         }
-        throw error;
-      }
-    });
+      },
+      { shutdown_signal: this.shutdown_controller.signal },
+    );
     return task.finally(() => tracked?.close());
+  }
+  native_operation<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.shutting_down)
+      return Promise.reject(new DOMException('The operation was aborted', 'AbortError'));
+    let cancel!: () => void;
+    const closing = new Promise<T>((_resolve, reject) => {
+      cancel = () => reject(new DOMException('The operation was aborted', 'AbortError'));
+    });
+    this.native_waiters.add(cancel);
+    let native: Promise<T>;
+    try {
+      native = operation();
+    } catch (error) {
+      this.native_waiters.delete(cancel);
+      return Promise.reject(error);
+    }
+    return Promise.race([native, closing]).finally(() => this.native_waiters.delete(cancel));
   }
   note_written(state: ConversationState, rows: readonly StoredConversationEvent[]): void {
     if (rows.length === 0) return;
@@ -231,6 +263,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       }
     }
     state.record = new ConversationRecord(values);
+    if (this.shutting_down) return;
     // A subscriber failure occurs after commit. Never put it inside a save retry.
     for (const row of rows) {
       try {
@@ -505,6 +538,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       );
       delivery = await deliver_prompt(this, state, reservation, batch);
     } catch (error) {
+      if (this.shutting_down) throw error;
       if (error instanceof PromptWriteFailed) {
         await this.record_delivery_uncertainty(state, reservation, batch);
         return new PromptDeliveryUncertain();
@@ -534,7 +568,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     }
     reservation.automatic_notice = delivery.automatic_notice;
     const survivors = delivery.messages.length > 0 ? delivery.messages : batch;
-    let held_change: ModelChangedEventPayload | null = null;
     const fate = await state.lock.run(async () => {
       try {
         if (delivery.refusal_reason !== null) {
@@ -638,8 +671,17 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         state.has_delivered_prompt = true;
         state.delivery_uncertain = false;
         set_phase(state, 'running');
-        if (change && queued) held_change = change;
-        this.options.emit_change?.();
+        this.finish_held_deliveries(state, reservation.messages);
+        if (!this.shutting_down) {
+          this.options.emit_change?.();
+          if (change && queued) {
+            await this.options.on_held_model_change?.(
+              state.record.conversation_id,
+              change.model,
+              change.reasoning_effort,
+            );
+          }
+        }
         return new PromptDeliveryStarted();
       } finally {
         if (state.phase !== 'starting') {
@@ -649,14 +691,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       }
     });
     await state.lock.run(() => this.finish_held_deliveries(state, batch));
-    if (held_change !== null) {
-      const committed_change = held_change as ModelChangedEventPayload;
-      await this.options.on_held_model_change?.(
-        state.record.conversation_id,
-        committed_change.model,
-        committed_change.reasoning_effort,
-      );
-    }
     if (fate instanceof PromptDeliveryRefused && (!queued || promoted)) this.schedule_drain(state);
     return fate;
   }
@@ -832,6 +866,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   async wait_for_reservation(state: ConversationState, token: TurnToken | null): Promise<void> {
     while (state.reserved_turn && same_turn(state.reserved_turn.token, token)) {
+      if (this.shutting_down) return;
       await state.reserved_turn.resolved.promise;
     }
   }
@@ -950,7 +985,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
             : state.record.automatic_compaction_attempted_through_sequence,
       });
     }
-    this.options.emit_change?.();
+    if (!this.shutting_down) this.options.emit_change?.();
     return written[written.length - 1] ?? null;
   }
   acquire_after_steers(state: ConversationState): Promise<LockLease> {
@@ -964,7 +999,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     child: import('./backends/contracts.ts').BackendChild,
   ): Promise<boolean> {
     if (state.child === child) state.child = null;
-    const stopped = await stop_child(state, child);
+    const stopped = await stop_child(state, child, (operation) => this.native_operation(operation));
     if (stopped) {
       state.local_child_retirement_proven = true;
       state.child_event_sink = null;
@@ -1091,13 +1126,17 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
       const state = this.conversation_state(conversation_id);
       if (!state) throw new Error('conversation is absent');
-      return state.lock.run(async () => {
-        const result = await this.persist(state, () =>
-          this.options.store.transact_events(conversation_id, operation),
-        );
-        this.note_written(state, result.written);
-        return result.value;
-      });
+      return own_settlement(
+        state,
+        state.lock.run(async () => {
+          if (this.shutting_down) throw new DOMException('The operation was aborted', 'AbortError');
+          const result = await contention_only_write(() =>
+            this.options.store.transact_events(conversation_id, operation),
+          );
+          this.note_written(state, result.written);
+          return result.value;
+        }),
+      );
     });
   }
   async held_prompts(conversation_id: string): Promise<readonly HeldPrompt[]> {
@@ -1216,21 +1255,39 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   async shutdown(): Promise<void> {
     if (this.shutdown_task) return this.shutdown_task;
+    const states = [...this.conversations.values()];
+    const pumps = states.flatMap((state) =>
+      state.backend_event_pump ? [state.backend_event_pump] : [],
+    );
+    // A child can already exist while its native start still awaits a response.
+    for (const state of states) {
+      if (state.child === null && state.preparing_child !== null)
+        state.child = state.preparing_child;
+      state.closing = true;
+      state.child_event_sink = null;
+      if (state.running_turn) state.running_turn.callbacks_revoked = true;
+      state.backend_events.length = 0;
+      state.backend_event_pump = null;
+      state.late_steer_generation += 1;
+      state.late_steers.clear();
+      for (const barrier of state.steer_settlements) barrier.resolve();
+      state.steer_settlements.clear();
+      state.phase_settled.resolve();
+      state.reserved_turn?.resolved.resolve();
+    }
     this.shutting_down = true;
+    for (const cancel of this.native_waiters) cancel();
+    this.native_waiters.clear();
+    this.shutdown_controller.abort();
     this.shutdown_task = (async () => {
-      for (const state of this.conversations.values()) {
-        if (state.running_turn) state.running_turn.callbacks_revoked = true;
-        state.backend_events.length = 0;
-      }
-      // Caller departure never cancels an accepted exchange. Keep the record door open.
-      await Promise.allSettled(
-        [...this.conversations.values()].flatMap((state) => [...state.settlement_tasks]),
-      );
-      await Promise.allSettled(
-        [...this.conversations.values()].map(async (state) => {
-          if (state.child) await stop_child(state, state.child);
-        }),
-      );
+      await this.idle_janitor?.stop();
+      // These are fenced observers, never raw provider promises. Cleanup can restore
+      // an uncertain child which must participate in the detach below.
+      await Promise.allSettled([
+        ...pumps,
+        ...states.flatMap((state) => [...state.settlement_tasks]),
+      ]);
+      await detach_children(states);
       await this.options.store.finish_writes();
     })();
     return this.shutdown_task;

@@ -10,3 +10,6 @@ export const IDLE_CHILD_SWEEP_INTERVAL_SECONDS = 5 * 60;
 export const LOST_BACKGROUND_TASK_SENDER_LABEL = 'Panels';
 export const BACKGROUND_TASK_ENDINGS_OF_THEIR_OWN = new Set(['completed', 'failed', 'ambient']);
 export const STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS = 2048;
+
+/** Python CONVERSATION_WRITE_LOCK_RETRY_SECONDS, in the Node timer unit. */
+export const WRITE_LOCK_RETRY_MILLISECONDS = 50;

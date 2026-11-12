@@ -70,9 +70,10 @@ export async function cancel_and_end_running_turn(
     if (!child) return;
     const attempt = await host.begin_attempt(state, running.token, O.cancel);
     try {
-      await child.cancel_running_turn();
+      await host.native_operation(() => child.cancel_running_turn());
       cancel_fact = { ...attempt, status: S.accepted };
     } catch (error) {
+      if (host.shutting_down) throw error;
       console.error(
         `conversation turn cancel failed conversation_id=${state.record.conversation_id} backend=${state.record.backend_key}`,
         error,
@@ -261,10 +262,12 @@ async function attempt_steer(
   let outcome: BackendSteerOutcome;
   let adapter_error: unknown = null;
   try {
-    outcome = await child.steer(token, message.content, {
-      sender_content: message.content,
-      sender_label: message.sender_label,
-    });
+    outcome = await host.native_operation(() =>
+      child.steer(token, message.content, {
+        sender_content: message.content,
+        sender_label: message.sender_label,
+      }),
+    );
   } catch (error) {
     if (error instanceof PromptWriteRefused)
       outcome = new BackendSteerRefused({ refusal_reason: R.write_to_backend_failed });

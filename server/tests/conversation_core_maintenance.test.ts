@@ -133,11 +133,22 @@ test('shutdown retains an unconfirmed child and revokes its callbacks', async ()
     const state = f.core.conversations.get('core')!;
     const token = state.running_turn!.token;
     const before = f.store.read_events_after('core', 0);
+    await child.configure('steer', { barrier: 'pending-native' });
+    const steering = f.core.send('core', text_message_content('pending steer'), {
+      sender_label: 'Owner',
+      sender_message_id: 'pending',
+      mode: 'steer',
+    });
+    const cancelled = expect(steering).rejects.toMatchObject({ name: 'AbortError' });
+    await child.wait_for_barrier('pending-native');
     vi.spyOn(child, 'detach').mockRejectedValue(
       Object.assign(new Error('termination remains unconfirmed'), { name }),
     );
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await f.core.shutdown();
+    await cancelled;
+    // Shutdown finishes even though the detached native receipt is still withheld.
+    await child.release('pending-native');
     expect(state.child).toBe(child);
     expect(state.child_is_quarantined).toBe(true);
     expect(state.local_child_retirement_proven).toBe(false);

@@ -93,6 +93,42 @@ test('two promotions of one held id have one winner', async () => {
 test('observer departure during a native write retains one owned settlement', async () => {
   const f = setup({ behavior: { barrier: 'native' } });
   await f.start();
+  // The retained domain seam uses BUSY-only retry. Semantic failures must roll back once.
+  const rejected_domain = new Error('domain rejected');
+  let rejected_calls = 0;
+  await expect(
+    f.core.record_events_transaction('core', (tx) => {
+      rejected_calls += 1;
+      tx.run("UPDATE projects SET name='rejected' WHERE id='project_other'");
+      throw rejected_domain;
+    }),
+  ).rejects.toBe(rejected_domain);
+  expect(rejected_calls).toBe(1);
+  expect(
+    f.database.read(
+      (sql) =>
+        sql.get<{ name: string }>("SELECT name FROM projects WHERE id='project_other'")?.name,
+    ),
+  ).toBe('Other');
+  const original_transaction = f.store.transact_events.bind(f.store);
+  let transaction_attempts = 0;
+  const busy = vi.spyOn(f.store, 'transact_events').mockImplementation((...args) => {
+    transaction_attempts += 1;
+    if (transaction_attempts === 1)
+      throw Object.assign(new Error('writer contention'), { code: 'SQLITE_BUSY' });
+    return original_transaction(...args);
+  });
+  let committed_calls = 0;
+  expect(
+    await f.core.record_events_transaction('core', (tx) => {
+      committed_calls += 1;
+      tx.run("UPDATE projects SET name='committed' WHERE id='project_other'");
+      return { value: 'once', payloads: [] };
+    }),
+  ).toBe('once');
+  expect(transaction_attempts).toBe(2);
+  expect(committed_calls).toBe(1);
+  busy.mockRestore();
   const controller = new AbortController();
   const sent = f.send();
   const observed = observe(sent, controller.signal);
@@ -192,12 +228,14 @@ for (const replacement of ['backend ending', 'send_now'] as const) {
     let tracked_close = 0;
     const f = setup({
       core: {
-        track_save_retry: () => ({
-          set_detail() {},
-          close() {
-            tracked_close += 1;
-          },
-        }),
+        wait_registry: {
+          track: () => ({
+            set_detail() {},
+            close() {
+              tracked_close += 1;
+            },
+          }),
+        },
       },
     });
     await f.start();
@@ -313,4 +351,56 @@ test('a post-read admission race cannot readmit one sender identity', async () =
   ).toHaveLength(1);
   expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toEqual(['prompt']);
   await f.core.shutdown();
+});
+
+// New record option risk: shutdown must cancel generic backoff promptly without another
+// failed save attempt. Existing BUSY and observer cases do not reach this outer retry wait.
+test('shutdown retains an active BUSY save and cancels generic backoff', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const failed = new Deferred<void>();
+  let attempts = 0;
+  let closed = 0;
+  const set_detail = vi.fn();
+  const track = vi.fn(() => ({
+    set_detail,
+    close() {
+      closed += 1;
+    },
+  }));
+  const f = setup({ core: { wait_registry: { track } } });
+  await f.start();
+  const busy_shutdown = new AbortController();
+  let busy_attempts = 0;
+  const retained = f.store.settle_recording(
+    'core',
+    () => {
+      busy_attempts += 1;
+      if (busy_attempts === 1) {
+        busy_shutdown.abort();
+        throw Object.assign(new Error('writer contention'), { code: 'SQLITE_BUSY' });
+      }
+      return f.store.advance_owner_read_through_sequence('core', 0);
+    },
+    { shutdown_signal: busy_shutdown.signal },
+  );
+  expect((await retained)?.conversation_id).toBe('core');
+  expect(busy_attempts).toBe(2);
+  vi.spyOn(f.store, 'append_delivered_prompt').mockImplementation(() => {
+    attempts += 1;
+    if (attempts === 2) failed.resolve();
+    throw Object.assign(new Error('record unavailable'), { code: 'SQLITE_IOERR' });
+  });
+  const sent = f.send();
+  const rejected = expect(sent).rejects.toMatchObject({ name: 'AbortError' });
+  await failed.promise;
+  await f.core.shutdown();
+  await rejected;
+  expect(attempts).toBe(2);
+  expect(closed).toBe(1);
+  expect(set_detail).toHaveBeenCalledExactlyOnceWith('Stuck at write 2');
+  expect(track).toHaveBeenCalledExactlyOnceWith('vps_save_retrying', 'core', {
+    detail: 'Stuck at write 1',
+    conversation_id: 'core',
+  });
+  expect(f.store.read_events_after('core', 0)).toEqual([]);
 });

@@ -51,6 +51,8 @@ export class FifoLock {
 export class ConversationState {
   record: ConversationRecord;
   readonly lock = new FifoLock();
+  closing = false;
+  preparing_child: BackendChild | null = null;
   phase: ConversationPhase = 'idle';
   phase_settled = new Deferred<void>();
   readonly held_prompts: Message[] = [];

@@ -41,9 +41,13 @@ function owned(host: DeliveryServices, state: ConversationState, reservation: Re
     throw new DeliveryCancelled();
   }
 }
-export async function stop_child(state: ConversationState, child: BackendChild): Promise<boolean> {
+export async function stop_child(
+  state: ConversationState,
+  child: BackendChild,
+  native_operation: <T>(operation: () => Promise<T>) => Promise<T> = (operation) => operation(),
+): Promise<boolean> {
   try {
-    await child.stop();
+    await native_operation(() => child.stop());
   } catch (error) {
     state.child_is_quarantined = true;
     console.error(`conversation ${state.record.conversation_id} could not stop its child`, error);
@@ -84,9 +88,16 @@ async function ensure_child(
   if (child.stop_outside_lock)
     throw new BackendSpawnFailed('Backend did not retain its run identity');
   state.local_child_retirement_proven = false;
-  await child.start(resolved, { vendor_session_cursor: state.record.vendor_session_cursor });
+  state.preparing_child = child;
+  try {
+    await host.native_operation(() =>
+      child.start(resolved, { vendor_session_cursor: state.record.vendor_session_cursor }),
+    );
+  } finally {
+    if (state.preparing_child === child) state.preparing_child = null;
+  }
   if (host.shutting_down || state.reserved_turn !== reservation) {
-    await host.discard_child(state, child);
+    if (!host.shutting_down) await host.discard_child(state, child);
     throw new DeliveryCancelled();
   }
   state.child = child;
@@ -198,16 +209,18 @@ export async function deliver_prompt(
   let sender_content = one_prompt_from(survivors);
   let wire_content = await compose(host, state, sender_content);
   const write = async (target: BackendChild) => {
-    const accepted = await target.write_prompt(reservation.token, wire_content, {
-      sender_label: survivors[0].sender_label,
-      sender_content,
-      sender_message_count: survivors.length,
-      mode: reservation.mode,
-      model_change: first.model_change,
-      reasoning_effort_change: first.reasoning_effort_change,
-      reasoning_effort_is_set: first.reasoning_effort_is_set,
-      automatic_compaction: reservation.automatic_compaction,
-    });
+    const accepted = await host.native_operation(() =>
+      target.write_prompt(reservation.token, wire_content, {
+        sender_label: survivors[0].sender_label,
+        sender_content,
+        sender_message_count: survivors.length,
+        mode: reservation.mode,
+        model_change: first.model_change,
+        reasoning_effort_change: first.reasoning_effort_change,
+        reasoning_effort_is_set: first.reasoning_effort_is_set,
+        automatic_compaction: reservation.automatic_compaction,
+      }),
+    );
     reservation.prompt_accepted = true;
     return result({
       messages: survivors,

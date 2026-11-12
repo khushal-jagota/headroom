@@ -71,9 +71,17 @@ export interface TrackedSaveRetry {
   set_detail(detail: string): void;
   close(): void;
 }
+/** Structural slice of the stalls unit's registry. The owner injects its clock. */
+export interface SaveWaitRegistry {
+  track(
+    kind: 'vps_save_retrying',
+    wait_key: string,
+    options: { detail: string; conversation_id?: string | null },
+  ): TrackedSaveRetry;
+}
 export interface ConversationCoreOptions {
   readonly store: ConversationRecordStore;
-  readonly track_save_retry?: (conversation_id: string, detail: string) => TrackedSaveRetry;
+  readonly wait_registry?: SaveWaitRegistry;
   readonly backend_child_factories: Readonly<Record<ConversationBackendKey, BackendChildFactory>>;
   readonly message_files: ConversationMessageFiles;
   readonly publish_event?: (event: StoredConversationEvent) => void;
@@ -106,6 +114,7 @@ export interface DeliveryServices {
     work: () => T,
     mutations?: readonly RuntimeMutation[],
   ): Promise<T>;
+  native_operation<T>(operation: () => Promise<T>): Promise<T>;
   discard_child(
     state: import('./state.ts').ConversationState,
     child: import('../backends/contracts.ts').BackendChild,
