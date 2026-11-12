@@ -202,3 +202,30 @@ integer-text forms. The Manager accepts this narrower rule as Python leniency
 that TS does not reproduce. The focused credential-request check pins refusal of
 one `0x`-prefixed form. Canonical UUID identities and all normal request outcomes
 still match Python.
+
+## Codex process cleanup and blocked writes
+
+The migration Manager accepted these three differences in the Part 1 review on
+November 12, 2026:
+
+- TypeScript cleans up the owned process group. Python's uncontained client stops
+  only its direct child. The WorkerUnit path retains its existing containment.
+- A write failure immediately fails all pending requests and suspended writes in
+  TypeScript. Python marks the wire broken, while some pending requests wait for
+  a later child exit or their own deadline.
+- A TypeScript request deadline includes time in the write queue and a blocked
+  stdin write. Python starts its request deadline after the write completes.
+
+These differences do not authorize one request's cancellation to stop the whole
+app-server, or a timeout to reject unrelated pending requests. Those operations
+retain Python's scope. The process implementation never signals a group after
+it observes the direct child's exit.
+
+## Codex shell startup path
+
+The migration Manager required the TypeScript-owned startup script in the Part 1 review
+on November 12, 2026. On Linux, Python sets `BASH_ENV` to
+`src/planner/conversation/tool_shell_startup.bash`. TypeScript sets it to
+`server/conversation/tool_shell_startup.bash` through the shared TypeScript helper.
+The paired startup check asserts each exact path and identical script bytes. Every other
+child environment value and launch argument compares exactly.
