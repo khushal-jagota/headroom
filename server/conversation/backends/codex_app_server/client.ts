@@ -179,18 +179,37 @@ export class CodexAppServerClient {
     );
   }
   async start(options: CodexClientStart): Promise<void> {
-    if (this.start_task !== null || this.process !== null || this.worker_unit !== null)
+    if (
+      this.start_task !== null ||
+      (this.process !== null &&
+        this.process.child.exitCode === null &&
+        this.process.child.signalCode === null) ||
+      (this.process === null && this.worker_unit !== null)
+    )
       throw new CodexChildWouldNotStart('the previous codex child still owns cleanup handles');
     this.stopping = false;
     this.stop_task = null;
     const incarnation = ++this.incarnation;
-    const task = this.start_owned(options, incarnation);
+    const task = this.replace_dead_child(options, incarnation);
     this.start_task = task;
     try {
       await task;
     } finally {
       if (this.start_task === task) this.start_task = null;
     }
+  }
+  private async replace_dead_child(options: CodexClientStart, incarnation: number): Promise<void> {
+    const previous = this.process;
+    const previous_unit = this.worker_unit;
+    if (previous !== null) {
+      this.break_wire('the codex process ended');
+      await previous.stop();
+      if (previous_unit !== null) await this.stop_unit(previous_unit);
+      if (this.process === previous) this.process = null;
+    }
+    if (this.incarnation !== incarnation || this.stopping)
+      throw new CodexChildWouldNotStart('the codex child stopped during startup');
+    await this.start_owned(options, incarnation);
   }
   private async start_owned(options: CodexClientStart, incarnation: number): Promise<void> {
     const current = () => this.incarnation === incarnation && !this.stopping;
@@ -248,8 +267,16 @@ export class CodexAppServerClient {
     let owned: OwnedCodexProcess;
     try {
       owned = await spawn_codex_process([executable, '--version'], {
-        environment,
+        environment: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
+          ),
+          ...environment,
+        },
         working_directory,
+        close_stdin: true,
       });
     } catch {
       throw cli_version_error('codex', executable, 'check');
@@ -265,9 +292,20 @@ export class CodexAppServerClient {
     owned.child.stderr.resume();
     const output_done = new Promise<void>((resolve) => owned.child.stdout.once('end', resolve));
     try {
-      if (!(await within(owned.exited, VERSION_TIMEOUT_SECONDS)))
+      if (
+        !(await within(
+          Promise.race([
+            owned.exited,
+            owned.output_failed.then(() => {
+              throw cli_version_error('codex', executable, 'check');
+            }),
+          ]),
+          VERSION_TIMEOUT_SECONDS,
+        ))
+      )
         throw cli_version_error('codex', executable, 'check');
       await within(output_done, PIPE_DRAIN_SECONDS);
+      if (owned.output_error !== null) throw cli_version_error('codex', executable, 'check');
       validate_cli_version(
         'codex',
         executable,
@@ -283,48 +321,67 @@ export class CodexAppServerClient {
     const current = () =>
       this.process === owned && this.incarnation === incarnation && !this.stopping;
     const decoder = new StringDecoder('utf8');
-    let remainder = '';
+    let fragments: string[] = [];
+    let line_bytes = 0;
     const read = (text: string) => {
       if (!current()) return;
-      remainder += text;
-      let newline: number;
-      while ((newline = remainder.indexOf('\n')) >= 0) {
-        const line = remainder.slice(0, newline);
-        remainder = remainder.slice(newline + 1);
-        if (Buffer.byteLength(line) > CHILD_OUTPUT_LINE_LIMIT_BYTES) {
+      let start = 0;
+      while (start < text.length) {
+        const newline = text.indexOf('\n', start);
+        const fragment = text.slice(start, newline < 0 ? text.length : newline);
+        line_bytes += Buffer.byteLength(fragment);
+        if (line_bytes > CHILD_OUTPUT_LINE_LIMIT_BYTES) {
           this.warn('a line could not be read');
+          fragments = [];
+          line_bytes = 0;
           owned.child.stdout.destroy();
           return;
         }
-        this.route_line(line, owned, incarnation);
-      }
-      if (Buffer.byteLength(remainder) > CHILD_OUTPUT_LINE_LIMIT_BYTES) {
-        this.warn('a line could not be read');
-        remainder = '';
-        owned.child.stdout.destroy();
+        fragments.push(fragment);
+        if (newline < 0) return;
+        this.route_line(fragments.join(''), owned, incarnation);
+        fragments = [];
+        line_bytes = 0;
+        start = newline + 1;
       }
     };
     owned.child.stdout.on('data', (chunk: Buffer) => read(decoder.write(chunk)));
     owned.child.stdout.once('end', () => {
       read(decoder.end());
-      if (current() && remainder.trim()) this.route_line(remainder, owned, incarnation);
-      remainder = '';
+      if (current() && fragments.length) this.route_line(fragments.join(''), owned, incarnation);
+      fragments = [];
+      line_bytes = 0;
     });
-    let stderr_remainder = Buffer.alloc(0);
+    let stderr_fragments: Buffer[] = [];
+    let stderr_line_bytes = 0;
     owned.child.stderr.on('data', (chunk: Buffer) => {
       if (!current()) return;
-      stderr_remainder = Buffer.concat([stderr_remainder, chunk]);
-      let newline: number;
-      while ((newline = stderr_remainder.indexOf(10)) >= 0) {
-        this.keep_stderr(stderr_remainder.subarray(0, newline + 1));
-        stderr_remainder = stderr_remainder.subarray(newline + 1);
+      let start = 0;
+      while (start < chunk.length) {
+        const newline = chunk.indexOf(10, start);
+        const fragment = chunk.subarray(start, newline < 0 ? chunk.length : newline + 1);
+        stderr_fragments.push(fragment);
+        stderr_line_bytes += fragment.length;
+        if (stderr_line_bytes > CHILD_OUTPUT_LINE_LIMIT_BYTES) {
+          stderr_fragments = [];
+          stderr_line_bytes = 0;
+          return;
+        }
+        if (newline < 0) return;
+        this.keep_stderr(Buffer.concat(stderr_fragments, stderr_line_bytes));
+        stderr_fragments = [];
+        stderr_line_bytes = 0;
+        start = newline + 1;
       }
-      if (stderr_remainder.length > CHILD_OUTPUT_LINE_LIMIT_BYTES)
-        stderr_remainder = Buffer.alloc(0);
     });
     owned.child.stderr.once('end', () => {
-      if (current() && stderr_remainder.length) this.keep_stderr(stderr_remainder);
-      stderr_remainder = Buffer.alloc(0);
+      if (current() && stderr_line_bytes)
+        this.keep_stderr(Buffer.concat(stderr_fragments, stderr_line_bytes));
+      stderr_fragments = [];
+      stderr_line_bytes = 0;
+    });
+    void owned.output_failed.then((error) => {
+      if (current()) this.warn(`a child output stream could not be read: ${error.message}`);
     });
     owned.child.stdin.on('error', (error) => {
       if (current()) this.break_wire(error_text(error));
@@ -462,7 +519,6 @@ export class CodexAppServerClient {
     params: Readonly<WireObject> | undefined,
     options: CodexRequestOptions,
   ): Promise<CodexReply> {
-    let written = false;
     let attempted = false;
     return this.bounded_request(
       method,
@@ -473,7 +529,6 @@ export class CodexAppServerClient {
             attempted = true;
           },
         });
-        written = true;
         try {
           return this.unwrap_reply(method, await this.wait_answer(answer, signal));
         } finally {
@@ -481,7 +536,6 @@ export class CodexAppServerClient {
         }
       },
       options,
-      () => written,
       () => attempted,
     );
   }
@@ -567,16 +621,12 @@ export class CodexAppServerClient {
     method: string,
     work: (signal: AbortSignal) => Promise<T>,
     options: CodexRequestOptions,
-    written: () => boolean,
-    attempted: () => boolean = written,
+    attempted: () => boolean,
   ): Promise<T> {
     const owned = this.process;
     const incarnation = this.incarnation;
     const current = () => this.process === owned && this.incarnation === incarnation;
-    if (options.signal?.aborted) {
-      if (current()) await this.stop();
-      throw options.signal.reason;
-    }
+    options.signal?.throwIfAborted();
     const cancel = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const external_abort = () => cancel.abort(options.signal!.reason);
@@ -596,11 +646,13 @@ export class CodexAppServerClient {
     try {
       return await Promise.race([work(cancel.signal), canceled]);
     } catch (error) {
-      if (cancel.signal.aborted && current()) {
-        if (options.signal?.aborted || !written()) await this.stop();
-        else if (options.poison_wire_on_timeout ?? true)
-          this.break_wire(`${method} was not answered`);
-      }
+      if (
+        cancel.signal.aborted &&
+        !options.signal?.aborted &&
+        current() &&
+        (options.poison_wire_on_timeout ?? true)
+      )
+        this.wire_broken = true;
       throw error;
     } finally {
       clearTimeout(timer);
@@ -682,44 +734,43 @@ export class CodexAppServerClient {
   private route_line(line: string, owned: OwnedCodexProcess, incarnation: number): void {
     const current = () =>
       this.process === owned && this.incarnation === incarnation && !this.stopping;
-    if (!current()) return;
-    if (!line.trim()) return;
-    let message: unknown;
-    try {
-      message = parse_numeric_json(line);
-    } catch {
-      this.warn('a line was not JSON');
-      return;
-    }
-    if (!object(message)) {
-      this.warn('a line was not a JSON object');
-      return;
-    }
-    const method = message.method;
-    if (typeof method === 'string') {
-      const task = this.dispatch.then(() =>
-        current() ? this.route_method(method, message) : undefined,
-      );
-      this.dispatch = task.catch((error) => {
-        if (current()) this.warn(error_text(error));
-      });
-      return;
-    }
-    const request_id = numeric_value(message.id);
-    if (
-      request_id !== undefined &&
-      numeric_kind(message.id) === 'integer' &&
-      Number.isSafeInteger(request_id) &&
-      ('result' in message || 'error' in message)
-    ) {
-      const answer = this.pending.get(request_id);
-      if (answer !== undefined) {
-        this.pending.delete(request_id);
-        answer.resolve({ envelope: message, raw_result: raw_json_result(line) });
+    const task = this.dispatch.then(async () => {
+      if (!current() || !line.trim()) return;
+      let message: unknown;
+      try {
+        message = parse_numeric_json(line);
+      } catch {
+        this.warn('a line was not JSON');
+        return;
       }
-      return;
-    }
-    this.warn('a message was none of the three shapes');
+      if (!object(message)) {
+        this.warn('a line was not a JSON object');
+        return;
+      }
+      const method = message.method;
+      if (typeof method === 'string') {
+        await this.route_method(method, message);
+        return;
+      }
+      const request_id = numeric_value(message.id);
+      if (
+        request_id !== undefined &&
+        numeric_kind(message.id) === 'integer' &&
+        Number.isSafeInteger(request_id) &&
+        ('result' in message || 'error' in message)
+      ) {
+        const answer = this.pending.get(request_id);
+        if (answer !== undefined) {
+          this.pending.delete(request_id);
+          answer.resolve({ envelope: message, raw_result: raw_json_result(line) });
+        }
+        return;
+      }
+      this.warn('a message was none of the three shapes');
+    });
+    this.dispatch = task.catch((error) => {
+      if (current()) this.warn(error_text(error));
+    });
   }
   private async route_method(method: string, message: WireObject): Promise<void> {
     if ('id' in message) {

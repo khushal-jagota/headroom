@@ -59,12 +59,17 @@ def _warning(message: str) -> str:
 
 async def _python(spec: dict[str, Any]) -> dict[str, Any]:
     notifications: list[dict[str, Any]] = []
+    ordering: list[str] = []
     requests: list[dict[str, Any]] = []
     ended = asyncio.Event()
     child_ended = 0
 
     class Handler:
         async def on_notification(self, method: str, notification: BaseModel) -> None:
+            if getattr(notification, "delta", None) == "slow":
+                ordering.append("handler-start")
+                await asyncio.sleep(0.02)
+                ordering.append("handler-end")
             notifications.append(
                 {"method": method, "params": notification.model_dump()}
             )
@@ -104,6 +109,8 @@ async def _python(spec: dict[str, Any]) -> dict[str, Any]:
             client.finish_request("wire/second", second),
         )
         exchange = await client.request("wire/exchange", {})
+        await client.request("wire/slow-handler", {})
+        ordering.append("reply")
         usage = await client.request("account/rateLimits/read", {})
         rejection: dict[str, Any] | None = None
         try:
@@ -133,6 +140,7 @@ async def _python(spec: dict[str, Any]) -> dict[str, Any]:
             "rejection": rejection,
             "exit_failure": exit_failure,
             "notifications": notifications,
+            "ordering": ordering,
             "requests": requests,
             "child_ended": child_ended,
             "stderr": client.standard_error_tail(),
@@ -206,8 +214,10 @@ def test_unit17_wire(
     assert '"usedPercent":25.0' in raw_usage
     assert json.loads(raw_usage) == candidate["usage"]
     assert candidate == reference
+    assert reference["ordering"] == ["handler-start", "handler-end", "reply"]
     assert [reply["label"] for reply in candidate["replies"]] == ["first", "second"]
-    assert len(candidate["notifications"]) == len(candidate["requests"]) == 1
+    assert len(candidate["notifications"]) == 2 and len(candidate["requests"]) == 1
+    assert candidate["ordering"] == ["handler-start", "handler-end", "reply"]
     assert candidate["warnings"] == [
         "invalid JSON",
         "malformed notification",

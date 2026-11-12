@@ -51,7 +51,8 @@ export function refuse_a_duplicated_codex_login(
   try {
     if (resolved_home(home) === resolved_home(real_home)) return;
   } catch {
-    return;
+    // An unresolved path is not evidence that the credentials differ.
+    // Continue to the file comparison, which warns when it cannot read them.
   }
   const shared = logins_hold_the_same_credential(home, real_home);
   if (shared === null) {

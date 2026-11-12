@@ -14,6 +14,7 @@ export interface WireParitySpec {
 }
 export async function run_wire_parity(spec: WireParitySpec): Promise<unknown> {
   const notifications: unknown[] = [];
+  const ordering: string[] = [];
   const requests: unknown[] = [];
   const warnings: string[] = [];
   let child_ended = 0;
@@ -37,6 +38,11 @@ export async function run_wire_parity(spec: WireParitySpec): Promise<unknown> {
     handler: {
       async on_notification(method, notification) {
         notifications.push({ method, params: notification });
+        if ((notification as { delta?: string }).delta === 'slow') {
+          ordering.push('handler-start');
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          ordering.push('handler-end');
+        }
       },
       async on_server_request(method, request_id, params) {
         requests.push({ method, id: request_id, params });
@@ -67,6 +73,8 @@ export async function run_wire_parity(spec: WireParitySpec): Promise<unknown> {
       client.finish_request('wire/second', second),
     ]);
     const exchange = await client.request('wire/exchange', {});
+    await client.request('wire/slow-handler', {});
+    ordering.push('reply');
     const raw_usage = await client.request_raw('account/rateLimits/read', {});
     let rejection: unknown = null;
     try {
@@ -101,6 +109,7 @@ export async function run_wire_parity(spec: WireParitySpec): Promise<unknown> {
       rejection,
       exit_failure,
       notifications,
+      ordering,
       requests,
       warnings,
       child_ended,

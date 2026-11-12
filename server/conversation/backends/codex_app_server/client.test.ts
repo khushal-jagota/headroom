@@ -26,6 +26,8 @@ function fake() {
   const owned = {
     child,
     exited,
+    output_failed: new Promise<Error>(() => {}),
+    output_error: null,
     stop: vi.fn(async () => {
       child.exitCode = 0;
       exit();
@@ -46,7 +48,9 @@ async function start() {
   const version = fake();
   const wire = fake();
   vi.mocked(spawn_codex_process)
-    .mockImplementationOnce(async () => {
+    .mockImplementationOnce(async (_argv, options) => {
+      expect(options.environment.HOME).toBe(process.env.HOME);
+      expect(options.close_stdin).toBe(true);
       setImmediate(() => {
         version.child.stdout.end('codex-cli 0.166.0\n');
         version.finish();
@@ -208,43 +212,97 @@ test('shutdown joins a pending version probe and prevents a later app-server lau
   expect(client.is_alive).toBe(false);
 });
 
-test('an already aborted raw read writes nothing and joins its child', async () => {
+test('an already aborted request writes nothing and preserves its child', async () => {
   const { client, wire } = await start();
   const write = vi.spyOn(wire.child.stdin, 'write');
   const abort = new AbortController();
   const reason = new Error('canceled before write');
   abort.abort(reason);
-  await expect(client.request_raw('usage', {}, { signal: abort.signal })).rejects.toBe(reason);
-  expect(write).not.toHaveBeenCalled();
-  expect(wire.owned.stop).toHaveBeenCalled();
-  expect(client.is_alive).toBe(false);
+  try {
+    await expect(client.request_raw('usage', {}, { signal: abort.signal })).rejects.toBe(reason);
+    expect(write).not.toHaveBeenCalled();
+    expect(wire.owned.stop).not.toHaveBeenCalled();
+    expect(client.is_alive).toBe(true);
+  } finally {
+    await client.stop();
+  }
 });
 
-test('abort covers a blocked write and prevents a queued raw request from writing later', async () => {
+test('abort releases a blocked write without canceling a queued independent request', async () => {
   const { client, wire } = await start();
-  const write = vi.spyOn(wire.child.stdin, 'write').mockImplementation(() => true);
+  const write = vi.spyOn(wire.child.stdin, 'write').mockImplementationOnce(() => true);
   const abort = new AbortController();
   const blocked = client.request('blocked', {}, { signal: abort.signal });
   const reason = new Error('canceled blocked write');
   const refused = expect(blocked).rejects.toBe(reason);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  const queued = client.request_raw('queued');
-  const queued_refused = expect(queued).rejects.toBeInstanceOf(CodexWireFailed);
-  abort.abort(reason);
-  await refused;
-  await queued_refused;
-  expect(write).toHaveBeenCalledTimes(1);
-  expect(wire.owned.stop).toHaveBeenCalled();
-  expect(client.is_alive).toBe(false);
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const queued = client.request_raw('queued');
+    abort.abort(reason);
+    await refused;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    wire.child.stdout.write('{"id":2,"result":{"ok":true}}\n');
+    expect(await queued).toBe('{"ok":true}');
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(wire.owned.stop).not.toHaveBeenCalled();
+    expect(client.is_alive).toBe(true);
+  } finally {
+    await client.stop();
+  }
 });
 
-test('deadline covers a blocked raw write before its callback can complete', async () => {
+test('deadline poisons future writes while a previously written request can still receive its answer', async () => {
   const { client, wire } = await start();
-  vi.spyOn(wire.child.stdin, 'write').mockImplementation(() => true);
-  await expect(client.request_raw('blocked', {}, { timeout_seconds: 0.01 })).rejects.toMatchObject({
-    request_may_have_been_written: true,
-    message: 'blocked was not answered',
-  });
-  expect(wire.owned.stop).toHaveBeenCalled();
-  expect(client.is_alive).toBe(false);
+  try {
+    const independent = await client.begin_request('independent');
+    vi.spyOn(wire.child.stdin, 'write').mockImplementationOnce(() => true);
+    await expect(
+      client.request_raw('blocked', {}, { timeout_seconds: 0.01 }),
+    ).rejects.toMatchObject({
+      request_may_have_been_written: true,
+      message: 'blocked was not answered',
+    });
+    wire.child.stdout.write('{"id":1,"result":{"survived":true}}\n');
+    expect(await client.finish_request('independent', independent)).toEqual({ survived: true });
+    await expect(client.notify('future')).rejects.toMatchObject({
+      request_may_have_been_written: false,
+    });
+    expect(wire.owned.stop).not.toHaveBeenCalled();
+    expect(wire.child.exitCode).toBeNull();
+  } finally {
+    await client.stop();
+  }
+});
+
+test('a natural exit permits a new start without an explicit stop', async () => {
+  const { client, wire, ended } = await start();
+  wire.child.stdout.end();
+  wire.child.stderr.end();
+  wire.finish();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const version = fake();
+  const next = fake();
+  vi.mocked(spawn_codex_process)
+    .mockImplementationOnce(async () => {
+      setImmediate(() => {
+        version.child.stdout.end('codex-cli 0.166.0\n');
+        version.finish();
+      });
+      return version.owned as unknown as OwnedCodexProcess;
+    })
+    .mockResolvedValueOnce(next.owned as unknown as OwnedCodexProcess);
+  try {
+    await client.start({
+      argv: ['/synthetic/codex', 'app-server'],
+      environment: {},
+      working_directory: '/tmp',
+    });
+    expect(ended).toEqual(['ended']);
+    const answer = client.request('restarted');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    next.child.stdout.write('{"id":1,"result":{"restarted":true}}\n');
+    expect(await answer).toEqual({ restarted: true });
+  } finally {
+    await client.stop();
+  }
 });
