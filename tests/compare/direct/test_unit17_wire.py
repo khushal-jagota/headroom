@@ -36,6 +36,7 @@ def _environment(root: Path, trace: Path) -> dict[str, str]:
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "LANG": "C.UTF-8",
         "HOME": str(home),
+        "PLAN_SERVER_URL": "http://127.0.0.1:0",
         "CODEX_HOME": str(home / "codex"),
         "CLAUDE_CONFIG_DIR": str(home / "claude"),
         "HERMES_HOME": str(home / "hermes"),

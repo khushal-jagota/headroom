@@ -80,6 +80,8 @@ def _environment(root: Path) -> dict[str, str]:
             "PLAN_TICKET_SCRATCH_DATABASE": str(root / "database.sqlite"),
             "PLAN_DISPATCHER_LOCK_PATH": str(root / "dispatcher.lock"),
             "PLAN_SERVER_CONTROL_SOCKET": str(root / "control.sock"),
+            "PLAN_SERVER_LIFECYCLE_LEASE_PATH": str(root / "server-lifecycle.lock"),
+            "PLAN_SERVER_URL": "http://127.0.0.1:0",
             "PLAN_CREDENTIAL_KEY_PATH": str(root / "key"),
             "PLAN_TEST_MODE": "1",
             "PLAN_DISPATCH_ENABLED": "false",
@@ -584,13 +586,17 @@ def _seed_route_callers(conn: sqlite3.Connection) -> dict[str, str]:
 
 
 def _service_fixture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, seed_callers: bool = False
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    seed_callers: bool = False,
+    node: bool = False,
 ) -> tuple[Any, dict[str, Any]]:
     from tests.unit.test_update_service import Harness
 
     from planner.environments import update_service
 
-    host: Any = Harness(tmp_path / "python")
+    host: Any = Harness(tmp_path / "python", node=node)
     callers: dict[str, str] = {}
     if seed_callers:
         from contextlib import closing
@@ -744,10 +750,126 @@ def test_service_owner_actions_and_synchronous_poll_match_python(
     )
     actual = _identities(_node(tmp_path, {**value, "actions": actions}, "probe_service"))
     assert actual == expected
+    node_started = time.perf_counter()
+    node_host, node_value = _service_fixture(tmp_path / "node-frontier", monkeypatch, node=True)
+    from planner.environments import update_service
+    from planner.environments.update_install import (
+        migration_graph,
+        require_exact_schema_frontier,
+        write_installer,
+    )
+
+    staged = node_host.root / (".app-next-" + node_host.release.manifest.app_sha)
+    with sqlite3.connect(node_host.database) as db:
+        original = db.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+    versions = staged / "src/planner/core/migrations/versions"
+    (versions / "data-only.py").write_text(
+        f'revision = "unit21_data_only"\ndown_revision = "{original}"\n'
+        'def upgrade():\n    op.execute("UPDATE tickets SET recap=recap")\n'
+    )
+    graph = migration_graph(staged)
+    heads = sorted(set(graph) - {parent for parents in graph.values() for parent in parents})
+    node_value["schema_heads"] = heads
+    # Harness eagerly prefetches. Reset only its cache to model cold v2 admission.
+    node_host.service._ready = None
+    trace: list[str] = []
+    exact = require_exact_schema_frontier
+    stage = node_host.service._stage
+
+    def admitted(database: Path, candidate: Path) -> None:
+        trace.append("frontier")
+        exact(database, candidate)
+
+    def stage_again(*args: Any) -> Path:
+        trace.append("stage")
+        return Path(stage(*args))
+
+    def frontier(revision: str) -> None:
+        with sqlite3.connect(node_host.database) as db:
+            db.execute("DELETE FROM alembic_version")
+            db.execute("INSERT INTO alembic_version VALUES (?)", (revision,))
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(update_service, "require_exact_schema_frontier", admitted)
+        scoped.setattr(node_host.service, "_stage", stage_again)
+        scoped.setattr(
+            node_host.service, "_prepare_mac_update", lambda _release: trace.append("prepare_mac")
+        )
+        frontier_error = None
+        try:
+            node_host.service.prefetch()
+        except ValueError as failure:
+            frontier_error = str(failure)
+        cold = dict(
+            error=frontier_error,
+            ready=node_host.service.ready_release() is not None,
+            mac=trace.count("prepare_mac"),
+        )
+        frontier(heads[0])
+        node_host.service.prefetch()
+        ready = node_host.service.ready_release() is not None
+        node_host.service.install(node_host.release.manifest.app_sha, "now", confirm_activity=False)
+        frontier(original)
+        node_host.advance()
+        failed = node_host.store.read()
+        denied = dict(
+            state=failed.state,
+            detail=failed.detail,
+            backup=failed.backup,
+            launches=len(node_host.launched),
+            reopened=not node_host.system.workspace_admission.closed,
+        )
+        frontier(heads[0])
+        # Trace only external prepare/launch, while retaining the real source installer setup.
+        prepare = write_installer
+
+        def prepare_again(path: Path) -> Path:
+            trace.append("prepare")
+            return prepare(path)
+
+        scoped.setattr(update_service, "write_installer", prepare_again)
+        launch = node_host.service._launch
+
+        def launch_again(*args: Any) -> None:
+            trace.append("launch")
+            launch(*args)
+
+        scoped.setattr(node_host.service, "_launch", launch_again)
+        node_host.service.retry(failed.attempt_id)
+        node_host.advance()
+        expected_node = dict(
+            cold=cold,
+            ready=ready,
+            denied=denied,
+            final_state=node_host.store.read().state,
+            backups=int(node_host.store.read().backup is not None),
+            launches=len(node_host.launched),
+            trace=trace,
+        )
+    actual_node = _node(tmp_path / "node-frontier", node_value, "probe_node_frontier")
+    assert actual_node == expected_node
+    assert cold["error"] and not cold["ready"] and cold["mac"] == 0
+    assert (
+        denied["state"] == "failed"
+        and denied["backup"] is None
+        and denied["launches"] == 0
+        and denied["reopened"]
+    )
+    assert (
+        actual_node["final_state"] == "installing"
+        and actual_node["launches"] == 1
+        and actual_node["backups"] == 0
+    )
     _report(
         request,
         "unit-21-update-service.json",
-        {"complete": True, "seconds": time.perf_counter() - started, "result": actual},
+        {
+            "complete": True,
+            "seconds": time.perf_counter() - started,
+            "result": actual,
+            "node_frontier": actual_node,
+            "node_frontier_extra_seconds": time.perf_counter() - node_started,
+        },
     )
 
 
@@ -1029,6 +1151,7 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
         "head_repository": {"full_name": "owner/repository"},
         "path": ".github/workflows/deploy.yml",
         "head_sha": "b" * 40,
+        "created_at": NOW,
     }
     artifacts = [
         {"name": "panels-publication-proof", "id": 3, "expired": False},
@@ -1068,7 +1191,20 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
             name,
             "available",
             {
-                "actions/workflows/deploy.yml/runs": {"json": {"workflow_runs": [{"id": 1}]}},
+                "actions/workflows/deploy.yml/runs": {
+                    "json": {
+                        "workflow_runs": []
+                        if (run_patch or {}).get("path")
+                        == ".github/workflows/publish-typescript-release.yml"
+                        else [{"id": 1, "created_at": NOW}]
+                    }
+                },
+                "actions/workflows/publish-typescript-release.yml/runs": (
+                    {"json": {"workflow_runs": [{"id": 1, "created_at": NOW}]}}
+                    if (run_patch or {}).get("path")
+                    == ".github/workflows/publish-typescript-release.yml"
+                    else {"status": 404, "json": {"message": "Not Found"}}
+                ),
                 "actions/runs/1": {"json": {**run, **(run_patch or {})}},
                 "actions/runs/1/artifacts": {
                     "json": {"artifacts": artifacts if artifact_rows is None else artifact_rows}
@@ -1126,6 +1262,61 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
                 }
             },
         )
+    node_runtime = {**runtime, "version": 2, "minimum_node_version": "22.18.0"}
+    del node_runtime["python_version"]
+    node_manifest = {**published["manifest"], "runtime_contract": node_runtime}
+    node_workflow = {"path": ".github/workflows/publish-typescript-release.yml"}
+    add("node_trusted", run_patch=node_workflow, release_patch={"manifest": node_manifest})
+    add("deploy_node_mismatch", release_patch={"manifest": node_manifest})
+    add("node_python_mismatch", run_patch=node_workflow)
+    for name, patch in (
+        ("node_minimum", {"minimum_node_version": "22.17.0"}),
+        ("node_float_version", {"version": 2.0}),
+        ("node_python_field", {"python_version": "3.12.12"}),
+    ):
+        add(
+            name,
+            run_patch=node_workflow,
+            release_patch={
+                "manifest": {**node_manifest, "runtime_contract": {**node_runtime, **patch}}
+            },
+        )
+    transport_case(
+        "combined_order",
+        "available_order",
+        {
+            "actions/workflows/deploy.yml/runs": {
+                "json": {
+                    "workflow_runs": [
+                        {"id": 9007199254740992, "created_at": "2026-11-12T10:00:00.000001Z"}
+                    ]
+                }
+            },
+            "actions/workflows/publish-typescript-release.yml/runs": {
+                "json": {
+                    "workflow_runs": [
+                        {"id": 9007199254740993, "created_at": "2026-11-12T10:00:00.000001Z"},
+                        {"id": 1, "created_at": "2026-11-12T10:00:00.000002Z"},
+                    ]
+                }
+            },
+        },
+    )
+    transport_case(
+        "missing_deploy",
+        "available",
+        {
+            "actions/workflows/deploy.yml/runs": {"status": 404, "json": {}},
+        },
+    )
+    transport_case(
+        "publisher_refused",
+        "available",
+        {
+            "actions/workflows/deploy.yml/runs": {"json": {"workflow_runs": []}},
+            "actions/workflows/publish-typescript-release.yml/runs": {"status": 403, "json": {}},
+        },
+    )
     source = root / "large-artifact.zip"
     with source.open("wb") as stream:
         for _ in range(128):
@@ -1228,6 +1419,15 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
             if case["action"] == "available":
                 offered = provider.available()
                 result = None if offered is None else asdict(offered)
+            elif case["action"] == "available_order":
+                considered: list[int] = []
+                monkeypatch.setattr(
+                    provider,
+                    "publication",
+                    lambda run_id, considered=considered: considered.append(run_id),
+                )
+                provider.available()
+                result = {"considered": considered}
             elif case["action"] == "publication":
                 offered = provider.publication(case["run_id"])
                 result = None if offered is None else asdict(offered)
@@ -1251,6 +1451,9 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
     )
     timing = {item["name"]: item.pop("timing") for item in actual if "timing" in item}
     assert actual == json.loads(json.dumps(expected))
+    assert next(item["result"] for item in actual if item["name"] == "combined_order") == {
+        "considered": [1, 9007199254740993, 9007199254740992]
+    }
     assert timing["slow_steady"]["elapsed_ms"] > 70
     assert timing["slow_steady"]["aborted"] is False
     assert timing["stalled_read"]["aborted"] is True

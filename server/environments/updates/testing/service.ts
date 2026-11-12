@@ -24,6 +24,7 @@ export interface ServiceProbeRequest {
   database_path: string;
   now: string;
   release: Record<string, unknown>;
+  schema_heads?: readonly string[];
   actions?: { op: string; [key: string]: unknown }[];
   installed?: {
     app_sha: string | null;
@@ -121,6 +122,31 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
       },
     },
     installer: {
+      require_exact_schema_frontier: (path, candidate) => {
+        trace.push('frontier');
+        if (path !== request.database_path || candidate !== staged)
+          throw new Error('frontier adapter received a different fixture');
+        if (request.schema_heads === undefined)
+          throw new Error('Node frontier facts are unavailable in this fixture');
+        const revisions = database.read(
+          (sql) =>
+            new Set(
+              sql
+                .all<{ version_num: string }>('SELECT version_num FROM alembic_version')
+                .map(({ version_num }) => String(version_num)),
+            ),
+        );
+        const heads = new Set(request.schema_heads);
+        if (
+          !revisions.size ||
+          revisions.size !== heads.size ||
+          [...revisions].some((value) => !heads.has(value))
+        )
+          throw new Error(
+            'This release requires the database to be at exactly its schema revision. ' +
+              'Install the Python release that carries the same migrations first.',
+          );
+      },
       schema_change_pending: () => hooks.migrate ?? false,
       create_backup: async () => {
         counts.backup++;
@@ -176,6 +202,62 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
       unregister();
     },
   };
+}
+export async function probe_node_frontier(request: ServiceProbeRequest) {
+  const host = harness(request, { migrate: true });
+  try {
+    const original = host.database.read(
+      (sql) =>
+        sql.get<{ version_num: string }>('SELECT version_num FROM alembic_version')!.version_num,
+    );
+    host.service.start();
+    let error: string | null = null;
+    try {
+      await host.service.prefetch();
+    } catch (failure) {
+      if (!(failure instanceof Error)) throw failure;
+      error = failure.message;
+    }
+    const cold = {
+      error,
+      ready: host.service.ready_release() !== null,
+      mac: host.trace.filter((item) => item === 'prepare_mac').length,
+    };
+    const revision = request.schema_heads![0];
+    const frontier = (value: string) =>
+      host.database.write((sql) => {
+        sql.run('DELETE FROM alembic_version');
+        sql.run('INSERT INTO alembic_version(version_num) VALUES (?)', [value]);
+      });
+    frontier(revision);
+    await host.service.prefetch();
+    const ready = host.service.ready_release() !== null;
+    host.service.install(host.release.manifest.app_sha, 'now', { confirm_activity: false });
+    frontier(original);
+    await host.service.advance();
+    const failed = host.attempts.read()!;
+    const denied = {
+      state: failed.state,
+      detail: failed.detail,
+      backup: failed.backup,
+      launches: host.counts.launch,
+      reopened: !host.barrier.closed,
+    };
+    frontier(revision);
+    host.service.retry(failed.attempt_id);
+    await host.service.advance();
+    return {
+      cold,
+      ready,
+      denied,
+      final_state: host.attempts.read()!.state,
+      backups: host.counts.backup,
+      launches: host.counts.launch,
+      trace: host.trace,
+    };
+  } finally {
+    await host.close();
+  }
 }
 export async function probe_service(request: ServiceProbeRequest) {
   const host = harness(request),

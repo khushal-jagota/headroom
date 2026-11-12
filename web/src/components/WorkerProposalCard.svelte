@@ -161,11 +161,7 @@
     {#if revisionEditor}{@render revisionEditor()}{:else}
       <ComposerField bind:value={revisionText} placeholder="Add a note for the worker…"
         inputAttributes={{ "data-revision-note": "" }}
-        onkeydown={(event) => {
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.repeat) {
-            event.preventDefault(); sendItBack();
-          }
-        }} />
+        onsubmit={sendItBack} />
     {/if}
   </div>
   <!-- Every button row sits at the right, the most important action furthest right, as in a
