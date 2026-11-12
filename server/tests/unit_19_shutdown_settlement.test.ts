@@ -73,7 +73,9 @@ test('four service deadlines reject without completing their actual settlement',
   const backend_failure = new Error('Synthetic environment cleanup failure');
   const usage_failure = new Error('Synthetic worker termination failure after exit');
   const terminate = Worker.prototype.terminate;
-  const termination = vi.spyOn(Worker.prototype, 'terminate').mockImplementation(async function(this: Worker) {
+  const termination = vi.spyOn(Worker.prototype, 'terminate').mockImplementation(async function (
+    this: Worker,
+  ) {
     await terminate.call(this);
     throw usage_failure;
   });

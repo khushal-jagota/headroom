@@ -62,10 +62,12 @@ export function create_backend_runtime(options: {
         ]).then((results) => {
           const failures = results.filter((result) => result.status === 'rejected');
           if (failures.length)
-            reject_resource_join(new AggregateError(
-              failures.map((failure) => failure.reason),
-              'Backend shutdown failed',
-            ));
+            reject_resource_join(
+              new AggregateError(
+                failures.map((failure) => failure.reason),
+                'Backend shutdown failed',
+              ),
+            );
           else resolve_resource_join();
         });
       }

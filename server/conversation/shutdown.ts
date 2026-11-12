@@ -19,15 +19,11 @@ export async function observe_shutdown(
     await Promise.race([
       settlement,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new ShutdownDeadlineExceeded(pending, message)),
-          remaining,
-        );
+        timer = setTimeout(() => reject(new ShutdownDeadlineExceeded(pending, message)), remaining);
       }),
     ]);
     // Timers cannot preempt synchronous JavaScript or SQLite. Check after completion too.
-    if (performance.now() / 1000 >= deadline)
-      throw new ShutdownDeadlineExceeded(pending, message);
+    if (performance.now() / 1000 >= deadline) throw new ShutdownDeadlineExceeded(pending, message);
   } finally {
     clearTimeout(timer);
   }

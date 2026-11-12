@@ -129,7 +129,9 @@ test('two source executions retain per-source exclusion and drain cancellation b
     await expect(uncooperative.stop({ deadline: performance.now() / 1000 })).rejects.toBeInstanceOf(
       ShutdownDeadlineExceeded,
     );
-    const actual = uncooperative.settled().then(() => { settled = true; });
+    const actual = uncooperative.settled().then(() => {
+      settled = true;
+    });
     await turn();
     expect(settled).toBe(false);
     expect(owned).toBe(true);

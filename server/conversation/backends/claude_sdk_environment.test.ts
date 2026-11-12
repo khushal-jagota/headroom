@@ -62,9 +62,9 @@ it('pins real SDK child metadata and leaves the server environment unchanged', a
     const { CLAUDE_AGENT_SDK_VERSION } = await import('./claude_sdk.ts');
     expect(CLAUDE_AGENT_SDK_VERSION).toBe('0.3.316');
     const { probe_claude_model_catalog } = await import('./claude_model_catalog.ts');
-    await expect(probe_claude_model_catalog('/synthetic/claude-metadata-probe', children)).rejects.toThrow(
-      sentinel.message,
-    );
+    await expect(
+      probe_claude_model_catalog('/synthetic/claude-metadata-probe', children),
+    ).rejects.toThrow(sentinel.message);
     expect(ensure_cli_compatible).toHaveBeenCalledExactlyOnceWith(
       'claude',
       '/synthetic/claude-metadata-probe',

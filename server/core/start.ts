@@ -185,8 +185,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
           });
         });
       };
-      producer('recorded usage', () => recorded_usage?.stop?.(stop),
-        () => recorded_usage?.settled() ?? Promise.resolve());
+      producer(
+        'recorded usage',
+        () => recorded_usage?.stop?.(stop),
+        () => recorded_usage?.settled() ?? Promise.resolve(),
+      );
       producer(
         'background services',
         () => background?.close(stop),
