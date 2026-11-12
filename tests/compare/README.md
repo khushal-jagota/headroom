@@ -84,6 +84,40 @@ The workflow installs `server/` dependencies and runs on Node 22 and 24, as the
 server workflow does. A difference fails the job. Reports upload even after
 failure, with one artifact for each Node version.
 
+## Synthetic host configuration
+
+A request list can supply `host_environment`. The runner accepts only these names:
+
+| Name | Accepted synthetic values |
+| --- | --- |
+| `PLAN_TRUSTED_INGRESS_PROVIDER` | `tailscale` |
+| `PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN` | A login at a domain that ends in `.invalid` |
+| `PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN` | An HTTPS origin at a domain that ends in `.invalid`, without credentials, port, path, query, or fragment |
+| `PLAN_APNS_KEY_ID` | Uppercase letters or digits with the prefix `TEST` |
+| `PLAN_APNS_TEAM_ID` | Uppercase letters or digits with the prefix `TEST` |
+| `PLAN_APNS_BUNDLE_IDS` | A comma-separated list of reverse-domain identifiers that start with `invalid.` |
+
+For example:
+
+```json
+{
+  "host_environment": {
+    "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+    "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "owner@comparison.invalid",
+    "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "https://panels.comparison.invalid",
+    "PLAN_APNS_KEY_ID": "TESTKEY10",
+    "PLAN_APNS_TEAM_ID": "TESTTEAM10",
+    "PLAN_APNS_BUNDLE_IDS": "invalid.panels.ios"
+  }
+}
+```
+
+Unsupported names and nonsynthetic values fail before any server starts. The allowlist is explicit in `runner.py`. An extension requires a code change and review. A list cannot set `HOME`, provider homes, database paths, server URLs, credential paths, key paths, or adapter/mode selection.
+
+If a list supplies APNs metadata, it must supply all three APNs names. The runner generates a fresh P-256 PKCS8 PEM key inside the test directory with mode `0600`. Only the runner supplies `PLAN_APNS_KEY_PATH`. The same synthetic configuration and generated key reach the Python seed host, both comparison hosts, and their restarts through the existing fixture hook. The seed still uses the real scripted Python core. The separate `conversation_system` selection applies only to the comparison hosts.
+
+This configuration permits successful authenticated device registration and durable native queue comparison. It does not select a real transport. Both comparison hosts keep mandatory recording adapters for notification passes and disable production loops in test mode. Synthetic push targets use reserved invalid domains and device tokens. No comparison path constructs a real push adapter or sends a push. Existing source-row inspection still opens host databases read-only.
+
 ## TypeScript host contract
 
 Select the TS launcher with:

@@ -1,6 +1,9 @@
 import { routes as previews } from './previews/routes.ts';
 import { routes as files } from './files/routes.ts';
 import { routes as credentials } from './credentials/routes.ts';
+import { routes as notifications } from './notifications/routes.ts';
+import { initialize_notifications } from './notifications/data.ts';
+import { buildClock } from './core/clock.ts';
 import { conversation_routes } from './tickets/conversation_routes.ts';
 import { routes as membership } from './membership/routes.ts';
 import { configure_conversation_start } from './runtime/conversation_start.ts';
@@ -32,6 +35,7 @@ export const initializeAreas = (
   authority: SignalNavigationAuthority,
   config: Config,
 ): void => {
+  database.write((tx) => initialize_notifications(tx, buildClock(config).nowUnix()));
   initialize_worker_settings(database, config);
   configure_conversation_start(database, config);
   configure_chief_resources(config);
@@ -48,6 +52,7 @@ export const areas: readonly Area[] = [
   { prefix: '', routes: previews },
   { prefix: '', routes: files },
   { prefix: '/api', routes: credentials },
+  { prefix: '/api', routes: notifications },
   { prefix: '/api', routes: tickets },
   { prefix: '/api', routes: conversation_routes },
   { prefix: '/api', routes: membership },
