@@ -1,9 +1,12 @@
 """Keep the live Python/TypeScript credential-store boundary in comparison CI."""
 
+import json
 import subprocess
+import time
 from contextlib import closing
 from pathlib import Path
 
+import pytest
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.core.contracts import OWNER_PRINCIPAL
@@ -21,7 +24,7 @@ from planner.credentials.contracts import (
 from planner.credentials.logic.validation import associated_data
 from planner.credentials.store import DatabaseCredentialResolver, FileCredentialCipher
 
-REPOSITORY = Path(__file__).resolve().parents[2]
+REPOSITORY = Path(__file__).resolve().parents[3]
 
 
 def _node(database: Path, key: Path, mode: str) -> None:
@@ -43,8 +46,11 @@ def _node(database: Path, key: Path, mode: str) -> None:
     assert not result.stdout, "credential interoperability must not emit output"
 
 
-def test_python_typescript_credentials_interoperate_on_real_store(tmp_path: Path) -> None:
+def test_python_typescript_credentials_interoperate_on_real_store(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
     """Metadata HTTP comparison and fixed vectors cannot prove live writes both ways."""
+    started = time.perf_counter()
     home = tmp_path / "home"
     home.mkdir()
     homes = create_synthetic_homes(home)
@@ -116,3 +122,26 @@ def test_python_typescript_credentials_interoperate_on_real_store(tmp_path: Path
                 key_path=key,
             )
         _node(database, key, "verify")
+
+    report = request.config.getoption("--compare-report-dir")
+    if report:
+        destination = Path(report)
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "credential-interoperability.json").write_text(
+            json.dumps(
+                {
+                    "kind": "direct",
+                    "case": "credential-store",
+                    "python_to_typescript": True,
+                    "typescript_to_python": True,
+                    "python_replacement_to_typescript": True,
+                    "legacy_context_retained": True,
+                    "canonical_context_checked": True,
+                    "key_mode": "0600",
+                    "parent_mode": "0700",
+                    "seconds": time.perf_counter() - started,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
