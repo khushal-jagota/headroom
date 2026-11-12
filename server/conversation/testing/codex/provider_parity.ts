@@ -6,6 +6,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createDatabase } from '../../../core/database/index.ts';
 import { create_durable_codex_login_rejection } from '../../backend_state.ts';
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import type {
   CodexLoginRejectionMemory,
   SavedCodexLoginSource,
@@ -140,12 +141,14 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
     ]) {
       mode(name);
       const database = name === 'signin-shutdown' ? createDatabase(spec.database) : null;
+      const one_shot_children = new OneShotChildren();
       const clock = () => new Date('2026-11-12T12:34:56Z');
       const durable = database && create_durable_codex_login_rejection(database, clock);
       durable?.remember(saved_codex_login_source.read_stored_codex_login().generation);
       const providers =
         database &&
         create_codex_providers({
+          one_shot_children,
           database,
           now: clock,
           read_codex_snapshot: async () => ({ executable_path: spec.executable }),
@@ -197,7 +200,12 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
           login: providers && durable ? saved(providers.saved_codex_login!, durable) : saved(),
         });
       } finally {
-        await service.shutdown();
+        try {
+          await service.shutdown();
+        } finally {
+          one_shot_children.seal();
+          await one_shot_children.settled();
+        }
         database?.close();
       }
     }

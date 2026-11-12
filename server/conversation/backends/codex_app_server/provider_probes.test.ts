@@ -4,12 +4,14 @@ import { create_codex_providers } from './providers.ts';
 import * as login from './login.ts';
 import { Deferred } from '../../runtime/state.ts';
 import type { Database } from '../../../core/database/contracts.ts';
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 
-function production_providers(database: Database = {} as Database) {
+function production_providers(children: OneShotChildren, database: Database = {} as Database) {
   vi.stubEnv('VITEST', '');
   vi.stubEnv('PLAN_TEST_MODE', '');
   vi.stubEnv('PYTEST_CURRENT_TEST', undefined);
   return create_codex_providers({
+    one_shot_children: children,
     database,
     now: () => new Date(0),
     read_codex_snapshot: async () => {
@@ -74,11 +76,12 @@ test('usage cancellation covers a blocked handshake and waits for owned cleanup'
 
 // The existing composition refusal proves construction in test mode. This proves a later context change.
 test('a retained production sign-in refuses test context before its first login read', async () => {
+  const children = new OneShotChildren();
   const read = vi.spyOn(login, 'read_stored_codex_login').mockImplementation(() => {
     throw new Error('A login read crossed the test fence');
   });
   try {
-    const providers = production_providers();
+    const providers = production_providers(children);
     vi.stubEnv('PLAN_TEST_MODE', '1');
     await expect(providers.codex_sign_in!.start()).rejects.toThrow(
       'Production sign-in is unavailable in tests.',
@@ -86,6 +89,8 @@ test('a retained production sign-in refuses test context before its first login 
     expect(read).not.toHaveBeenCalled();
     await providers.codex_sign_in!.shutdown();
   } finally {
+    children.seal();
+    await children.settled();
     read.mockRestore();
     vi.unstubAllEnvs();
   }
@@ -93,6 +98,7 @@ test('a retained production sign-in refuses test context before its first login 
 
 // A synchronous failure in one owner must not skip another owner's active child cleanup.
 test('runtime shutdown joins the production catalog owner before reporting environment failure', async () => {
+  const children = new OneShotChildren();
   const { create_backend_runtime, unavailable_backend_providers } =
     await import('../../snapshot/composition.ts');
   const { RecordingBackendProbeEnvironment } =
@@ -118,7 +124,7 @@ test('runtime shutdown joins the production catalog owner before reporting envir
   let stopping: Promise<void> | undefined;
   try {
     const database = {} as Database;
-    const providers = production_providers(database);
+    const providers = production_providers(children, database);
     const runtime = create_backend_runtime({
       database,
       config: { test_mode: true } as import('../../../core/config.ts').Config,
@@ -151,6 +157,8 @@ test('runtime shutdown joins the production catalog owner before reporting envir
     cleanup.resolve();
     await stopping?.catch(() => {});
     await operation?.catch(() => {});
+    children.seal();
+    await children.settled();
     probe.mockRestore();
     vi.unstubAllEnvs();
   }
