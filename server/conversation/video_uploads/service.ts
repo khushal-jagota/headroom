@@ -1,6 +1,8 @@
-/** Route-required durable admission and atomic adoption. No upload intake or cleanup loop. */
+/** Durable bounded intake, atomic adoption, and conservative recovery. */
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, statSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { open } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Database, ReadSql } from '../../core/database/contracts.ts';
 import type { KeptMessageFile } from '../message_files.ts';
@@ -8,12 +10,34 @@ import { MEDIA_TYPE_SUFFIX } from '../record/message_files.ts';
 import { destination_from_json, destination_to_json, VideoUploadError } from './contracts.ts';
 import type {
   CheckedVideoUpload,
+  ReserveVideoUpload,
   UploadDestination,
   UploadState,
   VideoUploadOutcome,
   VideoUploadStatus,
 } from './contracts.ts';
-import { validate_binding } from './logic/rules.ts';
+import {
+  expiry_eligible,
+  require_capacity,
+  validate_binding,
+  validate_filename,
+} from './logic/rules.ts';
+import { VIDEO_UPLOAD_LIMITS } from './configuration.ts';
+import type { VideoUploadLimits } from './configuration.ts';
+import { probe_video, require_probe } from './probe.ts';
+
+export interface VideoUploadServiceOptions {
+  readonly now?: () => number;
+  readonly limits?: Partial<VideoUploadLimits>;
+  readonly probe_video?: (
+    path: string,
+    filename: string,
+    options?: { signal?: AbortSignal },
+  ) => Promise<string>;
+  readonly signal?: AbortSignal;
+  readonly require_probe?: () => unknown;
+  readonly disk_free_bytes?: () => number;
+}
 
 const UNSAFE_IDENTIFIER_CHARACTER = /[^A-Za-z0-9_-]/;
 interface UploadRow {
@@ -54,12 +78,33 @@ export class VideoUploadService {
   readonly database: Database;
   readonly db_path: string;
   readonly root: string;
+  private readonly now: () => number;
+  private readonly limits: Readonly<VideoUploadLimits>;
+  private readonly probe: (
+    path: string,
+    filename: string,
+    options?: { signal?: AbortSignal },
+  ) => Promise<string>;
+  private readonly signal: AbortSignal | undefined;
+  private readonly require_probe: () => unknown;
+  private readonly disk_free_bytes: () => number;
 
-  constructor(database: Database, db_path: string) {
+  constructor(database: Database, db_path: string, options: VideoUploadServiceOptions = {}) {
     this.database = database;
     this.db_path = db_path;
     this.root = join(dirname(db_path), 'files', 'video-uploads');
     mkdirSync(this.root, { recursive: true });
+    this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
+    this.limits = { ...VIDEO_UPLOAD_LIMITS, ...options.limits };
+    this.probe = options.probe_video ?? probe_video;
+    this.signal = options.signal;
+    this.require_probe = options.require_probe ?? require_probe;
+    this.disk_free_bytes =
+      options.disk_free_bytes ??
+      (() => {
+        const usage = statfsSync(this.root);
+        return usage.bavail * usage.bsize;
+      });
   }
 
   private row(sql: ReadSql, upload_id: string): UploadRow {
@@ -116,6 +161,188 @@ export class VideoUploadService {
     });
   }
 
+  private disk_capacity(sql: ReadSql, free_bytes: number, incoming = 0): void {
+    const outstanding = sql.get<{ outstanding: number }>(`
+      SELECT COALESCE(SUM(byte_count-received_bytes),0) AS outstanding
+      FROM conversation_video_uploads
+      WHERE state IN ('reserved','transferring')
+    `)!.outstanding;
+    if (free_bytes - outstanding - incoming < this.limits.free_space_floor_bytes)
+      throw new VideoUploadError('Not enough free disk space for this video.', 507);
+  }
+
+  reserve(request: ReserveVideoUpload): VideoUploadStatus {
+    this.require_probe();
+    validate_filename(request.filename);
+    if (request.byte_count > this.limits.max_video_bytes)
+      throw new VideoUploadError('Video exceeds the 250 MiB limit.', 413);
+    if (!request.destination.id || UNSAFE_IDENTIFIER_CHARACTER.test(request.destination.id))
+      throw new VideoUploadError('Invalid destination.');
+    const upload_id = 'vu_' + randomUUID().replaceAll('-', '');
+    const free_bytes = this.disk_free_bytes();
+    this.database.write((tx) => {
+      const used = tx.get<{ used: number }>(`
+        SELECT COALESCE(SUM(byte_count),0) AS used
+        FROM conversation_video_uploads
+        WHERE state IN ('reserved','transferring','ready','admitted','linked')
+      `)!.used;
+      require_capacity(used, request.byte_count, this.limits.video_budget_bytes);
+      this.disk_capacity(tx, free_bytes, request.byte_count);
+      tx.run(
+        `
+        INSERT INTO conversation_video_uploads
+          (upload_id,destination_json,filename,byte_count,state,expires_at,stored_file_id)
+        VALUES (?,?,?,?,?,?,?)
+      `,
+        [
+          upload_id,
+          destination_to_json(request.destination),
+          request.filename,
+          request.byte_count,
+          'reserved',
+          this.now() + this.limits.upload_ttl_seconds,
+          'f_' + randomUUID().replaceAll('-', ''),
+        ],
+      );
+    });
+    return this.status(upload_id);
+  }
+
+  private remove(row: UploadRow): void {
+    const path = this.path(row);
+    remove_if_present(path);
+    if (row.conversation_id !== null) remove_if_present(path + MEDIA_TYPE_SUFFIX);
+    remove_if_present(this.temporary(row.upload_id));
+  }
+
+  cancel(upload_id: string): void {
+    const row = this.database.read((sql) => this.row(sql, upload_id));
+    if (['admitted', 'linked'].includes(row.state))
+      throw new VideoUploadError('This video is in use. It cannot be removed.', 409);
+    this.remove(row);
+    this.database.write((tx) => {
+      tx.run("UPDATE conversation_video_uploads SET state='cancelled' WHERE upload_id=?", [
+        upload_id,
+      ]);
+    });
+  }
+
+  async transfer(upload_id: string, chunks: AsyncIterable<Uint8Array>): Promise<VideoUploadStatus> {
+    this.signal?.throwIfAborted();
+    const [declared, filename] = this.begin_transfer(upload_id);
+    let received = 0;
+    let output: FileHandle | undefined;
+    try {
+      output = await open(this.temporary(upload_id), 'wx');
+      try {
+        for await (const incoming of chunks) {
+          this.signal?.throwIfAborted();
+          for (
+            let offset = 0;
+            offset < incoming.length;
+            offset += this.limits.transfer_chunk_bytes
+          ) {
+            const chunk = incoming.subarray(offset, offset + this.limits.transfer_chunk_bytes);
+            if (received + chunk.length > declared)
+              throw new VideoUploadError('Transfer exceeds its reserved size.', 413);
+            received = await this.store_chunk(upload_id, output, chunk, received);
+          }
+        }
+        await output.sync();
+        this.signal?.throwIfAborted();
+      } finally {
+        await output.close();
+        output = undefined;
+      }
+      if (received !== declared)
+        throw new VideoUploadError('Video transfer was interrupted. Retry the attachment.');
+      const media_type = await this.probe(this.temporary(upload_id), filename, {
+        signal: this.signal,
+      });
+      this.signal?.throwIfAborted();
+      return this.mark_ready(upload_id, media_type);
+    } catch (error) {
+      // File writes and failures occur outside the write door. Commit only facts.
+      this.mark_failed(upload_id, this.signal?.aborted ? this.signal.reason : error);
+      this.signal?.throwIfAborted();
+      if (error instanceof Error && 'code' in error)
+        throw new VideoUploadError('Video could not be stored. Retry the attachment.', 507);
+      throw error;
+    }
+  }
+
+  private begin_transfer(upload_id: string): readonly [number, string] {
+    return this.database.write((tx) => {
+      const row = this.row(tx, upload_id);
+      if (row.state !== 'reserved' || row.expires_at <= this.now())
+        throw new VideoUploadError(
+          'This upload is no longer available. Attach the video again.',
+          409,
+        );
+      tx.run("UPDATE conversation_video_uploads SET state='transferring' WHERE upload_id=?", [
+        upload_id,
+      ]);
+      return [row.byte_count, row.filename];
+    });
+  }
+
+  private async store_chunk(
+    upload_id: string,
+    output: FileHandle,
+    chunk: Uint8Array,
+    received: number,
+  ): Promise<number> {
+    this.signal?.throwIfAborted();
+    const free_bytes = this.disk_free_bytes();
+    this.database.read((sql) => {
+      if (this.row(sql, upload_id).state !== 'transferring')
+        throw new VideoUploadError('The video upload was cancelled or expired.', 409);
+      this.disk_capacity(sql, free_bytes);
+    });
+    if (free_bytes - chunk.length < this.limits.free_space_floor_bytes)
+      throw new VideoUploadError('Video upload stopped: disk space is low.', 507);
+    let written = 0;
+    while (written < chunk.length) {
+      const result = await output.write(chunk, written, chunk.length - written);
+      if (result.bytesWritten === 0) throw new Error('Video file write made no progress.');
+      written += result.bytesWritten;
+      this.signal?.throwIfAborted();
+    }
+    received += chunk.length;
+    this.database.write((tx) => {
+      if (this.row(tx, upload_id).state !== 'transferring')
+        throw new VideoUploadError('The video upload was cancelled or expired.', 409);
+      tx.run('UPDATE conversation_video_uploads SET received_bytes=? WHERE upload_id=?', [
+        received,
+        upload_id,
+      ]);
+    });
+    return received;
+  }
+
+  private mark_ready(upload_id: string, media_type: string): VideoUploadStatus {
+    this.database.write((tx) => {
+      if (this.row(tx, upload_id).state !== 'transferring')
+        throw new VideoUploadError('The video upload was cancelled or expired.', 409);
+      tx.run("UPDATE conversation_video_uploads SET state='ready',media_type=? WHERE upload_id=?", [
+        media_type,
+        upload_id,
+      ]);
+    });
+    return this.status(upload_id);
+  }
+
+  private mark_failed(upload_id: string, error: unknown): void {
+    remove_if_present(this.temporary(upload_id));
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    this.database.write((tx) => {
+      tx.run("UPDATE conversation_video_uploads SET state='failed',error=? WHERE upload_id=?", [
+        message || 'Upload interrupted.',
+        upload_id,
+      ]);
+    });
+  }
+
   preflight(
     upload_id: string,
     destination: UploadDestination,
@@ -137,7 +364,7 @@ export class VideoUploadService {
       }
       if (!['ready', 'admitted', 'linked'].includes(row.state))
         throw new VideoUploadError('The video is not ready. Retry its upload.', 409);
-      if (row.state === 'ready' && row.expires_at <= Math.floor(Date.now() / 1000)) {
+      if (row.state === 'ready' && row.expires_at <= this.now()) {
         throw new VideoUploadError('The video expired. Attach it again.', 409);
       }
       if (row.state !== 'linked') {
@@ -229,5 +456,40 @@ export class VideoUploadService {
         checked.upload_id,
       ]);
     });
+  }
+
+  recover_and_cleanup(): void {
+    const now = this.now();
+    const rows = this.database.read((sql) =>
+      sql.all<UploadRow>('SELECT * FROM conversation_video_uploads'),
+    );
+    for (const row of rows) {
+      if (row.state === 'admitted' && row.conversation_id) {
+        this.database.write((tx) => {
+          const accepted = tx.get(
+            `
+            SELECT 1 FROM conversation_events
+            WHERE conversation_id=? AND kind='prompt'
+              AND json_extract(payload,'$.sender_message_id')=?
+            LIMIT 1
+          `,
+            [row.conversation_id, row.sender_message_id],
+          );
+          if (accepted)
+            tx.run(
+              "UPDATE conversation_video_uploads SET state='linked',outcome='accepted' WHERE upload_id=?",
+              [row.upload_id],
+            );
+        });
+      }
+      if (expiry_eligible(row.state, row.expires_at, now)) {
+        this.remove(row);
+        this.database.write((tx) => {
+          tx.run("UPDATE conversation_video_uploads SET state='cancelled' WHERE upload_id=?", [
+            row.upload_id,
+          ]);
+        });
+      }
+    }
   }
 }

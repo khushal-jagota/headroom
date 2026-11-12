@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import math
 import re
@@ -21,6 +22,18 @@ from tests.support.server_fixtures import _start_server, _stop_server
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.core.db import connect, create_schema
+
+
+def request_body(call: dict[str, Any]) -> dict[str, Any]:
+    """One optional raw body; response/capture policy remains unchanged."""
+    if "body_base64" in call:
+        if "json" in call:
+            raise ValueError("body_base64 and json are mutually exclusive")
+        value = call["body_base64"]
+        if not isinstance(value, str):
+            raise ValueError("body_base64 must be a base64 string")
+        return {"content": base64.b64decode(value, validate=True)}
+    return {"json": call.get("json")}
 
 # Unit-01's reached bare 32-hex values trace to UUID4, not content digests.
 ID = re.compile(
@@ -248,7 +261,7 @@ async def stream_answer(
                                 resolved = substitute(operation, saved)
                                 changed = await client.request(
                                     resolved["method"], base + resolved["path"],
-                                    json=resolved.get("json"), headers=resolved.get("headers"),
+                                    **request_body(resolved), headers=resolved.get("headers"),
                                 )
                                 assert changed.status_code == resolved["status"], (
                                     operation, changed.status_code, changed.text,
@@ -415,7 +428,7 @@ def run_list(
                     call = substitute(request, seed_captures)
                     response = client.request(
                         call["method"], seed_server.base + call["path"],
-                        json=call.get("json"), headers=call.get("headers"),
+                        **request_body(call), headers=call.get("headers"),
                     )
                     assert response.status_code == call["status"], (
                         call, response.status_code, response.text,
@@ -520,7 +533,7 @@ def run_list(
                             response = client.request(
                                 resolved["method"],
                                 server.base + resolved["path"],
-                                json=resolved.get("json"),
+                                **request_body(resolved),
                                 headers=resolved.get("headers"),
                             )
                             if "status" in resolved:

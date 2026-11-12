@@ -20,6 +20,10 @@ import type { SqliteProcessConversationSystem } from '../conversation/system.ts'
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { run_automatic_recovery } from '../conversation/deploy_interruptions/coordinator.ts';
+import { VideoUploadService } from '../conversation/video_uploads/service.ts';
+import { createVideoUploadRoutes } from '../conversation/video_uploads/routes.ts';
+import { createVoiceRoutes } from '../conversation/voice_transcription/routes.ts';
+import { CLEANUP_INTERVAL_SECONDS } from '../conversation/video_uploads/configuration.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 
 import {
@@ -76,6 +80,9 @@ export interface StartedServer {
   close(): Promise<void>;
 }
 export async function startServer(options: ServerOptions = {}): Promise<StartedServer> {
+  const media_lifetime = new AbortController();
+  let video_cleanup_timer: ReturnType<typeof setInterval> | undefined;
+  let video_cleanup_work: Promise<unknown> | undefined;
   const config = loadConfig();
   config.db_path = assert_test_database_path(config.db_path);
   const ownership = acquireRuntimeOwnership(config.db_path);
@@ -108,6 +115,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   const close = (): Promise<void> => {
     if (closing) return closing;
     conversationWrites.seal();
+    media_lifetime.abort(new Error('Media processing stopped at shutdown'));
+    clearInterval(video_cleanup_timer);
     revokeSignal();
     areas.closeSubscriptions();
     const deadline = performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS;
@@ -120,6 +129,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       }
     };
     closing = (async () => {
+      await attempt(() => video_cleanup_work);
       await attempt(() => background?.close({ deadline }));
       await attempt(() => conversationWrites.drain());
       // Loop cancellation shares one deadline. Core and record settlement have
@@ -172,6 +182,16 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       revoke_signal: revokeSignal,
     };
     core = options.createConversationCore?.(context);
+    const video_uploads = new VideoUploadService(database, config.db_path, {
+      signal: media_lifetime.signal,
+    });
+    const conversation_http = core
+      ? {
+          core,
+          record: context.record,
+          writes: conversationWrites,
+        }
+      : null;
     const conversationSystem = options.conversationSystem ?? core;
     if (core) {
       const current = core;
@@ -212,15 +232,19 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       changes,
       areas: [
         ...areas.areas,
+        {
+          prefix: '/api/conversation/video-uploads',
+          routes: createVideoUploadRoutes(video_uploads, conversation_http, media_lifetime.signal),
+        },
+        {
+          prefix: '/api/conversation',
+          routes: createVoiceRoutes({ signal: media_lifetime.signal }),
+        },
         ...(core
           ? [
               {
                 prefix: '/api/conversation',
-                routes: createConversationRoutes({
-                  core,
-                  record: context.record,
-                  writes: conversationWrites,
-                }),
+                routes: createConversationRoutes(conversation_http!),
               },
             ]
           : []),
@@ -236,6 +260,22 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     }
     if (core) {
       const current = core;
+      video_uploads.recover_and_cleanup();
+      video_cleanup_timer = setInterval(() => {
+        if (closing !== undefined || video_cleanup_work !== undefined) return;
+        video_cleanup_work = current.workspace_admission.operation(async (admitted) => {
+          if (admitted) video_uploads.recover_and_cleanup();
+        });
+        void video_cleanup_work
+          .catch((error) => {
+            clearInterval(video_cleanup_timer);
+            console.error('Video upload cleanup failed', error);
+          })
+          .finally(() => {
+            video_cleanup_work = undefined;
+          });
+      }, CLEANUP_INTERVAL_SECONDS * 1000);
+      video_cleanup_timer.unref();
       recovery = current.workspace_admission.operation(async (admitted) => {
         if (!admitted) return;
         await current.tell_agents_of_background_tasks_lost_at_restart();
