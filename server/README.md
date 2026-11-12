@@ -135,7 +135,7 @@ The SDK public spawn hook owns the exact child and its required WorkerUnit. An i
 
 On Linux, `BASH_ENV` points to the absolute source path of `server/conversation/tool_shell_startup.bash` for TS and `src/planner/conversation/tool_shell_startup.bash` for Python. The direct proof permits only this exact source-location pair and requires identical file bytes. A byte difference fails the proof. Other environment differences require explicit acceptance in `DEVIATIONS.md`.
 
-`tests/compare/direct/unit18_real_provider.py` is a manual migration proof, outside pytest discovery. It rehearses a fresh TS turn, a Python seed, and TS recall through the real cores with the scripted CLI before its single real attempt. Real mode requires explicit executable and Claude-home inputs, an isolated Ticket directory, and the Manager's approval after the adapter merge. It records only its own launches, requires the four normal version probes, denies tools, and stops on any failed phase. Generated reports, session allowlists, and tokens stay outside the repository.
+The paired scripted proof also exercises the real CLI's observed ordering, status and rate-limit frames, and optional message fields. The one-attempt provider driver and its results remain Ticket artifacts, outside automatic discovery.
 
 ## In-memory conversation instrument
 

@@ -8,10 +8,6 @@ if (process.argv.includes('--version') || process.argv.includes('-v')) {
   process.exit(0);
 }
 const arguments_ = process.argv.slice(2);
-const part3 = process.env.UNIT18_PART3_SCRIPTED === '1';
-if (part3 && Object.keys(process.env).some((name) => name.startsWith('PLAN_'))) {
-  throw new Error('The manual provider rehearsal must have no Panels identity variables');
-}
 const option = (name: string) => {
   const inline = arguments_.find((argument) => argument.startsWith(`${name}=`));
   if (inline !== undefined) return inline.slice(name.length + 1);
@@ -25,14 +21,14 @@ function log(value: unknown) {
   appendFileSync(trace!, `${JSON.stringify(value)}\n`);
 }
 const launchMetadata = process.env.UNIT18_WRAPPED_FILE;
-if (!launchMetadata && !part3) throw new Error('The scripted CLI requires captured launch argv');
+if (!launchMetadata) throw new Error('The scripted CLI requires captured launch argv');
 log({
   kind: 'launch',
   pid: process.pid,
   node_executable: process.execPath,
   environment: process.env,
   args: arguments_,
-  ...(launchMetadata ? JSON.parse(readFileSync(launchMetadata, 'utf8')) : {}),
+  ...JSON.parse(readFileSync(launchMetadata, 'utf8')),
 });
 if (process.env.PLAN_TICKET_ID) {
   const path = process.env.UNIT18_WRAPPED_FILE;
@@ -59,11 +55,19 @@ if (option('--resume')) {
   log({ kind: 'resume-loaded', session, memory: state.memory });
 }
 function emit(message: Record<string, unknown>) {
-  process.stdout.write(`${JSON.stringify(message)}\n`);
+  const raw = JSON.stringify(message);
+  log({ kind: 'wire-out', message, raw_json: raw });
+  process.stdout.write(`${raw}\n`);
 }
 function lifecycle(uuid: string, state: string) {
   log({ kind: 'lifecycle', uuid, state });
-  emit({ type: 'command_lifecycle', command_uuid: uuid, state, session_id: session });
+  emit({
+    type: 'command_lifecycle',
+    command_uuid: uuid,
+    state,
+    session_id: session,
+    uuid: `script-lifecycle-${uuid}-${state}`,
+  });
 }
 let resultNumber = state.resultNumber;
 let assistantNumber = 0;
@@ -71,7 +75,10 @@ let active: string[] = [];
 let malformedCancel = false;
 let plainResult = false;
 let initDelayed = process.env.UNIT18_DELAY_INIT === '1';
+let initPublished = false;
+let observedPattern: 'plain' | 'resume' | null = null;
 function publishInit() {
+  initPublished = true;
   emit({
     type: 'system',
     subtype: 'init',
@@ -79,11 +86,31 @@ function publishInit() {
     uuid: 'script-init',
     cwd: process.cwd(),
     model: 'haiku',
-    tools: part3 ? [] : ['Write', 'AskUserQuestion'],
+    tools: ['Write', 'AskUserQuestion'],
     mcp_servers: [],
     slash_commands: [],
     permissionMode: 'default',
     capabilities: ['interrupt_cancel_queued_v1', 'interrupt_receipt_v1'],
+    terminal_slash_commands: [],
+    apiKeySource: 'synthetic-fixture',
+    claude_code_version: '2.1.316',
+    output_style: 'default',
+    agents: [],
+    skills: [],
+    plugins: [],
+    analytics_disabled: true,
+    product_feedback_disabled: true,
+    memory_paths: {},
+    original_cwd: process.cwd(),
+    additional_directories: [],
+    messaging_socket_path: 'synthetic-socket',
+    fast_mode_state: 'off',
+    fast_mode_disabled_reason: 'synthetic-disabled',
+    per_turn_effort_active: false,
+    ultrathink_available: false,
+    ultrathink_typed_raises: false,
+    view_mode: 'default',
+    user_message_uuids: [...active],
   });
 }
 const queued = new Set<string>();
@@ -95,21 +122,101 @@ function assistant(content: unknown[]) {
     session_id: session,
     parent_tool_use_id: null,
     uuid: `script-assistant-${assistantNumber}`,
+    timestamp: '2000-01-01T00:00:00.000Z',
+    request_id: `synthetic-request-${resultNumber}`,
+    user_message_uuid: active[0],
+    user_message_uuids: [...active],
     message: {
       id: `script-message-${assistantNumber}`,
       role: 'assistant',
       model: 'haiku',
       content,
+      type: 'message',
+      container: null,
+      stop_reason: null,
+      stop_sequence: null,
+      stop_details: null,
+      usage: {},
+      input_transformations: [],
+      diagnostics: observedPattern === 'resume' ? {} : null,
+      context_management: null,
     },
   });
 }
 function text(value: string) {
   assistant([{ type: 'text', text: value }]);
 }
+function status() {
+  emit({
+    type: 'system',
+    subtype: 'status',
+    status: 'synthetic-ready',
+    session_id: session,
+    uuid: `synthetic-status-${resultNumber}`,
+    user_message_uuids: [...active],
+  });
+}
+function rateLimit() {
+  // Only the outer object shape was recorded in the real turn. This is synthetic.
+  emit({
+    type: 'rate_limit_event',
+    rate_limit_info: { status: 'allowed' },
+    session_id: session,
+    uuid: `synthetic-rate-${resultNumber}`,
+  });
+}
+function streamedAnswer(value: string, pieces: string[]) {
+  let index = 0;
+  const stream = (event: Record<string, unknown>) => {
+    emit({
+      type: 'stream_event',
+      event,
+      session_id: session,
+      parent_tool_use_id: null,
+      uuid: `synthetic-stream-${resultNumber}-${index}`,
+      api_message_id: `synthetic-api-${resultNumber}`,
+      ...(index++ === 0
+        ? {
+            ttft_ms: 1,
+            thinking_display: 'synthetic-none',
+            user_message_uuid: active[0],
+            user_message_uuids: [...active],
+          }
+        : {}),
+    });
+  };
+  // Inner stream discriminators were not retained in the real evidence. These
+  // representative SDK frames prove the observed outer order and text delivery.
+  status();
+  if (observedPattern === 'plain') rateLimit();
+  stream({
+    type: 'message_start',
+    message: {
+      id: `synthetic-api-${resultNumber}`,
+      type: 'message',
+      role: 'assistant',
+      model: 'haiku',
+      content: [],
+      usage: {},
+    },
+  });
+  stream({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+  for (const piece of pieces) {
+    stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: piece } });
+  }
+  text(value);
+  stream({ type: 'content_block_stop', index: 0 });
+  stream({
+    type: 'message_delta',
+    delta: { stop_reason: 'end_turn' },
+    usage: { output_tokens: 5 },
+  });
+  stream({ type: 'message_stop' });
+  if (observedPattern === 'resume') rateLimit();
+}
 function finish(interrupted = false) {
   const completed = active;
   active = [];
-  for (const uuid of completed) lifecycle(uuid, interrupted ? 'cancelled' : 'completed');
   resultNumber += 1;
   state.resultNumber = resultNumber;
   writeFileSync(statePath, JSON.stringify(state));
@@ -123,6 +230,7 @@ function finish(interrupted = false) {
     session_id: session,
     uuid: `script-result-${resultNumber}`,
     user_message_uuids: completed,
+    user_message_uuid: completed[0],
     terminal_reason: interrupted ? 'aborted_streaming' : 'completed',
     total_cost_usd: resultNumber / 1000,
     usage: {
@@ -131,8 +239,30 @@ function finish(interrupted = false) {
       cache_read_input_tokens: 1,
     },
     result: interrupted ? '' : 'script completed',
+    api_error_status: null,
+    credential_expires_at: '2000-01-01T00:00:00.000Z',
+    fast_mode_disabled_reason: 'synthetic-disabled',
+    fast_mode_state: 'off',
+    first_content_frame_ms: 1,
+    first_request_cache_read_input_tokens: 0,
+    first_request_input_tokens: 5,
+    modelUsage: {},
+    model_usage_since_last_result: {},
+    permission_denials: [],
+    queued_turn_count: 0,
+    request_sent_wall_ms: 100000,
+    result_index: resultNumber,
+    safety_stops: 0,
+    stop_reason: 'end_turn',
+    subagent_stats: {},
+    time_to_request_ms: 1,
+    ttft_ms: 1,
+    ttft_stream_ms: 1,
   };
-  process.stdout.write(`${JSON.stringify(result).replace('"unit18-float-input"', '5.0')}\n`);
+  const raw = JSON.stringify(result).replace('"unit18-float-input"', '5.0');
+  log({ kind: 'wire-out', message: JSON.parse(raw), raw_json: raw });
+  process.stdout.write(`${raw}\n`);
+  for (const uuid of completed) lifecycle(uuid, interrupted ? 'cancelled' : 'completed');
 }
 function answer(request: Record<string, unknown>, payload: unknown) {
   emit({
@@ -158,7 +288,6 @@ input.on('line', (line) => {
         ],
       });
       if (initDelayed) log({ kind: 'system-init-withheld' });
-      else publishInit();
     } else if (message.request.subtype === 'interrupt') {
       const cancelled = malformedCancel ? [null] : message.request.cancel_queued ? [...queued] : [];
       const still_queued = message.request.cancel_queued ? [] : [...queued];
@@ -235,33 +364,9 @@ input.on('line', (line) => {
   }
   lifecycle(uuid, 'started');
   active.push(uuid);
-  if (part3) {
-    let reply: string;
-    if (value.includes('Reply exactly UNIT18_FRESH_OK')) {
-      reply = 'UNIT18_FRESH_OK';
-    } else {
-      const token = /UNIT18_MEMORY_[0-9a-f]+/.exec(value)?.[0];
-      if (token && value.includes('Reply exactly STORED')) {
-        state.memory = token;
-        reply = 'STORED';
-      } else if (value.includes('Recall the exact memory token from the previous turn')) {
-        if (!option('--resume') || !state.memory) throw new Error('No scripted seed memory exists');
-        reply = state.memory;
-      } else {
-        throw new Error('Unexpected prompt in the manual provider rehearsal');
-      }
-    }
-    emit({
-      type: 'stream_event',
-      session_id: session,
-      uuid: 'part3-stream',
-      parent_tool_use_id: null,
-      event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: reply } },
-    });
-    text(reply);
-    finish();
-    return;
-  }
+  if (!initPublished && !initDelayed) publishInit();
+  observedPattern =
+    scenario === 'plain' ? 'plain' : scenario === 'resume-success' ? 'resume' : null;
   if (scenario === 'crash7') {
     process.stderr.write('synthetic process crash\n');
     process.exit(7);
@@ -321,26 +426,17 @@ input.on('line', (line) => {
     return;
   }
   if (scenario === 'plain') {
-    emit({
-      type: 'stream_event',
-      session_id: session,
-      uuid: 'script-stream-plain',
-      parent_tool_use_id: null,
-      event: {
-        type: 'content_block_delta',
-        index: 0,
-        delta: { type: 'text_delta', text: 'plain live text' },
-      },
-    });
+    streamedAnswer('plain live text', ['plain live ', 'text']);
+    finish();
+    return;
   }
-  if (scenario === 'resume-success') log({ kind: 'resume-memory', memory: state.memory });
-  text(
-    scenario === 'steer'
-      ? 'steer answer'
-      : scenario === 'resume-success'
-        ? state.memory
-        : 'plain answer',
-  );
+  if (scenario === 'resume-success') {
+    log({ kind: 'resume-memory', memory: state.memory });
+    streamedAnswer(state.memory, ['unit18-', 'memory', '-', 'to', 'ken']);
+    finish();
+    return;
+  }
+  text(scenario === 'steer' ? 'steer answer' : 'plain answer');
   finish();
 });
 input.once('close', () => process.exit(0));
