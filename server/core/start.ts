@@ -3,6 +3,8 @@ import { areas, commitSteps, initializeAreas, prepareAreas, closeAreas } from '.
 import { createApp } from '../app.ts';
 import { loadConfig } from './config.ts';
 import { buildClock } from './clock.ts';
+import { prepare_background_loops, type BackgroundLoops } from './loops.ts';
+import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import { ChangeSignal } from './changes/index.ts';
 import { createDatabase } from './database/index.ts';
 import type { Database } from './database/index.ts';
@@ -15,6 +17,10 @@ import type { SignalPublicationAuthority } from '../conversation/publication/aut
 
 /** Shared process lifecycle for the normal entry point and comparison host. */
 export interface ServerOptions {
+  /** Off until Unit 21 explicitly composes the production lifecycle. */
+  enableWorkerReadiness?: boolean;
+  /** Unit 21 supplies UpdateService.poll. True suppresses this poll. */
+  beforeWorkerReadinessPoll?: () => boolean;
   testAreas?: readonly Area[];
   conversationSystem?: ConversationSystem;
   createSignalAuthority?: (database: Database) => SignalPublicationAuthority;
@@ -24,6 +30,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   const ownership = acquireRuntimeOwnership(config.db_path);
   let dispatcher: ReturnType<typeof acquireLock> = null;
   let database: ReturnType<typeof createDatabase> | undefined;
+  let loops: BackgroundLoops | undefined;
   let signalAuthority: SignalPublicationAuthority | undefined;
   try {
     const changes = new ChangeSignal();
@@ -34,11 +41,25 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     if (!config.test_mode && config.dispatch_enabled) {
       dispatcher = acquireLock(config.dispatcher_lock_path);
     }
+    const clock = buildClock(config);
+    loops = prepare_background_loops({
+      enable_worker_readiness: options.enableWorkerReadiness ?? false,
+      test_mode: config.test_mode,
+      dispatch_enabled: config.dispatch_enabled,
+      dispatcher_owned: dispatcher !== null,
+      before_poll: options.beforeWorkerReadinessPoll,
+      worker: options.conversationSystem ? {
+        connect_database: () => database!,
+        conversation_system: options.conversationSystem,
+        worker_type_registry: configured_worker_type_registry(),
+        now: () => clock.nowUnix(),
+      } : null,
+    });
     const app = await createApp(config, {
       database,
       changes,
       areas: [...areas, ...(options.testAreas ?? [])],
-      clock: buildClock(config),
+      clock,
       signalAuthority,
       conversationSystem: options.conversationSystem,
       workspaceAdmission: options.conversationSystem?.workspace_admission,
@@ -47,7 +68,8 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     const close = () => {
       if (closing) return closing;
       signalAuthority?.invalidate('shutdown');
-      return (closing = closeAreas()
+      return (closing = loops!.stop()
+        .then(() => closeAreas())
         .then(() => app.close())
         .finally(() => {
           database?.close();
@@ -63,6 +85,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
         });
       });
     }
+    loops.start(config.tick_seconds, changes);
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     if (inherited !== undefined) {
       const fd = Number(inherited);
@@ -73,6 +96,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     }
   } catch (error) {
     signalAuthority?.invalidate('shutdown');
+    await loops?.stop();
     await closeAreas();
     database?.close();
     dispatcher?.close();

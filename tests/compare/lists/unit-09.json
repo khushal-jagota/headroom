@@ -1,0 +1,196 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/runtime/",
+    "src/planner/core/loops.py"
+  ],
+  "requests": [
+    {
+      "area": "worker-readiness",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Readiness worker",
+        "worker_type": "coding",
+        "brief": "Agreed brief",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      },
+      "capture": {
+        "worker": "id"
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Readiness discussion",
+        "worker_type": "new_worker",
+        "brief": "Agreed brief",
+        "ceiling": "needs_what_good_looks_like_at_each_stage",
+        "ceiling_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      },
+      "capture": {
+        "discussion": "id"
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Readiness backlogged",
+        "worker_type": "coding",
+        "brief": "Agreed brief",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      },
+      "capture": {
+        "backlogged": "id"
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Readiness pending",
+        "worker_type": "coding",
+        "brief": "Agreed brief",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      },
+      "capture": {
+        "pending": "id"
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "POST",
+      "path": "/api/tickets/${backlogged}/backlog",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "worker-readiness",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "No opener at pending proposal",
+        "worker_type": "coding",
+        "brief": "Review me"
+      },
+      "capture": {
+        "awaiting": "id"
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "POST",
+      "path": "/api/test/poll/readiness",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "first_pass": "ticket_ids"
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "GET",
+      "path": "/api/tickets?id=${worker}&detail=full",
+      "status": 200,
+      "capture": {
+        "worker_conversation": "tickets.0.conversation_id"
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${worker_conversation}/state",
+      "status": 200,
+      "capture": {
+        "worker_send": ""
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "GET",
+      "path": "/api/tickets?id=${discussion}&detail=full",
+      "status": 200,
+      "capture": {
+        "discussion_conversation": "tickets.0.conversation_id"
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${discussion_conversation}/state",
+      "status": 200,
+      "capture": {
+        "discussion_send": ""
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "GET",
+      "path": "/api/tickets?id=${pending}&detail=full",
+      "status": 200,
+      "capture": {
+        "pending_conversation": "tickets.0.conversation_id"
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${pending_conversation}/state",
+      "status": 200,
+      "capture": {
+        "pending_send": ""
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "POST",
+      "path": "/api/test/poll/readiness",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "second_pass": "ticket_ids"
+      }
+    },
+    {
+      "area": "worker-readiness",
+      "method": "GET",
+      "path": "/api/tickets?detail=full",
+      "status": 200
+    }
+  ],
+  "probes": [
+    "/api/tickets?detail=full",
+    "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0}%5D}"
+  ],
+  "report_captures": [
+    "first_pass",
+    "second_pass",
+    "worker_send",
+    "discussion_send"
+  ]
+}

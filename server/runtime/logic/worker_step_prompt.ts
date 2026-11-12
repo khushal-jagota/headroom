@@ -79,3 +79,8 @@ export function compose_worker_step_prompt(
 function _render_worker_step_input(item: WorkerStepInput): string {
   return item.quoted ? `[${item.name}]\n${item.text}\n[/${item.name}]` : item.text;
 }
+
+export function mid_step_memory_loss_prompt(ticket: Ticket): string {
+  const guidance = '\n\n[Ticket workflow guidance]\n' + render_workflow_guide(ticket.workflow) + '\n[/Ticket workflow guidance]';
+  return `You are part-way through a step on ticket ${ticket.id} — ${ticket.title}, at Stage '${ticket.stage}'. ${MEMORY_LOSS_NOTICE}${guidance}`;
+}

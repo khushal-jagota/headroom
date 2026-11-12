@@ -1,4 +1,5 @@
 /** Explicit per-Ticket start path. Polling and scheduling remain in Unit 9. */
+import { PlannerError } from '../core/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
 import {
   PromptDeliveryStarted,
@@ -17,7 +18,7 @@ import * as revision_feedback from '../tickets/revision_feedback.ts';
 import * as conversation_start from './conversation_start.ts';
 import * as worker_memory from './worker_memory.ts';
 import * as worker_step_readiness from './worker_step_readiness.ts';
-import { compose_worker_step_prompt } from './logic/worker_step_prompt.ts';
+import { compose_worker_step_prompt, mid_step_memory_loss_prompt } from './logic/worker_step_prompt.ts';
 export const LOOP_SENDER_LABEL = 'loop';
 export type WorkerStepDeliveryFate =
   'started' | 'queued' | 'injected' | 'refused' | 'uncertain' | 'suppressed';
@@ -203,4 +204,115 @@ async function _admitted_start_ready_worker_step(
     }
     return WorkerStepStartResult.from_delivery_fate(fate);
   });
+}
+
+export async function tell_a_worker_it_lost_its_memory(
+  ticket_id: string, options: WorkerStepStartOptions,
+): Promise<boolean> {
+  return options.conversation_system.workspace_admission.operation(async (admitted) => {
+    if (!admitted) return false;
+    const database = options.connect_database();
+    return conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
+      const ticket = database.read((sql) => tickets_data.read_ticket(sql, ticket_id));
+      const conversation_id = ticket.conversation_id;
+      if (conversation_id === null || !database.read((sql) => worker_memory.ticket_needs_memory_notice(sql, ticket_id))) return false;
+      if (worker_memory.an_answer_is_already_waiting(await options.conversation_system.held_prompts(conversation_id))) return false;
+      try {
+        if (!database.read((sql) => worker_memory.ticket_needs_memory_notice(sql, ticket_id))) return false;
+        const delivered = await conversation_start.send_to_ticket_conversation(
+          options.conversation_system, database, ticket_id,
+          text_message_content(mid_step_memory_loss_prompt(ticket)), {
+            conversation_id, sender_label: LOOP_SENDER_LABEL, mode: 'queue',
+            sender_message_id: worker_memory.new_memory_notice_message_id(),
+            worker_type_registry: options.worker_type_registry, now: options.now(),
+          });
+        if (delivered.fate instanceof PromptDeliveryRefused || delivered.fate instanceof PromptDeliverySuppressed) return false;
+        return true;
+      } catch (error) {
+        console.error(`memory-loss notice could not be sent (ticket=${ticket_id} conversation=${conversation_id})`, error);
+        return false;
+      }
+    });
+  });
+}
+
+/** Candidate scanning, timer backstop, and per-Ticket task ownership. */
+export class WorkerStepReadinessLoop {
+  private readonly in_flight = new Map<string, Promise<unknown>>();
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private interval_ms: number | undefined;
+  private stop_requested = false;
+  private poll_queued = false;
+  private readonly options: WorkerStepStartOptions & { before_poll?: () => boolean };
+  constructor(options: WorkerStepStartOptions & { before_poll?: () => boolean }) {
+    this.options = options;
+  }
+  private ready_ticket_ids(): string[] {
+    return this.options.connect_database().read((sql) => {
+      const rows = sql.all<{id: string}>(`SELECT t.id FROM tickets t
+        WHERE t.integrity_error_reason IS NULL AND t.is_backlogged=0
+          AND t.worker_step_claim='none' AND t.pending_proposal IS NULL
+          AND NOT EXISTS (SELECT 1 FROM json_each(t.workflow_json, '$.stages') stage
+            WHERE json_extract(stage.value, '$.id')=t.stage
+              AND json_extract(stage.value, '$.is_terminal'))
+        ORDER BY t.updated_at, t.id`);
+      return rows.filter(({id}) => {
+        try {
+          const ticket = tickets_data.read_ticket(sql, id);
+          return worker_step_readiness.is_ready_for_worker_step(sql, ticket, {worker_type_definition: ticket.workflow});
+        } catch (error) {
+          if (error instanceof PlannerError && error.code === 'not_found') return false;
+          throw error;
+        }
+      }).map(({id}) => id);
+    });
+  }
+  private schedule(ticket_id: string, notice = false): boolean {
+    if (this.stop_requested || this.in_flight.has(ticket_id)) return false;
+    const task = Promise.resolve().then<unknown>(() => notice
+      ? tell_a_worker_it_lost_its_memory(ticket_id, this.options)
+      : start_ready_worker_step(ticket_id, this.options));
+    this.in_flight.set(ticket_id, task);
+    void task.catch((error) => console.error(`worker step task ended in an unhandled failure (ticket=${ticket_id})`, error))
+      .finally(() => this.in_flight.delete(ticket_id));
+    return true;
+  }
+  poll_once(): string[] {
+    if (this.stop_requested || this.options.before_poll?.()) return [];
+    const ids = this.ready_ticket_ids().filter((id) => this.schedule(id));
+    try { this.tell_every_worker_that_lost_its_memory(); }
+    catch (error) { console.error('memory-loss notices could not be scanned for', error); }
+    return ids;
+  }
+  tell_every_worker_that_lost_its_memory(): string[] {
+    return this.options.connect_database().read(worker_memory.ticket_ids_holding_an_unanswered_memory_loss)
+      .filter((id) => this.schedule(id, true));
+  }
+  async drain(): Promise<void> {
+    await Promise.allSettled([...this.in_flight.values()]);
+  }
+  wake(): void {
+    if (this.stop_requested || this.interval_ms === undefined || this.poll_queued) return;
+    this.poll_queued = true;
+    queueMicrotask(() => {
+      this.poll_queued = false;
+      if (!this.stop_requested) this.tick();
+    });
+  }
+  private tick(): void {
+    clearTimeout(this.timer);
+    try { this.poll_once(); }
+    catch (error) { console.error('worker-step readiness poll failed', error); }
+    if (!this.stop_requested) this.timer = setTimeout(() => this.tick(), this.interval_ms);
+  }
+  start(interval_seconds: number): void {
+    if (this.interval_ms !== undefined || this.stop_requested) throw new Error('worker-step readiness loop already started or stopped');
+    this.interval_ms = interval_seconds * 1000;
+    this.tick();
+  }
+  async stop(): Promise<void> {
+    this.stop_requested = true;
+    clearTimeout(this.timer);
+    await this.drain();
+  }
 }
