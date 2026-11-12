@@ -4,6 +4,8 @@ import { VIEW_PROJECTION_VERSION } from '../../src/lib/conversation/view/contrac
 export function installConversationViewReaderFixture(id='bounded-reader', options: {search?: string; baseUrl?: string} = {}):void {
   const search = options.search ?? location.search;
   const baseUrl = options.baseUrl ?? location.origin;
+  const previewClock = new URLSearchParams(search).has("preview-clock");
+  let previewModel = "gpt-6.1-sol";
   const textRestoration=new URLSearchParams(search).get('text-restoration');
   const restorationText=textRestoration==='tall'
     ? '```text\n'+Array.from({length:1400},(_,index)=>`Interior code line ${index}: preserve this exact character through late layout.`).join('\n')+'\n```'
@@ -41,6 +43,13 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
   const calls:string[]=[];
   (window as any).__viewCalls=calls;
   const status:ConversationViewStatus={diagnostics_expired:false,runtime_epoch:'fixture',revision:0,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,background_tasks:[],pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,rest:{latest_happened:{kind:'agent_message',sender_label:null,excerpt:'Latest owner answer'},latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:2000,latest_owner_message_preview:"Latest owner answer",last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}};
+  if (previewClock) {
+    const started = Date.now() - 240_000;
+    status.turn_key = 'preview-turn'; status.turn_running = true;
+    status.rest.latest_turn = {kind:'turn',key:'preview-turn',order:{sequence:1,slot:0},changed_through_sequence:sequence,
+      settled:false,stopped:false,started_at_unix_milliseconds:started,ending:null,duration_seconds:null,
+      tool_call_count:0,folded_message_count:0,latest_message_key:null,is_latest:true};
+  }
   let liveText='Temporary streaming prose.';
   let liveVersion=1;
   const deferredEndingText=JSON.stringify({kind:'turn_ended',ending:'completed',error_summary:null,automatic_compaction_result:null});
@@ -87,6 +96,7 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
   if(folds){status.turn_key='turn:14';status.stopped_without_ending=true;}
   function page(url:URL):ConversationViewPage{
     const lens=url.searchParams.get('lens')==='full'?'full':'focus';
+    if(previewClock)return{conversation_id:url.pathname.split('/')[4],protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,scope:{kind:'timeline',key:null},items:status.rest.latest_turn?[status.rest.latest_turn]:[],older:null,newer:null,body_bytes:0};
     if(ownerWidth){
       const items:ConversationViewRow[]=[1,2,3].map(n=>({...item(n),row_kind:'prompt',body:{kind:'inline',value:{kind:'prompt',sender_label:n===3?'Chief':'owner',mode:'queue',sent_at_unix_milliseconds:n,content:[{piece:'text',text:n===2?'A long owner prompt retains its existing width limit. '.repeat(8):'Short prompt.'}]}}}));
       items[0].body={kind:'deferred',reference:{body_id:'owner-width:1',version:'1',byte_count:widthBody.length,media_type:'application/json'}};
@@ -166,7 +176,7 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
   window.fetch=async(input,init)=>{
     const value=String(input);if(!value.startsWith('/api/conversation/'))return originalFetch(input,init);
     calls.push(value);const url=new URL(value,baseUrl);
-    if(url.pathname==='/api/conversation/backends')return Response.json({backends:[]});
+    if(url.pathname==='/api/conversation/backends')return Response.json({backends:previewClock?[{backend_key:'codex',installed:true,available_models:[{model_id:'gpt-6.1-sol',display_name:'GPT 6.1 Sol',reasoning_effort_options:['medium']},{model_id:'gpt-6.1-terra',display_name:'GPT 6.1 Terra',reasoning_effort_options:['medium']}],reasoning_effort_options:['medium']}]:[]});
     if(url.pathname.endsWith('/view/body/content')){
       const reference=JSON.parse(url.searchParams.get('reference')!);
       if(String(reference.body_id).startsWith('return:')){
@@ -216,7 +226,7 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
     }
     if(url.pathname.endsWith('/view/receipts'))return Response.json({conversation_id:id,coverage:{through_sequence:sequence},receipts:[]});
     if(url.pathname.endsWith('/owner-read'))return Response.json({owner_read_through_sequence:JSON.parse(String(init?.body)).through_sequence});
-    return Response.json({conversation_id:id,backend_key:'codex',supports_steer:true,model:null,reasoning_effort:null,workspace_folder:'/fixture',access:'full',role_text:null,identity_environment_variable_names:[],latest_sequence:sequence,owner_read_through_sequence:unread??sequence,is_running:false,held_prompts:[],pending_permission_ask:null,pending_user_input:null,composer_catalog:[]});
+    return Response.json({conversation_id:previewClock?url.pathname.split('/')[4]:id,backend_key:'codex',supports_steer:true,model:previewClock?(url.pathname.includes('/preview-chief')?'gpt-6.1-terra':previewModel):null,reasoning_effort:previewClock?'medium':null,workspace_folder:'/fixture',access:'full',role_text:null,identity_environment_variable_names:[],latest_sequence:sequence,owner_read_through_sequence:unread??sequence,is_running:previewClock?status.turn_running===true:false,held_prompts:[],pending_permission_ask:null,pending_user_input:null,composer_catalog:[]});
   };
   class Source extends EventTarget{
     onerror:null|(()=>void)=null;closed=false;
@@ -247,6 +257,19 @@ export function installConversationViewReaderFixture(id='bounded-reader', option
     previewBodies.set(++sequence,{kind:'agent_message',to_owner:true,content:[{piece:'text',text:'This is a local sample reply. Your message stays in this preview.'}]});
     for(const source of sources){if((source as Source).closed)continue;
       source.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({page:page(new URL((source as Source).raw,baseUrl)),coverage:{through_sequence:sequence},status})}));}
+  };
+  if(previewClock)(window as any).__previewActivity=(activity:string)=>{
+    status.pending_permission=activity==='permission'?{kind:'permission',request_id:'preview-permission',row_key:'permission:1',source_sequence:1}:null;
+    status.rest.permission_title_excerpt=activity==='permission'?'Allow command':null;
+    status.background_tasks=activity==='background'?[{task_id:'preview-task',task_description:'Run checks'}]:[];
+    if(activity==='model'){previewModel='gpt-6.1-terra';status.turn_key='next-preview-turn';}
+    else {status.turn_running=activity==='working'||activity==='permission';status.authority=activity==='unknown'?'unknown':'current';}
+    const before=sequence;sequence++;status.revision=sequence;
+    for(const source of sources){if((source as Source).closed)continue;
+      const lens=new URL((source as Source).raw,baseUrl).searchParams.get('lens');
+      source.dispatchEvent(new MessageEvent('changes',{data:JSON.stringify({kind:'changes',conversation_id:new URL((source as Source).raw,baseUrl).pathname.split('/')[4],
+        protocol_version:1,projection_version:VIEW_PROJECTION_VERSION,lens,from_sequence:before,
+        coverage:{through_sequence:sequence},upserts:[],scope_changes:[],removed_keys:[],invalidated_scopes:[],status})}));}
   };
   window.EventSource=Source as unknown as typeof EventSource;
 }
