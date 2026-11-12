@@ -35,7 +35,16 @@ it.skipIf(process.platform !== 'linux')(
             'printf "self_write_status=%s score_after_write=%s\\n" "$write_status" "$after_write" >&2; ' +
             'fi',
         ],
-        { cwd: directory, env: environment, encoding: 'utf8', timeout: 5000 },
+        {
+          cwd: directory,
+          env: environment,
+          encoding: 'utf8',
+          timeout: 5000,
+          // Socket-backed Node stdin can trigger Bash's remote-shell startup path.
+          // Match the Python proof's nonremote input; this command consumes no input.
+          // https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files.html
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
       );
       expect(child.error).toBeUndefined();
       expect(child.status).toBe(0);
