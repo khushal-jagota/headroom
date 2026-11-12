@@ -55,7 +55,7 @@ from typing import Any, Final
 
 from pydantic import BaseModel
 
-from planner.conversation.backends.codex_app_server import login_bindings_gen as login_bindings
+from planner.conversation.backends.codex_app_server import protocol
 from planner.conversation.backends.codex_app_server.client import (
     CodexAppServerClient,
     CodexAppServerError,
@@ -77,11 +77,9 @@ START_METHOD: Final = "account/login/start"
 CANCEL_METHOD: Final = "account/login/cancel"
 COMPLETED_NOTIFICATION: Final = "account/login/completed"
 
-# The one notification a sign-in child is listened to for. Its model comes from the login
-# bundle, which is pinned separately from the turn adapter's, so it is handed to the client
-# per instance rather than added to the adapter's table.
+# Sign-in consumes only its own completion notification, not turn activity.
 SIGN_IN_NOTIFICATIONS: Mapping[str, type[BaseModel]] = {
-    COMPLETED_NOTIFICATION: login_bindings.AccountLoginCompletedNotification,
+    COMPLETED_NOTIFICATION: protocol.AccountLoginCompletedNotification,
 }
 
 
@@ -143,7 +141,7 @@ class UnknownSignInSession(Exception):
 class _FromTheChild:
     """One thing the child said. A completion, or the fact that it ended."""
 
-    completion: login_bindings.AccountLoginCompletedNotification | None = None
+    completion: protocol.AccountLoginCompletedNotification | None = None
     child_ended: bool = False
 
 
@@ -180,7 +178,7 @@ class _Session:
     # every delivered event survives the consumer being cancelled at any point.
     delivered: list[_FromTheChild] = field(default_factory=list)
     arrived: asyncio.Event = field(default_factory=asyncio.Event)
-    completion: login_bindings.AccountLoginCompletedNotification | None = None
+    completion: protocol.AccountLoginCompletedNotification | None = None
     child_ended: bool = False
     # Set by the reaper before it settles. The wording used to infer this by comparing a
     # clock against the deadline, which is a second source of truth for something one
@@ -361,17 +359,12 @@ class CodexSignInService:
 
     def _take_the_start_answer(self, session: _Session, result: Any) -> None:
         try:
-            decoded = login_bindings.LoginAccountResponse.model_validate(result).root
+            decoded = protocol.DeviceCodeLoginResponse.model_validate(result)
         except Exception as would_not_decode:  # noqa: BLE001 - reported, never swallowed
             raise CodexSignInUnavailable(
                 f"codex answered {START_METHOD} with a shape this does not read: "
                 f"{would_not_decode}"
             ) from would_not_decode
-        if not isinstance(decoded, login_bindings.ChatgptDeviceCodev2LoginAccountResponse):
-            raise CodexSignInUnavailable(
-                f"codex answered a {getattr(decoded, 'type', 'different')} login rather "
-                "than a device-code one"
-            )
         session.login_id = decoded.loginId
         session.verification_url = decoded.verificationUrl
         session.user_code = decoded.userCode
@@ -658,7 +651,7 @@ class _SignInMessages(CodexServerMessageHandler):
 
     async def on_notification(self, method: str, notification: BaseModel) -> None:
         if method != COMPLETED_NOTIFICATION or not isinstance(
-            notification, login_bindings.AccountLoginCompletedNotification
+            notification, protocol.AccountLoginCompletedNotification
         ):  # pragma: no cover - the client only decodes the one method this asked for
             return
         self._enqueue(_FromTheChild(completion=notification))
