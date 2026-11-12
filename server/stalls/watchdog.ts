@@ -28,6 +28,11 @@ export interface WatchdogRun {
   pushes_delivered: number;
   chief_accepted: boolean;
 }
+/** The standalone command and direct comparison share the same summary text. */
+export function watchdog_summary(run: WatchdogRun): string {
+  const chief = run.chief_accepted ? 'accepted' : run.raised.length ? 'not reached' : 'not needed';
+  return `${run.due.length} due, ${run.raised.length} raised, ${run.pushes_delivered} pushes delivered, Chief ${chief}`;
+}
 export function read_database(db_path: string): WatchdogReading {
   if (!db_path) throw new Error('watchdog requires an explicit database path');
   const database = createReadAccess(db_path);

@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../core/config.ts';
 import { load_apns_config } from '../notifications/config.ts';
 import { message_chief } from './alarms.ts';
-import { run_watchdog } from './watchdog.ts';
+import { run_watchdog, watchdog_summary } from './watchdog.ts';
 
 export async function watchdog_command(
   args: readonly string[],
@@ -40,12 +40,7 @@ export async function watchdog_command(
       push_origin: origin,
       message_chief: (text) => message_chief(text, `http://127.0.0.1:${config.port}`),
     });
-    const chief = run.chief_accepted
-      ? 'accepted'
-      : run.raised.length
-        ? 'not reached'
-        : 'not needed';
-    return `${run.due.length} due, ${run.raised.length} raised, ${run.pushes_delivered} pushes delivered, Chief ${chief}`;
+    return watchdog_summary(run);
   } finally {
     await apns?.close();
   }
