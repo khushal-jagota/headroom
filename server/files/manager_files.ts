@@ -1,3 +1,4 @@
+/** Shared Manager inventory for file routes and the Manager workspace. */
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ownerRoot } from './managed_files.ts';

@@ -1,3 +1,4 @@
+import { ManagerDocumentResources } from '../managers/resource_versions.ts';
 import { ChiefResources } from '../worker_settings/resource_versions.ts';
 import type { FastifyRequest } from 'fastify';
 import { TicketWorkspaceResources } from '../tickets/resource_versions.ts';
@@ -9,6 +10,7 @@ export const providers: readonly ResourceProvider[] = [
   new WorkerTypeResources(),
   new TicketWorkspaceResources(),
   new ChiefResources(),
+  new ManagerDocumentResources(),
 ];
 export function capture(
   providers: readonly ResourceProvider[],

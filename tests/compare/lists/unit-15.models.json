@@ -1,0 +1,408 @@
+{
+  "source_roots": [
+    "src/planner/conversation/system.py",
+    "src/planner/conversation/api.py",
+    "src/planner/conversation/logic/",
+    "src/planner/conversation/backends/contracts.py"
+  ],
+  "scenarios": [
+    "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+    "test_a_send_without_a_change_leaves_model_and_effort_alone",
+    "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+    "test_a_refused_delivery_carrying_a_change_changes_nothing"
+  ],
+  "requests": [
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-s17",
+        "model": "first-model",
+        "backend_key": "codex",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s17/inspect",
+      "status": 200,
+      "capture": {
+        "models_1": ""
+      }
+    },
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s17/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "switch here"
+          }
+        ],
+        "sender_label": "owner",
+        "model_change": "second-model"
+      }
+    },
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-s17",
+      "status": 200,
+      "capture": {
+        "models_positive_http_state": ""
+      }
+    },
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s17/inspect",
+      "status": 200,
+      "capture": {
+        "models_2": ""
+      }
+    },
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s17/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s17/inspect",
+      "status": 200,
+      "capture": {
+        "models_3": ""
+      }
+    },
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s17/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "plain send after"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s17/inspect",
+      "status": 200,
+      "capture": {
+        "models_4": ""
+      }
+    },
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s17/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s17/inspect",
+      "status": 200,
+      "capture": {
+        "models_5": ""
+      }
+    },
+    {
+      "area": "test_a_send_without_a_change_leaves_model_and_effort_alone",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-s18",
+        "model": "start-model",
+        "backend_key": "codex",
+        "workspace_folder": "/tmp",
+        "reasoning_effort": "start-effort"
+      }
+    },
+    {
+      "area": "test_a_send_without_a_change_leaves_model_and_effort_alone",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s18/inspect",
+      "status": 200,
+      "capture": {
+        "models_6": ""
+      }
+    },
+    {
+      "area": "test_a_send_without_a_change_leaves_model_and_effort_alone",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s18/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "plain"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_send_without_a_change_leaves_model_and_effort_alone",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s18/inspect",
+      "status": 200,
+      "capture": {
+        "models_7": ""
+      }
+    },
+    {
+      "area": "test_a_send_without_a_change_leaves_model_and_effort_alone",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s18/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_send_without_a_change_leaves_model_and_effort_alone",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s18/inspect",
+      "status": 200,
+      "capture": {
+        "models_8": ""
+      }
+    },
+    {
+      "area": "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-s19",
+        "model": "start-model",
+        "backend_key": "codex",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s19/inspect",
+      "status": 200,
+      "capture": {
+        "models_9": ""
+      }
+    },
+    {
+      "area": "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s19/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s19/inspect",
+      "status": 200,
+      "capture": {
+        "models_10": ""
+      }
+    },
+    {
+      "area": "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s19/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "held with change"
+          }
+        ],
+        "sender_label": "owner",
+        "model_change": "next-model"
+      }
+    },
+    {
+      "area": "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s19/inspect",
+      "status": 200,
+      "capture": {
+        "models_11": ""
+      }
+    },
+    {
+      "area": "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s19/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s19/inspect",
+      "status": 200,
+      "capture": {
+        "models_12": ""
+      }
+    },
+    {
+      "area": "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s19/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s19/inspect",
+      "status": 200,
+      "capture": {
+        "models_13": ""
+      }
+    },
+    {
+      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-s20",
+        "model": "start-model",
+        "backend_key": "codex",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s20/inspect",
+      "status": 200,
+      "capture": {
+        "models_14": ""
+      }
+    },
+    {
+      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s20/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "make the session exist"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s20/inspect",
+      "status": 200,
+      "capture": {
+        "models_15": ""
+      }
+    },
+    {
+      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s20/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s20/inspect",
+      "status": 200,
+      "capture": {
+        "models_16": ""
+      }
+    },
+    {
+      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s20/configure",
+      "status": 200,
+      "json": {
+        "command": "write_prompt",
+        "behavior": {
+          "error": {
+            "name": "PromptWriteRefused",
+            "message": "Scripted PromptWriteRefused."
+          }
+        }
+      }
+    },
+    {
+      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s20/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "doomed"
+          }
+        ],
+        "sender_label": "owner",
+        "model_change": "never-model"
+      }
+    },
+    {
+      "area": "test_a_refused_delivery_carrying_a_change_changes_nothing",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s20/inspect",
+      "status": 200,
+      "capture": {
+        "models_17": ""
+      }
+    }
+  ],
+  "probes": [],
+  "report_captures": [
+    "models_1",
+    "models_2",
+    "models_3",
+    "models_4",
+    "models_5",
+    "models_6",
+    "models_7",
+    "models_8",
+    "models_9",
+    "models_10",
+    "models_11",
+    "models_12",
+    "models_13",
+    "models_14",
+    "models_15",
+    "models_16",
+    "models_17",
+    "models_positive_http_state"
+  ],
+  "candidate": "typescript"
+}

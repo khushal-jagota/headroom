@@ -1,3 +1,4 @@
+/** Recoverable managed-file quarantine shared by Manager and goal deletion. */
 import { existsSync, mkdirSync, renameSync, rmSync, lstatSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';

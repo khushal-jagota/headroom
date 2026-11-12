@@ -1,0 +1,33 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time before the synthetic host clock is installed."
+  },
+  "response_ignore": {},
+  "tokens": {
+    "resource_source_versions.revision": "Trigger counters count SQL updates, so compare change rather than magnitude."
+  },
+  "response_tokens": {},
+  "derived_tables": {
+    "navigation_meta": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_records": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_dependencies": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_root_records": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_dirty": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_journal": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_delivery_retention": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_signal_installation": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_signal_publications": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "signal_publication_meta": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "signal_publication_values": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "signal_publication_dirty": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "signal_publication_associations": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_view_meta": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_view_index": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_view_memberships": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_view_counts": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_view_current_conversations": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_view_unread_conversations": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_view_globals": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim.",
+    "navigation_view_changes": "Status publication is a separate pending PR, per the approved comparison-before-status order. This core list makes no publication or navigation parity claim."
+  }
+}
