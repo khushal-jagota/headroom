@@ -1,3 +1,4 @@
+import { assert_test_database_path } from './test_paths.ts';
 import type { FastifyInstance, FastifyListenOptions } from 'fastify';
 import { createAreasRuntime, composeAreaLoops } from '../areas.ts';
 import type { AreaLoopOptions } from '../areas.ts';
@@ -72,6 +73,7 @@ export interface StartedServer {
 }
 export async function startServer(options: ServerOptions = {}): Promise<StartedServer> {
   const config = loadConfig();
+  config.db_path = assert_test_database_path(config.db_path);
   const ownership = acquireRuntimeOwnership(config.db_path);
   const areas = createAreasRuntime();
   let dispatcher: ReturnType<typeof acquireLock> = null;

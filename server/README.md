@@ -122,8 +122,14 @@ The optional `beforePublication(database)` hook performs test-host projection bo
 It does not replace the producer authority. `testAreas` receives the shared core, record, publication, clock, and database.
 `startServer` returns its listener address and an idempotent close operation for isolated lifecycle tests.
 
+Vitest removes all `PLAN_*`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and `HERMES_HOME` variables before test files load.
+Each test file starts with a fresh temporary `HOME`, which tests can override explicitly.
+Vitest and `PLAN_TEST_MODE=1` hosts can only open databases inside the OS temp folder or an explicitly registered test root.
+
 Use `requestOrigin(request)` from `core/http/origin.ts` for public URL construction.
 It matches Uvicorn's default trusted local peer (`127.0.0.1`) and validated
 `X-Forwarded-Proto` schemes. It keeps the actual Host and does not trust
 `X-Forwarded-Host`. Nondefault `FORWARDED_ALLOW_IPS` configuration is not part of
 this helper's current contract.
+
+`panels` CLI calls keep the Worker's own `PLAN_ACTOR`, `PLAN_TICKET_ID`, `PLAN_MANAGER_ID`, and `PLAN_CONVERSATION_ID` values; only repository code runs with inherited `PLAN_*` removed.
