@@ -85,11 +85,22 @@ enum TicketMachine {
         switch locale { case "macos": "Mac"; case "vps": "VPS"; default: nil }
     }
     static func activityUnknown(_ locale: String?, health: ExecutorHealth?) -> Bool {
-        locale == "macos" && health?.activityKnown != true
+        switch locale {
+        case "vps": false
+        case "macos": health?.activityKnown != true
+        default: true
+        }
+    }
+    static func conversationActivityUnknown(_ locale: String?, owner: ConversationOwner, health: ExecutorHealth?) -> Bool {
+        guard case .ticket = owner else { return false }
+        return activityUnknown(locale, health: health)
+    }
+    static func unknownActivityText(_ locale: String?) -> String {
+        locale == "macos" ? "Current activity on Mac is unknown." : "Current activity is unknown."
     }
     static func accessibilityLabel(_ title: String, locale: String?, health: ExecutorHealth?) -> String {
         let machine = name(locale).map { ", runs on " + $0 } ?? ""
-        return title + machine + (activityUnknown(locale, health: health) ? ", current activity on Mac is unknown" : "")
+        return title + machine + (activityUnknown(locale, health: health) ? (locale == "macos" ? ", current activity on Mac is unknown" : ", current activity is unknown") : "")
     }
     static func signal(_ signal: ConversationSignal?, locale: String?, health: ExecutorHealth?, completed: Bool = false) -> ConversationSignal? {
         signal.map { ConversationSignal(working: $0.working && !completed && !activityUnknown(locale, health: health), messageForOwner: $0.messageForOwner) }

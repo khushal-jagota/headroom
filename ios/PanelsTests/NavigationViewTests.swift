@@ -75,6 +75,40 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertEqual(WorkspaceGrouping.section(for: closing.summary), .consequences)
     }
 
+    func testTicketLocaleSurvivesDecodeAndMappingBeforeRuntimeMark() throws {
+        // The canonical navigation Ticket fixture identifies its machine even when
+        // the server supplies current conversation facts. The phone's executor
+        // health still gates the Mac working mark; durable unread survives.
+        let records = try snapshot([ticket(), conversation("a-conversation")]).content.records
+        guard case .ticket(_, let decoded) = records[0] else { return XCTFail("Expected Ticket") }
+        XCTAssertEqual(decoded.locale, "macos")
+        let presented = try XCTUnwrap(NavigationPresentation(records).tickets.first)
+        XCTAssertEqual(presented.locale, "macos")
+        let summary = presented.summary
+        XCTAssertEqual(summary.locale, "macos")
+        let unavailable = try XCTUnwrap(TicketMachine.signal(summary.conversationSignal, locale: summary.locale, health: nil))
+        XCTAssertFalse(unavailable.working)
+        XCTAssertTrue(unavailable.messageForOwner)
+        let ready = ExecutorHealth(mode: "remote", identity: .init(executorIncarnation: "mac", connectionGeneration: 2), connectionState: "ready", lastContactAtMs: 1000)
+        XCTAssertTrue(try XCTUnwrap(TicketMachine.signal(summary.conversationSignal, locale: summary.locale, health: ready)).working)
+
+        XCTAssertFalse(TicketMachine.conversationActivityUnknown(nil, owner: .chief, health: nil))
+        XCTAssertFalse(TicketMachine.conversationActivityUnknown(nil, owner: .manager("manager"), health: nil))
+        XCTAssertTrue(TicketMachine.conversationActivityUnknown(nil, owner: .ticket("ticket"), health: ready))
+
+        for locale in ["future-machine", nil] as [String?] {
+            var record = ticket()
+            var value = record["value"] as! [String: Any]
+            value["locale"] = locale
+            record["value"] = value
+            let mapped = try XCTUnwrap(NavigationPresentation(try snapshot([record, conversation("a-conversation")]).content.records).tickets.first).summary
+            XCTAssertEqual(mapped.locale, locale)
+            let shown = try XCTUnwrap(TicketMachine.signal(mapped.conversationSignal, locale: mapped.locale, health: ready))
+            XCTAssertFalse(shown.working, "Unknown machine identity grants no runtime authority")
+            XCTAssertTrue(shown.messageForOwner)
+        }
+    }
+
     // MARK: Review queue (presentation.ts, ReviewRoute.svelte)
 
     func testReviewQueueUsesCanonicalAddressesOldestWaitAndWindowOrder() throws {

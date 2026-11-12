@@ -217,7 +217,7 @@ private struct ConversationSurface: View {
                 Button(action: open) {
                     HStack(spacing: 8) {
                         Group {
-                            if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil && !TicketMachine.activityUnknown(model.machineLocale, health: store.executorHealth) {
+                            if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil && !TicketMachine.conversationActivityUnknown(model.machineLocale, owner: owner, health: store.executorHealth) {
                                 RingSpinner(size: .compact)
                             } else {
                                 Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0)

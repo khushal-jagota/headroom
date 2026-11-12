@@ -147,7 +147,7 @@ struct TicketView: View {
                 TicketProposalCard(presentation: presentation, proposal: proposal) { await load(); await store.refresh() }
                     .id("\(proposal.field):\(proposal.revision)")
             } else {
-                Text(TicketMachine.activityUnknown(presentation.ticket.locale, health: store.executorHealth) ? "Current activity on Mac is unknown." : presentation.heading).font(PanelsTheme.TypeScale.heading)
+                Text(TicketMachine.activityUnknown(presentation.ticket.locale, health: store.executorHealth) ? TicketMachine.unknownActivityText(presentation.ticket.locale) : presentation.heading).font(PanelsTheme.TypeScale.heading)
                     .foregroundStyle(presentation.ticket.agentState == "errored" ? PanelsTheme.error : PanelsTheme.strong)
                     .accessibilityAddTraits(.isHeader)
                 if !presentation.terminal && presentation.ticket.stage != "needs_brief" {
