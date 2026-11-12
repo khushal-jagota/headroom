@@ -451,9 +451,17 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     const reader = this.reader;
     if (reader) {
       this.reader_cancel?.abort();
-      await reader;
-      this.reader = null;
-      this.reader_cancel = null;
+      try {
+        await reader;
+      } catch (error) {
+        console.error(
+          `conversation ${this.resolved_start.conversation_id}: Claude message reader failed during cleanup`,
+          error,
+        );
+      } finally {
+        this.reader = null;
+        this.reader_cancel = null;
+      }
     }
     const client = this.client;
     if (client) {
