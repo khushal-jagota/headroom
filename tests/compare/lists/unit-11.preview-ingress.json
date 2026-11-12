@@ -184,6 +184,66 @@
         "Origin": "https://panels.comparison.invalid"
       },
       "response_bytes": true
+    },
+    {
+      "area": "preview-ingress",
+      "method": "POST",
+      "path": "/dev/tickets/${ticket}/absent/",
+      "status": 410,
+      "headers": {
+        "Host": "panels.comparison.invalid",
+        "Tailscale-User-Login": "owner@comparison.invalid",
+        "Origin": "https://panels.comparison.invalid"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "preview-ingress",
+      "method": "PUT",
+      "path": "/dev/tickets/${ticket}/absent/",
+      "status": 410,
+      "headers": {
+        "Host": "panels.comparison.invalid",
+        "Tailscale-User-Login": "owner@comparison.invalid",
+        "Origin": "https://panels.comparison.invalid"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "preview-ingress",
+      "method": "PATCH",
+      "path": "/dev/tickets/${ticket}/absent/",
+      "status": 410,
+      "headers": {
+        "Host": "panels.comparison.invalid",
+        "Tailscale-User-Login": "owner@comparison.invalid",
+        "Origin": "https://panels.comparison.invalid"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "preview-ingress",
+      "method": "DELETE",
+      "path": "/dev/tickets/${ticket}/absent/",
+      "status": 410,
+      "headers": {
+        "Host": "panels.comparison.invalid",
+        "Tailscale-User-Login": "owner@comparison.invalid",
+        "Origin": "https://panels.comparison.invalid"
+      },
+      "response_bytes": true
+    },
+    {
+      "area": "preview-ingress",
+      "method": "OPTIONS",
+      "path": "/dev/tickets/${ticket}/absent/",
+      "status": 410,
+      "headers": {
+        "Host": "panels.comparison.invalid",
+        "Tailscale-User-Login": "owner@comparison.invalid",
+        "Origin": "https://panels.comparison.invalid"
+      },
+      "response_bytes": true
     }
   ],
   "probes": [
