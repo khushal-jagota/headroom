@@ -1,0 +1,57 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time.",
+    "conversation_events.created_at": "Event storage reads real wall time, independent of the test clock.",
+    "conversations.created_at": "ConversationStore creates records with integer_now backed by real time, independent of the test clock.",
+    "conversation_history_catalog.created_at": "Conversation history stores the real creation timestamp of the conversation record."
+  },
+  "response_ignore": {
+    "body.status.runtime_epoch": "Conversation view status has a process-specific live epoch.",
+    "body.coverage.scope": "Navigation continuity scope is specific to each installation.",
+    "body.coverage.epoch": "Navigation continuity epoch is specific to each process.",
+    "body.events.*.created_at": "Event storage reads real wall time, independent of the test clock.",
+    "body.page.items.*.started_at_unix_milliseconds": "Conversation view projects the event timestamp from real wall time, independent of the test clock.",
+    "body.status.rest.latest_turn.started_at_unix_milliseconds": "Conversation view projects the event timestamp from real wall time, independent of the test clock.",
+    "body.conversation_history.*.created_at": "Ticket history exposes the real creation timestamp of each conversation record."
+  },
+  "tokens": {
+    "resource_source_versions.revision": "Trigger counters count SQL updates, so compare change rather than magnitude."
+  },
+  "response_tokens": {
+    "body.record_sha256": "Ticket record digest includes its stored JSON representation, so compare changes.",
+    "body.tickets.*.record_sha256": "Ticket record digests include stored JSON representation, so compare changes.",
+    "body.pending_proposal.revision": "Proposal revision is an opaque approval token, so compare changes.",
+    "body.tickets.*.pending_proposal.revision": "Proposal revisions are opaque approval tokens, so compare changes.",
+    "body.coverage.revision": "Navigation continuity revisions count source commits, so compare changes.",
+    "body.status.revision": "Conversation view revisions count status publications, so compare changes.",
+    "body.content_version": "Navigation content digest covers opaque installation continuity, so compare changes."
+  },
+  "derived_tables": {
+    "navigation_meta": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_records": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_dependencies": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_root_records": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_dirty": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_journal": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_delivery_retention": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_signal_installation": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_signal_publications": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_meta": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_values": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_dirty": "Derived projection, compared through navigation and conversation read routes.",
+    "signal_publication_associations": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_meta": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_index": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_memberships": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_counts": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_current_conversations": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_unread_conversations": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_globals": "Derived projection, compared through navigation and conversation read routes.",
+    "navigation_view_changes": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_view_state": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_view_rows": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_view_turns": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_view_groups": "Derived projection, compared through navigation and conversation read routes.",
+    "conversation_view_lookups": "Derived projection, compared through navigation and conversation read routes."
+  }
+}

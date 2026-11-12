@@ -448,6 +448,7 @@ def run_list(
     modules = ["tests.compare.host", right_module]
     differences: list[dict[str, Any]] = []
     byte_answers: list[dict[str, Any]] = []
+    cli_answers: list[dict[str, Any]] = []
     reach: dict[str, set[str]] = {}
     try:
         for name, module in zip(("python", "candidate"), modules, strict=True):
@@ -485,6 +486,40 @@ def run_list(
                 and not path.startswith("/api/test/")
             ]
             for index, request in enumerate(spec["requests"]):
+                if request.get("kind") == "cli":
+                    from tests.compare.direct.unit20_cli import (
+                        CliHost,
+                        cli_capture,
+                        comparable,
+                        run_cli,
+                    )
+                    answers, evidence = [], []
+                    for side, server in enumerate(servers):
+                        resolved = substitute(request, captures[side])
+                        outcome = run_cli(
+                            CliHost(server, root), resolved, side == 1,
+                            root / ("python" if side == 0 else "candidate") / "cli-input",
+                        )
+                        cli_capture(outcome, resolved, captures[side])
+                        evidence.append(outcome)
+                        answer = comparable(outcome)
+                        # A declared probe retains its ordinary HTTP-200 requirement.
+                        for path in spec.get("probes", []):
+                            probe = substitute(path, captures[side])
+                            response = client.get(server.base + probe)
+                            assert response.status_code == 200, (probe, response.text)
+                            answer.setdefault("probes", {})[probe] = norms[side].normalize(
+                                {"body": response.json()}, "GET " + probe
+                            )
+                        answers.append(norms[side].normalize(
+                            answer, "CLI " + " ".join(resolved["argv"])
+                        ))
+                    cli_answers.append({
+                        "step": index, "proof": request["proof"], "answers": evidence,
+                    })
+                    if answers[0] != answers[1]:
+                        differences.append({"step": index, "call": request, "answers": answers})
+                    continue
                 if request.get("kind") == "restart":
                     for side, server in enumerate(servers):
                         _stop_server(server)
@@ -640,6 +675,7 @@ def run_list(
             "rules": rules,
             **file_reports,
             **({"byte_answers": byte_answers} if byte_answers else {}),
+            **({"cli_answers": cli_answers} if cli_answers else {}),
         }
     finally:
         for server in reversed(servers):
