@@ -176,12 +176,23 @@ def _start_server(
         try:
             proc = subprocess.Popen(
                 (
-                    [sys.executable, "-m", server_module]
-                    if server_module
+                    ["node", str(REPO_ROOT / "server/test_host.ts")]
+                    if (
+                        os.environ.get("PANELS_TEST_SERVER_BACKEND") == "typescript"
+                        and server_module
+                        in {
+                            "tests.e2e.rail_server",
+                            "tests.e2e.conversation_signals_server",
+                        }
+                    )
                     else (
-                        ["node", str(REPO_ROOT / "server/main.ts")]
-                        if os.environ.get("PANELS_TEST_SERVER_BACKEND") == "typescript"
-                        else [str(PLAN_BIN), "serve"]
+                        [sys.executable, "-m", server_module]
+                        if server_module
+                        else (
+                            ["node", str(REPO_ROOT / "server/main.ts")]
+                            if os.environ.get("PANELS_TEST_SERVER_BACKEND") == "typescript"
+                            else [str(PLAN_BIN), "serve"]
+                        )
                     )
                 ),
                 cwd=str(REPO_ROOT),  # load-bearing: assets mount + config.yaml
