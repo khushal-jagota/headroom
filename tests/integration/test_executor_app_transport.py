@@ -73,6 +73,7 @@ from planner.executor.protocol import (
     MailboxPollReply,
     QueuedEnvelope,
     ReceiptDisposition,
+    WorkspaceRegistrationRequest,
     WorkspaceRetirementReply,
     WorkspaceRetirementRequest,
     as_object,
@@ -81,7 +82,7 @@ from planner.executor.protocol import (
 )
 from planner.executor.update_contracts import MacUpdateCheck
 from planner.executor.vps_transport import VpsExecutor
-from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
+from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceIdentity, WorkspaceState
 
 EXECUTOR_ID = "test-executor"
 SETTLES = 5.0
@@ -294,8 +295,11 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                             "(ticket_id,ended_at,deleted) VALUES(?,?,1)",
                             ("t_01234567", ended_at),
                         )
+                    local_workspace = WorkspaceIdentity("test-mac", "workspace-one")
                     retirement = encode_bounded(
-                        WorkspaceRetirementRequest(WorkspaceState("t_01234567", ended_at, True))
+                        WorkspaceRetirementRequest(
+                            WorkspaceState("t_01234567", ended_at, True), local_workspace
+                        )
                     )
                     status, body, _ = await call(
                         "POST",
@@ -311,7 +315,7 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                     assert decode_bounded(body, WorkspaceRetirementReply).authorized
                     with connect(db_path) as connection:
                         connection.execute(
-                            "UPDATE ticket_workspace_lifecycle SET generation=1,ended_at=NULL,"
+                            "UPDATE ticket_workspace_lifecycle SET ended_at=NULL,"
                             "deleted=0 WHERE ticket_id='t_01234567'"
                         )
                     # A prior grant proves only an already detached generation. It
@@ -323,7 +327,9 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                     assert not decode_bounded(body, WorkspaceRetirementReply).authorized
                     replay = encode_bounded(
                         WorkspaceRetirementRequest(
-                            WorkspaceState("t_01234567", ended_at, True), replay=True
+                            WorkspaceState("t_01234567", ended_at, True),
+                            local_workspace,
+                            replay=True,
                         )
                     )
                     status, body, _ = await call(
@@ -336,6 +342,24 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                     )
                     proxy_child = endpoint.runs.recover(child)
                     assert proxy_child is not None
+                    with connect(db_path) as connection:
+                        connection.execute(
+                            "INSERT INTO conversations(conversation_id,backend_key,model,"
+                            "workspace_folder,access,created_at) VALUES "
+                            "('c','codex','scripted','/tmp','full',1)"
+                        )
+                    status, _, _ = await call(
+                        "POST",
+                        "/api/executor/workspaces/register",
+                        data=encode_bounded(WorkspaceRegistrationRequest(child, local_workspace)),
+                    )
+                    assert status == 204
+                    with connect(db_path) as connection:
+                        registered = connection.execute(
+                            "SELECT machine_id,workspace_id FROM ticket_workspace_conversations "
+                            "WHERE conversation_id='c'"
+                        ).fetchone()
+                    assert tuple(registered) == ("test-mac", "workspace-one")
 
                     # The work-route fence, from memory, with the error body.
                     for headers, code in (

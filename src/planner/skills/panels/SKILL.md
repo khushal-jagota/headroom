@@ -111,7 +111,7 @@ SELF-CHECK before returning: scan for contractions, "has been", "should", ", mak
 
 ## Ticket-owned artifacts
 
-A Ticket owns its documents, images, evidence, and scratch. Panels clears its files seven days after it ends. Its stage text and proposals remain, but links to cleared files expire.
+A Ticket owns its documents, images, evidence, and scratch. Panels clears its files seven days after it ends. New activity on an ended Ticket starts a fresh seven-day wait. Its stage text and proposals remain, but links to cleared files expire.
 
 Use the artifact directory in the Worker prompt. On the VPS, it is inside `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/artifacts/`. On the Mac, it is inside the executor's local Ticket folder. Panels transfers public Mac artifacts to the VPS. Use served links such as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Keep code, dependencies, and scratch in the supplied `worktree/`. The checkout is private and is not served, transferred as artifacts, or backed up. Do not infer paths from the current directory.
 

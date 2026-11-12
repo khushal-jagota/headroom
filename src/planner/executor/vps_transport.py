@@ -46,6 +46,7 @@ from planner.executor.protocol import (
     LiveEventBatch,
     LiveReadRequest,
     MailboxPollReply,
+    WorkspaceRegistrationRequest,
     WorkspaceRetirementReply,
     as_object,
     decode_event_arguments,
@@ -56,8 +57,14 @@ from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService, UpdateCheck
 from planner.executor.vps_presence_store import require_current_incarnation_in_transaction
 from planner.executor.vps_runs import MacRuns
-from planner.ticket_workspaces.contracts import WorkspaceState
-from planner.ticket_workspaces.data import authorize_retirement, has_committed_retirement
+from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
+from planner.ticket_workspaces.data import (
+    authorize_retirement,
+    has_committed_retirement,
+)
+from planner.ticket_workspaces.data import (
+    register_workspace as register_ticket_workspace,
+)
 
 # GET-only Panels reads an agent on the Mac may make.
 _READABLE_PATHS = (
@@ -187,25 +194,73 @@ class VpsExecutor:
             self.presence.accept_lease(request), answer_within=LEASE_SERVER_LIMIT_SECONDS
         )
 
+    async def register_workspace(
+        self, identity: ExecutorIdentity, registration: WorkspaceRegistrationRequest
+    ) -> None:
+        await self._owned_work(
+            run_on_worker_thread(self._register_workspace, identity, registration),
+            answer_within=LIVE_READ_SERVER_LIMIT_SECONDS,
+        )
+
+    def _register_workspace(
+        self, identity: ExecutorIdentity, registration: WorkspaceRegistrationRequest
+    ) -> None:
+        connection = connect(self.db_path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            require_current_incarnation_in_transaction(connection, identity.executor_incarnation)
+            if registration.child.executor_incarnation != identity.executor_incarnation:
+                raise PlannerError(
+                    ErrorCode.agent_forbidden, "workspace child belongs to another executor"
+                )
+            assignment = self.runs.store.open_child_assignment(connection, registration.child)
+            if assignment is None or assignment[0] != PrincipalKind.ticket.value:
+                raise PlannerError(
+                    ErrorCode.agent_forbidden, "workspace child has no Ticket assignment"
+                )
+            register_ticket_workspace(
+                connection,
+                assignment[1],
+                registration.child.conversation_id,
+                registration.workspace,
+            )
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     async def retire_workspace(
-        self, identity: ExecutorIdentity, state: WorkspaceState, *, replay: bool = False
+        self,
+        identity: ExecutorIdentity,
+        state: WorkspaceState,
+        workspace: WorkspaceIdentity,
+        *,
+        replay: bool = False,
     ) -> WorkspaceRetirementReply:
         return await self._owned_work(
-            run_on_worker_thread(self._retire_workspace, identity, state, replay),
+            run_on_worker_thread(self._retire_workspace, identity, state, workspace, replay),
             answer_within=LIVE_READ_SERVER_LIMIT_SECONDS,
         )
 
     def _retire_workspace(
-        self, identity: ExecutorIdentity, state: WorkspaceState, replay: bool
+        self,
+        identity: ExecutorIdentity,
+        state: WorkspaceState,
+        workspace: WorkspaceIdentity,
+        replay: bool,
     ) -> WorkspaceRetirementReply:
         connection = connect(self.db_path)
         try:
             connection.execute("BEGIN IMMEDIATE")
             require_current_incarnation_in_transaction(connection, identity.executor_incarnation)
             authorized = (
-                has_committed_retirement(connection, state)
+                has_committed_retirement(connection, state, workspace)
                 if replay
-                else authorize_retirement(connection, state, self.clock.now_unix())
+                else authorize_retirement(
+                    connection, state, self.clock.now_unix(), identity=workspace
+                )
             )
             connection.commit()
             return WorkspaceRetirementReply(authorized)

@@ -21,7 +21,7 @@ Each stage is named for what the ticket needs next; your step is to give it that
 
   Settle anything whose answer changes what we do or guard. Investigate, do not build. Leave anything that only changes how the work gets done. Mention guards, added machinery, commitments, or limits where relevant, with their reasons. Say plainly what the Ticket cannot establish. Include one sentence on what we will prove and why.
 
-- **needs\_implementation** — do the actual work then propose a package similar to a PR. Where work is non-trivial, dogfood the work in the browser and capture evidence of success. Use the Ticket worktree and branch that Panels supplies. Workers handle repository setup, commits, pushes, pull requests, and approved merges. Panels owns workspace creation and removal. Make 4 things clear:
+- **needs\_implementation** — do the actual work then propose a package similar to a PR. Where work is non-trivial, dogfood the work in the browser and capture evidence of success. Use the Ticket worktree and branch that Panels supplies. Workers handle repository setup, commits, pushes, pull requests, and approved merges. Panels owns workspace creation and removal. New activity on an ended Ticket starts a fresh seven-day wait. Make 4 things clear:
 
   - **Intent:** the outcome of the ticket this work fulfills.
   - **How it was done:** the important work and choices that produced the result. Include diagrams or pictures when they improve understanding.

@@ -123,6 +123,7 @@ EXECUTOR_UPLOAD_PATH: Final = "/api/executor/uploads/{sha256}"
 EXECUTOR_COMMAND_FILE_PATH: Final = "/api/executor/commands/{command_id}/files/{stored_file_id}"
 EXECUTOR_READS_PATH: Final = "/api/executor/reads"
 EXECUTOR_WORKSPACE_RETIREMENT_PATH: Final = "/api/executor/workspaces/retire"
+EXECUTOR_WORKSPACE_REGISTRATION_PATH: Final = "/api/executor/workspaces/register"
 EXECUTOR_LIVE_PATH: Final = "/api/executor/conversations/{conversation_id}/live"
 
 # Agent environment and transport identity.

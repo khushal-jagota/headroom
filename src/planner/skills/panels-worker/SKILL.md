@@ -74,7 +74,7 @@ Panels creates the Ticket folder and its worktree before your turn starts. Use t
 
 Follow the repository instructions for dependency and environment setup. You still commit, push, open pull requests, run checks, and perform approved merges. Stop any services you start. Do not create or remove Ticket worktrees. Do not remove the Ticket folder at Consequences.
 
-Panels clears the folder seven days after the Ticket ends. Stage text and proposals remain, but file links expire. Before removal, Panels checks that the work is safe on a remote. Dirty files, unpublished commits, or failed Git inspection preserve the folder and require action. Panels never commits or pushes for you.
+Panels clears the folder seven days after the Ticket ends. New activity on an ended Ticket starts a fresh seven-day wait. Stage text and proposals remain, but file links expire. Before removal, Panels checks that the work is safe on a remote. Dirty files, unpublished commits, or failed Git inspection preserve the folder and require action. Panels never commits or pushes for you.
 
 ### Ticket-owned planning artifacts
 

@@ -22,13 +22,17 @@ def upgrade() -> None:
     conn = cast(sqlite3.Connection, op.get_bind().connection.driver_connection)
     conn.execute(
         "CREATE TABLE ticket_workspace_lifecycle (ticket_id TEXT PRIMARY KEY, "
-        "ended_at INTEGER, deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1)), "
-        "generation INTEGER NOT NULL DEFAULT 0)"
+        "ended_at INTEGER, deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1)))"
     )
     conn.execute(
         "CREATE TABLE ticket_workspace_retirements (ticket_id TEXT NOT NULL, "
-        "generation INTEGER NOT NULL, authorized_at INTEGER NOT NULL, "
-        "PRIMARY KEY(ticket_id,generation))"
+        "machine_id TEXT NOT NULL, workspace_id TEXT NOT NULL, authorized_at INTEGER NOT NULL, "
+        "PRIMARY KEY(ticket_id,machine_id,workspace_id))"
+    )
+    conn.execute(
+        "CREATE TABLE ticket_workspace_conversations (conversation_id TEXT PRIMARY KEY "
+        "REFERENCES conversations(conversation_id), ticket_id TEXT NOT NULL, "
+        "machine_id TEXT NOT NULL, workspace_id TEXT NOT NULL)"
     )
     # No historical end time exists. Old ended Tickets receive the full grace period.
     conn.execute(
@@ -49,12 +53,7 @@ def upgrade() -> None:
         "CREATE TRIGGER ticket_workspace_stage AFTER UPDATE OF stage,workflow_json ON tickets "
         "BEGIN UPDATE ticket_workspace_lifecycle SET ended_at=CASE WHEN "
         + _TERMINAL.format(row="NEW")
-        + " THEN COALESCE(ended_at,NEW.updated_at) ELSE NULL END,deleted=0, "
-        "generation=generation+CASE WHEN ended_at IS NOT NULL AND NOT "
-        + _TERMINAL.format(row="NEW")
-        + " AND EXISTS(SELECT 1 FROM ticket_workspace_retirements r "
-        "WHERE r.ticket_id=NEW.id AND r.generation=ticket_workspace_lifecycle.generation) "
-        "THEN 1 ELSE 0 END "
+        + " THEN COALESCE(ended_at,NEW.updated_at) ELSE NULL END,deleted=0 "
         "WHERE ticket_id=NEW.id; END"
     )
     conn.execute(
@@ -67,15 +66,9 @@ def upgrade() -> None:
     # Provider intents and retirement grants share SQLite's writer boundary.
     # A stale native conversation cannot invoke a provider in a retired workspace.
     retired = """EXISTS(
-        SELECT 1 FROM conversations c
-        JOIN json_each(c.identity_environment_variables) owner
-          ON json_extract(owner.value,'$[0]')='PLAN_TICKET_ID'
-        LEFT JOIN json_each(c.identity_environment_variables) generation
-          ON json_extract(generation.value,'$[0]')='PLAN_TICKET_WORKSPACE_GENERATION'
-        JOIN ticket_workspace_retirements r
-          ON r.ticket_id=json_extract(owner.value,'$[1]')
-          AND r.generation=COALESCE(CAST(json_extract(generation.value,'$[1]') AS INTEGER),0)
-        WHERE c.conversation_id=NEW.conversation_id
+        SELECT 1 FROM ticket_workspace_conversations w
+        JOIN ticket_workspace_retirements r USING(ticket_id,machine_id,workspace_id)
+        WHERE w.conversation_id=NEW.conversation_id
     )"""
     active = """((NEW.kind='turn' AND NEW.status IN ('intent','running','unknown'))
         OR (NEW.kind='attempt' AND NEW.status IN ('intent','unknown'))
@@ -85,14 +78,37 @@ def upgrade() -> None:
             f"CREATE TRIGGER ticket_workspace_activity_{operation.lower()} "
             f"BEFORE {operation} ON conversation_lifecycle_facts "
             f"WHEN {active} AND {retired} BEGIN "
-            "SELECT RAISE(ABORT, 'Ticket workspace generation is retired'); END"
+            "SELECT RAISE(ABORT, 'Ticket workspace is retired'); END"
         )
         conn.execute(
             f"CREATE TRIGGER ticket_workspace_background_{operation.lower()} "
             f"BEFORE {operation} ON conversation_background_tasks "
             f"WHEN {retired} BEGIN "
-            "SELECT RAISE(ABORT, 'Ticket workspace generation is retired'); END"
+            "SELECT RAISE(ABORT, 'Ticket workspace is retired'); END"
         )
+
+    conn.execute(
+        "CREATE TRIGGER ticket_workspace_turn_ended AFTER UPDATE OF status "
+        "ON conversation_lifecycle_facts WHEN NEW.kind='turn' "
+        "AND NEW.status IN ('completed','failed','interrupted') AND NEW.status<>OLD.status "
+        "BEGIN UPDATE ticket_workspace_lifecycle SET ended_at=unixepoch() "
+        "WHERE ended_at IS NOT NULL AND deleted=0 AND ticket_id IN ("
+        "SELECT json_extract(owner.value,'$[1]') FROM conversations c "
+        "JOIN json_each(c.identity_environment_variables) owner "
+        "ON json_extract(owner.value,'$[0]')='PLAN_TICKET_ID' "
+        "WHERE c.conversation_id=NEW.conversation_id); END"
+    )
+
+    conn.execute(
+        "CREATE TRIGGER ticket_workspace_background_ended AFTER DELETE "
+        "ON conversation_background_tasks BEGIN "
+        "UPDATE ticket_workspace_lifecycle SET ended_at=unixepoch() "
+        "WHERE ended_at IS NOT NULL AND deleted=0 AND ticket_id IN ("
+        "SELECT json_extract(owner.value,'$[1]') FROM conversations c "
+        "JOIN json_each(c.identity_environment_variables) owner "
+        "ON json_extract(owner.value,'$[0]')='PLAN_TICKET_ID' "
+        "WHERE c.conversation_id=OLD.conversation_id); END"
+    )
 
 
 def downgrade() -> None:

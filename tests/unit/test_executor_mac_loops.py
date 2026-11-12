@@ -83,6 +83,7 @@ from planner.executor.protocol import (
     MailboxPollReply,
     ReceiptDisposition,
     StopRun,
+    WorkspaceRegistrationRequest,
     WorkspaceRetirementReply,
     WorkspaceRetirementRequest,
     WritePrompt,
@@ -175,6 +176,11 @@ class VpsStub:
             high = max((command.command_sequence for command in self.mailbox), default=0)
         reply = LeaseReply(self.lease_time_ms, 60.0, self.update, high, self.workspace_states)
         return web.Response(body=encode_bounded(reply), content_type="application/json")
+
+    async def register_workspace(self, request: web.Request) -> web.Response:
+        self._check(request)
+        decode_bounded(await request.read(), WorkspaceRegistrationRequest)
+        return web.Response(status=204)
 
     async def retire_workspace(self, request: web.Request) -> web.Response:
         self._check(request)
@@ -274,6 +280,7 @@ class VpsStub:
         app = web.Application()
         app.router.add_post("/api/executor/lease", self.lease)
         app.router.add_post("/api/executor/workspaces/retire", self.retire_workspace)
+        app.router.add_post("/api/executor/workspaces/register", self.register_workspace)
         app.router.add_get("/api/executor/commands", self.commands)
         app.router.add_post("/api/executor/commands/outcomes", self.outcomes)
         app.router.add_post("/api/executor/conversations/{conversation_id}/items", self.post_items)
@@ -349,7 +356,13 @@ def start_command(child: ChildReference, workspace: Path, ticket_id: str) -> Chi
         ConversationBackendKey.codex,
         "test",
         None,
-        ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", ticket_id),)),
+        ConversationRoleMaterials(
+            "worker",
+            (
+                ("PLAN_TICKET_ID", ticket_id),
+                ("PLAN_TICKET_WORKSPACE_MANAGED", "1"),
+            ),
+        ),
         workspace,
         ConversationAccess.full,
     )

@@ -54,7 +54,7 @@ from planner.executor.vps_presence_store import read_presence
 from planner.executor.vps_transport import VpsExecutor
 from planner.runtime.worker_step_readiness import worker_step_blocker
 from planner.stalls.contracts import TrackedWait, TrackedWaitKind
-from planner.ticket_workspaces.contracts import WorkspaceState
+from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
 from planner.tickets import locale_configuration
 from planner.tickets.contracts import TicketLocale
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -335,7 +335,11 @@ def test_a_replaced_process_is_refused_at_the_lease_and_at_the_work_route_fence(
             # The grant rechecks the binding inside its own write transaction, even
             # if this request passed the route fence before replacement.
             with pytest.raises(PlannerError) as grant_refused:
-                await endpoint.retire_workspace(replaced, WorkspaceState("t_01234567", 1, True))
+                await endpoint.retire_workspace(
+                    replaced,
+                    WorkspaceState("t_01234567", 1, True),
+                    WorkspaceIdentity("mac", "workspace"),
+                )
             assert grant_refused.value.code is ErrorCode.executor_incarnation_not_current
 
             assert (

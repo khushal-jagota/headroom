@@ -21,7 +21,7 @@ from typing import Final, Literal, cast
 
 import aiohttp
 
-from planner.execution_identity import ExecutorIdentity
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.configuration import (
     COMMAND_OUTCOME_TIMEOUT_SECONDS,
     COMMAND_POLL_TIMEOUT_SECONDS,
@@ -38,6 +38,7 @@ from planner.executor.configuration import (
     EXECUTOR_PROTOCOL_HEADER,
     EXECUTOR_READS_PATH,
     EXECUTOR_UPLOAD_PATH,
+    EXECUTOR_WORKSPACE_REGISTRATION_PATH,
     EXECUTOR_WORKSPACE_RETIREMENT_PATH,
     FILE_TRANSFER_STALL_SECONDS,
     HTTP_CLOSE_TIMEOUT_SECONDS,
@@ -75,12 +76,13 @@ from planner.executor.protocol import (
     LiveEventBatch,
     LiveReadRequest,
     MailboxPollReply,
+    WorkspaceRegistrationRequest,
     WorkspaceRetirementReply,
     WorkspaceRetirementRequest,
     decode_bounded,
     encode_bounded,
 )
-from planner.ticket_workspaces.contracts import WorkspaceState
+from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
 
 type MacLoop = Literal["lease", "poll", "outcomes", "items", "downloads", "reads", "live"]
 
@@ -254,13 +256,26 @@ class MacHttpClient:
                 pass
         raise _error(status, body)
 
-    async def retire_workspace(self, state: WorkspaceState, *, replay: bool = False) -> bool:
+    async def register_workspace(self, child: ChildReference, workspace: WorkspaceIdentity) -> None:
+        status, body = await self._json(
+            "reads",
+            "POST",
+            EXECUTOR_WORKSPACE_REGISTRATION_PATH,
+            timeout=LIVE_READ_TIMEOUT_SECONDS,
+            body=encode_bounded(WorkspaceRegistrationRequest(child, workspace)),
+        )
+        if status != 204:
+            raise _error(status, body)
+
+    async def retire_workspace(
+        self, state: WorkspaceState, workspace: WorkspaceIdentity, *, replay: bool = False
+    ) -> bool:
         status, body = await self._json(
             "reads",
             "POST",
             EXECUTOR_WORKSPACE_RETIREMENT_PATH,
             timeout=LIVE_READ_TIMEOUT_SECONDS,
-            body=encode_bounded(WorkspaceRetirementRequest(state, replay)),
+            body=encode_bounded(WorkspaceRetirementRequest(state, workspace, replay)),
         )
         if status != 200:
             raise _error(status, body)

@@ -12,7 +12,12 @@ class WorkspaceState:
     ticket_id: str
     ended_at: int | None
     deleted: bool
-    generation: int = 0
+
+
+@dataclass(frozen=True)
+class WorkspaceIdentity:
+    machine_id: str
+    workspace_id: str
 
 
 @dataclass

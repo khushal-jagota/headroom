@@ -7,7 +7,7 @@ from pathlib import Path
 
 from planner.core.db import connect
 from planner.files.logic.paths import ticket_files_root
-from planner.ticket_workspaces.contracts import CleanupResult, WorkspaceState
+from planner.ticket_workspaces.contracts import CleanupResult, WorkspaceIdentity, WorkspaceState
 from planner.ticket_workspaces.data import (
     authorize_retirement,
     has_committed_retirement,
@@ -33,22 +33,23 @@ def clean_for_database(
             for row in conn.execute("SELECT id FROM tickets WHERE worker_step_claim='out'")
         )
 
-    def granted(expected: WorkspaceState) -> bool:
+    def granted(expected: WorkspaceState, identity: WorkspaceIdentity) -> bool:
         with closing(connect(db_path)) as fresh:
-            return has_committed_retirement(fresh, expected)
+            return has_committed_retirement(fresh, expected, identity)
 
-    def retire(path: Path, expected: WorkspaceState) -> Path | str:
+    def retire(path: Path, expected: WorkspaceState, identity: WorkspaceIdentity) -> Path | str:
         with closing(connect(db_path)) as fresh:
             fresh.execute("BEGIN IMMEDIATE")
             target: Path | str | None = None
             try:
                 current = read_workspace_states(fresh).get(expected.ticket_id)
-                if current != expected or not authorize_retirement(fresh, expected, now):
+                if current != expected or not authorize_retirement(fresh, expected, now, identity):
                     fresh.rollback()
                     return "Ticket is active or no longer eligible"
                 target = retire_workspace(
                     path,
                     expected,
+                    identity=identity,
                     retired_root=ticket_files_root(db_path).parent / ".ticket-retired",
                 )
                 fresh.commit()

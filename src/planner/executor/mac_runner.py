@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import logging
 import secrets
+import subprocess
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -92,8 +93,15 @@ from planner.executor.protocol import (
     type_adapter,
 )
 from planner.executor.skills import install_native_skill_snapshot, native_skill_home
-from planner.ticket_workspaces.contracts import WorkspaceState
-from planner.ticket_workspaces.filesystem import cleanup_local_workspaces, prepare_workspace
+from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
+from planner.ticket_workspaces.filesystem import (
+    cleanup_local_workspaces,
+    prepare_workspace,
+    workspace_identity,
+)
+from planner.ticket_workspaces.filesystem import (
+    retire_workspace as detach_workspace,
+)
 from planner.workspace_localization import localize_workspace, require_safe_relative_workspace
 
 if TYPE_CHECKING:
@@ -249,6 +257,7 @@ class RunningChild:
     launch_input: StartRun
     localized_start: ResolvedConversationStart
     backend_key: ConversationBackendKey
+    workspace: WorkspaceIdentity | None = None
     active_turn: TurnToken | None = None
     asks: dict[str, AskReference] = field(default_factory=dict)
     background_task_ids: set[str] = field(default_factory=set)
@@ -294,8 +303,12 @@ class MacRunner:
         files: MacFilesApi | None = None,
         live: MacLiveEvents | None = None,
         agent_processes: MacAgentProcesses | None = None,
-        retire_workspace: Callable[[WorkspaceState], Awaitable[bool]] | None = None,
-        retirement_is_committed: Callable[[WorkspaceState], Awaitable[bool]] | None = None,
+        retire_workspace: Callable[[WorkspaceState, WorkspaceIdentity], Awaitable[bool]]
+        | None = None,
+        retirement_is_committed: Callable[[WorkspaceState, WorkspaceIdentity], Awaitable[bool]]
+        | None = None,
+        register_workspace: Callable[[ChildReference, WorkspaceIdentity], Awaitable[None]]
+        | None = None,
     ) -> None:
         self.workspace_home = workspace_home or Path.home()
         self.paths = paths
@@ -307,6 +320,7 @@ class MacRunner:
         self.agent_processes = agent_processes
         self._retire_workspace = retire_workspace
         self._retirement_is_committed = retirement_is_committed
+        self._register_workspace = register_workspace
         self.factory = factory or self._factory(panels_server_url)
         self.message_files = message_files
         self._children: dict[str, RunningChild] = {}
@@ -475,14 +489,12 @@ class MacRunner:
             raise BackendSpawnFailed(f"Mac workspace unavailable: {error}") from error
         ticket_id = safe_component(identity["PLAN_TICKET_ID"])
         artifact_root = self.paths.artifacts / ticket_id
+        managed = identity.get("PLAN_TICKET_WORKSPACE_MANAGED") == "1"
         try:
-            generation = int(identity.get("PLAN_TICKET_WORKSPACE_GENERATION", "0"))
-            if generation < 0:
-                raise ValueError("invalid Ticket workspace generation")
-            workspace = prepare_workspace(
-                artifact_root, workspace, ticket_id, generation=generation
-            )
-        except (OSError, ValueError, RuntimeError) as error:
+            artifact_root.mkdir(parents=True, exist_ok=True)
+            if managed:
+                workspace = prepare_workspace(artifact_root, workspace, ticket_id)
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
             raise BackendSpawnFailed(f"Mac Ticket worktree unavailable: {error}") from error
         original = resolved.role_materials
         # Native adapters merge role identity after launch settings. Remove the VPS
@@ -506,15 +518,22 @@ class MacRunner:
         identity["PLAN_TICKET_FILES_DIR"] = str(artifact_root)
         identity[NATIVE_SKILLS_DIR_ENV] = str(skill_generation / "skills")
         role_text = original.role_text if original else ""
-        role_text += (
-            "\n\nPanels owns this Ticket workspace. "
-            f"Use the supplied worktree at {workspace}. "
-            "Do not create or remove worktrees. Keep scratch and dependencies inside it. "
-            f"Write reviewable artifacts and evidence under {artifact_root / 'artifacts'}. "
-            "Follow repository setup instructions. Workers commit, push, open PRs, and merge. "
-            "Panels removes the complete Ticket folder seven days after the Ticket ends, "
-            "unless unpublished or uncommitted work prevents safe removal."
-        )
+        if managed:
+            role_text += (
+                "\n\nPanels owns this Ticket workspace. "
+                f"Use the supplied worktree at {workspace}. "
+                "Do not create or remove worktrees. Keep scratch and dependencies inside it. "
+                f"Write reviewable artifacts and evidence under {artifact_root / 'artifacts'}. "
+                "Follow repository setup instructions. Workers commit, push, open PRs, and merge. "
+                "Panels removes the complete Ticket folder seven days after the Ticket ends, "
+                "unless unpublished or uncommitted work prevents safe removal."
+            )
+        else:
+            role_text += (
+                f"\n\nThis existing conversation keeps its original workspace at {workspace}. "
+                "Continue the work there, including any unpublished changes. "
+                f"Write reviewable output under {artifact_root / 'artifacts'}."
+            )
         return replace(
             resolved,
             workspace_folder=workspace,
@@ -622,6 +641,7 @@ class MacRunner:
         except Exception as error:
             raise BackendSpawnFailed(f"Canonical skill bootstrap failed: {error}") from error
         async with self._workspace_lock:
+            self._check_start_admission(command, ticket_id)
             resolved = await run_on_worker_thread(
                 self._localize_start,
                 resolved,
@@ -631,6 +651,26 @@ class MacRunner:
                 identity,
                 generation,
             )
+            self._check_start_admission(command, ticket_id)
+            local_workspace = (
+                workspace_identity(self.paths.artifacts / ticket_id)
+                if identity.get("PLAN_TICKET_WORKSPACE_MANAGED") == "1"
+                else None
+            )
+        # Registration does not hold the filesystem lock or delay another Ticket's
+        # start. The final check below reestablishes ownership before child insertion.
+        if local_workspace is not None and self._register_workspace is not None:
+            try:
+                await self._register_workspace(command.child, local_workspace)
+            except Exception as error:
+                raise BackendSpawnFailed(f"Mac workspace registration failed: {error}") from error
+        async with self._workspace_lock:
+            self._check_start_admission(command, ticket_id)
+            if (
+                local_workspace is not None
+                and workspace_identity(self.paths.artifacts / ticket_id) != local_workspace
+            ):
+                raise BackendSpawnFailed("Ticket workspace changed before native start")
             native = self.factory(resolved)(
                 resolved_start=resolved,
                 event_sink=NativeEventSink(self, command.child),
@@ -643,6 +683,7 @@ class MacRunner:
                 ticket_id=ticket_id,
                 launch_input=args,
                 localized_start=resolved,
+                workspace=local_workspace,
                 model=resolved.model,
                 reasoning_effort=resolved.reasoning_effort,
                 backend_key=resolved.backend_key,
@@ -674,6 +715,21 @@ class MacRunner:
                     )
         return {}
 
+    def _check_start_admission(self, command: ChildCommand, ticket_id: str) -> None:
+        """The caller holds the workspace lock through insertion after this check."""
+        if self.admission_stopped:
+            raise _CommandAdmissionRefused("executor is quiescing")
+        if command.command_id in self._withdrawn_commands:
+            raise _CommandAdmissionRefused("command withdrawn before provider invocation")
+        if command.child.child_id in self._retiring_children or (
+            command.child.child_id in self._retired_children
+        ):
+            raise BackendSpawnFailed("source child identity was retired")
+        if command.child.child_id in self._children:
+            raise BackendSpawnFailed("child identity already has a native start")
+        if any(existing.ticket_id == ticket_id for existing in self._children.values()):
+            raise BackendSpawnFailed("Ticket already has a retained source child")
+
     async def cleanup_workspaces(self, states: tuple[WorkspaceState, ...], now: int) -> None:
         """Use a fresh canonical lease only; local admission cannot race removal."""
         if self._retire_workspace is None:
@@ -681,27 +737,19 @@ class MacRunner:
         loop = asyncio.get_running_loop()
         retire_workspace = self._retire_workspace
 
-        async def request_authorization(state: WorkspaceState, *, replay: bool = False) -> bool:
+        async def authorize_locked(
+            state: WorkspaceState, workspace: WorkspaceIdentity, *, replay: bool = False
+        ) -> bool:
             children = [
                 child
                 for child in self._children.values()
-                if child.ticket_id == state.ticket_id
-                and int(
-                    dict(
-                        child.localized_start.role_materials.identity_environment_variables
-                        if child.localized_start.role_materials
-                        else ()
-                    ).get("PLAN_TICKET_WORKSPACE_GENERATION", "0")
-                )
-                == state.generation
+                if child.ticket_id == state.ticket_id and child.workspace == workspace
             ]
             if any(self._workspace_child_busy(child) for child in children):
                 return False
             authorize = self._retirement_is_committed if replay else retire_workspace
-            if authorize is None or not await authorize(state):
+            if authorize is None or not await authorize(state, workspace):
                 return False
-            # A prompt can arrive while the grant request waits on the network.
-            # Keep the folder if it made the old native session active meanwhile.
             if any(self._workspace_child_busy(child) for child in children):
                 return False
             for child in children:
@@ -709,33 +757,58 @@ class MacRunner:
                     return False
             return True
 
-        def authorize(state: WorkspaceState, *, replay: bool = False) -> bool:
-            # The cleanup thread waits for fresh VPS authorization without blocking
-            # the lease or command loops. Failure preserves the local generation.
-            future = asyncio.run_coroutine_threadsafe(
-                request_authorization(state, replay=replay), loop
-            )
+        async def replay_authorization(state: WorkspaceState, workspace: WorkspaceIdentity) -> bool:
+            async with self._workspace_lock:
+                return await authorize_locked(state, workspace, replay=True)
+
+        async def retire_current(
+            path: Path, state: WorkspaceState, workspace: WorkspaceIdentity
+        ) -> Path | str:
+            async with self._workspace_lock:
+                if workspace_identity(path) != workspace:
+                    return "workspace ownership changed"
+                if not await authorize_locked(state, workspace):
+                    return "retirement authorization refused"
+                # Keep admission closed through the atomic detach. Slow inventory,
+                # Git verification, backlink repair, and deletion run outside it.
+                return await run_on_worker_thread(
+                    detach_workspace,
+                    path,
+                    state,
+                    identity=workspace,
+                    retired_root=self.paths.artifacts.parent / ".ticket-retired",
+                )
+
+        def committed(state: WorkspaceState, workspace: WorkspaceIdentity) -> bool:
+            future = asyncio.run_coroutine_threadsafe(replay_authorization(state, workspace), loop)
             try:
                 return future.result(timeout=30)
             except TimeoutError:
                 future.cancel()
                 raise
 
-        async with self._workspace_lock:
-            result = await run_on_worker_thread(
-                cleanup_local_workspaces,
-                self.paths.artifacts,
-                {state.ticket_id: state for state in states},
-                now,
-                extra_roots=(self.workspace_home / "panels-session-evidence",),
-                authorize_retirement=authorize,
-                retirement_is_committed=partial(authorize, replay=True),
-                active_ticket_ids=frozenset(
-                    child.ticket_id
-                    for child in self._children.values()
-                    if self._workspace_child_busy(child)
-                ),
-            )
+        def retire(path: Path, state: WorkspaceState, workspace: WorkspaceIdentity) -> Path | str:
+            future = asyncio.run_coroutine_threadsafe(retire_current(path, state, workspace), loop)
+            try:
+                return future.result(timeout=30)
+            except TimeoutError:
+                future.cancel()
+                raise
+
+        result = await run_on_worker_thread(
+            cleanup_local_workspaces,
+            self.paths.artifacts,
+            {state.ticket_id: state for state in states},
+            now,
+            extra_roots=(self.workspace_home / "panels-session-evidence",),
+            retire=retire,
+            retirement_is_committed=committed,
+            active_ticket_ids=frozenset(
+                child.ticket_id
+                for child in self._children.values()
+                if self._workspace_child_busy(child)
+            ),
+        )
         for entry in result.skipped:
             logging.getLogger(__name__).warning(
                 "Ticket workspace retained path=%s reason=%s", entry["path"], entry["reason"]

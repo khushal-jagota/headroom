@@ -194,15 +194,12 @@ def worker_resolve(
         workspace_folder=selected_workspace,
         workspace_path_policy=workspace_policy,
     )
-    from planner.ticket_workspaces.data import read_workspace_states
-
-    generation = read_workspace_states(conn)[ticket.id].generation
     values = replace(
         values,
         role_materials=replace(
             values.role_materials,
             identity_environment_variables=values.role_materials.identity_environment_variables
-            + (("PLAN_TICKET_WORKSPACE_GENERATION", str(generation)),),
+            + (("PLAN_TICKET_WORKSPACE_MANAGED", "1"),),
             role_text=values.role_materials.role_text
             + "\n\n[Ticket workflow guidance]\n"
             + render_workflow_guide(ticket.workflow)
@@ -375,17 +372,21 @@ async def start_ticket_conversation(
             if ticket.project_id is not None
             else None
         )
-        workspace = await asyncio.to_thread(
-            prepare_workspace,
-            ticket_files_root(database_path(conn)) / ticket.id,
-            project_folder,
-            ticket.id,
-            generation=int(
-                dict(values.role_materials.identity_environment_variables).get(
-                    "PLAN_TICKET_WORKSPACE_GENERATION", "0"
-                )
-            ),
-        )
+        import subprocess
+
+        try:
+            workspace = await asyncio.to_thread(
+                prepare_workspace,
+                ticket_files_root(database_path(conn)) / ticket.id,
+                project_folder,
+                ticket.id,
+            )
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+            raise PlannerError(
+                ErrorCode.validation,
+                f"Cannot prepare the Ticket workspace: {exc}",
+                {"ticket_id": ticket.id},
+            ) from exc
         values = replace(values, workspace_folder=workspace)
     request = ConversationStartRequest(
         conversation_id=conversation_id,
@@ -402,6 +403,20 @@ async def start_ticket_conversation(
         linked = await run_on_worker_thread(
             _record_and_link_ticket_conversation, conn, ticket.id, request, values, now
         )
+
+        if ticket.locale != TicketLocale.macos:
+            from planner.ticket_workspaces.data import register_workspace
+            from planner.ticket_workspaces.filesystem import workspace_identity
+
+            identity = await asyncio.to_thread(
+                workspace_identity, ticket_files_root(database_path(conn)) / ticket.id
+            )
+
+            def register_local_workspace() -> None:
+                with conn:
+                    register_workspace(conn, ticket.id, conversation_id, identity)
+
+            await run_on_worker_thread(register_local_workspace)
     except BaseException as start_error:
         try:
             await system.kill(conversation_id)
@@ -613,18 +628,13 @@ async def _send_into_the_conversation_the_ticket_is_in(
     own values — and the value it keeps for a field this message did not change is read
     back now rather than taken from before the send, for the same reason.
     """
-    from planner.ticket_workspaces.data import ensure_workspace_generation
+    from planner.ticket_workspaces.data import (
+        conversation_workspace_retired,
+        ensure_workspace_activity,
+    )
 
-    current = await run_on_worker_thread(ensure_workspace_generation, conn, ticket_id)
-    stored = conn.execute(
-        "SELECT identity_environment_variables FROM conversations WHERE conversation_id=?",
-        (sending_into,),
-    ).fetchone()
-    environment = dict(json.loads(stored[0])) if stored is not None else {}
-    old_generation = int(environment.get("PLAN_TICKET_WORKSPACE_GENERATION", "0"))
-    # Legacy sessions retain their original workspace until generation zero retires.
-    # No native session can resume inside a detached generation.
-    if current is not None and old_generation != current.generation:
+    await run_on_worker_thread(ensure_workspace_activity, conn, ticket_id, now)
+    if conversation_workspace_retired(conn, sending_into):
         if await system.is_running(sending_into):
             raise PlannerError(
                 ErrorCode.already_running, "The retired workspace still has an active conversation"
@@ -742,9 +752,9 @@ async def _make_a_conversation_and_send_into_it(
     for — and every one of those leaves the same half-made conversation as a refusal does.
     So the undo is on the way out, not on the answer.
     """
-    from planner.ticket_workspaces.data import ensure_workspace_generation
+    from planner.ticket_workspaces.data import ensure_workspace_activity
 
-    await run_on_worker_thread(ensure_workspace_generation, conn, ticket.id)
+    await run_on_worker_thread(ensure_workspace_activity, conn, ticket.id, now)
     making = created_conversation_id or new_conversation_id()
     values = worker_resolve(conn, ticket, runs_under, worker_type_registry=worker_type_registry)
     linked = await start_ticket_conversation(
