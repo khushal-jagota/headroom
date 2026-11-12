@@ -8,6 +8,7 @@ import { SqliteProcessConversationSystem } from './conversation/system.ts';
 import { ConversationMessageFiles } from './conversation/record/message_files.ts';
 import { ScriptedBackendRegistry } from './conversation/testing/scripted_registry.ts';
 import { scriptedConversationControls } from './conversation/testing/scripted_controls.ts';
+import { browserConversationControls } from './conversation/testing/browser_controls.ts';
 import { InMemoryConversationSystem } from './conversation/in_memory_conversation_system.ts';
 import { inMemoryConversationRoutes } from './conversation/testing/routes.ts';
 import { rebuild_conversation_view } from './conversation/views/data/writer.ts';
@@ -56,7 +57,10 @@ await startServer({
     managerWakeTestArea({ ...context, assert_database_owned: context.require_runtime_ownership }),
     ...(conversationSystem
       ? inMemoryConversationRoutes(conversationSystem)
-      : scriptedConversationControls(context, registry)),
+      : [
+          ...scriptedConversationControls(context, registry),
+          ...browserConversationControls(context, registry),
+        ]),
   ],
   beforePublication(database) {
     // Rebuild copied Python projections through the actual TS writer. Comparing

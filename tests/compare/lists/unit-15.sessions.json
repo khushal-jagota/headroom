@@ -1,0 +1,878 @@
+{
+  "source_roots": [
+    "src/planner/conversation/system.py",
+    "src/planner/conversation/logic/",
+    "src/planner/conversation/api.py",
+    "src/planner/runtime/logic/conversation_start_resolution.py"
+  ],
+  "external_proofs": [
+    {
+      "source_test": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "coverage": "confirmed/not-compacted, exact fixed two-send source provenance through purpose-specific real-core control"
+    },
+    {
+      "source_test": "test_resumed_manager_receives_canonical_role_and_environment",
+      "coverage": "real Manager owner route, retained transcript, canonical role/environment included on each compared turn"
+    },
+    {
+      "source_test": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "coverage": "five local variants only; server-restarted branch remains Unit19"
+    }
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Maintenance source Worker",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Mixed provenance proof"
+      },
+      "capture": {
+        "session_worker": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Canonical retained Manager",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "session_manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T10:00:00"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers/${session_manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Establish retained Manager transcript"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "seed-manager"
+      },
+      "capture": {
+        "session_manager_cid": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${session_manager_cid}/finish",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:00"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:00"
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-maintenance-confirmed",
+        "model": "m1",
+        "backend_key": "claude",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-maintenance-confirmed/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "first"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-confirmed/finish",
+      "status": 200
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:50:00"
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-confirmed/sweep-idle-children",
+      "status": 200
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "GET",
+      "path": "/api/test/signals/u15-maintenance-confirmed/inspect",
+      "status": 200,
+      "capture": {
+        "maintenance_confirmed_compacting": ""
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-confirmed/maintenance-mixed-messages",
+      "status": 200,
+      "json": {
+        "ticket_id": "${session_worker}"
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "GET",
+      "path": "/api/test/signals/u15-maintenance-confirmed/inspect",
+      "status": 200,
+      "capture": {
+        "maintenance_confirmed_queued": ""
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-confirmed/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "ContextCompacted",
+            "values": {}
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-confirmed/finish",
+      "status": 200
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "GET",
+      "path": "/api/test/signals/u15-maintenance-confirmed/inspect",
+      "status": 200,
+      "capture": {
+        "maintenance_confirmed_released": ""
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-confirmed/finish",
+      "status": 200
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:00"
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-maintenance-not-compacted",
+        "model": "m1",
+        "backend_key": "claude",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-maintenance-not-compacted/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "first"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-not-compacted/finish",
+      "status": 200
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:50:00"
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-not-compacted/sweep-idle-children",
+      "status": 200
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "GET",
+      "path": "/api/test/signals/u15-maintenance-not-compacted/inspect",
+      "status": 200,
+      "capture": {
+        "maintenance_not-compacted_compacting": ""
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-not-compacted/maintenance-mixed-messages",
+      "status": 200,
+      "json": {
+        "ticket_id": "${session_worker}"
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "GET",
+      "path": "/api/test/signals/u15-maintenance-not-compacted/inspect",
+      "status": 200,
+      "capture": {
+        "maintenance_not-compacted_queued": ""
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-not-compacted/finish",
+      "status": 200
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "GET",
+      "path": "/api/test/signals/u15-maintenance-not-compacted/inspect",
+      "status": 200,
+      "capture": {
+        "maintenance_not-compacted_released": ""
+      }
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/signals/u15-maintenance-not-compacted/finish",
+      "status": 200
+    },
+    {
+      "area": "test_maintenance_releases_owner_and_worker_messages_in_order",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:00"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-taskloss-stream_ended",
+        "model": "m1",
+        "backend_key": "claude",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-taskloss-stream_ended/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "run the suite"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stream_ended/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "BackgroundTaskStarted",
+            "values": {
+              "task_id": "task-1",
+              "task_description": "Run the test suite"
+            }
+          }
+        ],
+        "turn": null
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stream_ended/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stream_ended/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "BackendStreamEnded",
+            "values": {}
+          }
+        ],
+        "turn": null
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "GET",
+      "path": "/api/test/signals/u15-taskloss-stream_ended/inspect",
+      "status": 200,
+      "capture": {
+        "taskloss_stream_ended": ""
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-taskloss-stopped_as_the_stream_ended",
+        "model": "m1",
+        "backend_key": "claude",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-taskloss-stopped_as_the_stream_ended/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "run the suite"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stopped_as_the_stream_ended/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "BackgroundTaskStarted",
+            "values": {
+              "task_id": "task-1",
+              "task_description": "Run the test suite"
+            }
+          }
+        ],
+        "turn": null
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stopped_as_the_stream_ended/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stopped_as_the_stream_ended/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "BackgroundTaskEnded",
+            "values": {
+              "task_id": "task-1",
+              "task_status": "killed"
+            }
+          }
+        ],
+        "turn": null
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stopped_as_the_stream_ended/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "BackendStreamEnded",
+            "values": {}
+          }
+        ],
+        "turn": null
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "GET",
+      "path": "/api/test/signals/u15-taskloss-stopped_as_the_stream_ended/inspect",
+      "status": 200,
+      "capture": {
+        "taskloss_stopped_as_the_stream_ended": ""
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-taskloss-stopped_then_the_agent_acted",
+        "model": "m1",
+        "backend_key": "claude",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-taskloss-stopped_then_the_agent_acted/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "run the suite"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stopped_then_the_agent_acted/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "BackgroundTaskStarted",
+            "values": {
+              "task_id": "task-1",
+              "task_description": "Run the test suite"
+            }
+          }
+        ],
+        "turn": null
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stopped_then_the_agent_acted/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stopped_then_the_agent_acted/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "BackgroundTaskEnded",
+            "values": {
+              "task_id": "task-1",
+              "task_status": "killed"
+            }
+          }
+        ],
+        "turn": null
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-taskloss-stopped_then_the_agent_acted/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "carry on"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stopped_then_the_agent_acted/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-stopped_then_the_agent_acted/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "BackendStreamEnded",
+            "values": {}
+          }
+        ],
+        "turn": null
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "GET",
+      "path": "/api/test/signals/u15-taskloss-stopped_then_the_agent_acted/inspect",
+      "status": 200,
+      "capture": {
+        "taskloss_stopped_then_the_agent_acted": ""
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-taskloss-child_replaced",
+        "model": "m1",
+        "backend_key": "claude",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-taskloss-child_replaced/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "run the suite"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-child_replaced/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "BackgroundTaskStarted",
+            "values": {
+              "task_id": "task-1",
+              "task_description": "Run the test suite"
+            }
+          }
+        ],
+        "turn": null
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-child_replaced/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-child_replaced/configure",
+      "status": 200,
+      "json": {
+        "command": "write_prompt",
+        "behavior": {
+          "error": {
+            "name": "NeedsRebind",
+            "message": "replace the source child",
+            "failed_child_recovery": false
+          }
+        }
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-taskloss-child_replaced/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "switch model"
+          }
+        ],
+        "sender_label": "owner",
+        "model_change": "m2"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-child_replaced/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "GET",
+      "path": "/api/test/signals/u15-taskloss-child_replaced/inspect",
+      "status": 200,
+      "capture": {
+        "taskloss_child_replaced": ""
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-taskloss-killed",
+        "model": "m1",
+        "backend_key": "claude",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-taskloss-killed/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "run the suite"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-killed/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "BackgroundTaskStarted",
+            "values": {
+              "task_id": "task-1",
+              "task_description": "Run the test suite"
+            }
+          }
+        ],
+        "turn": null
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/test/signals/u15-taskloss-killed/configure",
+      "status": 200,
+      "json": {
+        "command": "cancel_running_turn",
+        "behavior": {
+          "error": {
+            "name": "RuntimeError",
+            "message": "the cancel never got to the child"
+          }
+        }
+      }
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-taskloss-killed/kill",
+      "status": 204
+    },
+    {
+      "area": "test_a_background_task_lost_with_its_session_is_told_to_the_agent",
+      "method": "GET",
+      "path": "/api/test/signals/u15-taskloss-killed/inspect",
+      "status": 200,
+      "capture": {
+        "taskloss_killed": ""
+      }
+    },
+    {
+      "area": "test_resumed_manager_receives_canonical_role_and_environment",
+      "method": "POST",
+      "path": "/api/managers/${session_manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "${session_manager_cid}",
+        "content": [
+          {
+            "piece": "text",
+            "text": "first"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "manager-first"
+      }
+    },
+    {
+      "area": "test_resumed_manager_receives_canonical_role_and_environment",
+      "method": "GET",
+      "path": "/api/test/signals/${session_manager_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "canonical_manager_first": ""
+      }
+    },
+    {
+      "area": "test_resumed_manager_receives_canonical_role_and_environment",
+      "method": "POST",
+      "path": "/api/test/signals/${session_manager_cid}/finish",
+      "status": 200
+    },
+    {
+      "area": "test_resumed_manager_receives_canonical_role_and_environment",
+      "method": "POST",
+      "path": "/api/managers/${session_manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "${session_manager_cid}",
+        "content": [
+          {
+            "piece": "text",
+            "text": "next"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "manager-next"
+      }
+    },
+    {
+      "area": "test_resumed_manager_receives_canonical_role_and_environment",
+      "method": "GET",
+      "path": "/api/test/signals/${session_manager_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "canonical_manager_next": ""
+      }
+    },
+    {
+      "area": "test_resumed_manager_receives_canonical_role_and_environment",
+      "method": "POST",
+      "path": "/api/test/signals/${session_manager_cid}/finish",
+      "status": 200
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_sessions_en_us": ""
+      }
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_sessions_de_de": ""
+      }
+    }
+  ],
+  "report_captures": [
+    "maintenance_confirmed_compacting",
+    "maintenance_confirmed_queued",
+    "maintenance_confirmed_released",
+    "maintenance_not-compacted_compacting",
+    "maintenance_not-compacted_queued",
+    "maintenance_not-compacted_released",
+    "taskloss_stream_ended",
+    "taskloss_stopped_as_the_stream_ended",
+    "taskloss_stopped_then_the_agent_acted",
+    "taskloss_child_replaced",
+    "taskloss_killed",
+    "canonical_manager_first",
+    "canonical_manager_next",
+    "navigation_sessions_en_us",
+    "navigation_sessions_de_de"
+  ]
+}

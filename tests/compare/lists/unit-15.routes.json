@@ -1,0 +1,964 @@
+{
+  "source_roots": [
+    "src/planner/conversation/api.py",
+    "src/planner/conversation/system.py",
+    "src/planner/conversation/logic/",
+    "src/planner/conversation/storage.py"
+  ],
+  "external_proofs": [
+    {
+      "source_test": "test_local_worker_does_not_receive_native_context",
+      "coverage": "same browser start factory with fixed local Worker role and identity, exact actual wire and factory observation"
+    }
+  ],
+  "requests": [
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-routes",
+        "model": "a-model",
+        "workspace_folder": "/tmp",
+        "reasoning_effort": "high"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 409,
+      "json": {
+        "conversation_id": "u15-routes",
+        "model": "a-model"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 422,
+      "json": {}
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 422,
+      "json": {
+        "conversation_id": "bad",
+        "model": "a",
+        "backend_key": "unknown"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 422,
+      "json": {
+        "conversation_id": "bad",
+        "model": "a",
+        "access": "unknown"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "bad",
+        "model": "a",
+        "role_text": "role alone",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/missing",
+      "status": 404
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "work"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/send",
+      "status": 422,
+      "json": {
+        "sender_label": "owner",
+        "model_change": "a-model",
+        "ignored": 1
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/send",
+      "status": 422,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "bad"
+          }
+        ],
+        "sender_label": "owner",
+        "model_change": 42
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/send",
+      "status": 422,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "bad"
+          }
+        ],
+        "sender_label": "owner",
+        "reasoning_effort_change": 42
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/composer-catalog",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/test/signals/u15-routes/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "ComposerCatalogReported",
+            "values": {
+              "composer_catalog": [
+                {
+                  "kind": "command",
+                  "display_text": "/compact",
+                  "insertion_text": "/compact",
+                  "description": "Compact the conversation",
+                  "argument_hint": null
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/composer-catalog",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/missing/composer-catalog",
+      "status": 404
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/test/signals/u15-routes/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "ToolCallStarted",
+            "values": {
+              "tool_call_id": "route-tool",
+              "title": "Read source",
+              "tool_kind": "read",
+              "detail": "Opening source"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events/2/detail",
+      "status": 404
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/test/signals/u15-routes/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "ToolCallFinished",
+            "values": {
+              "tool_call_id": "route-tool",
+              "tool_call_status": "completed",
+              "detail": "readable detail\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events?after=0_0&limit=2",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events?after=1&limit=1",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events?before=4&limit=2",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events?limit=1",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events?limit=0",
+      "status": 400
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events?limit=101",
+      "status": 400
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events?before=3",
+      "status": 400
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events?after=1&before=3&limit=2",
+      "status": 400
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events?after=oops",
+      "status": 422
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events/3/detail",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/events/99/detail",
+      "status": 404
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/missing/events",
+      "status": 404
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/tail?after=3",
+      "status": 200,
+      "capture": {
+        "routes_event_tail": ""
+      },
+      "kind": "stream",
+      "frames": 3,
+      "deadline_seconds": 10,
+      "after_open": [
+        {
+          "method": "POST",
+          "path": "/api/test/signals/u15-routes/backend-news",
+          "status": 200,
+          "json": {
+            "events": [
+              {
+                "kind": "ToolCallStarted",
+                "values": {
+                  "tool_call_id": "tail-tool",
+                  "title": "Live tool",
+                  "tool_kind": "read"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/api/test/signals/u15-routes/backend-news",
+          "status": 200,
+          "json": {
+            "events": [
+              {
+                "kind": "ToolCallProgress",
+                "values": {
+                  "tool_call_id": "tail-tool",
+                  "detail": "transient progress"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/tail?after=2",
+      "status": 200,
+      "capture": {
+        "routes_replay_tail": ""
+      },
+      "kind": "stream",
+      "frames": 3,
+      "deadline_seconds": 10
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/view/tail?lens=full",
+      "status": 200,
+      "capture": {
+        "routes_view_tail": ""
+      },
+      "kind": "stream",
+      "frames": 2,
+      "deadline_seconds": 10,
+      "after_open": [
+        {
+          "method": "POST",
+          "path": "/api/test/signals/u15-routes/backend-news",
+          "status": 200,
+          "json": {
+            "events": [
+              {
+                "kind": "ToolCallFinished",
+                "values": {
+                  "tool_call_id": "tail-tool",
+                  "tool_call_status": "completed",
+                  "detail": "committed after open"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/test/signals/u15-routes/inspect",
+      "status": 200,
+      "capture": {
+        "routes_after_streams": ""
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/test/signals/u15-routes/message",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "proof-worker",
+        "label": "Worker",
+        "text": "unread owner reply"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/owner-read",
+      "status": 200,
+      "json": {
+        "through_sequence": "0_0"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/owner-read",
+      "status": 200,
+      "json": {
+        "through_sequence": 99
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/owner-read",
+      "status": 200,
+      "json": {
+        "through_sequence": 0
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/owner-read",
+      "status": 422,
+      "json": {
+        "through_sequence": -1
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/owner-read",
+      "status": 422,
+      "json": {
+        "through_sequence": 1.5
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/owner-read",
+      "status": 422,
+      "json": {}
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/missing/owner-read",
+      "status": 404,
+      "json": {
+        "through_sequence": 0
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/owner-read",
+      "status": 400,
+      "json": {
+        "through_sequence": 0
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/permission-answers",
+      "status": 400,
+      "json": {
+        "ask_id": "unknown",
+        "option_id": "allow"
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/user-input-answers",
+      "status": 400,
+      "json": {
+        "request_id": "unknown",
+        "answers": {}
+      },
+      "headers": {
+        "X-Plan-Actor": "chief"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/owner-read",
+      "status": 400,
+      "json": {
+        "through_sequence": 0
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${authority_manager}"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/permission-answers",
+      "status": 400,
+      "json": {
+        "ask_id": "unknown",
+        "option_id": "allow"
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${authority_manager}"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/user-input-answers",
+      "status": 400,
+      "json": {
+        "request_id": "unknown",
+        "answers": {}
+      },
+      "headers": {
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "${authority_manager}"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/owner-read",
+      "status": 400,
+      "json": {
+        "through_sequence": 0
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${authority_ticket}"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/permission-answers",
+      "status": 400,
+      "json": {
+        "ask_id": "unknown",
+        "option_id": "allow"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${authority_ticket}"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/user-input-answers",
+      "status": 400,
+      "json": {
+        "request_id": "unknown",
+        "answers": {}
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${authority_ticket}"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/permission-answers",
+      "status": 422,
+      "json": {
+        "ask_id": "unknown",
+        "option_id": "allow",
+        "extra": 1
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/user-input-answers",
+      "status": 422,
+      "json": {
+        "request_id": "unknown",
+        "answers": {},
+        "extra": 1
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/user-input-answers",
+      "status": 422,
+      "json": {
+        "request_id": "unknown",
+        "answers": {
+          "scope": {
+            "answers": [
+              42
+            ]
+          }
+        }
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/permission-answers",
+      "status": 200,
+      "json": {
+        "ask_id": "unknown",
+        "option_id": "allow"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/user-input-answers",
+      "status": 200,
+      "json": {
+        "request_id": "unknown",
+        "answers": {}
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "DELETE",
+      "path": "/api/conversation/conversations/u15-routes/held-prompts/missing",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/held-prompts/missing/promote",
+      "status": 200,
+      "json": {
+        "mode": "send_now"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-routes/held-prompts/missing/promote",
+      "status": 422,
+      "json": {
+        "mode": "bad"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-file/files/${stored_file}",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "HEAD",
+      "path": "/api/conversation/conversations/u15-file/files/${stored_file}",
+      "status": 200
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-routes/files/${stored_file}",
+      "status": 404
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-file/files/missing",
+      "status": 404
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/voice-transcriptions",
+      "status": 503,
+      "json": {
+        "audio": "aGVsbG8=",
+        "media_type": "audio/webm"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-bound-current",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/tmp",
+        "role_text": "Bounded synthetic Ticket worker for the browser proof.",
+        "identity_environment_variables": {
+          "PLAN_ACTOR": "worker",
+          "PLAN_TICKET_ID": "${authority_ticket}"
+        }
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/test/signals/u15-bound-current/start",
+      "status": 200,
+      "json": {
+        "ticket_id": "${authority_ticket}"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-bound-current/send",
+      "status": 409,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "raw employee send"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-bound-old",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/tmp",
+        "role_text": "Bounded synthetic Ticket worker for the browser proof.",
+        "identity_environment_variables": {
+          "PLAN_ACTOR": "worker",
+          "PLAN_TICKET_ID": "${authority_ticket}"
+        }
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/test/signals/u15-bound-old/start",
+      "status": 200,
+      "json": {
+        "ticket_id": "${authority_ticket}"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/test/connected/bind",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${authority_ticket}",
+        "conversation_id": "u15-bound-old"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-bound-current/send",
+      "status": 409,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "stale"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-bound-current/interrupt",
+      "status": 409
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-bound-current/kill",
+      "status": 409
+    },
+    {
+      "area": "route-surface",
+      "method": "DELETE",
+      "path": "/api/conversation/conversations/u15-bound-current/held-prompts/missing",
+      "status": 409
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-bound-current/held-prompts/missing/promote",
+      "status": 409,
+      "json": {
+        "mode": "steer"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-bound-current/permission-answers",
+      "status": 409,
+      "json": {
+        "ask_id": "x",
+        "option_id": "y"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-bound-current/user-input-answers",
+      "status": 409,
+      "json": {
+        "request_id": "x",
+        "answers": {}
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/test/signals/u15-bound-old/inspect",
+      "status": 200,
+      "capture": {
+        "local_worker_wire": ""
+      }
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_routes_en_us": ""
+      }
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_routes_de_de": ""
+      }
+    }
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Route authority Manager",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "authority_manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Route authority Worker",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Route proof"
+      },
+      "capture": {
+        "authority_ticket": "id"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-file",
+        "model": "a-model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-file/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "file",
+            "data": "aGVsbG8K",
+            "media_type": "text/plain",
+            "file_name": "proof.txt"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "route-surface",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-file/events",
+      "status": 200,
+      "capture": {
+        "stored_file": "events.0.payload.content.0.stored_file_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/u15-file/finish",
+      "status": 200
+    }
+  ],
+  "report_captures": [
+    "routes_event_tail",
+    "routes_replay_tail",
+    "routes_view_tail",
+    "routes_after_streams",
+    "local_worker_wire",
+    "navigation_routes_en_us",
+    "navigation_routes_de_de"
+  ]
+}

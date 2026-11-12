@@ -1650,6 +1650,15 @@
     {
       "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
       "method": "GET",
+      "path": "/api/test/signals/u15-restart-lazy/live-status-before-adoption",
+      "status": 200,
+      "capture": {
+        "u15_restart_before_adoption": ""
+      }
+    },
+    {
+      "area": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
+      "method": "GET",
       "path": "/api/test/signals/u15-restart-lazy/inspect",
       "status": 200,
       "capture": {
@@ -1773,7 +1782,8 @@
     "backend_prose_runtime_only",
     "owner_message_first",
     "owner_message_duplicate",
-    "owner_message_conflict"
+    "owner_message_conflict",
+    "u15_restart_before_adoption"
   ],
   "candidate": "typescript",
   "external_proofs": [
@@ -1787,7 +1797,7 @@
     },
     {
       "source_test": "test_after_a_restart_nothing_is_running_and_the_next_message_resumes",
-      "coverage": "partial: observable stopped runtime and lazy saved-cursor/model/workspace resume; zero-store-read/no-adoption private boundary remains unproved"
+      "coverage": "pre-adoption six false live statuses, request-scoped zero store reads, unchanged empty runtime keys, no child; then exact one lazy child resumes saved cursor/model/workspace"
     },
     {
       "source_test": "test_backend_prose_is_runtime_only",

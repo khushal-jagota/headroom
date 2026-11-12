@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict, fields, is_dataclass
 from functools import partial
@@ -20,13 +20,17 @@ from unittest.mock import patch
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from tests.compare.scripted.record_inspection import record_rows
+from tests.compare.scripted.scripted_browser_controls import install_browser_controls
 from tests.compare.scripted.scripted_child import decode_scripted_event
+from tests.compare.scripted.scripted_probes import PendingSteerProbe, live_status_before_adoption
 from tests.compare.scripted.scripted_registry import ScriptedBackendRegistry
+from tests.compare.scripted.scripted_terminal_save import TerminalSaveProbe
 from tests.e2e.conversation_signals_server import NoInstalledBackends
 from tests.e2e.ticket_model_controls import TicketModelSnapshots
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 
 from planner.conversation import contracts
+from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.message_content import (
     MessageFile,
@@ -203,12 +207,96 @@ def _in_memory_routes(app: FastAPI, system: InMemoryConversationSystem) -> None:
         return {"complete": True}
 
 
-def _scripted_routes(app: FastAPI, registry: ScriptedBackendRegistry, db_path: str) -> None:
+def _scripted_routes(
+    app: FastAPI, registry: ScriptedBackendRegistry, db_path: str
+) -> Callable[[], Awaitable[None]]:
     children = registry.current
     """Drive the existing scripted child through the real Python core for shared seeds."""
+    pending = PendingSteerProbe(lambda: app.state.conversation.system, registry, db_path)
+    terminal = TerminalSaveProbe(lambda: app.state.conversation.system, registry, db_path)
 
     async def settled() -> None:
         await app.state.conversation.system.wait_until_quiescent()
+
+    @app.get("/api/test/signals/{conversation_id}/live-status-before-adoption")
+    async def live_status(conversation_id: str) -> dict[str, Any]:
+        return await live_status_before_adoption(app.state.conversation.system, conversation_id)
+
+    @app.post("/api/test/signals/{conversation_id}/pending-steer/begin")
+    async def begin_steer(conversation_id: str, body: dict[str, Any]) -> dict[str, bool]:
+        return await pending.begin(conversation_id, body)
+
+    @app.get("/api/test/signals/{conversation_id}/pending-steer/observe")
+    async def observe_steer(conversation_id: str) -> dict[str, Any]:
+        return pending.observe(conversation_id)
+
+    @app.post("/api/test/signals/{conversation_id}/pending-steer/release")
+    async def release_steer(conversation_id: str) -> dict[str, Any]:
+        return await pending.release(conversation_id)
+
+    @app.post("/api/test/signals/{conversation_id}/terminal-save/arm")
+    async def arm_terminal(conversation_id: str) -> dict[str, bool]:
+        return terminal.arm(conversation_id)
+
+    @app.post("/api/test/signals/{conversation_id}/terminal-save/begin")
+    async def begin_terminal(conversation_id: str) -> dict[str, Any]:
+        return await terminal.begin(conversation_id)
+
+    @app.post("/api/test/signals/{conversation_id}/terminal-save/join")
+    async def join_terminal(conversation_id: str) -> dict[str, Any]:
+        return await terminal.join(conversation_id)
+
+    @app.post("/api/test/signals/{conversation_id}/saved-model-enablement")
+    async def model_enablement(conversation_id: str, body: dict[str, bool]) -> dict[str, bool]:
+        record = await app.state.conversation.store.read_conversation(conversation_id)
+        if record is None:
+            raise ValueError("No conversation for saved model enablement")
+        BackendStateStore(db_path).write_model_enablement(
+            record.backend_key, record.model, body["enabled"]
+        )
+        return {"configured": True}
+
+    @app.post("/api/test/signals/{conversation_id}/maintenance-mixed-messages")
+    async def maintenance_messages(conversation_id: str, body: dict[str, str]) -> dict[str, bool]:
+        ticket = Principal(PrincipalKind.ticket, body["ticket_id"])
+        system = app.state.conversation.system
+        await system.send(
+            conversation_id,
+            text_message_content("owner message"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=ticket,
+        )
+        await system.send(
+            conversation_id,
+            text_message_content("worker opener"),
+            sender_label=f"Ticket {ticket.id}",
+            sender=ticket,
+            recipient=OWNER_PRINCIPAL,
+        )
+        await settled()
+        return {"ok": True}
+
+    @app.post("/api/test/signals/{conversation_id}/discard-source-messages")
+    async def discard_messages(conversation_id: str, body: dict[str, str]) -> dict[str, bool]:
+        system = app.state.conversation.system
+        await system.send(
+            conversation_id,
+            text_message_content("first held"),
+            sender_label="owner",
+            sender_message_id="message-one",
+            sent_at_unix_milliseconds=1234,
+            sender=Principal(PrincipalKind.ticket, body["ticket_id"]),
+            recipient=Principal(PrincipalKind.chief, "chief"),
+        )
+        await system.send(
+            conversation_id,
+            text_message_content("second held"),
+            sender_label="owner",
+            sender_message_id="message-two",
+        )
+        await settled()
+        return {"ok": True}
 
     @app.post("/api/test/signals/{conversation_id}/finish")
     async def finish(conversation_id: str) -> dict[str, bool]:
@@ -229,6 +317,8 @@ def _scripted_routes(app: FastAPI, registry: ScriptedBackendRegistry, db_path: s
 
     @app.post("/api/test/signals/{conversation_id}/message")
     async def message(conversation_id: str, body: dict[str, Any]) -> dict[str, bool]:
+        if body.get("settle") is False:
+            pending.require(conversation_id)
         try:
             await app.state.conversation.system.record_message_to_owner(
                 conversation_id,
@@ -243,11 +333,14 @@ def _scripted_routes(app: FastAPI, registry: ScriptedBackendRegistry, db_path: s
             if str(error) != "sender_message_id already names a different message":
                 raise
             raise HTTPException(status_code=422, detail=str(error)) from error
-        await settled()
+        if body.get("settle") is not False:
+            await settled()
         return {"ok": True}
 
     @app.post("/api/test/signals/{conversation_id}/backend-news")
     async def backend_news(conversation_id: str, body: dict[str, Any]) -> dict[str, int]:
+        if body.get("settle") is False:
+            pending.require(conversation_id)
         child = children[conversation_id]
         if "turn" in body:
             if body["turn"] is not None:
@@ -275,8 +368,16 @@ def _scripted_routes(app: FastAPI, registry: ScriptedBackendRegistry, db_path: s
                 values = {"ask": {"detail": None, **values}}
             news = decode_scripted_event({"kind": aliases.get(kind, kind), "values": values})
             await child.emit(news, turn=turn)
-        await child.flush_events()
-        await settled()
+        if body.get("settle") is False:
+
+            async def ending_settled() -> None:
+                await child.flush_events()
+                await settled()
+
+            pending.ending(conversation_id, ending_settled())
+        else:
+            await child.flush_events()
+            await settled()
         return {"reported": len(body["events"])}
 
     @app.post("/api/test/signals/{conversation_id}/sweep-idle-children")
@@ -320,6 +421,12 @@ def _scripted_routes(app: FastAPI, registry: ScriptedBackendRegistry, db_path: s
         patch.object(contracts, "BACKEND_KEYS_SUPPORTING_STEER", keys).start()
         return {"configured": True}
 
+    async def close_probes() -> None:
+        await pending.close()
+        await terminal.close()
+
+    return close_probes
+
 
 def build_app(config: Config) -> FastAPI:
     assert config.test_mode, "The comparison host requires test mode"
@@ -360,10 +467,12 @@ def build_app(config: Config) -> FastAPI:
         },
         conversation_system_for_test=in_memory,
     )
+    close_probes = None
     if in_memory is not None:
         _in_memory_routes(app, in_memory)
     else:
-        _scripted_routes(app, registry, config.db_path)
+        close_probes = _scripted_routes(app, registry, config.db_path)
+        install_browser_controls(app, registry, config.db_path, clock)
     original_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
@@ -376,6 +485,8 @@ def build_app(config: Config) -> FastAPI:
                 object.__setattr__(app.state.conversation, "backend_snapshots", snapshots)
                 yield
         finally:
+            if close_probes is not None:
+                await close_probes()
             await registry.close()
 
     app.router.lifespan_context = lifespan
