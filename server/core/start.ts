@@ -203,7 +203,10 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         database,
         config,
         now: () => clock.now(),
-        providers: production_backend_providers(config.test_mode),
+        providers: production_backend_providers(config.test_mode, {
+          database,
+          now: () => clock.now(),
+        }),
       });
     const conversationSystem = options.conversationSystem ?? core;
     if (core) {
