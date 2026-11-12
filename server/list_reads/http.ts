@@ -1,7 +1,14 @@
 import type { FastifyReply } from 'fastify';
+import { JsonNumber } from '../core/http/numeric_json.ts';
 
 export function dictionaryBody(raw: unknown, reply: FastifyReply): raw is Record<string, unknown> {
-  if (raw !== undefined && raw !== null && typeof raw === 'object' && !Array.isArray(raw))
+  if (
+    raw !== undefined &&
+    raw !== null &&
+    typeof raw === 'object' &&
+    !Array.isArray(raw) &&
+    !(raw instanceof JsonNumber)
+  )
     return true;
   const missing = raw == null;
   reply.code(422).send({
