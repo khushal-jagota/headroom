@@ -1,6 +1,8 @@
 /** Source-compatible evidence and bypass rules. No filesystem or transport operations. */
 import { TYPESCRIPT_SERVICE_NAME } from '../../lifecycle/service_identity.ts';
 import { InvalidPeerEvidence } from './contracts.ts';
+import { PYTHON_SPACE, strip } from '../whitespace.ts';
+export { strip } from '../whitespace.ts';
 import type {
   UnidentifiedCallRequest,
   UnidentifiedHttpRefusal,
@@ -8,11 +10,7 @@ import type {
 } from './contracts.ts';
 
 const REFUSAL = 'Unidentified caller refused. Restore PLAN_ACTOR and your Panels identity.';
-const SPACE =
-  '[\\u0009-\\u000d\\u001c-\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]';
-const EDGES = new RegExp(`^${SPACE}+|${SPACE}+$`, 'gu');
-const WORD_BREAK = new RegExp(`${SPACE}+`, 'u');
-export const strip = (value: string): string => value.replace(EDGES, '');
+const WORD_BREAK = new RegExp(`${PYTHON_SPACE}+`, 'u');
 export const words = (value: string): string[] => strip(value).split(WORD_BREAK);
 export function splitlines(text: string): string[] {
   if (!text) return [];
