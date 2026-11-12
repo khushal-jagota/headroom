@@ -21,9 +21,15 @@ export interface AdapterParitySpec {
   trace: string;
 }
 const tables = [
-  'conversations', 'conversation_events', 'conversation_lifecycle_facts',
-  'conversation_view_state', 'conversation_view_rows', 'conversation_view_turns',
-  'conversation_view_groups', 'conversation_view_lookups', 'codex_login_rejection',
+  'conversations',
+  'conversation_events',
+  'conversation_lifecycle_facts',
+  'conversation_view_state',
+  'conversation_view_rows',
+  'conversation_view_turns',
+  'conversation_view_groups',
+  'conversation_view_lookups',
+  'codex_login_rejection',
 ];
 const rowOrders: Readonly<Record<string, string>> = {
   conversation_lifecycle_facts: 'conversation_id,turn_number,kind,operation,identity',
@@ -31,62 +37,97 @@ const rowOrders: Readonly<Record<string, string>> = {
 };
 export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unknown> {
   const original = {
-    spawn: childProcess.spawn, spawnSync: childProcess.spawnSync, exec: childProcess.exec,
-    execSync: childProcess.execSync, execFile: childProcess.execFile,
-    execFileSync: childProcess.execFileSync, fork: childProcess.fork,
+    spawn: childProcess.spawn,
+    spawnSync: childProcess.spawnSync,
+    exec: childProcess.exec,
+    execSync: childProcess.execSync,
+    execFile: childProcess.execFile,
+    execFileSync: childProcess.execFileSync,
+    fork: childProcess.fork,
   };
-  const forbidden = (): never => { throw new Error('Only the owned scripted Codex child can start'); };
+  const forbidden = (): never => {
+    throw new Error('Only the owned scripted Codex child can start');
+  };
   Object.assign(childProcess, {
     spawn(executable: string, args: string[], options: Parameters<typeof childProcess.spawn>[2]) {
-      if (executable !== spec.executable || args.length !== 1 || !['app-server', '--version'].includes(args[0]!)) forbidden();
+      if (
+        executable !== spec.executable ||
+        args.length !== 1 ||
+        !['app-server', '--version'].includes(args[0]!)
+      )
+        forbidden();
       return original.spawn(executable, args, options);
     },
-    spawnSync: forbidden, exec: forbidden, execSync: forbidden, execFile: forbidden,
-    execFileSync: forbidden, fork: forbidden,
+    spawnSync: forbidden,
+    exec: forbidden,
+    execSync: forbidden,
+    execFile: forbidden,
+    execFileSync: forbidden,
+    fork: forbidden,
   });
   syncBuiltinESMExports();
-  const { create_codex_backend_child_factory } = await import('../../backends/codex_app_server/adapter.ts');
+  const { create_codex_backend_child_factory } =
+    await import('../../backends/codex_app_server/adapter.ts');
   const database = createDatabase(spec.database);
-  database.write((tx) => tx.run(
-    'INSERT INTO conversation_runtime_epoch VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET epoch=excluded.epoch',
-    ['unit17-runtime'],
-  ));
+  database.write((tx) =>
+    tx.run(
+      'INSERT INTO conversation_runtime_epoch VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET epoch=excluded.epoch',
+      ['unit17-runtime'],
+    ),
+  );
   const store = new ConversationStore(database, { integer_now: () => 100 });
   const rejection = new DurableCodexLoginRejection(database, () => new Date(100000));
   const backlog_order: string[] = [];
-  const factory = create_codex_backend_child_factory({
-    argv: [spec.executable, 'app-server'],
-    environment_overrides: [['UNIT17_TRACE', spec.trace], ['UNIT17_CORE_PROOF', '1']],
-  }, { remembered_login_rejection: rejection,
-    client_factory: (options) => new CodexAppServerClient({ ...options, handler: {
-      on_server_request: (...args) => options.handler.on_server_request(...args),
-      on_child_ended: () => options.handler.on_child_ended(),
-      async on_notification(method, notification) {
-        if (method === 'skills/changed') {
-          backlog_order.push('handler-start');
-          await new Promise((resolve) => setTimeout(resolve, 20));
-          backlog_order.push('handler-end');
-        }
-        await options.handler.on_notification(method, notification);
-      },
-    } }),
-  });
+  const factory = create_codex_backend_child_factory(
+    {
+      argv: [spec.executable, 'app-server'],
+      environment_overrides: [
+        ['UNIT17_TRACE', spec.trace],
+        ['UNIT17_CORE_PROOF', '1'],
+      ],
+    },
+    {
+      remembered_login_rejection: rejection,
+      client_factory: (options) =>
+        new CodexAppServerClient({
+          ...options,
+          handler: {
+            on_server_request: (...args) => options.handler.on_server_request(...args),
+            on_child_ended: () => options.handler.on_child_ended(),
+            async on_notification(method, notification) {
+              if (method === 'skills/changed') {
+                backlog_order.push('handler-start');
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                backlog_order.push('handler-end');
+              }
+              await options.handler.on_notification(method, notification);
+            },
+          },
+        }),
+    },
+  );
   const live_text: { type: string; text_delta: string }[] = [];
   const core = new SqliteProcessConversationSystem({
-    store, backend_child_factories: { codex: factory, claude: factory, hermes: factory },
-    message_files: new ConversationMessageFiles(spec.database), unix_time_now: () => 100,
+    store,
+    backend_child_factories: { codex: factory, claude: factory, hermes: factory },
+    message_files: new ConversationMessageFiles(spec.database),
+    unix_time_now: () => 100,
     publish_frame: (_id, frame) => {
-      if (frame instanceof AgentMessageDeltaFrame) live_text.push({ type: 'agent_message_delta', text_delta: frame.text_delta });
+      if (frame instanceof AgentMessageDeltaFrame)
+        live_text.push({ type: 'agent_message_delta', text_delta: frame.text_delta });
     },
   });
   const id = 'unit17-codex';
   const checkpoints: unknown[] = [];
   let sender = 0;
-  const send = async (scenario: string, mode: 'queue' | 'steer' = 'queue', native = false) => delivery_fate_json(
-    await core.send(id, text_message_content(native ? scenario : `[CASE:${scenario}]`), {
-      sender_label: 'Owner', sender_message_id: `sender-${++sender}`, mode,
-    }),
-  );
+  const send = async (scenario: string, mode: 'queue' | 'steer' = 'queue', native = false) =>
+    delivery_fate_json(
+      await core.send(id, text_message_content(native ? scenario : `[CASE:${scenario}]`), {
+        sender_label: 'Owner',
+        sender_message_id: `sender-${++sender}`,
+        mode,
+      }),
+    );
   const wait = async (condition: () => boolean | Promise<boolean>, description: string) => {
     const deadline = performance.now() + 10000;
     while (!(await condition())) {
@@ -95,29 +136,56 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     }
     await core.wait_until_quiescent();
   };
-  const ended = async (count: number) => wait(async () => {
-    const actual = database.read((sql) => sql.get<{ count: number }>(
-      "SELECT count(*) AS count FROM conversation_events WHERE kind='turn_ended'",
-    )!.count);
-    return actual >= count && !(await core.is_running(id));
-  }, `turn ${count} ending`);
+  const ended = async (count: number) =>
+    wait(async () => {
+      const actual = database.read(
+        (sql) =>
+          sql.get<{ count: number }>(
+            "SELECT count(*) AS count FROM conversation_events WHERE kind='turn_ended'",
+          )!.count,
+      );
+      return actual >= count && !(await core.is_running(id));
+    }, `turn ${count} ending`);
   const capture = async (name: string, fates: unknown[]) => {
     await core.wait_until_quiescent();
-    const rows = database.read((sql) => Object.fromEntries(tables.map((table) => [
-      table, sql.all<Record<string, unknown>>(`SELECT * FROM ${table} ORDER BY ${rowOrders[table] ?? '1,2'}`),
-    ])));
+    const rows = database.read((sql) =>
+      Object.fromEntries(
+        tables.map((table) => [
+          table,
+          sql.all<Record<string, unknown>>(
+            `SELECT * FROM ${table} ORDER BY ${rowOrders[table] ?? '1,2'}`,
+          ),
+        ]),
+      ),
+    );
     const login = read_stored_codex_login();
-    checkpoints.push({ name, fates, rows, running: await core.is_running(id),
-      login: { generation: login.generation, rejected: rejection.applies_to(login.generation) } });
+    checkpoints.push({
+      name,
+      fates,
+      rows,
+      running: await core.is_running(id),
+      login: { generation: login.generation, rejected: rejection.applies_to(login.generation) },
+    });
   };
   try {
-    await core.start_conversation(new ConversationStartRequest({
-      conversation_id: id, backend_key: 'codex', model: 'gpt-6-luna', reasoning_effort: 'low',
-      workspace_folder: spec.workspace, workspace_path_policy: 'absolute',
-      role_materials: new ConversationRoleMaterials({ role_text: 'Synthetic owner',
-        identity_environment_variables: [['PLAN_ACTOR', 'owner']] }),
-    }));
-    await wait(() => readFileSync(spec.trace, 'utf8').includes('app/installed'), 'initial catalog reads');
+    await core.start_conversation(
+      new ConversationStartRequest({
+        conversation_id: id,
+        backend_key: 'codex',
+        model: 'gpt-6-luna',
+        reasoning_effort: 'low',
+        workspace_folder: spec.workspace,
+        workspace_path_policy: 'absolute',
+        role_materials: new ConversationRoleMaterials({
+          role_text: 'Synthetic owner',
+          identity_environment_variables: [['PLAN_ACTOR', 'owner']],
+        }),
+      }),
+    );
+    await wait(
+      () => readFileSync(spec.trace, 'utf8').includes('app/installed'),
+      'initial catalog reads',
+    );
     let count = 0;
     const plain = await send('plain');
     await ended(++count);
@@ -136,14 +204,16 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     await capture('queued-and-cancelled', [queueBase, queued, { discarded }]);
     const permission = await send('permission');
     await wait(() => core.has_pending_permission_ask(id), 'permission ask');
-    const ask = [...await core.pending_permission_ask_ids(id)][0]!;
+    const ask = [...(await core.pending_permission_ask_ids(id))][0]!;
     const permissionAnswer = await core.answer_permission_ask(id, ask, 'approve_once');
     await ended(++count);
     await capture('permission', [permission, { answer_fate: permissionAnswer }]);
     const question = await send('question');
     await wait(() => core.has_pending_user_input(id), 'question');
-    const questionId = [...await core.pending_user_input_request_ids(id)][0]!;
-    const questionAnswer = await core.answer_user_input(id, questionId, [new UserInputAnswer({ question_id: 'color', answers: ['Blue'] })]);
+    const questionId = [...(await core.pending_user_input_request_ids(id))][0]!;
+    const questionAnswer = await core.answer_user_input(id, questionId, [
+      new UserInputAnswer({ question_id: 'color', answers: ['Blue'] }),
+    ]);
     await ended(++count);
     await capture('question', [question, { answer_fate: questionAnswer }]);
     const interrupt = await send('interrupt-base');
@@ -176,8 +246,17 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     Object.assign(childProcess, original);
     syncBuiltinESMExports();
   }
-  return { checkpoints, live_text, backlog_order,
-    trace: readFileSync(spec.trace, 'utf8').trim().split('\n').map((line) => JSON.parse(line)),
-    children: readFileSync(`${spec.trace}.children`, 'utf8').trim().split('\n').map((line) => JSON.parse(line)),
+  return {
+    checkpoints,
+    live_text,
+    backlog_order,
+    trace: readFileSync(spec.trace, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
+    children: readFileSync(`${spec.trace}.children`, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
   };
 }

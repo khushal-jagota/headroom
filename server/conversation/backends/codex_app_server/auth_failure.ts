@@ -34,8 +34,7 @@ export function read_a_failed_turn(options: {
   ].join('\n');
   if (LOGIN_IS_REJECTED_PHRASES.some((phrase) => about_the_login.includes(phrase)))
     return CodexAuthReading.login_is_rejected;
-  if (AUTHORIZATION_WAS_REFUSED.test(codex_said))
-    return CodexAuthReading.authorization_was_refused;
+  if (AUTHORIZATION_WAS_REFUSED.test(codex_said)) return CodexAuthReading.authorization_was_refused;
   return CodexAuthReading.says_nothing_about_the_login;
 }
 

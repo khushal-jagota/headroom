@@ -186,14 +186,18 @@ export class CatalogCoordinator {
     const generation = this.generation;
     const now = this.clock();
     const missing = [...this.identities]
-      .filter((key) => !this.metadata.has(key) || now - this.metadata.get(key)![0] >= APP_METADATA_TTL_SECONDS)
+      .filter(
+        (key) =>
+          !this.metadata.has(key) || now - this.metadata.get(key)![0] >= APP_METADATA_TTL_SECONDS,
+      )
       .sort(compare_text);
     for (let offset = 0; offset < missing.length; offset += APP_METADATA_BATCH_SIZE) {
       const ids = missing.slice(offset, offset + APP_METADATA_BATCH_SIZE);
       const response = await Promise.race([this.reads.read_metadata(ids), this.closure]);
       if (this.closed || response === CLOSED || generation !== this.generation) return;
       const returned = new Map(response.apps.map((app) => [app.id, app]));
-      for (const app_id of ids) this.metadata.set(app_id, [this.clock(), returned.get(app_id) ?? null]);
+      for (const app_id of ids)
+        this.metadata.set(app_id, [this.clock(), returned.get(app_id) ?? null]);
     }
   }
 }
@@ -236,9 +240,26 @@ export class CatalogSnapshot {
 }
 export const EMPTY_CATALOG_SNAPSHOT = new CatalogSnapshot();
 export const CODEX_BUILT_IN_CATALOG_ENTRIES: readonly ComposerCatalogEntry[] = [
-  new ComposerCatalogEntry({ kind: 'command', display_text: '/compact', insertion_text: '/compact', description: 'Compact the conversation context' }),
-  new ComposerCatalogEntry({ kind: 'command', display_text: '/review', insertion_text: '/review ', description: 'Review the working tree or follow the supplied review instructions', argument_hint: '[review instructions]' }),
-  new ComposerCatalogEntry({ kind: 'command', display_text: '/goal', insertion_text: '/goal ', description: 'Inspect, set, or clear the Codex thread goal', argument_hint: '[get | set <objective> | clear]' }),
+  new ComposerCatalogEntry({
+    kind: 'command',
+    display_text: '/compact',
+    insertion_text: '/compact',
+    description: 'Compact the conversation context',
+  }),
+  new ComposerCatalogEntry({
+    kind: 'command',
+    display_text: '/review',
+    insertion_text: '/review ',
+    description: 'Review the working tree or follow the supplied review instructions',
+    argument_hint: '[review instructions]',
+  }),
+  new ComposerCatalogEntry({
+    kind: 'command',
+    display_text: '/goal',
+    insertion_text: '/goal ',
+    description: 'Inspect, set, or clear the Codex thread goal',
+    argument_hint: '[get | set <objective> | clear]',
+  }),
 ];
 
 type Candidate = readonly [string, ComposerCatalogEntry, CatalogInvocation];
@@ -258,9 +279,17 @@ function compare_tuple(a: readonly string[], b: readonly string[]): number {
   return 0;
 }
 function mention_token(name: string): string {
-  return casefold(name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'item';
+  return (
+    casefold(name)
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'item'
+  );
 }
-function collision_alias(token: string, invocation: CatalogInvocation, allocated: Set<string>): string {
+function collision_alias(
+  token: string,
+  invocation: CatalogInvocation,
+  allocated: Set<string>,
+): string {
   const identity = `${invocation.kind}\0${invocation.name}\0${invocation.path ?? ''}`;
   const digest = createHash('sha256').update(identity, 'utf8').digest('hex');
   for (let length = 8; length <= digest.length; length += 1) {
@@ -284,24 +313,60 @@ export function catalog_snapshot(
       if (!skill.enabled) continue;
       const token = `$${skill.name}`;
       const display_name = skill.interface?.displayName || skill.name;
-      const description = skill.interface?.shortDescription || skill.shortDescription || skill.description;
-      candidates.push([token, new ComposerCatalogEntry({ kind: 'skill', display_text: `$${display_name}`, insertion_text: `${token} `, description }), { kind: 'skill', name: skill.name, path: skill.path }]);
+      const description =
+        skill.interface?.shortDescription || skill.shortDescription || skill.description;
+      candidates.push([
+        token,
+        new ComposerCatalogEntry({
+          kind: 'skill',
+          display_text: `$${display_name}`,
+          insertion_text: `${token} `,
+          description,
+        }),
+        { kind: 'skill', name: skill.name, path: skill.path },
+      ]);
     }
   }
   const metadata = new Map((apps ?? []).map((app) => [app.id, app]));
   for (const runtime_app of installed_apps?.apps ?? []) {
     if (!runtime_app.enabled || !runtime_app.callable) continue;
     const app = metadata.get(runtime_app.id);
-    const name = (app?.name.trim() ? app.name : null) || (runtime_app.runtimeName?.trim() ? runtime_app.runtimeName : runtime_app.id);
+    const name =
+      (app?.name.trim() ? app.name : null) ||
+      (runtime_app.runtimeName?.trim() ? runtime_app.runtimeName : runtime_app.id);
     const token = `@${mention_token(name)}`;
-    candidates.push([token, new ComposerCatalogEntry({ kind: 'app', display_text: `@${name}`, insertion_text: `${token} `, description: app?.description || `Use ${name}` }), { kind: 'app', name, path: `app://${runtime_app.id}` }]);
+    candidates.push([
+      token,
+      new ComposerCatalogEntry({
+        kind: 'app',
+        display_text: `@${name}`,
+        insertion_text: `${token} `,
+        description: app?.description || `Use ${name}`,
+      }),
+      { kind: 'app', name, path: `app://${runtime_app.id}` },
+    ]);
   }
   for (const marketplace of plugins?.marketplaces ?? []) {
     for (const plugin of marketplace.plugins) {
-      if (!plugin.installed || !plugin.enabled || plugin.availability === 'DISABLED_BY_ADMIN' || plugin.disabledReason !== null) continue;
+      if (
+        !plugin.installed ||
+        !plugin.enabled ||
+        plugin.availability === 'DISABLED_BY_ADMIN' ||
+        plugin.disabledReason !== null
+      )
+        continue;
       const display_name = plugin.interface?.displayName || plugin.name;
       const token = `@${mention_token(plugin.name)}@${mention_token(marketplace.name)}`;
-      candidates.push([token, new ComposerCatalogEntry({ kind: 'plugin', display_text: `@${display_name}`, insertion_text: `${token} `, description: plugin.interface?.shortDescription || `Use ${display_name}` }), { kind: 'plugin', name: display_name, path: `plugin://${plugin.name}@${marketplace.name}` }]);
+      candidates.push([
+        token,
+        new ComposerCatalogEntry({
+          kind: 'plugin',
+          display_text: `@${display_name}`,
+          insertion_text: `${token} `,
+          description: plugin.interface?.shortDescription || `Use ${display_name}`,
+        }),
+        { kind: 'plugin', name: display_name, path: `plugin://${plugin.name}@${marketplace.name}` },
+      ]);
     }
   }
   const deduplicated = new Map<string, Candidate>();
@@ -318,25 +383,41 @@ export function catalog_snapshot(
   }
   const executable: Candidate[] = [];
   const allocated = new Set(by_token.keys());
-  for (const token of [...by_token.keys()].sort((a, b) => compare_tuple([casefold(a), a], [casefold(b), b]))) {
+  for (const token of [...by_token.keys()].sort((a, b) =>
+    compare_tuple([casefold(a), a], [casefold(b), b]),
+  )) {
     const colliding = by_token.get(token)!;
     if (colliding.length === 1) {
       executable.push(colliding[0]!);
       continue;
     }
-    colliding.sort((a, b) => compare_tuple([a[2].kind, a[2].name, a[2].path ?? ''], [b[2].kind, b[2].name, b[2].path ?? '']));
+    colliding.sort((a, b) =>
+      compare_tuple(
+        [a[2].kind, a[2].name, a[2].path ?? ''],
+        [b[2].kind, b[2].name, b[2].path ?? ''],
+      ),
+    );
     for (const [, entry, invocation] of colliding) {
       const alias = collision_alias(token, invocation, allocated);
       allocated.add(alias);
-      executable.push([alias, new ComposerCatalogEntry({ ...entry, display_text: alias, insertion_text: `${alias} ` }), invocation]);
+      executable.push([
+        alias,
+        new ComposerCatalogEntry({ ...entry, display_text: alias, insertion_text: `${alias} ` }),
+        invocation,
+      ]);
     }
   }
-  executable.sort((a, b) => compare_tuple([a[1].kind, casefold(a[0])], [b[1].kind, casefold(b[0])]));
+  executable.sort((a, b) =>
+    compare_tuple([a[1].kind, casefold(a[0])], [b[1].kind, casefold(b[0])]),
+  );
   const invocations = new Map<string, CatalogInvocation | null>([
     ['/compact', { kind: 'command', name: 'compact', path: null }],
     ['/review', { kind: 'command', name: 'review', path: null }],
     ['/goal', { kind: 'command', name: 'goal_get', path: null }],
   ]);
   for (const [token, , invocation] of executable) invocations.set(token, invocation);
-  return new CatalogSnapshot([...CODEX_BUILT_IN_CATALOG_ENTRIES, ...executable.map((entry) => entry[1])], invocations);
+  return new CatalogSnapshot(
+    [...CODEX_BUILT_IN_CATALOG_ENTRIES, ...executable.map((entry) => entry[1])],
+    invocations,
+  );
 }
