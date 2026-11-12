@@ -34,6 +34,8 @@ def declarations() -> list[dict[str, Any]]:
                 typ = "float"
             elif isinstance(kind, click.types.BoolParamType):
                 typ = "boolean"
+            elif isinstance(kind, click.types.UUIDParameterType):
+                typ = "uuid"
             elif isinstance(kind, click.Path):
                 typ = "path"
             item = {

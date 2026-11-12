@@ -5,6 +5,32 @@ import { resolve } from 'node:path';
 import type { CommandDefinition, Parameter } from './contracts.ts';
 import { command_path, command_shape, usage_error } from './errors.ts';
 
+/** Decimal Unicode digits have the same numeric value in Python int(). */
+function decimal_digit(character: string): string {
+  const point = character.codePointAt(0)!;
+  let start = point;
+  while (start > 0 && /\p{Decimal_Number}/u.test(String.fromCodePoint(start - 1))) start--;
+  return String((point - start) % 10);
+}
+function python_strip(text: string): string {
+  return text.replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, '');
+}
+/** Mirror uuid.UUID(hex=...) after Click strips the option value. */
+function uuid_text(text: string): string | null {
+  const hex = python_strip(text).replaceAll('urn:', '').replaceAll('uuid:', '')
+    .replace(/^[{}]+|[{}]+$/g, '').replaceAll('-', '');
+  if ([...hex].length !== 32) return null;
+  // int(hex, 16) also accepts signs, prefixes, underscores and decimal Unicode digits.
+  // Its ASCII whitespace grammar excludes the extra str.strip control separators.
+  const digits = hex.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
+    .replace(/\p{Decimal_Number}/gu, decimal_digit);
+  if (!/^[+]?(?:0[xX]_?)?[0-9a-fA-F](?:_?[0-9a-fA-F])*$/.test(digits)) return null;
+  const value = BigInt('0x' + digits.replace(/^\+/, '').replace(/^0[xX]/, '').replaceAll('_', ''));
+  if (value >= (1n << 128n)) return null;
+  const normalized = value.toString(16).padStart(32, '0');
+  return [normalized.slice(0,8), normalized.slice(8,12), normalized.slice(12,16), normalized.slice(16,20), normalized.slice(20)].join('-');
+}
+
 /** Python int() accepts decimal Unicode digits and underscores between digits. */
 function integer_text(text: string): bigint | null {
   if (text.includes('\uFEFF')) return null;
@@ -21,15 +47,17 @@ function integer_text(text: string): bigint | null {
       ascii += character;
       continue;
     }
-    const point = character.codePointAt(0)!;
-    let start = point;
-    while (start > 0 && /\p{Decimal_Number}/u.test(String.fromCodePoint(start - 1))) start--;
-    ascii += (point - start) % 10;
+    ascii += decimal_digit(character);
   }
   return BigInt(ascii);
 }
 function converted(command: CommandDefinition, p: Parameter, text: string): unknown {
   let message: string | undefined;
+  if (p.type === 'uuid') {
+    const normalized = uuid_text(text);
+    if (normalized !== null) return normalized;
+    message = `${python_string_repr(python_strip(text))} is not a valid UUID.`;
+  }
   if (p.type === 'choice' && !p.choices?.includes(text))
     message = `${python_string_repr(text)} is not${p.choices?.length === 1 ? '' : ' one of'} ${(p.choices ?? []).map(python_string_repr).join(', ')}.`;
   if (p.type === 'integer' || p.type === 'float') {

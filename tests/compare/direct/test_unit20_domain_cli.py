@@ -176,7 +176,8 @@ process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(declaratio
             expected = (
                 json.dumps(
                     expected_data,
-                    **({} if mode == "json" else {"ensure_ascii": False, "indent": 2}),
+                    ensure_ascii=mode == "json",
+                    indent=None if mode == "json" else 2,
                 )
                 + "\n"
             )
@@ -442,3 +443,102 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
             _stop_server(handle)
         evidence["seconds"] = time.perf_counter() - started
         _domain_report(request, "unit20-real-preview-cli", evidence)
+
+
+def test_unit20_domain_same_python_host(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    """Ordinary domain commands need human bytes and both clients on one reference host.
+
+    The shared list proves JSON across servers. It cannot prove human rendering or
+    isolate CLI differences from backend differences. Reuse the existing replay and
+    Python host, with database/process/private-file reset before each write sequence.
+    """
+    import shutil
+    from unittest.mock import patch
+
+    import httpx
+    from tests.compare.direct import unit20_cli as driver
+    from tests.compare.direct.test_unit20_cli import _replay
+    from tests.compare.direct.unit20_domain_fixtures import RULES
+    from tests.compare.runner import capture_values
+
+    started = time.perf_counter()
+    spec = json.loads(LIST.read_text())
+    rules = json.loads(RULES.read_text())
+    host_root = tmp_path / "domain-same-host"
+    handle = _start_server(host_root, server_module="tests.compare.host")
+    seed_captures: dict[str, Any] = {}
+    try:
+        with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
+            for step in spec["seed_requests"]:
+                resolved = substitute(step, seed_captures)
+                response = client.request(
+                    resolved["method"],
+                    handle.base + resolved["path"],
+                    json=resolved.get("json"),
+                    headers=resolved.get("headers"),
+                )
+                assert response.status_code == resolved["status"], (resolved, response.text)
+                capture_values(response.json(), resolved, seed_captures)
+    finally:
+        _stop_server(handle)
+    port = handle.port
+    snapshot = tmp_path / "domain-seed.db"
+    backup_database(handle.db_path, snapshot)
+    private_files = tmp_path / "domain-private-files"
+    private_files.mkdir()
+    # The source fixture scopes this key and these trees under the private host.
+    # Preserve the synthetic credential key as well as authored and managed files.
+    for name in ("skills", "files", "credential-key"):
+        source = host_root / name
+        if source.is_dir():
+            shutil.copytree(source, private_files / name)
+        elif source.is_file():
+            shutil.copy2(source, private_files / name)
+
+    evidence: dict[str, Any] = {
+        "list": LIST.name,
+        "boundary": "Human and JSON command contracts, both CLIs on one Python host",
+        "strategy": {"python": "CliRunner.invoke", "typescript": "subprocess"},
+        "seed_capture_names": sorted(seed_captures),
+        "comparisons": {},
+    }
+    physical_driver = driver.run_cli
+    for mode in ("json", "text"):
+        results = []
+        for candidate in (False, True):
+            # The previous fixture-owned process stopped before its files change.
+            shutil.rmtree(host_root)
+
+            def restore(target: Path) -> None:
+                backup_database(snapshot, target)
+                for source in private_files.iterdir():
+                    if source.is_dir():
+                        shutil.copytree(source, target.parent / source.name, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(source, target.parent / source.name)
+
+            handle = _start_server(
+                host_root, port=port, server_module="tests.compare.host", seed_db=restore
+            )
+            saved = dict(seed_captures)
+            raw: list[dict[str, Any]] = []
+
+            def capture_run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+                # Record the real driver, without substituting its result or checks.
+                outcome = physical_driver(*args, **kwargs)
+                raw.append({"argv": args[1]["argv"], "proof": args[1]["proof"], "outcome": outcome})
+                return outcome
+
+            normalized: list[Any] | None = None
+            try:
+                with patch.object(driver, "run_cli", capture_run):
+                    normalized = _replay(
+                        handle, tmp_path, spec["requests"], saved, candidate, mode, rules
+                    )
+            finally:
+                _stop_server(handle)
+                results.append({"raw": raw, "normalized": normalized, "captures": saved})
+                evidence["comparisons"][mode] = results
+                evidence["seconds"] = time.perf_counter() - started
+                _domain_report(request, "unit20-domain-same-host", evidence)
+        assert results[0]["normalized"] == results[1]["normalized"], evidence

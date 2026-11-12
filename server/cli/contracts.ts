@@ -5,7 +5,7 @@ export interface Parameter {
   secondary_opts?: string[];
   argument?: boolean;
   nargs?: number;
-  type: 'string' | 'integer' | 'float' | 'boolean' | 'choice' | 'path';
+  type: 'string' | 'integer' | 'float' | 'boolean' | 'choice' | 'path' | 'uuid';
   choices?: string[];
   min?: number;
   max?: number;

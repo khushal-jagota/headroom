@@ -28,7 +28,7 @@ def direct_steps(group: str) -> list[dict[str, Any]]:
 
 
 def rule(name: str) -> dict[str, Any]:
-    return json.loads(RULES.read_text())["cli_direct_rules"][name]
+    return cast(dict[str, Any], json.loads(RULES.read_text())["cli_direct_rules"][name])
 
 
 def node_export(host: cli.CliHost, root: Path, code: str, payload: Any = None) -> Any:

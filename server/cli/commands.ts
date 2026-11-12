@@ -385,7 +385,7 @@ export const commands: CommandDefinition[] = [
     parameters: [
       {
         name: 'request_id',
-        type: 'string',
+        type: 'uuid',
         required: true,
         default: null,
         metavar: 'UUID',
