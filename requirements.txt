@@ -16,7 +16,6 @@ charset-normalizer==3.4.7
 claude-agent-sdk==0.2.152
 click==8.4.2
 cryptography==49.0.0
-datamodel-code-generator==0.71.0
 execnet==2.1.2
 fastapi==0.139.0
 frozenlist==1.8.0

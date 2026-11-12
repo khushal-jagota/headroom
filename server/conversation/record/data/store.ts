@@ -1088,6 +1088,14 @@ export class ConversationStore
     const reconcile = this.#participants.reconcile_deployment;
     if (reconcile !== undefined) {
       synchronously(() => reconcile(tx, this.integer_now()));
+    } else {
+      // Deployment reconciliation imports evidence before rotating the epoch.
+      // The standalone record still claims a fresh epoch when that owner is absent.
+      tx.run(
+        'INSERT INTO conversation_runtime_epoch VALUES (1,?) ON CONFLICT(singleton) ' +
+          'DO UPDATE SET epoch=excluded.epoch',
+        [randomUUID().replaceAll('-', '')],
+      );
     }
     const ids = tx.all<{ conversation_id: string }>(
       'SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts ' +

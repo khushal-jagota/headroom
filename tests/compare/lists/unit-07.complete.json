@@ -1,0 +1,710 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/tickets/",
+    "src/planner/membership/",
+    "src/planner/runtime/conversation_start.py",
+    "src/planner/message_delivery/"
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Conversation Manager",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed Chief"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "seed-chief"
+      },
+      "capture": {
+        "seed_chief": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${seed_chief}/kill",
+      "status": 204
+    },
+    {
+      "method": "GET",
+      "path": "/api/chief/conversation/start-values",
+      "status": 200,
+      "capture": {
+        "chief_workspace": "workspace_folder"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers/${manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed Manager"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "seed-manager"
+      },
+      "capture": {
+        "seed_manager": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversation/conversations/${seed_manager}/kill",
+      "status": 204
+    }
+  ],
+  "requests": [
+    {
+      "area": "conversation-fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "status": 200,
+      "json": {
+        "conversation_id": "${seed_chief}",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "${chief_workspace}"
+      }
+    },
+    {
+      "area": "conversation-fixture",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/start",
+      "status": 200,
+      "json": {
+        "conversation_id": "${seed_manager}",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/comparison/manager"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Conversation proof",
+        "worker_type": "coding",
+        "brief": "Agreed brief",
+        "ceiling": "needs_what_changes",
+        "ceiling_holder": {
+          "kind": "owner",
+          "id": "owner"
+        },
+        "manager": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "ticket": "id"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/chief/conversation",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/chief/conversation/start-values",
+      "status": 200
+    },
+    {
+      "area": "chief-resources",
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/recap",
+      "status": 200,
+      "json": {
+        "recap": "Changed Chief recap"
+      }
+    },
+    {
+      "area": "ticket-dependencies",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/workers/chief-of-staff/settings",
+      "status": 200
+    },
+    {
+      "area": "chief-resources",
+      "method": "PUT",
+      "path": "/api/workers/chief-of-staff/launch-defaults",
+      "status": 200,
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "high"
+      }
+    },
+    {
+      "area": "ticket-dependencies",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/chief/conversation/start-values",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/chief/conversation/start-values",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/workers/chief-of-staff/settings",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/tickets/${ticket}/conversation/start-values",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "PUT",
+      "path": "/api/tickets/${ticket}/employee-configuration",
+      "status": 200,
+      "json": {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-6.1-sol",
+        "employee_launch_reasoning_effort": "medium"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Hello worker"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "message-1",
+        "sent_at_unix_milliseconds": 123
+      },
+      "capture": {
+        "conversation": "conversation_id",
+        "ticket_send_fate": "fate"
+      }
+    },
+    {
+      "area": "ticket-dependencies",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${conversation}/state",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${conversation}/state",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/request-help",
+      "status": 200,
+      "json": {
+        "message": "Need a decision",
+        "recipient": {
+          "kind": "owner",
+          "id": "owner"
+        }
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "capture": {
+        "owner_help_fate": "fate"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/request-help",
+      "status": 200,
+      "json": {
+        "message": "Chief help",
+        "recipient": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "chief_conversation": "conversation_id",
+        "chief_help_fate": "fate"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "ticket-media",
+      "method": "POST",
+      "path": "/api/test/in-memory-conversations/${chief_conversation}/complete",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "video-admission",
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 404,
+      "json": {
+        "sender_label": "Owner",
+        "sender_message_id": "missing-video-message",
+        "content": [
+          {
+            "piece": "video_upload",
+            "upload_id": "missing_ready_video"
+          }
+        ]
+      }
+    },
+    {
+      "area": "ticket-media",
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 200,
+      "json": {
+        "sender_label": "Owner",
+        "conversation_id": "${chief_conversation}",
+        "sender_message_id": "attached-1",
+        "content": [
+          {
+            "piece": "image",
+            "data": "iVBORw0KGgo=",
+            "media_type": "untrusted/png",
+            "file_name": "plot.png"
+          },
+          {
+            "piece": "file",
+            "data": "eyJhIjogMX0=",
+            "media_type": "untrusted/json",
+            "file_name": "records.json"
+          }
+        ]
+      },
+      "capture": {
+        "chief_media_fate": "fate"
+      }
+    },
+    {
+      "area": "ticket-media",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${chief_conversation}/state",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Owner to Chief"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "chief-message",
+        "conversation_id": "${chief_conversation}"
+      },
+      "capture": {
+        "chief_send_fate": "fate"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 422,
+      "json": {
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/chief/conversation/send",
+      "status": 422,
+      "json": {
+        "sender_label": "Owner",
+        "content": [
+          {
+            "piece": "image",
+            "data": "iVBORw0KGgo=",
+            "media_type": "image/png",
+            "file_name": "must-not-remain.png"
+          },
+          {
+            "piece": "file",
+            "data": "IQ==",
+            "media_type": "text/plain",
+            "file_name": "../escape.txt"
+          }
+        ],
+        "sender_message_id": "invalid-later-piece"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${chief_conversation}/state",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/request-help",
+      "status": 200,
+      "json": {
+        "message": "Manager help",
+        "recipient": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      },
+      "capture": {
+        "manager_conversation": "conversation_id",
+        "manager_help_fate": "fate"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "manager_observations": "observations"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/conversation/reset",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "clock",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:01"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/restart-worker",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "restarted": "conversation_id",
+        "restart_started": "started"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/propose",
+      "status": 200,
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      },
+      "json": {
+        "body": "Review this proposal"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/reject",
+      "status": 200,
+      "json": {
+        "message": "Revise the concrete evidence."
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:02"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets/${ticket}/restart-worker",
+      "status": 200,
+      "capture": {
+        "revision_conversation": "conversation_id",
+        "restart_started": "started"
+      },
+      "json": {}
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${revision_conversation}/state",
+      "status": 200,
+      "capture": {
+        "revision_prompt": "backend_prompt_writes"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/tickets?id=${ticket}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/chief/conversation",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Membership proof",
+        "worker_type": "coding",
+        "brief": "Membership review",
+        "ceiling": "needs_brief",
+        "ceiling_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "member": "id"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "PUT",
+      "path": "/api/collections/manager_tickets/${manager}/${member}",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "membership",
+      "method": "PATCH",
+      "path": "/api/tickets/${member}",
+      "status": 200,
+      "json": {
+        "ceiling_holder": {
+          "kind": "manager",
+          "id": "${manager}"
+        }
+      }
+    },
+    {
+      "area": "ticket-dependencies",
+      "method": "GET",
+      "path": "/api/test/in-memory-conversations/${manager_conversation}/state",
+      "status": 200,
+      "capture": {
+        "manager_observations": "observations"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/tickets/${member}/workspace",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "DELETE",
+      "path": "/api/collections/manager_tickets/${manager}/${member}",
+      "status": 200
+    },
+    {
+      "area": "workspace-dependencies",
+      "method": "POST",
+      "path": "/api/projects",
+      "status": 200,
+      "json": {
+        "name": "Dependency project"
+      },
+      "capture": {
+        "project": "id"
+      }
+    },
+    {
+      "area": "workspace-dependencies",
+      "method": "PATCH",
+      "path": "/api/tickets/${member}",
+      "status": 200,
+      "json": {
+        "project_id": "${project}"
+      }
+    },
+    {
+      "area": "workspace-dependencies",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/tickets/${member}/workspace",
+      "status": 200,
+      "capture": {
+        "member_workspace": "body"
+      }
+    },
+    {
+      "area": "workspace-dependencies",
+      "method": "PATCH",
+      "path": "/api/projects/${project}",
+      "status": 200,
+      "json": {
+        "name": "Renamed dependency project"
+      }
+    },
+    {
+      "area": "workspace-dependencies",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/tickets/${member}/workspace",
+      "status": 200,
+      "capture": {
+        "member_workspace": "body"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "PUT",
+      "path": "/api/collections/blockers/${member}/${ticket}",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "tickets-membership",
+      "method": "PUT",
+      "path": "/api/collections/blockers/${ticket}/${member}",
+      "status": 400,
+      "json": {}
+    },
+    {
+      "area": "tickets-membership",
+      "method": "PUT",
+      "path": "/api/collections/blockers/${ticket}/${ticket}",
+      "status": 400,
+      "json": {}
+    },
+    {
+      "area": "ticket-dependencies",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/tickets/${member}/workspace",
+      "status": 200,
+      "capture": {
+        "member_workspace": "body"
+      }
+    },
+    {
+      "area": "ticket-dependencies",
+      "method": "PATCH",
+      "path": "/api/tickets/${ticket}",
+      "status": 200,
+      "json": {
+        "title": "Renamed blocker"
+      }
+    },
+    {
+      "area": "ticket-dependencies",
+      "method": "GET",
+      "path": "/api/resource-body?key=/api/tickets/${member}/workspace",
+      "status": 200,
+      "capture": {
+        "member_workspace": "body"
+      }
+    },
+    {
+      "area": "tickets-membership",
+      "method": "GET",
+      "path": "/api/tickets/${member}/workspace",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "DELETE",
+      "path": "/api/collections/blockers/${member}/${ticket}",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "POST",
+      "path": "/api/chief/conversation/reset",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "tickets-membership",
+      "method": "DELETE",
+      "path": "/api/tickets/${member}",
+      "status": 200
+    },
+    {
+      "area": "tickets-membership",
+      "method": "DELETE",
+      "path": "/api/tickets/${ticket}?force=true",
+      "status": 200
+    }
+  ],
+  "probes": [
+    "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0}%5D}",
+    "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A0}%5D}"
+  ],
+  "candidate": "typescript",
+  "report_captures": [
+    "ticket_send_fate",
+    "owner_help_fate",
+    "chief_help_fate",
+    "chief_media_fate",
+    "chief_send_fate",
+    "manager_help_fate",
+    "manager_observations",
+    "restart_started",
+    "revision_prompt",
+    "member_workspace"
+  ]
+}

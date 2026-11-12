@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { HttpError } from './errors.ts';
 import { PlannerError } from '../contracts.ts';
 import { jsonFailure } from './json.ts';
 interface Match {
@@ -64,6 +65,10 @@ export function installCompatibility(app: FastifyInstance): void {
       code?: string;
       jsonSource?: string;
     };
+    if (error instanceof HttpError) {
+      reply.code(error.statusCode).send({ detail: error.detail });
+      return;
+    }
     if (error instanceof PlannerError) {
       reply.code(error.statusCode).send(error.toPayload());
       return;

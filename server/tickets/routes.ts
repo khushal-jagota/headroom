@@ -11,7 +11,7 @@ import { configured_worker_type_registry } from '../worker_types/configuration.t
 import { custom_workflow_from_dict } from '../worker_types/store.ts';
 import * as data from './data/index.ts';
 import { TITLE_MAX_CHARS } from './contracts.ts';
-import type { TicketEdit } from './contracts.ts';
+import type { TicketEdit, ReviewTransferNotice } from './contracts.ts';
 import type { WorkflowDefinition } from '../worker_types/contracts.ts';
 import {
   ticket_json,
@@ -23,6 +23,7 @@ import {
   review_view,
 } from './views.ts';
 import type { Json } from './views.ts';
+import { notify_review_transfers } from './review_transfer.ts';
 import { workspace_ticket, workspace_field } from './workspace/views.ts';
 import { add_work_attention, read_running_conversation_count } from '../work_attention.ts';
 
@@ -203,6 +204,7 @@ export function write_patch_ticket(
   body: Json,
   principal: Principal,
   now: number,
+  review_transfer_notices: ReviewTransferNotice[] = [],
 ): Json {
   const recognized = [
     'title',
@@ -246,7 +248,13 @@ export function write_patch_ticket(
     edit.field_values = values;
   }
   return ticket_json(
-    data.edit_ticket(sql, ticket_id, { edit, title_max_chars: TITLE_MAX_CHARS, principal, now }),
+    data.edit_ticket(sql, ticket_id, {
+      edit,
+      title_max_chars: TITLE_MAX_CHARS,
+      principal,
+      now,
+      review_transfer_notices,
+    }),
     now,
   );
 }
@@ -448,15 +456,24 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
   app.patch<{ Params: { ticket_id: string } }>('/tickets/:ticket_id', async (request, reply) => {
     if (!dictionaryBody(request.body, reply)) return;
     const raw = request.body;
-    return services.database.write((tx) =>
+    const notices: ReviewTransferNotice[] = [];
+    const now = services.clock.nowUnix();
+    const result = services.database.write((tx) =>
       write_patch_ticket(
         tx,
         request.params.ticket_id,
         raw,
         services.identity(request).principal,
-        services.clock.nowUnix(),
+        now,
+        notices,
       ),
     );
+    if (services.conversationSystem) {
+      await notify_review_transfers(services.conversationSystem, services.database, notices, {
+        now,
+      });
+    }
+    return result;
   });
   app.post<{ Params: { ticket_id: string } }>(
     '/tickets/:ticket_id/propose',

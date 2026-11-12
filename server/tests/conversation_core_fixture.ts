@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, vi } from 'vitest';
-import { fixture_with_path } from './ticket_fixture.ts';
+import { fixture, fixture_path } from './ticket_fixture.ts';
 import { ConversationStore } from '../conversation/record/data/store.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
@@ -30,7 +30,8 @@ export function setup(
     core?: Partial<ConversationCoreOptions>;
   } = {},
 ) {
-  const { database, path: database_path } = fixture_with_path();
+  const database = fixture();
+  const database_path = fixture_path(database);
   const directory = mkdtempSync(join(tmpdir(), 'conversation-core-'));
   directories.push(directory);
   database.write((tx) =>
