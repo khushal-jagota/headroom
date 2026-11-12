@@ -43,6 +43,7 @@ interface NativeState {
   nextTurn: number;
   resumes: number;
   memory: string;
+  interrupt_settled?: boolean;
 }
 const nativeState: NativeState =
   coreProof && existsSync(statePath)
@@ -52,27 +53,6 @@ const saveNative = () => writeFileSync(statePath, JSON.stringify(nativeState));
 const nativeThread = 'unit17-thread';
 let nativeTurn = '';
 let pendingAsk: number | null = null;
-let initial_catalog_ready = false;
-let installed_replied = false;
-let pending_installed: Record<string, unknown> | null = null;
-let pending_initial_turn: Record<string, unknown> | null = null;
-const installed_result = {
-  apps: [
-    {
-      id: 'calendar.synthetic',
-      enabled: true,
-      callable: true,
-      runtimeName: 'Runtime Calendar',
-    },
-  ],
-};
-function release_initial_inventory(): void {
-  if (!installed_replied && pending_installed !== null && pending_initial_turn !== null) {
-    installed_replied = true;
-    send({ id: pending_installed.id, result: installed_result });
-    pending_installed = null;
-  }
-}
 const note = (kind: string) =>
   appendFileSync(
     `${trace}.children`,
@@ -161,13 +141,18 @@ function coreMessage(message: Record<string, unknown>): boolean {
         },
       ],
     });
-  else if (message.method === 'app/installed') {
-    if (initial_catalog_ready) answer(installed_result);
-    else {
-      pending_installed = message;
-      release_initial_inventory();
-    }
-  } else if (message.method === 'app/read') {
+  else if (message.method === 'app/installed')
+    answer({
+      apps: [
+        {
+          id: 'calendar.synthetic',
+          enabled: true,
+          callable: true,
+          runtimeName: 'Runtime Calendar',
+        },
+      ],
+    });
+  else if (message.method === 'app/read')
     answer({
       apps: [
         {
@@ -177,15 +162,7 @@ function coreMessage(message: Record<string, unknown>): boolean {
         },
       ],
     });
-    if (!initial_catalog_ready && pending_initial_turn !== null) {
-      // The same native response barrier fixes the order on both event loops.
-      // Prompt submission must proceed while app inventory is still unanswered.
-      initial_catalog_ready = true;
-      const turn = pending_initial_turn;
-      pending_initial_turn = null;
-      coreMessage(turn);
-    }
-  } else if (message.method === 'thread/goal/get')
+  else if (message.method === 'thread/goal/get')
     answer({
       goal: {
         objective: 'Synthetic objective',
@@ -219,17 +196,18 @@ function coreMessage(message: Record<string, unknown>): boolean {
     else nativeText('review output');
     nativeEnded();
   } else if (message.method === 'turn/start') {
-    if (!initial_catalog_ready) {
-      pending_initial_turn = message;
-      release_initial_inventory();
-      return true;
-    }
     nativeTurn = `turn-${++nativeState.nextTurn}`;
     saveNative();
     const content = (params.input as { type: string; text?: string }[])
       .map((piece) => piece.text ?? '')
       .join('\n');
     const scenario = /\[CASE:([^\]]+)\]/.exec(content)?.[1] ?? 'native';
+    if (scenario === 'exit-before-reply') {
+      process.stderr.write('codex_login::auth: invalid_grant before admission\n', () =>
+        process.exit(7),
+      );
+      return true;
+    }
     if (scenario === 'rejected-after-output') {
       const frames = [
         { method: 'skills/changed', params: {} },
@@ -249,12 +227,26 @@ function coreMessage(message: Record<string, unknown>): boolean {
       });
       return true;
     }
-    answer({ turn: { id: nativeTurn, status: 'inProgress' } });
-    send({
+    const started = {
       method: 'turn/started',
       params: { threadId: nativeThread, turn: { id: nativeTurn, status: 'inProgress' } },
-    });
-    if (['steer-base', 'queue-base', 'interrupt-base'].includes(scenario)) return true;
+    };
+    if (scenario === 'plain') {
+      send({
+        method: 'item/agentMessage/delta',
+        params: {
+          threadId: nativeThread,
+          turnId: 'stale-turn',
+          itemId: 'stale',
+          delta: 'STALE_OUTPUT',
+        },
+      });
+      send(started);
+    }
+    answer({ turn: { id: nativeTurn, status: 'inProgress' } });
+    if (scenario !== 'plain') send(started);
+    if (['steer-base', 'steer-race-base', 'queue-base', 'interrupt-base'].includes(scenario))
+      return true;
     if (scenario === 'permission') {
       pendingAsk = 1000 + nativeState.nextTurn;
       send({
@@ -299,8 +291,17 @@ function coreMessage(message: Record<string, unknown>): boolean {
           }),
         );
       }
-      process.stderr.write('codex_login::auth: invalid_grant\n');
-      nativeEnded('failed', 'invalid_grant');
+      if (scenario === 'auth-failure') {
+        nativeNotification('error', { error: { message: 'invalid_grant' }, willRetry: false });
+        nativeNotification('error', {
+          error: { message: 'retryable transport fault' },
+          willRetry: true,
+        });
+        nativeEnded('failed');
+      } else {
+        process.stderr.write('codex_login::auth: invalid_grant\n');
+        nativeEnded('failed', 'invalid_grant');
+      }
     } else {
       if (scenario === 'plain') {
         nativeState.memory = 'codex-memory-token';
@@ -329,6 +330,19 @@ function coreMessage(message: Record<string, unknown>): boolean {
             aggregatedOutput: 'tool output',
           },
         });
+        const file = {
+          type: 'fileChange',
+          id: 'file',
+          changes: [{ path: '/synthetic/changed.txt', kind: { type: 'update' } }],
+        };
+        nativeNotification('item/started', { item: { ...file, status: 'inProgress' } });
+        nativeNotification('item/completed', { item: { ...file, status: 'completed' } });
+        const mcp = { type: 'mcpToolCall', id: 'mcp', server: 'synthetic', tool: 'inspect' };
+        nativeNotification('item/started', { item: { ...mcp, status: 'inProgress' } });
+        nativeNotification('item/mcpToolCall/progress', { itemId: 'mcp', message: 'MCP progress' });
+        nativeNotification('item/completed', {
+          item: { ...mcp, status: 'failed', error: { message: 'synthetic MCP failure' } },
+        });
         nativeNotification('turn/plan/updated', {
           plan: [{ step: 'Synthetic step', status: 'completed' }],
         });
@@ -345,15 +359,31 @@ function coreMessage(message: Record<string, unknown>): boolean {
             ? 'plain ☃ output'
             : `${scenario} output`,
       );
-      nativeEnded();
+      if (scenario === 'steer-refused')
+        setTimeout(
+          () => process.stderr.write('synthetic child exit midturn\n', () => process.exit(7)),
+          20,
+        );
+      else nativeEnded();
     }
   } else if (message.method === 'turn/steer') {
-    answer({ turnId: nativeTurn });
-    nativeText('steered output');
-    nativeEnded();
+    if (JSON.stringify(params.input).includes('[CASE:steer-refused]')) {
+      nativeEnded();
+      send({ id: message.id, error: { code: -32600, message: 'no active turn to steer' } });
+    } else {
+      answer({ turnId: nativeTurn });
+      nativeText('steered output');
+      nativeEnded();
+    }
   } else if (message.method === 'turn/interrupt') {
+    nativeState.interrupt_settled = false;
+    saveNative();
     answer({});
-    nativeEnded('interrupted');
+    setTimeout(() => {
+      nativeState.interrupt_settled = true;
+      saveNative();
+      nativeEnded('interrupted');
+    }, 20);
   } else if (message.id === pendingAsk) {
     pendingAsk = null;
     nativeText('answer received');

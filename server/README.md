@@ -240,13 +240,19 @@ permission decisions. They are not hidden by broad comparison rules.
 The Codex child preserves correlated admission, provisional-event buffering, native thread
 resume, steer certainty, parked asks, catalog refresh, and generation-scoped login diagnosis.
 Its paired direct proof uses the same scripted app-server behind both real SQLite cores.
-Fifteen checkpoints compare ordered native requests, delivery fates, events, lifecycle facts,
+Sixteen checkpoints compare ordered native requests, delivery fates, events, lifecycle facts,
 all five populated view tables, live output, and durable login rejection. The script supports
 numeric ask IDs, delayed JSONL fragments inside a UTF-8 character, and stdin EOF exit.
+The driver waits for each child's native metadata request before its first prompt, so
+catalog discovery precedes input without a scripted turn-response barrier. The pair
+does not prove nonblocking discovery. It includes early turn-start news, refused steer,
+delayed interruption, file and MCP items, retryable and final errors, and child exit
+before and after admission. Request timeout and write-failure transport checks use
+injected clients rather than this paired core run.
 
 The adapter bounds ask withdrawal before child shutdown, then always invokes client cleanup.
-The existing Python withdrawal wait is unbounded. This safety difference requires the
-Manager's acceptance with the Part 2 review before merge.
+The existing Python withdrawal wait is unbounded. The Manager accepted the two-second
+bound in the Part 2 review. The difference is recorded in `DEVIATIONS.md`.
 
 The provider proof compares paginated and partial model catalogs, login generations and
 rejections, correlated sign-in completion and cancellation races, deadlines, shutdown,

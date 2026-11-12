@@ -86,37 +86,13 @@ async function setup() {
   return { child, client, handler, report, calls, token, prompt, reply, pending };
 }
 
-test('provisional output waits for admission and excludes a stale native turn', async () => {
+test('an invalid or failed permission answer retains the ask for another answer', async () => {
   const state = await setup();
   try {
     const writing = state.prompt();
     await Promise.resolve();
-    await state.handler.on_notification('item/agentMessage/delta', {
-      threadId: 'thread',
-      turnId: 'stale',
-      itemId: 'old',
-      delta: 'stale',
-    });
-    await state.handler.on_notification('item/agentMessage/delta', {
-      threadId: 'thread',
-      turnId: 'native',
-      itemId: 'm',
-      delta: 'current',
-    });
-    expect(
-      state.report.mock.calls.filter(([, event]) => event instanceof B.AgentMessageDelta),
-    ).toEqual([]);
     state.reply(1, { turn: { id: 'native', status: 'inProgress' } });
-    await expect(writing).resolves.toBeInstanceOf(B.BackendPromptAccepted);
-    expect(
-      state.report.mock.calls
-        .filter(([, event]) => event instanceof B.AgentMessageDelta)
-        .map(([, event]) => (event as B.AgentMessageDelta).text_delta),
-    ).toEqual(['current']);
-    const steer = await state.child.steer(state.token, text_message_content('more'), {
-      sender_label: 'Owner',
-    });
-    expect(steer).toBeInstanceOf(B.BackendSteerUncertain);
+    await writing;
     vi.spyOn(state.client, 'request').mockRejectedValueOnce(
       new CodexRequestRejected('turn/steer', -32000, 'rejected', {
         codexErrorInfo: { activeTurnNotSteerable: new JsonNumber('1') },
@@ -125,18 +101,6 @@ test('provisional output waits for admission and excludes a stale native turn', 
     await expect(
       state.child.steer(state.token, text_message_content('more'), { sender_label: 'Owner' }),
     ).resolves.toMatchObject({ refusal_reason: 'backend_rejected_steer' });
-  } finally {
-    await state.child.stop();
-  }
-});
-
-test('an invalid or failed permission answer retains the ask for another answer', async () => {
-  const state = await setup();
-  try {
-    const writing = state.prompt();
-    await Promise.resolve();
-    state.reply(1, { turn: { id: 'native', status: 'inProgress' } });
-    await writing;
     await state.handler.on_server_request('item/commandExecution/requestApproval', 7, {
       threadId: 'thread',
       turnId: 'native',
@@ -166,33 +130,73 @@ test('an invalid or failed permission answer retains the ask for another answer'
   }
 });
 
-test('a rejection after provisional activity stays uncertain instead of a clean refusal', async () => {
+test('child death before admission leaves ending and login diagnosis to the failed request', async () => {
   const state = await setup();
-  const gate = new Deferred<void>();
-  vi.spyOn(state.client, 'finish_request').mockImplementationOnce(async () => {
-    await gate.promise;
-    throw new CodexRequestRejected('turn/start', -32600, 'rejected');
-  });
   try {
     const writing = state.prompt();
-    const uncertain = expect(writing).rejects.toBeInstanceOf(B.PromptWriteFailed);
     await Promise.resolve();
-    await state.handler.on_notification('item/agentMessage/delta', {
-      threadId: 'thread',
-      turnId: 'native',
-      itemId: 'm',
-      delta: 'provisional',
-    });
-    gate.resolve();
-    await uncertain;
-    expect(
-      state.report.mock.calls.filter(
-        ([, event]) => event instanceof B.AgentMessageDelta || event instanceof B.TurnEnded,
-      ),
-    ).toEqual([]);
+    const login = vi.spyOn(state.client, 'standard_error_since');
+    await state.handler.on_child_ended();
+    expect(state.report.mock.calls.some(([, event]) => event instanceof B.TurnEnded)).toBe(false);
+    expect(login).not.toHaveBeenCalled();
+    state.reply(1, { turn: {} });
+    await expect(writing).rejects.toBeInstanceOf(B.PromptWriteFailed);
   } finally {
-    gate.resolve();
     await state.child.stop();
+  }
+});
+
+test('close fences a blocked catalog publication before it adopts a new snapshot', async () => {
+  vi.useFakeTimers();
+  const state = await setup();
+  const entered = new Deferred<void>();
+  const release = new Deferred<void>();
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    const internal = state.child as unknown as { catalog: unknown; published_catalog: unknown };
+    const before = [internal.catalog, internal.published_catalog];
+    const request = state.client.request.bind(state.client);
+    vi.spyOn(state.client, 'request').mockImplementation(async (method, params, options) =>
+      method === 'skills/list'
+        ? {
+            data: [
+              {
+                skills: [
+                  {
+                    name: 'late',
+                    path: '/tmp/late',
+                    enabled: true,
+                    description: 'Late',
+                    shortDescription: null,
+                    interface: null,
+                  },
+                ],
+              },
+            ],
+          }
+        : request(method, params, options),
+    );
+    state.report.mockImplementation(async (_turn, event) => {
+      if (event instanceof B.ComposerCatalogReported) {
+        entered.resolve();
+        await release.promise;
+      }
+    });
+    await state.handler.on_notification('skills/changed', {});
+    await vi.advanceTimersByTimeAsync(50);
+    await entered.promise;
+    const stop = vi.spyOn(state.client, 'stop');
+    await state.child.stop();
+    expect(stop).toHaveBeenCalledTimes(1);
+    const publications = state.report.mock.calls.length;
+    release.resolve();
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect([internal.catalog, internal.published_catalog]).toEqual(before);
+    expect(state.report.mock.calls).toHaveLength(publications);
+  } finally {
+    release.resolve();
+    await state.child.stop();
+    vi.useRealTimers();
   }
 });
 

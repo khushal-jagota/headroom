@@ -1,7 +1,7 @@
 /** Shared scripted Codex child behind the actual TS conversation core and records. */
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createDatabase } from '../../../core/database/index.ts';
 import { ConversationStore } from '../../record/data/store.ts';
 import { SqliteProcessConversationSystem } from '../../system.ts';
@@ -78,7 +78,7 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
   const store = new ConversationStore(database, { integer_now: () => 100 });
   const rejection = new DurableCodexLoginRejection(database, () => new Date(100000));
   const backlog_order: string[] = [];
-  const factory = create_codex_backend_child_factory(
+  const base_factory = create_codex_backend_child_factory(
     {
       argv: [spec.executable, 'app-server'],
       environment_overrides: [
@@ -106,6 +106,34 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
         }),
     },
   );
+  const factory: typeof base_factory = (options) => {
+    const offset = existsSync(spec.trace)
+      ? readFileSync(spec.trace, 'utf8').trim().split('\n').length
+      : 0;
+    const child = base_factory(options);
+    const prompt = child.write_prompt.bind(child);
+    let first = true;
+    child.write_prompt = async (...args) => {
+      if (first) {
+        first = false;
+        const deadline = performance.now() + 10000;
+        while (
+          !existsSync(spec.trace) ||
+          !readFileSync(spec.trace, 'utf8')
+            .trim()
+            .split('\n')
+            .slice(offset)
+            .some((line) => (JSON.parse(line) as { method?: string }).method === 'app/read')
+        ) {
+          if (performance.now() > deadline)
+            throw new Error('Timed out: driver discovery-before-first-input boundary');
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      }
+      return prompt(...args);
+    };
+    return child;
+  };
   const live_text: { type: string; text_delta: string }[] = [];
   const core = new SqliteProcessConversationSystem({
     store,
@@ -156,7 +184,7 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
       );
       return actual >= count && !(await core.is_running(id));
     }, `turn ${count} ending`);
-  const capture = async (name: string, fates: unknown[]) => {
+  const capture = async (name: string, fates: unknown[], conversation_id = id) => {
     await core.wait_until_quiescent();
     const rows = database.read((sql) =>
       Object.fromEntries(
@@ -173,7 +201,7 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
       name,
       fates,
       rows,
-      running: await core.is_running(id),
+      running: await core.is_running(conversation_id),
       login: { generation: login.generation, rejected: rejection.applies_to(login.generation) },
     });
   };
@@ -213,16 +241,20 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     await wait(catalog_ready, 'populated catalog sources and app metadata');
     await ended(++count);
     await capture('plain', [plain]);
-    const steerBase = await send('steer-base');
-    const steer = await send('steer', 'steer');
-    await ended(++count);
-    await capture('steer', [steerBase, steer]);
     const queueBase = await send('queue-base');
     const queued = await send('queued');
     const held = await core.held_prompts(id);
     if (held.length !== 1) throw new Error('Expected exactly one held message');
     const discarded = await core.discard_held_prompt(id, held[0]!.held_prompt_id);
     await core.interrupt(id);
+    if (
+      !(
+        JSON.parse(readFileSync(`${spec.trace}.state.json`, 'utf8')) as {
+          interrupt_settled: boolean;
+        }
+      ).interrupt_settled
+    )
+      throw new Error('Interrupt returned before terminal evidence');
     await ended(++count);
     await capture('queued-and-cancelled', [queueBase, queued, { discarded }]);
     const permission = await send('permission');
@@ -244,8 +276,24 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     await capture('question', [question, { answer_fate: questionAnswer }]);
     const interrupt = await send('interrupt-base');
     await core.interrupt(id);
+    if (
+      !(
+        JSON.parse(readFileSync(`${spec.trace}.state.json`, 'utf8')) as {
+          interrupt_settled: boolean;
+        }
+      ).interrupt_settled
+    )
+      throw new Error('Interrupt returned before terminal evidence');
     await ended(++count);
     await capture('interrupt', [interrupt]);
+    const steerBase = await send('steer-base');
+    const steer = await send('steer', 'steer');
+    await ended(++count);
+    const refusedBase = await send('steer-race-base');
+    const refusedSteer = await send('steer-refused', 'steer');
+    count += 2;
+    await ended(count);
+    await capture('steer', [steerBase, steer, refusedBase, refusedSteer]);
     await core.kill(id);
     const resumed = await send('resume-success');
     await wait(catalog_ready, 'resumed child populated catalog');
@@ -267,6 +315,28 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
     await core.kill(id);
     const refused = await send('resume-must-fail');
     await capture('failed-resume', [refused]);
+    const noReceipt = 'unit17-no-receipt';
+    await core.start_conversation(
+      new ConversationStartRequest({
+        conversation_id: noReceipt,
+        backend_key: 'codex',
+        model: 'gpt-6-luna',
+        reasoning_effort: 'low',
+        workspace_folder: spec.workspace,
+        workspace_path_policy: 'absolute',
+        role_materials: new ConversationRoleMaterials({
+          role_text: 'Synthetic owner',
+          identity_environment_variables: [['PLAN_ACTOR', 'owner']],
+        }),
+      }),
+    );
+    const missing = delivery_fate_json(
+      await core.send(noReceipt, text_message_content('[CASE:exit-before-reply]'), {
+        sender_label: 'Owner',
+        sender_message_id: 'missing-receipt',
+      }),
+    );
+    await capture('exit-before-reply', [missing], noReceipt);
   } finally {
     await core.shutdown();
     database.close();
