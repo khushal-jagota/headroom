@@ -56,6 +56,13 @@ export function exclusive_lock<T>(path: string, action: () => T): T {
 function missing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
+function read_record_json(path: string): unknown {
+  // Python read_text rejects invalid UTF-8 and leaves a BOM for JSON to reject.
+  const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+    readFileSync(path),
+  );
+  return parse_attempt_json(text);
+}
 export function atomic_write_json(path: string, payload: Record<string, unknown>): void {
   const parent = dirname(path);
   mkdirSync(parent, { recursive: true });
@@ -105,7 +112,7 @@ export class FileUpdateAttemptStore {
   }
   read(): UpdateAttempt | null {
     try {
-      return parse_attempt(parse_attempt_json(readFileSync(this.path, 'utf8')));
+      return parse_attempt(read_record_json(this.path));
     } catch (error) {
       if (!missing(error)) console.warn('The update attempt record is unreadable', error);
       return null;
@@ -114,7 +121,7 @@ export class FileUpdateAttemptStore {
   private write(attempt: UpdateAttempt): UpdateAttempt {
     const payload = attempt_to_dict(attempt);
     try {
-      const previous = parse_attempt_json(readFileSync(this.path, 'utf8'));
+      const previous = read_record_json(this.path);
       if (is_object(previous) && previous.attempt_id === attempt.attempt_id)
         payload.release = merged(previous.release, payload.release);
     } catch {
@@ -162,11 +169,7 @@ export class FileUpdateAttemptStore {
       if (running_sha === null || existsSync(this.path)) return null;
       let payload: Record<string, unknown>, release;
       try {
-        const decoded = parse_attempt_json(
-          new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-            readFileSync(join(data_directory, 'owner-update-request.json')),
-          ),
-        );
+        const decoded = read_record_json(join(data_directory, 'owner-update-request.json'));
         if (
           !is_object(decoded) ||
           !is_object(decoded.release) ||
@@ -185,11 +188,7 @@ export class FileUpdateAttemptStore {
         return null;
       let from_sha: unknown = '';
       try {
-        const lifecycle = parse_attempt_json(
-          new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-            readFileSync(join(data_directory, 'deployment-lifecycle.json')),
-          ),
-        );
+        const lifecycle = read_record_json(join(data_directory, 'deployment-lifecycle.json'));
         if (
           is_object(lifecycle) &&
           lifecycle.requested_sha === running_sha &&

@@ -281,6 +281,33 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
         tmp_path, {"path": str(node_path), "now": NOW, "operations": recovery}, "probe_store"
     )
     assert actual_recovery == expected_recovery
+    encoding_results = []
+    for encoding in ("invalid_utf8", "utf8_bom"):
+        unreadable = _attempt("encoding-recovery")
+        unreadable["release"]["future_release"] = {"value": "__invalid_byte__"}
+        encoded = json.dumps(unreadable).encode("utf8")
+        encoded = (
+            encoded.replace(b"__invalid_byte__", b"\xff")
+            if encoding == "invalid_utf8"
+            else b"\xef\xbb\xbf" + encoded
+        )
+        for path in (python_path, node_path):
+            path.write_bytes(encoded)
+        recover_encoding: list[dict[str, Any]] = [
+            {"kind": "read"},
+            {"kind": "create", "attempt": _attempt("encoding-recovery")},
+            {"kind": "read"},
+        ]
+        expected_encoding = json.loads(json.dumps(_python_store(python_path, recover_encoding)))
+        actual_encoding = _node(
+            tmp_path,
+            {"path": str(node_path), "now": NOW, "operations": recover_encoding},
+            "probe_store",
+        )
+        assert actual_encoding == expected_encoding
+        assert actual_encoding["answers"][0]["result"] is None
+        assert "future_release" not in json.loads(actual_encoding["file_text"])["release"]
+        encoding_results.append({"encoding": encoding, "result": actual_encoding})
     # A previous server's request must reactivate its Mac without replacing any
     # existing attempt file, even an unreadable one. Reuse this store proof host.
     legacy_results: list[dict[str, Any]] = []
@@ -341,6 +368,7 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
             "first": actual,
             "after_settlement": actual_more,
             "corrupt_record_recovery": actual_recovery,
+            "unreadable_encoding_recovery": encoding_results,
             "legacy_adoption": legacy_results,
         },
     )
