@@ -41,6 +41,7 @@ from planner.conversation.message_content import MessageContent, text_message_co
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import PlannerError
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.projects.data import create_project, update_project
 from planner.runtime.conversation_start import (
     new_conversation_id,
@@ -465,8 +466,8 @@ def test_mac_project_ticket_starts_in_its_mac_workspace_project_folder(
     server_checkout.mkdir()
     project = create_project(tmp_db, name="Mac project", folder_path=server_checkout, now=1)
     tmp_db.execute(
-        "UPDATE tickets SET project_id = ?, locale = 'macos' WHERE id = ?",
-        (project.id, ticket.id),
+        "UPDATE tickets SET project_id = ?, locale = 'macos', machine_id = ? WHERE id = ?",
+        (project.id, ORIGINAL_MAC_MACHINE_ID, ticket.id),
     )
     ticket = read_ticket(tmp_db, ticket.id)
     values = worker_resolve(tmp_db, ticket)
@@ -537,7 +538,10 @@ def test_unconfigured_mac_uses_executor_workspace_without_replacing_explicit_cho
     from planner.tickets.api import _conversation_start_values_json
     from planner.tickets.contracts import TicketLocale
 
-    tmp_db.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket.id,))
+    tmp_db.execute(
+        "UPDATE tickets SET locale='macos', machine_id=? WHERE id=?",
+        (ORIGINAL_MAC_MACHINE_ID, ticket.id),
+    )
     mac = read_ticket(tmp_db, ticket.id)
     values = worker_resolve(tmp_db, mac)
     assert values.workspace_path_policy is WorkspacePathPolicy.executor_default
