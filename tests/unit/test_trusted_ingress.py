@@ -4,11 +4,13 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core import server as server_module
+from planner.core import unidentified_agent_calls
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -25,7 +27,9 @@ _VITE_CSS_ROUTE = "/_app/assets/" + next(
 )
 
 
-def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[FastAPI, Path]:
+def _make_app(
+    tmp_path: Path, *, hosted: bool = True, refuse_unidentified: bool = False
+) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning-test.db"
     db_path.parent.mkdir(parents=True)
     boot = connect(str(db_path))
@@ -35,6 +39,8 @@ def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[FastAPI, Path]:
         "PLAN_TEST_MODE": "1",
         "PLAN_DB_PATH": str(db_path),
     }
+    if refuse_unidentified:
+        env["PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS"] = "1"
     if hosted:
         env.update(
             {
@@ -77,6 +83,27 @@ def test_tailscale_allowed_and_wrong_login_are_enforced(tmp_path: Path) -> None:
     assert allowed.status_code == 200
     assert wrong.status_code == 403
     assert wrong.json()["error"]["code"] == "agent_forbidden"
+
+
+def test_trusted_owner_reaches_enabled_agent_boundary_after_ingress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lookups: list[tuple[Any, ...]] = []
+
+    def refuse(*args: Any) -> unidentified_agent_calls.PeerLookupResult:
+        lookups.append(args)
+        return unidentified_agent_calls.PeerLookupResult(False)
+
+    monkeypatch.setattr(unidentified_agent_calls, "resolve_loopback_peer", refuse)
+    app, _db_path = _make_app(tmp_path, refuse_unidentified=True)
+    with TestClient(app) as client:
+        owner = client.get("/api/meta", headers=REMOTE)
+        unidentified = client.get("/api/meta")
+
+    assert owner.status_code == 200, owner.text
+    assert unidentified.status_code == 403
+    assert unidentified.json()["error"]["code"] == "agent_forbidden"
+    assert len(lookups) == 1
 
 
 def test_remote_tailscale_actor_spoof_is_ignored_but_internal_actor_remains(
