@@ -25,6 +25,14 @@ export interface ReadAccess {
   close(): void;
 }
 export interface Database extends WriteDoor, ReadAccess {}
+/** Cleanup ownership can cross an opening failure without exposing a connection. */
+export interface DatabaseCloseHandle {
+  close(): void;
+}
+export interface DurableSidecarOpenFailure extends Error {
+  database_cleanup: DatabaseCloseHandle;
+  cleanup_error: unknown;
+}
 
 /** Build-time DDL only. Generated identities and domain rows never enter this artifact. */
 export interface ApplicationSchemaSeed {

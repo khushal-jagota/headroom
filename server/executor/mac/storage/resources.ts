@@ -1,5 +1,5 @@
 /** The database owner retains its lock independently of the optional file worker. */
-import type { Database } from '../../../core/database/contracts.ts';
+import type { DatabaseCloseHandle } from '../../../core/database/contracts.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { FilesService } from '../files.ts';
@@ -8,7 +8,7 @@ export interface OutboxCleanup {
   settled(): Promise<void>;
 }
 export class OutboxResources implements OutboxCleanup {
-  database: Database | undefined;
+  database: DatabaseCloseHandle | undefined;
   lock: { close(): void } | undefined;
   private readonly files: FilesService;
   private done = false;

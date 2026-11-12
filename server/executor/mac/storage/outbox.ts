@@ -7,7 +7,7 @@ import {
   assertDatabaseVersion,
   createDurableSidecarDatabase,
 } from '../../../core/database/index.ts';
-import type { Database } from '../../../core/database/contracts.ts';
+import type { Database, DurableSidecarOpenFailure } from '../../../core/database/contracts.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
@@ -141,6 +141,9 @@ export class OutboxStore {
       return store;
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
+      const database_cleanup = (failure as Partial<DurableSidecarOpenFailure>).database_cleanup;
+      if (database === undefined && database_cleanup !== undefined)
+        resources.database = database_cleanup;
       try {
         await resources.stop(options);
       } catch (cleanup_error) {

@@ -18,12 +18,14 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { createReadAccess } from '../../../core/database/index.ts';
 import { FilesService } from '../files.ts';
 import { MAX_ENVELOPE_BYTES } from '../configuration.ts';
+import { acquire_process_lock } from '../platform.ts';
 import { DATABASE_NAME } from './schema.ts';
 import { OutboxStore } from './outbox.ts';
 import type { CaptureRows, ItemColumns, ItemFileColumns, TicketFileRow } from './contracts.ts';
+import type { OutboxCleanup } from './resources.ts';
 
 const roots: string[] = [],
-  stores: OutboxStore[] = [];
+  stores: OutboxCleanup[] = [];
 const clock = {
   monotonic: () => performance.now() / 1000,
   now_ns: () => BigInt(Date.now()) * 1_000_000n,
@@ -92,6 +94,51 @@ test('an incompatible version-zero store refuses before a lock, WAL, or byte mut
   );
   expect(readFileSync(path)).toEqual(before);
   expect(readdirSync(spool)).toEqual([DATABASE_NAME]);
+});
+
+test('failed reader initialization retains both unreturned connections and their main lock', async () => {
+  const spool = join(scratch(), 'spool'),
+    path = join(spool, DATABASE_NAME);
+  const pragma = BetterSqlite3.prototype.pragma,
+    close = BetterSqlite3.prototype.close;
+  const connections = new Set<BetterSqlite3.Database>();
+  const configuring = vi.spyOn(BetterSqlite3.prototype, 'pragma').mockImplementation(function (
+    this: BetterSqlite3.Database,
+    ...args: Parameters<BetterSqlite3.Database['pragma']>
+  ) {
+    if (this.readonly && this.name === path && args[0] === 'query_only = ON')
+      throw new Error('initial PRAGMA failed');
+    return pragma.call(this, ...args);
+  });
+  const closing = vi.spyOn(BetterSqlite3.prototype, 'close').mockImplementation(function (
+    this: BetterSqlite3.Database,
+  ) {
+    if (this.name === path) {
+      connections.add(this);
+      throw new Error('unreturned database connection cannot close');
+    }
+    return close.call(this);
+  });
+  const failure = await OutboxStore.open(spool, clock, deadline()).then(
+    (store) => {
+      stores.push(store);
+      throw new Error('startup unexpectedly succeeded');
+    },
+    (error) => error as Error & { cleanup?: OutboxCleanup; cause?: Error },
+  );
+  expect(failure.cleanup).toBeDefined();
+  const cleanup = failure.cleanup!;
+  stores.push(cleanup);
+  expect(failure.cause?.message).toBe('initial PRAGMA failed');
+  expect([...connections].map((connection) => connection.readonly).sort()).toEqual([false, true]);
+  expect(() => acquire_process_lock(spool)).toThrow('outbox is already owned');
+  configuring.mockRestore();
+  closing.mockRestore();
+  await cleanup.stop(deadline());
+  await cleanup.settled();
+  expect([...connections].every((connection) => !connection.open)).toBe(true);
+  const lease = acquire_process_lock(spool);
+  lease.close();
 });
 
 test('the full-item limit rolls back row and index allocation even with a no-op validator', async () => {

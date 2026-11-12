@@ -19,6 +19,7 @@ import type {
   ApplicationSchemaSeed,
   FreshDatabaseBootstrap,
   DurableSidecarDatabaseOptions,
+  DatabaseCloseHandle,
 } from './contracts.ts';
 export type * from './contracts.ts';
 const functionScopes = new WeakMap<
@@ -177,10 +178,26 @@ export function createReadAccess(
   return createConfiguredReadAccess(path, options);
 }
 
+function closeCapability(close: () => void): DatabaseCloseHandle & { readonly closed: boolean } {
+  let closed = false;
+  return {
+    get closed() {
+      return closed;
+    },
+    close() {
+      if (!closed) {
+        close();
+        closed = true;
+      }
+    },
+  };
+}
+
 function createConfiguredReadAccess(
   path: string,
   options: { busyTimeoutMs?: number },
   durable?: { foreignKeys: boolean },
+  adopt?: (cleanup: DatabaseCloseHandle) => void,
 ): ReadAccess {
   path = assert_test_database_path(path);
   const connection = new BetterSqlite3(path, {
@@ -188,7 +205,13 @@ function createConfiguredReadAccess(
     fileMustExist: true,
     timeout: busyTimeout(options.busyTimeoutMs ?? BUSY_TIMEOUT_MS),
   });
+  let reading = false;
+  const cleanup = closeCapability(() => {
+    if (reading) throw new TypeError('cannot close an active database scope');
+    connection.close();
+  });
   try {
+    adopt?.(cleanup);
     connection.pragma('query_only = ON');
     if (durable) {
       connection.pragma(`foreign_keys = ${durable.foreignKeys ? 'ON' : 'OFF'}`);
@@ -198,14 +221,19 @@ function createConfiguredReadAccess(
       connection.pragma('recursive_triggers = ON');
     }
   } catch (error) {
-    connection.close();
+    try {
+      cleanup.close();
+    } catch (cleanup_error) {
+      if (adopt === undefined) throw cleanup_error;
+      const failure = error instanceof Error ? error : new Error(String(error));
+      Object.assign(failure, { cleanup_error });
+      throw failure;
+    }
     throw error;
   }
-  let reading = false;
-  let closed = false;
   return Object.freeze({
     read<T>(work: (sql: ReadSql) => T): T {
-      if (closed) throw new Error('database is closed');
+      if (cleanup.closed) throw new Error('database is closed');
       if (reading)
         throw new TypeError('nested read callbacks are not allowed; use the current read scope');
       reading = true;
@@ -222,10 +250,7 @@ function createConfiguredReadAccess(
       }
     },
     close(): void {
-      if (closed) return;
-      if (reading) throw new TypeError('cannot close an active database scope');
-      connection.close();
-      closed = true;
+      cleanup.close();
     },
   });
 }
@@ -461,6 +486,8 @@ export function createDurableSidecarDatabase(
   // The caller owns its parent directory and process lock. Never claim another creator's file.
   if (!existed) closeSync(openSync(path, 'wx', 0o644));
   const writer = new BetterSqlite3(path, { fileMustExist: true, timeout: BUSY_TIMEOUT_MS });
+  const writer_cleanup = closeCapability(() => writer.close());
+  let reader_cleanup: DatabaseCloseHandle | undefined;
   let reader: ReadAccess | undefined;
   try {
     // Existing version zero is refused. Only our exclusive creation can initialize version zero.
@@ -470,7 +497,14 @@ export function createDurableSidecarDatabase(
     writer.pragma('fullfsync = ON');
     writer.pragma('trusted_schema = OFF');
     writer.pragma(`foreign_keys = ${options.foreignKeys ? 'ON' : 'OFF'}`);
-    reader = createConfiguredReadAccess(path, { busyTimeoutMs: BUSY_TIMEOUT_MS }, options);
+    reader = createConfiguredReadAccess(
+      path,
+      { busyTimeoutMs: BUSY_TIMEOUT_MS },
+      options,
+      (cleanup) => {
+        reader_cleanup = cleanup;
+      },
+    );
     const owned = createOwnedDatabase<TransactionSql>(writer, reader, {
       busyTimeoutMs: BUSY_TIMEOUT_MS,
       safeIntegers: true,
@@ -483,8 +517,26 @@ export function createDurableSidecarDatabase(
     }
     return owned.database;
   } catch (error) {
-    reader?.close();
-    writer.close();
+    const cleanup: DatabaseCloseHandle = {
+      close() {
+        let failure: unknown;
+        for (const connection of [reader_cleanup, writer_cleanup])
+          if (connection !== undefined)
+            try {
+              connection.close();
+            } catch (close_error) {
+              failure ??= close_error;
+            }
+        if (failure !== undefined) throw failure;
+      },
+    };
+    try {
+      cleanup.close();
+    } catch (cleanup_error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      Object.assign(failure, { database_cleanup: cleanup, cleanup_error });
+      throw failure;
+    }
     throw error;
   }
 }
