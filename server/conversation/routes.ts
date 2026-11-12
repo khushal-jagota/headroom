@@ -116,7 +116,10 @@ function integer_queries(raw: unknown, names: readonly string[]) {
   fields.finish();
   return parsed;
 }
-function mutable_conversation(runtime: ConversationHttpRuntime, conversation_id: string): void {
+export function mutable_conversation(
+  runtime: ConversationHttpRuntime,
+  conversation_id: string,
+): void {
   const associated = runtime.record.database.read((sql) =>
     sql.get<{ conversation_id: string | null }>(
       'SELECT tickets.conversation_id FROM ticket_conversations JOIN tickets ' +
@@ -127,7 +130,7 @@ function mutable_conversation(runtime: ConversationHttpRuntime, conversation_id:
   if (associated && associated.conversation_id !== conversation_id)
     throw new HttpError(409, "the conversation is not the Ticket's active conversation");
 }
-function unassociated_send(runtime: ConversationHttpRuntime, conversation_id: string): void {
+export function unassociated_send(runtime: ConversationHttpRuntime, conversation_id: string): void {
   const associated = runtime.record.database.read((sql) =>
     sql.get(
       'SELECT 1 FROM ticket_conversations WHERE conversation_id=? ' +
@@ -409,15 +412,6 @@ export function createConversationRoutes(
           cache: 'private, max-age=31536000, immutable',
         });
       },
-    });
-    app.post('/voice-transcriptions', async (request) => {
-      const fields = body_fields(request.body);
-      fields.text('audio');
-      fields.text('media_type', false, false);
-      fields.extras(['audio', 'media_type']);
-      fields.finish();
-      // Audio processing and configured transcription belong to the uploads/service unit.
-      throw new HttpError(503, 'voice transcription needs PLAN_GROQ_API_KEY, which is not set');
     });
     app.post<{ Params: { conversation_id: string } }>(
       '/conversations/:conversation_id/send',

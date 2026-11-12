@@ -7,6 +7,11 @@ export interface UploadDestination {
   readonly id: string;
   readonly expected_conversation_id: string | null;
 }
+export interface ReserveVideoUpload {
+  readonly destination: UploadDestination;
+  readonly filename: string;
+  readonly byte_count: number;
+}
 export interface VideoUploadStatus {
   upload_id: string;
   destination: UploadDestination;

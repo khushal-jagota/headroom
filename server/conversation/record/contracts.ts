@@ -134,6 +134,7 @@ export interface RunningTurn {
   user_input_provider_ids: Map<string, string>;
   pending_user_input_questions: Map<string, readonly UserInputQuestion[]>;
   automatic_notice: boolean;
+  memory_notice_only: boolean;
   ended: boolean;
   callbacks_revoked: boolean;
   ending_is_the_cores: boolean;
@@ -218,6 +219,11 @@ export interface RecordParticipants {
       readonly now: number;
     },
   ) => void;
+  readonly is_memory_notice?: (sender_message_id: string | null) => boolean;
+  readonly automated_maintenance_suppression_reason?: (
+    sql: ReadSql,
+    conversation_id: string,
+  ) => string | null;
   readonly admit_notice?: (
     tx: TransactionSql,
     conversation_id: string,
@@ -345,6 +351,8 @@ export interface ConversationRecordStore {
     conversation_id: string,
     through_sequence: number,
   ): ConversationRecord | null;
+  automated_maintenance_suppression_reason(conversation_id: string): string | null;
+  open_turn_holds_only_memory_notices(conversation_id: string): boolean;
   conversations_due_for_automatic_compaction(options: {
     due_at_or_before: number;
     activity_after: number;
@@ -354,6 +362,7 @@ export interface ConversationRecordStore {
     messages: readonly PromptDiscardedEventPayload[],
     options?: {
       lifecycle_if_all_suppressed?: readonly LifecycleFact[];
+      automatic_compaction?: boolean;
     },
   ): readonly PromptDispatchDecision[];
   mark_held_sender_messages_leaving_queue(

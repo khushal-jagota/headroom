@@ -843,6 +843,33 @@ def clear_ticket_conversation_link(
         return updated.rowcount == 1
 
 
+def automated_maintenance_suppression_reason(
+    conn: sqlite3.Connection, conversation_id: str
+) -> str | None:
+    """Say why Panels' own maintenance may not reach this conversation, or None if it may.
+
+    Maintenance is the automatic ``/compact`` and the Worker memory-loss notice. A Worker
+    conversation acts only on its Ticket's permission to run: it is eligible while it is
+    its Ticket's current conversation and that Ticket is not in the backlog. A
+    conversation a reset left behind stays in ``ticket_conversations`` and is never
+    eligible again. A conversation no Ticket ever linked (a Manager's, the Chief's) is not
+    a Worker, and this rule does not reach it.
+    """
+    current = conn.execute(
+        "SELECT is_backlogged FROM tickets WHERE conversation_id = ?", (conversation_id,)
+    ).fetchone()
+    if current is not None:
+        return "worker_ticket_backlogged" if current[0] else None
+    if (
+        conn.execute(
+            "SELECT 1 FROM ticket_conversations WHERE conversation_id = ?", (conversation_id,)
+        ).fetchone()
+        is not None
+    ):
+        return "worker_conversation_replaced"
+    return None
+
+
 def write_ticket_last_chosen_configuration(
     conn: sqlite3.Connection,
     ticket_id: str,

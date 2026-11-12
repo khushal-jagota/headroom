@@ -135,6 +135,8 @@ The SDK public spawn hook owns the exact child and its required WorkerUnit. An i
 
 On Linux, `BASH_ENV` points to the absolute source path of `server/conversation/tool_shell_startup.bash` for TS and `src/planner/conversation/tool_shell_startup.bash` for Python. The direct proof permits only this exact source-location pair and requires identical file bytes. A byte difference fails the proof. Other environment differences require explicit acceptance in `DEVIATIONS.md`.
 
+The paired scripted proof also exercises the real CLI's observed ordering, status and rate-limit frames, and optional message fields. The one-attempt provider driver and its results remain Ticket artifacts, outside automatic discovery.
+
 ## In-memory conversation instrument
 
 `conversation/contracts.ts` is the 15-member in-process conversation boundary.
