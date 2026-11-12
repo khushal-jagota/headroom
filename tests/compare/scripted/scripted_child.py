@@ -167,7 +167,10 @@ class ScriptedChild(backend.BackendChild):
     async def _spawn(self) -> asyncio.subprocess.Process:
         process = await asyncio.create_subprocess_exec(
             "node",
-            str(Path(__file__).with_name("scripted_process.ts")),
+            str(
+                Path(__file__).resolve().parents[3]
+                / "server/conversation/testing/scripted_process.ts"
+            ),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

@@ -19,9 +19,9 @@ from unittest.mock import patch
 
 import uvicorn
 from fastapi import FastAPI
-from server.conversation.testing.record_inspection import record_rows
-from server.conversation.testing.scripted_child import decode_scripted_event
-from server.conversation.testing.scripted_registry import ScriptedBackendRegistry
+from tests.compare.scripted.record_inspection import record_rows
+from tests.compare.scripted.scripted_child import decode_scripted_event
+from tests.compare.scripted.scripted_registry import ScriptedBackendRegistry
 from tests.e2e.conversation_signals_server import NoInstalledBackends
 from tests.e2e.ticket_model_controls import TicketModelSnapshots
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
