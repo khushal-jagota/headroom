@@ -185,3 +185,52 @@ It matches Uvicorn's default trusted local peer (`127.0.0.1`) and validated
 this helper's current contract.
 
 `panels` CLI calls keep the Worker's own `PLAN_ACTOR`, `PLAN_TICKET_ID`, `PLAN_MANAGER_ID`, and `PLAN_CONVERSATION_ID` values; only repository code runs with inherited `PLAN_*` removed.
+
+## Codex app-server transport
+
+`conversation/backends/codex_app_server/` supplies the small consumed wire contracts,
+JSONL client, saved-login reader, inherited child environment, and bounded process-group
+ownership. This is the first part of the Codex port. It does not yet supply a configured
+Codex backend child or the model/sign-in/usage provider bindings.
+
+The client checks the selected CLI version before it starts the app-server. Unknown
+notifications and item kinds remain unconsumed. A malformed consumed notification warns
+and drops. Session, turn, outcome, permission, and numeric-kind checks remain strict.
+Raw response text is retained for usage reads that must preserve numeric token spelling.
+
+The direct Unit 17 checks compare fresh Python answers and the same scripted TypeScript
+executable. The startup check intercepts all provider and service-manager launches and
+records complete environments, command arguments, and working directories.
+On Linux, the one child-environment difference is `BASH_ENV`: Python names
+`src/planner/conversation/tool_shell_startup.bash`, and TypeScript names
+`server/conversation/tool_shell_startup.bash` through the shared TypeScript helper.
+The Manager requested this runtime independence from Python source. The startup check
+asserts both exact paths, compares the scripts byte for byte, and compares every other
+environment variable, command argument, and working directory without normalization.
+
+### Codex process lifetime and remaining wire differences
+
+TypeScript starts Codex in a detached process group and a new session. Normal cleanup
+signals that owned group while its direct child remains alive. After it observes the
+child's exit, it does not signal the numeric group id, which the OS can reuse. WorkerUnit
+cleanup retains the existing service-manager containment for Worker conversations.
+
+If Node dies before cleanup, the OS closes its stdin pipe. Codex exits when it reads EOF.
+There is no parent-death signal or server-supervisor replacement in this adapter. Python's
+uncontained child shares the server's session instead of starting a new one. Descendants
+that survive a natural leader exit outside WorkerUnit are not cleaned up through a late
+group signal.
+
+The Manager requested documentation of these remaining wire differences:
+
+- JSON integers above `2^53` can lose precision when projected into JavaScript numbers.
+- Python and JavaScript disagree on blank identifiers containing U+0085 or U+FEFF.
+  Python treats U+0085 as whitespace and U+FEFF as non-whitespace. JavaScript does the reverse.
+- Python treats `id: true` as integer reply id 1. TypeScript does not correlate that reply.
+- TypeScript replaces invalid UTF-8 bytes during stream decode. Python warns when the
+  input cannot decode.
+- If an application handler throws, TypeScript warns and continues its dispatch chain.
+  Python's reader task ends.
+
+These limits do not change the strict checks for consumed identities, outcomes, and
+permission decisions. They are not hidden by broad comparison rules.
