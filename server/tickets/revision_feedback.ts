@@ -67,3 +67,39 @@ export function acknowledge(
     expected_revision,
   ]);
 }
+
+export function set_feedback(
+  sql: TransactionSql,
+  ticket_id: string,
+  options: {
+    stage: string;
+    sender: Principal;
+    message: string;
+    now: number;
+  },
+): PendingRevisionFeedback {
+  const feedback = JSON.stringify([
+    { sender_kind: options.sender.kind, sender_id: options.sender.id, message: options.message },
+  ]).replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  sql.run(
+    `INSERT INTO ticket_revision_feedback
+    (ticket_id, stage, feedback_json, revision, created_at, updated_at)
+    VALUES (?, ?, ?, 1, ?, ?)
+    ON CONFLICT(ticket_id) DO UPDATE SET
+      stage=excluded.stage, feedback_json=excluded.feedback_json,
+      revision=ticket_revision_feedback.revision+1, updated_at=excluded.updated_at`,
+    [ticket_id, options.stage, feedback, options.now, options.now],
+  );
+  return new PendingRevisionFeedback({
+    ticket_id,
+    stage: options.stage,
+    items: [{ sender: options.sender, message: options.message }],
+    revision: sql.get<{ revision: number }>(
+      'SELECT revision FROM ticket_revision_feedback WHERE ticket_id=?',
+      [ticket_id],
+    )!.revision,
+  });
+}
+export function discard(sql: TransactionSql, ticket_id: string): void {
+  sql.run('DELETE FROM ticket_revision_feedback WHERE ticket_id=?', [ticket_id]);
+}

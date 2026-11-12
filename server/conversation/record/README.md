@@ -60,10 +60,11 @@ To regenerate the fixture oracle after Python view code changes, run from the
 repository root with this checkout's installed Python dependencies:
 
 ```sh
-.venv/bin/python server/conversation/views/generate_fixture_oracle.py
+.venv/bin/python tests/compare/tools/generate_fixture_oracle.py
 ```
 
-The oracle is a local fixture proof. The populated six-route comparison in CI
+The comparison workflow also runs the generator with `--check` on both Node jobs.
+It fails if current Python produces different bytes. The oracle is a local fixture proof. The populated six-route comparison in CI
 checks current Python behavior after staging merges.
 
 Without a deployment participant, `reconcile_in_transaction` rotates
