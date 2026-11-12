@@ -33,10 +33,16 @@ export async function trim_surrounding_silence(
   let failed = false;
   let settled = false;
   const kill_group = () => {
+    if (settled || child.exitCode !== null || child.signalCode !== null) return;
     try {
       if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL');
     } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH'))
+      if (
+        !(error instanceof Error && 'code' in error && error.code === 'ESRCH') &&
+        !settled &&
+        child.exitCode === null &&
+        child.signalCode === null
+      )
         child.kill('SIGKILL');
     }
   };
@@ -84,8 +90,8 @@ export async function trim_surrounding_silence(
     child.stderr.resume();
     child.stdin.end(audio);
     const code = await exited;
-    // Preserve buffered audio while the owned group's inherited pipe holders stop.
-    kill_group();
+    // Preserve buffered audio. A reaped leader's numeric group is no longer ours
+    // to signal, even when a descendant retains an inherited pipe.
     if (code !== 0) stop();
     await output_ended;
     options.signal?.throwIfAborted();

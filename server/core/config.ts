@@ -44,19 +44,23 @@ export function pythonRepr(value: unknown): string {
     return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\n', '\\n').replaceAll('\r', '\\r')}'`;
   return String(value);
 }
-function parseBoolean(v: unknown, key: string, text = String(v).trim()): boolean {
-  if (typeof v === 'boolean') return v;
-  const s = text.toLowerCase();
-  if (['1', 'true', 'yes', 'on'].includes(s)) return true;
-  if (['0', 'false', 'no', 'off'].includes(s)) return false;
-  throw new PlannerError('validation', `invalid boolean for ${key}: ${pythonRepr(v)}`);
+export function parseConfigBoolean(value: unknown, key: string, source = String(value).trim()): boolean {
+  if (typeof value === 'boolean') return value;
+  const text = source.toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(text)) return true;
+  if (['0', 'false', 'no', 'off'].includes(text)) return false;
+  throw new PlannerError('validation', `invalid boolean for ${key}: ${pythonRepr(value)}`);
+}
+/** The I/O guards use the same environment-only test setting as loadConfig. */
+export function testModeFromEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return parseConfigBoolean(env.PLAN_TEST_MODE ?? '0', 'test_mode');
 }
 export function loadConfig(
   path: string | undefined = undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): Config {
   const refusalFlag = env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS ?? '0';
-  const refuse_unidentified_agent_calls = parseBoolean(
+  const refuse_unidentified_agent_calls = parseConfigBoolean(
     refusalFlag,
     'refuse_unidentified_agent_calls',
     strip(refusalFlag),
@@ -75,7 +79,6 @@ export function loadConfig(
     const v = raw(key, variable);
     return v == null ? null : String(v).trim() || null;
   };
-  const bool = parseBoolean;
   const integer = (key: string, variable: string, fallback: number): number => {
     const v = raw(key, variable, fallback);
     if (
@@ -105,7 +108,7 @@ export function loadConfig(
       );
     }
   };
-  const test_mode = bool(env.PLAN_TEST_MODE ?? '0', 'test_mode');
+  const test_mode = testModeFromEnvironment(env);
   let provider =
     optional('trusted_ingress_provider', 'PLAN_TRUSTED_INGRESS_PROVIDER')?.toLowerCase() ?? null;
   let login = optional('trusted_ingress_allowed_login', 'PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN');
@@ -176,7 +179,7 @@ export function loadConfig(
     db_path,
     port: integer('port', 'PLAN_PORT', 8767),
     tick_seconds: integer('tick_seconds', 'PLAN_TICK_SECONDS', 60),
-    dispatch_enabled: bool(
+    dispatch_enabled: parseConfigBoolean(
       raw('dispatch_enabled', 'PLAN_DISPATCH_ENABLED', true),
       'dispatch_enabled',
     ),

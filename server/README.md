@@ -291,3 +291,24 @@ Provider shutdown refuses new sign-in and probe work, aborts active catalog and 
 reads, and joins them before the database closes. Both snapshot environment and sign-in
 cleanup run even if either fails. Exact-second sign-in timestamps omit the fractional
 part, as Python does. Nonzero microseconds retain six digits.
+
+## Hermes ACP transport
+
+`conversation/backends/hermes_acp/` supplies the first part of the Hermes port:
+launch values, ordered ACP transport, and process ownership. The backend child and
+catalog binding remain later parts. Hermes retains Python's exact child environment,
+including the absence of an automatic `BASH_ENV` override.
+
+The adapter pins `@agentclientprotocol/sdk` to `2.6.0` and uses its ACP v1
+`/unstable` entrypoint to retain prompt usage fields. The public `ClientApp` dispatches
+handlers concurrently, so the adapter uses the SDK's lower-level `Connection` and
+generated validators behind an admission gate. Notifications and request admission
+finish before the next frame reaches the SDK. Permission answers remain outside
+that gate. Notification admission has no timeout; the permission response-write
+confirmation retains Python's 15-second bound. Close and wire failure release the gate.
+
+The package exports no subpath for `Connection` or the generated validators.
+Runtime imports resolve their files from the pinned package entrypoint. Relative
+`node_modules` imports supply those same official types without a duplicate protocol
+interface. Pin checks cover the consumed internal symbols. Any SDK upgrade requires
+a new review of `conversation/backends/hermes_acp/client.ts` before approval.
