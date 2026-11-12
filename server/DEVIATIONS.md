@@ -62,3 +62,29 @@ Python enforces only the wall-time limit. Its configured default is 30 seconds (
 - `good child sees only frozen data and a clean temporary home; parent retains numeric candidates` checks the actual default child option `--max-old-space-size=256`.
 
 The byte/heap failure cases use smaller configured limits to avoid unnecessary VPS load. Default constants retain the accepted values above.
+
+## Claude SDK identity in the child environment
+
+The migration Manager accepted these two differences on November 12, 2026, for Unit 18:
+
+| Variable | Python SDK | TypeScript SDK |
+| --- | --- | --- |
+| `CLAUDE_CODE_ENTRYPOINT` | `sdk-py` | `sdk-ts` |
+| `CLAUDE_AGENT_SDK_VERSION` | `0.2.152` | `0.3.316` |
+
+The child identifies the SDK that actually runs it. TypeScript does not claim to be the Python SDK.
+These are the only accepted launch-environment differences. All other variables compare exactly;
+there is no blanket SDK-variable normalization. The public spawn hook preserves the Python
+inherited-environment policy, including removal of `CLAUDECODE`, rather than forwarding the TS
+SDK's additional flags or filtered environment.
+
+`conversation/backends/claude_sdk_environment.test.ts` pins the two TS values through the real
+pinned SDK and the catalog's public spawn hook. It compares the entire child environment,
+including inherited values and the removal of `CLAUDECODE`. Every process API is blocked before
+SDK import, and the synthetic launch stops at the hook without a process.
+
+Source inspection found no Panels storage, view, usage, catalog, or session-path consumer of
+either variable. Panels reads usage and cost from result fields, models from the handshake,
+and the session cursor from `session_id`. Provider-private session-file effects remain unverified;
+no provider session file or owner executable was inspected for this check. The adapter follows
+this accepted policy in Unit 18's next part.
