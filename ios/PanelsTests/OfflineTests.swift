@@ -814,8 +814,11 @@ import XCTest
         try Data([4]).write(to: unownedURL); try Data([5]).write(to: sharedURL)
         defer { try? FileManager.default.removeItem(at: unownedURL); try? FileManager.default.removeItem(at: sharedURL) }
         let past = Date(timeIntervalSinceNow: -8 * 86400)
-        try outbox.save(PendingWork(id: "expired-audio", created: past, kind: .voice, state: .uncertain, audioFile: unowned, draftID: "old"), server: server)
-        try outbox.save(PendingWork(id: "expired-shared", created: past, kind: .voice, state: .uncertain, audioFile: shared, draftID: "old"), server: server)
+        try outbox.save(PendingWork(id: "expired-audio", created: past, kind: .voice, state: .waiting, audioFile: unowned, draftID: "old"), server: server)
+        try outbox.save(PendingWork(id: "expired-shared", created: past, kind: .voice, state: .waiting, audioFile: shared, draftID: "old"), server: server)
+        for id in ["expired-audio", "expired-shared"] {
+            try store.outgoing.settle(server: server, id: id, state: .uncertain, note: "Delivery uncertain", now: past)
+        }
         try outbox.save(PendingWork(id: "retained-audio", created: past, kind: .voice, state: .recording, audioFile: shared, draftID: "kept"), server: server + "-foreign")
         outbox.clearFinished(server)
         XCTAssertFalse(FileManager.default.fileExists(atPath: unownedURL.path))

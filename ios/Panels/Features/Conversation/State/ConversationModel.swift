@@ -174,11 +174,35 @@ import UniformTypeIdentifiers
 
     func syncOutbox(savedWork: [PendingWork]? = nil) {
         guard let api = persistenceAPI, let owner = persistenceOwner else { return }
+        if let savedWork {
+            // Review supplies an already-selected snapshot, which can belong to
+            // another store. Its membership and outcomes are authoritative here.
+            let previous = Dictionary(outgoing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let received = Set(items.compactMap(\.senderMessageId))
+            recoveries = [:]
+            outgoing = savedWork.compactMap { work -> Outgoing? in
+                guard work.kind == .message, work.owner == owner, !supersededIDs.contains(work.id),
+                    !received.contains(work.id) || work.state != .sent else { return nil }
+                if let prior = work.priorMessageIDs, let first = prior.first {
+                    supersededIDs.formUnion(prior); retryAliases[work.id] = first
+                }
+                if work.state == .failed { recoveries[work.id] = .retry }
+                else if work.state == .uncertain { recoveries[work.id] = .resend(unknownDestination: work.message?.conversationId == nil) }
+                if var rendered = previous[work.id] {
+                    rendered.note = work.note; rendered.retryable = recoveries[work.id] != nil
+                    return rendered
+                }
+                return Outgoing(id: work.id, text: work.message?.content.compactMap(\.text).joined(separator: "\n") ?? work.displayText,
+                    note: work.note, retryable: recoveries[work.id] != nil,
+                    attachments: work.message?.content.filter { $0.piece != "text" } ?? [])
+            }.filter { !supersededIDs.contains($0.id) }
+            rememberRows(outgoing.map { retryAliases[$0.id] ?? $0.id })
+            return
+        }
         let server = LocalStore.server(api.baseURL)
         if conversationID == nil { conversationID = try? outgoingStore.outgoing.latestConversationID(server: server, owner: owner) }
         let selected = (try? outgoingStore.outgoing.conversationSummaries(server: server, owner: owner, conversationID: conversationID)) ?? []
         let previous = Dictionary(outgoing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let supplied = savedWork.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
         recoveries = [:]
         for fact in selected where fact.scheduled {
             if fact.holdReason != nil { recoveries[fact.id] = .held(unknownDestination: fact.conversationID == nil) }
@@ -195,7 +219,7 @@ import UniformTypeIdentifiers
                 rendered.note = fact.note; rendered.retryable = recoveries[fact.id] != nil
                 return rendered
             }
-            guard let work = supplied?[fact.id] ?? (try? outgoingStore.outgoing.work(server: server, id: fact.id)), work.owner == owner else { return nil }
+            guard let work = try? outgoingStore.outgoing.work(server: server, id: fact.id), work.owner == owner else { return nil }
             if let previous = work.priorMessageIDs, let first = previous.first {
                 supersededIDs.formUnion(previous)
                 retryAliases[work.id] = first
