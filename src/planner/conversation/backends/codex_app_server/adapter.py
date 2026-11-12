@@ -51,7 +51,7 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, ValidationError
 
 from planner import __version__
-from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server import protocol
 from planner.conversation.backends.codex_app_server.auth_failure import (
     CodexAuthReading,
     error_summary_for,
@@ -152,14 +152,14 @@ CLIENT_TITLE = "Panels"
 
 # The v2 thread and turn methods are behind codex's experimental-API flag, so the handshake
 # opts in. Without it the methods this adapter is built on are not the ones it gets.
-INITIALIZE_CAPABILITIES = bindings.InitializeCapabilities(experimentalApi=True)
+INITIALIZE_CAPABILITIES = protocol.InitializeCapabilities(experimentalApi=True)
 
 # How full access is realized on codex: nothing is asked and nothing is fenced. The reviewer
 # is stated too, because codex keeps the last one a thread was given.
 FULL_ACCESS_APPROVAL_POLICY: Final = "never"
 FULL_ACCESS_APPROVALS_REVIEWER: Final = "user"
 FULL_ACCESS_THREAD_SANDBOX: Final = "danger-full-access"
-FULL_ACCESS_TURN_SANDBOX_POLICY = bindings.DangerFullAccessSandboxPolicy(type="dangerFullAccess")
+FULL_ACCESS_TURN_SANDBOX_POLICY = protocol.DangerFullAccessSandboxPolicy(type="dangerFullAccess")
 
 # What this adapter calls the kinds of work codex reports, in the same words the ACP
 # adapter's agents use for the same things, so one pane reads both without translating.
@@ -577,7 +577,7 @@ class CodexAppServerBackendChild:
             labeled_content = sender_labeled_composed_message_content(
                 content, sender_content, sender_label
             )
-            parameters = bindings.TurnSteerParams(
+            parameters = protocol.TurnSteerParams(
                 threadId=thread_id,
                 expectedTurnId=captured_native_turn_id,
                 input=self._turn_input(labeled_content),
@@ -603,7 +603,7 @@ class CodexAppServerBackendChild:
             return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
 
         try:
-            response = bindings.TurnSteerResponse.model_validate(result)
+            response = protocol.TurnSteerResponse.model_validate(result)
         except ValidationError:
             return BackendSteerUncertain()
         if response.turnId != captured_native_turn_id:
@@ -642,7 +642,7 @@ class CodexAppServerBackendChild:
         if interrupt_turn_id is None:
             return
         thread_id = self._bound_thread()
-        parameters = bindings.TurnInterruptParams(threadId=thread_id, turnId=interrupt_turn_id)
+        parameters = protocol.TurnInterruptParams(threadId=thread_id, turnId=interrupt_turn_id)
         try:
             await self._client.request("turn/interrupt", _wire(parameters))
         except CodexAppServerError as did_not_reach:
@@ -739,8 +739,8 @@ class CodexAppServerBackendChild:
 
     async def _shake_hands(self) -> None:
         """Say who we are, and hear what codex is. A codex that will not is not one to use."""
-        parameters = bindings.InitializeParams(
-            clientInfo=bindings.ClientInfo(
+        parameters = protocol.InitializeParams(
+            clientInfo=protocol.ClientInfo(
                 name=CLIENT_NAME, title=CLIENT_TITLE, version=__version__
             ),
             capabilities=INITIALIZE_CAPABILITIES,
@@ -757,7 +757,7 @@ class CodexAppServerBackendChild:
         self,
         resolved_start: ResolvedConversationStart,
     ) -> None:
-        parameters = bindings.ThreadStartParams(
+        parameters = protocol.ThreadStartParams(
             cwd=str(resolved_start.workspace_folder),
             model=resolved_start.model,
             approvalPolicy=_approval_policy(resolved_start.access),
@@ -766,7 +766,7 @@ class CodexAppServerBackendChild:
             developerInstructions=_role_text(resolved_start),
         )
         started = await self._ask_about_the_thread(
-            "thread/start", parameters, bindings.ThreadStartResponse
+            "thread/start", parameters, protocol.ThreadStartResponse
         )
         self._thread_id = started.thread.id
         self._thread_is_ephemeral = started.thread.ephemeral
@@ -786,7 +786,7 @@ class CodexAppServerBackendChild:
         lost the conversation is exactly what must never be handed back in silence — so the
         thread codex says it resumed is checked against the one that was asked for.
         """
-        parameters = bindings.ThreadResumeParams(
+        parameters = protocol.ThreadResumeParams(
             threadId=vendor_session_cursor,
             cwd=str(resolved_start.workspace_folder),
             model=resolved_start.model,
@@ -798,7 +798,7 @@ class CodexAppServerBackendChild:
         resumed = await self._ask_about_the_thread(
             "thread/resume",
             parameters,
-            bindings.ThreadResumeResponse,
+            protocol.ThreadResumeResponse,
         )
         if resumed.thread.id != vendor_session_cursor:
             raise SessionLoadFailed(
@@ -850,34 +850,34 @@ class CodexAppServerBackendChild:
             self._catalog_snapshot = snapshot
             self._published_catalog_entries = snapshot.entries
 
-    async def _read_skills(self, workspace: str) -> bindings.SkillsListResponse:
+    async def _read_skills(self, workspace: str) -> protocol.SkillsListResponse:
         result = await self._catalog_request(
-            "skills/list", bindings.SkillsListParams(cwds=[workspace])
+            "skills/list", protocol.SkillsListParams(cwds=[workspace])
         )
-        return bindings.SkillsListResponse.model_validate(result)
+        return protocol.SkillsListResponse.model_validate(result)
 
-    async def _read_installed_apps(self, thread_id: str) -> bindings.AppsInstalledResponse:
+    async def _read_installed_apps(self, thread_id: str) -> protocol.AppsInstalledResponse:
         result = await self._catalog_request(
-            "app/installed", bindings.AppsInstalledParams(threadId=thread_id, forceRefresh=True)
+            "app/installed", protocol.AppsInstalledParams(threadId=thread_id, forceRefresh=True)
         )
-        return bindings.AppsInstalledResponse.model_validate(result)
+        return protocol.AppsInstalledResponse.model_validate(result)
 
-    async def _read_plugins(self, workspace: str) -> bindings.PluginInstalledResponse:
+    async def _read_plugins(self, workspace: str) -> protocol.PluginInstalledResponse:
         result = await self._catalog_request(
-            "plugin/installed", bindings.PluginInstalledParams(cwds=[workspace])
+            "plugin/installed", protocol.PluginInstalledParams(cwds=[workspace])
         )
-        return bindings.PluginInstalledResponse.model_validate(result)
+        return protocol.PluginInstalledResponse.model_validate(result)
 
-    async def _read_app_metadata(self, ids: list[str]) -> bindings.AppsReadResponse:
+    async def _read_app_metadata(self, ids: list[str]) -> protocol.AppsReadResponse:
         result = await self._catalog_request(
             "app/read",
-            bindings.AppsReadParams(
+            protocol.AppsReadParams(
                 appIds=ids,
                 threadId=self._bound_thread(),
                 includeTools=False,
             ),
         )
-        return bindings.AppsReadResponse.model_validate(result)
+        return protocol.AppsReadResponse.model_validate(result)
 
     async def _catalog_request(self, method: str, parameters: BaseModel) -> Any:
         """Read catalogue data without letting a stale source poison the prompt wire."""
@@ -926,20 +926,20 @@ class CodexAppServerBackendChild:
         for piece in content:
             match piece:
                 case MessageText():
-                    given.append(bindings.TextUserInput(type="text", text=piece.text))
+                    given.append(protocol.TextUserInput(type="text", text=piece.text))
                 case MessageImage():
                     given.append(
-                        bindings.LocalImageUserInput(
+                        protocol.LocalImageUserInput(
                             type="localImage", path=str(self._kept_path(piece.stored_file_id))
                         )
                     )
                 case MessageFile():
                     given.append(
-                        bindings.TextUserInput(type="text", text=self._file_context(piece))
+                        protocol.TextUserInput(type="text", text=self._file_context(piece))
                     )
         if invocation is not None and invocation.kind is ComposerCatalogEntryKind.skill:
             given.append(
-                bindings.SkillUserInput(
+                protocol.SkillUserInput(
                     type="skill", name=invocation.name, path=invocation.path or ""
                 )
             )
@@ -948,7 +948,7 @@ class CodexAppServerBackendChild:
             ComposerCatalogEntryKind.plugin,
         }:
             given.append(
-                bindings.MentionUserInput(
+                protocol.MentionUserInput(
                     type="mention", name=invocation.name, path=invocation.path or ""
                 )
             )
@@ -979,9 +979,9 @@ class CodexAppServerBackendChild:
         content: MessageContent,
         model: str | None,
         invocation: _CatalogInvocation | None = None,
-    ) -> bindings.TurnStartParams:
+    ) -> protocol.TurnStartParams:
         access = self._resolved_start.access
-        return bindings.TurnStartParams(
+        return protocol.TurnStartParams(
             threadId=thread_id,
             input=self._turn_input(content, invocation),
             model=model,
@@ -999,7 +999,7 @@ class CodexAppServerBackendChild:
         turn: _TurnInFlight,
     ) -> str | None:
         if invocation.name == "compact":
-            compact_parameters = bindings.ThreadCompactStartParams(threadId=thread_id)
+            compact_parameters = protocol.ThreadCompactStartParams(threadId=thread_id)
             return await self._start_compaction(compact_parameters, turn)
 
         if invocation.name.startswith("goal_"):
@@ -1009,10 +1009,10 @@ class CodexAppServerBackendChild:
         instructions = invocation.path or ""
         target: BaseModel
         if instructions:
-            target = bindings.CustomReviewTarget(type="custom", instructions=instructions)
+            target = protocol.CustomReviewTarget(type="custom", instructions=instructions)
         else:
-            target = bindings.UncommittedChangesReviewTarget(type="uncommittedChanges")
-        review_parameters = bindings.ReviewStartParams(
+            target = protocol.UncommittedChangesReviewTarget(type="uncommittedChanges")
+        review_parameters = protocol.ReviewStartParams(
             threadId=thread_id, delivery="inline", target=target
         )
         return await self._start_review(review_parameters, turn)
@@ -1031,29 +1031,29 @@ class CodexAppServerBackendChild:
             if invocation.name == "goal_get":
                 result = await self._client.request(
                     "thread/goal/get",
-                    _wire(bindings.ThreadGoalGetParams(threadId=thread_id)),
+                    _wire(protocol.ThreadGoalGetParams(threadId=thread_id)),
                 )
-                get_response = bindings.ThreadGoalGetResponse.model_validate(result)
+                get_response = protocol.ThreadGoalGetResponse.model_validate(result)
                 message = _goal_inspection_message(get_response.goal)
             elif invocation.name == "goal_set":
                 result = await self._client.request(
                     "thread/goal/set",
                     _wire(
-                        bindings.ThreadGoalSetParams(
+                        protocol.ThreadGoalSetParams(
                             threadId=thread_id,
                             objective=invocation.path,
                             status="active",
                         )
                     ),
                 )
-                set_response = bindings.ThreadGoalSetResponse.model_validate(result)
+                set_response = protocol.ThreadGoalSetResponse.model_validate(result)
                 message = f"Goal set: {set_response.goal.objective}"
             else:
                 result = await self._client.request(
                     "thread/goal/clear",
-                    _wire(bindings.ThreadGoalClearParams(threadId=thread_id)),
+                    _wire(protocol.ThreadGoalClearParams(threadId=thread_id)),
                 )
-                clear_response = bindings.ThreadGoalClearResponse.model_validate(result)
+                clear_response = protocol.ThreadGoalClearResponse.model_validate(result)
                 message = "Goal cleared." if clear_response.cleared else "No goal was set."
         except (CodexAppServerError, ValidationError) as failed:
             raise PromptWriteFailed(str(failed)) from failed
@@ -1073,7 +1073,7 @@ class CodexAppServerBackendChild:
 
     async def _start_compaction(
         self,
-        parameters: bindings.ThreadCompactStartParams,
+        parameters: protocol.ThreadCompactStartParams,
         turn: _TurnInFlight,
     ) -> str | None:
         """Accept compaction on its immediate response or its standard turn notification."""
@@ -1091,7 +1091,7 @@ class CodexAppServerBackendChild:
             return turn.started.result()
         try:
             result = await accepted
-            bindings.ThreadCompactStartResponse.model_validate(result)
+            protocol.ThreadCompactStartResponse.model_validate(result)
         except (CodexAppServerError, ValidationError) as would_not_start:
             raise PromptWriteFailed(str(would_not_start)) from would_not_start
         # The documented response has no turn id. A later turn/started notification binds
@@ -1100,7 +1100,7 @@ class CodexAppServerBackendChild:
 
     async def _start_review(
         self,
-        parameters: bindings.ReviewStartParams,
+        parameters: protocol.ReviewStartParams,
         turn: _TurnInFlight,
     ) -> str | None:
         """Keep the parent review id and the nested interrupt id distinct."""
@@ -1122,7 +1122,7 @@ class CodexAppServerBackendChild:
             return turn.turn_id
         try:
             result = await accepted
-            response_turn_id = bindings.ReviewStartResponse.model_validate(result).turn.id
+            response_turn_id = protocol.ReviewStartResponse.model_validate(result).turn.id
         except (CodexAppServerError, ValidationError) as would_not_start:
             raise PromptWriteFailed(str(would_not_start)) from would_not_start
         self._bind_review_parent_id(turn, response_turn_id)
@@ -1133,7 +1133,7 @@ class CodexAppServerBackendChild:
     ) -> None:
         """Read a review response that arrived after its nested start notification."""
         result = await accepted
-        response_turn_id = bindings.ReviewStartResponse.model_validate(result).turn.id
+        response_turn_id = protocol.ReviewStartResponse.model_validate(result).turn.id
         self._bind_review_parent_id(turn, response_turn_id)
 
     def _bind_review_parent_id(self, turn: _TurnInFlight, turn_id: str) -> None:
@@ -1147,7 +1147,7 @@ class CodexAppServerBackendChild:
 
     async def _start_the_turn(
         self,
-        parameters: bindings.TurnStartParams,
+        parameters: protocol.TurnStartParams,
         turn: _TurnInFlight,
         effort: str | None,
     ) -> str:
@@ -1155,7 +1155,6 @@ class CodexAppServerBackendChild:
         turn.awaiting_start_response = True
         try:
             payload = _wire(parameters)
-            # The generated enum describes this pin, not all provider-supported values.
             # Explicit null must reach Codex instead of inheriting the previous effort.
             payload["effort"] = effort
             answer = await self._client.begin_request("turn/start", payload)
@@ -1170,7 +1169,7 @@ class CodexAppServerBackendChild:
         except CodexAppServerError as failed:
             raise PromptWriteFailed(str(failed)) from failed
         try:
-            turn_id = bindings.TurnStartResponse.model_validate(result).turn.id
+            turn_id = protocol.TurnStartResponse.model_validate(result).turn.id
             if not turn_id:
                 raise ValueError("missing turn id")
         except (ValidationError, ValueError) as invalid:
@@ -1349,43 +1348,43 @@ class CodexAppServerBackendChild:
             turn.pending_notifications.append((method, notification))
             return
         match notification:
-            case bindings.TurnStartedNotification():
+            case protocol.TurnStartedNotification():
                 self._on_turn_started(notification)
-            case bindings.TurnCompletedNotification():
+            case protocol.TurnCompletedNotification():
                 await self._on_turn_completed(notification)
-            case bindings.AgentMessageDeltaNotification():
+            case protocol.AgentMessageDeltaNotification():
                 await self._on_agent_message_delta(notification)
-            case bindings.ItemStartedNotification():
+            case protocol.ItemStartedNotification():
                 await self._on_item_started(notification)
-            case bindings.CommandExecutionOutputDeltaNotification():
+            case protocol.CommandExecutionOutputDeltaNotification():
                 await self._on_tool_call_progress(
                     notification.turnId, notification.itemId, notification.delta
                 )
-            case bindings.McpToolCallProgressNotification():
+            case protocol.McpToolCallProgressNotification():
                 await self._on_tool_call_progress(
                     notification.turnId, notification.itemId, notification.message
                 )
             case (
-                bindings.ReasoningTextDeltaNotification()
-                | bindings.ReasoningSummaryTextDeltaNotification()
+                protocol.ReasoningTextDeltaNotification()
+                | protocol.ReasoningSummaryTextDeltaNotification()
             ):
                 await self._on_model_thinking(notification.turnId)
-            case bindings.TurnPlanUpdatedNotification():
+            case protocol.TurnPlanUpdatedNotification():
                 await self._on_plan_updated(notification)
-            case bindings.ThreadTokenUsageUpdatedNotification():
+            case protocol.ThreadTokenUsageUpdatedNotification():
                 await self._on_token_usage_updated(notification)
-            case bindings.ItemCompletedNotification():
+            case protocol.ItemCompletedNotification():
                 await self._on_item_completed(notification)
-            case bindings.ErrorNotification():
+            case protocol.ErrorNotification():
                 self._on_error(notification)
-            case bindings.SkillsChangedNotification():
+            case protocol.SkillsChangedNotification():
                 self._catalog_coordinator.hint_skills()
-            case bindings.AppListUpdatedNotification():
+            case protocol.AppListUpdatedNotification():
                 self._catalog_coordinator.hint_apps()
             case _:
                 LOGGER.debug("codex sent %s, which nothing here reads", method)
 
-    def _on_turn_started(self, notification: bindings.TurnStartedNotification) -> None:
+    def _on_turn_started(self, notification: protocol.TurnStartedNotification) -> None:
         turn = self._turn
         if turn is None or notification.threadId != self._thread_id:
             return
@@ -1399,7 +1398,7 @@ class CodexAppServerBackendChild:
         if not turn.started.done():
             turn.started.set_result(notification.turn.id)
 
-    async def _on_turn_completed(self, notification: bindings.TurnCompletedNotification) -> None:
+    async def _on_turn_completed(self, notification: protocol.TurnCompletedNotification) -> None:
         turn = self._turn_this_is_about(notification.turn.id)
         if turn is None:
             return
@@ -1419,7 +1418,7 @@ class CodexAppServerBackendChild:
         await self._end_turn(turn, ending, error_summary)
 
     async def _on_agent_message_delta(
-        self, notification: bindings.AgentMessageDeltaNotification
+        self, notification: protocol.AgentMessageDeltaNotification
     ) -> None:
         turn = self._turn_this_is_about(notification.turnId)
         if turn is None:
@@ -1451,7 +1450,7 @@ class CodexAppServerBackendChild:
             return
         await self._sink.report(turn.token, ModelThinkingHappened())
 
-    async def _on_plan_updated(self, notification: bindings.TurnPlanUpdatedNotification) -> None:
+    async def _on_plan_updated(self, notification: protocol.TurnPlanUpdatedNotification) -> None:
         """The turn's plan, whole, as codex now has it.
 
         Codex sends the entire plan on every change, which is exactly what a plan row is,
@@ -1464,7 +1463,7 @@ class CodexAppServerBackendChild:
         await self._sink.report(turn.token, PlanUpdated(entries=_plan_entries(notification.plan)))
 
     async def _on_token_usage_updated(
-        self, notification: bindings.ThreadTokenUsageUpdatedNotification
+        self, notification: protocol.ThreadTokenUsageUpdatedNotification
     ) -> None:
         """What codex has counted so far, every time it recounts.
 
@@ -1496,14 +1495,20 @@ class CodexAppServerBackendChild:
             ),
         )
 
-    async def _on_item_started(self, notification: bindings.ItemStartedNotification) -> None:
+    async def _on_item_started(self, notification: protocol.ItemStartedNotification) -> None:
         turn = self._turn_this_is_about(notification.turnId)
         if turn is None:
             return
-        if isinstance(notification.item, bindings.ReasoningThreadItem):
+        if isinstance(notification.item, protocol.ReasoningThreadItem):
             # What it reasoned is dropped where it arrives. That it began reasoning is the
             # earliest sign codex gives that the model is working, and it is passed on.
             await self._sink.report(turn.token, ModelThinkingHappened())
+            return
+        if not isinstance(notification.item, (
+            protocol.CommandExecutionThreadItem,
+            protocol.FileChangeThreadItem,
+            protocol.McpToolCallThreadItem,
+        )):
             return
         started = _tool_call_started(notification.item)
         if started is None:
@@ -1517,23 +1522,29 @@ class CodexAppServerBackendChild:
             ),
         )
 
-    async def _on_item_completed(self, notification: bindings.ItemCompletedNotification) -> None:
+    async def _on_item_completed(self, notification: protocol.ItemCompletedNotification) -> None:
         turn = self._turn_this_is_about(notification.turnId)
         if turn is None:
             return
         item = notification.item
-        if isinstance(item, bindings.AgentMessageThreadItem):
+        if isinstance(item, protocol.AgentMessageThreadItem):
             turn.agent_message_texts.pop(item.id, None)
             await self._sink.report(
                 turn.token, AgentMessageCompleted(content=text_message_content(item.text))
             )
             return
-        if isinstance(item, bindings.ContextCompactionThreadItem):
+        if isinstance(item, protocol.ContextCompactionThreadItem):
             # Codex summarised the conversation so far and dropped what it summarised. It
             # sends the compaction as an item like any other — started, then completed —
             # and the finish is the one read here, because that is where the item is codex's
             # settled account of itself and reading both would write the row twice.
             await self._sink.report(turn.token, ContextCompacted())
+            return
+        if not isinstance(item, (
+            protocol.CommandExecutionThreadItem,
+            protocol.FileChangeThreadItem,
+            protocol.McpToolCallThreadItem,
+        )):
             return
         finished = _tool_call_finished(item)
         if finished is None:
@@ -1544,7 +1555,7 @@ class CodexAppServerBackendChild:
             ToolCallFinished(tool_call_id=item.id, tool_call_status=status, detail=detail),
         )
 
-    def _on_error(self, notification: bindings.ErrorNotification) -> None:
+    def _on_error(self, notification: protocol.ErrorNotification) -> None:
         """Remember what went wrong, for the turn's own ending to say.
 
         Codex reports an error and then reports the turn, so ending the turn here would end
@@ -1566,7 +1577,7 @@ class CodexAppServerBackendChild:
         if turn is not None and turn.awaiting_start_response:
             turn.pending_requests.append((method, request_id, params))
             return
-        if isinstance(params, bindings.ToolRequestUserInputParams):
+        if isinstance(params, protocol.ToolRequestUserInputParams):
             await self._on_user_input_request(request_id, params)
             return
         ask = _permission_ask_of(params)
@@ -1596,7 +1607,7 @@ class CodexAppServerBackendChild:
         )
 
     async def _on_user_input_request(
-        self, wire_request_id: Any, params: bindings.ToolRequestUserInputParams
+        self, wire_request_id: Any, params: protocol.ToolRequestUserInputParams
     ) -> None:
         """Raise a question request, never an execution approval."""
         turn = self._turn_this_is_about(params.turnId)
@@ -1723,7 +1734,7 @@ def _thread_sandbox(access: ConversationAccess) -> Literal["danger-full-access"]
     raise NotImplementedError(f"codex has no thread sandbox for {access}")
 
 
-def _turn_sandbox_policy(access: ConversationAccess) -> bindings.DangerFullAccessSandboxPolicy:
+def _turn_sandbox_policy(access: ConversationAccess) -> protocol.DangerFullAccessSandboxPolicy:
     if access is ConversationAccess.full:
         return FULL_ACCESS_TURN_SANDBOX_POLICY
     raise NotImplementedError(f"codex has no turn sandbox policy for {access}")
@@ -1751,7 +1762,7 @@ _PLAN_ENTRY_STATUSES: dict[str, PlanEntryStatus] = {
 }
 
 
-def _plan_entries(plan: list[bindings.TurnPlanStep]) -> tuple[PlanEntry, ...]:
+def _plan_entries(plan: list[protocol.TurnPlanStep]) -> tuple[PlanEntry, ...]:
     return tuple(
         PlanEntry(text=step.step, status=_PLAN_ENTRY_STATUSES[str(step.status)]) for step in plan
     )
@@ -1760,15 +1771,15 @@ def _plan_entries(plan: list[bindings.TurnPlanStep]) -> tuple[PlanEntry, ...]:
 def _tool_call_started(item: Any) -> tuple[str, str, str | None] | None:
     """The title, kind and detail of a codex item that is a piece of work, if it is one."""
     match item:
-        case bindings.CommandExecutionThreadItem():
+        case protocol.CommandExecutionThreadItem():
             return (
                 _shortened(item.command, TOOL_CALL_TITLE_MAXIMUM_CHARACTERS),
                 COMMAND_EXECUTION_TOOL_KIND,
                 item.cwd,
             )
-        case bindings.FileChangeThreadItem():
+        case protocol.FileChangeThreadItem():
             return (_file_change_title(item), FILE_CHANGE_TOOL_KIND, _file_change_detail(item))
-        case bindings.McpToolCallThreadItem():
+        case protocol.McpToolCallThreadItem():
             return (f"{item.server}/{item.tool}", MCP_TOOL_CALL_TOOL_KIND, None)
         case _:
             return None
@@ -1777,15 +1788,15 @@ def _tool_call_started(item: Any) -> tuple[str, str, str | None] | None:
 def _tool_call_finished(item: Any) -> tuple[ToolCallStatus, str | None] | None:
     """How a piece of work finished, if it is a piece of work and it has finished."""
     match item:
-        case bindings.CommandExecutionThreadItem():
+        case protocol.CommandExecutionThreadItem():
             status = _FINISHED_TOOL_CALL_STATUSES.get(item.status)
             detail = _shortened_or_nothing(
                 item.aggregatedOutput, TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS
             )
-        case bindings.FileChangeThreadItem():
+        case protocol.FileChangeThreadItem():
             status = _FINISHED_TOOL_CALL_STATUSES.get(item.status)
             detail = _file_change_detail(item)
-        case bindings.McpToolCallThreadItem():
+        case protocol.McpToolCallThreadItem():
             status = _FINISHED_TOOL_CALL_STATUSES.get(item.status)
             detail = None if item.error is None else item.error.message
         case _:
@@ -1796,14 +1807,14 @@ def _tool_call_finished(item: Any) -> tuple[ToolCallStatus, str | None] | None:
     return status, detail
 
 
-def _file_change_title(item: bindings.FileChangeThreadItem) -> str:
+def _file_change_title(item: protocol.FileChangeThreadItem) -> str:
     paths = [change.path for change in item.changes]
     if len(paths) == 1:
         return f"Change {paths[0]}"
     return f"Change {len(paths)} files"
 
 
-def _file_change_detail(item: bindings.FileChangeThreadItem) -> str | None:
+def _file_change_detail(item: protocol.FileChangeThreadItem) -> str | None:
     lines = [f"{change.kind.type} {change.path}" for change in item.changes]
     return _shortened("\n".join(lines), TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS)
 
@@ -1811,14 +1822,14 @@ def _file_change_detail(item: bindings.FileChangeThreadItem) -> str | None:
 def _permission_ask_of(params: BaseModel) -> tuple[str, str, str | None] | None:
     """The turn, title and detail of an approval codex is asking for."""
     match params:
-        case bindings.CommandExecutionRequestApprovalParams():
+        case protocol.CommandExecutionRequestApprovalParams():
             command = params.command or params.itemId
             return (
                 params.turnId,
                 f"Run {_shortened(command, TOOL_CALL_TITLE_MAXIMUM_CHARACTERS)}",
                 params.reason or params.cwd,
             )
-        case bindings.FileChangeRequestApprovalParams():
+        case protocol.FileChangeRequestApprovalParams():
             return (params.turnId, "Change files", params.reason or params.grantRoot)
         case _:
             return None
@@ -1828,19 +1839,19 @@ def _approval_answer(method: str, decision: str) -> dict[str, Any]:
     """The answer to one of codex's approval requests, in the shape that request expects.
 
     The decision is passed through as codex's own word for it. Building the answer through
-    the generated model is what refuses an answer codex does not offer before it reaches
+    the Panels contract refuses an unsupported answer before it reaches
     the wire rather than after.
     """
     model = (
-        bindings.FileChangeRequestApprovalResponse
+        protocol.FileChangeRequestApprovalResponse
         if method == "item/fileChange/requestApproval"
-        else bindings.CommandExecutionRequestApprovalResponse
+        else protocol.CommandExecutionRequestApprovalResponse
     )
     return _wire(model.model_validate({"decision": decision}))
 
 
 def _user_input_questions(
-    questions: list[bindings.ToolRequestUserInputQuestion],
+    questions: list[protocol.ToolRequestUserInputQuestion],
 ) -> tuple[UserInputQuestion, ...]:
     """Translate one complete Codex request, rejecting shapes the UI cannot answer."""
     if not questions:
@@ -1883,9 +1894,9 @@ def _user_input_questions(
 def _user_input_answer(answers: tuple[UserInputAnswer, ...]) -> dict[str, Any]:
     """The complete answer map in Codex's exact response shape."""
     return _wire(
-        bindings.ToolRequestUserInputResponse(
+        protocol.ToolRequestUserInputResponse(
             answers={
-                answer.question_id: bindings.ToolRequestUserInputAnswer(
+                answer.question_id: protocol.ToolRequestUserInputAnswer(
                     answers=list(answer.answers)
                 )
                 for answer in answers
@@ -1894,7 +1905,7 @@ def _user_input_answer(answers: tuple[UserInputAnswer, ...]) -> dict[str, Any]:
     )
 
 
-def _error_summary(error: bindings.TurnError | None) -> str:
+def _error_summary(error: protocol.TurnError | None) -> str:
     if error is None:
         return normalized_failure_summary(None)
     info = error.codexErrorInfo
@@ -1907,9 +1918,11 @@ def _error_summary(error: bindings.TurnError | None) -> str:
         "responseStreamDisconnected",
         "responseTooManyFailedAttempts",
     ):
-        variant = getattr(info, info_field, None)
-        if variant is not None:
-            http_status = variant.httpStatusCode
+        variant = info.get(info_field) if isinstance(info, dict) else None
+        if isinstance(variant, dict):
+            candidate = variant.get("httpStatusCode")
+            if type(candidate) is int:
+                http_status = candidate
             break
     detail = error.message
     if error.additionalDetails:
@@ -1929,10 +1942,10 @@ def _shortened_or_nothing(text: str | None, limit: int) -> str | None:
 
 
 def _catalog_snapshot(
-    skills: bindings.SkillsListResponse | None,
-    installed_apps: bindings.AppsInstalledResponse | None,
-    apps: tuple[bindings.ConnectorMetadata, ...] | None,
-    plugins: bindings.PluginInstalledResponse | None,
+    skills: protocol.SkillsListResponse | None,
+    installed_apps: protocol.AppsInstalledResponse | None,
+    apps: tuple[protocol.ConnectorMetadata, ...] | None,
+    plugins: protocol.PluginInstalledResponse | None,
 ) -> _CatalogSnapshot:
     """Join Codex's catalogue sources into one deterministic, executable snapshot."""
     candidates: list[tuple[str, ComposerCatalogEntry, _CatalogInvocation]] = []
@@ -2116,7 +2129,7 @@ def _goal_invocation(text: str) -> _CatalogInvocation:
     raise PromptWriteFailed("/goal accepts no argument, 'get', 'set <objective>', or 'clear'")
 
 
-def _goal_inspection_message(goal: bindings.ThreadGoal | None) -> str:
+def _goal_inspection_message(goal: protocol.ThreadGoal | None) -> str:
     if goal is None:
         return "No goal is set."
     budget = "" if goal.tokenBudget is None else f"/{goal.tokenBudget}"
@@ -2133,7 +2146,7 @@ def _mention_token(name: str) -> str:
 
 
 def _wire(parameters: BaseModel) -> dict[str, Any]:
-    """A generated model as the JSON codex is sent: what was asked for, and nothing else.
+    """A Panels request as JSON: what was asked for, and nothing else.
 
     Absent fields are left out rather than sent as nulls, because codex tells absent from
     null on the fields that override thread state and a null is not "leave this alone".
