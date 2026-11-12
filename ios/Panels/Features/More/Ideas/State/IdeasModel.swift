@@ -24,11 +24,25 @@ import Observation
         projectID = project.isEmpty ? nil : project
         restoring = false
     }
-    private(set) var ideas: [Idea] = []
-    private(set) var projects: [IdeaProject] = []
-    private(set) var hasLoaded = false
+    private var resourceOwner: ResourceOwner?
+    private var ideaResource: ResourceHandle<IdeasResponse>?
+    private var projectResource: ResourceHandle<IdeaProjectsResponse>?
+    private var standaloneIdeas: [Idea] = []
+    private var standaloneProjects: [IdeaProject] = []
+    private var standaloneHasLoaded = false
+    var ideas: [Idea] { ideaResource == nil ? standaloneIdeas : ideaResource?.value?.ideas ?? [] }
+    var projects: [IdeaProject] { projectResource == nil ? standaloneProjects : projectResource?.value?.projects ?? [] }
+    var hasLoaded: Bool { ideaResource == nil ? standaloneHasLoaded : ideaResource?.value != nil }
+    func connect(_ owner: ResourceOwner, api: APIClient) {
+        resourceOwner = owner
+        standaloneIdeas = []; standaloneProjects = []; standaloneHasLoaded = false; standaloneReadError = nil
+        ideaResource = owner.handle(IdeasResources.ideas)
+        projectResource = owner.handle(IdeasResources.projects)
+        restore(api)
+    }
     private(set) var isCapturing = false
-    private(set) var readError: String?
+    private var standaloneReadError: String?
+    var readError: String? { ideaResource?.error ?? projectResource?.error ?? standaloneReadError }
     private(set) var captureError: String?
     private var readGeneration = 0
 
@@ -36,6 +50,12 @@ import Observation
 
     func refresh(using service: any IdeasServing) async {
         restore(service)
+        if let ideaResource, let projectResource {
+            async let ideas: Void = ideaResource.refresh()
+            async let projects: Void = projectResource.refresh()
+            _ = await (ideas, projects)
+            return
+        }
         readGeneration += 1
         let generation = readGeneration
         do {
@@ -43,13 +63,13 @@ import Observation
             async let projectRead = service.ideaProjects()
             let (response, catalogue) = try await (ideaRead, projectRead)
             guard !Task.isCancelled, generation == readGeneration else { return }
-            ideas = response.ideas
-            projects = catalogue.projects
-            hasLoaded = true
-            readError = nil
+            standaloneIdeas = response.ideas
+            standaloneProjects = catalogue.projects
+            standaloneHasLoaded = true
+            standaloneReadError = nil
         } catch {
             guard !Task.isCancelled, generation == readGeneration else { return }
-            readError = error.localizedDescription
+            standaloneReadError = error.localizedDescription
         }
     }
 
@@ -67,12 +87,20 @@ import Observation
             let idea = try await service.captureIdea(capture)
             // An earlier read must not erase the acknowledged capture.
             readGeneration += 1
-            ideas.removeAll { $0.id == idea.id }
-            ideas.insert(idea, at: 0)
+            if let api = service as? APIClient {
+                guard draftServer == LocalStore.server(api.baseURL) else { return true }
+                resourceOwner?.invalidate([IdeasResources.ideas.key])
+                await ideaResource?.refresh()
+                guard draftServer == LocalStore.server(api.baseURL) else { return true }
+            } else {
+                standaloneIdeas.removeAll { $0.id == idea.id }
+                standaloneIdeas.insert(idea, at: 0)
+                standaloneHasLoaded = true
+            }
             title = ""; detail = ""; projectID = nil
-            hasLoaded = true
             return true
         } catch {
+            if let api = service as? APIClient, draftServer != LocalStore.server(api.baseURL) { return false }
             captureError = error.localizedDescription
             return false
         }

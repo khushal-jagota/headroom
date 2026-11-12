@@ -113,9 +113,22 @@ struct ResourceTransport: Sendable {
     })
 }
 
+/// Only admitted display data enters this schema. Restoration never grants freshness.
+struct ResourceCacheEnvelope: Codable {
+    static let schema = 1
+    let schemaIdentity: Int
+    let server: String
+    let key: String
+    let data: Data
+    let epoch: String?
+    let revision: String?
+    static func identity(_ key: String) -> String { "resource-body:v1:" + key }
+}
+
 /// One raw body per normalized server and exact key. Navigation and tails remain separate.
 @MainActor final class ResourceOwner {
     private var api: APIClient
+    private let cacheStore: LocalStore
     private let transport: ResourceTransport
     private var generation = 0
     private var entries: [String: ResourceEntry] = [:]
@@ -126,8 +139,11 @@ struct ResourceTransport: Sendable {
     private var wake: Task<Void, Never>?
     private var changes: Task<Void, Never>?
     private var expiry: Task<Void, Never>?
-    init(api: APIClient, transport: ResourceTransport = .live) { self.api = api; self.transport = transport }
+    init(api: APIClient, transport: ResourceTransport = .live, cacheStore: LocalStore = .shared) {
+        self.api = api; self.transport = transport; self.cacheStore = cacheStore
+    }
     var server: String { LocalStore.server(api.baseURL) }
+    var admissionGeneration: Int { generation }
     func handle<T>(_ registration: ResourceRegistration<T>) -> ResourceHandle<T> {
         evict()
         let identity = server + ":" + registration.key
@@ -135,6 +151,14 @@ struct ResourceTransport: Sendable {
         if let existing = entries[identity] { entry = existing }
         else {
             entry = ResourceEntry(key: registration.key, server: server, versioned: registration.versioned)
+            if let payload = try? cacheStore.record(server: server, kind: "cache", id: ResourceCacheEnvelope.identity(entry.key))?.payload,
+               let saved = try? JSONDecoder().decode(ResourceCacheEnvelope.self, from: payload),
+               saved.schemaIdentity == ResourceCacheEnvelope.schema, saved.server == server, saved.key == entry.key,
+               (saved.epoch == nil) == (saved.revision == nil), (try? registration.decode(saved.data)) != nil {
+                entry.data = saved.data; entry.epoch = saved.epoch; entry.revision = saved.revision
+                // A saved revision is display metadata, never admission for this run.
+                entry.isStale = true
+            }
             entries[identity] = entry
         }
         entry.validate = { _ = try registration.decode($0) }
@@ -278,6 +302,11 @@ struct ResourceTransport: Sendable {
                 try entry.validate?(data)
                 entry.data = data; entry.publication += 1; entry.decoded = [:]; entry.epoch = epoch; entry.revision = revision
                 entry.isStale = revision == nil; entry.error = nil; entry.failure = nil; entry.lastUsed = Date()
+                let saved = ResourceCacheEnvelope(schemaIdentity: ResourceCacheEnvelope.schema, server: entry.server,
+                                                  key: entry.key, data: data, epoch: epoch, revision: revision)
+                if let payload = try? JSONEncoder().encode(saved) {
+                    cacheStore.enqueueCacheResponse(server: entry.server, id: ResourceCacheEnvelope.identity(entry.key), data: payload)
+                }
                 if let deadline = try entry.deadlineForData?(data) { schedule(entry, at: deadline) }
             } catch {
                 guard expected == generation, readGeneration == entry.generation, !Task.isCancelled else { return }

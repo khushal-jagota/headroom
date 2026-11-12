@@ -14,16 +14,22 @@ import Observation
     /// Per Workspace card (manager id, or "chief"), the active tickets its rail window
     /// counts but did not load: the shared row budget can cut a card short.
     var workspaceHidden: [String: Int] = [:]
-    var chief: ChiefDetail?
+    private var chiefResource: ResourceHandle<ChiefDetail> { resources.handle(ChiefResources.settings) }
+    private var deploymentResource: ResourceHandle<DeploymentStatus> { resources.handle(ChiefResources.deployment) }
+    private var healthResource: ResourceHandle<ExecutorHealth> { resources.handle(ChiefResources.executorHealth) }
+    var chief: ChiefDetail? { chiefResource.value }
     var chiefSignal: ConversationSignal?
     var review: ReviewResponse?
     var counts: ViewCounts?
     /// The last admitted view; screens read window paging facts from it.
     private(set) var view: ViewSnapshot?
-    var executorHealth: ExecutorHealth?
-    var deployment: DeploymentStatus?
+    var executorHealth: ExecutorHealth? { healthResource.value }
+    var deployment: DeploymentStatus? { deploymentResource.value }
     var errors: [String: ServerReadFailure] = [:]
-    var serverUnreachable: Bool { errors.values.contains { $0.isServerUnreachable } }
+    var serverUnreachable: Bool {
+        errors.values.contains { $0.isServerUnreachable } || chiefResource.failure?.isServerUnreachable == true ||
+            deploymentResource.failure?.isServerUnreachable == true || healthResource.failure?.isServerUnreachable == true
+    }
     var isLoading = false
     /// The view stream's health: "Following changes" once the current stream delivered
     /// its snapshot, "Reconnecting" after a failure until the next snapshot.
@@ -52,7 +58,6 @@ import Observation
     private var reconnectRequested = false
     private var viewReading = false
     private var viewReadsStarted = 0
-    private var resourceVersions = ResourceVersionState()
 
     init(baseURL suppliedBaseURL: URL? = nil, session: URLSession = .shared) {
         self.session = session
@@ -79,10 +84,9 @@ import Observation
         self.baseURL = baseURL
         resources.configure(api: client)
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
-        managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; chief = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
+        managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; chiefSignal = nil; review = nil; counts = nil; view = nil
         presentation = nil; recordStamps = [:]
-        deployment = nil; errors = [:]; executorHealth = nil
-        resourceVersions = ResourceVersionState()
+        errors = [:]
         restore()
     }
 
@@ -100,7 +104,6 @@ import Observation
                   case .snapshot(let snapshot)? = try? APIClient.decoder().decode(ViewFrame.self, from: data) else { continue }
             admit(snapshot)
         }
-        chief = client.cached("/api/workers/chief-of-staff/settings")
     }
 
     private func save(_ snapshot: ViewSnapshot, data: Data, api: APIClient) async {
@@ -212,15 +215,16 @@ import Observation
         runGeneration += 1
         let generation = runGeneration
         running = true
+        let chief = chiefResource, deployment = deploymentResource, health = healthResource
+        chief.acquire(); deployment.acquire(); health.acquire()
         resources.start()
         if hasRun { connectionSession += 1 }
         hasRun = true
         defer {
+            chief.release(); deployment.release(); health.release()
             if runGeneration == generation { resources.stop(); running = false; viewConsumer = nil; streamRequest = nil }
         }
-        async let settings: () = followSettings()
         await followView()
-        await settings
     }
 
     fileprivate enum ViewStreamEnd { case cancelled, ended(admitted: Bool), refused(admitted: Bool), failed }
@@ -294,25 +298,6 @@ import Observation
         }
     }
 
-    /// Chief settings and deployment status are outside the view, and deployment status
-    /// is not a navigation change at all, so these two small versioned reads keep the
-    /// payload-free change stream. Wakes are coalesced to one probe a second.
-    private func followSettings() async {
-        await readSettings(probing: false)
-        while !Task.isCancelled {
-            do {
-                for try await _ in client.changes() {
-                    try Task.checkCancellation()
-                    await readSettings(probing: true)
-                    try await Task.sleep(for: .seconds(1))
-                }
-            } catch {
-                if Task.isCancelled { return }
-            }
-            do { try await Task.sleep(for: .seconds(3)) } catch { return }
-        }
-    }
-
     /// Manual refresh and confirmed writes. Chief settings and deployment read again. The
     /// view follows its stream; a stream that is not current reconnects now. Without a
     /// foreground stream, one snapshot is read.
@@ -329,20 +314,15 @@ import Observation
         if errors.isEmpty { Task { await Outbox.shared.drain(api: api) } }
     }
 
-    /// Probing reads a body only when its version moved; otherwise both bodies read.
+    /// Explicit refresh reads the three shell resources; probes share the owner.
     func readSettings(probing: Bool) async {
-        let api = client
-        let keys = ["/api/workers/chief-of-staff/settings", "/api/deployment-status"]
-        let probe = probing ? try? await api.resourceVersions(keys) : nil
-        guard !Task.isCancelled, api.baseURL == baseURL else { return }
-        async let chiefRead: () = readVersioned("Chief", path: keys[0], api: api, probe: probe, force: !probing) { self.chief = $0 }
-        async let deployRead: () = readVersioned("Deployment", path: keys[1], api: api, probe: probe, force: !probing) { self.deployment = $0 }
-        async let machineRead = api.executorHealth()
-        _ = await (chiefRead, deployRead)
-        let health = try? await machineRead
-        guard !Task.isCancelled, api.baseURL == baseURL else { return }
-        executorHealth = health
-        revision += 1
+        if probing { await resources.reconcile() }
+        else {
+            async let chief: Void = chiefResource.refresh()
+            async let deployment: Void = deploymentResource.refresh()
+            async let health: Void = healthResource.refresh()
+            _ = await (chief, deployment, health)
+        }
     }
 
     /// One bounded snapshot for the current scope, when no stream runs. A read that starts
@@ -370,30 +350,4 @@ import Observation
         }
     }
 
-    private func readVersioned<T: Decodable & Sendable>(_ label: String, path: String, api: APIClient, probe: ResourceVersions?, force: Bool, apply: @MainActor @Sendable (T) -> Void) async {
-        if !force, errors[label] == nil, resourceVersions.isCurrent(path, probe: probe) { return }
-        do {
-            let result: ResourceBody<T> = try await api.resourceBody(path)
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            apply(result.body)
-            resourceVersions.accept(result)
-            errors[label] = nil
-        } catch {
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            // Older servers and unregistered resources retain ordinary refresh.
-            resourceVersions.invalidate(path)
-            await read(label, from: api, fetch: { try await api.get(path) }, apply: apply)
-        }
-    }
-
-    private func read<T: Sendable>(_ key: String, from api: APIClient, fetch: @Sendable () async throws -> T, apply: @MainActor @Sendable (T) -> Void) async {
-        do {
-            let value = try await fetch()
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            apply(value); errors[key] = nil
-        } catch {
-            guard !Task.isCancelled, api.baseURL == baseURL else { return }
-            errors[key] = ServerReadFailure(error)
-        }
-    }
 }

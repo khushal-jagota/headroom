@@ -4,8 +4,10 @@ struct OrchestratorView: View {
     let managerID: String
     var openConversationID: String?
     @Environment(AppStore.self) private var store
-    @State private var detail: ManagerDetail?
-    @State private var error: String?
+    private var resource: ResourceHandle<ManagerDetail> { store.resources.handle(ManagerResources.detail(managerID)) }
+    private var detail: ManagerDetail? { resource.value }
+    private var contentResource: ResourceHandle<ManagerDocumentContent> { store.resources.handle(ManagerResources.content(managerID)) }
+    private var error: String? { resource.error ?? contentResource.error }
     @State private var actions = AgentPageActions()
 
     private var summary: ManagerSummary? { store.managers.first { $0.id == managerID } }
@@ -15,12 +17,12 @@ struct OrchestratorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
                 AgentPageControls {
-                    AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await store.refresh() }
+                    AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await load(); await store.refresh() }
                 }
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
                     AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator", signal: liveSignal ?? detail?.conversationSignal ?? summary?.conversationSignal)
                     if let detail {
-                        AgentRecap(recap: detail.recap, target: Principal(kind: "manager", id: managerID), refresh: { await store.refresh() }, actions: actions)
+                        AgentRecap(recap: contentResource.value?.recap ?? detail.recap, target: Principal(kind: "manager", id: managerID), refresh: { await load(); await store.refresh() }, actions: actions)
                     }
                 }
                 if let detail {
@@ -35,8 +37,8 @@ struct OrchestratorView: View {
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
         .conversationNavigation(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", openConversationID: openConversationID, refreshError: error, retry: { await load() })
-        .task(id: "\(store.baseURL.absoluteString)|\(store.connectionSession)") { await load() }
-        .reload(onChangeOf: store.managerStamp(managerID)) { await load() }
+        .resourceDemand(resource)
+        .resourceDemand(contentResource)
         .navigationDemand("manager:\(managerID)", selected: .manager(managerID), windows: [NavigationScope.children(of: .manager(managerID))])
         .panelsRefreshable { await load() }
         .screenLoadState("orchestrator", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
@@ -44,15 +46,12 @@ struct OrchestratorView: View {
     }
 
     private func load() async {
-        let api = store.client
-        if detail == nil { detail = api.cached("/api/managers/\(managerID)/workspace") }
-        do {
-            let result = try await api.manager(managerID)
-            try Task.checkCancellation()
-            guard api.baseURL == store.baseURL else { return }
-            detail = result; error = nil
-        } catch { if !Task.isCancelled, api.baseURL == store.baseURL { self.error = error.localizedDescription } }
+        store.resources.invalidate([resource.key, contentResource.key])
+        async let detail: Void = resource.refresh()
+        async let content: Void = contentResource.refresh()
+        _ = await (detail, content)
     }
+
 }
 
 struct AgentPageTitle: View {

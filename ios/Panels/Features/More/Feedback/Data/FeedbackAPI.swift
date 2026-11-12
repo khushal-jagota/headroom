@@ -14,3 +14,7 @@ extension APIClient: FeedbackServing {
         return try Self.decoder().decode(FeedbackNote.self, from: data)
     }
 }
+
+enum FeedbackResources {
+    static let notes = ResourceRegistration<FeedbackResponse>(key: "/api/feedback", versioned: false)
+}

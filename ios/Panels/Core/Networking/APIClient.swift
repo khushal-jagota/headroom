@@ -63,7 +63,7 @@ struct APIClient: Sendable {
         let (data, url) = try await responseData(path, query: query)
         let value = try Self.decoder().decode(T.self, from: data)
         if Self.cacheable(path) {
-            try? await LocalStore.shared.cacheResponse(server: LocalStore.server(baseURL), id: url.absoluteString, data: data)
+            await LocalStore.shared.enqueueCacheResponse(server: LocalStore.server(baseURL), id: url.absoluteString, data: data)
         }
         return value
     }

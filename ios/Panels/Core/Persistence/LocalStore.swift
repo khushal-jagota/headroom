@@ -29,14 +29,16 @@ import SwiftData
     // user work needs to wake draft restoration and outgoing-work observers.
     private(set) var workRevision = 0
     var saveError: String?
+    private(set) var cacheErrors: [String: String] = [:]
+    private var cacheWriteGenerations: [String: Int] = [:]
 
-    init(url: URL? = nil) {
+    init(url: URL? = nil, cacheWrite: (@Sendable () throws -> Void)? = nil) {
         do {
             let location = url ?? Self.directory.appendingPathComponent("phone.store")
             try FileManager.default.createDirectory(at: location.deletingLastPathComponent(), withIntermediateDirectories: true)
             container = try ModelContainer(for: LocalRecord.self, configurations: ModelConfiguration(url: location))
             container?.mainContext.autosaveEnabled = false
-            if let container { cacheWriter = ResponseCacheWriter(container: container) }
+            if let container { cacheWriter = ResponseCacheWriter(container: container, beforeWrite: cacheWrite) }
         } catch { startupError = error; saveError = "Couldn’t open saved work: \(error.localizedDescription)" }
     }
     static var directory: URL {
@@ -76,14 +78,33 @@ import SwiftData
     }
     func cacheResponse(server: String, id: String, data: Data, updated: Date = .now) async throws {
         guard let cacheWriter else { throw startupError ?? CocoaError(.fileWriteUnknown) }
+        cacheWriteGenerations[server, default: 0] += 1
+        let generation = cacheWriteGenerations[server]
         do {
             try await cacheWriter.put(server: server, id: id, data: data, updated: updated)
-            saveError = nil
+            if cacheWriteGenerations[server] == generation { cacheErrors[server] = nil }
         } catch {
-            saveError = "Couldn’t save on this phone: \(error.localizedDescription)"
+            if cacheWriteGenerations[server] == generation { cacheErrors[server] = "Couldn’t cache this response: \(error.localizedDescription)" }
             throw error
         }
     }
+    /// Admission is synchronous and bounded. A cache save never delays live content.
+    func enqueueCacheResponse(server: String, id: String, data: Data, updated: Date = .now) {
+        guard let cacheWriter else {
+            cacheErrors[server] = "Couldn’t open the response cache."
+            return
+        }
+        cacheWriteGenerations[server, default: 0] += 1
+        let generation = cacheWriteGenerations[server]
+        cacheWriter.enqueue(server: server, id: id, data: data, updated: updated) { [weak self] error in
+            Task { @MainActor in
+                guard let self, self.cacheWriteGenerations[server] == generation else { return }
+                self.cacheErrors[server] = error.map { "Couldn’t cache this response: \($0)" }
+            }
+        }
+    }
+    func flushCache() async { await cacheWriter?.flush() }
+
     func put(server: String, kind: String, id: String, data: Data, draft: (String, String)? = nil) throws {
         guard kind != "cache" || data.count <= Self.cacheByteLimit else { return }
         let context = try context

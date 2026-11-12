@@ -5,10 +5,15 @@ struct TicketView: View {
     let ticketID: String
     var openConversationID: String?
     @Environment(AppStore.self) private var store
-    @State private var detail: TicketDetail?
-    @State private var manifest: TicketWorkerType?
+    private var resource: ResourceHandle<TicketRead> { store.resources.handle(TicketResources.detail(ticketID)) }
+    private var detail: TicketDetail? { resource.value?.detail }
+    private var manifestResource: ResourceHandle<TicketWorkerTypes>? {
+        guard let detail, detail.workflow == nil, let type = detail.workerType else { return nil }
+        return store.resources.handle(TicketResources.manifest(type))
+    }
+    private var manifest: TicketWorkerType? { detail?.workflow ?? manifestResource?.value?.workerTypes.first }
     @State private var artifacts: ArtifactPage?
-    @State private var error: String?
+    private var error: String? { resource.error ?? manifestResource?.error }
     @State private var artifactError: String?
     @State private var actionNote: String?
     @State private var busy = false
@@ -18,7 +23,6 @@ struct TicketView: View {
     @State private var configurationOpen = false
     @State private var renaming = false
     @State private var titleDraft = ""
-    @State private var loadGeneration = 0
     @State private var linkedArtifact: AppRoute?
     private var owner: ArtifactOwner { ArtifactOwner(kind: .ticket, id: ticketID) }
     private var presentation: TicketPresentation? {
@@ -47,8 +51,13 @@ struct TicketView: View {
         .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .panelsRefreshable { await load(); await loadArtifacts() }
         .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
-        .task(id: "\(store.baseURL.absoluteString)|\(store.connectionSession)") { await load() }
-        .reload(onChangeOf: store.ticketStamp(ticketID)) { await load() }
+        .resourceDemand(resource)
+        .task(id: store.baseURL.absoluteString + "|" + (detail?.workerType ?? "") + "|" + String(detail?.workflow == nil)) {
+            guard detail?.workflow == nil, let handle = manifestResource else { return }
+            handle.acquire(); defer { handle.release() }
+            await handle.refresh()
+            while !Task.isCancelled { do { try await Task.sleep(for: .seconds(3600)) } catch { return } }
+        }
         .navigationDemand("ticket:\(ticketID)", selected: ViewOwner(kind: "ticket", id: ticketID))
         .task(id: store.baseURL.absoluteString) { await loadArtifacts() }
         .sheet(isPresented: $scopeOpen) {
@@ -204,24 +213,9 @@ struct TicketView: View {
         Task { await perform { try await store.client.setTicketBacklogged(ticket, backlogged: !ticket.isBacklogged); return nil } }
     }
     private func load() async {
-        if detail == nil { detail = store.client.cachedTicket(ticketID) }
-        loadGeneration += 1
-        let generation = loadGeneration
-        let client = store.client
-        do {
-            let result = try await client.ticket(ticketID)
-            let type: TicketWorkerType
-            if let workflow = result.workflow { type = workflow }
-            else { type = try await client.ticketWorkerType(result.workerType) }
-            try Task.checkCancellation()
-            guard generation == loadGeneration, client.baseURL == store.baseURL else { return }
-            detail = result; manifest = type; error = nil
-        } catch {
-            if !Task.isCancelled && generation == loadGeneration && client.baseURL == store.baseURL {
-                self.error = error.localizedDescription
-                if error is APIError, error.localizedDescription.hasPrefix("Broken Ticket:") { detail = nil; manifest = nil }
-            }
-        }
+        store.resources.invalidate([resource.key])
+        await resource.refresh()
+        if detail?.workflow == nil { await manifestResource?.refresh() }
     }
     private func loadArtifacts() async {
         let client = store.client

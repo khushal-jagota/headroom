@@ -44,11 +44,18 @@ import XCTest
     func testRefreshReadsOneScopedViewAndSettingsFollowVersions() async throws {
         RefreshProtocol.state.withLock { $0 = RefreshFixture() }
         let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let chief = store.resources.handle(ChiefResources.settings)
+        let deployment = store.resources.handle(ChiefResources.deployment)
+        chief.acquire(); deployment.acquire()
+        defer { chief.release(); deployment.release(); store.resources.stop() }
         await store.refresh()
         XCTAssertTrue(store.errors.isEmpty)
         XCTAssertEqual(store.chief?.label, "Chief 1")
-        let cached = try XCTUnwrap(LocalStore.shared.record(server: "https://refresh.invalid", kind: "cache", id: "https://refresh.invalid/api/workers/chief-of-staff/settings")?.payload)
-        XCTAssertEqual((try JSONSerialization.jsonObject(with: cached) as? [String: Any])?["future_field"] as? String, "preserved")
+        await LocalStore.shared.flushCache()
+        let cached = try XCTUnwrap(LocalStore.shared.record(server: "https://refresh.invalid", kind: "cache", id: ResourceCacheEnvelope.identity(chief.key))?.payload)
+        let saved = try JSONDecoder().decode(ResourceCacheEnvelope.self, from: cached)
+        XCTAssertEqual(saved.epoch, RefreshProtocol.state.withLock { $0.epoch })
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: saved.data) as? [String: Any])?["future_field"] as? String, "preserved")
         // Without a foreground stream, one view snapshot replaces the Review, manager and ticket list reads.
         store.setNavigationDemand("workspace", [ViewWindowRequest(section: "rail_parents", limit: 60), ViewWindowRequest(section: "rail_tickets", owner: .chief, limit: 30)])
         RefreshProtocol.state.withLock { $0.paths = [] }

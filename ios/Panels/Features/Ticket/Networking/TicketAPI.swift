@@ -92,3 +92,16 @@ extension APIClient {
         return data
     }
 }
+
+/// Document reads use bounded server resources. Command preflights keep APIClient.ticket.
+enum TicketResources {
+    static func detail(_ id: String) -> ResourceRegistration<TicketRead> {
+        ResourceRegistration(key: "/api/tickets/\(id)/workspace")
+    }
+    static func field(_ id: String, _ field: String) -> ResourceRegistration<TicketFieldBody> {
+        ResourceRegistration(key: "/api/tickets/\(id)/workspace/fields/\(field)")
+    }
+    static func manifest(_ type: String) -> ResourceRegistration<TicketWorkerTypes> {
+        ResourceRegistration(key: "/api/worker-types/\(type)/manifest")
+    }
+}

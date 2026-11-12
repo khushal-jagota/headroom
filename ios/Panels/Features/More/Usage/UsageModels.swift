@@ -203,3 +203,23 @@ enum UsagePresentation {
     }
     static func fraction(_ percent: Double) -> Double { min(1, max(0, percent / 100)) }
 }
+
+enum UsageResources {
+    static let backends = ResourceRegistration<UsageBackends>(key: "/api/conversation/backends", versioned: false)
+    static func summary(days: Int, now: Date = .now, timeZone: TimeZone = .current) -> ResourceRegistration<RecordedUsageSummary> {
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
+        let format = DateFormatter(); format.calendar = calendar; format.timeZone = timeZone
+        format.locale = Locale(identifier: "en_US_POSIX"); format.dateFormat = "yyyy-MM-dd"
+        let start = calendar.date(byAdding: .day, value: -(days - 1), to: now)!
+        var parts = URLComponents()
+        parts.path = "/api/conversation/usage/summary"
+        parts.queryItems = [.init(name: "sinceDay", value: format.string(from: start)),
+                            .init(name: "untilDay", value: format.string(from: now)),
+                            .init(name: "timeZone", value: timeZone.identifier), .init(name: "resolution", value: "day")]
+        return ResourceRegistration(key: parts.string!, versioned: false, decode: { data in
+            let wire = try APIClient.decoder().decode(RecordedUsageSummary.self, from: data)
+            guard wire.contractVersion == 5 else { throw APIError(status: 0, message: "Usage format changed. Update the app to read it.") }
+            return wire
+        })
+    }
+}

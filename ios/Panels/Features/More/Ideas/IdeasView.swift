@@ -3,6 +3,8 @@ import SwiftUI
 struct IdeasView: View {
     @Environment(AppStore.self) private var store
     @State private var model = IdeasModel()
+    private var ideaResource: ResourceHandle<IdeasResponse> { store.resources.handle(IdeasResources.ideas) }
+    private var projectResource: ResourceHandle<IdeaProjectsResponse> { store.resources.handle(IdeasResources.projects) }
     @FocusState private var titleFocused: Bool
 
     var body: some View {
@@ -45,7 +47,9 @@ struct IdeasView: View {
             }
         }
         .panelsScreen()
-        .task(id: "\(store.baseURL.absoluteString):\(store.connectionSession)") { await model.refresh(using: store.client) }
+        .resourceDemand(ideaResource)
+        .resourceDemand(projectResource)
+        .task(id: store.baseURL.absoluteString) { model.connect(store.resources, api: store.client) }
         .panelsRefreshable { await model.refresh(using: store.client) }
     }
 

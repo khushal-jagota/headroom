@@ -53,3 +53,10 @@ enum SettingsServerAddress {
         return components.url
     }
 }
+
+enum SettingsResources {
+    static let workers = ResourceRegistration<SettingsWorkers>(key: "/api/workers", versioned: false)
+    static let skills = ResourceRegistration<SettingsSkills>(key: "/api/skills", versioned: false)
+    static let schedules = ResourceRegistration<SettingsSchedules>(key: "/api/schedules", versioned: false)
+    static let notifications = ResourceRegistration<SettingsNotifications>(key: "/api/notifications/settings", versioned: false)
+}
