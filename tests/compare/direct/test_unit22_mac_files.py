@@ -208,7 +208,9 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
         {
             "error": {
                 "name": "ValueError",
-                "message": "TypeScript executor root must be separate from the Python executor root",
+                "message": (
+                    "TypeScript executor root must be separate from the Python executor root"
+                ),
             }
         }
     ] * len(refused_roots)
@@ -238,7 +240,9 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
                     "accepted_difference": {
                         "python_default_paths": python_default_paths,
                         "typescript_default_paths": typescript_default_paths,
-                        "reason": "The TypeScript installation must stay separate from Python state.",
+                        "reason": (
+                            "The TypeScript installation must stay separate from Python state."
+                        ),
                         "fifo": "TS refuses FIFO intake without an external writer.",
                     },
                     "seconds": time.perf_counter() - started,
