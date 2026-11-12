@@ -1,3 +1,4 @@
+import { ChiefResources } from '../worker_settings/resource_versions.ts';
 import type { FastifyRequest } from 'fastify';
 import { TicketWorkspaceResources } from '../tickets/resource_versions.ts';
 import { WorkerTypeResources } from '../worker_types/resource_versions.ts';
@@ -7,6 +8,7 @@ import type { ResourceProvider, ResourceSnapshot } from './contracts.ts';
 export const providers: readonly ResourceProvider[] = [
   new WorkerTypeResources(),
   new TicketWorkspaceResources(),
+  new ChiefResources(),
 ];
 export function capture(
   providers: readonly ResourceProvider[],
