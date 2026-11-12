@@ -170,6 +170,7 @@ def test_unit17_startup_environment(
         "PATH": os.environ.get("PATH", "/bin:/usr/bin"),
         "LANG": "C.UTF-8",
         "HOME": str(home),
+        "PLAN_SERVER_URL": "http://127.0.0.1:0",
         "CODEX_HOME": str(ambient),
         "CLAUDE_CONFIG_DIR": str(home / "claude"),
         "HERMES_HOME": str(home / "hermes"),
