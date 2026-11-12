@@ -73,6 +73,7 @@ export function page_readings(
       sql,
       { id: manager_id ?? 'chief', page, revision: saved.page_revision },
       now,
+      calendar_iso,
     );
   let today: string;
   let midnight: Date;
