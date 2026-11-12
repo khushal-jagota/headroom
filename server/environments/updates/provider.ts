@@ -78,18 +78,56 @@ export class GitHubUpdateProvider implements UpdateProvider {
     const url = new URL(`https://api.github.com/repos/${this.repository}/${path}`);
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
     let response: Response;
+    const controller = new AbortController();
+    const network_read = async <T>(read: () => Promise<T>): Promise<T> => {
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      try {
+        return await read();
+      } finally {
+        clearTimeout(timer);
+      }
+    };
     try {
-      response = await this.fetch(url, {
-        method: 'GET',
-        headers,
-        redirect: 'follow',
-        signal: AbortSignal.timeout(30_000),
-      });
+      response = await network_read(() =>
+        this.fetch(url, {
+          method: 'GET',
+          headers,
+          redirect: 'follow',
+          signal: controller.signal,
+        }),
+      );
     } catch {
+      controller.abort();
       throw new Error('The repository update service is unavailable or its result is uncertain.');
     }
-    if (!response.ok) throw new Error('The repository update service refused the operation.');
-    return response;
+    if (!response.ok) {
+      controller.abort();
+      await response.body?.cancel().catch(() => {});
+      throw new Error('The repository update service refused the operation.');
+    }
+    if (response.body === null) {
+      controller.abort();
+      return response;
+    }
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    try {
+      for (;;) {
+        const { value, done } = await network_read(() => reader.read());
+        if (done) break;
+        chunks.push(value);
+      }
+    } catch {
+      throw new Error('The repository update service is unavailable or its result is uncertain.');
+    } finally {
+      controller.abort();
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+    return new Response(Buffer.concat(chunks), {
+      status: response.status,
+      headers: response.headers,
+    });
   }
   private async json(
     path: string,

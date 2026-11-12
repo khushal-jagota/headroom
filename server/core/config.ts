@@ -1,3 +1,4 @@
+import { python_string_repr } from './python_repr.ts';
 import type { APNsConfig } from '../notifications/contracts.ts';
 import { load_apns_config } from '../notifications/config.ts';
 import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
@@ -38,9 +39,19 @@ export interface Config {
 export function pythonRepr(value: unknown): string {
   if (value === null) return 'None';
   if (typeof value === 'boolean') return value ? 'True' : 'False';
-  if (typeof value === 'string')
-    return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\n', '\\n').replaceAll('\r', '\\r')}'`;
+  if (typeof value === 'string') return python_string_repr(value);
   return String(value);
+}
+function parse_boolean(v: unknown, key: string): boolean {
+  if (typeof v === 'boolean') return v;
+  const s = String(v).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(s)) return true;
+  if (['0', 'false', 'no', 'off'].includes(s)) return false;
+  throw new PlannerError('validation', `invalid boolean for ${key}: ${pythonRepr(v)}`);
+}
+
+export function test_mode_enabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return parse_boolean(env.PLAN_TEST_MODE ?? '0', 'test_mode');
 }
 export function loadConfig(
   path: string | undefined = undefined,
@@ -58,13 +69,6 @@ export function loadConfig(
   const optional = (key: string, variable: string): string | null => {
     const v = raw(key, variable);
     return v == null ? null : String(v).trim() || null;
-  };
-  const bool = (v: unknown, key: string): boolean => {
-    if (typeof v === 'boolean') return v;
-    const s = String(v).trim().toLowerCase();
-    if (['1', 'true', 'yes', 'on'].includes(s)) return true;
-    if (['0', 'false', 'no', 'off'].includes(s)) return false;
-    throw new PlannerError('validation', `invalid boolean for ${key}: ${pythonRepr(v)}`);
   };
   const integer = (key: string, variable: string, fallback: number): number => {
     const v = raw(key, variable, fallback);
@@ -95,7 +99,7 @@ export function loadConfig(
       );
     }
   };
-  const test_mode = bool(env.PLAN_TEST_MODE ?? '0', 'test_mode');
+  const test_mode = test_mode_enabled(env);
   let provider =
     optional('trusted_ingress_provider', 'PLAN_TRUSTED_INGRESS_PROVIDER')?.toLowerCase() ?? null;
   let login = optional('trusted_ingress_allowed_login', 'PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN');
@@ -166,7 +170,7 @@ export function loadConfig(
     db_path,
     port: integer('port', 'PLAN_PORT', 8767),
     tick_seconds: integer('tick_seconds', 'PLAN_TICK_SECONDS', 60),
-    dispatch_enabled: bool(
+    dispatch_enabled: parse_boolean(
       raw('dispatch_enabled', 'PLAN_DISPATCH_ENABLED', true),
       'dispatch_enabled',
     ),

@@ -1,3 +1,4 @@
+import { python_string_repr } from '../../../core/python_repr.ts';
 const SECRET_ASSIGNMENT =
   /(["']?\b(?:authorization|password|api[ -]key|(?:[a-z0-9]+[_-])*(?:api[_-]?key|authorization|password|secret|token)(?:[_-][a-z0-9]+)*)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer\s+)?[^,;}]+)/gi;
 const BEARER_VALUE = /\bbearer\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi;
@@ -6,21 +7,7 @@ export function python_repr(value: unknown): string {
   if (value === null || value === undefined) return 'None';
   if (value === true) return 'True';
   if (value === false) return 'False';
-  if (typeof value === 'string') {
-    const quote = value.includes("'") && !value.includes('"') ? '"' : "'";
-    let result = quote;
-    for (const character of value) {
-      const point = character.codePointAt(0)!;
-      if (character === quote || character === '\\') result += '\\' + character;
-      else if (character === '\n') result += '\\n';
-      else if (character === '\r') result += '\\r';
-      else if (character === '\t') result += '\\t';
-      else if (point < 32 || (point >= 127 && point < 160)) {
-        result += '\\x' + point.toString(16).padStart(2, '0');
-      } else result += character;
-    }
-    return result + quote;
-  }
+  if (typeof value === 'string') return python_string_repr(value);
   if (Array.isArray(value)) return '[' + value.map(python_repr).join(', ') + ']';
   if (typeof value === 'object') {
     return (

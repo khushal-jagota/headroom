@@ -23,7 +23,8 @@ import {
 } from './conversation/snapshot/composition.ts';
 import { TicketModelSnapshots } from './conversation/snapshot/testing/ticket_models.ts';
 
-if (process.env.PLAN_TEST_MODE !== '1') throw new Error('The comparison host requires test mode');
+if (!(await import('./core/config.ts')).test_mode_enabled())
+  throw new Error('The comparison host requires test mode');
 
 const conversationSystem =
   process.env.PLAN_COMPARE_CONVERSATION_SYSTEM === 'in_memory'
