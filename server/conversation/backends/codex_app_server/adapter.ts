@@ -561,6 +561,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         null,
         new B.ComposerCatalogReported({ composer_catalog: snapshot.entries }),
       );
+      // Admission can finish after close. Do not adopt that retired publication locally.
+      if (this.coordinator.closed) return;
       this.catalog = snapshot;
       this.published_catalog = snapshot.entries;
     });
@@ -1083,6 +1085,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     await this.coordinator.close();
     const turn = this.turn;
     if (turn === null) return;
+    // The failed request owns an unacknowledged start. It is not an admitted turn ending.
+    if (turn.awaiting_start_response) return;
     this.turn = null;
     turn.parked_asks.clear();
     turn.parked_user_inputs.clear();

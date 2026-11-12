@@ -92,7 +92,7 @@ export class CatalogCoordinator {
     this.closed = true;
     this.resolve_closure(CLOSED);
     this.wake();
-    await Promise.all([...this.lanes.values()].map((lane) => lane.task));
+    await Promise.allSettled([...this.lanes.values()].map((lane) => lane.task));
   }
 
   private async wait(lane: Lane, delay: number | null): Promise<void> {

@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -134,7 +134,7 @@ def owned_launch_boundary(executable: str) -> Any:
 async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
     store = ConversationStore(spec["database"], integer_now=lambda: 100)
     rejection = DurableCodexLoginRejection(spec["database"])
-    factory = CodexAppServerBackendChildFactory(
+    base_factory = CodexAppServerBackendChildFactory(
         CodexChildLaunch(
             argv=(spec["executable"], "app-server"),
             environment_overrides=(
@@ -144,6 +144,31 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         ),
         remembered_login_rejection=rejection,
     )
+
+    def factory(**options: Any) -> Any:
+        offset = len(read_trace(spec["trace"])) if Path(spec["trace"]).exists() else 0
+        child = base_factory(**options)
+        prompt = child.write_prompt
+        first = True
+
+        async def write_prompt(*args: Any, **kwargs: Any) -> Any:
+            nonlocal first
+            if first:
+                first = False
+
+                async def discovery() -> None:
+                    while not Path(spec["trace"]).exists() or not any(
+                        frame.get("method") == "app/read"
+                        for frame in read_trace(spec["trace"])[offset:]
+                    ):
+                        await asyncio.sleep(0.005)
+
+                await asyncio.wait_for(discovery(), timeout=10)
+            return await prompt(*args, **kwargs)
+
+        cast(Any, child).write_prompt = write_prompt
+        return child
+
     identity = "unit17-codex"
     tail = ConversationLiveTail()
     subscription = tail.subscribe(identity)
@@ -201,7 +226,9 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
 
         await wait(complete, f"turn {count} ending")
 
-    async def capture(name: str, fates: list[Any]) -> None:
+    async def capture(
+        name: str, fates: list[Any], conversation_id: str | None = None
+    ) -> None:
         await core.wait_until_quiescent()
         login = read_stored_codex_login()
         checkpoints.append(
@@ -209,7 +236,7 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
                 "name": name,
                 "fates": fates,
                 "rows": snapshot(spec["database"]),
-                "running": await core.is_running(identity),
+                "running": await core.is_running(conversation_id or identity),
                 "login": {
                     "generation": (
                         asdict(login.generation) if login.generation else None
@@ -267,17 +294,15 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         count += 1
         await ended(count)
         await capture("plain", [plain])
-        base = await send("steer-base")
-        steer = await send("steer", PromptDeliveryMode.steer)
-        count += 1
-        await ended(count)
-        await capture("steer", [base, steer])
         base = await send("queue-base")
         queued = await send("queued")
         held = await core.held_prompts(identity)
         assert len(held) == 1
         discarded = await core.discard_held_prompt(identity, held[0].held_prompt_id)
         await core.interrupt(identity)
+        assert json.loads(Path(f"{spec['trace']}.state.json").read_text())[
+            "interrupt_settled"
+        ]
         count += 1
         await ended(count)
         await capture("queued-and-cancelled", [base, queued, {"discarded": discarded}])
@@ -301,9 +326,21 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         await capture("question", [question, {"answer_fate": str(answer)}])
         interruption = await send("interrupt-base")
         await core.interrupt(identity)
+        assert json.loads(Path(f"{spec['trace']}.state.json").read_text())[
+            "interrupt_settled"
+        ]
         count += 1
         await ended(count)
         await capture("interrupt", [interruption])
+        base = await send("steer-base")
+        steer = await send("steer", PromptDeliveryMode.steer)
+        count += 1
+        await ended(count)
+        refused_base = await send("steer-race-base")
+        refused_steer = await send("steer-refused", PromptDeliveryMode.steer)
+        count += 2
+        await ended(count)
+        await capture("steer", [base, steer, refused_base, refused_steer])
         await core.kill(identity)
         resumed = await send("resume-success")
         await wait(catalog_read, "resumed child populated catalog")
@@ -326,6 +363,29 @@ async def python_exercise(spec: dict[str, str]) -> dict[str, Any]:
         await core.kill(identity)
         refused = await send("resume-must-fail")
         await capture("failed-resume", [refused])
+        no_receipt = "unit17-no-receipt"
+        await core.start_conversation(
+            ConversationStartRequest(
+                conversation_id=no_receipt,
+                backend_key=ConversationBackendKey.codex,
+                model="gpt-6-luna",
+                reasoning_effort="low",
+                workspace_folder=Path(spec["workspace"]),
+                workspace_path_policy=WorkspacePathPolicy.absolute,
+                role_materials=ConversationRoleMaterials(
+                    "Synthetic owner", (("PLAN_ACTOR", "owner"),)
+                ),
+            )
+        )
+        missing = delivery_fate_json(
+            await core.send(
+                no_receipt,
+                text_message_content("[CASE:exit-before-reply]"),
+                sender_label="Owner",
+                sender_message_id="missing-receipt",
+            )
+        )
+        await capture("exit-before-reply", [missing], no_receipt)
     finally:
         subscription.close()
         async for frame in subscription:
@@ -504,6 +564,12 @@ def test_unit17_adapter_real_core_parity(
         "boundary": (
             "shared JSONL process -> actual Codex adapter -> real SQLite core -> all five views"
         ),
+        "fixture_synchronization": (
+            "Each injected factory observes its new child's native app/read request. "
+            "It waits for that discovery request before the first native prompt, "
+            "without core quiescence. "
+            "This proof does not establish nonblocking discovery."
+        ),
         "not_proven": [
             "real provider",
             "browser/HTTP",
@@ -566,7 +632,7 @@ def test_unit17_adapter_real_core_parity(
         metadata_reads = [
             frame for frame in result["trace"] if frame.get("method") == "app/read"
         ]
-        assert len(metadata_reads) == 2
+        assert len(metadata_reads) == 3
         assert all(
             frame["params"]
             == {
@@ -593,9 +659,11 @@ def test_unit17_adapter_real_core_parity(
             )
         )
         assert all(
-            any(
-                installed < index < metadata and frame.get("method") == "turn/start"
+            metadata
+            < next(
+                index
                 for index, frame in enumerate(result["trace"])
+                if index > installed and frame.get("method") == "turn/start"
             )
             for installed, metadata in zip(
                 installed_indices, metadata_indices, strict=True
@@ -626,6 +694,43 @@ def test_unit17_adapter_real_core_parity(
             "rejected": False,
         }
         assert checkpoints["rejected-after-output"]["fates"] == [{"fate": "uncertain"}]
+        assert checkpoints["exit-before-reply"]["fates"] == [{"fate": "uncertain"}]
+        assert checkpoints["exit-before-reply"]["login"]["rejected"] is False
+        assert checkpoints["exit-before-reply"]["running"] is False
+        assert not any(
+            frame["text_delta"] == "STALE_OUTPUT" for frame in result["live_text"]
+        )
+        refused_facts = checkpoints["steer"]["rows"]["conversation_lifecycle_facts"]
+        assert any(
+            row["operation"] == "steer" and row["status"] == "refused"
+            for row in refused_facts
+        )
+        assert checkpoints["steer"]["fates"][-1]["fate"] != "injected"
+        plain_payloads = [
+            json.loads(row["payload"])
+            for row in plain["conversation_events"]
+            if row["kind"] == "tool_call_started"
+        ]
+        assert {payload["tool_kind"] for payload in plain_payloads} == {
+            "execute",
+            "edit",
+            "other",
+        }
+        death = [
+            json.loads(row["payload"])
+            for row in checkpoints["steer"]["rows"]["conversation_events"]
+            if row["kind"] == "turn_ended"
+        ][-1]
+        assert (
+            death["ending"] == "failed"
+            and "codex process ended" in death["error_summary"]
+        )
+        interrupted = [
+            json.loads(row["payload"])
+            for row in checkpoints["interrupt"]["rows"]["conversation_events"]
+            if row["kind"] == "turn_ended"
+        ][-1]
+        assert interrupted["ending"] == "interrupted"
         assert result["backlog_order"] == ["handler-start", "handler-end", "receipt"]
         assert not any(
             frame["text_delta"] == "unadmitted output" for frame in result["live_text"]
@@ -634,7 +739,7 @@ def test_unit17_adapter_real_core_parity(
             {"fate": "refused", "refusal_reason": "session_did_not_load"}
         ]
         assert (
-            sum(frame.get("method") == "thread/start" for frame in result["trace"]) == 1
+            sum(frame.get("method") == "thread/start" for frame in result["trace"]) == 2
         )
         assert (
             sum(frame.get("method") == "thread/resume" for frame in result["trace"])
