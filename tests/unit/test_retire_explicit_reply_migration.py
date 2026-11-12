@@ -155,6 +155,9 @@ def _staging_shape(tmp_path: Path) -> Path:
     path = tmp_path / "staging.db"
     with closing(connect(str(path))) as conn:
         create_schema(conn)
+        conn.execute("DROP TRIGGER tickets_legacy_machine")
+        conn.execute("ALTER TABLE tickets DROP COLUMN machine_id")
+        conn.execute("DROP TABLE machines")
         for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' "
             "AND name GLOB 'ticket_workspace_*'"

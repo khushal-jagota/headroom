@@ -53,6 +53,7 @@ export interface ValidWorkspaceTicket {
   worker_type: string | null;
   workflow: WorkflowControlsManifest;
   locale: "vps" | "macos";
+  machine_id: string;
   employee_backend: string;
   employee_launch_model: string | null;
   employee_launch_reasoning_effort: string | null;

@@ -4350,7 +4350,7 @@ def _machine_evidence(browser, url):
     expect(page.locator('[data-conversation-id="vps-conversation"] [data-conversation-signal="working"]')).to_be_visible()
     expect(page.locator('[data-conversation-id="machine-conversation"] [data-conversation-signal="working"]')).to_have_count(0)
     assert page.locator('.ticket-row button, .ticket-row a').count()==0
-    expect(page.locator('[data-conversation-alive-word]')).to_contain_text('Current activity on Mac is unknown')
+    expect(page.locator('[data-conversation-alive-word]')).to_contain_text('Current activity on this machine is unknown')
     allow=page.locator('[data-conversation-ask-action="yes"]')
     expect(allow).to_be_enabled()
     page.evaluate('()=>window.__machine.change({requestGone:true})')
@@ -4358,19 +4358,19 @@ def _machine_evidence(browser, url):
     page.evaluate('()=>window.__machine.change({requestGone:false})')
     expect(allow).to_be_enabled()
     allow.click()
-    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
+    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved at home; delivery to the machine is pending.')
     post=page.evaluate('()=>window.__machine.posts[0]')
     assert post['ask_id']=='public-turn:permission:native-ask'
     assert set(post)=={'ask_id','option_id'}
     page.evaluate('()=>window.__machine.change({applied:true})')
-    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer applied on Mac.')
+    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer applied on the machine.')
     page.evaluate('()=>window.__machine.change({questions:true})')
     expect(page.locator('[data-user-input-option="One"]')).to_be_enabled()
     page.locator('[data-user-input-option="One"]').click()
     page.locator('[data-user-input-continue]').click()
     page.locator('[data-user-input-option="Two"]').click()
     page.locator('[data-user-input-continue]').click()
-    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved on VPS; delivery to Mac is pending.')
+    expect(page.locator('[data-executor-answer-status]')).to_have_text('Answer saved at home; delivery to the machine is pending.')
     post=page.evaluate('()=>window.__machine.posts[1]')
     assert post['request_id']=='public-turn:user_input:native-questions'
     assert set(post)=={'request_id','answers'}

@@ -62,6 +62,8 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
 from planner.files.lifecycle import database_path
 from planner.files.logic.paths import chief_files_root, manager_files_root, ticket_files_root
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
+from planner.machines.data import read_machine
 from planner.projects import data as projects_data
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
@@ -203,10 +205,14 @@ def worker_resolve(
             role_text=values.role_materials.role_text
             + "\n\n[Ticket workflow guidance]\n"
             + render_workflow_guide(ticket.workflow)
-            + "\n[/Ticket workflow guidance]",
+            + "\n[/Ticket workflow guidance]"
+            + "\n\n[Ticket machine]\n"
+            + f"This Ticket runs on {read_machine(conn, ticket.machine_id).name}. "
+            + f"Its fixed destination is {ticket.machine_id}. "
+            + "A rename never changes this destination.\n[/Ticket machine]",
         ),
     )
-    if ticket.locale != TicketLocale.macos:
+    if ticket.machine_id == HOME_MACHINE_ID:
         artifact_folder = ticket_files_root(database_path(conn)) / ticket.id / "artifacts"
         values = replace(
             values,
@@ -234,9 +240,11 @@ def worker_resolve(
 def _worker_workspace(
     conn: sqlite3.Connection, ticket: Ticket, explicit: Path | None
 ) -> tuple[Path, WorkspacePathPolicy]:
-    if ticket.locale == TicketLocale.macos:
+    if ticket.machine_id not in {HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID}:
+        raise PlannerError(ErrorCode.validation, "Ticket destination has no execution route")
+    if ticket.machine_id == ORIGINAL_MAC_MACHINE_ID:
         # The executor resolves its own repository and Ticket root on the Mac.
-        return workspace_for_project(conn, ticket.locale, ticket.project_id, explicit=explicit)
+        return workspace_for_project(conn, TicketLocale.macos, ticket.project_id, explicit=explicit)
     return (
         ticket_files_root(database_path(conn)) / ticket.id / "worktree",
         WorkspacePathPolicy.home_relative,
@@ -364,7 +372,7 @@ async def start_ticket_conversation(
     conversation that will never be spoken into, which is the whole of what this rule is
     against.
     """
-    if ticket.locale != TicketLocale.macos:
+    if ticket.machine_id == HOME_MACHINE_ID:
         from planner.ticket_workspaces.filesystem import prepare_workspace
 
         project_folder = (
@@ -404,7 +412,7 @@ async def start_ticket_conversation(
             _record_and_link_ticket_conversation, conn, ticket.id, request, values, now
         )
 
-        if ticket.locale != TicketLocale.macos:
+        if ticket.machine_id == HOME_MACHINE_ID:
             from planner.ticket_workspaces.data import register_workspace
             from planner.ticket_workspaces.filesystem import workspace_identity
 
@@ -538,10 +546,10 @@ async def send_to_ticket_conversation(
     # machinery would refuse: deliver and hold, do not start. This guard only protects
     # local execution. The general runtime fix must decide whether it subsumes this
     # refusal so that separate admission mechanisms do not disagree.
-    if not locale_configuration.can_execute_locale(conn, ticket.locale):
+    if not locale_configuration.can_execute_machine(conn, ticket.machine_id):
         raise PlannerError(
             ErrorCode.validation,
-            locale_configuration.execution_unavailable_reason(conn, ticket.locale),
+            locale_configuration.machine_unavailable_reason(conn, ticket.machine_id),
             {
                 "ticket_id": ticket_id,
                 "locale": ticket.locale.value,

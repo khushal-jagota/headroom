@@ -250,7 +250,7 @@ def test_cold_invalid_manager_wake_refuses_durably_then_repairs_without_blocking
 
         def outcomes() -> dict[str, str]:
             with closing(connect(str(db_path))) as conn:
-                reconcile_batch_outcomes(conn, now=5)
+                reconcile_batch_outcomes(conn, now=fake_clock.now_unix())
                 return dict(conn.execute("SELECT target_id,status FROM manager_wake_batches"))
 
         try:

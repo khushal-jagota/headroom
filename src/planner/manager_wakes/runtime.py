@@ -26,6 +26,7 @@ from planner.core.clock import Clock
 from planner.core.contracts import PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.machines.contracts import HOME_MACHINE_ID
 from planner.manager_wakes import data
 from planner.manager_wakes.contracts import WakeBatch, WakeBatchStatus
 from planner.managers import data as managers_data
@@ -168,10 +169,10 @@ async def _admitted_deliver_batch(
                     data.release_pending_batch(conn, batch.id, process_token=process_token)
                     return False
                 if starts is not None:
-                    destination = "home"
+                    destination = HOME_MACHINE_ID
                     if agent_key is None:
                         ticket = tickets_data.read_ticket(conn, target.id)
-                        destination = "macos" if ticket.locale.value == "macos" else "home"
+                        destination = ticket.machine_id
                     if not starts.try_start(
                         StartRequest(
                             batch.sender_message_id,

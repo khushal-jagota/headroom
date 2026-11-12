@@ -388,6 +388,8 @@ def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicke
     )
     if "workflow" in raw:
         body["workflow"] = custom_workflow_from_dict(raw["workflow"])
+    if "machine_id" in raw:
+        body["machine_id"] = body_str(raw, "machine_id")
     if "locale" in raw:
         from planner.tickets.logic.locale import require_ticket_locale
 
@@ -538,6 +540,7 @@ def write_create_ticket(
         worker_type=body["worker_type"],
         workflow=body.get("workflow"),
         locale=body.get("locale"),
+        machine_id=body.get("machine_id"),
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
         employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),

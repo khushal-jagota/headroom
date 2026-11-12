@@ -29,6 +29,7 @@ from planner.core.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
+from planner.machines.data import resolve_destination
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import capture_ticket_attention
 from planner.tickets import derivation, revision_feedback
@@ -60,7 +61,6 @@ from planner.tickets.logic import (
     review_transfer,
 )
 from planner.tickets.logic.decisions import Decision
-from planner.tickets.logic.locale import resolve_ticket_locale
 from planner.worker_settings.contracts import ManagedWorkerLaunchDefaults
 from planner.worker_settings.service import read_worker_launch_defaults_for_ticket_creation
 from planner.worker_types.configuration import (
@@ -263,6 +263,7 @@ def resolve_ticket_draft_context(
     *,
     worker_type: str | None,
     locale: TicketLocale | str | None = None,
+    machine_id: str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     employee_launch_reasoning_effort: str | None = None,
@@ -305,8 +306,10 @@ def resolve_ticket_draft_context(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 
-    resolved_locale = resolve_ticket_locale(locale)
-    return ResolvedTicketCreationContext(resolved_locale, launch_configuration, project_id)
+    destination, resolved_locale = resolve_destination(conn, machine_id, locale)
+    return ResolvedTicketCreationContext(
+        resolved_locale, destination, launch_configuration, project_id
+    )
 
 
 def resolve_ticket_creation_context(
@@ -316,6 +319,7 @@ def resolve_ticket_creation_context(
     title_max_chars: int,
     worker_type: str | None,
     locale: TicketLocale | str | None = None,
+    machine_id: str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     employee_launch_reasoning_effort: str | None = None,
@@ -333,6 +337,7 @@ def resolve_ticket_creation_context(
         conn,
         worker_type=worker_type,
         locale=locale,
+        machine_id=machine_id,
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,
         employee_launch_reasoning_effort=employee_launch_reasoning_effort,
@@ -361,6 +366,7 @@ def _row_to_ticket(
     return Ticket(
         field_approvals=fields_codec.approvals_from_json(row["field_approvals"], values),
         locale=TicketLocale(row["locale"]),
+        machine_id=str(row["machine_id"]),
         is_backlogged=bool(row["is_backlogged"]),
         id=row["id"],
         title=row["title"],
@@ -429,6 +435,7 @@ _TICKET_STORED_COLUMNS = (
     "manager_kind",
     "is_backlogged",
     "locale",
+    "machine_id",
 )
 _TICKET_STORED_SELECT = ", ".join(f"tickets.{column}" for column in _TICKET_STORED_COLUMNS)
 # Integrity is separate from the canonical Ticket, but changes its usability and display.
@@ -988,6 +995,7 @@ def create_ticket(
     worker_type: str | None,
     workflow: TicketWorkflowDefinition | None = None,
     locale: TicketLocale | str | None = None,
+    machine_id: str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     employee_launch_reasoning_effort: str | None = None,
@@ -1039,6 +1047,7 @@ def create_ticket(
             reasoning_effort_is_set=reasoning_effort_is_set,
             model_source_is_historical=model_source_is_historical,
             locale=locale,
+            machine_id=machine_id,
             project_id=project_id,
             deadline=deadline,
             manager_id=manager_id,
@@ -1088,9 +1097,9 @@ def create_ticket(
             "recap, ceiling, ceiling_holder, "
             "conversation_id, field_values, field_approvals, pending_proposal, "
             "pending_proposal_revision, "
-            "created_at, updated_at, locale) "
+            "created_at, updated_at, locale, machine_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
-            "?, ?, ?, ?, ?, ?, ?)",
+            "?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -1120,6 +1129,7 @@ def create_ticket(
                 now,
                 now,
                 creation_context.locale.value,
+                creation_context.machine_id,
             ),
         )
         wake_target = _proposal_wake_target(conn, initial_proposal_route)

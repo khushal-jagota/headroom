@@ -71,3 +71,28 @@ def execution_unavailable_reason(conn: sqlite3.Connection, locale: TicketLocale)
             return WAITING_FOR_THE_MAC
         return "Mac Tickets cannot start: no compatible Mac executor has leased yet"
     return f"The Ticket locale {locale.value} cannot execute on this machine"
+
+
+def can_execute_machine(conn: sqlite3.Connection, machine_id: str) -> bool:
+    """Only the home and the explicitly bound original executor have a route."""
+    from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
+
+    if machine_id == HOME_MACHINE_ID:
+        return True
+    return machine_id == ORIGINAL_MAC_MACHINE_ID and can_execute_locale(conn, TicketLocale.macos)
+
+
+def machine_unavailable_reason(conn: sqlite3.Connection, machine_id: str) -> str:
+    from planner.machines.data import read_machine
+
+    machine = read_machine(conn, machine_id)
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+
+    if machine_id == ORIGINAL_MAC_MACHINE_ID:
+        reason = execution_unavailable_reason(conn, TicketLocale.macos)
+        if machine.name == "Mac":
+            return reason
+        import re
+
+        return re.sub(r"the Mac|Mac", lambda _match: machine.name, reason)
+    return f"Waiting for {machine.name}"

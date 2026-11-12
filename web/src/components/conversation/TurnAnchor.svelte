@@ -139,7 +139,7 @@
           class:live-text-shimmer={fresh && !activityUncertain}
           data-conversation-alive-word
         >
-          {activityUncertain ? "Current activity on Mac is unknown." : workingSentence(elapsedSeconds)}
+          {activityUncertain ? "Current activity on this machine is unknown." : workingSentence(elapsedSeconds)}
         </span>
       </div>
     {/if}

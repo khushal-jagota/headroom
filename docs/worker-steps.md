@@ -30,7 +30,7 @@ That narrowness is the design. A Worker can run for a long time, a person can ta
 All of these must hold:
 
 - It is not backlogged.
-- It can run here: its locale is this machine, or it is a Mac Ticket and the [Mac executor](executor.md) is present (its lease is fresh). Until then the step shows "Waiting for the Mac".
+- It can run here: its stable destination names the home, or the original Mac destination has a present [executor](executor.md). Away work waits with its machine name.
 - The stage is not terminal and has a field for the Worker to fill.
 - The Ticket's status is empty. That one check keeps out parked proposals, blockers, a claim already out, and errors.
 - On a user-owned stage, this entry onto the stage has not had its opener yet.
@@ -42,7 +42,7 @@ One more question goes to the conversation itself: is a turn already running? A 
 
 Automatic starts share a launch gate with Manager wakes and recovery notices. The gate permits one new start per second and four starts awaiting acceptance. Workers use at most three slots, so Chief and Managers retain capacity. A slot ends on positive agent activity or definite refusal. A wire write or a local queue position alone does not prove acceptance. Messages that wait behind a turn or quarantine hold no start slot. At dequeue, a combined prompt takes one slot. Running turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing.
 
-An absent executor holds no shared slot. Its pending starts retain their claims and command identities until receipts and ownership evidence settle them. On return, pending starts pass through the gate again. Durable bindings preserve this rule across a home restart. Control commands can pass unfetched deferred work without a new prompt or a change to conversation order.
+Automatic admission carries the same stable machine ID as the Ticket. A rename never changes a deferred start or claim. An absent executor holds no shared slot. Its pending starts retain their claims and command identities until receipts and ownership evidence settle them. On return, pending starts pass through the gate again. Durable bindings preserve this rule across a home restart. Control commands can pass unfetched deferred work without a new prompt or a change to conversation order.
 
 ## How a step is sent
 
