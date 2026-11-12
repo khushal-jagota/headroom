@@ -1,5 +1,6 @@
 import type { ScratchRuntime, ScratchRuntimeOptions } from './contracts.ts';
 import { CLEANUP_INTERVAL_SECONDS } from './configuration.ts';
+import { observe_shutdown } from '../../lifecycle/deadline.ts';
 
 /** Independent of readiness/dispatch, with Python's initial ten-minute wait. */
 export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): ScratchRuntime {
@@ -9,6 +10,7 @@ export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): S
   let flight: Promise<void> | undefined;
   let started = false;
   let closing: Promise<void> | undefined;
+  let shutdown_settlement: Promise<void> | undefined;
   const schedule = () => {
     if (controller.signal.aborted) return;
     timer = setTimeout(() => {
@@ -46,24 +48,13 @@ export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): S
     },
     close(stop) {
       if (closing) return closing;
+      shutdown_settlement = Promise.resolve().then(() => flight);
+      closing = observe_shutdown(shutdown_settlement, stop, 'ticket scratch');
       controller.abort();
       clearTimeout(timer);
       timer = undefined;
-      const pending = flight;
-      closing = (async () => {
-        let deadline: NodeJS.Timeout | undefined;
-        try {
-          await Promise.race([
-            pending,
-            new Promise<void>((resolve) => {
-              deadline = setTimeout(resolve, Math.max(0, stop.deadline * 1000 - performance.now()));
-            }),
-          ]);
-        } finally {
-          clearTimeout(deadline);
-        }
-      })();
       return closing;
     },
+    settled: () => shutdown_settlement ?? Promise.resolve(flight),
   };
 }

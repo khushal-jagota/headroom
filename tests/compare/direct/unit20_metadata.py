@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 from pathlib import Path
@@ -100,7 +101,7 @@ def declarations() -> list[dict[str, Any]]:
         result.append(
             {
                 "path": path,
-                "help": command.help or "",
+                "help": inspect.cleandoc(command.help or ""),
                 "hidden": command.hidden,
                 "group": isinstance(command, click.Group),
                 "parameters": parameters,

@@ -1,4 +1,5 @@
 /** Fresh-provider comparison companion. Every process launch is the supplied script. */
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import childProcess from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
@@ -6,6 +7,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createDatabase } from '../../../core/database/index.ts';
 import { create_durable_codex_login_rejection } from '../../backend_state.ts';
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import type {
   CodexLoginRejectionMemory,
   SavedCodexLoginSource,
@@ -36,6 +38,7 @@ function read_trace(path: string): Record<string, unknown>[] {
     : [];
 }
 export async function run_provider_parity(spec: ProviderParitySpec): Promise<unknown> {
+  const child_processes = new ChildProcesses();
   const original = {
     spawn: childProcess.spawn,
     spawnSync: childProcess.spawnSync,
@@ -116,7 +119,7 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
     for (const name of ['models-full', 'models-partial']) {
       mode(name);
       models[name] = {
-        catalog: await probe_codex_model_catalog(spec.executable),
+        catalog: await probe_codex_model_catalog(spec.executable, { child_processes }),
         joined: joined(),
       };
     }
@@ -140,12 +143,15 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
     ]) {
       mode(name);
       const database = name === 'signin-shutdown' ? createDatabase(spec.database) : null;
+      const one_shot_children = new OneShotChildren(child_processes);
       const clock = () => new Date('2026-11-12T12:34:56Z');
       const durable = database && create_durable_codex_login_rejection(database, clock);
       durable?.remember(saved_codex_login_source.read_stored_codex_login().generation);
       const providers =
         database &&
         create_codex_providers({
+          one_shot_children,
+          child_processes,
           database,
           now: clock,
           read_codex_snapshot: async () => ({ executable_path: spec.executable }),
@@ -153,6 +159,7 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
       const service =
         providers?.codex_sign_in ??
         new CodexSignInService({
+          child_processes,
           resolve_argv: async () => [spec.executable, 'app-server'],
           remembered_login_rejection: memory,
           now: () => instant,
@@ -197,7 +204,12 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
           login: providers && durable ? saved(providers.saved_codex_login!, durable) : saved(),
         });
       } finally {
-        await service.shutdown();
+        try {
+          await service.shutdown();
+        } finally {
+          one_shot_children.seal();
+          await one_shot_children.settled();
+        }
         database?.close();
       }
     }
@@ -209,10 +221,14 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
         read_codex_rate_limits: async (executable, options) => {
           if (options.timeout_seconds !== 30)
             throw new Error('Usage adapter must request its declared 30-second bound');
-          const result = await read_codex_rate_limits(executable, {
-            ...options,
-            timeout_seconds: name === 'usage-timeout' ? 0.3 : 3,
-          });
+          const result = await read_codex_rate_limits(
+            executable,
+            {
+              ...options,
+              timeout_seconds: name === 'usage-timeout' ? 0.3 : 3,
+            },
+            { child_processes },
+          );
           raw[name] = result;
           return result;
         },
@@ -245,6 +261,7 @@ export async function run_provider_parity(spec: ProviderParitySpec): Promise<unk
       } else usage.push({ name, result: await adapter.refresh(), joined: joined() });
     }
   } finally {
+    await child_processes.settled();
     delete process.env.UNIT17_PROVIDER_MODE;
     delete process.env.UNIT17_PROVIDER_CONTROL;
     delete process.env.UNIT17_TRACE;

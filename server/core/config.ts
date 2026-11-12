@@ -10,7 +10,7 @@ import { strip } from './whitespace.ts';
 export const HOST = '127.0.0.1';
 export const SSE_HEARTBEAT_MS = 15000;
 export const DB_BUSY_TIMEOUT_MS = 5000;
-export const SHUTDOWN_GRACE_SECONDS = 30;
+export { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 export const MAX_CONVERSATION_SEND_REQUEST_BYTES = 20 * 1024 * 1024;
 export interface Config {
   apns?: APNsConfig | null;

@@ -1,4 +1,6 @@
 /** Manager calls are mocked. The stdin failure case owns one plain Node child. */
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -18,7 +20,7 @@ const { query } = vi.hoisted(() => ({
     >(),
 }));
 
-vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
+vi.mock('node:child_process', () => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query }));
 vi.mock('../cli_compatibility.ts', () => ({ ensure_cli_compatible: vi.fn() }));
 vi.mock('../../worker_unit/index.ts', () => ({ WorkerUnit: { create: vi.fn() } }));
@@ -136,7 +138,10 @@ function setup_client<T extends object>(
       },
     } as never;
   });
+  const child_processes = new ChildProcesses();
   const client = claude_sdk_client({
+    child_processes,
+    one_shot_children: new OneShotChildren(child_processes),
     pathToClaudeCodeExecutable: '/synthetic/claude',
     env: environment,
     canUseTool: can_use_tool,
@@ -291,6 +296,9 @@ it('joins one owned unit stop when EOF and disconnect overlap', async () => {
   const unit = {
     environment: {},
     argv: (original: readonly string[]) => original,
+    begin_launch: vi.fn(),
+    track_wrapper: vi.fn(),
+    launch_failed_before_spawn: vi.fn(),
     stop: vi.fn(async () => {
       announce_stop();
       await stopped;
@@ -432,6 +440,7 @@ it('fails a later prompt immediately after an owned live child loses stdin', asy
       cwd: process.env.HOME,
       env: { HOME: process.env.HOME, PATH: '/usr/bin:/bin' },
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     },
   );
   let closed = false;

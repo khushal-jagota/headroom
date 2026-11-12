@@ -15,6 +15,13 @@ import {
   ServerLifecycleError,
 } from '../../lifecycle/contracts.ts';
 import type { LifecycleLease } from '../../lifecycle/contracts.ts';
+import {
+  acquireRuntimeOwnership,
+  canonical_database_path,
+  runtime_authority_path,
+  observe_existing_flock,
+  ConversationRuntimeAlreadyOwnedError,
+} from '../../core/locks/index.ts';
 import { EnvironmentValidationError } from './contracts.ts';
 import type {
   EnvironmentInspection,
@@ -299,8 +306,9 @@ export function environment_lifecycle_lease_path(manifest: EnvironmentManifest):
     : join(manifest.instance_root, 'run/server-lifecycle.lock');
 }
 export function acquire_stopped_environment_lease(manifest: EnvironmentManifest): LifecycleLease {
+  let lifecycle: LifecycleLease;
   try {
-    return acquire_server_lifecycle_lease(
+    lifecycle = acquire_server_lifecycle_lease(
       environment_lifecycle_lease_path(manifest),
       manifest.port_policy.kind === 'fixed' ? manifest.port_policy.port : 0,
     );
@@ -313,21 +321,40 @@ export function acquire_stopped_environment_lease(manifest: EnvironmentManifest)
       );
     throw error;
   }
+  try {
+    // A supervisor holds the port lease between incarnations. A directly started
+    // application holds this canonical DB lock. Both must remain free throughout mutation.
+    const database = acquireRuntimeOwnership(manifest.db_path);
+    return {
+      close() {
+        try {
+          database.close();
+        } finally {
+          lifecycle.close();
+        }
+      },
+    };
+  } catch (error) {
+    lifecycle.close();
+    if (error instanceof ConversationRuntimeAlreadyOwnedError)
+      throw new EnvironmentValidationError('environment instance is running');
+    throw new EnvironmentValidationError(
+      `could not prove environment instance is stopped: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 export function environment_lifecycle_lease_is_held(manifest: EnvironmentManifest): boolean {
   try {
-    acquire_server_lifecycle_lease(
+    const database = canonical_database_path(manifest.db_path);
+    return [
+      runtime_authority_path(database),
+      `${database}.conversation-owner.lock`,
       environment_lifecycle_lease_path(manifest),
-      manifest.port_policy.kind === 'fixed' ? manifest.port_policy.port : 0,
-    ).close();
-    return false;
+    ].some((path) => observe_existing_flock(path) === 'held');
   } catch (error) {
-    if (error instanceof ServerLifecycleAlreadyOwnedError) return true;
-    if (error instanceof ServerLifecycleError)
-      throw new EnvironmentValidationError(
-        `could not probe environment running state: ${error.message}`,
-      );
-    throw error;
+    throw new EnvironmentValidationError(
+      `could not probe environment running state: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 export function manifest_to_json_dict(

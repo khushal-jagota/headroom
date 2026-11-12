@@ -119,6 +119,8 @@ def _python(
         running_remove = _error(lambda: materialize.remove_environment_instance(**options))
     finally:
         lease.release()
+    prepared.db_path.unlink()
+    missing_database_status = materialize._environment_lifecycle_lease_is_held(prepared)
     reset = materialize.reset_environment_instance(**options, now=1_800_000_002)
     shutil.copytree(reset.db_path.parent, output / "reset")
     run_env = build_test_environment_run_env(
@@ -145,6 +147,7 @@ def _python(
                 for path in sorted((home / "skills").iterdir())
             }
         )
+    reset.db_path.unlink()
     materialize.remove_environment_instance(**options)
     return dict(
         before=materialize.manifest_to_json_dict(before),
@@ -153,6 +156,7 @@ def _python(
         reset=materialize.manifest_to_json_dict(reset),
         disk=disk,
         restored_registry=True,
+        missing_database_status=missing_database_status,
         invalid_git_marker=invalid_git_marker,
         bom_git_marker=bom_git_marker,
         bom_credentials=bom_credentials,
@@ -239,14 +243,20 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
         "PLAN_DB_PATH": "private.sqlite",
         "PLAN_CONFIG_PATH": "config.json",
         "PLAN_DATA_DIR": "data",
+        "PLAN_LOGS_DIR": "logs",
+        "PLAN_BACKUP_DIR": "backups",
         "PLAN_WORKSPACE_ROOT": "workspace",
         "PLAN_DISPATCHER_LOCK_PATH": "dispatcher.lock",
         "PLAN_SERVER_CONTROL_SOCKET": "control.sock",
         "PLAN_APP_ROOT": "app",
         "PLAN_KEY_PATH": "key",
+        "PLAN_CREDENTIAL_KEY_PATH": "credential-key",
+        "PLAN_SERVER_LIFECYCLE_LEASE_PATH": "lifecycle.lock",
     }.items():
         environment[name] = str(tmp_path / relative)
+    Path(environment["PLAN_WORKSPACE_ROOT"]).mkdir()
     environment["PLAN_TEST_MODE"] = "1"
+    environment["PLAN_SERVER_URL"] = "http://127.0.0.1:0"
     with monkeypatch.context() as private:
         for name in list(os.environ):
             private.delenv(name)
@@ -301,6 +311,19 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
             )
             assert result.returncode == 0, result.stderr
             actual = json.loads(result.stdout)
+            server_owner = actual.pop("server_owner")
+            assert server_owner == {
+                "running": True,
+                "reset": "environment instance is running",
+                "remove": "environment instance is running",
+            }
+            assert actual.pop("probe_before_start") is False
+            assert actual.pop("probe_files_unchanged") is True
+            mutation_authority = actual.pop("mutation_authority")
+            assert mutation_authority == {
+                phase: {"refused": True, "producer_starts": 0, "data_parent_recreated": False}
+                for phase in ("reset", "remove")
+            }
             assert actual == python
             assert (
                 actual["fixture_unchanged"]
@@ -326,9 +349,11 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
                     "boundary": (
                         "TS-only fresh fictional writers, manifest bytes, private flock, "
                         "failed swap rollback, reset/remove and scrubbed launch environment. "
-                        "No server or browser host."
+                        "One private actual TS server proves DB-owner admission. No browser."
                     ),
                     "result": actual,
+                    "server_owner": server_owner,
+                    "mutation_authority": mutation_authority,
                 },
                 indent=2,
             )

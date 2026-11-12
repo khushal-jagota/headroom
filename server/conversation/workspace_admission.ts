@@ -9,6 +9,9 @@ export class WorkspaceAdmission implements HttpWorkspaceAdmission {
   get closed(): boolean {
     return this._closed;
   }
+  seal(): void {
+    this._closed = true;
+  }
 
   // The callback owns the Python context manager's try/finally scope, including awaits.
   operation(): ReturnType<HttpWorkspaceAdmission['operation']>;

@@ -173,24 +173,38 @@ export class IdleChildJanitor {
 }
 
 /** Detach preserves durable task rows for the later restart-recovery owner. */
-export async function detach_children(states: readonly ConversationState[]): Promise<void> {
-  for (const state of states) {
+export async function detach_children(
+  states: readonly ConversationState[],
+  additional: readonly {
+    child: import('../backends/contracts.ts').BackendChild;
+    state: ConversationState;
+  }[] = [],
+): Promise<void> {
+  const candidates = new Map(additional.map(({ child, state }) => [child, state]));
+  for (const state of states) if (state.child !== null) candidates.set(state.child, state);
+  const detaches = [...candidates].map(async ([child, state]) => {
     if (state.running_turn !== null) state.running_turn.callbacks_revoked = true;
-    const child = state.child;
-    state.child = null;
     state.child_event_sink = null;
-    if (child === null) continue;
     try {
       await child.detach();
+      if (state.child === child) state.child = null;
     } catch (error) {
-      state.child = child;
+      if (state.child === null) state.child = child;
       state.child_is_quarantined = true;
       console.error(
         `conversation ${state.record.conversation_id} could not detach its backend child cleanly`,
         error,
       );
+      throw error;
     }
-  }
+  });
+  const results = await Promise.allSettled(detaches);
+  const failures = results.filter((result) => result.status === 'rejected');
+  if (failures.length)
+    throw new AggregateError(
+      failures.map((failure) => failure.reason),
+      'Backend children did not detach cleanly',
+    );
 }
 
 export function tell_agent_about_lost_background_tasks(

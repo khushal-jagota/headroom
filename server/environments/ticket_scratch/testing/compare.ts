@@ -15,6 +15,7 @@ import { finished, ticket_id_of_branch, ticket_id_of_name } from '../logic.ts';
 import { create_ticket_scratch_runtime } from '../runtime.ts';
 import type { ScratchResult, ScratchRuntimeOptions } from '../contracts.ts';
 import type { ScratchProbeRequest } from './contracts.ts';
+import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 
 const empty = (): ScratchResult => ({
   removed: [],
@@ -160,11 +161,24 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     await tick();
     const pending_timers = scheduled.size;
     const start = performance.now();
-    await runtime.close({ deadline: start / 1000 + 0.03 });
+    await Promise.resolve(runtime.close({ deadline: start / 1000 + 0.03 })).then(
+      () => {
+        throw new Error('Held scratch work cannot finish shutdown');
+      },
+      (error: unknown) => {
+        if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+      },
+    );
     const stop_ms = performance.now() - start;
-    owned = false;
-    held.release();
+    let actual_done = false;
+    const actual_drain = runtime.settled().then(() => {
+      actual_done = true;
+    });
     await pause(0);
+    if (actual_done) throw new Error('Actual scratch settlement discarded a held pass');
+    held.release();
+    await actual_drain;
+    owned = false;
     const after_stop = scheduled.size;
     const before_disabled = timers.length;
     for (const options of [
@@ -173,7 +187,7 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     ]) {
       const disabled = create_ticket_scratch_runtime(options);
       disabled.start();
-      await disabled.close({ deadline: performance.now() / 1000 });
+      await disabled.close({ deadline: performance.now() / 1000 + 1 });
     }
     actual = create_ticket_scratch_runtime(base);
     actual.start();
@@ -186,7 +200,12 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     }
     const pid = Number(await readFile(request.git_marker!, 'utf8'));
     const git_start = performance.now();
-    await actual.close({ deadline: git_start / 1000 + 0.1 });
+    await Promise.resolve(actual.close({ deadline: git_start / 1000 + 0.1 })).catch(
+      (error: unknown) => {
+        if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+      },
+    );
+    await actual.settled();
     const git_stop_ms = performance.now() - git_start;
     let reaped = false;
     try {
@@ -199,6 +218,7 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
       before_first,
       seen,
       pending_timers,
+      actual_retained: true,
       stop_ms,
       after_stop,
       disabled_timers: timers.length - before_disabled - 1,
@@ -209,8 +229,18 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     };
   } finally {
     held.release();
-    await runtime.close({ deadline: performance.now() / 1000 });
-    await actual?.close({ deadline: performance.now() / 1000 });
+    await Promise.resolve(runtime.close({ deadline: performance.now() / 1000 })).catch(
+      (error: unknown) => {
+        if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+      },
+    );
+    await runtime.settled();
+    await Promise.resolve(actual?.close({ deadline: performance.now() / 1000 + 1 })).catch(
+      (error: unknown) => {
+        if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+      },
+    );
+    await actual?.settled();
     for (const timer of scheduled.keys()) clearTimeout(timer);
     globalThis.setTimeout = original_timeout;
     unregister();

@@ -1,10 +1,13 @@
 /** Each child owns a process group. Exit and pipe closure are independent facts. */
-import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
+import type { WorkerUnit } from '../../worker_unit/index.ts';
 import { CHILD_KILL_WAIT_SECONDS, CHILD_SHUTDOWN_GRACE_SECONDS } from './configuration.ts';
 import { CodexChildWouldNotStart } from './errors.ts';
 
 export interface CodexProcessOptions {
+  child_processes: OwnedChildProcesses;
+  worker_unit?: WorkerUnit;
   environment: Readonly<Record<string, string>>;
   working_directory: string;
   /** A preflight receives EOF without changing the main child's piped stream API. */
@@ -110,16 +113,19 @@ export async function spawn_codex_process(
 ): Promise<OwnedCodexProcess> {
   if (argv.length === 0) throw new CodexChildWouldNotStart('the codex command is empty');
   let child: ChildProcessWithoutNullStreams;
+  options.worker_unit?.begin_launch();
   try {
-    child = spawn(argv[0]!, argv.slice(1), {
+    child = options.child_processes.spawn(argv[0]!, argv.slice(1), {
       env: { ...options.environment },
       cwd: options.working_directory,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     });
   } catch (error) {
+    options.worker_unit?.launch_failed_before_spawn();
     throw new CodexChildWouldNotStart(error instanceof Error ? error.message : String(error));
   }
+  options.worker_unit?.track_wrapper(child);
   const owned = new OwnedCodexProcess(child);
   try {
     await new Promise<void>((resolve, reject) => {

@@ -1,6 +1,7 @@
 /** Production receives provider implementations as values. Missing ones stay explicit. */
 import type { Database } from '../../core/database/contracts.ts';
 import type { Config } from '../../core/config.ts';
+import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import type { BackendProbeEnvironment, BackendHttpRuntime } from './contracts.ts';
 import type {
   CodexModelCatalogSource,
@@ -35,34 +36,39 @@ export function create_backend_runtime(options: {
   readonly now: () => Date;
   readonly providers: BackendProviders;
   readonly environment?: BackendProbeEnvironment;
+  readonly one_shot_children?: OwnedOneShotChildren;
 }): BackendHttpRuntime {
   const { database, providers, now } = options;
   const environment: BackendProbeEnvironment =
     options.environment ??
     (options.config.test_mode || backend_io_is_test()
       ? new RecordingBackendProbeEnvironment()
-      : new SubprocessBackendProbeEnvironment());
+      : new SubprocessBackendProbeEnvironment(require_children(options.one_shot_children)));
   const rejection = create_durable_codex_login_rejection(database, now);
-  let resolve_resource_join!: () => void;
-  const resource_join = new Promise<void>((resolve) => {
+  let resolve_resource_join!: () => void, reject_resource_join!: (error: unknown) => void;
+  const resource_join = new Promise<void>((resolve, reject) => {
     resolve_resource_join = resolve;
+    reject_resource_join = reject;
   });
   let shutdown_result: Promise<void> | undefined;
   return {
     shutdown(options = {}) {
       if (shutdown_result === undefined) {
-        const cleanup = Promise.allSettled([
+        // Publish the raw join before either cleanup can reenter shutdown.
+        shutdown_result = resource_join;
+        void Promise.allSettled([
           Promise.resolve().then(() => environment.shutdown?.()),
           Promise.resolve().then(() => providers.codex_sign_in?.shutdown()),
-        ]);
-        void cleanup.then(() => resolve_resource_join());
-        shutdown_result = cleanup.then((results) => {
-          const failed = results.filter((result) => result.status === 'rejected');
-          if (failed.length)
-            throw new AggregateError(
-              failed.map((result) => result.reason),
-              'Backend shutdown failed',
+        ]).then((results) => {
+          const failures = results.filter((result) => result.status === 'rejected');
+          if (failures.length)
+            reject_resource_join(
+              new AggregateError(
+                failures.map((failure) => failure.reason),
+                'Backend shutdown failed',
+              ),
             );
+          else resolve_resource_join();
         });
       }
       return observe_shutdown(
@@ -87,6 +93,10 @@ export function create_backend_runtime(options: {
     codex_sign_in: providers.codex_sign_in,
     machine_catalog: providers.machine_catalog,
   };
+}
+function require_children(children: OwnedOneShotChildren | undefined): OwnedOneShotChildren {
+  if (!children) throw new Error('Production backend probes require a server-owned child lifetime');
+  return children;
 }
 export function unavailable_backend_providers(): BackendProviders {
   return {

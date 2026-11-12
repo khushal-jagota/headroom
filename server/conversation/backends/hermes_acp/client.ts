@@ -21,6 +21,7 @@ import type { ResolvedConversationStart } from '../../contracts.ts';
 import { child_environment } from './launch.ts';
 import { require_strict_session_notification } from './strict_updates.ts';
 import type { AcpChildLaunch } from './launch.ts';
+import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import {
   CHILD_OUTPUT_LINE_LIMIT_BYTES,
   STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS,
@@ -361,6 +362,10 @@ export class HermesAcpClient {
 
 /** Launch ownership exists before startup, so shutdown can seal an in-flight spawn. */
 export class HermesAcpLauncher {
+  private readonly child_processes: OwnedChildProcesses;
+  constructor(child_processes: OwnedChildProcesses) {
+    this.child_processes = child_processes;
+  }
   private sealed = false;
   private owned: OwnedCodexProcess | null = null;
   private client: HermesAcpClient | null = null;
@@ -392,6 +397,7 @@ export class HermesAcpLauncher {
   ): Promise<HermesAcpClient> {
     try {
       const owned = await spawn_codex_process(launch.argv, {
+        child_processes: this.child_processes,
         environment: child_environment(launch, resolved_start),
         working_directory: resolved_start.workspace_folder,
       });

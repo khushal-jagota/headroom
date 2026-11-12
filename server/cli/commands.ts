@@ -93,7 +93,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['attention', 'summary'],
-    help: 'Compare recorded involvement with the preceding date range.\n\nOmit both dates for the last seven local dates. Filters select one work scope;\n--group-by selects its breakdown. These figures do not measure owner hours.\n',
+    help: 'Compare recorded involvement with the preceding date range.\n\nOmit both dates for the last seven local dates. Filters select one work scope;\n--group-by selects its breakdown. These figures do not measure owner hours.',
     hidden: false,
     group: false,
     parameters: [
@@ -2129,7 +2129,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['goal'],
-    help: 'Read, edit, and permanently delete goals.\n\nSee goal schema create|edit|primary-chart for request contracts.\n',
+    help: 'Read, edit, and permanently delete goals.\n\nSee goal schema create|edit|primary-chart for request contracts.',
     hidden: false,
     group: true,
     parameters: [],
@@ -2627,7 +2627,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['manager'],
-    help: 'Manage ordinary Managers. Settled Managers are finished destinations.\n\nChoose an active Manager for new work. Reads expose the boolean settled key.\nAn absent settled field does not establish that a Manager is active.\n\nRead manager workspace ID for the visible page and its edit command.\nUse panels page show|edit --manager ID for its own page document.\n',
+    help: 'Manage ordinary Managers. Settled Managers are finished destinations.\n\nChoose an active Manager for new work. Reads expose the boolean settled key.\nAn absent settled field does not establish that a Manager is active.\n\nRead manager workspace ID for the visible page and its edit command.\nUse panels page show|edit --manager ID for its own page document.',
     hidden: false,
     group: true,
     parameters: [],
@@ -3802,7 +3802,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['measure-source', 'create'],
-    help: 'Read JSON from stdin. Discover fields with measure-source schema create --json.\n\nAfter creating a source, read measure-source runtime --json before writing its script.\n',
+    help: 'Read JSON from stdin. Discover fields with measure-source schema create --json.\n\nAfter creating a source, read measure-source runtime --json before writing its script.',
     hidden: false,
     group: false,
     parameters: [
@@ -3925,7 +3925,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['measure-source', 'request-run'],
-    help: 'Enqueue JSON from stdin; see measure-source schema run --json for fields.\n\nRead measure-source runtime --json for candidates, collection and script behavior.\n',
+    help: 'Enqueue JSON from stdin; see measure-source schema run --json for fields.\n\nRead measure-source runtime --json for candidates, collection and script behavior.',
     hidden: false,
     group: false,
     parameters: [
@@ -4051,7 +4051,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['measure-source', 'runtime'],
-    help: 'Show script helpers, context and an executable example; no server or stdin needed.\n\nRequest envelopes are in measure-source schema script|run --json.\n',
+    help: 'Show script helpers, context and an executable example; no server or stdin needed.\n\nRequest envelopes are in measure-source schema script|run --json.',
     hidden: false,
     group: false,
     parameters: [
@@ -4235,7 +4235,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['measure-source', 'submit-script'],
-    help: 'Save JSON from stdin; see measure-source schema script --json for fields.\n\nRead measure-source runtime --json for Python helpers and dated outputs first.\n',
+    help: 'Save JSON from stdin; see measure-source schema script --json for fields.\n\nRead measure-source runtime --json for Python helpers and dated outputs first.',
     hidden: false,
     group: false,
     parameters: [
@@ -4267,7 +4267,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['page'],
-    help: "Read and edit the page documents that Managers and Chief can change.\n\nSelect --manager ID or --chief. For a sole held goal's visible document,\nuse goal show|edit. Start with manager workspace ID to find the visible source.\n",
+    help: "Read and edit the page documents that Managers and Chief can change.\n\nSelect --manager ID or --chief. For a sole held goal's visible document,\nuse goal show|edit. Start with manager workspace ID to find the visible source.",
     hidden: false,
     group: true,
     parameters: [],
@@ -4920,7 +4920,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['server-event-loop-tasks'],
-    help: 'List what the running server waits on: every asyncio task on its event loop.\n\nEach task shows its name, coroutine, the line it is awaiting, and its age, oldest\nfirst. Reads only: no task is cancelled, woken, or changed.\n',
+    help: 'List what the running server waits on: every asyncio task on its event loop.\n\nEach task shows its name, coroutine, the line it is awaiting, and its age, oldest\nfirst. Reads only: no task is cancelled, woken, or changed.',
     hidden: true,
     group: false,
     parameters: [
@@ -5145,7 +5145,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['skill', 'write-file'],
-    help: "Write a file at PATH inside a skill's folder. File text on redirected stdin.\n\nThe skill's own SKILL.md is not writable here; use `panels skill edit`.\n",
+    help: "Write a file at PATH inside a skill's folder. File text on redirected stdin.\n\nThe skill's own SKILL.md is not writable here; use `panels skill edit`.",
     hidden: false,
     group: false,
     parameters: [
@@ -5193,7 +5193,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['stalls', 'watchdog'],
-    help: 'Alarm once on each open stall finding and on a stale checker heartbeat.\n\nReads the database read-only. Push settings come from the live configuration\n(PLAN_CONFIG_PATH and the PLAN_APNS_* environment); the Chief message goes to the\nlocal server on the configured port.\n',
+    help: 'Alarm once on each open stall finding and on a stale checker heartbeat.\n\nReads the database read-only. Push settings come from the live configuration\n(PLAN_CONFIG_PATH and the PLAN_APNS_* environment); the Chief message goes to the\nlocal server on the configured port.',
     hidden: false,
     group: false,
     parameters: [
@@ -5254,7 +5254,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['ticket', 'assign'],
-    help: 'Assign one Worker to an explicit Manager.\n\nChoose an active Manager for new work. Settled Managers are finished\ndestinations. Read the settled boolean first. An absent settled field does not\nestablish active state.\n',
+    help: 'Assign one Worker to an explicit Manager.\n\nChoose an active Manager for new work. Settled Managers are finished\ndestinations. Read the settled boolean first. An absent settled field does not\nestablish active state.',
     hidden: false,
     group: false,
     parameters: [
@@ -5616,7 +5616,7 @@ export const commands: CommandDefinition[] = [
   },
   {
     path: ['ticket', 'employee-configuration'],
-    help: "Set what this Ticket's worker launches on: backend, model, reasoning effort.\n\nAll three go together because the door takes them together — a model id belongs to the\nbackend that named it, so there is no such thing as changing one of them on its own.\n",
+    help: "Set what this Ticket's worker launches on: backend, model, reasoning effort.\n\nAll three go together because the door takes them together — a model id belongs to the\nbackend that named it, so there is no such thing as changing one of them on its own.",
     hidden: true,
     group: false,
     parameters: [
