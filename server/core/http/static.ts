@@ -171,7 +171,7 @@ export async function sendFile(
         .send(
           request.method === 'HEAD' || end === start
             ? Buffer.alloc(0)
-            : end - start < FILE_CHUNK_BYTES
+            : end - start <= FILE_CHUNK_BYTES
               ? await readSlice(file, start, end)
               : createReadStream(file, { start, end: end - 1, highWaterMark: FILE_CHUNK_BYTES }),
         );
