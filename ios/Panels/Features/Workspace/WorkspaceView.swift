@@ -93,7 +93,7 @@ struct WorkspaceView: View {
         .onChange(of: workspaceWindows) { _, windows in if visible { store.setNavigationDemand("workspace", windows) } }
         .onChange(of: store.view?.contentVersion) { _, _ in if visible { updateGroups() } }
         .onChange(of: store.baseURL) { _, _ in
-            groups = [:]; managers = []; settled = nil; parentsPage = nil; goals = nil; goalsError = nil
+            groups = [:]; managers = []; settled = nil; parentsPage = nil; goalsHandle = nil
             settledError = nil; settledOpen = false; settledRequestedOffset = 0
         }
         // Settled rows keep their paged list read, only while the section is open, and
