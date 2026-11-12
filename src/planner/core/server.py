@@ -433,15 +433,18 @@ def create_app(
                             participants_factory=slot_participants_for_test,
                         )
 
-                    from planner.environments.vps_metrics.collectors import LinuxCollector
                     from planner.environments.vps_metrics.data import Store
+                    from planner.platform_runtime.selection import get_platform_adapter
 
                     metrics_config = load_metrics_config()
                     metrics_path = store_path(config.db_path)
                     metrics = MetricsRuntime(
                         metrics_path,
                         Store(metrics_path, metrics_config),
-                        None if config.test_mode else LinuxCollector(metrics_config),
+                        (
+                            None if config.test_mode
+                            else get_platform_adapter().metrics_collector(metrics_config)
+                        ),
                         metrics_config,
                     )
                     app.state.vps_metrics = metrics

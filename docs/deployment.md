@@ -33,6 +33,10 @@ The host supplies the glibc loader and a short named list of system libraries, N
 
 Actual Claude and Codex conversations use owner-maintained CLIs outside the release. App installation does not change those versions. SDK dependencies keep their API pins, while CLI qualification checks the protocol that Panels uses instead of an exact version number. These checks cannot guarantee compatibility with every future CLI update. See [Conversations](conversations.md) for the owner update controls.
 
+The platform adapter owns the Linux service identity, independent installer launch, and installer source. The copied installer stays self-contained and uses only the standard library. It keeps the same stop, swap, start, health, and rollback sequence.
+
+The update barrier remains separate work. Current updates close admission and take any schema backup before the installer stops the service. A later change must join confirmed child retirement, acknowledged-result settlement, and the snapshot before it can claim no-loss rollback. A queue drain alone does not prove process retirement.
+
 ## How an install happens
 
 **Getting ready.** On its usual one-minute check, the server looks for the newest successful publication from `main`. For a release it is not running, it streams the archive to disk, checks its fingerprint against the receipt once, and unpacks it beside the live app on the same disk. It checks that the unpacked release names itself as the receipt does and that the host meets its runtime contract, and keeps the matching Mac runtime. Only then does the card show **Update available**. A failed download or check is tried again on the next pass and never shows as an error. Only one waiting release is kept.

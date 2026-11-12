@@ -13,7 +13,6 @@ import asyncio
 import concurrent.futures
 import logging
 import sqlite3
-import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -54,6 +53,7 @@ from planner.environments.update_install import (
 )
 from planner.environments.update_prefetch import stage_release, staged_app_path
 from planner.managed_skills import skill_names
+from planner.platform_runtime.selection import get_platform_adapter
 from planner.tickets.data import audit_ticket_registry_integrity
 from planner.worker_types.configuration import build_worker_runtime_definitions
 from planner.worker_types.store import read_definitions
@@ -67,12 +67,7 @@ RESTARTED_DETAIL = "Panels restarted before the update began, so nothing changed
 
 
 def launch_transient_unit(attempt_id: str, command: list[str]) -> None:
-    """Start the installer in its own user unit, so it outlives this service."""
-    subprocess.run(
-        ["systemd-run", "--user", "--collect", "--quiet",
-         f"--unit=panels-update-{attempt_id}", *command],
-        check=True, shell=False, capture_output=True, timeout=30,
-    )
+    get_platform_adapter().launch_installer(attempt_id, command)
 
 
 class UpdateService:
