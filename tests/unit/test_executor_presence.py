@@ -636,5 +636,17 @@ def test_large_ticket_history_never_breaks_an_accepted_lease(
                 )
                 assert response.status_code == 200, response.text
                 assert decode_bounded(response.content, LeaseReply).update.target is None
+                # The optional offer must not turn an old peer's refusal into HTTP 500.
+                old = replace(identity, protocol_version=PROTOCOL_VERSION - 1)
+                response = await client.post(
+                    "/api/executor/lease", content=encode_bounded(lease_request(old))
+                )
+                assert response.status_code == 409, response.text
+                refused = decode_bounded(response.content, LeaseRefused)
+                assert refused.error["code"] == ErrorCode.executor_version_refused.value
+                assert refused.update is None
+                assert refused.refusal is not None
+                assert refused.refusal.peer_identity == old
+
 
     asyncio.run(exercise())

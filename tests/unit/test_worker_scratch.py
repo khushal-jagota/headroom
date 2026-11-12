@@ -132,3 +132,39 @@ def test_close_shares_physical_removal_and_joins_it_after_cancellation(
         assert not scratch.directory.exists()
 
     asyncio.run(exercise())
+
+
+def test_cancel_during_creation_survives_failed_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Creation cancellation must survive the cleanup error that previously replaced it."""
+    import asyncio
+    import threading
+
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+    entered, release = threading.Event(), threading.Event()
+    construct = WorkerScratch.__init__
+    scratch_paths = []
+
+    def slow_create(self, environment):  # type: ignore[no-untyped-def]
+        construct(self, environment)
+        scratch_paths.append(self.directory)
+        entered.set()
+        assert release.wait(5), "Creation stayed on the event loop"
+
+    def fail_remove(path):  # type: ignore[no-untyped-def]
+        raise OSError("cleanup failed")
+
+    async def exercise() -> None:
+        monkeypatch.setattr(WorkerScratch, "__init__", slow_create)
+        creation = asyncio.create_task(WorkerScratch.create({"PLAN_TICKET_ID": "ticket"}))
+        assert await asyncio.to_thread(entered.wait, 5)
+        creation.cancel()
+        monkeypatch.setattr(shutil, "rmtree", fail_remove)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await creation
+        assert "cleanup failed" in caplog.text
+        assert scratch_paths[0].exists()
+
+    asyncio.run(exercise())

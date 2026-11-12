@@ -9,7 +9,7 @@ That narrowness is the design. A Worker can run for a long time, a person can ta
 - **The readiness decision.** A read-only check of one Ticket that answers "may a step start now?" or names the reason it may not.
 - **The worker-step claim.** The only control fact a Ticket stores about automatic work: at rest, out, or errored. See [Ticket lifecycle](tickets.md#how-status-is-read).
 - **The opener fact.** On a stage the person shares with the Worker, a record that this entry onto the stage has had its opening turn.
-- **The loop.** A background pass over the Tickets that could start, least recently updated first, that runs readiness, takes the claim, and sends. It skips backlogged Tickets, Tickets at a final Stage, and Tickets whose step is out, failed, or waiting on a proposal before it reads them.
+- **The loop.** A background pass over the Tickets that can start. It offers waiting starts in admission order, then new candidates in database order. It runs readiness, takes the claim, and sends. It skips backlogged Tickets, Tickets at a final Stage, and Tickets whose step is out, failed, or waiting on a proposal before it reads them.
 
 ```
  change signal or timer
@@ -40,7 +40,7 @@ The ceiling is not a readiness question. It decides what a finished proposal doe
 
 One more question goes to the conversation itself: is a turn already running? A busy conversation is left alone this pass, so automation never steers into an unrelated turn.
 
-Automatic starts share a launch gate with Manager wakes and recovery notices. The gate permits one new start per second and four starts awaiting acceptance. Workers use at most three slots, so Chief and Managers retain capacity. A slot ends on positive agent activity or definite refusal. A wire write or a local queue position alone does not prove acceptance. Messages that wait behind a turn or quarantine hold no start slot. At dequeue, a combined prompt takes one slot. Running turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing.
+Automatic starts share a launch gate with Manager wakes and recovery notices. The gate permits one new start per second and four starts awaiting acceptance. Workers use at most three slots, so Chief and Managers retain capacity. A slot ends on positive agent activity or definite refusal. A wire write or a local queue position alone does not prove acceptance. Messages that wait behind a turn or quarantine hold no start slot. At dequeue, a combined prompt takes one slot. Running turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing. Preparation follows admission order, so its limit cannot hide the next eligible Worker. A deferred preparation loses its place when its Ticket no longer meets readiness or its conversation becomes busy.
 
 Automatic admission carries the same stable machine ID as the Ticket. A rename never changes a deferred start or claim. An absent executor holds no shared slot. Its pending starts retain their claims and command identities until receipts and ownership evidence settle them. On return, pending starts pass through the gate again. Durable bindings preserve this rule across a home restart. Control commands can pass unfetched deferred work without a new prompt or a change to conversation order.
 

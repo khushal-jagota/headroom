@@ -1745,8 +1745,7 @@ class ConversationStore:
                 )
                 # A new conversation has no source process. The pre-spawn boundary
                 # replaces this receipt with launch_pending before a child can start.
-                child_custody.write_pending(conn, record.conversation_id, "never-started")
-                child_custody.write_retired(conn, record.conversation_id, "never-started")
+                child_custody.write_never_started(conn, record.conversation_id)
                 if self.signal_coordinator is not None:
                     conn.commit()
             except sqlite3.IntegrityError as already_there:

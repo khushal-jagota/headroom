@@ -596,8 +596,25 @@ def test_selective_codex_reads_preserve_strict_identities_outcomes_and_permissio
     assert completed.turn.error.message == "provider refused"
 
 
-def test_native_identity_reaches_custody_before_protocol_initialization(tmp_path: Path) -> None:
+def test_native_identity_reaches_custody_before_protocol_initialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The real scripted child proves that custody precedes the first handshake write."""
+    import threading
+
+    from planner.conversation.child_custody import process_identity
+
+    loop_thread = threading.get_ident()
+    probe = process_identity
+
+    def inspect(pid):  # type: ignore[no-untyped-def]
+        assert threading.get_ident() != loop_thread
+        return probe(pid)
+
+    monkeypatch.setattr(
+        "planner.conversation.backends.codex_app_server.client.process_identity", inspect,
+    )
+
     async def exercise() -> None:
         identities = []
         async with _scripted_child(tmp_path, script={}) as scripted:

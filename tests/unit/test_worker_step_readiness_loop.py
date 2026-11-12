@@ -17,7 +17,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
@@ -33,6 +33,9 @@ from planner.conversation.contracts import (
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
+from planner.conversation.start_admission import AutomaticStartAdmission
+from planner.conversation.start_admission.contracts import StartRequest
+from planner.core import ticket_blocks
 from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
@@ -1002,6 +1005,156 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
         )
         assert world.ticket(ready_one).ticket_status is TicketStatus.agent
         assert world.ticket(ready_two).ticket_status is TicketStatus.agent
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+
+class _AdmissionConversations(InMemoryConversationSystem):
+    def __init__(self, starts: AutomaticStartAdmission) -> None:
+        super().__init__()
+        self.start_admission = starts
+
+
+def test_burst_dispatch_reaches_admission_order_beyond_the_preparation_cap(
+    world: _World, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk: DB order hides the admission head behind four repeatedly refused tasks.
+
+    Existing readiness cases do not combine the real preparation cap and ranked starts.
+    Reuse their SQLite/fake-conversation host; no backend or browser is needed.
+    """
+    from planner.runtime import worker_step_readiness_loop as loop_module
+
+    ticket_ids = [world.ready_ticket(title=f"Burst {number}") for number in range(8)]
+    with closing(world.connect()) as conn:
+        conn.executemany(
+            "UPDATE tickets SET updated_at=? WHERE id=?", enumerate(ticket_ids),
+        )
+    now = [0.0]
+    starts = AutomaticStartAdmission(clock=lambda: now[0])
+    world.conversations = _AdmissionConversations(starts)
+    assert starts.try_start(StartRequest("initial", "supervisor", HOME_MACHINE_ID))
+    # The first database candidate is unseen. Every ranked candidate must precede it.
+    for ticket_id in reversed(ticket_ids[1:]):
+        assert not starts.try_start(
+            StartRequest(f"worker-preparation:{ticket_id}", "worker", HOME_MACHINE_ID)
+        )
+    starts.finish("initial")
+
+    prepare = threading.Event()
+    real_start = start_ready_worker_step
+
+    async def start_after_poll(ticket_id: str, **kwargs: Any) -> WorkerStepStartResult:
+        # Hold tasks until this poll selected its four futures. Fast refusals must
+        # not open more preparation places halfway through the candidate scan.
+        await asyncio.to_thread(prepare.wait)
+        return await real_start(ticket_id, **kwargs)
+
+    monkeypatch.setattr(loop_module, "start_ready_worker_step", start_after_poll)
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+
+    def preparations_ended() -> bool:
+        with readiness_loop._in_flight_lock:
+            return not readiness_loop._in_flight
+
+    started: set[str] = set()
+    try:
+        for second, expected in enumerate([*reversed(ticket_ids[1:]), ticket_ids[0]], 1):
+            now[0] = float(second)
+            prepare.clear()
+            scheduled = readiness_loop.poll_once()
+            assert len(scheduled) <= starts.limit
+            prepare.set()
+            assert _waited_for(preparations_ended)
+            current = {
+                ticket_id for ticket_id in ticket_ids
+                if world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
+            }
+            assert current - started == {expected}
+            started = current
+            # The fake conversation has no backend activity callbacks. Settle the
+            # accepted opener here, so the next controlled second can take a place.
+            active = [s for s in starts.snapshots() if s.state == "active"]
+            assert [s.request.identity for s in active] == [
+                f"worker_step_message_{expected}:1"
+            ]
+            starts.finish(active[0].request.identity)
+        assert started == set(ticket_ids)
+    finally:
+        prepare.set()
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+
+def test_ineligible_admission_heads_do_not_hold_the_next_ready_worker(world: _World) -> None:
+    """Risk: a deferred rank survives the Ticket's loss of readiness and blocks work.
+
+    The deletion race case has no admission state. Exercise candidate exclusions,
+    readiness exclusions, an away destination, and a new busy turn on the same host.
+    """
+    deleted, backlogged, blocked, not_empty, away, busy, survivor = [
+        world.ready_ticket(title=title)
+        for title in ("Deleted", "Backlogged", "Blocked", "Claim out", "Away", "Busy", "Survivor")
+    ]
+    now = [0.0]
+    starts = AutomaticStartAdmission(clock=lambda: now[0])
+    starts.configure_destinations(lambda destination: True)
+    world.conversations = _AdmissionConversations(starts)
+    assert starts.try_start(StartRequest("initial", "supervisor", HOME_MACHINE_ID))
+    for ticket_id in (deleted, backlogged, blocked, not_empty, away, busy, survivor):
+        assert not starts.try_start(StartRequest(
+            f"worker-preparation:{ticket_id}", "worker",
+            ORIGINAL_MAC_MACHINE_ID if ticket_id == away else HOME_MACHINE_ID,
+        ))
+    with closing(world.connect()) as conn:
+        tickets_data.delete_ticket(
+            conn, deleted, principal=OWNER_PRINCIPAL, now=0, even_while_running=True,
+        )
+        tickets_data.set_ticket_backlog(
+            conn, backlogged, is_backlogged=True, principal=OWNER_PRINCIPAL, now=0,
+        )
+        # A backlogged Ticket can still block another Ticket.
+        ticket_blocks.add_ticket_block(conn, backlogged, blocked, 0)
+        conn.execute("UPDATE tickets SET worker_step_claim='out' WHERE id=?", (not_empty,))
+        conn.execute(
+            "UPDATE tickets SET locale='macos', machine_id=? WHERE id=?",
+            (ORIGINAL_MAC_MACHINE_ID, away),
+        )
+    # The oldest remaining preparation becomes busy after it received a rank.
+    # Its Ticket is still empty, so the readiness scan alone cannot remove it.
+    with closing(world.connect()) as conn:
+        conn.execute("UPDATE tickets SET conversation_id='owner-busy' WHERE id=?", (busy,))
+    world.start_conversation("owner-busy")
+    asyncio.run(world.conversations.send(
+        "owner-busy", text_message_content("Owner turn"), sender_label="owner",
+    ))
+    starts.configure_destinations(lambda destination: destination == HOME_MACHINE_ID)
+    starts.finish("initial")
+    now[0] = 1.0
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+
+    def preparations_ended() -> bool:
+        with readiness_loop._in_flight_lock:
+            return not readiness_loop._in_flight
+
+    try:
+        # Depending on the two tasks' order, the survivor starts in this poll or
+        # the next one. No clock advance or restart can release a stale busy rank.
+        for _ in range(2):
+            readiness_loop.poll_once()
+            assert _waited_for(preparations_ended)
+            if world.ticket(survivor).worker_step_claim is WorkerStepClaim.out:
+                break
+        assert world.ticket(survivor).worker_step_claim is WorkerStepClaim.out
+        assert world.ticket(busy).worker_step_claim is WorkerStepClaim.none
+        assert {snapshot.request.identity for snapshot in starts.snapshots()} == {
+            f"worker_step_message_{survivor}:1"
+        }
     finally:
         readiness_loop.stop()
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)

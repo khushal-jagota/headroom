@@ -184,6 +184,7 @@ from planner.conversation.message_files import (
     MessageFileMissing,
 )
 from planner.conversation.worker_scratch import WorkerScratch
+from planner.core.task_settlement import run_on_worker_thread
 from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
 from planner.worker_supervision.config import NATIVE_PHASE_SECONDS, NATIVE_STREAM_SECONDS
 
@@ -512,11 +513,18 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         if self.custody_reporter is not None:
             if self._process is None:
                 raise BackendSpawnFailed("Claude did not expose its process identity")
-            identity = (process_identity(self._process.pid) if self._worker_supervisor is None
-                        else self._worker_supervisor.identity())
+            if self._worker_supervisor is None:
+                identity = await run_on_worker_thread(process_identity, self._process.pid)
+            else:
+                identity = await run_on_worker_thread(self._worker_supervisor.identity)
             if identity is None:
                 raise BackendSpawnFailed("Cannot establish the Claude process identity")
-            await self.custody_reporter(identity)
+            try:
+                await self.custody_reporter(identity)
+            except Exception as error:
+                raise BackendSpawnFailed(
+                    f"Cannot save the Claude process identity: {error}"
+                ) from error
 
     async def _stop_worker(self) -> None:
         supervisor = self._worker_supervisor
@@ -1524,8 +1532,10 @@ class ClaudeAgentSdkBackendChild:
                 # callback is there for the asks that reach it anyway.
                 warnings.simplefilter("ignore", CanUseToolShadowedWarning)
                 await client.connect()
-        except (CLINotFoundError, BackendCliIncompatible) as no_executable:
-            raise BackendSpawnFailed(str(no_executable)) from no_executable
+        except (
+            CLINotFoundError, BackendCliIncompatible, BackendSpawnFailed, WorkerCleanupError,
+        ) as start_failure:
+            raise BackendSpawnFailed(str(start_failure)) from start_failure
         except Exception as would_not_come_up:
             why = self._with_the_standard_error(str(would_not_come_up))
             if resumed_from is not None:

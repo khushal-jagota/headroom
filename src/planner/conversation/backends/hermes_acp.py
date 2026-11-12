@@ -160,6 +160,7 @@ from planner.conversation.message_files import (
     MessageFileMissing,
 )
 from planner.conversation.worker_scratch import WorkerScratch
+from planner.core.task_settlement import run_on_worker_thread
 from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
 from planner.worker_supervision.config import NATIVE_PHASE_SECONDS
 
@@ -839,8 +840,10 @@ class HermesAcpBackendChild:
             await supervisor.started(process.pid)
         reporter = getattr(self._sink, "record_local_child_custody", None)
         if reporter is not None:
-            identity = (process_identity(process.pid) if supervisor is None
-                        else supervisor.identity())
+            if supervisor is None:
+                identity = await run_on_worker_thread(process_identity, process.pid)
+            else:
+                identity = await run_on_worker_thread(supervisor.identity)
             if identity is None:
                 raise BackendSpawnFailed("Cannot establish the Hermes process identity")
             await reporter(identity)

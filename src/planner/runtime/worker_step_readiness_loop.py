@@ -177,6 +177,9 @@ async def _admitted_start_ready_worker_step(
         if conversation_id is not None and await conversation_system.is_running(conversation_id):
             # An occupied worker is left alone for this pass. Queueing stays the answer
             # only for a collision that slipped between this check and the send.
+            # Its old unbound preparation must not retain priority over ready work.
+            if starts is not None:
+                starts.finish_unbound(f"worker-preparation:{ticket.id}")
             return WorkerStepStartResult(started=False)
 
         worker_type_definition = ticket.workflow
@@ -537,6 +540,12 @@ class WorkerStepReadinessLoop:
             starts = getattr(self._conversation_system, "start_admission", None)
             if starts is not None:
                 starts.retain_deferred("worker-preparation:", ready_start_ids)
+                # Select the admission head before the preparation cap can hide it.
+                # All candidates are Workers; unknown identities must not inherit
+                # priority()'s default supervisor role. Stable ties retain DB order.
+                ready_ticket_ids.sort(
+                    key=lambda ticket_id: starts.priority((f"worker-preparation:{ticket_id}",))[1]
+                )
             return ready_ticket_ids
         finally:
             conn.close()

@@ -50,6 +50,7 @@ from planner.conversation.backends.codex_app_server.login import (
 from planner.conversation.child_custody import process_identity
 from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.worker_scratch import WorkerScratch
+from planner.core.task_settlement import run_on_worker_thread
 from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
@@ -250,7 +251,7 @@ class CodexAppServerClient:
                 await supervisor.spawned(process.pid)
                 await supervisor.started(process.pid)
             if custody_reporter is not None:
-                identity = self.local_child_identity()
+                identity = await run_on_worker_thread(self.local_child_identity)
                 if identity is None:
                     raise CodexChildWouldNotStart("Cannot establish the Codex process identity")
                 await custody_reporter(identity)

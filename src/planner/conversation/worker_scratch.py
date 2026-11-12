@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import secrets
@@ -14,6 +15,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from planner.core.task_settlement import run_on_worker_thread, wait_for_settlement
+
+LOGGER = logging.getLogger(__name__)
 
 
 class WorkerScratchError(OSError):
@@ -119,7 +122,12 @@ class WorkerScratch:
             if not task.cancelled() and task.exception() is None:
                 cleanup = asyncio.create_task(task.result().aclose())
                 await wait_for_settlement(cleanup)
-                cleanup.result()
+                try:
+                    cleanup.result()
+                except Exception:
+                    LOGGER.warning(
+                        "Worker scratch cleanup failed after interrupted creation", exc_info=True,
+                    )
             raise
 
     async def aclose(self) -> None:

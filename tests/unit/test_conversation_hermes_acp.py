@@ -682,11 +682,22 @@ def test_configured_home_worker_root_reaches_real_hermes_transport_without_ambie
     tmp_path: Path, executor_transport_home: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The curated Hermes environment must retain the configured supervision root."""
+    import threading
+
     from tests.support.conversation_scripted_acp_agent import scripted_acp_agent_launch
 
     from planner.conversation.production_backends import production_backend_launches
-    from planner.worker_supervision import records
+    from planner.worker_supervision import WorkerSupervisor, records
 
+    loop_thread = threading.get_ident()
+    native_identity = WorkerSupervisor.identity
+    identities = []
+
+    def inspect(supervisor):  # type: ignore[no-untyped-def]
+        assert threading.get_ident() != loop_thread
+        return native_identity(supervisor)
+
+    monkeypatch.setattr(WorkerSupervisor, "identity", inspect)
     monkeypatch.delenv("PLAN_DB_PATH", raising=False)
     monkeypatch.delenv("PLAN_WORKER_PROCESS_ROOT", raising=False)
     monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "scratch")
@@ -706,6 +717,11 @@ def test_configured_home_worker_root_reaches_real_hermes_transport_without_ambie
 
     async def exercise() -> None:
         sink = _RecordingSink()
+
+        async def record_identity(identity):  # type: ignore[no-untyped-def]
+            identities.append(identity)
+
+        sink.record_local_child_custody = record_identity  # type: ignore[attr-defined]
         child = HermesAcpBackendChild(
             launch=launch, resolved_start=start, event_sink=sink,
             message_files=ConversationMessageFiles(tmp_path / "files"),
@@ -713,6 +729,7 @@ def test_configured_home_worker_root_reaches_real_hermes_transport_without_ambie
         try:
             await asyncio.wait_for(child.start(start, vendor_session_cursor=None), 10)
             assert sink.vendor_session_cursor is not None
+            assert len(identities) == 1 and identities[0] is not None
             journals = list(configured_root.glob("*.json"))
             assert len(journals) == 1
             record = records.read(journals[0])
