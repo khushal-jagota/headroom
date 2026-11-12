@@ -1,4 +1,5 @@
 {
+  "candidate": "typescript",
   "source_roots": [
     "src/planner/navigation/"
   ],
@@ -1568,6 +1569,5 @@
     "overview_de-DE",
     "live_frames",
     "agent_seed_status"
-  ],
-  "candidate": "typescript"
+  ]
 }
