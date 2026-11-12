@@ -4,6 +4,8 @@ This package is the shared server shell for the backend migration. It runs `.ts`
 
 Accepted migration differences live in [DEVIATIONS.md](DEVIATIONS.md).
 
+The Linux runtime requires `libicu-dev`, including its unversioned `libicui18n.so` link, for [native history date labels](conversation/history/README.md). Python already requires this ICU development library. The Node process now loads it through the existing `koffi` dependency.
+
 From the repository root:
 
 ```sh
