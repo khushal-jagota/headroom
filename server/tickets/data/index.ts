@@ -17,6 +17,7 @@ import type { TicketWorkflowDefinition } from '../../worker_types/contracts.ts';
 import { capture_ticket_attention } from '../../notifications/attention.ts';
 import { capture_gate, record_approval } from '../../attention/history.ts';
 import { create_proposal_wake, create_worker_error_wake } from '../../manager_wakes/data.ts';
+import * as revision_feedback from '../revision_feedback.ts';
 import * as blocks from '../../core/ticket_blocks.ts';
 import * as admission from '../logic/admission.ts';
 import * as machine from '../logic/machine.ts';
@@ -488,7 +489,7 @@ export function _apply_decision(
   );
   if (d.stage !== t.stage) {
     tx.run('DELETE FROM ticket_paired_stage_openers WHERE ticket_id=?', [t.id]);
-    tx.run('DELETE FROM ticket_revision_feedback WHERE ticket_id=?', [t.id]);
+    revision_feedback.discard(tx, t.id);
   }
   if ((t.stage !== 'done') !== (d.stage !== 'done'))
     for (const b of blocked) {
@@ -694,13 +695,12 @@ export function reject_proposal(
     worker_type_definition: t.workflow,
   });
   if (o.message !== null) {
-    const feedback = compact([
-      { sender_kind: o.principal.kind, sender_id: o.principal.id, message: o.message },
-    ]).replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
-    tx.run(
-      'INSERT INTO ticket_revision_feedback (ticket_id,stage,feedback_json,revision,created_at,updated_at) VALUES (?,?,?,1,?,?) ON CONFLICT(ticket_id) DO UPDATE SET stage=excluded.stage,feedback_json=excluded.feedback_json,revision=ticket_revision_feedback.revision+1,updated_at=excluded.updated_at',
-      [id, t.stage, feedback, o.now, o.now],
-    );
+    revision_feedback.set_feedback(tx, id, {
+      stage: t.stage,
+      sender: o.principal,
+      message: o.message,
+      now: o.now,
+    });
   }
   const u = _apply_decision(tx, t, d, o.now);
   tx.run('DELETE FROM ticket_paired_stage_openers WHERE ticket_id=? AND stage=?', [id, t.stage]);
