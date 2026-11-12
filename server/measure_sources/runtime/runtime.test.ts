@@ -310,16 +310,17 @@ test('credential use crosses private IPC from an encrypted temporary store to a 
 });
 // Smaller configured limits exercise real enforcement without consuming production budgets on the VPS.
 test('stdout and private control frames share the output byte budget', async () => {
-  for (const body of [
-    "process.stdout.write('x'.repeat(4096));",
-    "console.log('x'.repeat(4096));",
-    "await record('measure-test','2026-11-12',1,{limitation:'x'.repeat(4096)});",
-  ]) {
+  for (const [body, ordinaryBytes] of [
+    ["process.stdout.write('x'.repeat(4096));", 4096],
+    ["console.log('x'.repeat(4096));", 4097],
+    ["await record('measure-test','2026-11-12',1,{limitation:'x'.repeat(4096)});", 0],
+  ] as const) {
     const result = await new Runtime().execute(
       admission(module(body), { output_bytes: 1024 }),
       noCredentials,
     );
     expect(result.failure?.budget).toBe('output_bytes');
+    expect(result.metrics.child_output_bytes).toBe(ordinaryBytes);
     expect(result.observations).toEqual([]);
   }
 });

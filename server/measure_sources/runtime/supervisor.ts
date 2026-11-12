@@ -75,6 +75,8 @@ export class Runtime {
       elapsed_milliseconds: 0,
       script_cpu_milliseconds: 0,
     };
+    // The accepted budget covers control frames too; the legacy metric does not.
+    let totalOutputBytes = 0;
     let resultFailure: RunFailure | null = null;
     const observations: NumericJSON<CandidateObservation[]> = [];
     const datasets: NumericJSON<CandidateDatasetResult[]> = [];
@@ -144,9 +146,10 @@ export class Runtime {
           settled = true;
           resolve(value);
         };
-        const count = (bytes: number) => {
-          metrics.child_output_bytes += bytes;
-          if (metrics.child_output_bytes > admission.limits.output_bytes)
+        const count = (bytes: number, ordinaryOutput: boolean) => {
+          totalOutputBytes += bytes;
+          if (ordinaryOutput) metrics.child_output_bytes += bytes;
+          if (totalOutputBytes > admission.limits.output_bytes)
             finish(failure('budget_exhausted', { budget: 'output_bytes' }));
         };
         let pending = Buffer.alloc(0);
@@ -155,7 +158,7 @@ export class Runtime {
             stringify_python_json({ id, value, failure: problem }, { compact: true }) + '\n',
           );
         channel.on('data', (chunk: Buffer) => {
-          count(chunk.length);
+          count(chunk.length, false);
           if (settled) return;
           pending = Buffer.concat([pending, chunk]);
           let boundary: number;
@@ -288,11 +291,11 @@ export class Runtime {
             }
           }
         });
-        process!.stdout!.on('data', (chunk: Buffer) => count(chunk.length));
+        process!.stdout!.on('data', (chunk: Buffer) => count(chunk.length, true));
         let fatalHeap = false;
         let stderrSuffix = '';
         process!.stderr!.on('data', (chunk: Buffer) => {
-          count(chunk.length);
+          count(chunk.length, true);
           const diagnostic = stderrSuffix + chunk.toString('utf8');
           if (
             diagnostic.includes('JavaScript heap out of memory') ||
@@ -344,7 +347,7 @@ export class Runtime {
       this.active.delete(admission.run.id);
       metrics.elapsed_milliseconds = Math.trunc((performance.now() / 1000 - started) * 1000);
     }
-    if (metrics.child_output_bytes > admission.limits.output_bytes)
+    if (totalOutputBytes > admission.limits.output_bytes)
       resultFailure = failure('budget_exhausted', { budget: 'output_bytes' });
     if (metrics.response_bytes > admission.limits.response_bytes)
       resultFailure = failure('budget_exhausted', { budget: 'response_bytes' });
