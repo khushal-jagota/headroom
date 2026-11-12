@@ -8,7 +8,14 @@ import type {
 } from '../conversation/snapshot/contracts.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
 import { BackendStateStore } from '../conversation/backend_state.ts';
-import { fixture } from './ticket_fixture.ts';
+import { fixture, fixture_path } from './ticket_fixture.ts';
+import { createApp } from '../app.ts';
+import { loadConfig } from '../core/config.ts';
+import { BackendUsageService } from '../conversation/backend_usage/service.ts';
+import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
+import { production_backend_providers } from '../conversation/snapshot/production.ts';
+import { SubprocessBackendProbeEnvironment } from '../conversation/snapshot/environment.ts';
+import { http_get_usage } from '../conversation/backend_usage/http.ts';
 const login = () => ({
   stored: {
     present: true,
@@ -178,4 +185,81 @@ test('a failed replacement of allowance windows preserves the previous successfu
     }),
   ).toThrow();
   expect(store.read_usage('codex')).toEqual({ observed_at: result.observed_at, windows: [window] });
+});
+// Distinct gap: successful route comparisons cannot prove cleanup after catalog failure.
+test('catalog failure cancels and joins the outstanding allowance read', async () => {
+  const database = fixture();
+  const entered = new Deferred<void>();
+  let cancelled = false;
+  const usage = new BackendUsageService({
+    codex: {
+      async refresh(options = {}) {
+        entered.resolve();
+        await new Promise<void>((_resolve, reject) => {
+          options.signal!.addEventListener(
+            'abort',
+            () => {
+              cancelled = true;
+              reject(options.signal!.reason);
+            },
+            { once: true },
+          );
+        });
+        throw new Error('unreachable');
+      },
+    },
+  });
+  const snapshots = new BackendSnapshotService({
+    environment: machine(),
+    read_codex_login_standing: login,
+    probe: async () => {
+      await entered.promise;
+      throw new Error('Synthetic catalog failure');
+    },
+  });
+  const app = await createApp(
+    loadConfig(undefined, {
+      PLAN_TEST_MODE: '1',
+      PLAN_DB_PATH: fixture_path(database),
+    }),
+    {
+      database,
+      areas: [
+        {
+          prefix: '/api/conversation',
+          routes: createBackendRoutes({
+            database,
+            backend_snapshots: snapshots,
+            backend_usage: usage,
+            backend_state: null,
+            codex_sign_in: null,
+            machine_catalog: () => null,
+          }),
+        },
+      ],
+    },
+  );
+  try {
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/conversation/backends/refresh' })).statusCode,
+    ).toBe(500);
+    expect(cancelled).toBe(true);
+  } finally {
+    await app.close();
+  }
+});
+// Distinct gap: a mistaken production composition must fail before process or network I/O.
+test('test compositions cannot acquire production catalogs, login, updates, or HTTP usage', async () => {
+  const providers = production_backend_providers(true);
+  expect([providers.codex, providers.claude, providers.hermes, providers.codex_sign_in]).toEqual([
+    null,
+    null,
+    null,
+    null,
+  ]);
+  expect(providers.usage).toEqual({});
+  expect(() => new SubprocessBackendProbeEnvironment()).toThrow('unavailable in tests');
+  await expect(http_get_usage('https://invalid.example', {}, 1)).rejects.toThrow(
+    'unavailable in tests',
+  );
 });

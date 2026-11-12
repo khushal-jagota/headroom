@@ -1,13 +1,16 @@
 import type { BackendUsageWindow, BackendUsageWindowKind } from '../contracts.ts';
 import { parse_iso_datetime } from '../../../core/clock.ts';
+import { numeric_kind, numeric_value } from '../../../core/http/numeric_json.ts';
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 export function percentage(value: unknown): number | null {
-  return typeof value === 'number' && value >= 0 && value <= 100 ? value : null;
+  const number = numeric_value(value);
+  return number !== undefined && number >= 0 && number <= 100 ? number : null;
 }
 export function parse_datetime(value: unknown): Date | null {
   let parsed: Date;
-  if (typeof value === 'number') parsed = new Date(Math.round(value * 1_000_000) / 1000);
+  const number = numeric_value(value);
+  if (number !== undefined) parsed = new Date(Math.round(number * 1_000_000) / 1000);
   else if (
     typeof value === 'string' &&
     value &&
@@ -27,7 +30,54 @@ export function parse_datetime(value: unknown): Date | null {
     : null;
 }
 export function window_kind(minutes: unknown): BackendUsageWindowKind | null {
-  return minutes === 300 ? 'five_hour' : minutes === 10080 ? 'seven_day' : null;
+  const number = numeric_value(minutes);
+  return number === 300 ? 'five_hour' : number === 10080 ? 'seven_day' : null;
+}
+/** Validate the complete app-server answer before selecting understood windows. */
+export function parse_codex_windows(body: unknown): readonly BackendUsageWindow[] | null {
+  if (!object(body) || !valid_bucket(body.rateLimits)) return null;
+  const by_id = body.rateLimitsByLimitId;
+  if (by_id !== undefined && by_id !== null && !object(by_id)) return null;
+  const buckets = by_id === undefined || by_id === null ? {} : by_id;
+  for (const value of Object.values(buckets)) if (!valid_bucket(value)) return null;
+  const account = body.rateLimits;
+  const windows = codex_bucket_windows(account, null);
+  for (const [id, value] of Object.entries(buckets)) {
+    const bucket = value as Record<string, unknown>;
+    if (account.limitId != null && (id === account.limitId || bucket.limitId === account.limitId))
+      continue;
+    windows.push(...codex_bucket_windows(bucket, (bucket.limitName || id) as string));
+  }
+  return windows;
+}
+function valid_bucket(value: unknown): value is Record<string, unknown> {
+  if (!object(value)) return false;
+  for (const key of ['limitId', 'limitName'])
+    if (value[key] != null && typeof value[key] !== 'string') return false;
+  for (const key of ['primary', 'secondary']) {
+    const window = value[key];
+    if (window === undefined || window === null) continue;
+    if (!object(window) || numeric_kind(window.usedPercent) !== 'integer') return false;
+    for (const field of ['windowDurationMins', 'resetsAt'])
+      if (window[field] != null && numeric_kind(window[field]) !== 'integer') return false;
+  }
+  return true;
+}
+function codex_bucket_windows(
+  bucket: Record<string, unknown>,
+  model_scope: string | null,
+): BackendUsageWindow[] {
+  const windows: BackendUsageWindow[] = [];
+  for (const key of ['primary', 'secondary']) {
+    const value = bucket[key];
+    if (!object(value)) continue;
+    const kind = window_kind(value.windowDurationMins);
+    const used_percent = percentage(value.usedPercent);
+    const resets_at = parse_datetime(value.resetsAt);
+    if (kind !== null && used_percent !== null && resets_at !== null)
+      windows.push({ kind, used_percent, resets_at, model_scope });
+  }
+  return windows;
 }
 function claude_reset_time(value: Record<string, unknown>): Date | null {
   for (const key of ['resets_at', 'reset_at']) {

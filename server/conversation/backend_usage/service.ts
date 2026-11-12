@@ -9,8 +9,12 @@ export class BackendUsageService {
   constructor(adapters: Readonly<Partial<Record<ConversationBackendKey, BackendUsageAdapter>>>) {
     this.adapters = adapters;
   }
-  async refresh(backend_key: ConversationBackendKey): Promise<BackendUsageResult> {
+  async refresh(
+    backend_key: ConversationBackendKey,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<BackendUsageResult> {
     return this.locks.get(backend_key)!.run(async () => {
+      options.signal?.throwIfAborted();
       const title = backend_key[0].toUpperCase() + backend_key.slice(1);
       const adapter = this.adapters[backend_key];
       if (!adapter)
@@ -22,8 +26,9 @@ export class BackendUsageService {
           windows: [],
         };
       try {
-        return await adapter.refresh();
+        return await adapter.refresh(options);
       } catch {
+        options.signal?.throwIfAborted();
         return {
           backend_key,
           outcome: 'failed',

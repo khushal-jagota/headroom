@@ -25,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.compare.scripted.scripted_registry import ScriptedBackendRegistry
 from tests.e2e.conversation_signals_server import NoInstalledBackends
+from tests.e2e.ticket_model_controls import install_ticket_model_controls
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.conversation import api
@@ -69,7 +70,7 @@ def fixture_cards() -> list[dict[str, Any]]:
     cards = []
     for backend, model, display in (
         ("hermes", "provider:small", "Small"),
-        ("codex", "gpt-6.1-sol", "Sol"),
+        ("codex", "gpt-6.1-sol", "Straße"),
         ("claude", "claude-opus-5", "Opus"),
     ):
         cards.append(
@@ -222,7 +223,7 @@ def test_unit19_backend_route_answers_and_rows(
     seed = tmp_path / "seed.sqlite"
     with synthetic_home_environment(homes), closing(connect(str(seed))) as conn:
         create_schema(conn)
-        project = create_project(conn, name='Backend proof', now=int(now.timestamp()))
+        project = create_project(conn, name="Backend proof", now=int(now.timestamp()))
         ticket = create_ticket(
             conn,
             title="Backend scope",
@@ -234,7 +235,7 @@ def test_unit19_backend_route_answers_and_rows(
             title_max_chars=200,
         )
         manager = create_manager(
-            conn, title="Backend caller", project_id=ticket.project_id, clock=FakeClock(now)
+            conn, title="Backend caller", project_id=project.id, clock=FakeClock(now)
         )
         conn.commit()
     requests: list[dict[str, Any]] = [
@@ -275,7 +276,34 @@ def test_unit19_backend_route_answers_and_rows(
                 "headers": headers,
             }
         )
-    usage = [
+    requests.extend(
+        [
+            {
+                "method": "POST",
+                "path": "/api/conversation/backends?refresh=invalid",
+                "json": {"ticket_id": "missing"},
+            },
+            {"method": "POST", "path": "/api/test/ticket-model-catalog", "json": {}},
+            {"method": "GET", "path": "/api/conversation/backends"},
+            {
+                "method": "POST",
+                "path": "/api/test/ticket-model-catalog",
+                "json": {"credentials_unavailable": True},
+            },
+            {
+                "method": "POST",
+                "path": "/api/conversation/backends",
+                "json": {"ticket_id": ticket.id},
+            },
+            {
+                "method": "POST",
+                "path": "/api/test/ticket-model-catalog",
+                "json": {"credentials_unavailable": False},
+            },
+            {"method": "GET", "path": "/api/conversation/backends"},
+        ]
+    )
+    usage: list[dict[str, Any]] = [
         {
             "backend_key": backend,
             "outcome": "succeeded",
@@ -296,7 +324,7 @@ def test_unit19_backend_route_answers_and_rows(
                 },
             ],
         }
-        for backend, scope in (("codex", "Sol"), ("claude", "Opus"))
+        for backend, scope in (("codex", "STRASSE"), ("claude", "Opus"))
     ]
     pending = {
         "session_id": "recorded",
@@ -358,9 +386,18 @@ def test_unit19_backend_route_answers_and_rows(
             codex_sign_in=sign_in,
             system=SimpleNamespace(machine_catalog=None),
         )
-        app.dependency_overrides[api._runtime] = lambda: runtime
+        install_ticket_model_controls(app)
+
+        def route_runtime() -> Any:
+            runtime.backend_snapshots = app.state.conversation.backend_snapshots
+            return runtime
+
+        app.dependency_overrides[api._runtime] = route_runtime
         answers = []
         with TestClient(app) as client:
+            object.__setattr__(
+                app.state.conversation, "backend_snapshots", runtime.backend_snapshots
+            )
             for operation in requests:
                 response = client.request(
                     operation["method"],
@@ -396,7 +433,7 @@ def test_unit19_backend_route_answers_and_rows(
         400,
         400,
         400,
-    ]
+    ] + [422] + [200] * 6
     spec = tmp_path / "spec.json"
     spec.write_text(
         json.dumps(

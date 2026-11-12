@@ -1,3 +1,4 @@
+import { casefold } from '../core/casefold.ts';
 /** Durable decorations of backend cards share the existing database write door. */
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -149,15 +150,16 @@ export function resolve_usage_model_scopes(
   return { ...result, windows };
 }
 function catalogue_model_id(snapshot: BackendSnapshot, scope: string): string | null {
-  const wanted = scope.toLowerCase().trim();
+  const wanted = casefold(scope).trim();
   const exact = snapshot.available_models.filter((model) =>
-    [model.model_id.toLowerCase(), (model.display_name ?? '').toLowerCase()].includes(wanted),
+    [casefold(model.model_id), casefold(model.display_name ?? '')].includes(wanted),
   );
   if (exact.length === 1) return exact[0].model_id;
   const family = snapshot.available_models.filter(
     (model) =>
-      (model.display_name ?? '').toLowerCase().trimStart().split(/\s+/, 1)[0] === wanted ||
-      model.model_id.toLowerCase().split('[', 1)[0] === wanted,
+      casefold(model.display_name ?? '')
+        .trimStart()
+        .split(/\s+/, 1)[0] === wanted || casefold(model.model_id).split('[', 1)[0] === wanted,
   );
   return family.length === 1 ? family[0].model_id : null;
 }

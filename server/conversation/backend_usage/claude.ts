@@ -42,7 +42,8 @@ export class ClaudeUsageAdapter implements BackendUsageAdapter {
     this.http_get = options.http_get;
     this.now = options.now;
   }
-  async refresh(): Promise<BackendUsageResult> {
+  async refresh(options: { signal?: AbortSignal } = {}): Promise<BackendUsageResult> {
+    options.signal?.throwIfAborted();
     const result = (
       outcome: BackendUsageResult['outcome'],
       detail: string,
@@ -70,8 +71,10 @@ export class ClaudeUsageAdapter implements BackendUsageAdapter {
         CLAUDE_USAGE_URL,
         { authorization: `Bearer ${access_token}`, 'anthropic-beta': CLAUDE_USAGE_BETA },
         CLAUDE_USAGE_TIMEOUT_SECONDS,
+        options,
       );
     } catch {
+      options.signal?.throwIfAborted();
       return result('failed', 'Claude usage could not be reached. Try again.');
     }
     if (response.status_code === 401 || response.status_code === 403)

@@ -64,6 +64,7 @@ export function createBackendRoutes(runtime: BackendHttpRuntime): FastifyPluginA
       };
     });
     app.post('/backends', async (request, reply) => {
+      const refresh_requested = refresh(request.query);
       if (!dictionaryBody(request.body, reply)) return;
       const raw = request.body;
       if (
@@ -79,7 +80,7 @@ export function createBackendRoutes(runtime: BackendHttpRuntime): FastifyPluginA
         throw new PlannerError('validation', 'The selected machine is unavailable', {});
       const snapshots = await Promise.all(
         Object.values(ConversationBackendKey).map((key) =>
-          source.snapshot(key, { refresh: refresh(request.query) }),
+          source.snapshot(key, { refresh: refresh_requested }),
         ),
       );
       return {
@@ -87,8 +88,11 @@ export function createBackendRoutes(runtime: BackendHttpRuntime): FastifyPluginA
       };
     });
     app.post('/backends/refresh', async () => {
+      const controller = new AbortController();
       const usage_refresh = Promise.all(
-        Object.values(ConversationBackendKey).map((key) => runtime.backend_usage.refresh(key)),
+        Object.values(ConversationBackendKey).map((key) =>
+          runtime.backend_usage.refresh(key, { signal: controller.signal }),
+        ),
       );
       let snapshots;
       let refreshed;
@@ -97,6 +101,7 @@ export function createBackendRoutes(runtime: BackendHttpRuntime): FastifyPluginA
         snapshots = await runtime.backend_snapshots.snapshots();
         refreshed = await usage_refresh;
       } finally {
+        controller.abort();
         await usage_refresh.catch(() => {});
       }
       const by_backend = new Map(snapshots.map((snapshot) => [snapshot.backend_key, snapshot]));

@@ -21,10 +21,8 @@ import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
-import {
-  create_backend_runtime,
-  unavailable_backend_providers,
-} from '../conversation/snapshot/composition.ts';
+import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
+import { production_backend_providers } from '../conversation/snapshot/production.ts';
 import { run_automatic_recovery } from '../conversation/deploy_interruptions/coordinator.ts';
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 
@@ -188,7 +186,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         database,
         config,
         now: () => clock.now(),
-        providers: unavailable_backend_providers(),
+        providers: production_backend_providers(config.test_mode),
       });
     const conversationSystem = options.conversationSystem ?? core;
     if (core) {

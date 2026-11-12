@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, delimiter } from 'node:path';
+import { dirname, isAbsolute, join, resolve, delimiter, normalize } from 'node:path';
 import type { BackendProbeEnvironment, CommandOutcome } from './contracts.ts';
 export function backend_io_is_test(): boolean {
   return (
@@ -46,9 +46,15 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
   }
   executable_path(name: string): string | null {
     require_production_io();
-    if (name === 'claude' && process.env.PLAN_CLAUDE_EXECUTABLE) {
+    if (name === 'claude' && process.env.PLAN_CLAUDE_EXECUTABLE !== undefined) {
       const selected = expand(process.env.PLAN_CLAUDE_EXECUTABLE);
-      return file(selected) ? selected : null;
+      const app_root = process.env.PLAN_APP_ROOT;
+      const legacy =
+        app_root === undefined
+          ? null
+          : join(app_root, 'agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe');
+      if (legacy === null || normalize(selected) !== normalize(legacy))
+        return file(selected) ? selected : null;
     }
     return which(name);
   }

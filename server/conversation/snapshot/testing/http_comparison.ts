@@ -13,6 +13,7 @@ import type { CodexSignIn, CodexSignInService } from '../provider_contracts.ts';
 import { UnknownSignInSession } from '../provider_contracts.ts';
 import { createBackendRoutes } from '../routes.ts';
 import { RecordingBackendProbeEnvironment } from './environment.ts';
+import { ticketModelCatalogControl } from './ticket_models.ts';
 interface Spec {
   readonly db_path: string;
   readonly now: string;
@@ -120,7 +121,10 @@ export async function run(spec: Spec) {
   const app = await createApp(config, {
     database,
     clock: new TestClock(spec.now),
-    areas: [{ prefix: '/api/conversation', routes: createBackendRoutes(runtime) }],
+    areas: [
+      { prefix: '/api/conversation', routes: createBackendRoutes(runtime) },
+      ticketModelCatalogControl(runtime),
+    ],
   });
   try {
     const answers = [];

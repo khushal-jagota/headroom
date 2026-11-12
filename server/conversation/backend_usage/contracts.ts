@@ -19,7 +19,7 @@ export interface CachedBackendUsage {
   readonly windows: readonly BackendUsageWindow[];
 }
 export interface BackendUsageAdapter {
-  refresh(): Promise<BackendUsageResult>;
+  refresh(options?: { signal?: AbortSignal }): Promise<BackendUsageResult>;
 }
 export interface UsageHttpResponse {
   readonly status_code: number;
@@ -30,8 +30,22 @@ export interface UsageHttpGet {
     url: string,
     headers: Readonly<Record<string, string>>,
     timeout_seconds: number,
+    options?: { signal?: AbortSignal },
   ): Promise<UsageHttpResponse>;
 }
 export interface CodexUsageSource {
-  (executable: string): Promise<unknown>;
+  (
+    executable: string,
+    options: { timeout_seconds: number; signal?: AbortSignal },
+  ): Promise<unknown>;
 }
+/** The Codex unit owns the short-lived app-server child and its cleanup. */
+export class CodexUsageTimeout extends Error {}
+export class CodexUsageRequestRejected extends Error {
+  readonly code: number;
+  constructor(code: number, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+export class CodexUsageLoginIsDuplicated extends Error {}

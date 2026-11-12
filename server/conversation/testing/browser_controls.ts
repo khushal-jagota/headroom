@@ -7,7 +7,7 @@ import { write_ticket_conversation_start } from '../../tickets/data/index.ts';
 import { ConversationRoleMaterials, ConversationStartRequest } from '../contracts.ts';
 import { text_message_content } from '../message_content.ts';
 import type { ScriptedBackendRegistry } from './scripted_registry.ts';
-import { TicketModelSnapshots } from '../snapshot/testing/ticket_models.ts';
+import { ticketModelCatalogControl } from '../snapshot/testing/ticket_models.ts';
 
 export function browserConversationControls(
   context: TestCompositionContext,
@@ -17,26 +17,12 @@ export function browserConversationControls(
   if (!core) throw new Error('Browser controls require the real conversation core');
   const identity = (request: { params: unknown }) =>
     (request.params as { conversation_id: string }).conversation_id;
-  let snapshots: TicketModelSnapshots | null = null;
+  if (!context.backendServices) throw new Error('Backend snapshot services are not composed');
   return [
+    ticketModelCatalogControl(context.backendServices),
     {
       prefix: '/api/test',
       routes: async (app) => {
-        app.post<{ Body: { credentials_unavailable?: boolean } }>(
-          '/ticket-model-catalog',
-          async (request) => {
-            if (!context.backendServices)
-              throw new Error('Backend snapshot services are not composed');
-            if (snapshots === null) {
-              snapshots = new TicketModelSnapshots();
-              snapshots.models = ['gpt-browser-initial', 'gpt-browser-proof'];
-              snapshots.efforts = [];
-              context.backendServices.backend_snapshots = snapshots;
-            }
-            snapshots.credentials_unavailable = request.body.credentials_unavailable ?? false;
-            return { observations: snapshots.calls };
-          },
-        );
         app.post<{ Body: { ticket_id?: string } | null }>(
           '/signals/:conversation_id/start',
           async (request) => {

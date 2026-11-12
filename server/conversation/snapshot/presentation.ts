@@ -26,7 +26,12 @@ export function snapshot_json(
   const cached_usage = backend_state?.read_usage(snapshot.backend_key) ?? null;
   const disabled = backend_state?.read_disabled_models(snapshot.backend_key) ?? new Set<string>();
   let default_model_id = snapshot.default_model_id;
-  if (default_model_id !== null && disabled.has(default_model_id)) default_model_id = null;
+  if (
+    default_model_id !== null &&
+    disabled.has(default_model_id) &&
+    snapshot.available_models.some((model) => model.model_id === default_model_id)
+  )
+    default_model_id = null;
   return {
     backend_key: snapshot.backend_key,
     installed: snapshot.installed,

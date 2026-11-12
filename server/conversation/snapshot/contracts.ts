@@ -90,7 +90,10 @@ export interface BackendHttpRuntime {
   backend_snapshots: BackendSnapshotServiceContract;
   readonly backend_state: BackendStateStore | null;
   readonly backend_usage: {
-    refresh(backend_key: ConversationBackendKey): Promise<BackendUsageResult>;
+    refresh(
+      backend_key: ConversationBackendKey,
+      options?: { signal?: AbortSignal },
+    ): Promise<BackendUsageResult>;
   };
   readonly codex_sign_in: CodexSignInService | null;
   readonly machine_catalog: () => RemoteCatalogSource | null;
