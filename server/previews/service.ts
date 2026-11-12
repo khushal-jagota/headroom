@@ -21,6 +21,8 @@ export class PreviewService {
   private process_checks = new Map<string, Promise<void>>();
   private active = 0;
   private lifecycle_active = false;
+  private inspection_waiters: Array<() => void> = [];
+  private lifecycle_waiters: Array<() => void> = [];
   constructor(database: Database, public_origin: string, panels_port = 8767) {
     this.database = database;
     this.public_origin = public_origin.replace(/\/+$/, '');
@@ -38,26 +40,39 @@ export class PreviewService {
       throw new PreviewError('Preview inspection is busy; try again shortly.', 503);
     this.outstanding++;
     const submitted = performance.now();
+    const waiters = lifecycle ? this.lifecycle_waiters : this.inspection_waiters;
+    let acquired = false;
     try {
-      while (
-        lifecycle
-          ? this.lifecycle_active
-          : this.active >= Math.max(1, config.INSPECTION_WORKERS - 1)
-      ) {
-        if (performance.now() - submitted >= config.INSPECTION_SECONDS * 1000)
-          throw new PreviewError('Preview inspection admission expired.', 503);
-        await new Promise((r) => setTimeout(r, 1));
-      }
-      if (lifecycle) this.lifecycle_active = true;
-      else this.active++;
-      try {
-        if (this.closed || performance.now() - submitted >= config.INSPECTION_SECONDS * 1000)
-          throw new PreviewError('Preview inspection admission expired.', 503);
-        return await operation();
-      } finally {
-        if (lifecycle) this.lifecycle_active = false;
-        else this.active--;
-      }
+      await new Promise<void>((resolve, reject) => {
+        let timer: NodeJS.Timeout | undefined;
+        const start = (): void => {
+          clearTimeout(timer);
+          if (lifecycle) this.lifecycle_active = true;
+          else this.active++;
+          acquired = true;
+          resolve();
+        };
+        const active = lifecycle ? Number(this.lifecycle_active) : this.active;
+        const capacity = lifecycle ? 1 : Math.max(1, config.INSPECTION_WORKERS - 1);
+        if (active < capacity && waiters.length === 0) {
+          start();
+          return;
+        }
+        waiters.push(start);
+        timer = setTimeout(
+          () => {
+            const position = waiters.indexOf(start);
+            if (position >= 0) {
+              waiters.splice(position, 1);
+              reject(new PreviewError('Preview inspection admission expired.', 503));
+            }
+          },
+          Math.max(0, config.INSPECTION_SECONDS * 1000 - (performance.now() - submitted)),
+        );
+      });
+      if (this.closed || performance.now() - submitted >= config.INSPECTION_SECONDS * 1000)
+        throw new PreviewError('Preview inspection admission expired.', 503);
+      return await operation();
     } catch (error) {
       if (
         ['SQLITE_BUSY', 'SQLITE_LOCKED'].some((code) =>
@@ -67,6 +82,12 @@ export class PreviewService {
         throw new PreviewError('Preview registry is busy; try again shortly.', 503);
       throw error;
     } finally {
+      if (acquired) {
+        if (lifecycle) this.lifecycle_active = false;
+        else this.active--;
+        // Reserve the next slot now, before the completing caller can submit again.
+        waiters.shift()?.();
+      }
       this.outstanding--;
     }
   }
