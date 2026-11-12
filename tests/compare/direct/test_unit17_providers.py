@@ -367,7 +367,8 @@ def test_unit17_provider_parity(tmp_path: Path, request: pytest.FixtureRequest) 
         ),
         "session_rule": (
             "One generated public session ID maps bijectively per flow, "
-            "after exact pending-to-terminal identity checks. Stale/concurrent cases use focused unit coverage."
+            "after exact pending-to-terminal identity checks. "
+            "Stale/concurrent cases use focused unit coverage."
         ),
         "timeout_rule": (
             "Real timeout runs at 0.3 seconds on both sides; "
