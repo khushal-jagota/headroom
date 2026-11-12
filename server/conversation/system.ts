@@ -1072,7 +1072,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     if (state.child === child) state.child = null;
     const stopped = await stop_child(state, child, (operation) => this.native_operation(operation));
     if (stopped) {
-      state.local_child_retirement_proven = true;
       state.child_event_sink = null;
       state.child_is_quarantined = false;
       await background_tasks_ended_with_child(this, state);
@@ -1120,17 +1119,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     const state = this.conversation_state(conversation_id);
     return state
       ? own_settlement(state, controls.discard_held_prompt(this, state, held_prompt_id))
-      : false;
-  }
-  async retirement_is_confirmed(conversation_id: string): Promise<boolean> {
-    const state = this.conversation_state(conversation_id);
-    return state
-      ? state.lock.run(
-          () =>
-            state.child === null &&
-            !state.child_is_quarantined &&
-            (state.local_child_retirement_proven || !state.has_delivered_prompt),
-        )
       : false;
   }
   async answer_permission_ask(

@@ -296,6 +296,42 @@ def test_missing_files_stop_the_batch_and_a_sender_refusal_is_receipted_refused(
     asyncio.run(asyncio.wait_for(exercise(), 20))
 
 
+def test_an_event_with_files_is_published_and_applied_once_through_the_core(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: the files published outside the writer never reach the conversation core's
+    receipt transaction (it refuses or retries the event), or a repeat of the same
+    manifest does file work again. Gap: other tests here stop at missing files; the
+    store tests accept files without the core."""
+    import hashlib
+
+    data = b"hello"
+    manifest = FileManifest(
+        FileScope.ticket, "ticket-1", "out/result.txt", hashlib.sha256(data).hexdigest(), 5
+    )
+
+    async def exercise() -> None:
+        async with _case(tmp_path, monkeypatch) as case:
+            store = case.endpoint.inbox.store
+            source = tmp_path / "upload"
+            source.write_bytes(data)
+            store.store_upload(manifest, source)
+            first = replace(case.event(1), file_dependencies=(manifest,))
+            reply = await case.send(first)
+            assert reply.stop is None
+            assert reply.receipts[0].disposition is ReceiptDisposition.accepted
+            assert store.file_target(manifest).read_bytes() == data
+            # A later item names the same, already published file; the resend of the
+            # first gets its stored receipt.
+            later = replace(case.event(2), file_dependencies=(manifest,))
+            assert (await case.send(later)).receipts[0].disposition is (ReceiptDisposition.accepted)
+            assert (await case.send(first)).receipts[0].result == {}
+            assert await case.tool_calls() == ["tool-1", "tool-2"]
+            assert not case.endpoint.inbox._file_publication_guards["ticket-1"].locked()
+
+    asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
 def test_a_malformed_batch_is_refused_whole(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
