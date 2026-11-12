@@ -26,7 +26,9 @@ class CleanupResult:
     scope: str = (
         "Recorded process incarnations and observed session members only. "
         "Unseen detached descendants and processes that change user before observation "
-        "are outside this proof. Linux signals use pidfds. "
+        "are outside this proof. Linux signals use pidfds. Adoption of a late Linux "
+        "session member assumes that the entire Worker session did not end before "
+        "the root PID was reused by a new session leader that forked and exited. "
         "Mac signals use an immediate matching microsecond birth check, with an accepted "
         "check-to-signal race."
     )

@@ -137,12 +137,12 @@ PY
 
 Check that the resolved commit equals the reviewed full SHA.
 Record the constants printed from the exact candidate source; they govern compatibility.
-At the time of writing the candidate uses wire protocol 22, outbox format 5 and
+The Worker supervision candidate uses wire protocol 24, outbox format 5 and
 command journal format 1. Both Mac and VPS must match the candidate's wire protocol
 before work, and the existing `spool/outbox.sqlite3` and `spool/commands.sqlite3` must
 pass the candidate's SQLite version checks below. A missing command journal is created
 at start; a previous runtime ignores it. Plan the VPS and Mac updates together when the
-protocol changes. Protocol 22 replaced the WebSocket of protocol 21: a protocol-21 Mac
+protocol changes. A protocol-23 Mac
 is refused with "Mac needs update" and can still update itself through the update route.
 
 Each new native Worker start installs the canonical database skills into the selected provider's normal skills home.

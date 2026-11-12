@@ -93,6 +93,8 @@ One subsystem supervises Claude, Codex, and Hermes Workers on the home and on ex
 
 Workers on Linux share the home's resource domain. They do not inherit its protected OOM score: each Worker raises its own score before the backend starts. Tools inherit the Worker score. Separate Worker units, aggregate CPU weight, and the tool-first OOM hook no longer apply. The [operator inputs](../ops/panels-environments/README.md#worker-processes) describe the inherited service properties.
 
+Linux can adopt a late tool from the root's session after the leader exits. This assumes that the whole session did not end before the root PID served a new session leader that forked and exited. That unlikely reuse sequence can make a stranger appear to belong to the old session. Each signal still uses that process's own pidfd.
+
 `WorkerScratch` supplies temporary disk storage separately. The directory survives across turns and closes after confirmed cleanup. Account and login probes retain their separate lifetime.
 
 ## Models and asks

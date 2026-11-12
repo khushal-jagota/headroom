@@ -24,7 +24,7 @@ The Mac opens every request. Each is a plain HTTPS request. No work depends on a
 
 ## Which work goes to the Mac
 
-Each Ticket names a stable machine destination (see [Tickets](tickets.md)). The home destination keeps direct execution. Only the original Mac destination uses the configured executor ID. Without that executor, its Tickets wait. They never run on the home. The Chief and Managers stay on the home. Legacy `vps` and `macos` values remain aliases for these original two destinations. The executor wire protocol stays at 23.
+Each Ticket names a stable machine destination (see [Tickets](tickets.md)). The home destination keeps direct execution. Only the original Mac destination uses the configured executor ID. Without that executor, its Tickets wait. They never run on the home. The Chief and Managers stay on the home. Legacy `vps` and `macos` values remain aliases for these original two destinations. The executor wire protocol is 24. Release the home and Mac executor together. A protocol-23 executor is refused, but its update remains available.
 
 Settings → Machines shows each destination’s availability, current Worker count, and Tickets that wait while it is away. Counts use existing conversation signals and Ticket ownership. An away machine has unknown activity. Display names, four icons, and eight colors do not enter routing or authority checks.
 

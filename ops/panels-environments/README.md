@@ -140,6 +140,15 @@ the user service directory. New Worker launches need neither slice. Keep the hom
 existing OOM protection and service properties. No root OOM or memory configuration
 change is part of Worker supervision.
 
+At release, stop installing `panels.slice` and `panels-workers.slice` from this folder
+into `~/.config/systemd/user/`. Remove their old copy, enable, and start steps from
+local installation instructions. Do not create per-Worker transient services or add
+Worker slice assignments. These services had no static Worker template to remove.
+Retain exact-unit evidence until old unit-backed custody retires. Then remove the
+obsolete slice files and perform any user-manager reload through the operator's
+release procedure. Keep `panels-live.service` and the backup, maintenance, watchdog,
+and deployment-runner units. This repository change performs no live unit operation.
+
 On a disposable Linux home, verify that the home retains its configured OOM score,
 that each Worker uses at least 0, and that its tools inherit the Worker score. Check
 home responsiveness under heavy builds and low memory. These checks must not run on
