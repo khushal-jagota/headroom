@@ -39,9 +39,16 @@ evidence outside the exact agent cgroups. Trusted owners, identified actors and
 non-loopback callers keep the source bypass rules. The accepted TypeScript service
 name and rollback prerequisite are recorded in [DEVIATIONS.md](DEVIATIONS.md).
 
+The default peer resolver refuses before constructing its proc context or doing I/O
+when `VITEST=true`, `PYTEST_CURRENT_TEST` is present, or `PLAN_TEST_MODE` is a truthy
+test-mode value. Tests can supply an explicit private `PeerLookupContext` to exercise
+the resolver. The current raw WebSocket preview upgrade requires Tailscale-owner
+ingress. There is no general application WebSocket route: the exported close-1008
+decision is source-compared, with transport wiring reserved for Unit 22.
+
 One direct comparison reuses Python's synthetic proc fixtures and Fastify injection, without a listener or database.
-It covers peer evidence, bypasses, refusal values and config consumption. Its body takes 0.43 seconds, with zero skill-tree guard receipts.
-TypeScript, Ruff and mypy pass. Added helpers total 400 lines against 418 product lines (95.7%).
+It covers peer evidence, bypasses, refusal values, config consumption and the default test I/O guard. Its body takes 0.51 seconds, with zero skill-tree guard receipts.
+TypeScript, Ruff and mypy pass. Added helpers total 423 lines against 426 product lines (99.3%).
 
 ## How an area adds itself
 

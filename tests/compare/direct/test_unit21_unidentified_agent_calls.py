@@ -228,6 +228,8 @@ def test_unit21_unidentified_agent_refusal(
     )
     assert result.returncode == 0, result.stderr
     actual = json.loads(result.stdout)
+    assert actual["default_peer"] == dict(is_owner=False, skipped_unreadable_processes=0)
+    assert actual["default_reads"] == 0
     # The exact new unit is the one approved extension; never label it Python parity.
     assert expected_peers[-1] == dict(is_owner=True, skipped_unreadable_processes=0)
     assert actual["peers"][-1] == dict(is_owner=False, skipped_unreadable_processes=0)

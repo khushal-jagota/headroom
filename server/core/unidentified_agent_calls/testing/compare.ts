@@ -15,6 +15,18 @@ interface Probe {
   requests: (UnidentifiedCallRequest & { enabled: boolean })[];
 }
 export async function refusal_probe(spec: Probe): Promise<unknown> {
+  const saved_read = proc_reader.readText;
+  let default_reads = 0,
+    default_peer;
+  try {
+    proc_reader.readText = async () => {
+      default_reads++;
+      throw new Error('default proc access');
+    };
+    default_peer = await resolve_loopback_peer(['127.0.0.1', 40001], ['127.0.0.1', 8767]);
+  } finally {
+    proc_reader.readText = saved_read;
+  }
   const peers = [];
   for (const peer of spec.peers) {
     let reads = 0;
@@ -132,5 +144,14 @@ export async function refusal_probe(spec: Probe): Promise<unknown> {
   } finally {
     await app.close();
   }
-  return { peers, requests, configs, consumed, invalid_retained, http };
+  return {
+    peers,
+    requests,
+    configs,
+    consumed,
+    invalid_retained,
+    http,
+    default_peer,
+    default_reads,
+  };
 }
