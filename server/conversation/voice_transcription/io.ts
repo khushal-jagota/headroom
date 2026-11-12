@@ -1,6 +1,8 @@
+import { testModeFromEnvironment } from '../../core/config.ts';
+
 export function require_production_voice_io(): void {
   if (
-    process.env.PLAN_TEST_MODE === '1' ||
+    testModeFromEnvironment() ||
     process.env.VITEST === 'true' ||
     process.env.PYTEST_CURRENT_TEST !== undefined
   )

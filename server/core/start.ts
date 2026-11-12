@@ -25,6 +25,9 @@ import { create_backend_runtime } from '../conversation/snapshot/composition.ts'
 import { production_backend_providers } from '../conversation/snapshot/production.ts';
 import { CredentialRequestOperations } from '../credentials/requests/service.ts';
 import { createCredentialRequestRoutes } from '../credentials/requests/routes.ts';
+import { makeUsageService } from '../conversation/usage/composition.ts';
+import { createUsageRoutes } from '../conversation/usage/routes.ts';
+import type { RecordedUsageService } from '../conversation/usage/contracts.ts';
 import { run_automatic_recovery } from '../conversation/deploy_interruptions/coordinator.ts';
 import { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { createVideoUploadRoutes } from '../conversation/video_uploads/routes.ts';
@@ -66,6 +69,7 @@ export interface TestCompositionContext extends ConversationCompositionContext {
 }
 /** Shared process lifecycle for the normal entry point and comparison host. */
 export interface ServerOptions {
+  createUsageService?: (context: ConversationCompositionContext) => RecordedUsageService;
   createBackendServices?: (context: ConversationCompositionContext) => BackendHttpRuntime;
   /** Off until Unit 21 explicitly composes the production lifecycle. */
   enableWorkerReadiness?: boolean;
@@ -110,6 +114,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   let core: SqliteProcessConversationSystem | undefined;
   let backendServices: BackendHttpRuntime | undefined;
   let credential_requests: CredentialRequestOperations | null = null;
+  let recorded_usage: RecordedUsageService | undefined;
   let video_uploads: VideoUploadService | undefined;
   let app: FastifyInstance | undefined;
   let ownership_current = true;
@@ -152,6 +157,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       // Fence every producer before awaiting either drain. Ownership also covers
       // environment setup that was already pending when shutdown began.
       const producers = Promise.all([
+        attempt(() => recorded_usage?.stop?.({ deadline })),
         attempt(() => background?.close({ deadline })),
         attempt(() => environments?.close({ deadline })),
         attempt(() => environmentsStarting?.catch(() => {})),
@@ -168,6 +174,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       await producers;
       await attempt(() => conversationWrites.drain());
       await attempt(() => credential_requests?.finish_operations());
+      // Concrete usage shutdown already joins its resources by the shared deadline.
+      // Do not await its retained cleanup again after a deadline failure.
+      if (!recorded_usage?.stop) await attempt(() => recorded_usage?.finish_operations());
       // Loop cancellation shares one deadline. Core and record settlement have
       // no deadline contract, so retain ownership through their final writes.
       await attempt(() => core?.shutdown());
@@ -243,9 +252,16 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         database,
         config,
         now: () => clock.now(),
-        providers: production_backend_providers(config.test_mode),
+        providers: production_backend_providers(config.test_mode, {
+          database,
+          now: () => clock.now(),
+          read_codex_snapshot: () => backendServices!.backend_snapshots.snapshot('codex'),
+        }),
       });
     const conversationSystem = options.conversationSystem ?? core;
+    const usage =
+      options.createUsageService?.(context) ?? makeUsageService(config, { now: () => clock.now() });
+    recorded_usage = usage;
     if (core) {
       const current = core;
       areas.bindRuntimeFacts(async (conversation_id) => ({
@@ -298,6 +314,19 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       areas: [
         ...areas.areas,
         { prefix: '/api', routes: createCredentialRequestRoutes(credential_requests) },
+        {
+          prefix: '/api/conversation/usage',
+          routes: createUsageRoutes({
+            conversation_runtime_available: conversationSystem !== undefined,
+            recorded_usage: {
+              readSummary: async (input) =>
+                await conversationWrites.run(() => usage.readSummary(input)),
+              refreshRates: async () => await conversationWrites.run(() => usage.refreshRates()),
+              finish_operations: () => usage.finish_operations(),
+            },
+            backend_state: backendServices.backend_state,
+          }),
+        },
         {
           prefix: '/api/conversation/video-uploads',
           routes: createVideoUploadRoutes(video_uploads, conversation_http, media_lifetime.signal),

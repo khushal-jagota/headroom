@@ -36,6 +36,8 @@ const answered = new Set<string>();
 const identity = { threadId: 'scripted-thread', turnId: 'scripted-turn' };
 
 const coreProof = process.env.UNIT17_CORE_PROOF === '1';
+const providerMode = process.env.UNIT17_PROVIDER_MODE ?? '';
+const providerControl = process.env.UNIT17_PROVIDER_CONTROL;
 const statePath = `${trace}.state.json`;
 interface NativeState {
   nextTurn: number;
@@ -52,8 +54,11 @@ const nativeThread = 'unit17-thread';
 let nativeTurn = '';
 let pendingAsk: number | null = null;
 const note = (kind: string) =>
-  appendFileSync(`${trace}.children`, JSON.stringify({ kind, pid: process.pid }) + '\n');
-if (coreProof) {
+  appendFileSync(
+    `${trace}.children`,
+    JSON.stringify({ kind, pid: process.pid, mode: providerMode }) + '\n',
+  );
+if (coreProof || providerMode) {
   note('launch');
   process.once('exit', () => note('exit'));
   process.once('SIGTERM', () => process.exit(0));
@@ -387,11 +392,121 @@ function coreMessage(message: Record<string, unknown>): boolean {
   return true;
 }
 
+function providerLogin(): void {
+  const home = process.env.CODEX_HOME;
+  if (!home) throw new Error('The provider fixture requires its synthetic Codex home');
+  const path = join(home, 'auth.json');
+  const document = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  document.last_refresh = 'signed-generation';
+  writeFileSync(path, JSON.stringify(document));
+}
+function providerCompleted(): void {
+  if (providerMode !== 'signin-unconfirmed') providerLogin();
+  const completion = {
+    method: 'account/login/completed',
+    params: { loginId: 'synthetic-login', success: true },
+  };
+  if (providerMode === 'signin-child-success')
+    process.stdout.write(JSON.stringify(completion) + '\n', () => process.exit(0));
+  else send(completion);
+}
+if (['signin-complete', 'signin-unconfirmed', 'signin-child-success'].includes(providerMode)) {
+  const completionPoll = setInterval(() => {
+    if (!providerControl || !existsSync(providerControl)) return;
+    if (readFileSync(providerControl, 'utf8') !== 'complete') return;
+    clearInterval(completionPoll);
+    providerCompleted();
+  }, 5);
+}
+function providerMessage(message: Record<string, unknown>): boolean {
+  if (!providerMode) return false;
+  const params = (message.params ?? {}) as Record<string, unknown>;
+  const answer = (result: unknown) => send({ id: message.id, result });
+  if (message.method === 'initialize') answer({ userAgent: 'scripted-provider' });
+  else if (message.method === 'initialized') {
+    /* one-way handshake */
+  } else if (message.method === 'model/list') {
+    if (params.cursor === 'second' && providerMode === 'models-partial') {
+      send({ id: message.id, error: { code: 503, message: 'partial catalog unavailable' } });
+    } else if (params.cursor === 'second') {
+      answer({
+        data: [
+          {
+            model: 'model-b',
+            displayName: 'Model B',
+            hidden: false,
+            supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }],
+            defaultReasoningEffort: 'low',
+            isDefault: true,
+          },
+        ],
+        nextCursor: null,
+      });
+    } else
+      answer({
+        data: [
+          {
+            model: 'model-a',
+            displayName: 'Model A',
+            hidden: false,
+            supportedReasoningEfforts: [{ reasoningEffort: 'medium' }, { reasoningEffort: 'low' }],
+            defaultReasoningEffort: 'medium',
+            isDefault: false,
+          },
+          {
+            model: 'hidden-model',
+            displayName: 'Hidden',
+            hidden: true,
+            supportedReasoningEfforts: [{ reasoningEffort: 'hidden-effort' }],
+            defaultReasoningEffort: 'hidden-effort',
+            isDefault: false,
+          },
+        ],
+        nextCursor: 'second',
+      });
+  } else if (message.method === 'account/login/start') {
+    answer({
+      type: 'chatgptDeviceCode',
+      loginId: 'synthetic-login',
+      userCode: 'SYNTHETIC-CODE',
+      verificationUrl: 'https://login.example.invalid/device',
+    });
+  } else if (message.method === 'account/login/cancel') {
+    if (providerMode === 'signin-race') {
+      providerLogin();
+      // A completion delivered during cancel must survive settlement of the inbox.
+      process.stdout.write(
+        [
+          {
+            method: 'account/login/completed',
+            params: { loginId: 'synthetic-login', success: true },
+          },
+          { id: message.id, result: { status: 'canceled' } },
+        ]
+          .map((frame) => JSON.stringify(frame))
+          .join('\n') + '\n',
+      );
+    } else answer({ status: 'canceled' });
+  } else if (message.method === 'account/rateLimits/read') {
+    if (providerMode === 'usage-timeout' || providerMode === 'usage-cancel') return true;
+    if (providerMode === 'usage-rejected') {
+      send({ id: message.id, error: { code: 401, message: 'not logged in' } });
+    } else
+      process.stdout.write(
+        `{"id":${JSON.stringify(message.id)},"result":{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":300,"resetsAt":2000000000},"secondary":{"usedPercent":25.0,"windowDurationMins":10080,"resetsAt":2000000000}}}}\n`,
+      );
+  } else throw new Error(`Unsupported provider proof method ${String(message.method)}`);
+  return true;
+}
+
 const reader = createInterface({ input: process.stdin });
 reader.on('line', (line) => {
   const message = JSON.parse(line) as Record<string, unknown>;
-  appendFileSync(trace, JSON.stringify(message) + '\n');
-  if (coreMessage(message)) return;
+  appendFileSync(
+    trace,
+    JSON.stringify(providerMode ? { mode: providerMode, ...message } : message) + '\n',
+  );
+  if (providerMessage(message) || coreMessage(message)) return;
   if (message.method === 'initialize') {
     send({ id: message.id, result: { userAgent: 'scripted-codex' } });
   } else if (message.method === 'wire/first') {

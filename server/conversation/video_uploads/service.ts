@@ -5,6 +5,7 @@ import { open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Database, ReadSql } from '../../core/database/contracts.ts';
+import { ServerLifecycleError } from '../../lifecycle/contracts.ts';
 import type { KeptMessageFile } from '../message_files.ts';
 import { MEDIA_TYPE_SUFFIX } from '../record/message_files.ts';
 import { destination_from_json, destination_to_json, VideoUploadError } from './contracts.ts';
@@ -253,7 +254,12 @@ export class VideoUploadService {
         Promise.allSettled([...this.transfers]),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
-            () => reject(new Error('Video transfers did not settle before the shutdown deadline')),
+            () =>
+              reject(
+                new ServerLifecycleError(
+                  'Video transfers remain unfinished at the shutdown deadline.',
+                ),
+              ),
             Math.max(0, (options.deadline - performance.now() / 1000) * 1000),
           );
         }),

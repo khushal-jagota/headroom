@@ -239,6 +239,38 @@ on November 12, 2026. On Linux, Python sets `BASH_ENV` to
 The paired startup check asserts each exact path and identical script bytes. Every other
 child environment value and launch argument compares exactly.
 
+## Recorded usage test composition and shutdown
+
+The migration Manager accepted these usage differences in the Part 5 review on
+November 12, 2026:
+
+- Default TypeScript test composition selects synthetic provider homes beside the
+  test database and supplies a rates fetcher that returns no rates. Python's
+  default composition selects ambient provider homes and can fetch LiteLLM rates.
+  Explicit source directories and recording fetchers remain injectable. Tests do
+  not read owner transcripts or contact the public rates source.
+- TypeScript summary and rate-refresh requests receive HTTP 503 after the shared
+  conversation write admission seals during shutdown. This retains ownership of
+  previously admitted work through its drain. Python has no equivalent shared
+  write-admission gate on these routes.
+
+## Recorded usage timezone data and nonstandard JSON
+
+The migration Manager accepted these remaining Part 5 differences on November 12,
+2026:
+
+- Day buckets use Node's bundled ICU timezone rules. Python uses the installed
+  ZoneInfo data, with its package fallback. A temporary rule difference between
+  these data releases can place an instant in a different day bucket. Validation
+  still requires a Python-valid key. The Manager also accepted UTC fallback for
+  an installed custom or legacy key that ICU cannot name, which differs from
+  Python's installed TZif offset and can change its buckets. Invalid or
+  uninstalled HTTP keys still receive 422.
+- Transcript JSON in TypeScript rejects the nonstandard numeric tokens `NaN`,
+  `Infinity`, and `-Infinity`. Python's `json.loads` accepts these tokens. The
+  TypeScript parser rejects the whole line even when such a token occurs in an
+  otherwise unused property. This narrower intake does not change ordinary JSON
+  numeric signatures or finite token arithmetic.
 ## Codex ask withdrawal at shutdown
 
 The migration Manager accepted this difference in the Part 2 review on November 12, 2026.
@@ -246,6 +278,12 @@ TypeScript bounds ask withdrawal before shutdown to two seconds. When that bound
 client stop breaks the wire and stops and joins the owned child. Python waits for the
 withdrawal without this bound. The bound prevents a parked ask or blocked write from
 holding process cleanup open.
+
+## Codex sign-in admission after shutdown
+
+The migration Manager required this safety difference in the Part 3 source review. TypeScript closes sign-in admission when shutdown begins. Later or queued starts fail with `CodexSignInUnavailable`. Python permits a later start on the same service instance.
+
+The production provider set also closes catalog and usage admission, aborts its owned probes, and joins them before shutdown completes. Snapshot environment cleanup and sign-in cleanup both run even if either fails. An aggregate error retains their failures. These ownership requirements come from the Ticket Brief and Manager review.
 
 ## Hermes ACP ordering and bounded retirement
 
