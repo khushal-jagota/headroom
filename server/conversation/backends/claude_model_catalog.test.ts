@@ -2,13 +2,18 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { load_claude_sdk } from './claude_sdk.ts';
 import { ensure_cli_compatible } from './cli_compatibility.ts';
 import { probe_claude_model_catalog } from './claude_model_catalog.ts';
 
+const { query } = vi.hoisted(() => ({
+  query: vi.fn<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>(),
+}));
+
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: vi.fn() }));
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query }));
 vi.mock('./cli_compatibility.ts', () => ({ ensure_cli_compatible: vi.fn() }));
+await load_claude_sdk();
 afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
