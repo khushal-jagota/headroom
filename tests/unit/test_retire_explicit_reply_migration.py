@@ -135,6 +135,12 @@ STAGING_ONLY_TABLES = (
 # Tables created by revisions after canonical_manager_identities, which a database at
 # goal_holders does not have yet.
 LATER_TABLES = (
+    "conversation_child_custody",
+    "worker_step_dispatch_intents",
+    "automatic_start_bindings",
+    "ticket_workspace_conversations",
+    "ticket_workspace_retirements",
+    "ticket_workspace_lifecycle",
     "executor_incarnations",
     "mac_executor_presence",
     "executor_commands",
@@ -149,6 +155,11 @@ def _staging_shape(tmp_path: Path) -> Path:
     path = tmp_path / "staging.db"
     with closing(connect(str(path))) as conn:
         create_schema(conn)
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' "
+            "AND name GLOB 'ticket_workspace_*'"
+        ).fetchall():
+            conn.execute(f'DROP TRIGGER "{row[0]}"')
         for table in LATER_TABLES:
             conn.execute(f"DROP TABLE {table}")
         for statement in STAGING_ONLY_TABLES:

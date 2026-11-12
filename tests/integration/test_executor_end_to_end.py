@@ -624,6 +624,10 @@ def make_core(endpoint: VpsExecutor) -> SqliteProcessConversationSystem:
     )
     # All transport fixtures are native. Local discovery is never called here.
     system.configure_machine_catalog(endpoint.catalog)
+    system.start_admission.configure_destinations(
+        lambda destination: destination == "home" or endpoint.presence.is_present()
+    )
+    endpoint.mailbox.start_admission = system.start_admission
     return system
 
 
@@ -1339,6 +1343,7 @@ def test_kill_withdraws_a_stalled_delivery_without_a_round_trip(
     """Gap: a kill while a prompt's delivery is still committing withdraws its waiting
     row on the VPS alone, with no Mac request in between; the Mac never runs it."""
     from planner.conversation.contracts import ConversationBackendKey
+    from planner.core.errors import PlannerError
     from planner.executor.protocol import ChildCommand, ChildOperation
 
     async def run() -> None:
@@ -1382,7 +1387,9 @@ def test_kill_withdraws_a_stalled_delivery_without_a_round_trip(
             await asyncio.sleep(0.1)
             release.set()
             fate = await asyncio.wait_for(sending, 5)
-            await asyncio.wait_for(killing, 5)
+            # Withdrawal proves no prompt delivery, but not native process retirement.
+            with pytest.raises(PlannerError, match="previous agent did not stop"):
+                await asyncio.wait_for(killing, 5)
             assert isinstance(fate, PromptDeliverySuppressed), repr(fate)
             # Withdrawn on the VPS while the Mac's poll was still held on the Mac.
             assert not polls_released.is_set()

@@ -39,6 +39,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import OWNER_PRINCIPAL
+from planner.core.errors import PlannerError
 from planner.execution_identity import ChildReference
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.mac_outbox import MacOutbox
@@ -187,7 +188,11 @@ def test_claude_stop_result_controls_canonical_retirement(
             original_disconnect = client.disconnect
             if fails:
                 monkeypatch.setattr(client, "disconnect", disconnect_failure)
-            await system.kill("c_cleanup")
+            if fails:
+                with pytest.raises(PlannerError, match="previous agent did not stop"):
+                    await system.kill("c_cleanup")
+            else:
+                await system.kill("c_cleanup")
             assert client.interrupts == 1
             assert state.retirement_task is not None
             assert await state.retirement_task is (not fails)
