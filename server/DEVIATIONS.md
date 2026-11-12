@@ -2,6 +2,24 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Unidentified callers from the TypeScript service
+
+The migration Manager accepted the exact cgroup component `panels-typescript.service`
+as an additional agent process boundary. The opt-in unidentified-caller rule retains
+`panels-live.service` and `panels-workers.slice` and also refuses holders under that
+new component. Similar service names do not match. Packaging and the predicate share
+`lifecycle/service_identity.ts`. Packaging must import that same constant when its TS unit assets land.
+The installed unit name remains an owner cutover decision.
+
+The single direct source comparison records the old Python answer for the new name
+separately from this accepted extension. If rollback keeps the new unit name, Python
+must recognize that same name through the owner/Chief staging-change route before cutover.
+
+The HTTP gate is wired after trusted-owner normalization. This base has no generic
+application WebSocket transport. The pure close-1008 decision is source-compared;
+Unit 22 must wire the shared admission boundary after trusted ingress when its raw
+transport lands. Existing preview upgrades already require trusted-owner ingress.
+
 ## Unknown managed root in a verified backup
 
 The migration Manager accepted this difference during Unit 21 Part 3 source review.

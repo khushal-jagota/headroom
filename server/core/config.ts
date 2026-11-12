@@ -5,6 +5,7 @@ import { isAbsolute, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { parse } from 'yaml';
 import { PlannerError } from './contracts.ts';
+import { strip } from './unidentified_agent_calls/logic.ts';
 export const HOST = '127.0.0.1';
 export const SSE_HEARTBEAT_MS = 15000;
 export const DB_BUSY_TIMEOUT_MS = 5000;
@@ -19,6 +20,7 @@ export interface Config {
   dispatcher_lock_path: string;
   logs_dir: string;
   backup_dir: string;
+  refuse_unidentified_agent_calls: boolean;
   trusted_ingress_provider: string | null;
   trusted_ingress_allowed_login: string | null;
   trusted_ingress_canonical_origin: string | null;
@@ -42,10 +44,24 @@ export function pythonRepr(value: unknown): string {
     return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'").replaceAll('\n', '\\n').replaceAll('\r', '\\r')}'`;
   return String(value);
 }
+function parseBoolean(v: unknown, key: string, text = String(v).trim()): boolean {
+  if (typeof v === 'boolean') return v;
+  const s = text.toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(s)) return true;
+  if (['0', 'false', 'no', 'off'].includes(s)) return false;
+  throw new PlannerError('validation', `invalid boolean for ${key}: ${pythonRepr(v)}`);
+}
 export function loadConfig(
   path: string | undefined = undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): Config {
+  const refusalFlag = env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS ?? '0';
+  const refuse_unidentified_agent_calls = parseBoolean(
+    refusalFlag,
+    'refuse_unidentified_agent_calls',
+    strip(refusalFlag),
+  );
+  if (env === process.env) delete process.env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS;
   path ??= env.PLAN_CONFIG_PATH ?? 'config.yaml';
   const file: unknown = existsSync(path) ? parse(readFileSync(path, 'utf8')) : {};
   if (file !== null && (typeof file !== 'object' || Array.isArray(file)))
@@ -59,13 +75,7 @@ export function loadConfig(
     const v = raw(key, variable);
     return v == null ? null : String(v).trim() || null;
   };
-  const bool = (v: unknown, key: string): boolean => {
-    if (typeof v === 'boolean') return v;
-    const s = String(v).trim().toLowerCase();
-    if (['1', 'true', 'yes', 'on'].includes(s)) return true;
-    if (['0', 'false', 'no', 'off'].includes(s)) return false;
-    throw new PlannerError('validation', `invalid boolean for ${key}: ${pythonRepr(v)}`);
-  };
+  const bool = parseBoolean;
   const integer = (key: string, variable: string, fallback: number): number => {
     const v = raw(key, variable, fallback);
     if (
@@ -177,6 +187,7 @@ export function loadConfig(
     ),
     logs_dir: text('logs_dir', 'PLAN_LOGS_DIR', 'data/logs'),
     backup_dir: text('backup_dir', 'PLAN_BACKUP_DIR', 'data/backups'),
+    refuse_unidentified_agent_calls,
     trusted_ingress_provider: provider,
     trusted_ingress_allowed_login: login,
     trusted_ingress_canonical_origin: origin,
