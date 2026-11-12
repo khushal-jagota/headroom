@@ -15,8 +15,10 @@ import { FilesService, contained_path, safe_component } from '../files.ts';
 import type { DirectoryHandle } from '../files.ts';
 import { error_code, file_error } from '../file_metadata.ts';
 import { acquire_process_lock } from '../platform.ts';
+import { failure_name } from '../failure_name.ts';
 import { MAX_ITEM_BATCH_ITEMS, MAX_LEASE_WAITING_CONVERSATIONS } from '../configuration.ts';
 import { OutboxResources } from './resources.ts';
+import type { SidecarOpenScope } from './journal_contracts.ts';
 import { item_size_guard } from './size.ts';
 import { DATABASE_NAME, FORMAT_REFUSAL, OUTBOX_SCHEMA, SPOOL_FORMAT_VERSION } from './schema.ts';
 import type {
@@ -59,6 +61,7 @@ function unreadable(error: unknown): boolean {
   );
 }
 export class OutboxStore {
+  readonly health_fence = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
   readonly sender_id: string;
   readonly root: string;
   private readonly database: Database;
@@ -88,9 +91,7 @@ export class OutboxStore {
     this.blobs = blobs;
     this.clock = clock;
     this.resources = resources;
-    files.on_failure(() => {
-      this.closed = true;
-    });
+    files.on_failure(() => this.failed());
     const sender = database.read((sql) =>
       sql.get<{ sender_id: string }>('SELECT sender_id FROM sender WHERE singleton=1'),
     );
@@ -157,9 +158,72 @@ export class OutboxStore {
     }
   }
   private admit(capture_append = false): void {
-    this.files.assert_healthy();
     if (this.closed && (!capture_append || this.callback_scope === 0))
       throw new ServerLifecycleError('outbox is closed');
+    this.assert_healthy();
+  }
+  private failed(): void {
+    this.closed = true;
+    Atomics.store(new Int32Array(this.health_fence), 0, 1);
+  }
+  assert_admission(): void {
+    this.admit();
+  }
+  assert_healthy(): void {
+    if (Atomics.load(new Int32Array(this.health_fence), 0))
+      throw new ServerLifecycleError('Spool resource failure seals mutations.');
+    try {
+      this.files.assert_healthy();
+      this.resources.assert_healthy();
+    } catch (error) {
+      if (!this.closed) this.failed();
+      throw error;
+    }
+  }
+  with_sidecar_open<T>(work: (scope: SidecarOpenScope) => Promise<T>): Promise<T> {
+    this.admit();
+    let active = true;
+    const require_scope = () => {
+      if (!active) throw new ServerLifecycleError('sidecar opening scope is closed');
+    };
+    const scope: SidecarOpenScope = {
+      root: this.root,
+      health_fence: this.health_fence,
+      assert_admission: () => {
+        require_scope();
+        this.admit();
+      },
+      assert_healthy: () => {
+        require_scope();
+        this.assert_healthy();
+      },
+      register: (service) => {
+        require_scope();
+        this.resources.register(service);
+        service.on_failure(() => this.failed());
+      },
+      flush_spool: () => {
+        require_scope();
+        this.files.assert_healthy();
+        return this.files.fsync_directory(this.root);
+      },
+    };
+    const operation = (async () => {
+      await Promise.resolve();
+      try {
+        this.admit();
+        const value = await work(scope);
+        this.admit();
+        return value;
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        if (!('cleanup' in failure)) Object.assign(failure, { cleanup: this });
+        throw failure;
+      } finally {
+        active = false;
+      }
+    })();
+    return this.track(operation);
   }
   private track<T>(task: Promise<T>): Promise<T> {
     this.operations.add(task);
@@ -167,7 +231,7 @@ export class OutboxStore {
       () => this.operations.delete(task),
       (error) => {
         this.operations.delete(task);
-        console.warn('Mac outbox operation failed:', error);
+        console.warn('Mac outbox operation failed:', failure_name(error));
       },
     );
     return task;
@@ -241,7 +305,7 @@ export class OutboxStore {
     const submission = safe_component(columns.submission_id || randomUUID().replaceAll('-', ''));
     safe_component(columns.conversation_id);
     const size_guard = item_size_guard(this.sender_id, columns, submission, payload);
-    this.files.assert_healthy();
+    this.assert_healthy();
     const row = this.database.write((tx) => {
       const result = tx.run(
         'INSERT INTO items(submission_id,conversation_id,child_id,kind,payload_json) VALUES(?,?,?,?,?)',
@@ -263,7 +327,7 @@ export class OutboxStore {
         );
       const held = tx.get<ItemRow>('SELECT * FROM items WHERE sequence=?', [sequence])!;
       synchronous(validate(held));
-      this.files.assert_healthy();
+      this.assert_healthy();
       return held;
     });
     this.first_held.set(row.sequence, this.clock.monotonic());
@@ -296,7 +360,7 @@ export class OutboxStore {
           await this.sweep();
         } catch (error) {
           // Durable append success survives cleanup failure. Retry on a later sweep.
-          console.warn('Mac outbox capture cleanup deferred:', error);
+          console.warn('Mac outbox capture cleanup deferred:', failure_name(error));
         } finally {
           release();
           if (this.capture_tails.get(ticket_id) === tail) this.capture_tails.delete(ticket_id);
@@ -388,7 +452,7 @@ export class OutboxStore {
       const row = this.held(submission_id);
       if (row === null) return;
       if (sender_id !== this.sender_id) throw file_error('receipt identity mismatch');
-      this.files.assert_healthy();
+      this.assert_healthy();
       this.database.write((tx) => {
         if (!accepted)
           for (const file of invalidated)
@@ -402,7 +466,7 @@ export class OutboxStore {
         else tx.run('DELETE FROM items WHERE submission_id=?', [submission_id]);
         if (row.kind === 'child_stopped')
           tx.run('DELETE FROM items WHERE child_id=? AND receipt_json IS NOT NULL', [row.child_id]);
-        this.files.assert_healthy();
+        this.assert_healthy();
       });
       this.first_held.delete(row.sequence);
       // The host can settle its waiter even when subsequent blob cleanup fails.

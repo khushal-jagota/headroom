@@ -104,7 +104,9 @@ export class FilesService {
     return this.request('fsync_directory', [path]);
   }
   assert_healthy(): void {
-    if (this.closed || this.worker?.threadId === -1)
+    if (!this.closed && this.worker?.threadId === -1)
+      this.seal(new ServerLifecycleError('Executor file worker is unavailable.'));
+    if (this.closed)
       throw this.failure ?? new ServerLifecycleError('Executor file worker is unavailable.');
   }
   on_failure(listener: (error: Error) => void): () => void {

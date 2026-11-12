@@ -151,6 +151,7 @@ Missing symbols or failed calls must refuse the operation. A path-based fallback
 | `flock(int,int)` | Exclusive/nonblocking/unlock flags, contention refusal, crash release, and interrupted-call behavior |
 | `getpwnam` and Darwin `passwd` layout | Field offsets, pointer decoding, named-user expansion, and missing-account refusal |
 | Packaged Koffi addon | arm64 Mach-O architecture, pinned addon load from the relocated package, and no extra native library |
+| Packaged better-sqlite3 addon and journal worker | arm64 addon load inside the journal worker, full-flush commits, interrupted transaction recovery, and native connection cleanup before joined worker exit |
 | Native app and LaunchAgent | Signed requester attribution, startup/restart, exact Unix socket path/mode, consent, and permission retention |
 | Root aliases | Refusal of the Python root and descendants through symlinks and native case-insensitive aliases |
 | Process ownership | Darwin PID/start-time observations, priority, descendants, direct-child exit, and no leftover owned child |
