@@ -58,9 +58,6 @@ def test_incompatible_cli_refuses_before_native_launch(
 def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executable = tmp_path / "claude"
-    executable.write_text("#!/bin/sh\nexit 0\n")
-    executable.chmod(0o700)
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
 
@@ -71,16 +68,15 @@ def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
         create = AsyncMock(return_value=unit)
         monkeypatch.setattr(WorkerUnit, "create", create)
         options = ClaudeAgentOptions(
-            cli_path=str(executable), cwd=str(tmp_path), model="model",
-            env={"PLAN_TICKET_ID": "ticket", "PLAN_TICKET_FILES_DIR": str(tmp_path),
+            cli_path="/claude", cwd=str(tmp_path), model="model",
+            env={"PLAN_TICKET_ID": "ticket",
                  "AUTH_VALUE": "secret"},
         )
         transport = _ClaudeCleanupTransport("", options)
         original_command = SubprocessCLITransport._build_command(transport)
 
         async def connect(self: SubprocessCLITransport) -> None:
-            assert self._build_command()[0] == "contained"
-            assert self._build_command()[-len(original_command):] == original_command
+            assert self._build_command() == ["contained", *original_command]
 
         async def messages(self: SubprocessCLITransport):  # type: ignore[no-untyped-def]
             yield {"type": "result"}
@@ -152,7 +148,7 @@ def test_failed_worker_start_closes_partial_sdk_process_before_scratch(
         monkeypatch.setattr(SubprocessCLITransport, "close", close)
         transport = _ClaudeCleanupTransport(
             "", ClaudeAgentOptions(cli_path="/claude", env={
-                "PLAN_TICKET_ID": "ticket", "PLAN_TICKET_FILES_DIR": str(tmp_path),
+                "PLAN_TICKET_ID": "ticket",
             })
         )
         with pytest.raises(RuntimeError, match="startup failed"):

@@ -616,7 +616,7 @@ def _remove_retired(path: Path) -> str | None:
 
     ticket_id = path.name.split("-", 1)[0]
     if not prune_ticket_scratch(ticket_id):
-        return "Worker scratch still has live or unknown ownership"
+        return "Worker scratch path is not an owned real directory"
     return cleanup_ticket_folder(path)
 
 

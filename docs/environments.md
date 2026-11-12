@@ -41,9 +41,9 @@ The user units in `ops/panels-environments/` cover the live service, the deploym
 
 Panels owns each Ticket's workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
 
-Every Worker backend on Linux and macOS gets a real, short disk folder at `~/.pw/<ticket-id>-<six hex characters>`. `TMPDIR`, `TMP`, and `TEMP` point there. The launcher removes that scratch when the backend process ends, including failed startup. The same rule applies to Codex, Claude, and Hermes independently of the Linux Worker unit. The short path leaves room for tool-created Unix sockets.
+Every Worker backend on Linux and macOS gets a real, short disk folder at `~/.pw/<ticket-id>-<six hex characters>`. `TMPDIR`, `TMP`, and `TEMP` point there. The launcher removes that scratch when the backend process ends, including failed startup. The same rule applies to Codex, Claude, and Hermes independently of the Linux Worker unit. The short path leaves room for tool-created Unix sockets. A fresh backend folder replaces other scratch folders for the same Ticket. Ticket retirement removes the remaining folders.
 
-An inherited file lock protects a live backend's scratch if its launcher dies. Before another backend starts for that Ticket, Panels removes only its unlocked leftovers. Ticket retirement also removes those leftovers. Live or unknown ownership preserves the retirement record for a later retry. Other Tickets and unrelated temporary paths stay untouched. The root's single coordination lock file remains.
+Scratch belongs to one backend process. Panels can remove scratch of a process that is no longer current.
 
 Tools that follow the temporary environment use this scratch. Commands that name `/tmp` or `/var/tmp` still use those host paths. Workers must use `TMPDIR` or a tool's explicit temporary-folder setting. Chief and Managers retain the server's private `/tmp` on the VPS, which shares the host's memory-backed filesystem. Host storage and age cleanup remain operator policy.
 

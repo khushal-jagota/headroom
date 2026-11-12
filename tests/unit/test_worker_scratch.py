@@ -1,10 +1,9 @@
-"""Short paths and inherited locks protect scratch across backend lifetimes."""
+"""Short paths and Ticket-scoped cleanup keep Worker scratch on disk."""
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -36,9 +35,8 @@ def test_child_tempfile_defaults_follow_real_scratch_across_cwd(
     scratch = WorkerScratch({**os.environ, "PLAN_TICKET_ID": "ticket"})
     try:
         result = subprocess.run(
-            scratch.argv([sys.executable, "-c", "import tempfile,json; "
-                          "print(json.dumps([tempfile.gettempdir(), tempfile.mkstemp()[1]]))"],
-                         tmp_path),
+            [sys.executable, "-c", "import tempfile,json; "
+             "print(json.dumps([tempfile.gettempdir(), tempfile.mkstemp()[1]]))"],
             env=scratch.environment, cwd=tmp_path, text=True, capture_output=True, check=True,
         )
         default, file = json.loads(result.stdout)
@@ -52,70 +50,31 @@ def test_child_tempfile_defaults_follow_real_scratch_across_cwd(
     assert not scratch.directory.exists()
 
 
-def test_start_and_retirement_prune_only_stale_same_ticket_runs(
+def test_start_and_retirement_prune_only_other_same_ticket_folders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
     stale = WorkerScratch({"PLAN_TICKET_ID": "ticket"})
-    assert stale._descriptor is not None
-    os.close(stale._descriptor)  # Simulate the disappearance of the launcher holder.
-    stale._descriptor = None
     other = WorkerScratch({"PLAN_TICKET_ID": "other"})
     current = WorkerScratch({"PLAN_TICKET_ID": "ticket"})
     assert not stale.directory.exists()
-    assert other.directory.exists()
-    assert not prune_ticket_scratch("ticket")  # The current run remains live.
-    assert current.directory.exists()
-    assert current._descriptor is not None
-    os.close(current._descriptor)
-    current._descriptor = None
+    assert current.directory.exists() and other.directory.exists()
     assert prune_ticket_scratch("ticket")
     assert not current.directory.exists() and other.directory.exists()
     other.close()
 
 
-@pytest.mark.parametrize("runtime", ["python", "node"])
-def test_exec_owner_survives_launcher_holder_and_expires_with_backend(
-    runtime: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
-    scratch = WorkerScratch({**os.environ, "PLAN_TICKET_ID": "ticket"})
-    if runtime == "python":
-        command = [sys.executable, "-c", "import sys; print('ready',flush=True); sys.stdin.read()"]
-    else:
-        node = shutil.which("node")
-        assert node is not None, "node is a repository prerequisite"
-        command = [node, "-e", "console.log('ready'); process.stdin.resume()"]
-    process = subprocess.Popen(
-        scratch.argv(command, tmp_path), env=scratch.environment, stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE, text=True,
-    )
-    try:
-        assert process.stdout is not None and process.stdout.readline() == "ready\n"
-        assert scratch._descriptor is not None
-        os.close(scratch._descriptor)
-        scratch._descriptor = None
-        assert not prune_ticket_scratch("ticket")
-        assert scratch.directory.exists()
-    finally:
-        process.communicate(timeout=5)
-    assert prune_ticket_scratch("ticket")
-    assert not scratch.directory.exists()
-
-
-def test_unknown_and_symlink_ownership_never_authorizes_deletion(
+def test_same_ticket_symlink_never_authorizes_deletion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "runs"
     root.mkdir(mode=0o700)
     monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: root)
-    missing = root / "ticket-123456"
-    missing.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
     (root / "ticket-abcdef").symlink_to(outside, target_is_directory=True)
     assert not prune_ticket_scratch("ticket")
-    assert missing.exists() and outside.exists()
+    assert outside.exists()
     assert (root / "ticket-abcdef").is_symlink()
 
 
@@ -132,58 +91,3 @@ def test_memory_filesystem_cannot_receive_worker_scratch(
         ))
     with pytest.raises(worker_scratch.WorkerScratchError, match="must use disk"):
         worker_scratch._disk_directory(tmp_path)
-
-
-def test_exec_lock_handoff_serializes_with_prune_after_launcher_death(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import fcntl
-    import importlib
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-    from concurrent.futures import TimeoutError as FutureTimeout
-
-    launcher = importlib.import_module("planner.conversation.worker_scratch.exec")
-    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
-    scratch = WorkerScratch({"PLAN_TICKET_ID": "ticket"})
-    command = scratch.argv([sys.executable, "-c", "pass"], tmp_path)
-    monkeypatch.setattr(sys, "argv", list(command[1:]))
-    opened, proceed, pruning = threading.Event(), threading.Event(), threading.Event()
-    real_flock = fcntl.flock
-    backend_descriptor: list[int] = []
-
-    def pause_before_shared(descriptor: int, operation: int) -> None:
-        if operation == fcntl.LOCK_SH:
-            backend_descriptor.append(descriptor)
-            opened.set()
-            assert proceed.wait(5)
-        real_flock(descriptor, operation)
-
-    def prune() -> bool:
-        pruning.set()
-        return prune_ticket_scratch("ticket")
-
-    monkeypatch.setattr(fcntl, "flock", pause_before_shared)
-    monkeypatch.setattr(os, "execvpe", lambda *args: None)
-    try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            entering = pool.submit(launcher.main)
-            assert opened.wait(5)
-            assert scratch._descriptor is not None
-            os.close(scratch._descriptor)
-            scratch._descriptor = None
-            cleanup = pool.submit(prune)
-            assert pruning.wait(5)
-            try:
-                with pytest.raises(FutureTimeout):
-                    cleanup.result(timeout=0.05)
-            finally:
-                proceed.set()
-            entering.result(timeout=5)
-            assert cleanup.result(timeout=5) is False
-            assert scratch.directory.exists()
-    finally:
-        proceed.set()
-        for descriptor in backend_descriptor:
-            os.close(descriptor)
-    assert prune_ticket_scratch("ticket")

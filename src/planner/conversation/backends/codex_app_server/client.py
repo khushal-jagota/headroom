@@ -221,10 +221,8 @@ class CodexAppServerClient:
                     {**environment, "PLAN_TICKET_ID": worker_ticket_id}, working_directory
                 )
             unit = self._worker_unit
-            command = (argv if self._worker_scratch is None else
-                       self._worker_scratch.argv(argv, working_directory))
             process = await asyncio.create_subprocess_exec(
-                *(command if unit is None else unit.argv(command)),
+                *(argv if unit is None else unit.argv(argv)),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

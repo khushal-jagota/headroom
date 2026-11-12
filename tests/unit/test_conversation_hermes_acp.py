@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
 from pathlib import Path
 from tempfile import mkdtemp
 
@@ -38,7 +37,6 @@ from tests.support.conversation_system_under_test import (
     open_conversation_system_under_test,
 )
 
-from planner.conversation import worker_scratch
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
     BackendEventValue,
@@ -61,7 +59,6 @@ from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ConversationAccess,
     ConversationBackendKey,
-    ConversationRoleMaterials,
     ConversationStartRequest,
     PromptDeliveryMode,
     PromptDeliveryQueued,
@@ -645,32 +642,5 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
         assert sink.agent_contents == []
         assert sink.endings == []
         await child.stop()
-
-    _run(exercise)
-
-
-@pytest.mark.parametrize("nonexecutable", [False, True])
-def test_worker_hermes_missing_provider_releases_scratch_before_return(
-    nonexecutable: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
-
-    async def exercise() -> None:
-        start = replace(_resolved_start(tmp_path), role_materials=ConversationRoleMaterials(
-            role_text="Worker", identity_environment_variables=(("PLAN_TICKET_ID", "ticket"),),
-        ))
-        missing = tmp_path / "missing-hermes"
-        if nonexecutable:
-            missing.write_text("not executable")
-            missing.chmod(0o600)
-        child = HermesAcpBackendChild(
-            launch=AcpChildLaunch((str(missing), "-m", "hermes.acp")),
-            resolved_start=start, event_sink=_RecordingSink(), message_files=_message_files(),
-        )
-        with pytest.raises(BackendSpawnFailed, match="missing-hermes") as refusal:
-            await child.start(start, vendor_session_cursor=None)
-        expected_error = PermissionError if nonexecutable else FileNotFoundError
-        assert isinstance(refusal.value.__cause__, expected_error)
-        assert not list((tmp_path / "runs").glob("ticket-*"))
 
     _run(exercise)

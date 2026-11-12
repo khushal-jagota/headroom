@@ -758,12 +758,10 @@ class HermesAcpBackendChild:
             self._worker_scratch = WorkerScratch(environment)
             environment = self._worker_scratch.environment
         try:
-            command = (launch.argv if self._worker_scratch is None else
-                       self._worker_scratch.argv(launch.argv, resolved_start.workspace_folder))
             reader, writer, process = await self._processes.enter_async_context(
                 spawn_stdio_transport(
-                    command[0],
-                    *command[1:],
+                    launch.argv[0],
+                    *launch.argv[1:],
                     env=environment,
                     cwd=resolved_start.workspace_folder,
                     limit=CHILD_OUTPUT_LINE_LIMIT_BYTES,

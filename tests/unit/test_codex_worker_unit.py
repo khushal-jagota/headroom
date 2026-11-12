@@ -64,8 +64,7 @@ def test_only_explicit_worker_identity_selects_containment(
             _resolved_start(tmp_path),
             role_materials=ConversationRoleMaterials(
                 role_text="Worker",
-                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),
-                                                ("PLAN_TICKET_FILES_DIR", str(tmp_path))),
+                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),),
             ),
         )
         async with _scripted_child(tmp_path, script={}) as scripted:
@@ -115,8 +114,7 @@ def test_worker_launch_failure_cleans_up_its_prepared_unit(
             _resolved_start(tmp_path),
             role_materials=ConversationRoleMaterials(
                 role_text="Worker",
-                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),
-                                                ("PLAN_TICKET_FILES_DIR", str(tmp_path))),
+                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),),
             ),
         )
         async with _scripted_child(tmp_path, script={}) as scripted:
@@ -159,8 +157,7 @@ def test_failed_unit_stop_keeps_the_handle_for_a_retry(
             _resolved_start(tmp_path),
             role_materials=ConversationRoleMaterials(
                 role_text="Worker",
-                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),
-                                                ("PLAN_TICKET_FILES_DIR", str(tmp_path))),
+                identity_environment_variables=(("PLAN_TICKET_ID", "this-worker"),),
             ),
         )
         async with _scripted_child(tmp_path, script={}) as scripted:
