@@ -42,6 +42,11 @@ metadata error query. Undecodable work stays visible through the persistent stor
 error surface. Legacy waiting or sending work has unknown provenance and remains
 uncertain rather than receiving permission to POST.
 
+This phone-store migration runs forward. Opening the upgraded store with an older
+app is not a supported recovery route, and older-binary readability is not proved.
+If the store cannot open or backfill cannot commit, the app exposes a storage error
+and keeps the store instead of deleting it or creating an empty replacement.
+
 Responses are bounded to 96 entries and 16 MiB across servers. A response larger
 than the budget is not cached. Drafts and outgoing work are separate records and
 are never removed by this eviction. Each foreground pass first clears a due batch
