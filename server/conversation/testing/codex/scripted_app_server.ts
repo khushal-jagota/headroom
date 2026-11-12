@@ -240,8 +240,8 @@ function coreMessage(message: Record<string, unknown>): boolean {
       return true;
     }
     if (scenario === 'rejected-after-output') {
+      // A catalog hint here can race teardown with an unrelated coalesced refresh.
       const frames = [
-        { method: 'skills/changed', params: {} },
         {
           method: 'item/agentMessage/delta',
           params: {

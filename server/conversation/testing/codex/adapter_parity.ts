@@ -12,6 +12,7 @@ import { text_message_content } from '../../message_content.ts';
 import { delivery_fate_json } from '../../http.ts';
 import { DurableCodexLoginRejection } from '../../backend_state.ts';
 import { CodexAppServerClient } from '../../backends/codex_app_server/client.ts';
+import type { AgentMessageDeltaNotification } from '../../backends/codex_app_server/protocol.ts';
 import { read_stored_codex_login } from '../../backends/codex_app_server/login.ts';
 
 export interface AdapterParitySpec {
@@ -95,7 +96,10 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
             on_server_request: (...args) => options.handler.on_server_request(...args),
             on_child_ended: () => options.handler.on_child_ended(),
             async on_notification(method, notification) {
-              if (method === 'skills/changed') {
+              if (
+                method === 'item/agentMessage/delta' &&
+                (notification as AgentMessageDeltaNotification).itemId === 'provisional'
+              ) {
                 backlog_order.push('handler-start');
                 await new Promise((resolve) => setTimeout(resolve, 20));
                 backlog_order.push('handler-end');
