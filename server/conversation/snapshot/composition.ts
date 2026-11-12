@@ -16,7 +16,7 @@ import { BackendSnapshotService } from './service.ts';
 import { create_backend_probe } from './probe.ts';
 import { create_catalog_readers } from './catalogs/readers.ts';
 import { BackendUsageService } from '../backend_usage/service.ts';
-import { BackendStateStore, DurableCodexLoginRejection } from '../backend_state.ts';
+import { BackendStateStore, create_durable_codex_login_rejection } from '../backend_state.ts';
 import { SubprocessBackendProbeEnvironment, backend_io_is_test } from './environment.ts';
 import { RecordingBackendProbeEnvironment } from './recording_environment.ts';
 export interface BackendProviders {
@@ -41,11 +41,19 @@ export function create_backend_runtime(options: {
     (options.config.test_mode || backend_io_is_test()
       ? new RecordingBackendProbeEnvironment()
       : new SubprocessBackendProbeEnvironment());
-  const rejection = new DurableCodexLoginRejection(database, now);
+  const rejection = create_durable_codex_login_rejection(database, now);
   return {
     async shutdown() {
-      await environment.shutdown?.();
-      await providers.codex_sign_in?.shutdown();
+      const settled = await Promise.allSettled([
+        Promise.resolve().then(() => environment.shutdown?.()),
+        Promise.resolve().then(() => providers.codex_sign_in?.shutdown()),
+      ]);
+      const failed = settled.filter((result) => result.status === 'rejected');
+      if (failed.length)
+        throw new AggregateError(
+          failed.map((result) => result.reason),
+          'Backend shutdown failed',
+        );
     },
     database,
     backend_snapshots: new BackendSnapshotService({

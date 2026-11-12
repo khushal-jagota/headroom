@@ -11,12 +11,27 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { ClaudeUsageAdapter } from '../backend_usage/claude.ts';
 import { http_get_usage } from '../backend_usage/http.ts';
-export function production_backend_providers(test_mode = false): BackendProviders {
+import { create_codex_providers } from '../backends/codex_app_server/providers.ts';
+import type { CodexProviderContext } from '../backends/codex_app_server/providers.ts';
+export function production_backend_providers(test_mode: true): BackendProviders;
+export function production_backend_providers(
+  test_mode: boolean,
+  context: CodexProviderContext,
+): BackendProviders;
+export function production_backend_providers(
+  test_mode = false,
+  context?: CodexProviderContext,
+): BackendProviders {
   const providers = unavailable_backend_providers();
   if (test_mode || backend_io_is_test()) return providers;
+  if (context === undefined)
+    throw new Error('Production backend providers require database and clock context.');
+  const codex = create_codex_providers(context);
   return {
     ...providers,
+    ...codex,
     usage: {
+      ...codex.usage,
       claude: new ClaudeUsageAdapter({
         credential_path: join(
           process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),

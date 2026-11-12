@@ -262,3 +262,8 @@ conversation IDs, ranks, revisions, or arbitrary label text. Prefix search remai
 case-folded against the actual label that each runtime displays, so a prefix that
 includes different locale-data text can select a different entry. Unknown locale
 and zone inputs retain the documented fallback behavior.
+## Codex sign-in admission after shutdown
+
+The migration Manager required this safety difference in the Part 3 source review. TypeScript closes sign-in admission when shutdown begins. Later or queued starts fail with `CodexSignInUnavailable`. Python permits a later start on the same service instance.
+
+The production provider set also closes catalog and usage admission, aborts its owned probes, and joins them before shutdown completes. Snapshot environment cleanup and sign-in cleanup both run even if either fails. An aggregate error retains their failures. These ownership requirements come from the Ticket Brief and Manager review.
