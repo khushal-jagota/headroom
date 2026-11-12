@@ -503,5 +503,6 @@
       "status": 200
     }
   ],
-  "publication_fixture": "One completed real Chief turn is seeded through HTTP before cloning. Compared ordinary Chief sends reuse the same retained conversation ID on both hosts."
+  "publication_fixture": "One completed real Chief turn is seeded through HTTP before cloning. Compared ordinary Chief sends reuse the same retained conversation ID on both hosts.",
+  "candidate": "typescript"
 }

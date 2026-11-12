@@ -162,6 +162,10 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     expect(delivery.fate).toBe('started');
     const id = delivery.conversation_id;
     const child = registry.child(id);
+    const settle_backend_events = async () => {
+      await child.flush_events();
+      await context.core!.wait_until_quiescent();
+    };
     const view = encodeURIComponent(
       JSON.stringify({
         projection_version: 7,
@@ -203,8 +207,9 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
         }),
       }),
     );
-    await child.flush_events();
+    await settle_backend_events();
     await child.request_questions();
+    await settle_backend_events();
     expect((await attention()).awaiting_answer).toBe(true);
     const turn = context.core!.runtime_turn(id)!;
     const [permission] = turn.pending_permission_ask_ids;
@@ -219,15 +224,17 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     ).toBe('applied');
     expect((await attention()).awaiting_answer).toBe(false);
     await child.emit(new BackgroundTaskStarted({ task_id: 'task', task_description: 'Task' }));
-    await child.flush_events();
+    await settle_backend_events();
     await child.finish();
+    await settle_backend_events();
     expect(context.core!.runtime_turn(id)).toBeNull();
     expect((await attention()).signal.working).toBe(true);
     await child.emit(new BackgroundTaskEnded({ task_id: 'task', task_status: 'completed' }));
-    await child.flush_events();
+    await settle_backend_events();
     expect((await attention()).signal.working).toBe(false);
     expect((await post('fail')).status).toBe(200);
     await child.finish({ ending: 'failed', error_summary: 'Synthetic failure' });
+    await settle_backend_events();
     expect((await attention()).last_turn_failed).toBe(true);
     const through = context.record.store.read_conversation(id)!.latest_sequence;
     // The acknowledgment's domain policy belongs elsewhere. Exercise its actual
