@@ -25,11 +25,30 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def _state(root: Path, name: str) -> Any:
     path = root / f"{name}.json"
+    state_path = root / "pong.json"
+    log_path = root / "server.log"
     until = time.monotonic() + 20
     while not path.exists():
-        assert time.monotonic() < until, f"Missing owned-host state: {name}"
+        assert time.monotonic() < until, (
+            f"Missing owned-host state: {name}; markers: "
+            f"{sorted(path.name for path in root.glob('*.json'))}; "
+            f"latest state: {state_path.read_text() if state_path.exists() else 'none'}; "
+            f"log: {log_path.read_text()[-4096:] if log_path.exists() else 'none'}"
+        )
         time.sleep(0.01)
     return json.loads(path.read_text())
+
+
+def _json_reply(source: socket.SocketIO) -> tuple[int, Any]:
+    status = int(source.readline().split()[1])
+    headers = http.client.parse_headers(source)
+    length = int(headers["Content-Length"])
+    body = bytearray()
+    while len(body) < length:
+        chunk = source.read(length - len(body))
+        assert chunk, "Incomplete ordinary response during grace"
+        body.extend(chunk)
+    return status, json.loads(body)
 
 
 def _owner(path: Path, held: bool) -> None:
@@ -145,7 +164,16 @@ def test_unit21_stop_retains_disconnected_work_and_failed_cleanup(
             if mode == "http":
                 held = get("/proof/held")
                 tail = get("/proof/tail")
-                slow = get("/proof/slow")
+                slow = socket.create_connection(("127.0.0.1", server.port), timeout=20)
+                clients.append(slow)
+                body = b'{"during":"grace"}'
+                slow.sendall(
+                    b"POST /proof/slow HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                    b"Content-Type: application/json\r\nContent-Length: "
+                    + str(len(body)).encode()
+                    + b"\r\n\r\n"
+                    + body[:1]
+                )
                 late = get("/proof/late")
                 events = get("/api/changes")
                 event_response = http.client.HTTPResponse(events)
@@ -167,22 +195,32 @@ def test_unit21_stop_retains_disconnected_work_and_failed_cleanup(
                     event_response.read()
                 except http.client.IncompleteRead:
                     pass  # Closing an event stream need not send a final HTTP chunk.
-                (runtime / "release-slow").touch()
-                response = http.client.HTTPResponse(slow)
-                response.begin()
-                assert response.status == 200
-                assert json.loads(response.read()) == {"complete": "ordinary response during grace"}
+                # Finish the admitted POST body, then pipeline a genuinely NEW request
+                # on its active connection. Admission must distinguish the two.
+                slow.sendall(
+                    body[1:] + b"GET /api/meta HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                    b"Connection: close\r\n\r\n"
+                )
+                with slow.makefile("rb", buffering=0) as source:
+                    assert _json_reply(source) == (
+                        200,
+                        {"complete": "ordinary response during grace", "body": {"during": "grace"}},
+                    )
+                    status, _body = _json_reply(source)
+                    assert status == 503
                 (runtime / "release-late").touch()
-                refused = http.client.HTTPResponse(late)
-                refused.begin()
-                assert refused.status == 503
-                refused.read()
+                completed_hook = http.client.HTTPResponse(late)
+                completed_hook.begin()
+                assert completed_hook.status == 200
+                assert json.loads(completed_hook.read()) == {
+                    "complete": "admitted hook during grace"
+                }
                 _owner(owner, True)
                 server.proc.send_signal(signal.SIGTERM)
                 _state(runtime, "first-term")
                 server.proc.send_signal(signal.SIGTERM)
                 (runtime / "ping").touch()
-                assert _state(runtime, "pong") is True
+                assert _state(runtime, "pong")["state"]["kind"] == "stopping"
                 assert server.proc.poll() is None
                 assert not (runtime / "closed.json").exists()
                 for name in ("handler", "iterator"):

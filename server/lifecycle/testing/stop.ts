@@ -23,13 +23,11 @@ export async function stop_host_proof(spec: {
   };
   const handler = new Deferred<void>(),
     iterator = new Deferred<void>(),
-    slow = new Deferred<void>(),
     late = new Deferred<void>(),
     backend = new Deferred<void>();
   const gates = {
     'release-handler': handler,
     'release-iterator': iterator,
-    'release-slow': slow,
     'release-late': late,
     'release-backend': backend,
   };
@@ -37,7 +35,7 @@ export async function stop_host_proof(spec: {
   const polling = setInterval(() => {
     for (const [name, gate] of Object.entries(gates))
       if (existsSync(join(spec.root, name))) gate.resolve();
-    if (existsSync(join(spec.root, 'ping'))) put('pong', true);
+    if (existsSync(join(spec.root, 'ping'))) put('pong', { state: server.shutdown_state, closed });
   }, 10);
   polling.unref();
   const finished = new Deferred<void>();
@@ -125,6 +123,7 @@ export async function stop_host_proof(spec: {
             prefix: '/proof',
             routes: async (app) => {
               app.addHook('onRequest', async (request) => {
+                if (request.url === '/proof/slow') put('slow-entered', true);
                 if (request.url === '/proof/late') {
                   put('late-entered', true);
                   await late.promise;
@@ -138,12 +137,11 @@ export async function stop_host_proof(spec: {
                 put('handler-settled', result);
                 return result;
               });
-              app.get('/slow', async () => {
-                put('slow-entered', true);
-                await slow.promise;
-                return { complete: 'ordinary response during grace' };
-              });
-              app.get('/late', async () => ({ unexpected: 'admitted after seal' }));
+              app.post('/slow', async (request) => ({
+                complete: 'ordinary response during grace',
+                body: request.body,
+              }));
+              app.get('/late', async () => ({ complete: 'admitted hook during grace' }));
               app.get('/tail', async (request, reply) => {
                 async function* output() {
                   try {

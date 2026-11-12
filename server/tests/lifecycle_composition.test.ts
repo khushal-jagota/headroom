@@ -2,6 +2,9 @@
  * late-transport fencing at lifecycle shutdown. Reuse the Ticket DB and locks.
  */
 import { afterEach, expect, test, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import type { Socket } from 'node:net';
+import type { ServerResponse } from 'node:http';
 import { create, fixture, fixture_path, now, read } from './ticket_fixture.ts';
 import { createDatabase } from '../core/database/index.ts';
 import { record_attention } from '../notifications/attention.ts';
@@ -88,6 +91,33 @@ test('HTTP lifetime independently retains a handler and a pending iterator retur
     release.resolve();
     await Promise.all([returning, iterator_drain]);
   }
+  // end() is not proof of a flushed response. A second pipelined response can
+  // already be finished=true while its output still waits behind the first.
+  const sockets = new HttpRequestScope();
+  const socket = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    writableEnded: false,
+    end: vi.fn(() => {
+      socket.writableEnded = true;
+    }),
+  });
+  const first = Object.assign(new EventEmitter(), { finished: true, writableFinished: false });
+  const second = Object.assign(new EventEmitter(), { finished: true, writableFinished: false });
+  sockets.own_connection(socket as unknown as Socket);
+  sockets.own_response(socket as unknown as Socket, first as unknown as ServerResponse);
+  sockets.own_response(socket as unknown as Socket, second as unknown as ServerResponse);
+  sockets.seal();
+  sockets.close_idle_connections();
+  expect(socket.end).not.toHaveBeenCalled();
+  first.writableFinished = true;
+  first.emit('finish');
+  first.emit('close');
+  expect(socket.end).not.toHaveBeenCalled();
+  second.writableFinished = true;
+  second.emit('finish');
+  expect(socket.end).toHaveBeenCalledOnce();
+  second.emit('close');
+  expect(socket.end).toHaveBeenCalledOnce();
   console.info(`HTTP lifetime unit proof: ${(performance.now() - began).toFixed(3)} ms`);
 });
 afterEach(() => vi.restoreAllMocks());

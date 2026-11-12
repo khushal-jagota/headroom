@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
 import type { Socket } from 'node:net';
+import type { ServerResponse } from 'node:http';
 import { HttpError } from './errors.ts';
 
 declare module 'fastify' {
@@ -15,15 +16,37 @@ declare module 'fastify' {
 /** Socket/response completion never substitutes for actual handler/iterator work. */
 export class HttpRequestScope {
   readonly #pending = new Set<Promise<void>>();
-  readonly #connections = new Set<Socket>();
+  readonly #connections = new Map<Socket, number>();
   #sealed = false;
   own_connection(socket: Socket): void {
-    this.#connections.add(socket);
+    this.#connections.set(socket, 0);
     socket.once('close', () => this.#connections.delete(socket));
+  }
+  /** Include raw Fastify refusals and pipelined replies, before any handler runs. */
+  own_response(socket: Socket, response: ServerResponse): void {
+    const count = this.#connections.get(socket);
+    if (count === undefined) return;
+    this.#connections.set(socket, count + 1);
+    let completed = false;
+    const finish = () => {
+      if (completed) return;
+      completed = true;
+      const remaining = this.#connections.get(socket);
+      if (remaining === undefined) return;
+      this.#connections.set(socket, remaining - 1);
+      if (this.#sealed) this.close_idle_connections();
+    };
+    response.once('finish', finish);
+    response.once('close', finish);
+  }
+  /** end() flushes completed responses; active and queued responses retain their socket. */
+  close_idle_connections(): void {
+    for (const [socket, unfinished] of this.#connections)
+      if (unfinished === 0 && !socket.destroyed && !socket.writableEnded) socket.end();
   }
   /** Only sockets accepted by this invocation, including upgraded connections. */
   force_close_connections(): void {
-    for (const socket of this.#connections) socket.destroy();
+    for (const socket of this.#connections.keys()) socket.destroy();
   }
   get sealed(): boolean {
     return this.#sealed;
@@ -92,6 +115,12 @@ export function install_request_lifetime(
   if (app.request_lifetime) return app.request_lifetime;
   const scope = supplied ?? new HttpRequestScope();
   app.server.on('connection', (socket) => scope.own_connection(socket));
+  app.server.prependListener('request', (request, response) =>
+    scope.own_response(request.socket, response),
+  );
+  // Node's parser-idle list can include buffered response output. Both its
+  // standard close() and Fastify must use completed owned responses instead.
+  app.server.closeIdleConnections = () => scope.close_idle_connections();
   app.decorate('request_lifetime', scope);
   app.decorateRequest('request_lifetime', null);
   app.addHook('onRequest', async (request, reply) => {
@@ -111,7 +140,8 @@ export function install_request_lifetime(
   app.addHook('onRoute', (route) => {
     const handler = route.handler;
     route.handler = function (request, reply) {
-      return scope.run(() => handler.call(this, request, reply));
+      const operation = () => handler.call(this, request, reply);
+      return request.request_lifetime === scope ? scope.track(operation) : scope.run(operation);
     };
   });
   app.addHook('onSend', async (_request, _reply, payload) => {
