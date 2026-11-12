@@ -1,10 +1,13 @@
+import { Runtime as SourceRuntime } from './measure_sources/runtime/supervisor.ts';
+import { SourceScheduleLoop } from './measure_sources/schedule_loop.ts';
+import { build_participants as source_participants } from './measure_sources/scheduling.ts';
+import { routes as previews } from './previews/routes.ts';
+import { routes as files } from './files/routes.ts';
+import { routes as measures } from './measures/routes.ts';
 import {
   routes as measureSources,
   admission as source_admission,
 } from './measure_sources/routes.ts';
-import { routes as previews } from './previews/routes.ts';
-import { routes as files } from './files/routes.ts';
-import { routes as measures } from './measures/routes.ts';
 import { routes as datasets } from './datasets/routes.ts';
 import { admission as measure_admission } from './measures/routes.ts';
 import { configure_measure_resources } from './measures/resource_versions.ts';
@@ -156,8 +159,10 @@ export function createAreasRuntime() {
 /** The lifecycle composer opts into production loops at this composition point. */
 export interface AreaLoopOptions {
   managerWakes?: boolean;
+  measureSources?: boolean;
 }
 export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOptions = {}) {
+  let sources: SourceScheduleLoop | undefined;
   let wakes: ManagerWakeLoop | undefined;
   let unsubscribe: (() => void) | undefined;
   if (options.managerWakes) {
@@ -174,15 +179,32 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
       },
     });
   }
+  if (options.measureSources) {
+    context.assert_database_owned();
+    sources = new SourceScheduleLoop({
+      database: context.database,
+      clock: context.clock,
+      participants: source_participants(context, new SourceRuntime()),
+      assert_database_owned: context.assert_database_owned,
+      workspace_admission: context.conversationSystem?.workspace_admission,
+    });
+  }
   return {
     start(): void {
+      sources?.start(context.config.tick_seconds);
       if (!wakes) return;
       unsubscribe = context.changes.subscribe(() => wakes?.wake());
       wakes.start(context.config.tick_seconds);
     },
     async stop(options: { deadline?: number } = {}): Promise<void> {
       unsubscribe?.();
-      await wakes?.stop(options);
+      const results = await Promise.allSettled([wakes?.stop(options), sources?.stop(options)]);
+      const failures = results.filter((result) => result.status === 'rejected');
+      if (failures.length)
+        throw new AggregateError(
+          failures.map((result) => result.reason),
+          'Area loop shutdown failed',
+        );
     },
   };
 }
