@@ -24,4 +24,7 @@ export interface WorkerManagementSummary {
   specialist_skill_name: string;
   launch_defaults: ManagedWorkerLaunchDefaults;
 }
-export interface WorkerManagementDetail { manifest: WorkerTypeManifest; settings: ManagedWorkerSettings }
+export interface WorkerManagementDetail {
+  manifest: WorkerTypeManifest;
+  settings: ManagedWorkerSettings;
+}
