@@ -44,6 +44,8 @@ def test_account_skill_ownership(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     unused = tmp_path / "a-unused-home"
     warning = provision_account_skills(second, (unused, *homes))
     assert warning is not None and "one instance per OS account" in warning
+    assert account_skill_provisioning_conflict(second, homes) == warning
+    assert account_skill_provisioning_conflict(second, tuple(reversed(homes))) == warning
     assert str(first / "skills") in warning
     assert not unused.exists()  # All providers are checked before any provider write.
     cli = CliRunner().invoke(

@@ -97,8 +97,8 @@ def _account_skill_provisioning_conflict(
     if skill_names is None:
         skill_names = tuple(path.name for path in source.iterdir() if path.is_dir())
     names = set(skill_names) | RETIRED_PANELS_SKILL_NAMES | WORKER_ONLY_SKILL_NAMES
-    for home in native_homes:
-        target = home.expanduser().resolve() / SKILLS_DIR_NAME
+    for home in sorted({path.expanduser().resolve() for path in native_homes}):
+        target = home / SKILLS_DIR_NAME
         if target.is_symlink():
             owner = target.resolve(strict=False)
             if owner != source:
