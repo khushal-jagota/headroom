@@ -14,6 +14,7 @@ import {
 } from '../conversation/backends/contracts.ts';
 import { message_content_text, text_message_content } from '../conversation/message_content.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 function maintenance_setup() {
   let now = 100;
   const fixture = setup({
@@ -122,43 +123,89 @@ test('accepted compaction retains its child and retries storage only', async () 
   );
 }, 10_000);
 
-// Inventory #51: failed or aborted detach never proves retirement or admits late callbacks.
-test('shutdown retains an unconfirmed child and revokes its callbacks', async () => {
+// Inventory #51: a retiring child is still owned; one failed detach cannot hide
+// another child or let an aborted stop count as proven native closure.
+test('shutdown detaches retiring children concurrently and retains an unconfirmed child', async () => {
   const began = performance.now();
-  for (const name of ['Error', 'AbortError']) {
-    const f = maintenance_setup();
-    await f.start();
-    await f.send('work');
-    const child = f.children[0];
-    const state = f.core.conversations.get('core')!;
-    const token = state.running_turn!.token;
-    const before = f.store.read_events_after('core', 0);
-    await child.configure('steer', { barrier: 'pending-native' });
-    const steering = f.core.send('core', text_message_content('pending steer'), {
-      sender_label: 'Owner',
-      sender_message_id: 'pending',
-      mode: 'steer',
+  const f = maintenance_setup();
+  await f.start();
+  await f.send('work');
+  await f.core.start_conversation(
+    new ConversationStartRequest({
+      conversation_id: 'other',
+      model: 'model',
+      workspace_folder: '/workspace',
+    }),
+  );
+  await f.core.send('other', text_message_content('other work'), { sender_label: 'Owner' });
+  const [retiring, unconfirmed] = f.children;
+  const state = f.core.conversations.get('core')!;
+  const other = f.core.conversations.get('other')!;
+  const token = other.running_turn!.token;
+  const before = f.store.read_events_after('other', 0);
+  const stop_entered = new Deferred<void>(),
+    raw_stop = new Deferred<void>();
+  const detach_entered = new Deferred<void>(),
+    detach_release = new Deferred<void>();
+  vi.spyOn(retiring, 'stop').mockImplementation(async () => {
+    stop_entered.resolve();
+    await raw_stop.promise;
+    throw new Error('The original stop receipt failed after native detach');
+  });
+  const native_detach = retiring.detach.bind(retiring);
+  const first_detach = vi.spyOn(retiring, 'detach').mockImplementation(async () => {
+    detach_entered.resolve();
+    await detach_release.promise;
+    await native_detach();
+    raw_stop.resolve();
+  });
+  const failed_detach = vi
+    .spyOn(unconfirmed, 'detach')
+    .mockRejectedValue(new Error('termination remains unconfirmed'));
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const discarding = f.core.discard_child(state, retiring);
+  try {
+    await stop_entered.promise;
+    expect(state.child).toBeNull();
+    const shutdown = f.core.shutdown({ deadline: performance.now() / 1000 + 0.05 });
+    const expired = expect(shutdown).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    await detach_entered.promise;
+    expect(first_detach).toHaveBeenCalledOnce();
+    expect(failed_detach).toHaveBeenCalledOnce();
+    expect(await discarding).toBe(false);
+    await expired;
+    let quiescent = false;
+    const actual = f.core.settled().finally(() => {
+      quiescent = true;
     });
-    const cancelled = expect(steering).rejects.toMatchObject({ name: 'AbortError' });
-    await child.wait_for_barrier('pending-native');
-    vi.spyOn(child, 'detach').mockRejectedValue(
-      Object.assign(new Error('termination remains unconfirmed'), { name }),
-    );
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    await f.core.shutdown();
-    await cancelled;
-    // Shutdown finishes even though the detached native receipt is still withheld.
-    await child.release('pending-native');
-    expect(state.child).toBe(child);
-    expect(state.child_is_quarantined).toBe(true);
-    expect(state.backend_event_pump).toBeNull();
-    await child.emit(
-      new ToolCallStarted({ tool_call_id: 'late', title: 'Late', tool_kind: 'read' }),
+    void actual.catch(() => {});
+    expect(quiescent).toBe(false);
+    detach_release.resolve();
+    await expect(actual).rejects.toThrow('Conversation core did not shut down cleanly');
+    expect(other.child).toBe(unconfirmed);
+    expect(other.child_is_quarantined).toBe(true);
+    expect(other.backend_event_pump).toBeNull();
+    await unconfirmed.emit(
+      new ToolCallStarted({
+        tool_call_id: 'late',
+        title: 'Late',
+        tool_kind: 'read',
+      }),
       token,
     );
-    await child.emit(new TurnEnded({ ending: 'completed' }), token);
-    await child.flush_events();
-    expect(f.store.read_events_after('core', 0)).toEqual(before);
+    await unconfirmed.emit(new TurnEnded({ ending: 'completed' }), token);
+    await unconfirmed.flush_events();
+    expect(f.store.read_events_after('other', 0)).toEqual(before);
+    await expect(f.core.shutdown({ deadline: performance.now() / 1000 + 1 })).rejects.toThrow(
+      'Conversation core did not shut down cleanly',
+    );
+  } finally {
+    detach_release.resolve();
+    raw_stop.resolve();
+    await discarding;
+    // The existing core fixture terminates its exact scripted children in afterEach.
   }
-  console.info(`shutdown callback connected proof: ${Math.round(performance.now() - began)} ms`);
+  console.info(
+    `shutdown retiring-child connected proof: ${Math.round(performance.now() - began)} ms`,
+  );
 }, 10_000);

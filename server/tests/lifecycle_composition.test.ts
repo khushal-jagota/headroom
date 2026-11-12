@@ -12,6 +12,7 @@ import { TestClock } from '../core/clock.ts';
 import { acquireLock, acquireRuntimeOwnership } from '../core/locks/index.ts';
 import type { OwnedAreaContext } from '../core/authority/register.ts';
 import type { BackgroundServiceFactory } from '../lifecycle/contracts.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import {
   compose_background_services,
   dispatcher_admitted,
@@ -102,7 +103,7 @@ test('one dispatcher owner admits all loops and test mode admits no factories', 
         },
       );
       await inert.start();
-      await inert.close({ deadline: performance.now() / 1000 });
+      await inert.close({ deadline: performance.now() / 1000 + 1 });
     }
     expect(calls).toEqual([]);
     expect(wakes).not.toHaveBeenCalled();
@@ -240,10 +241,13 @@ test('notification deadline fences late web and native results and bounds adapte
     apns_adapter: { send: nativeSend, close: () => close.promise },
   });
   const pass = loop.poll_once();
-  await loop.stop({ deadline: performance.now() / 1000 + 0.01 });
+  await expect(loop.stop({ deadline: performance.now() / 1000 + 0.01 })).rejects.toBeInstanceOf(
+    ShutdownDeadlineExceeded,
+  );
   web.resolve({ delivered: true });
   close.resolve();
   await pass;
+  await loop.settled();
   expect(webRecord).not.toHaveBeenCalled();
   expect(nativeSend).not.toHaveBeenCalled();
   expect(await loop.poll_once()).toBe(0);
@@ -257,9 +261,12 @@ test('notification deadline fences late web and native results and bounds adapte
     apns_adapter: { send: nativeSend, close() {} },
   });
   const nativePass = nativeLoop.poll_once();
-  await nativeLoop.stop({ deadline: performance.now() / 1000 + 0.01 });
+  await expect(
+    nativeLoop.stop({ deadline: performance.now() / 1000 + 0.01 }),
+  ).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
   native.resolve({ delivered: true });
   await nativePass;
+  await nativeLoop.settled();
   expect(nativeRecord).not.toHaveBeenCalled();
 });
 
@@ -408,7 +415,7 @@ test('composed Worker and Manager sends share a deadline and leave no late datab
     expect(workerStop).toHaveBeenCalledWith({ deadline });
     expect(managerStop).toHaveBeenCalledWith({ deadline });
     expect(acquireLock(path + '.held-dispatcher')).toBeNull();
-    await closing;
+    await expect(closing).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
     expect(read(database, ticket.id)).toMatchObject({
       conversation_id: departure.conversation_id,
       worker_step_claim: 'out',
@@ -418,18 +425,21 @@ test('composed Worker and Manager sends share a deadline and leave no late datab
       status: 'uncertain',
     });
     const before = accesses;
+    expect(acquireLock(path + '.held-dispatcher')).toBeNull();
+    provider.resolve(new PromptDeliveryStarted());
+    await services.settled();
+    context.changes.emit();
+    await next_turn();
+    expect(accesses).toBe(before);
     owned = false;
     dispatcher.close();
     const successor = acquireLock(path + '.held-dispatcher');
     expect(successor).not.toBeNull();
     successor?.close();
-    provider.resolve(new PromptDeliveryStarted());
-    await next_turn();
-    context.changes.emit();
-    await next_turn();
-    expect(accesses).toBe(before);
   } finally {
-    await services.close({ deadline: performance.now() / 1000 });
+    provider.resolve(new PromptDeliveryStarted());
+    await Promise.resolve(services.close({ deadline: performance.now() / 1000 })).catch(() => {});
+    await services.settled();
     dispatcher.close();
   }
 });
@@ -466,19 +476,18 @@ test('close fences later starts and waits for the active start before ownership 
   });
   const starting = services.start();
   await entered.promise;
-  const closing = Promise.resolve(services.close({ deadline: performance.now() / 1000 })).then(
-    () => {
-      closed = true;
-      owned = false;
-      owner.close();
-    },
-  );
+  const closing = Promise.resolve(services.close({ deadline: performance.now() / 1000 }));
+  const expired = expect(closing).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
   await next_turn();
   expect(closed).toBe(false);
   expect(acquireLock(path + '.startup-dispatcher')).toBeNull();
   expect(trace).toEqual(['start entered', 'close entered']);
   finish.resolve();
-  await Promise.all([starting, closing]);
+  await expired;
+  await Promise.all([starting, services.settled()]);
+  closed = true;
+  owned = false;
+  owner.close();
   expect(trace).toEqual(['start entered', 'close entered', 'start settled']);
   const successor = acquireLock(path + '.startup-dispatcher');
   expect(successor).not.toBeNull();

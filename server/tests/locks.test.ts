@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
@@ -49,7 +49,17 @@ test('Node ownership excludes Python and dispatcher contention returns false', (
       execFileSync('python3', ['-c', probe, `${db}.conversation-owner.lock`], { stdio: 'pipe' }),
     ).toThrow();
     expect(acquireLock(`${db}.conversation-owner.lock`)).toBeNull();
+    const alias = join(dir, 'db-alias');
+    symlinkSync(db, alias);
+    expect(() => acquireRuntimeOwnership(alias)).toThrow('ConversationRuntimeAlreadyOwned');
     handle.close();
+    unlinkSync(db);
+    const missing = acquireRuntimeOwnership(alias);
+    try {
+      expect(() => acquireRuntimeOwnership(db)).toThrow('ConversationRuntimeAlreadyOwned');
+    } finally {
+      missing.close();
+    }
     expect(() =>
       execFileSync('python3', ['-c', probe, `${db}.conversation-owner.lock`], { stdio: 'pipe' }),
     ).not.toThrow();

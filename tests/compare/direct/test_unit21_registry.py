@@ -119,6 +119,8 @@ def _python(
         running_remove = _error(lambda: materialize.remove_environment_instance(**options))
     finally:
         lease.release()
+    prepared.db_path.unlink()
+    missing_database_status = materialize._environment_lifecycle_lease_is_held(prepared)
     reset = materialize.reset_environment_instance(**options, now=1_800_000_002)
     shutil.copytree(reset.db_path.parent, output / "reset")
     run_env = build_test_environment_run_env(
@@ -145,6 +147,7 @@ def _python(
                 for path in sorted((home / "skills").iterdir())
             }
         )
+    reset.db_path.unlink()
     materialize.remove_environment_instance(**options)
     return dict(
         before=materialize.manifest_to_json_dict(before),
@@ -153,6 +156,7 @@ def _python(
         reset=materialize.manifest_to_json_dict(reset),
         disk=disk,
         restored_registry=True,
+        missing_database_status=missing_database_status,
         invalid_git_marker=invalid_git_marker,
         bom_git_marker=bom_git_marker,
         bom_credentials=bom_credentials,
@@ -301,6 +305,11 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
             )
             assert result.returncode == 0, result.stderr
             actual = json.loads(result.stdout)
+            assert actual.pop("server_owner") == {
+                "running": True,
+                "reset": "environment instance is running",
+                "remove": "environment instance is running",
+            }
             assert actual == python
             assert (
                 actual["fixture_unchanged"]
@@ -326,7 +335,7 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
                     "boundary": (
                         "TS-only fresh fictional writers, manifest bytes, private flock, "
                         "failed swap rollback, reset/remove and scrubbed launch environment. "
-                        "No server or browser host."
+                        "One private actual TS server proves DB-owner admission. No browser."
                     ),
                     "result": actual,
                 },

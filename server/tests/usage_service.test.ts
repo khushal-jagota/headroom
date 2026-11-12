@@ -362,7 +362,7 @@ test('an unsettled injected callback makes shutdown fail at its shared deadline'
   try {
     await entered.promise;
     await expect(service.stop({ deadline: performance.now() / 1000 + 0.05 })).rejects.toThrow(
-      'Usage resources did not stop before the shutdown deadline.',
+      'Shutdown deadline expired; ownership retained: recorded usage',
     );
     expect(await request).toBeInstanceOf(UsageServiceStopped);
   } finally {

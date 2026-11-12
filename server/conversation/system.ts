@@ -154,7 +154,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   private readonly shutdown_controller = new AbortController();
   private readonly native_waiters = new Set<() => void>();
   private readonly native_settlements = new Set<Promise<void>>();
-  private readonly child_stop_ownership = new Map<import('./backends/contracts.ts').BackendChild, ConversationState>();
+  private readonly child_stop_ownership = new Map<
+    import('./backends/contracts.ts').BackendChild,
+    ConversationState
+  >();
   private idle_janitor: IdleChildJanitor | null = null;
   private background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
@@ -1374,7 +1377,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     // A child can already exist while its native start still awaits a response.
     for (const state of states) {
       if (state.child !== null) this.child_stop_ownership.set(state.child, state);
-      if (state.preparing_child !== null) this.child_stop_ownership.set(state.preparing_child, state);
+      if (state.preparing_child !== null)
+        this.child_stop_ownership.set(state.preparing_child, state);
       if (state.child === null && state.preparing_child !== null)
         state.child = state.preparing_child;
       state.closing = true;
@@ -1393,18 +1397,28 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     this.native_waiters.clear();
     this.shutdown_controller.abort();
     // Detach every child before waiting for a raw call. Exit can settle that call.
-    const detaching = detach_children(states, [...this.child_stop_ownership].map(([child, state]) => ({ child, state })))
-      .then(() => { this.child_stop_ownership.clear(); });
+    const detaching = detach_children(
+      states,
+      [...this.child_stop_ownership].map(([child, state]) => ({ child, state })),
+    ).then(() => {
+      this.child_stop_ownership.clear();
+    });
     const janitor = this.idle_janitor?.stop();
     void (async () => {
-      const results = await Promise.allSettled([
-        detaching,
-        janitor,
-        ...this.native_settlements,
-        ...pumps,
-        ...states.flatMap((state) => [...state.settlement_tasks]),
+      const [cleanup, business] = await Promise.all([
+        Promise.allSettled([detaching, janitor, ...this.native_settlements]),
+        Promise.allSettled([...pumps, ...states.flatMap((state) => [...state.settlement_tasks])]),
       ]);
-      for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+      // Cancelling our own business observer is expected. A failed native detach,
+      // janitor or store cleanup is never excused by its error name.
+      for (const result of cleanup) if (result.status === 'rejected') failures.push(result.reason);
+      for (const result of business) {
+        if (
+          result.status === 'rejected' &&
+          !(result.reason instanceof DOMException && result.reason.name === 'AbortError')
+        )
+          failures.push(result.reason);
+      }
       try {
         await this.options.store.finish_writes();
       } catch (error) {

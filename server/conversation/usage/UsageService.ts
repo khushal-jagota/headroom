@@ -198,13 +198,26 @@ export class UsageService implements RecordedUsageService {
     const worker = this.worker;
     // Publish the observer and actual join before termination/callbacks can reenter.
     let resolve!: () => void, reject!: (error: unknown) => void;
-    this.resourceJoin = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    this.resourceJoin = new Promise<void>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
     this.stopping = observe_shutdown(this.resourceJoin, options, 'recorded usage');
     this.fail(new UsageServiceStopped());
-    Promise.all([
+    Promise.allSettled([
       Promise.resolve().then(() => worker?.terminate()),
       Promise.allSettled([...this.callbackOperations]),
-    ]).then(() => resolve(), reject);
+    ]).then((results) => {
+      const failures = results.filter((result) => result.status === 'rejected');
+      if (failures.length)
+        reject(
+          new AggregateError(
+            failures.map((failure) => failure.reason),
+            'Usage resources did not close cleanly',
+          ),
+        );
+      else resolve();
+    });
     return this.stopping;
   }
 }

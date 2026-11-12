@@ -1,9 +1,10 @@
 /** Export-only registry/fixture sequence. All locations come from the private driver. */
-import { cp, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rename, stat, writeFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { configured_worker_runtime_definitions } from '../../../worker_types/configuration.ts';
 import { acquire_server_lifecycle_lease } from '../../../lifecycle/lease.ts';
+import { startServer } from '../../../core/start.ts';
 import {
   prepare_environment_instance,
   inspect_environment_instance,
@@ -12,6 +13,7 @@ import {
 } from '../materialize.ts';
 import {
   environment_lifecycle_lease_path,
+  environment_lifecycle_lease_is_held,
   instance_from_manifest,
   manifest_to_json_dict,
 } from '../store.ts';
@@ -116,6 +118,42 @@ export async function registry_probe(request: Request): Promise<unknown> {
   } finally {
     lease.close();
   }
+  // The lifecycle lease is deliberately FREE: the real direct server owns its DB lock.
+  const fields = {
+    PLAN_DB_PATH: prepared.db_path,
+    PLAN_CONFIG_PATH: join(request.output, 'server-config.yaml'),
+    PLAN_PORT: '0',
+    PLAN_TEST_MODE: '1',
+    PLAN_DISPATCH_ENABLED: 'false',
+    PLAN_SERVER_URL: 'http://127.0.0.1:0',
+    PLAN_SERVER_LIFECYCLE_LEASE_PATH: environment_lifecycle_lease_path(prepared),
+    PLAN_SERVER_CONTROL_SOCKET: prepared.server_control_socket_path,
+  };
+  const saved = Object.fromEntries(
+    [...Object.keys(fields), 'PLAN_SERVER_LISTENER_FD'].map((key) => [key, process.env[key]]),
+  );
+  let server_owner: unknown;
+  Object.assign(process.env, fields);
+  delete process.env.PLAN_SERVER_LISTENER_FD;
+  try {
+    const server = await startServer();
+    try {
+      server_owner = {
+        running: environment_lifecycle_lease_is_held(prepared),
+        reset: await error_of(() => reset_environment_instance(options)),
+        remove: await error_of(() => remove_environment_instance(options)),
+      };
+    } finally {
+      await server.close();
+    }
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  await unlink(prepared.db_path);
+  const missing_database_status = environment_lifecycle_lease_is_held(prepared);
   const reset = await reset_environment_instance({ ...options, now: 1_800_000_002 });
   await cp(dirname(reset.db_path), join(request.output, 'reset'), { recursive: true });
   const run_env = build_test_environment_run_env(instance_from_manifest(reset), {
@@ -152,6 +190,7 @@ export async function registry_probe(request: Request): Promise<unknown> {
       ),
     ),
   );
+  await unlink(reset.db_path);
   await remove_environment_instance(options);
   return {
     before: manifest_to_json_dict(before),
@@ -160,6 +199,8 @@ export async function registry_probe(request: Request): Promise<unknown> {
     reset: manifest_to_json_dict(reset),
     disk,
     restored_registry,
+    server_owner,
+    missing_database_status,
     invalid_git_marker,
     bom_git_marker,
     bom_credentials,
