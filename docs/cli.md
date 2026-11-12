@@ -23,7 +23,9 @@ Manager commands accept `panels manager` and `--manager`. The old Sprint Item an
 
 A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. Backlog and resume need no record fingerprint. `ticket delete` needs no confirmation flag, but a running Ticket still needs `--force`. `ticket create --input-json FILE` sends one object to the same create route as the browser, which validates the whole Ticket before one write. A new Ticket starts from a preset or custom stages. Custom stages carry their result fields, ownership, and instructions together.
 
-A Manager workspace read identifies the document that the browser displays and gives its edit command. It keeps the purpose, recap, held goals, artifacts, and Tickets distinct. `page show` and `page edit` select a Manager or Chief. `page schema` describes their shared document format. A sole held goal remains a goal edit through `goal`. A page edit replaces the complete document, so an agent preserves unrelated content.
+A Manager workspace read identifies the document that the browser displays and gives its edit command. It keeps the purpose, recap, held goals, artifacts, and Tickets distinct. `page show` and `page edit` select a Manager or Chief. `page schema` describes their shared document format. A sole held goal remains a goal edit through `goal`. A page edit replaces the complete document, so an agent preserves unrelated content. Optional captured revisions protect Goal and holder-page edits from replacing newer documents.
+
+Proposal accept and revise commands pin the revision from their own read. Optional `--expected-proposal-revision N` instead protects the proposal that the caller inspected earlier. Existing invocations remain valid. Older clients can omit revisions, but omission cannot protect an earlier read.
 
 ## What the CLI feeds
 

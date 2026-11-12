@@ -28,6 +28,11 @@ import XCTest
         try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: "json")))
 #endif
     }
+    private func assertSharedDecisionBody(_ body: [String: Any], named name: String) throws {
+        let requests = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture("review-decision-requests")) as? [String: Any])
+        let expected = try XCTUnwrap(requests[name] as? NSDictionary)
+        XCTAssertEqual(body as NSDictionary, expected, "Actual native request must match the server contract fixture")
+    }
     private func setupDecision() async throws -> (ReviewDecision, APIClient, ReviewItem) {
         for kind in ["cache", "draft", "outbox"] {
             for entry in try LocalStore.shared.records(server: "https://review.invalid", kind: kind) {
@@ -38,7 +43,7 @@ import XCTest
         let detail = try APIClient.decoder().decode(TicketDetail.self, from: ticket)
         let proposal = try XCTUnwrap(detail.pendingProposal)
         ReviewStub.state.reset(ticket: ticket, manifest: Data("""
-        {"worker_types":[{"worker_type":"\(detail.workerType ?? "")","stages":[{"id":"\(detail.stage)","label":"Current"},{"id":"next_gate","label":"Next gate"},{"id":"done","label":"Done"}],"advance":{"\(detail.stage)":"next_gate"},"fields":[{"id":"\(proposal.field)","label":"Proposal"}],"ceiling_range":["next_gate","done"]}]}
+        {"worker_types":[{"worker_type":"\(detail.workerType ?? "")","stages":[{"id":"\(detail.stage)","label":"Current"},{"id":"needs_implementation","label":"Next gate"},{"id":"done","label":"Done"}],"advance":{"\(detail.stage)":"needs_implementation"},"fields":[{"id":"\(proposal.field)","label":"Proposal"}],"ceiling_range":["needs_implementation","done"]}]}
         """.utf8))
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ReviewStub.self]
@@ -54,17 +59,15 @@ import XCTest
         let (decision, api, _) = try await setupDecision()
         let revision = try XCTUnwrap(decision.proposal?.revision)
         decision.draft = "Edited proposal\n\nWith context."
-        XCTAssertEqual(decision.approvalStages.first?.id, "next_gate")
-        let accepted = await decision.approve(api: api, ceiling: "next_gate", holder: Principal(kind: "owner", id: "owner"))
+        XCTAssertEqual(decision.approvalStages.first?.id, "needs_implementation")
+        let accepted = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(accepted)
         await settle(api)
         let request = try XCTUnwrap(ReviewStub.state.writes.first)
         XCTAssertTrue(request.url!.path.hasSuffix("/accept/wireframe"))
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
         XCTAssertEqual(body["expected_proposal_revision"] as? Int, revision)
-        XCTAssertEqual(body["edited_body"] as? String, decision.draft)
-        XCTAssertEqual(body["next_ceiling"] as? String, "next_gate")
-        XCTAssertEqual(body["next_holder"] as? [String: String], ["kind": "owner", "id": "owner"])
+        try assertSharedDecisionBody(body, named: "approve")
         let saved = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
         XCTAssertEqual(saved.ticketTitle, decision.ticket?.title)
         XCTAssertEqual(saved.proposalFieldLabel, "Proposal")
@@ -74,9 +77,15 @@ import XCTest
         let restored = try JSONDecoder().decode(PendingWork.self, from: JSONSerialization.data(withJSONObject: legacy))
         XCTAssertEqual(restored.ticketID, saved.ticketID)
         XCTAssertNil(restored.ticketTitle)
-        let repeated = await decision.approve(api: api, ceiling: "next_gate", holder: Principal(kind: "owner", id: "owner"))
+        let repeated = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertFalse(repeated)
         XCTAssertEqual(ReviewStub.state.writes.count, 1)
+        // The Ticket page has a separate serializer for the same decision contract.
+        try await api.acceptTicketProposal(try XCTUnwrap(decision.ticket), proposal: try XCTUnwrap(decision.proposal),
+                                           ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"), editedBody: decision.draft)
+        let ticketRequest = try XCTUnwrap(ReviewStub.state.writes.last)
+        let ticketBody = try XCTUnwrap(JSONSerialization.jsonObject(with: ticketRequest.httpBody!) as? [String: Any])
+        try assertSharedDecisionBody(ticketBody, named: "ticket_approve")
     }
 
     func testChangedProposalKeepsDraftAndCannotBeSentBackOrApproved() async throws {
@@ -87,14 +96,14 @@ import XCTest
         XCTAssertTrue(decision.changed)
         XCTAssertEqual(decision.draft, "Keep my unsaved edit")
         let returned = await decision.sendBack(api: api, message: "Revise it")
-        let approved = await decision.approve(api: api, ceiling: "next_gate", holder: Principal(kind: "owner", id: "owner"))
+        let approved = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertFalse(returned); XCTAssertFalse(approved)
         XCTAssertTrue(ReviewStub.state.writes.isEmpty)
         await decision.load(item: item, api: api, discardDraft: true)
         XCTAssertTrue(decision.ready)
         XCTAssertEqual(decision.draft, decision.proposal?.body)
         ReviewStub.state.bumpRevision()
-        let staleGesture = await decision.approve(api: api, ceiling: "next_gate", holder: Principal(kind: "owner", id: "owner"))
+        let staleGesture = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(staleGesture) // Saved locally; the drainer owns the fresh revision check.
         await settle(api)
         XCTAssertEqual(Outbox.shared.entries("https://review.invalid").last?.state, .changed)
@@ -110,8 +119,7 @@ import XCTest
         let request = try XCTUnwrap(ReviewStub.state.writes.first)
         XCTAssertTrue(request.url!.path.hasSuffix("/reject"))
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
-        XCTAssertEqual(body["message"] as? String, "Clarify the transition.")
-        XCTAssertEqual(body["expected_proposal_revision"] as? Int, decision.proposal?.revision)
+        try assertSharedDecisionBody(body, named: "send_back")
         let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
         XCTAssertEqual(work.state, .changed)
         XCTAssertEqual(work.guidance, "Clarify the transition.")
@@ -127,8 +135,7 @@ import XCTest
         }
         let workspaceRequest = try XCTUnwrap(ReviewStub.state.writes.last)
         let workspaceBody = try XCTUnwrap(JSONSerialization.jsonObject(with: workspaceRequest.httpBody!) as? [String: Any])
-        XCTAssertEqual(workspaceBody["expected_proposal_revision"] as? Int, decision.proposal?.revision)
-        XCTAssertEqual(workspaceBody["message"] as? String, "Workspace guidance")
+        try assertSharedDecisionBody(workspaceBody, named: "ticket_send_back")
     }
 
     func testRestoredSendBackCarriesOriginalRevisionAndHoldsServerRefusal() async throws {

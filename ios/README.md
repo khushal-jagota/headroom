@@ -719,7 +719,7 @@ Tailscale identity, microphone permissions, and actual APNs delivery.
 
 ## Mac execution release compatibility
 
-Ticket detail and Review identify the Ticket's machine. Workspace rows and their
+Ticket detail and Review identify the Ticket's machine. Navigation preserves that identity through generated Ticket wire fields and the native presentation adapter. An unknown or missing machine identity cannot authorize a working mark. Workspace rows and their
 long-press previews omit machine labels. The server's
 executor health decides whether a Mac working mark is current. A disconnected or
 reconciling Mac retains unread messages but shows activity as unknown. The full

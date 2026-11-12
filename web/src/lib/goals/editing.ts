@@ -26,11 +26,12 @@ function enqueue<T>(id: string, command: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export function createPageEditor<Document, Patch>(id: string, io: {
+export function createPageEditor<Document, Patch extends {expected_revision?: number}>(id: string, io: {
   read(): Promise<Document>;
   write(patch: Patch): Promise<Document>;
   page(document: Document): PageDocument | null;
-  pagePatch(page: PageDocument): Patch;
+  pagePatch(page: PageDocument, revision: number): Patch;
+  revision(document: Document): number;
   refresh(): Promise<unknown>;
 }) {
   async function accept(patch: Patch) {
@@ -41,14 +42,16 @@ export function createPageEditor<Document, Patch>(id: string, io: {
   }
   return {
     getAccepted: io.read,
-    write: (patch: Patch) => enqueue(id, () => accept(patch)),
-    updateBlock: (blockId: string, update: (block: Block) => Block) => enqueue(id, async () => {
+    write: (patch: Patch) => enqueue(id, async () => accept({
+      ...patch, expected_revision: patch.expected_revision ?? io.revision(await io.read()),
+    })),
+    updateBlock: (blockId: string, update: (block: Block) => Block, expectedRevision?: number) => enqueue(id, async () => {
       const document = await io.read(), page = io.page(document);
       if (!page) throw new Error('This page no longer exists.');
       let found = false;
       const blocks = updatePageBlock(page.blocks, blockId, block => { found = true; return update(block); });
       if (!found) throw new Error('This block no longer exists. Refresh the page before another edit.');
-      return accept(io.pagePatch({ ...page, blocks }));
+      return accept(io.pagePatch({ ...page, blocks }, expectedRevision ?? io.revision(document)));
     }),
   };
 }
@@ -63,7 +66,8 @@ export function createGoalEditor(goalId: string, io: EditorIO = http) {
     },
     write: patch => io.write(goalId, patch),
     page: goal => goal.page,
-    pagePatch: page => ({page}),
+    pagePatch: (page, expected_revision) => ({page, expected_revision}),
+    revision: goal => goal.revision,
     refresh: io.refresh,
   })};
 }

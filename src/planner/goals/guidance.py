@@ -180,6 +180,7 @@ EDIT = RequestGuidance(
     notes=(
         "Read panels goal show GOAL_ID --json first. "
         "Send changed fields to panels goal edit GOAL_ID on stdin. "
+        "Include expected_revision from that read to refuse a stale edit. "
         "Omitted goal fields stay unchanged. Authority checks run before "
         "the existing document validator.",
         "A kind change requires the destination main-display choice in the same request: "

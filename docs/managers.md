@@ -26,7 +26,7 @@ Chief is the special case. It is a global principal that stands above everything
 
 A Manager acts through the same routes as everyone else. It has no private API. [Authority](authority.md) limits it to its own record and its current children. It can create child Tickets, approve or send back their proposals, message them, delete them, and restart a Worker that errored. It cannot move a Ticket to another Manager. Only Khushal and Chief can.
 
-The Manager can edit its own page and held goal pages directly. Its plain goal field states its purpose. Artifacts hold supporting files. Neither replaces a page document.
+The Manager can edit its own page and held goal pages directly. A captured document revision protects an edit from replacing newer content. Its plain goal field states its purpose. Artifacts hold supporting files. Neither replaces a page document.
 
 The owner, Chief, Managers, and Workers talk through Send Message, which delivers a real prompt into the recipient's conversation. Two Managers can message each other. That is speech, not authority over each other's Tickets.
 

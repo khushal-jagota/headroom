@@ -269,6 +269,59 @@ import XCTest
         XCTAssertEqual(GoalProtocol.state.writes().count, 2)
     }
 
+    /// The server test replays this same fixture through the repaired transactions.
+    /// Existing stubs alone cannot prove that native request shape reaches that door.
+    func testNativeDocumentRequestsMatchRepairedTransactionFixtureAndKeepCapturedRevision() async throws {
+#if SWIFT_PACKAGE
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "document-revision-requests", withExtension: "json", subdirectory: "Fixtures"))
+#else
+        let fixtureURL = try XCTUnwrap(Bundle(for: GoalTests.self).url(forResource: "document-revision-requests", withExtension: "json"))
+#endif
+        let fixture = try JSONDecoder().decode(GoalJSON.self, from: Data(contentsOf: fixtureURL))
+        for item in fixture["cases"].array {
+            let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+            var initial = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(try goal())) as? [String: Any])
+            var page = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(fixture["page"])) as? [String: Any])
+            var blocks = try XCTUnwrap(page["blocks"] as? [[String: Any]])
+            blocks[0]["text"] = "Before native edit"; page["blocks"] = blocks; initial["page"] = page
+            let record = try APIClient.decoder().decode(GoalRecord.self, from: JSONSerialization.data(withJSONObject: initial))
+            GoalProtocol.state.reset(record); GoalProtocol.state.acceptGoalWrites()
+            let api = client()
+            let session: PageSession
+            switch item["kind"].text {
+            case "goal": session = PageSession(id: "g", api: api, goal: record)
+            case "chief": session = PageSession.holder(.chief, api: api)
+            default: session = PageSession.holder(.manager("holder-test"), api: api)
+            }
+            await session.refresh()
+            let captured = try XCTUnwrap(item["expected_revision"].number)
+            XCTAssertEqual(session.revision, Int(captured))
+            await session.updateBlock("native-text", revision: Int(captured)) { $0.setting("text", .string("Native submitted")) }
+            XCTAssertNil(session.saveError)
+            XCTAssertEqual(session.revision, Int(captured) + 1)
+            // Even a no-op body must reject the captured revision after acceptance.
+            await session.updateBlock("native-text", revision: Int(captured)) { $0.setting("text", .string("Native submitted")) }
+            XCTAssertNotNil(session.saveError)
+            await session.retry()
+            let expected = GoalJSON.object(["page": fixture["page"], "expected_revision": .number(captured)])
+            XCTAssertEqual(GoalProtocol.state.writes(), [expected, expected, expected], "A failed retry never rebases the captured edit")
+            for bytes in GoalProtocol.state.wireWrites() {
+                let wire = String(decoding: bytes, as: UTF8.self)
+                // The repaired server rejects 5.0. This checks emitted protocol bytes,
+                // rather than JSON numeric equality, which conflates 5 and 5.0.
+                let integerToken = #""expected_revision"\s*:\s*"# + String(Int(captured)) + #"(?=\s*[,}])"#
+                XCTAssertNotNil(wire.range(of: integerToken, options: .regularExpression))
+            }
+            let path = item["path"].text.replacingOccurrences(of: "{goal_id}", with: "g").replacingOccurrences(of: "{manager_id}", with: "holder-test")
+            XCTAssertEqual(GoalProtocol.state.patchRequests().map { $0.url?.path }, [path, path, path])
+            for request in GoalProtocol.state.patchRequests() {
+                XCTAssertEqual(request.httpMethod, "PATCH")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Panels-iOS-Build"), NativeBuildGate.build)
+            }
+        }
+    }
+
     func testGoalConversationUsesTheHolderCurrentConversationAndSendDoor() async throws {
         GoalProtocol.state.reset(try goal())
         let api = client()
@@ -342,6 +395,7 @@ private final class GoalProtocolState: @unchecked Sendable {
     let lock = NSLock()
     private var goal: GoalRecord?
     private var goalWrites: [GoalJSON] = []
+    private var encodedGoalWrites: [Data] = []
     private var commands: [GoalJSON] = []
     private var recordedRequests: [URLRequest] = []
     private var holderRevision = 4
@@ -351,8 +405,9 @@ private final class GoalProtocolState: @unchecked Sendable {
     func acceptGoalWrites() { lock.lock(); defer { lock.unlock() }; acceptsGoalWrites = true }
     func requests() -> [String] { lock.lock(); defer { lock.unlock() }; return recordedRequests.compactMap { $0.url?.path } }
     func lastRequest() -> URLRequest? { lock.lock(); defer { lock.unlock() }; return recordedRequests.last }
+    func patchRequests() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return recordedRequests.filter { $0.httpMethod == "PATCH" } }
     static let manualState = #"{"measure_id":"m","definition_revision":1,"write_revision":1,"timezone":"UTC","current_date":"2026-11-04","date":"2026-11-04","observation":{"value":5},"latest_observation":{"value":5}}"#
-    func reset(_ value: GoalRecord) { lock.lock(); defer { lock.unlock() }; goal = value; goalWrites = []; commands = []; recordedRequests = []; acceptsGoalWrites = false; holderRevision = 4; document = value.page }
+    func reset(_ value: GoalRecord) { lock.lock(); defer { lock.unlock() }; goal = value; goalWrites = []; encodedGoalWrites = []; commands = []; recordedRequests = []; acceptsGoalWrites = false; holderRevision = 4; document = value.page }
     func conflictGoal() {
         lock.lock(); defer { lock.unlock() }
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -361,6 +416,7 @@ private final class GoalProtocolState: @unchecked Sendable {
         goal = try! APIClient.decoder().decode(GoalRecord.self, from: JSONSerialization.data(withJSONObject: fields))
     }
     func writes() -> [GoalJSON] { lock.lock(); defer { lock.unlock() }; return goalWrites }
+    func wireWrites() -> [Data] { lock.lock(); defer { lock.unlock() }; return encodedGoalWrites }
     func manualWrites() -> [GoalJSON] { lock.lock(); defer { lock.unlock() }; return commands }
     private func bodyData(_ request: URLRequest) -> Data {
         if let body = request.httpBody { return body }
@@ -394,12 +450,13 @@ private final class GoalProtocolState: @unchecked Sendable {
             guard body["conversation_id"].text == expected else { throw URLError(.badServerResponse) }
             return (200, Data("{\"conversation_id\":\"\(expected)\",\"fate\":\"injected\"}".utf8))
         }
-        if path == "/api/managers/holder-test/page/readings" {
+        if path == "/api/managers/holder-test/page/readings" || path == "/api/chief/page/readings" {
             return (200, Data("{\"goal_id\":\"holder-test\",\"revision\":\(holderRevision),\"status\":\"neutral\",\"status_date\":\"2026-11-05\",\"next_refresh_at\":1794000000,\"values\":[],\"sources\":[],\"charts\":{}}".utf8))
         }
-        if path == "/api/managers/holder-test/page" {
+        if path == "/api/managers/holder-test/page" || path == "/api/chief/page" {
             if request.httpMethod == "PATCH" {
-                let body = try JSONDecoder().decode(GoalJSON.self, from: bodyData(request)); goalWrites.append(body)
+                let data = bodyData(request)
+                let body = try JSONDecoder().decode(GoalJSON.self, from: data); goalWrites.append(body); encodedGoalWrites.append(data)
                 if body["expected_revision"].number != Double(holderRevision) { return (409, Data(#"{"error":{"message":"Holder page changed"}}"#.utf8)) }
                 document = body["page"]; holderRevision += 1
             }
@@ -414,10 +471,15 @@ private final class GoalProtocolState: @unchecked Sendable {
             return (200, Data(reply.utf8))
         }
         if request.httpMethod == "PATCH" {
-            let body = try JSONDecoder().decode(GoalJSON.self, from: bodyData(request)); goalWrites.append(body)
+            let data = bodyData(request)
+            let body = try JSONDecoder().decode(GoalJSON.self, from: data); goalWrites.append(body); encodedGoalWrites.append(data)
             if acceptsGoalWrites, let current = goal, body["expected_revision"].number == Double(current.revision) {
                 var fields = try JSONSerialization.jsonObject(with: encoder.encode(current)) as! [String: Any]
-                fields["title"] = body["title"].text; fields["revision"] = current.revision + 1
+                if case .object(let patch) = body {
+                    if let title = patch["title"] { fields["title"] = title.text }
+                    if let page = patch["page"] { fields["page"] = try JSONSerialization.jsonObject(with: encoder.encode(page)) }
+                }
+                fields["revision"] = current.revision + 1
                 goal = try APIClient.decoder().decode(GoalRecord.self, from: JSONSerialization.data(withJSONObject: fields))
                 return (200, try encoder.encode(goal))
             }

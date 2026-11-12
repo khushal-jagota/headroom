@@ -83,7 +83,7 @@ private struct WorkspacePreview: View {
                 if let ticket { TicketActivityMark(locale: ticket.locale, signal: signal, completed: ticket.stage == "done" || ticket.stage == "cancelled") }
                 else { ConversationSignalMark(signal: signal) }
             }
-            if !stageLine.isEmpty { Text(TicketMachine.activityUnknown(ticket?.locale, health: store.executorHealth) ? "Current activity on Mac is unknown." : stageLine).panelsScaledFont(size: 15).foregroundStyle(PanelsTheme.muted) }
+            if !stageLine.isEmpty { Text(TicketMachine.activityUnknown(ticket?.locale, health: store.executorHealth) ? TicketMachine.unknownActivityText(ticket?.locale) : stageLine).panelsScaledFont(size: 15).foregroundStyle(PanelsTheme.muted) }
             if let recap, !recap.isEmpty {
                 Text(recap).panelsScaledFont(size: 16).lineLimit(5)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)

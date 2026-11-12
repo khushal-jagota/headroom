@@ -347,7 +347,7 @@ type GoalCreateBody = BinaryGoalCreateBody | QuantitativeGoalCreateBody
 
 
 class GoalEditBody(GoalWriteFields):
-    pass
+    expected_revision: NotRequired[int]
 
 
 @dataclass(frozen=True, slots=True)

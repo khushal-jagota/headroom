@@ -389,6 +389,7 @@ export interface GoalEditBody {
   kind?: "binary" | "quantitative";
   primary_checklist_block_id?: string | null;
   primary_chart?: ChartBlock | null;
+  expected_revision?: number;
 }
 
 export interface GoalResponse {

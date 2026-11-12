@@ -224,9 +224,9 @@
     });
   }
 
-  async function returnProposal(message: string): Promise<void> {
+  async function returnProposal(message: string, expectedProposalRevision: number): Promise<void> {
     const proposalKey = currentKey;
-    await write(`/api/tickets/${ticketId}/reject`, { method: "POST", body: { message } });
+    await write(`/api/tickets/${ticketId}/reject`, { method: "POST", body: { message, expected_proposal_revision: expectedProposalRevision } });
     if (currentKey !== proposalKey) return;
     revisionDraft = "";
     announceResolved();

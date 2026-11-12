@@ -97,6 +97,7 @@ class ErrorCode(StrEnum):
     already_running = "already_running"  # Hermes 4009 session busy
     diagnostic_expired = "diagnostic_expired"
     not_found = "not_found"
+    revision_conflict = "revision_conflict"  # captured document revision no longer matches
     validation = "validation"  # generic input validation
     skill_save_incomplete = "skill_save_incomplete"
     # Nothing was saved and no receipt was written; the sender keeps the item and sends it again.
