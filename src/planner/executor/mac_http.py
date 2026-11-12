@@ -40,6 +40,7 @@ from planner.executor.configuration import (
     EXECUTOR_UPLOAD_PATH,
     EXECUTOR_WORKSPACE_REGISTRATION_PATH,
     EXECUTOR_WORKSPACE_RETIREMENT_PATH,
+    EXECUTOR_WORKSPACE_STATES_PATH,
     FILE_TRANSFER_STALL_SECONDS,
     HTTP_CLOSE_TIMEOUT_SECONDS,
     HTTP_CONNECT_TIMEOUT_SECONDS,
@@ -58,6 +59,7 @@ from planner.executor.configuration import (
     MAX_ENVELOPE_BYTES,
     MAX_ITEM_BATCH_BYTES,
     MAX_MAILBOX_POLL_BYTES,
+    MAX_WORKSPACE_STATES_BYTES,
     REQUEST_TIMEOUT_SECONDS,
     TRANSFER_CHUNK_BYTES,
     MacHttpConnectorSettings,
@@ -79,6 +81,8 @@ from planner.executor.protocol import (
     WorkspaceRegistrationRequest,
     WorkspaceRetirementReply,
     WorkspaceRetirementRequest,
+    WorkspaceStatesReply,
+    WorkspaceStatesRequest,
     decode_bounded,
     encode_bounded,
 )
@@ -255,6 +259,19 @@ class MacHttpClient:
             except ValueError:
                 pass
         raise _error(status, body)
+
+    async def workspace_states(self, ticket_ids: tuple[str, ...]) -> WorkspaceStatesReply:
+        status, body = await self._json(
+            "reads", "POST", EXECUTOR_WORKSPACE_STATES_PATH,
+            timeout=LIVE_READ_TIMEOUT_SECONDS,
+            reply_limit=MAX_WORKSPACE_STATES_BYTES,
+            body=encode_bounded(
+                WorkspaceStatesRequest(ticket_ids), limit=MAX_WORKSPACE_STATES_BYTES
+            ),
+        )
+        if status != 200:
+            raise _error(status, body)
+        return decode_bounded(body, WorkspaceStatesReply, limit=MAX_WORKSPACE_STATES_BYTES)
 
     async def register_workspace(self, child: ChildReference, workspace: WorkspaceIdentity) -> None:
         status, body = await self._json(

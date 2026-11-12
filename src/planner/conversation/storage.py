@@ -23,7 +23,7 @@ import logging
 import sqlite3
 import time
 from collections.abc import Callable, Collection, Coroutine, Iterator, Mapping
-from contextlib import AbstractContextManager, ExitStack, contextmanager
+from contextlib import AbstractContextManager, ExitStack, closing, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -596,6 +596,31 @@ class ConversationStore:
                 return True
         return await self._write(retire)
 
+    async def recorded_source_block_reason(self, conversation_id: str) -> str:
+        def read() -> bool:
+            with closing(self._connect()) as conn:
+                row = conn.execute(
+                    "SELECT state,supervision_record FROM conversation_child_custody "
+                    "WHERE conversation_id=?", (conversation_id,),
+                ).fetchone()
+                return (row is not None and row["state"] == "launch_pending"
+                        and row["supervision_record"] is None)
+
+        if await asyncio.to_thread(read):
+            return (
+                "The home stopped before it saved the agent's process identity. "
+                "Your conversation is safe: a second agent cannot start. "
+                "Reboot this same host, reopen Headroom, select Stop, "
+                "then send your message again. A restart of Headroom alone "
+                "does not clear this block."
+            )
+        return (
+            "The home stopped during agent startup. A second agent cannot start. "
+            "Select Stop to end the previous "
+            "agent before another can start. If Stop fails, the previous process "
+            "still needs cleanup."
+        )
+
     async def settle_recorded_source(
         self, conversation_id: str, *, inspect_only: bool = False,
     ) -> RecordedSourceSettlement | None:
@@ -632,6 +657,8 @@ class ConversationStore:
                 check = inspect_record if inspect_only else stop_record
                 if not check(Path(source["supervision_record"])).complete:
                     return None
+            elif not child_custody.retirement_row_proven(source):
+                return None
             result = "undelivered"
         elif source["state"] == "retired":
             result = "retired"
@@ -774,6 +801,15 @@ class ConversationStore:
                 child_custody.write_pending(conn, conversation_id, generation)
             else:
                 child_custody.write_started(conn, conversation_id, generation, identity)
+                recorded = conn.execute(
+                    "SELECT generation,state,pid,birth,boot,unit,supervision_record "
+                    "FROM conversation_child_custody WHERE conversation_id=?", (conversation_id,),
+                ).fetchone()
+                if recorded is None or tuple(recorded) != (
+                    generation, "started", identity.pid, identity.birth, identity.boot,
+                    identity.unit, identity.supervision_record,
+                ):
+                    raise BackendSpawnFailed("The agent process identity could not be saved")
             commit_without_change_signal(conn)
         finally:
             conn.close()

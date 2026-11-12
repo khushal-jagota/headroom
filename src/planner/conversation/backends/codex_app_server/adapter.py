@@ -413,6 +413,7 @@ class CodexAppServerBackendChild:
                 environment=environment,
                 working_directory=resolved_start.workspace_folder,
                 supervision_reporter=getattr(self._sink, "record_local_child_supervision", None),
+                custody_reporter=getattr(self._sink, "record_local_child_custody", None),
                 worker_ticket_id=dict(self._identity_environment(resolved_start)).get(
                     "PLAN_TICKET_ID"
                 ),
@@ -421,12 +422,6 @@ class CodexAppServerBackendChild:
             raise BackendSpawnFailed(str(would_not_spawn)) from would_not_spawn
         try:
             await self._shake_hands()
-            reporter = getattr(self._sink, "record_local_child_custody", None)
-            identity_reader = getattr(self._client, "local_child_identity", None)
-            if reporter is not None and identity_reader is not None:
-                identity = identity_reader()
-                if identity is not None:
-                    await reporter(identity)
             if vendor_session_cursor is None:
                 await self._start_thread(resolved_start)
             else:

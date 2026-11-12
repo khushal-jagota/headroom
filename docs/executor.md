@@ -24,7 +24,7 @@ The Mac opens every request. Each is a plain HTTPS request. No work depends on a
 
 ## Which work goes to the Mac
 
-Each Ticket names a stable machine destination (see [Tickets](tickets.md)). The home destination keeps direct execution. Only the original Mac destination uses the configured executor ID. Without that executor, its Tickets wait. They never run on the home. The Chief and Managers stay on the home. Legacy `vps` and `macos` values remain aliases for these original two destinations. The executor wire protocol is 24. Release the home and Mac executor together. A protocol-23 executor is refused, but its update remains available.
+Each Ticket names a stable machine destination (see [Tickets](tickets.md)). The home destination keeps direct execution. Only the original Mac destination uses the configured executor ID. Without that executor, its Tickets wait. They never run on the home. The Chief and Managers stay on the home. Legacy `vps` and `macos` values remain aliases for these original two destinations. The executor wire protocol is 25. Release the home and Mac executor together. A protocol-24 executor is refused, but its update remains available.
 
 Settings → Machines shows each destination’s availability, current Worker count, and Tickets that wait while it is away. Counts use existing conversation signals and Ticket ownership. An away machine has unknown activity. Display names, four icons, and eight colors do not enter routing or authority checks.
 
@@ -34,7 +34,7 @@ All three backends can run on the Mac. Each Ticket uses its own workspace inside
 
 A Worker's `panels` writes enter the outbox, and the VPS applies them with the authority of the original run.
 
-The VPS supplies authoritative Ticket lifecycle state with a successful lease. The Mac uses that state for the [seven-day file clock](environments.md#ticket-scratch). Before removal, it requests fresh permission for the exact expired workspace on that Mac. Registration binds the native conversation to its actual local folder. A server mirror has a separate identity and cannot retire the Mac checkout.
+The Mac reads authoritative lifecycle state only for its local Ticket folders, in bounded batches separate from presence leases. It uses fresh state for the [seven-day file clock](environments.md#ticket-scratch). Before removal, it requests fresh permission for the exact expired workspace on that Mac. Registration binds the native conversation to its actual local folder. A server mirror has a separate identity and cannot retire the Mac checkout.
 
 Active native turns preserve their files. Idle sessions stop through the ordinary executor path before their workspace expires. Offline or incomplete local state never establishes that a Ticket ended. The clock covers Ticket folders. External legacy evidence remains in place for owner review. Shared project clones and extracted executor updates are outside it.
 

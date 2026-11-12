@@ -18,6 +18,23 @@ def read_workspace_states(conn: sqlite3.Connection) -> dict[str, WorkspaceState]
     }
 
 
+def read_workspace_states_for_tickets(
+    conn: sqlite3.Connection, ticket_ids: tuple[str, ...]
+) -> tuple[WorkspaceState, ...]:
+    """Read a bounded caller-selected page without a lifecycle history scan."""
+    if not ticket_ids:
+        return ()
+    placeholders = ",".join("?" for _ in ticket_ids)
+    return tuple(
+        WorkspaceState(str(row[0]), row[1], bool(row[2]))
+        for row in conn.execute(
+            f"SELECT ticket_id,ended_at,deleted FROM ticket_workspace_lifecycle "
+            f"WHERE ticket_id IN ({placeholders})",
+            ticket_ids,
+        )
+    )
+
+
 def ensure_workspace_activity(
     conn: sqlite3.Connection,
     ticket_id: str,

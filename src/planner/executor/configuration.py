@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 
 # Wire and file limits.
 MAX_ENVELOPE_BYTES: Final = 1024 * 1024
+MAX_WORKSPACE_STATE_IDS: Final = 64
+MAX_WORKSPACE_STATES_BYTES: Final = 16 * 1024
 MAX_TOOL_DETAIL_CHARACTERS: Final = 64 * 1024
 FILE_MODIFIED_WINDOW_NS: Final = 2_000_000_000
 FILE_CHUNK_BYTES: Final = 256 * 1024
@@ -124,6 +126,7 @@ EXECUTOR_ITEMS_PATH: Final = "/api/executor/conversations/{conversation_id}/item
 EXECUTOR_UPLOAD_PATH: Final = "/api/executor/uploads/{sha256}"
 EXECUTOR_COMMAND_FILE_PATH: Final = "/api/executor/commands/{command_id}/files/{stored_file_id}"
 EXECUTOR_READS_PATH: Final = "/api/executor/reads"
+EXECUTOR_WORKSPACE_STATES_PATH: Final = "/api/executor/workspaces/states"
 EXECUTOR_WORKSPACE_RETIREMENT_PATH: Final = "/api/executor/workspaces/retire"
 EXECUTOR_WORKSPACE_REGISTRATION_PATH: Final = "/api/executor/workspaces/register"
 EXECUTOR_LIVE_PATH: Final = "/api/executor/conversations/{conversation_id}/live"

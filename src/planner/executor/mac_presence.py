@@ -14,24 +14,26 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from planner.core.contracts import ErrorCode
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.clock import now_ms
-from planner.executor.configuration import LEASE_INTERVAL_SECONDS
+from planner.executor.configuration import LEASE_INTERVAL_SECONDS, MAX_WORKSPACE_STATE_IDS
 from planner.executor.diagnostics import ConnectionPhase, connection_diagnostics
 from planner.executor.mac_http import failure_name, lease_refusal_code
 from planner.executor.protocol import (
     ExecutorRefusal,
     LeaseRefused,
-    LeaseReply,
     LeaseRequest,
     MacLocalStatus,
 )
+from planner.ticket_workspaces.contracts import TICKET_ID_PATTERN, WorkspaceState
 
 if TYPE_CHECKING:
     from planner.executor.contracts import CommandJournalApi, MacHttpClient
@@ -40,6 +42,17 @@ if TYPE_CHECKING:
     from planner.executor.mac_updates import MacUpdateController
 
 _LOG = logging.getLogger(__name__)
+
+
+def _local_workspace_ticket_ids(root: Path) -> tuple[str, ...]:
+    if not root.is_dir() or root.is_symlink():
+        return ()
+    owners: set[str] = set()
+    for folder in root.iterdir():
+        match = re.match(rf"^({TICKET_ID_PATTERN})(?:-|$)", folder.name)
+        if match and folder.is_dir() and not folder.is_symlink():
+            owners.add(match.group(1))
+    return tuple(sorted(owners))
 
 
 @dataclass
@@ -152,14 +165,14 @@ class MacLeaseLoop:
             return True
         self.presence.accepted()
         self.updates.offer(result.update)
-        # No cached clock or local Ticket list authorizes removal. An accepted lease
-        # carries the complete canonical lifetimes, including deleted identities.
+        # Workspace reads and slow cleanup have their own task and cadence.
+        # Neither local inventory nor lifecycle history enters a presence lease.
         loop = asyncio.get_running_loop()
         if loop.time() >= self._next_workspace_cleanup and (
             self._workspace_cleanup_task is None or self._workspace_cleanup_task.done()
         ):
             self._next_workspace_cleanup = loop.time() + 600
-            self._workspace_cleanup_task = asyncio.create_task(self._cleanup_workspaces(result))
+            self._workspace_cleanup_task = asyncio.create_task(self._cleanup_workspaces())
 
         try:
             if cursor is not None and await asyncio.to_thread(
@@ -177,11 +190,23 @@ class MacLeaseLoop:
             _LOG.warning("lease follow-up failed error=%s", failure_name(error))
         return True
 
-    async def _cleanup_workspaces(self, result: LeaseReply) -> None:
+    async def _cleanup_workspaces(self) -> None:
         try:
-            await self.runner.cleanup_workspaces(
-                result.ticket_workspaces, result.accepted_at_vps_ms // 1000
+            ticket_ids = await asyncio.to_thread(
+                _local_workspace_ticket_ids, self.runner.paths.artifacts
             )
+            states: list[WorkspaceState] = []
+            at_vps_ms: int | None = None
+            for offset in range(0, max(len(ticket_ids), 1), MAX_WORKSPACE_STATE_IDS):
+                reply = await self.client.workspace_states(
+                    ticket_ids[offset : offset + MAX_WORKSPACE_STATE_IDS]
+                )
+                states.extend(reply.states)
+                at_vps_ms = (
+                    reply.at_vps_ms if at_vps_ms is None else min(at_vps_ms, reply.at_vps_ms)
+                )
+            assert at_vps_ms is not None
+            await self.runner.cleanup_workspaces(tuple(states), at_vps_ms // 1000)
         except Exception as error:
             _LOG.warning("Ticket workspace cleanup failed error=%s", failure_name(error))
 

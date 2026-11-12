@@ -83,7 +83,11 @@ After a deploy or ordinary crash interrupts a session, an eligible conversation 
 
 Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace.
 
-A pre-upgrade in-flight turn without a child ownership record keeps the existing restart rule. An Update Now capture still supplies its recovery prompt. The upgrade adds no inspection, fence, or repair requirement for that legacy turn. Every child launched by this version records ownership before it starts, so subsequent interruptions use the exact-source proof above. Stop, New Conversation, and Restart Worker can stop that exact recorded source on Linux. If a preparation never reached a prompt, Stop cancels it without a claim that the process died. On macOS, an agent that survives an application crash can require an operator to stop its recorded process. “Recheck Worker cleanup” inspects the exact Ticket source again without a new start. The action also remains available after a Ticket ends.
+Codex, Hermes, and Claude save the exact process identity as soon as native spawn returns, before protocol initialization. Stop can then end that recorded process after a home crash. If identity inspection or the durable write fails, startup must stop its owned process. Failed cleanup keeps that handle and blocks a second agent.
+
+A crash before the first durable identity write can leave only a pending startup record. Stop preserves the fence unless supervision proves cleanup or the recorded host boot ended. If no identity or supervision evidence exists, reboot the same host, reopen Headroom, select Stop, then send again. An application restart alone does not prove that the old process ended.
+
+A pre-upgrade in-flight turn without a child ownership record keeps the existing restart rule. An Update Now capture still supplies its recovery prompt. The upgrade adds no inspection, fence, or repair requirement for that legacy turn. Every child launched by this version records ownership before it starts, so subsequent interruptions use the exact-source proof above. Stop, New Conversation, and Restart Worker can stop that exact recorded source on Linux. Stop cancels preparation only after proof that its process ended or its supervised launch never started. On macOS, an agent that survives an application crash can require an operator to stop its recorded process. “Recheck Worker cleanup” inspects the exact Ticket source again without a new start. The action also remains available after a Ticket ends.
 
 A restart of the Mac's executor process interrupts its turns the same way: once the Mac has sent everything it held for a conversation, that turn ends interrupted and gets the same one recovery prompt, which resumes the session in a fresh agent. A message the old process never fetched goes to the fresh agent instead, and nothing is interrupted. A steer the Mac does not take in time, or that later proves it never reached its turn, waits in the queue as the next message.
 
@@ -95,7 +99,7 @@ Workers on Linux share the home's resource domain. They do not inherit its prote
 
 Linux can adopt a late tool from the root's session after the leader exits. This assumes that the whole session did not end before the root PID served a new session leader that forked and exited. That unlikely reuse sequence can make a stranger appear to belong to the old session. Each signal still uses that process's own pidfd.
 
-`WorkerScratch` supplies temporary disk storage separately. The directory survives across turns and closes after confirmed cleanup. Account and login probes retain their separate lifetime.
+`WorkerScratch` supplies temporary disk storage separately. The directory survives across turns and closes after confirmed cleanup. Preparation and removal run on awaited worker threads. Cancellation waits for physical removal, and concurrent Stop and natural exit share that removal. Account and login probes retain their separate lifetime.
 
 ## Models and asks
 

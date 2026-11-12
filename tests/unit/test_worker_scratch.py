@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -93,3 +94,41 @@ def test_memory_filesystem_cannot_receive_worker_scratch(
         ))
     with pytest.raises(worker_scratch.WorkerScratchError, match="must use disk"):
         worker_scratch._disk_directory(tmp_path)
+
+
+def test_close_shares_physical_removal_and_joins_it_after_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Natural exit and Stop can overlap after removal moves off the event loop."""
+    import asyncio
+    import threading
+
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+    entered, release = threading.Event(), threading.Event()
+    remove = shutil.rmtree
+    removals = []
+
+    def slow_remove(path: Path) -> None:
+        removals.append(path)
+        entered.set()
+        assert release.wait(5), "The event loop stalled behind scratch removal"
+        remove(path)
+
+    async def exercise() -> None:
+        scratch = await WorkerScratch.create({"PLAN_TICKET_ID": "ticket"})
+        monkeypatch.setattr(shutil, "rmtree", slow_remove)
+        first = asyncio.create_task(scratch.aclose())
+        assert await asyncio.to_thread(entered.wait, 5)
+        second = asyncio.create_task(scratch.aclose())
+        first.cancel()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not first.done() and not second.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await second
+        assert removals == [scratch.directory]
+        assert not scratch.directory.exists()
+
+    asyncio.run(exercise())

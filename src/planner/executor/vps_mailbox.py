@@ -262,13 +262,34 @@ class SqliteCommandMailbox:
                 ChildOperation.stop,
             ):
                 ExecutorStore.prepare_command_in_transaction(connection, command)
+            turn_number = None if command.turn is None else command.turn.turn_number
+            if command.operation is ChildOperation.cancel_running_turn and turn_number is None:
+                # The native cancel targets the child's current turn. Keep that turn
+                # beside its immutable wire command so a retry stays idempotent and a
+                # later turn cannot acquire this cancel's withdrawal authority.
+                row = connection.execute(
+                    "SELECT turn_number FROM mac_runs WHERE conversation_id=? "
+                    "AND executor_incarnation=? AND child_id=?",
+                    (child.conversation_id, child.executor_incarnation, child.child_id),
+                ).fetchone()
+                if row is not None and row[0]:
+                    turn_number = int(row[0])
+                else:
+                    bound = connection.execute(
+                        "SELECT turn_number FROM automatic_start_bindings WHERE conversation_id=? "
+                        "AND executor_incarnation=? AND child_id=? "
+                        "ORDER BY turn_number DESC LIMIT 1",
+                        (child.conversation_id, child.executor_incarnation, child.child_id),
+                    ).fetchone()
+                    if bound is not None:
+                        turn_number = int(bound[0])
             placed = self._insert(
                 connection,
                 MailboxCommand(0, command.command_id, now, child_command=command),
                 executor_incarnation=child.executor_incarnation,
                 conversation_id=child.conversation_id,
                 child_id=child.child_id,
-                turn_number=None if command.turn is None else command.turn.turn_number,
+                turn_number=turn_number,
             )
             connection.commit()
             return placed
@@ -447,9 +468,7 @@ class SqliteCommandMailbox:
                 ):
                     self.start_admission.restore_bindings(connection, start_turn)
                     if not self.start_admission.allow_dispatch(start_turn):
-                        if isinstance(
-                            child_command.arguments, WritePrompt
-                        ) and self._later_control_stops_prompt(connection, command):
+                        if self._later_control_stops_delivery(connection, command, start_turn):
                             result = settlement_result(
                                 command,
                                 CommandDisposition.refused,
@@ -489,20 +508,28 @@ class SqliteCommandMailbox:
             connection.close()
 
     @staticmethod
-    def _later_control_stops_prompt(connection: sqlite3.Connection, prompt: MailboxCommand) -> bool:
-        child = prompt.child_command
+    def _later_control_stops_delivery(
+        connection: sqlite3.Connection, delivery: MailboxCommand, turn: TurnToken,
+    ) -> bool:
+        child = delivery.child_command
         assert child is not None
-        for (text,) in connection.execute(
-            "SELECT command_json FROM executor_commands WHERE conversation_id=? "
+        for text, turn_number in connection.execute(
+            "SELECT command_json,turn_number FROM executor_commands WHERE conversation_id=? "
             "AND command_sequence>? "
             "AND state='waiting' AND operation IN ('stop','cancel_running_turn')",
-            (child.child.conversation_id, prompt.command_sequence),
+            (child.child.conversation_id, delivery.command_sequence),
         ):
             control = _mailbox_command(text).child_command
+            control_turn = None if control is None else control.turn
+            if control_turn is None and turn_number is not None:
+                control_turn = TurnToken(child.child.conversation_id, int(turn_number))
             if (
                 control is not None
                 and control.child == child.child
-                and (control.operation is ChildOperation.stop or control.turn == child.turn)
+                and (
+                    control.operation is ChildOperation.stop
+                    or control_turn == turn
+                )
             ):
                 return True
         return False
@@ -558,8 +585,9 @@ class SqliteCommandMailbox:
         assert child is not None
         rows = connection.execute(
             "SELECT command_sequence,command_json,state FROM executor_commands "
-            "WHERE conversation_id=? AND command_sequence>=? ORDER BY command_sequence",
-            (child.child.conversation_id, prompt.command_sequence),
+            "WHERE conversation_id=? AND command_sequence>=? "
+            "AND state IN (?,?) ORDER BY command_sequence",
+            (child.child.conversation_id, prompt.command_sequence, *_OPEN_STATES),
         ).fetchall()
         if any(row[2] != MailboxCommandState.waiting.value for row in rows):
             # A previously fetched suffix cannot be rewritten. It is factual evidence.

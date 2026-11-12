@@ -52,9 +52,9 @@ from planner.execution_identity import (
     ExecutorIdentity,
     ProtocolRefused,
 )
-from planner.executor.configuration import MAX_ENVELOPE_BYTES
+from planner.executor.configuration import MAX_ENVELOPE_BYTES, MAX_WORKSPACE_STATE_IDS
 from planner.executor.update_contracts import MacUpdateCheck
-from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
+from planner.ticket_workspaces.contracts import TICKET_ID_PATTERN, WorkspaceIdentity, WorkspaceState
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -596,9 +596,24 @@ class LeaseReply:
     away_after_seconds: float
     update: MacUpdateCheck
     mailbox_high_sequence: int
-    # Complete canonical state, including deleted Ticket tombstones. Absence is never
-    # permission to delete local files. Times use the VPS clock, in seconds.
-    ticket_workspaces: tuple[WorkspaceState, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceStatesRequest:
+    """Read only a bounded page of Ticket identities retained on this executor."""
+
+    ticket_ids: Annotated[
+        tuple[Annotated[str, Field(pattern=rf"^{TICKET_ID_PATTERN}$")], ...],
+        Field(max_length=MAX_WORKSPACE_STATE_IDS),
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceStatesReply:
+    """Fresh canonical states. An absent identity never permits file removal."""
+
+    states: tuple[WorkspaceState, ...]
+    at_vps_ms: int
 
 
 @dataclass(frozen=True, slots=True)

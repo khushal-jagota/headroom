@@ -750,7 +750,7 @@ class HermesAcpBackendChild:
         if self._worker_supervisor is None:
             await self._processes.aclose()
         if self._worker_scratch is not None:
-            self._worker_scratch.close()
+            await self._worker_scratch.aclose()
 
     async def _stop_worker(self) -> None:
         supervisor = self._worker_supervisor
@@ -800,7 +800,7 @@ class HermesAcpBackendChild:
                 environment, resolved_start.workspace_folder
             )
             try:
-                self._worker_scratch = WorkerScratch(environment)
+                self._worker_scratch = await WorkerScratch.create(environment)
             except BaseException:
                 if self._worker_supervisor is not None:
                     await self._worker_supervisor.cancel_unspawned()
@@ -837,6 +837,13 @@ class HermesAcpBackendChild:
         if supervisor is not None:
             await supervisor.spawned(process.pid)
             await supervisor.started(process.pid)
+        reporter = getattr(self._sink, "record_local_child_custody", None)
+        if reporter is not None:
+            identity = (process_identity(process.pid) if supervisor is None
+                        else supervisor.identity())
+            if identity is None:
+                raise BackendSpawnFailed("Cannot establish the Hermes process identity")
+            await reporter(identity)
         if process.stderr is not None:
             self._standard_error_reader = asyncio.create_task(
                 self._read_standard_error(process.stderr),
@@ -860,12 +867,6 @@ class HermesAcpBackendChild:
             # The process is running but it is not an ACP agent this can talk to, so there
             # is no live backend to write to — which is what a spawn failure names.
             raise BackendSpawnFailed(str(would_not_come_up)) from would_not_come_up
-        reporter = getattr(self._sink, "record_local_child_custody", None)
-        if reporter is not None:
-            identity = (process_identity(process.pid) if supervisor is None
-                        else supervisor.identity())
-            if identity is not None:
-                await reporter(identity)
         return connection
 
     async def _create_session(
@@ -1544,7 +1545,7 @@ class HermesAcpBackendChild:
             self._give_up_on_unsent_permission_answers(str(error))
             return
         if self._worker_scratch is not None:
-            self._worker_scratch.close()
+            await self._worker_scratch.aclose()
         self._wire_broken = True
         self._give_up_on_unsent_permission_answers("the backend process ended")
 

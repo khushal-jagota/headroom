@@ -44,6 +44,7 @@ from planner.executor.protocol import (
     MailboxPollReply,
     ModelListRequest,
     WorkerCleanupUncertainty,
+    WorkspaceStatesReply,
 )
 from planner.stalls.contracts import StallSource as StallSource
 from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
@@ -364,6 +365,8 @@ class MacHttpClient(Protocol):
     """
 
     async def lease(self, request: LeaseRequest) -> LeaseReply | LeaseRefused: ...
+
+    async def workspace_states(self, ticket_ids: tuple[str, ...]) -> WorkspaceStatesReply: ...
 
     async def register_workspace(
         self, child: ChildReference, workspace: WorkspaceIdentity

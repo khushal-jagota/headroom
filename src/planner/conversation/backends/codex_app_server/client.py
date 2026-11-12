@@ -206,6 +206,7 @@ class CodexAppServerClient:
         working_directory: Path,
         worker_ticket_id: str | None = None,
         supervision_reporter: Callable[[str], Awaitable[None]] | None = None,
+        custody_reporter: Callable[[LocalChildIdentity], Awaitable[None]] | None = None,
     ) -> None:
         """Spawn the child and begin reading it. Raises ``CodexChildWouldNotStart``."""
         environment = dict(environment)
@@ -220,7 +221,7 @@ class CodexAppServerClient:
                     environment, working_directory
                 )
                 try:
-                    self._worker_scratch = WorkerScratch(environment)
+                    self._worker_scratch = await WorkerScratch.create(environment)
                 except BaseException:
                     if self._worker_supervisor is not None:
                         await self._worker_supervisor.cancel_unspawned()
@@ -248,14 +249,21 @@ class CodexAppServerClient:
             if supervisor is not None:
                 await supervisor.spawned(process.pid)
                 await supervisor.started(process.pid)
+            if custody_reporter is not None:
+                identity = self.local_child_identity()
+                if identity is None:
+                    raise CodexChildWouldNotStart("Cannot establish the Codex process identity")
+                await custody_reporter(identity)
         except BaseException as would_not_spawn:
             if self._worker_supervisor is not None:
                 if process is None and isinstance(would_not_spawn, OSError):
                     await self._worker_supervisor.cancel_unspawned()
                 await self._stop_worker()
                 self._worker_supervisor = None
+            elif process is not None:
+                await self._stop_native_process()
             if self._worker_scratch is not None:
-                self._worker_scratch.close()
+                await self._worker_scratch.aclose()
             if isinstance(would_not_spawn, (OSError, WorkerCleanupError, BackendCliIncompatible)):
                 raise CodexChildWouldNotStart(str(would_not_spawn)) from would_not_spawn
             raise
@@ -281,7 +289,7 @@ class CodexAppServerClient:
                 raise WorkerCleanupError(result.reason)
 
     def local_child_identity(self) -> LocalChildIdentity | None:
-        """Read only after the adapter completes the child protocol handshake."""
+        """Read as soon as the native process exists."""
         if self._process is None:
             return None
         supervisor = self._worker_supervisor
@@ -307,7 +315,7 @@ class CodexAppServerClient:
             await self._stop_native_process()
         self._process = None
         if self._worker_scratch is not None:
-            self._worker_scratch.close()
+            await self._worker_scratch.aclose()
 
     async def _stop_native_process(self) -> None:
         process = self._process
@@ -626,7 +634,7 @@ class CodexAppServerClient:
             else:
                 self._worker_supervisor = None
         if self._worker_supervisor is None and self._worker_scratch is not None:
-            self._worker_scratch.close()
+            await self._worker_scratch.aclose()
         # The pipes reach EOF separately. Finish draining stderr before the adapter
         # classifies the turn that ended with the child.
         if self._standard_error_reader is not None:

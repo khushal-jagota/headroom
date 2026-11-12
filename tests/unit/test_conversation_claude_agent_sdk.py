@@ -593,11 +593,11 @@ def test_prequery_connect_failure_cannot_skip_retained_transport_exit_proof(
 
         monkeypatch.setattr(SubprocessCLITransport, "connect", partial_connect)
         monkeypatch.setattr(SubprocessCLITransport, "close", sdk_close)
-        with pytest.raises(RuntimeError, match="post-spawn pre-query failure"):
+        with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
             await observed.connect()
         assert observed._client._query is None
-        assert closes == 0  # Non-Workers keep startup failure separate from disconnect.
-        assert transport._process is cast(Process, process)
+        assert closes == 1  # Startup attempts cleanup but cannot prove native exit.
+        assert transport._cleanup_process is cast(Process, process)
         with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
             await observed.disconnect()
         # The SDK now lost its handle. Its no-op disconnect still cannot establish
@@ -606,11 +606,11 @@ def test_prequery_connect_failure_cannot_skip_retained_transport_exit_proof(
         assert transport._cleanup_process is cast(Process, process)
         with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
             await observed.disconnect()
-        assert closes == 2
+        assert closes == 3
         process.returncode = 0
         await observed.disconnect()
         await observed.disconnect()
-        assert closes == 4
+        assert closes == 5
         assert transport._cleanup_process is cast(Process, process)
 
     _run(exercise)
@@ -672,4 +672,42 @@ def test_observed_admission_survives_subsequent_query_failure(
             assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
         finally:
             await child.stop()
+    _run(exercise)
+
+
+def test_transport_records_identity_before_sdk_protocol_initialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The observed client's reporter reaches the SDK's pre-initialization transport seam."""
+    from planner.conversation.local_child_contracts import LocalChildIdentity
+
+    identity = LocalChildIdentity(123, "birth", "boot")
+    stages = []
+    monkeypatch.setattr(
+        "planner.conversation.backends.claude_agent_sdk.ensure_cli_compatible", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "planner.conversation.backends.claude_agent_sdk.process_identity", lambda pid: identity
+    )
+
+    async def native_connect(transport):  # type: ignore[no-untyped-def]
+        stages.append("spawn")
+        transport._process = SimpleNamespace(pid=123, returncode=0)
+    monkeypatch.setattr(SubprocessCLITransport, "connect", native_connect)
+
+    async def exercise() -> None:
+        transport = _ClaudeCleanupTransport("", ClaudeAgentOptions(
+            cli_path="/scripted/claude", cwd=str(tmp_path),
+        ))
+        client = _ObservedClaudeSdkClient(
+            ClaudeAgentOptions(), _ClaudeProtocolTransport(transport)
+        )
+        async def record(value):  # type: ignore[no-untyped-def]
+            assert value == identity
+            stages.append("custody")
+        client.set_custody_reporter(record)
+        await transport.connect()
+        stages.append("initialize")
+        assert stages == ["spawn", "custody", "initialize"]
+
     _run(exercise)

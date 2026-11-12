@@ -36,6 +36,7 @@ from planner.core import change_signal
 from planner.core.clock import RealClock
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import (
     MAC_NEEDS_UPDATE,
     MAC_VERSION_INCOMPATIBLE,
@@ -47,6 +48,9 @@ from planner.executor.protocol import (
     LeaseReply,
     WaitingConversation,
     WorkingTurn,
+    WorkspaceStatesReply,
+    as_object,
+    decode_bounded,
 )
 from planner.executor.update_configuration import MAC_UPDATE_SCHEMA_VERSION
 from planner.executor.update_contracts import MacUpdateCheck
@@ -212,10 +216,7 @@ def test_an_accepted_lease_makes_the_mac_present_and_answers_its_update_and_curs
             assert isinstance(reply, LeaseReply)
             assert reply.update is check and reply.mailbox_high_sequence == 0
             assert reply.away_after_seconds == 60
-            assert set(reply.ticket_workspaces) == {
-                WorkspaceState("t_01234567", None, False),
-                WorkspaceState("t_11234567", 100, True),
-            }
+            assert "ticket_workspaces" not in as_object(reply)
 
             # Health comes from memory: no database read on the loop.
             def no_database(path: str) -> sqlite3.Connection:
@@ -287,7 +288,7 @@ def test_a_version_refusal_never_grants_execution_and_is_written_only_when_it_ch
                 assert isinstance(await endpoint.lease(lease_request(old)), LeaseRefused)
                 assert stored_refusal_at() == first_at and signals == []
                 # Another reason is new evidence: written, and announced.
-                newer = replace(mac_identity(), protocol_version=25)
+                newer = replace(mac_identity(), protocol_version=PROTOCOL_VERSION + 1)
                 assert isinstance(await endpoint.lease(lease_request(newer)), LeaseRefused)
                 record = _read(path, read_presence)
                 assert record is not None and record.refusal is not None
@@ -344,13 +345,17 @@ def test_a_replaced_process_is_refused_at_the_lease_and_at_the_work_route_fence(
 
             assert (
                 endpoint.require_current(
-                    incarnation_header=current.executor_incarnation, protocol_header="24"
+                    incarnation_header=current.executor_incarnation,
+                    protocol_header=str(PROTOCOL_VERSION),
                 )
                 == current
             )
             for incarnation, protocol, code in (
-                (replaced.executor_incarnation, "24", ErrorCode.executor_incarnation_not_current),
-                (None, "24", ErrorCode.executor_incarnation_not_current),
+                (
+                    replaced.executor_incarnation, str(PROTOCOL_VERSION),
+                    ErrorCode.executor_incarnation_not_current,
+                ),
+                (None, str(PROTOCOL_VERSION), ErrorCode.executor_incarnation_not_current),
                 (current.executor_incarnation, "21", ErrorCode.executor_version_refused),
                 (current.executor_incarnation, None, ErrorCode.executor_version_refused),
             ):
@@ -549,3 +554,87 @@ def test_a_vps_restart_keeps_a_pending_replacement_and_resumes_its_drain(
             assert TrackedWaitKind.mac_replacement_pending not in _waits(restarted, now_ms())
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+def test_large_ticket_history_never_breaks_an_accepted_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The review's ASGI probe: encoding after acceptance must not become HTTP 500.
+
+    Reuse the presence endpoint and disposable DB. No new listener or browser host.
+    """
+    import httpx
+    from fastapi import FastAPI
+
+    import planner.core.trusted_ingress as ingress
+    from planner.executor.app_transport import build_executor_router
+    from planner.executor.configuration import MAX_WORKSPACE_STATES_BYTES
+    from planner.executor.protocol import encode_bounded
+    from planner.executor.update_contracts import MacUpdateTarget
+
+    monkeypatch.setattr(ingress, "require_executor_ingress", lambda *args: None)
+
+    async def exercise() -> None:
+        async with _endpoint(_database(tmp_path)) as endpoint:
+            with connect(endpoint.db_path) as connection:
+                connection.executemany(
+                    "INSERT INTO ticket_workspace_lifecycle VALUES(?,?,?)",
+                    ((f"t_{n:08d}", 1794480000, 1) for n in range(20000)),
+                )
+            app = FastAPI()
+            app.state.executor_id = "synthetic"
+            app.state.executor_endpoint = endpoint
+            app.include_router(build_executor_router())
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+                base_url="http://synthetic",
+            ) as client:
+                identity = mac_identity()
+                response = await client.post(
+                    "/api/executor/lease", content=encode_bounded(lease_request(identity))
+                )
+                assert response.status_code == 200, response.text
+                assert len(response.content) < 1024
+                assert endpoint.presence.is_present()
+                # Only this executor's requested page appears, despite large history.
+                headers = {
+                    "X-Panels-Executor-Protocol": str(PROTOCOL_VERSION),
+                    "X-Panels-Executor-Incarnation": identity.executor_incarnation,
+                }
+                query = {"ticket_ids": ["t_00000001", "t_99999999"]}
+                response = await client.post(
+                    "/api/executor/workspaces/states", headers=headers, json=query
+                )
+                assert response.status_code == 200, response.text
+                reply = decode_bounded(response.content, WorkspaceStatesReply)
+                assert reply.states == (WorkspaceState("t_00000001", 1794480000, True),)
+                assert reply.at_vps_ms > 0
+                assert len(response.content) < MAX_WORKSPACE_STATES_BYTES
+                response = await client.post(
+                    "/api/executor/workspaces/states", headers=headers,
+                    json={"ticket_ids": ["t_00000001"] * 65},
+                )
+                assert response.status_code == 400
+                response = await client.post(
+                    "/api/executor/workspaces/states", headers=headers,
+                    content=b" " * (MAX_WORKSPACE_STATES_BYTES + 1),
+                )
+                assert response.status_code == 413
+                response = await client.post(
+                    "/api/executor/workspaces/states", headers=headers | {
+                        "X-Panels-Executor-Incarnation": "11111111-1111-4111-8111-111111111111"
+                    }, json=query,
+                )
+                assert response.status_code == 409
+                # Optional offers cannot cause the same post-accept encoding fault.
+                endpoint.presence.update_check = lambda: MacUpdateCheck(
+                    1, MacUpdateTarget("x" * (1024 * 1024), "a" * 40, "now", True,
+                                       "b" * 64, 1, "/archive")
+                )
+                response = await client.post(
+                    "/api/executor/lease", content=encode_bounded(lease_request(identity))
+                )
+                assert response.status_code == 200, response.text
+                assert decode_bounded(response.content, LeaseReply).update.target is None
+
+    asyncio.run(exercise())

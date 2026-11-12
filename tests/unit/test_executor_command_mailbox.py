@@ -47,6 +47,7 @@ from planner.conversation.lifecycle import (
 from planner.conversation.lifecycle_storage import apply_facts
 from planner.conversation.logic.retained_turn import UndeliveredTurnPrompt
 from planner.conversation.message_content import text_message_content
+from planner.conversation.start_admission import AutomaticStartAdmission
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.core.sse import close_open_change_streams
@@ -58,6 +59,7 @@ from planner.executor.protocol import (
     CommandOutcomeReport,
     CommandResult,
     EnvelopeKind,
+    MailboxCommand,
     MailboxPollReply,
     QueuedEnvelope,
     ReceiptDisposition,
@@ -1045,3 +1047,164 @@ def test_cleanup_recheck_targets_only_the_retained_ticket_and_waits_for_fresh_pr
             assert (await asyncio.wait_for(historical, SETTLES)).complete
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+def _saturated_start_admission() -> AutomaticStartAdmission:
+    from planner.conversation.start_admission.contracts import StartRequest
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+
+    now = [0.0]
+    gate = AutomaticStartAdmission(clock=lambda: now[0])
+    gate.configure_destinations(lambda _destination: True)
+    for number in range(gate.limit - 1):
+        assert gate.try_start(StartRequest(f"occupied-{number}", "worker", ORIGINAL_MAC_MACHINE_ID))
+        now[0] += 1.0
+    return gate
+
+
+async def _put_deferred_start(
+    world: _World, gate: AutomaticStartAdmission, child: ChildReference, folder: Path,
+) -> MacRemoteChild:
+    from tests.unit.test_executor_native_runtime import canonical_snapshot
+
+    from planner.conversation.contracts import (
+        ConversationAccess,
+        ConversationBackendKey,
+        ConversationRoleMaterials,
+        ResolvedConversationStart,
+    )
+    from planner.conversation.start_admission.contracts import StartRequest
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+
+    turn = TurnToken(child.conversation_id, 1)
+    assert not gate.try_start(
+        StartRequest(child.conversation_id, "worker", ORIGINAL_MAC_MACHINE_ID)
+    )
+    gate.bind((child.conversation_id,), turn)
+    gate.persist_bindings(world.endpoint.db_path, turn)
+    gate.bind_child(world.endpoint.db_path, turn, child)
+    proxy = MacRemoteChild(child, world.endpoint.runs, lambda _start: canonical_snapshot())
+    await proxy.start(
+        ResolvedConversationStart(
+            child.conversation_id, ConversationBackendKey.codex, "scripted", None,
+            ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "ticket-1"),)),
+            folder, ConversationAccess.full,
+        ),
+        vendor_session_cursor=None,
+    )
+    return proxy
+
+
+def test_recovered_stop_withdraws_held_start_beyond_the_first_poll_page(tmp_path: Path) -> None:
+    """A recovered Stop must not need unrelated permits or native startup first.
+
+    Reuse the review's core/SQLite probe. The old mailbox blocks the real kill behind
+    StartRun. A synthetic stop receipt is sufficient because no backend ever starts.
+    Extra deferred starts put that receipt's command beyond the first poll page.
+    """
+    from planner.conversation.contracts import ConversationBackendKey
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.conversation.storage import ConversationStore
+    from planner.conversation.system import SqliteProcessConversationSystem
+    from planner.executor.configuration import MAX_MAILBOX_POLL_COMMANDS
+    from planner.executor.contracts import CommandSettlementReason
+    from planner.executor.protocol import ChildCommand, ChildOperation, Steer
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            _running_turn(world.endpoint.db_path)
+            gate = _saturated_start_admission()
+            world.endpoint.mailbox.start_admission = gate
+            initial = await _put_deferred_start(world, gate, world.child, tmp_path)
+            await _prompt(initial)
+            # Recovery loses the original proxy's in-memory delivery command IDs.
+            system = SqliteProcessConversationSystem(
+                store=ConversationStore(world.endpoint.db_path),
+                backend_child_factories={
+                    key: world.endpoint.runs for key in ConversationBackendKey
+                },
+                message_files=ConversationMessageFiles(world.endpoint.db_path),
+            )
+            system.start_admission = gate
+            world.endpoint.bind_conversations(system)
+            assert system._conversations["c"].running_turn is not None
+            for number in range(MAX_MAILBOX_POLL_COMMANDS + 1):
+                child = ChildReference(world.identity.executor_incarnation, f"held-{number}",
+                                       f"held-{number}")
+                world.endpoint.runs.store.register_child(child, "ticket", f"ticket-{number}", 1)
+                await _put_deferred_start(world, gate, child, tmp_path)
+                if number == 0:
+                    # A recovered child's steer can time out while its start is held.
+                    # Settled history must not prevent unrelated control from passing.
+                    steer = ChildCommand(
+                        "withdrawn-steer", child, ChildOperation.steer,
+                        TurnToken(child.conversation_id, 1),
+                        Steer(content=text_message_content("adjust"), sender_label="owner"),
+                    )
+                    await world.endpoint.mailbox.put_child_command(steer)
+                    assert await world.endpoint.mailbox.withdraw_waiting(
+                        steer.command_id, CommandSettlementReason.delivery_withdrawn
+                    )
+            stopping = asyncio.create_task(system.kill("c"))
+            try:
+                async with asyncio.timeout(SETTLES):
+                    while not any(operation == "stop" for operation, _state in world.rows()):
+                        await asyncio.sleep(0)
+                commands: list[MailboxCommand] = []
+                for _ in range(3):
+                    commands.extend((await world.poll()).commands)
+                    if any(command.operation.value == "stop" for command in commands):
+                        break
+                assert [command.operation.value for command in commands] == [
+                    "cancel_running_turn", "stop",
+                ]
+                assert world.rows()[:2] == [("start", "withdrawn"), ("write_prompt", "withdrawn")]
+                assert ("steer", "withdrawn") in world.rows()
+                stop = commands[-1]
+                outcome = CommandOutcome(
+                    stop.command_id, world.child, CommandDisposition.succeeded, {}
+                )
+                receipt = await world.endpoint.inbox.accept(
+                    QueuedEnvelope("synthetic", "c", 1, "stop-proof", EnvelopeKind.child_stopped,
+                                   as_object(outcome)),
+                    world.identity,
+                )
+                assert receipt.disposition is ReceiptDisposition.accepted
+                await asyncio.wait_for(stopping, SETTLES)
+                assert all(snapshot.state == "active" for snapshot in gate.snapshots()
+                           if snapshot.request.identity.startswith("occupied-"))
+            finally:
+                stopping.cancel()
+                await asyncio.gather(stopping, return_exceptions=True)
+                for state in system._conversations.values():
+                    state.child = None
+                await asyncio.wait_for(system.shutdown(), SETTLES)
+
+    asyncio.run(exercise())
+
+
+def test_cancel_withdraws_only_its_exact_held_initial_turn(tmp_path: Path) -> None:
+    """A cancel without a wire turn needs a durable turn, never a child-wide wildcard."""
+    from planner.executor.protocol import CancelTurn, ChildCommand, ChildOperation
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            _running_turn(world.endpoint.db_path)
+            gate = _saturated_start_admission()
+            world.endpoint.mailbox.start_admission = gate
+            await _put_deferred_start(world, gate, world.child, tmp_path)
+            wrong_turn = ChildCommand("wrong-turn", world.child, ChildOperation.cancel_running_turn,
+                                      TurnToken("c", 2), CancelTurn())
+            await world.endpoint.mailbox.put_child_command(wrong_turn)
+            assert (await world.poll()).commands == ()
+            assert world.rows()[:1] == [("start", "waiting")]
+            cancel = ChildCommand("cancel", world.child, ChildOperation.cancel_running_turn,
+                                  None, CancelTurn())
+            placed = await world.endpoint.mailbox.put_child_command(cancel)
+            # Retry remains idempotent even though the mailbox records an inferred turn.
+            assert await world.endpoint.mailbox.put_child_command(cancel) == placed
+            reply = await world.poll()
+            assert [command.command_id for command in reply.commands] == ["wrong-turn", "cancel"]
+            assert world.rows()[:1] == [("start", "withdrawn")]
+
+    asyncio.run(exercise())

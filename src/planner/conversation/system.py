@@ -1393,8 +1393,7 @@ class SqliteProcessConversationSystem:
                 if result is None:
                     raise PlannerError(
                         ErrorCode.retry_later,
-                        "The previous agent still owns this conversation. "
-                        "Stop it before resetting it.",
+                        await self._store.recorded_source_block_reason(conversation_id),
                     )
                 state.local_child_retirement_proven = result == "retired"
                 state.local_preparation_cancelled = result == "undelivered"
@@ -4539,10 +4538,21 @@ class SqliteProcessConversationSystem:
         state.local_preparation_cancelled = False
         if not child_stops_outside_lock(child):
             await self._store.record_child_custody(state.record.conversation_id, sink.generation)
-        await child.start(
-            resolved_start,
-            vendor_session_cursor=state.record.vendor_session_cursor,
-        )
+        try:
+            await child.start(
+                resolved_start,
+                vendor_session_cursor=state.record.vendor_session_cursor,
+            )
+        except BaseException:
+            if not child_stops_outside_lock(child):
+                # Startup still owns the handle if identity persistence or protocol
+                # initialization fails. Only confirmed cleanup permits replacement.
+                state.child = child
+                self._quarantine_child(state)
+                if await self._stop_child(state, child):
+                    state.child = None
+                    state.child_is_quarantined = False
+            raise
         if (
             child_stops_outside_lock(child)
             and (
