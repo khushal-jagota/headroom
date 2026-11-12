@@ -251,21 +251,46 @@ import XCTest
         XCTAssertNil(session.saveError)
         XCTAssertNil(session.textDrafts[key], "Only confirmed acceptance clears the unchanged submitted text")
     }
+    /// The child-only test keeps its route alive. This checks the app-session owner
+    /// used by RouteDestination after the route itself leaves and returns.
     func testConflictingTextRetryKeepsCapturedRevisionAndDiscardUsesAcceptedGoal() async throws {
         GoalProtocol.state.reset(try goal())
-        let api = client(); let session = PageSession(id: "g", api: api, goal: try goal())
+        let api = client()
+        let store = AppStore(baseURL: api.baseURL, session: api.session)
+        var route: PageSessionRoute? = store.goalEdits
+        var session: PageSession? = route?.goal("g", api: store.client, resources: store.resources)
+        await session?.refresh()
+        session?.textDrafts["title"] = GoalTextDraft(text: "Draft", revision: 5)
         GoalProtocol.state.conflictGoal()
-        await session.save(["title": .string("Draft")], revision: 5)
-        XCTAssertNotNil(session.saveError)
-        await session.retry()
+        await session?.save(["title": .string("Draft")], revision: 5,
+            textSubmission: GoalTextSubmission(key: "title", text: "Draft", revision: 5))
+        XCTAssertNotNil(session?.saveError)
+        await session?.refresh()
+        weak var retained = session
+        session = nil
+        route = nil // Pop destroys the destination's references to the edit owner.
+        let replacement = store.goalEdits.goal("g", api: store.client, resources: store.resources)
+        XCTAssertTrue(replacement === retained)
+        XCTAssertEqual(replacement.textDrafts["title"]?.text, "Draft")
+        XCTAssertEqual(replacement.textDrafts["title"]?.revision, 5)
+        XCTAssertTrue(replacement.hasPendingEdit)
+        XCTAssertNotNil(replacement.saveError)
+        XCTAssertEqual(replacement.goal?.revision, 9)
+        XCTAssertEqual(replacement.goal?.title, "Other editor")
+        await replacement.retry()
         let writes = GoalProtocol.state.writes()
         XCTAssertEqual(writes.count, 2)
         XCTAssertEqual(writes[0]["expected_revision"].number, 5)
         XCTAssertEqual(writes[0], writes[1])
-        await session.discard()
-        XCTAssertNil(session.saveError)
-        XCTAssertEqual(session.goal?.revision, 9)
-        XCTAssertEqual(session.goal?.title, "Other editor")
+        let freshStore = AppStore(baseURL: api.baseURL, session: api.session)
+        let fresh = freshStore.goalEdits.goal("g", api: freshStore.client, resources: freshStore.resources)
+        XCTAssertTrue(fresh.textDrafts.isEmpty, "Unsaved edits do not survive a new app session")
+        XCTAssertFalse(fresh.hasPendingEdit)
+        await replacement.discard()
+        XCTAssertNil(replacement.saveError)
+        XCTAssertNil(replacement.textDrafts["title"])
+        XCTAssertEqual(replacement.goal?.revision, 9)
+        XCTAssertEqual(replacement.goal?.title, "Other editor")
     }
     func testUncertainManualWriteRetriesExactIdentityAndDoesNotRegressState() async throws {
         GoalProtocol.state.reset(try goal())

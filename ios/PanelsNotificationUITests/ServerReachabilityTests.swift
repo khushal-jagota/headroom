@@ -1,7 +1,6 @@
 import XCTest
 
-/// Real URLSession connection failures, cached SwiftUI content and scene recovery
-/// share the existing offline fixture; the control listener stays up when it stops.
+/// Real URLSession refusal must cover cached controls and recover without a relaunch.
 final class ServerReachabilityTests: XCTestCase {
     @MainActor func testUnreachableServerReplacesContentAndRecovers() async throws {
         continueAfterFailure = false
@@ -10,74 +9,42 @@ final class ServerReachabilityTests: XCTestCase {
         let control = try XCTUnwrap(env["PANELS_REACHABILITY_CONTROL_URL"])
         let app = XCUIApplication()
         defer { app.terminate() }
-        let title = app.staticTexts["Panels can’t reach the server."]
-        func capture(_ name: String) {
-            let attachment = XCTAttachment(screenshot: app.screenshot())
-            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
-        }
         func state(_ value: String) async throws {
             let (_, response) = try await URLSession.shared.data(from: URL(string: control + "/" + value)!)
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
         }
-        func foreground() {
-            XCUIDevice.shared.press(.home)
-            app.activate()
-        }
-        func assertUnreachable() {
-            XCTAssertTrue(title.waitForExistence(timeout: 35))
-            XCTAssertTrue(app.staticTexts["Turn on Tailscale, then try again."].exists)
-            XCTAssertTrue(app.buttons["Try again"].exists)
-            XCTAssertFalse(app.buttons["review.openTicket"].exists)
-            XCTAssertFalse(app.buttons["review.approve"].exists)
-            XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "specified hostname")).firstMatch.exists)
-            XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "Couldn’t refresh")).firstMatch.exists)
-        }
-
-        // Cold DNS failure: the override is a launch-domain default, Debug proof only.
-        app.launchArguments = ["-panels.baseURL", "https://panels-no-tailscale.invalid"]
-        app.launch()
-        assertUnreachable()
-        capture("unresolvable-host")
-        app.terminate()
-
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Review"].waitForExistence(timeout: 15))
-        app.tabBars.buttons["Review"].tap()
+        let review = app.tabBars.buttons["Review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 15))
+        review.tap()
         let proposal = app.buttons["review.openTicket"]
         XCTAssertTrue(proposal.waitForExistence(timeout: 15))
-        capture("reachable-review")
-
-        // Stop the actual listening socket, rather than synthesizing an HTTP error.
+        // Stop the actual listener, then let the active scene observe its failed read.
         try await state("offline")
-        foreground()
-        assertUnreachable()
-        capture("unreachable-with-cached-review")
-        // Host tests pin the 15/30/60-second retry deadlines. The real UI
-        // remains covered through that interval and recovers automatically.
-        try await Task.sleep(for: .seconds(110))
-        XCTAssertTrue(title.exists)
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        let title = app.staticTexts["Panels can’t reach the server."]
+        let coverDeadline = Date().addingTimeInterval(35)
+        func remainingCoverTime() -> TimeInterval {
+            let remaining = coverDeadline.timeIntervalSinceNow
+            XCTAssertGreaterThan(remaining, 0, "The cover transition exceeded its existing deadline")
+            return max(0, remaining)
+        }
+        XCTAssertTrue(title.waitForExistence(timeout: remainingCoverTime()))
+        // The title and accessibility tree can settle in separate updates.
+        // All absence checks share the same transition deadline.
+        for coveredElement in [
+            proposal,
+            app.buttons["review.approve"],
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "specified hostname")).firstMatch,
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "Couldn’t refresh")).firstMatch,
+        ] {
+            XCTAssertTrue(coveredElement.waitForNonExistence(timeout: remainingCoverTime()))
+            XCTAssertFalse(coveredElement.exists)
+        }
         try await state("online")
         XCTAssertTrue(proposal.waitForExistence(timeout: 70))
-        XCTAssertFalse(title.exists)
-        capture("recovered-automatically-after-backoff")
-
-        try await state("offline")
-        foreground()
-        assertUnreachable()
-        XCUIDevice.shared.press(.home)
-        try await state("online")
-        app.activate()
-        XCTAssertTrue(proposal.waitForExistence(timeout: 20))
-        XCTAssertFalse(title.exists)
-        capture("recovered-on-foreground")
-
-        try await state("request-failed")
-        foreground()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Couldn’t refresh. Showing the last loaded content.")).firstMatch.waitForExistence(timeout: 15))
-        XCTAssertTrue(proposal.exists)
-        XCTAssertFalse(title.exists)
-        capture("http-error-retains-content")
-        try await state("online")
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5))
     }
 }

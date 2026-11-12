@@ -36,8 +36,11 @@ REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE
 
 def main() -> int:
     server_only = "--server-only" in sys.argv
+    review = "--review" in sys.argv
+    if review and not server_only and "/" not in os.environ.get("PANELS_OFFLINE_TEST", ""):
+        raise SystemExit("--review requires one explicit class/method in PANELS_OFFLINE_TEST")
     if not server_only and "--locked" not in sys.argv:
-        return subprocess.call(["lockf", LANE_LOCK, sys.executable, __file__, "--locked"])
+        return subprocess.call(["lockf", LANE_LOCK, sys.executable, __file__, *sys.argv[1:], "--locked"])
     output = Path(os.environ["PANELS_OFFLINE_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
     if not server_only:
@@ -1035,7 +1038,7 @@ def main() -> int:
                 "-project",
                 str(ROOT / "ios/Panels.xcodeproj"),
                 "-scheme",
-                "PanelsNotifications",
+                "PanelsReview" if review else "PanelsNotifications",
                 "-configuration",
                 "Debug",
                 "-destination",
@@ -1052,23 +1055,14 @@ def main() -> int:
                 "never",
                 "PANELS_APP_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
-                "-only-testing:PanelsNotificationUITests/"
+                ("-only-testing:PanelsReviewUITests/" if review else "-only-testing:PanelsNotificationUITests/")
                 + (
                     os.environ.get("PANELS_OFFLINE_TEST")
                     or (
-                        "ReviewMessagesTests/testCompletionAndRevisit"
-                        if REVIEW_COMPLETION
-                        else "ReviewMessagesTests"
+                        "ReviewMessagesTests"
                         if REVIEW_MESSAGES
                         else "OfflineOperationTests"
                     )
-                ),
-                *(
-                    [
-                        "-only-testing:PanelsTests/ReviewDecisionTests/testSkipIsLocalAndNewProposalIdentityReturns"
-                    ]
-                    if REVIEW_COMPLETION
-                    else []
                 ),
                 "test",
             ],

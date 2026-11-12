@@ -134,6 +134,9 @@ class Stub:
 
 def main() -> int:
     server_only = "--server-only" in sys.argv
+    review = "--review" in sys.argv
+    if review and not server_only and "/" not in os.environ.get("PANELS_CONVERSATION_TEST", ""):
+        raise SystemExit("--review requires one explicit class/method in PANELS_CONVERSATION_TEST")
     if not server_only and "--locked" not in sys.argv:
         return subprocess.call(
             [
@@ -574,7 +577,7 @@ def main() -> int:
                 "-project",
                 str(ROOT / "ios/Panels.xcodeproj"),
                 "-scheme",
-                "PanelsNotifications",
+                "PanelsReview" if review else "PanelsNotifications",
                 "-configuration",
                 "Debug",
                 "-destination",
@@ -593,7 +596,7 @@ def main() -> int:
                 "1",
                 "PANELS_APP_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
-                "-only-testing:PanelsNotificationUITests/"
+                ("-only-testing:PanelsReviewUITests/" if review else "-only-testing:PanelsNotificationUITests/")
                 + os.environ.get("PANELS_CONVERSATION_TEST", "ConversationOperationTests"),
                 "test",
             ],

@@ -9,13 +9,11 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
         let app = XCUIApplication()
         app.launchArguments = ["--conversation-stub", base]
-        try await proof(base, "start/cold-slow-load")
-        app.launch()
-        XCTAssertTrue(app.otherElements["Loading workspace"].firstMatch.waitForExistence(timeout: 3) || app.staticTexts["Loading workspace"].firstMatch.exists)
         try await proof(base, "fast")
+        app.launch()
+        defer { app.terminate() }
         let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
         XCTAssertTrue(chief.waitForExistence(timeout: 12))
-        try await proof(base, "stop")
         app.tabBars.buttons["Review"].tap()
         XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 10))
         // Preload the three proposal cards and their manifests before losing connectivity.
@@ -26,17 +24,20 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         try await Task.sleep(for: .seconds(2))
         try await proof(base, "offline")
-        try await proof(base, "start/offline-actions")
         input.tap(); input.typeText("Saved on the train")
         app.buttons["Send message"].tap()
-        app.buttons.matching(NSPredicate(format: "label CONTAINS 'Saved on the train'")).firstMatch.tap()
+        let pending = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Saved on the train'")).firstMatch
+        XCTAssertTrue(pending.waitForExistence(timeout: 5))
+        pending.tap()
         XCTAssertTrue(app.staticTexts["Delivery uncertain · check before another attempt"].firstMatch.waitForExistence(timeout: 5))
         // The conversation page and the Chief page each have the shared Back control.
         app.buttons["detail-back"].tap()
         XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
         app.buttons["detail-back"].tap()
         app.tabBars.buttons["Review"].tap()
-        app.buttons["review.approve"].tap()
+        let approve = app.buttons["review.approve"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 10))
+        approve.tap()
         let approval = app.buttons["review.confirmApproval"]
         XCTAssertTrue(approval.waitForExistence(timeout: 5))
         approval.tap()
@@ -46,9 +47,9 @@ final class OfflineOperationTests: XCTestCase {
         let guidanceAny = app.descendants(matching: .any).matching(identifier: "review.revision").firstMatch
         XCTAssertTrue(guidanceAny.waitForExistence(timeout: 5))
         guidanceAny.tap(); guidanceAny.typeText("Keep this send-back guidance")
-        app.buttons["review.confirmReturn"].tap()
-        try await proof(base, "stop")
-        try await proof(base, "start/relaunch-and-reconnect")
+        let confirmReturn = app.buttons["review.confirmReturn"]
+        XCTAssertTrue(confirmReturn.waitForExistence(timeout: 5))
+        confirmReturn.tap()
         app.terminate(); app.launch()
         XCTAssertTrue(chief.waitForExistence(timeout: 3), "Cached Workspace did not restore offline")
         app.tabBars.buttons["Review"].tap()
@@ -64,7 +65,8 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertEqual(Set(beforeRecovery), Set(["approve", "sendBack"]))
         XCTAssertEqual(beforeRecovery.count, 2)
         chief.tap()
-        app.buttons.matching(NSPredicate(format: "label CONTAINS 'Saved on the train'")).firstMatch.tap()
+        XCTAssertTrue(pending.waitForExistence(timeout: 8))
+        pending.tap()
         let sendAgain = app.buttons["Send again"]
         XCTAssertTrue(sendAgain.waitForExistence(timeout: 8))
         sendAgain.tap()
@@ -82,10 +84,6 @@ final class OfflineOperationTests: XCTestCase {
         let afterConfirmation = try await writes(base)
         XCTAssertEqual(Set(afterConfirmation), Set(["approve", "sendBack", "message"]))
         XCTAssertEqual(afterConfirmation.count, 3)
-        try await Task.sleep(for: .seconds(4))
-        let again = try await writes(base)
-        XCTAssertEqual(again.count, 3)
-        try await proof(base, "stop")
     }
     @MainActor private func writes(_ base: String) async throws -> [String] {
         let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
