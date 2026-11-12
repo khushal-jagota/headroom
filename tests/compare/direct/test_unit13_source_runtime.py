@@ -79,7 +79,6 @@ def normalized(snapshot: dict[str, Any]) -> dict[str, Any]:
         for key in ("elapsed_milliseconds", "script_cpu_milliseconds"):
             value[key] = "runtime-measurement"
 
-    metrics(result["result"]["metrics"])
     metrics(result["completed"]["run"]["metrics"])
     result["completed"]["run"]["script_sha256"] = "language-script-sha"
     result["source"]["active_script"]["text"] = "language-script"
@@ -145,7 +144,6 @@ def test_unit13_source_runtime(tmp_path: Path, request: pytest.FixtureRequest) -
             result = Runtime().execute(admission, credentials)
             completed = run_actions.complete_run(conn, RUN_ID, result, now=NOW)
             expected = {
-                "result": asdict(result),
                 "completed": asdict(completed),
                 "source": asdict(data.read_source(conn, source.id)),
                 "status": asdict(views.status(conn, source.id, now=NOW)),
@@ -159,12 +157,16 @@ def test_unit13_source_runtime(tmp_path: Path, request: pytest.FixtureRequest) -
                     for table, order in TABLES.items()
                 },
             }
-        assert result.failure is None
         assert completed.run.status.value == "succeeded"
         assert completed.run.observation_count == 1
         assert completed.run.dataset_result_count == 1
         assert completed.run.dataset_row_count == 1
-        assert result.metrics.request_count == result.metrics.response_bytes == 0
+        assert completed.run.metrics is not None
+        assert (
+            completed.run.metrics.request_count
+            == completed.run.metrics.response_bytes
+            == 0
+        )
         spec = tmp_path / "runtime.json"
         spec.write_text(
             json.dumps(

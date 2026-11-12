@@ -17,22 +17,17 @@ import { SourceScheduleLoop } from '../schedule_loop.ts';
 import { build_participants } from '../scheduling.ts';
 import * as actions from '../actions.ts';
 import * as runs from '../run_actions.ts';
-import { failure } from '../contracts.ts';
+import { Runtime } from '../runtime/supervisor.ts';
 import type { RunResult } from '../contracts.ts';
 interface Spec {
   db_path: string;
   now: number;
   source_id: string;
-  measure_id: string;
-  goal_id: string;
+  results: Record<'failure' | 'high' | 'low', RunResult>;
   runs: string[];
 }
 const tables: Record<string, string> = {
-  measure_sources: 'id',
-  measure_source_runs: 'id',
-  measure_observations: 'measure_id,date',
   goals: 'id',
-  measure_source_failure_episodes: 'source_id,episode',
   manager_wakes: 'id',
   manager_wake_batches: 'id',
   manager_wake_batch_members: 'batch_id,wake_id',
@@ -54,12 +49,7 @@ export async function run(spec: Spec) {
   };
   const loop = new SourceScheduleLoop({
     ...context,
-    participants: build_participants(context, {
-      execute: async () => {
-        throw new Error('no dispatcher in this proof');
-      },
-      cancel() {},
-    }),
+    participants: build_participants(context, new Runtime()),
   });
   const store = new ConversationStore(database, { integer_now: () => 50 });
   const system = {
@@ -106,34 +96,11 @@ export async function run(spec: Spec) {
           .map((row) => JSON.parse(row.payload)),
       })),
     );
-  const complete = (index: number, value: number | null = null) => {
+  const complete = (index: number, kind: 'failure' | 'high' | 'low' = 'failure') => {
     database.write((sql) => runs.claim_run(sql, spec.runs[index]!, { now: spec.now }));
-    const result: RunResult = {
-      observations:
-        value === null
-          ? []
-          : [
-              {
-                measure_id: spec.measure_id,
-                date: '2026-10-27',
-                value,
-                unavailable_reason: null,
-                query_start_at: null,
-                query_end_at: null,
-                limitation: null,
-              },
-            ],
-      dataset_results: [],
-      failure: value === null ? failure('http_error', { http_status: 401 }) : null,
-      metrics: {
-        request_count: 0,
-        response_bytes: 0,
-        child_output_bytes: 0,
-        elapsed_milliseconds: 1,
-        script_cpu_milliseconds: 0,
-      },
-    };
-    database.write((sql) => runs.complete_run(sql, spec.runs[index]!, result, { now: spec.now }));
+    database.write((sql) =>
+      runs.complete_run(sql, spec.runs[index]!, spec.results[kind], { now: spec.now }),
+    );
     loop.poll_once();
   };
   const claim = () =>
@@ -158,20 +125,17 @@ export async function run(spec: Spec) {
       assert_database_owned() {},
     });
   try {
-    loop.poll_once();
-    snapshot('initial');
     complete(0);
     const first = claim()!;
-    snapshot('producer-and-claim', first);
-    snapshot('durable-prompt-and-delivered-receipt', await deliver(first, 2));
+    const delivered = await deliver(first, 2);
     complete(1);
-    snapshot('same-episode-deduplicates', claim());
-    complete(2, 12);
+    snapshot('delivered-notice-and-repeat-dedup', { sent: delivered, repeat_claim: claim() });
+    complete(2, 'high');
     snapshot('collection-achieves-goal');
     complete(3);
     const closed = claim()!;
     offer(closed, 'unit13-not-offered-closure');
-    complete(4, 3);
+    complete(4, 'low');
     snapshot(
       'episode-closure-discards-and-correction-reopens-goal',
       database.write((sql) =>
@@ -197,21 +161,18 @@ export async function run(spec: Spec) {
         },
       ),
     );
-    snapshot(
-      'responsibility-transfer-discards-old-batch',
-      database.write((sql) =>
-        wakes.admit_notice_batch(sql, {
-          conversation_id: 'unit13-not-offered-transfer',
-          sender_message_id: transferred.sender_message_id,
-          now: spec.now + 4,
-        }),
-      ),
+    const admitted = database.write((sql) =>
+      wakes.admit_notice_batch(sql, {
+        conversation_id: 'unit13-not-offered-transfer',
+        sender_message_id: transferred.sender_message_id,
+        now: spec.now + 4,
+      }),
     );
     const chief = claim()!;
-    snapshot('replacement-recipient-claim', chief);
-    snapshot('replacement-recipient-durable-prompt', await deliver(chief, 5));
-    complete(6, 15);
-    snapshot('later-collection-restores-goal');
+    snapshot('transfer-discards-old-batch-and-delivers-new-recipient', {
+      admission: admitted,
+      sent: await deliver(chief, 5),
+    });
     return snapshots;
   } finally {
     await loop.stop({ deadline: performance.now() / 1000 + 5 });

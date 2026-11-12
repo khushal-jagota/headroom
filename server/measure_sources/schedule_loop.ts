@@ -40,25 +40,22 @@ export class SourceScheduleLoop {
     this.started = true;
     this.interval = interval * 1000;
     for (const participant of this.options.participants) participant.start();
-    this.wake();
-  }
-  wake(): void {
-    if (!this.started || this.stopped) return;
-    if (this.timer !== undefined) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      try {
-        this.poll_once();
-      } catch {
-        console.error('measure source poll failed');
-      } finally {
-        if (!this.stopped && this.timer === undefined) {
-          this.timer = setTimeout(() => this.wake(), this.interval);
-          this.timer.unref();
-        }
-      }
-    }, 0);
+    this.timer = setTimeout(() => this.tick(), 0);
     this.timer.unref();
+  }
+  private tick(): void {
+    this.timer = undefined;
+    if (this.stopped) return;
+    try {
+      this.poll_once();
+    } catch {
+      console.error('measure source poll failed');
+    } finally {
+      if (!this.stopped) {
+        this.timer = setTimeout(() => this.tick(), this.interval);
+        this.timer.unref();
+      }
+    }
   }
   stop(options: { deadline?: number } = {}): Promise<void> {
     this.stopped = true;

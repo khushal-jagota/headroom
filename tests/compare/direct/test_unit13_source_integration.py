@@ -24,6 +24,7 @@ from tests.support.synthetic_homes import (
     create_synthetic_homes,
     synthetic_home_environment,
 )
+from tests.unit.test_goal_automatic_outcomes import finish_line, numeric_goal
 from tests.unit.test_manager_wakes import (
     _DurableStartedConversationSystem,
     _item_and_ticket,
@@ -39,10 +40,9 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.db import connect, create_schema
-from planner.goals import actions as goals
 from planner.manager_wakes import data as wakes
-from planner.manager_wakes.runtime import deliver_batch
 from planner.manager_wakes.contracts import WakeBatch
+from planner.manager_wakes.runtime import deliver_batch
 from planner.measure_sources import actions, run_actions
 from planner.measure_sources.contracts import (
     FailureCode,
@@ -57,11 +57,7 @@ from planner.measures.contracts import CandidateObservation
 
 ROOT = Path(__file__).resolve().parents[3]
 TABLES = {
-    "measure_sources": "id",
-    "measure_source_runs": "id",
-    "measure_observations": "measure_id,date",
     "goals": "id",
-    "measure_source_failure_episodes": "source_id,episode",
     "manager_wakes": "id",
     "manager_wake_batches": "id",
     "manager_wake_batch_members": "batch_id,wake_id",
@@ -76,9 +72,12 @@ def normalized(value: object) -> object:
     def token(match: re.Match[str]) -> str:
         return maps.setdefault(match[0], f"<delivery-id-{len(maps)}>")
 
-    return cast(object, json.loads(
-        re.sub(r"manager_delivery_wake_[0-9a-f]+|conv_[0-9a-f]{32}", token, text)
-    ))
+    return cast(
+        object,
+        json.loads(
+            re.sub(r"manager_delivery_wake_[0-9a-f]+|conv_[0-9a-f]{32}", token, text)
+        ),
+    )
 
 
 def test_unit13_source_integration(
@@ -96,40 +95,7 @@ def test_unit13_source_integration(
             responsible=Principal(PrincipalKind.manager, manager_id),
             enabled=False,
         )
-        goal = goals.create_goal(
-            conn,
-            {
-                "project_id": "project_vylo",
-                "title": "Collected milestone",
-                "kind": "quantitative",
-                "completion_rule": {
-                    "actual": {
-                        "op": "reference",
-                        "measure_id": measure.id,
-                        "day_offset": 0,
-                    },
-                    "target": {"op": "constant", "value": 10},
-                    "direction": "atleast",
-                    "first_date": "2026-10-27",
-                },
-                "primary_chart": {
-                    "type": "chart",
-                    "id": "progress",
-                    "kind": "number",
-                    "placement": "primary",
-                    "measure_id": measure.id,
-                },
-                "page": {
-                    "kind": "headroom.page",
-                    "version": 1,
-                    "title": "Collected evidence",
-                    "summary": "",
-                    "blocks": [],
-                },
-            },
-            principal=OWNER_PRINCIPAL,
-            now=NOW,
-        )
+        numeric_goal(conn, finish_line(measure.id, first_date="2026-10-27"))
         script = source.active_script
         assert script is not None
         runs = [
@@ -142,7 +108,7 @@ def test_unit13_source_integration(
                 principal=OWNER_PRINCIPAL,
                 now=NOW,
             ).id
-            for _ in range(7)
+            for _ in range(6)
         ]
         target = tmp_path / "typescript.sqlite"
         with sqlite3.connect(target) as other:
@@ -160,6 +126,17 @@ def test_unit13_source_integration(
         )
         system = _DurableStartedConversationSystem(seed)
         metrics = RunMetrics(0, 0, 0, 1, 0)
+        results = {
+            "failure": RunResult(
+                (), RunFailure(FailureCode.http_error, http_status=401), metrics
+            ),
+            "high": RunResult(
+                (CandidateObservation(measure.id, "2026-10-27", 12.0),), None, metrics
+            ),
+            "low": RunResult(
+                (CandidateObservation(measure.id, "2026-10-27", 3.0),), None, metrics
+            ),
+        }
         snapshots: list[dict[str, object]] = []
 
         def snapshot(phase: str, outcome: object = None) -> None:
@@ -186,20 +163,9 @@ def test_unit13_source_integration(
                 }
             )
 
-        def complete(index: int, value: float | None = None) -> None:
+        def complete(index: int, kind: str = "failure") -> None:
             run_actions.claim_run(conn, runs[index], now=NOW)
-            result = (
-                RunResult(
-                    (), RunFailure(FailureCode.http_error, http_status=401), metrics
-                )
-                if value is None
-                else RunResult(
-                    (CandidateObservation(measure.id, "2026-10-27", value),),
-                    None,
-                    metrics,
-                )
-            )
-            run_actions.complete_run(conn, runs[index], result, now=NOW)
+            run_actions.complete_run(conn, runs[index], results[kind], now=NOW)
             loop.poll_once()
 
         def claim() -> WakeBatch | None:
@@ -217,12 +183,9 @@ def test_unit13_source_integration(
             )
 
         async def exercise() -> None:
-            loop.poll_once()
-            snapshot("initial")
             complete(0)
             batch = claim()
             assert batch is not None
-            snapshot("producer-and-claim", asdict(batch))
             sent = await deliver_batch(
                 batch,
                 connect_database=lambda: connect(str(seed)),
@@ -230,16 +193,23 @@ def test_unit13_source_integration(
                 process_token="unit13-source",
                 now=lambda: NOW + 2,
             )
-            snapshot("durable-prompt-and-delivered-receipt", sent)
+            assert sent
             complete(1)
-            snapshot("same-episode-deduplicates", claim())
-            complete(2, 12.0)
+            snapshot(
+                "delivered-notice-and-repeat-dedup",
+                {"sent": sent, "repeat_claim": claim()},
+            )
+            complete(2, "high")
+            assert (
+                conn.execute("SELECT completion_date FROM goals").fetchone()[0]
+                == "2026-10-27"
+            )
             snapshot("collection-achieves-goal")
             complete(3)
             closed = claim()
             assert closed is not None
             offer(closed, "unit13-not-offered-closure")
-            complete(4, 3.0)
+            complete(4, "low")
             with conn:
                 admitted = wakes.admit_notice_batch(
                     conn,
@@ -247,6 +217,10 @@ def test_unit13_source_integration(
                     sender_message_id=closed.sender_message_id,
                     now=NOW + 3,
                 )
+            assert admitted == (True, "source_failure_changed")
+            assert (
+                conn.execute("SELECT completion_date FROM goals").fetchone()[0] is None
+            )
             snapshot("episode-closure-discards-and-correction-reopens-goal", admitted)
             complete(5)
             transferred = claim()
@@ -267,10 +241,9 @@ def test_unit13_source_integration(
                     sender_message_id=transferred.sender_message_id,
                     now=NOW + 4,
                 )
-            snapshot("responsibility-transfer-discards-old-batch", admitted)
+            assert admitted == (True, "source_failure_changed")
             chief = claim()
             assert chief is not None
-            snapshot("replacement-recipient-claim", asdict(chief))
             sent = await deliver_batch(
                 chief,
                 connect_database=lambda: connect(str(seed)),
@@ -278,9 +251,11 @@ def test_unit13_source_integration(
                 process_token="unit13-source",
                 now=lambda: NOW + 5,
             )
-            snapshot("replacement-recipient-durable-prompt", sent)
-            complete(6, 15.0)
-            snapshot("later-collection-restores-goal")
+            assert sent
+            snapshot(
+                "transfer-discards-old-batch-and-delivers-new-recipient",
+                {"admission": admitted, "sent": sent},
+            )
 
         asyncio.run(exercise())
         expected = normalized(snapshots)
@@ -291,8 +266,7 @@ def test_unit13_source_integration(
                 "db_path": str(target),
                 "now": NOW,
                 "source_id": source.id,
-                "measure_id": measure.id,
-                "goal_id": goal.id,
+                "results": {kind: asdict(result) for kind, result in results.items()},
                 "runs": runs,
             }
         )

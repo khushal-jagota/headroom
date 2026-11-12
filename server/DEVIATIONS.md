@@ -59,9 +59,20 @@ Python enforces only the wall-time limit. Its configured default is 30 seconds (
 - `stdout and private control frames share the output byte budget` proves combined output enforcement, including buffered output before completion.
 - `decoded HTTP bytes accumulate across responses and exhaust the run budget` proves aggregate response enforcement even if a script catches the failure.
 - `V8 old-space exhaustion is a safe budget failure and the child is reaped` proves heap exhaustion with a smaller test cap.
-- `good child sees only frozen data and a clean temporary home; parent retains numeric candidates` checks the actual default child option `--max-old-space-size=256`.
+- `good child sees frozen data and the exact environment allowlist; parent retains numeric candidates` checks the actual default child option `--max-old-space-size=256`.
 
 The byte/heap failure cases use smaller configured limits to avoid unnecessary VPS load. Default constants retain the accepted values above.
+
+### Accepted script-contract differences after source review
+
+The Manager accepted these differences on November 12, 2026:
+
+- Python inherits the full server environment. TypeScript constructs a filtered environment with private `HOME`/`TMPDIR` and fixed `LANG`. It retains only `TZ`, `PATH`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, their lower-case forms, `SSL_CERT_FILE`, `SSL_CERT_DIR`, and `NODE_EXTRA_CA_CERTS`. No `PLAN_*` variable or provider home passes through. The environment test pins this exact list.
+- Non-wall limit notices say "The run exceeded an execution limit." Python's existing wall-time notice stays unchanged.
+- JavaScript diagnostics retain only `SyntaxError`, `TypeError`, `ReferenceError`, and `RangeError`. Python retains fourteen exception names.
+- A script's explicit `process.exit(0)` is a runtime failure because it omits the completion protocol. Python treated `SystemExit(0)` as success.
+
+The child runs as the same operating-system user and can read what the server can read, as in Python. Environment filtering is not a sandbox. The author prohibitions are policy, not filesystem or process isolation.
 
 ## Claude SDK identity in the child environment
 

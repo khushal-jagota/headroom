@@ -163,7 +163,6 @@ export interface AreaLoopOptions {
 }
 export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOptions = {}) {
   let sources: SourceScheduleLoop | undefined;
-  let unsubscribeSources: (() => void) | undefined;
   let wakes: ManagerWakeLoop | undefined;
   let unsubscribe: (() => void) | undefined;
   if (options.managerWakes) {
@@ -192,17 +191,13 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
   }
   return {
     start(): void {
-      if (sources) {
-        unsubscribeSources = context.changes.subscribe(() => sources?.wake());
-        sources.start(context.config.tick_seconds);
-      }
+      sources?.start(context.config.tick_seconds);
       if (!wakes) return;
       unsubscribe = context.changes.subscribe(() => wakes?.wake());
       wakes.start(context.config.tick_seconds);
     },
     async stop(options: { deadline?: number } = {}): Promise<void> {
       unsubscribe?.();
-      unsubscribeSources?.();
       const results = await Promise.allSettled([wakes?.stop(options), sources?.stop(options)]);
       const failures = results.filter((result) => result.status === 'rejected');
       if (failures.length)

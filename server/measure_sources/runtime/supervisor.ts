@@ -1,4 +1,4 @@
-/** One clean child per trusted script. Only the parent accepts provisional output. */
+/** One filtered-environment child per trusted script. Only the parent accepts provisional output. */
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import type { Duplex } from 'node:stream';
@@ -58,6 +58,19 @@ function scalar(raw: Record<string, unknown>): NumericJSON<CandidateObservation>
     limitation: limitation as string | null,
   };
 }
+const CHILD_ENVIRONMENT_KEYS = [
+  'TZ',
+  'PATH',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'NODE_EXTRA_CA_CERTS',
+] as const;
 export class Runtime {
   private active = new Map<string, () => void>();
   private canceled = new Set<string>();
@@ -83,7 +96,7 @@ export class Runtime {
     let process: ChildProcess | undefined;
     let directory: string | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let childClosed: Promise<void> | undefined;
+    let childExited: Promise<void> | undefined;
     const kill = () => {
       if (process?.pid) {
         try {
@@ -129,16 +142,29 @@ export class Runtime {
         ],
         {
           cwd: directory,
-          env: { HOME: directory, TMPDIR: directory, LANG: 'C.UTF-8' },
+          env: {
+            HOME: directory,
+            TMPDIR: directory,
+            LANG: 'C.UTF-8',
+            ...Object.fromEntries(
+              CHILD_ENVIRONMENT_KEYS.flatMap((key) =>
+                globalThis.process.env[key] === undefined
+                  ? []
+                  : [[key, globalThis.process.env[key]]],
+              ),
+            ),
+          },
           detached: true,
           stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
         },
       );
-      childClosed = new Promise<void>((resolve) => process!.once('close', () => resolve()));
+      childExited = new Promise<void>((resolve) => {
+        process!.once('exit', () => resolve());
+        process!.once('error', () => {
+          if (process!.pid === undefined) resolve();
+        });
+      });
       const channel = process.stdio[3] as Duplex;
-      // The extra stdio pipe is duplex. Close our writable half after child EOF
-      // so an ordinary child exit can finish 'close' after every read drains.
-      channel.on('end', () => channel.end());
       const complete = new Promise<RunFailure | null>((resolve) => {
         let settled = false;
         finish = (value) => {
@@ -305,13 +331,17 @@ export class Runtime {
           stderrSuffix = diagnostic.slice(-128);
         });
         process!.on('error', () => finish(failure('runtime_failure')));
-        process!.on('close', () =>
-          finish(
-            fatalHeap
-              ? failure('budget_exhausted', { budget: 'heap_bytes' })
-              : failure('runtime_failure'),
-          ),
-        );
+        process!.on('exit', () => {
+          // Allow already-readable diagnostics one poll turn, without waiting
+          // for EOF from a detached descendant that inherited the pipes.
+          setImmediate(() =>
+            finish(
+              fatalHeap
+                ? failure('budget_exhausted', { budget: 'heap_bytes' })
+                : failure('runtime_failure'),
+            ),
+          );
+        });
         channel.on('error', () => finish(failure('runtime_failure')));
         timer = setTimeout(
           () => finish(failure('budget_exhausted', { budget: 'wall_seconds' })),
@@ -341,7 +371,9 @@ export class Runtime {
     } finally {
       if (timer) clearTimeout(timer);
       kill();
-      await childClosed;
+      await childExited;
+      // Drain already-readable bytes once; descendant-held EOF is not a gate.
+      await new Promise<void>((resolve) => setImmediate(resolve));
       process?.stdio.forEach((stream) => stream?.destroy());
       if (directory) await rm(directory, { recursive: true, force: true });
       this.active.delete(admission.run.id);

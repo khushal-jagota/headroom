@@ -92,8 +92,8 @@ export function runtime_guidance(limits: RuntimeLimits = DEFAULT_LIMITS) {
         `The run allows ${limits.output_bytes} combined control/stdout/stderr bytes and ` +
         `${limits.response_bytes} aggregate decoded HTTP response bytes. ` +
         `V8 old-space has a ${limits.heap_megabytes} MiB cap. This is not a total resident-memory guarantee.`,
-      'The child has a private temporary directory and a clean environment without inherited provider homes or PLAN variables. ' +
-        'Scripts remain trusted arbitrary code, not a security sandbox. ' +
+      'The child has a private temporary directory and a filtered environment without provider homes or PLAN variables. Timezone, PATH, proxy, and CA variables use a fixed allowlist. ' +
+        'The child runs as the server user and can read server-readable files. This is not a sandbox. ' +
         "Do not start processes, write outside the temporary directory, or read the server's files. " +
         'The built-in attention collector uses its explicit read-only database path.',
     ],

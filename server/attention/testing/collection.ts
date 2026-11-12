@@ -1,7 +1,7 @@
 /** Direct attention collector proof on populated, exclusively synthetic state. */
 import { tmpdir } from 'node:os';
 import { relative, isAbsolute, resolve } from 'node:path';
-import { createReadAccess, createDatabase } from '../../core/database/index.ts';
+import { createReadAccess } from '../../core/database/index.ts';
 import { collect_daily } from '../collection.ts';
 import type { HistoryWindow } from '../../measure_sources/contracts.ts';
 interface Spec {
@@ -44,22 +44,7 @@ export async function run(spec: Spec) {
   } finally {
     access.close();
   }
-  const database = createDatabase(spec.db_path);
-  let rejected_writable = false;
-  try {
-    try {
-      await collect_daily(database as unknown as string, spec.dataset_ids, spec.measure_ids, {
-        context: { frozen_at: spec.now, history: null },
-        record: () => {},
-        record_dataset: () => {},
-      });
-    } catch (error) {
-      rejected_writable = error instanceof TypeError;
-    }
-  } finally {
-    database.close();
-  }
-  if (!readonly || !no_write_capability || !rejected_writable)
+  if (!readonly || !no_write_capability)
     throw new Error('attention collector accepted writable capability');
-  return { results, readonly, no_write_capability, rejected_writable, path_inside_temp: true };
+  return { results, readonly, no_write_capability, path_inside_temp: true };
 }

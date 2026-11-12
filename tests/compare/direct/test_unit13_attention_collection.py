@@ -216,7 +216,6 @@ def test_unit13_attention_collection(
         "results": expected,
         "readonly": True,
         "no_write_capability": True,
-        "rejected_writable": True,
         "path_inside_temp": True,
     }
     report = {

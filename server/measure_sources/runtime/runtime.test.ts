@@ -1,7 +1,7 @@
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { createServer } from 'node:http';
 import type { RequestListener } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Runtime } from './supervisor.ts';
@@ -12,7 +12,6 @@ import type { CredentialResolver } from '../../credentials/contracts.ts';
 import { numeric_value, stringify_python_json } from '../../core/http/numeric_json.ts';
 import { fixture } from '../../tests/ticket_fixture.ts';
 import { create_credential_in_transaction } from '../../credentials/actions.ts';
-import { DatabaseCredentialResolver, FileCredentialCipher } from '../../credentials/store.ts';
 import { OWNER } from '../../core/contracts.ts';
 import { create_source, submit_script } from '../actions.ts';
 import { read_source, read_failure_episode } from '../data.ts';
@@ -22,7 +21,11 @@ import { create_measure } from '../../measures/actions.ts';
 
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
-  for (const close of cleanup.splice(0).reverse()) await close();
+  try {
+    for (const close of cleanup.splice(0).reverse()) await close();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 const noCredentials: CredentialResolver = {
   resolve() {
@@ -98,12 +101,38 @@ async function provider(handler: RequestListener): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 // The runner was absent from existing coverage: this proves its actual process/IPC boundary.
-test('good child sees only frozen data and a clean temporary home; parent retains numeric candidates', async () => {
+test('good child sees frozen data and the exact environment allowlist; parent retains numeric candidates', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'panels-source-environment-'));
+  cleanup.push(() => rmSync(root, { recursive: true, force: true }));
+  const allowed = {
+    TZ: 'UTC',
+    PATH: '/synthetic/path',
+    HTTP_PROXY: 'http://127.0.0.1:1',
+    HTTPS_PROXY: 'http://127.0.0.1:2',
+    NO_PROXY: 'localhost',
+    http_proxy: 'http://127.0.0.1:3',
+    https_proxy: 'http://127.0.0.1:4',
+    no_proxy: '127.0.0.1',
+    SSL_CERT_FILE: join(root, 'cert.pem'),
+    SSL_CERT_DIR: root,
+    NODE_EXTRA_CA_CERTS: join(root, 'extra.pem'),
+  };
+  for (const [key, value] of Object.entries({
+    ...allowed,
+    PLAN_DB_PATH: join(root, 'forbidden.sqlite'),
+    CODEX_HOME: root,
+    HERMES_HOME: root,
+    CLAUDE_CONFIG_DIR: root,
+    UNLISTED_SOURCE_VARIABLE: 'forbidden',
+  }))
+    vi.stubEnv(key, value);
   const result = await new Runtime().execute(
     admission(
       module(`
     if (!Object.isFrozen(context) || !Object.isFrozen(context.required_outputs)) throw new Error();
-    if (Object.keys(process.env).some(key=>key.startsWith('PLAN_') || ['CODEX_HOME','HERMES_HOME','CLAUDE_CONFIG_DIR','NODE_OPTIONS'].includes(key))) throw new Error();
+    const actual={...process.env}; delete actual.HOME; delete actual.TMPDIR;
+    const expected=${JSON.stringify({ ...allowed, LANG: 'C.UTF-8' })};
+    if (JSON.stringify(Object.entries(actual).sort()) !== JSON.stringify(Object.entries(expected).sort())) throw new Error();
     if (process.cwd() !== process.env.HOME || process.env.HOME !== process.env.TMPDIR) throw new Error();
     if (!process.execArgv.includes('--max-old-space-size=256')) throw new Error();
     if (await latest('measure-test') !== null) throw new Error();
@@ -177,29 +206,7 @@ test('credential use crosses private IPC from an encrypted temporary store to a 
       response.end('{"error":"synthetic-provider-secret"}');
     } else response.end('{"value":12.5}');
   });
-  const credentials: CredentialResolver = {
-    resolve(reference) {
-      return db.read((sql) =>
-        new DatabaseCredentialResolver(sql, new FileCredentialCipher(key, true)).resolve(reference),
-      );
-    },
-  };
-  const result = await new Runtime().execute(
-    admission(
-      module(
-        `const response=await request(${JSON.stringify(url)},{credential_ref:'local-provider'}); response.raise_for_status(); await record('measure-test','2026-11-12',(await response.json()).value);`,
-      ),
-    ),
-    credentials,
-  );
-  expect(result.failure).toBeNull();
-  expect(authorization).toBe('Bearer synthetic-only-token');
-  expect(numeric_value(result.observations[0]!.value)).toBe(12.5);
-  expect(result.metrics.request_count).toBe(1);
-  expect(JSON.stringify(result)).not.toContain('synthetic-only-token');
-  // Gap: standalone runner results do not prove child output reaches retained rows
-  // or that a real HTTP failure reaches the canonical typed notice producer.
-  // Reuse this same database, key, provider and Runtime for both collection outcomes.
+  // The canonical collection below proves the same encrypted credential/HTTP path.
   const source = db.write((sql) =>
     create_source(
       sql,
@@ -308,6 +315,47 @@ test('credential use crosses private IPC from an encrypted temporary store to a 
     ),
   ).toEqual({ value: 12.5, run_id: collected.completed.run.id });
   db.close();
+});
+// A detached descendant can retain stdout after the owned child exits. Its exact
+// recorded PID is test-owned and is always killed, including assertion failures.
+test('a detached descendant cannot prevent direct-child reaping', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'panels-source-descendant-'));
+  const pidPath = join(root, 'pid');
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const running = new Runtime().execute(
+    admission(
+      module(`
+    const {spawn}=await import('node:child_process');
+    const {writeFileSync}=await import('node:fs');
+    const child=spawn(process.execPath,['-e','setTimeout(()=>{},10000)'],{detached:true,stdio:['ignore',1,2]});
+    writeFileSync(${JSON.stringify(pidPath)},String(child.pid)); child.unref();
+  `),
+    ),
+    noCredentials,
+  );
+  try {
+    const result = await Promise.race([
+      running,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('direct child did not reap')), 1500);
+      }),
+    ]);
+    expect(result.failure).toBeNull();
+  } finally {
+    clearTimeout(timeout);
+    if (existsSync(pidPath)) {
+      const pid = Number(readFileSync(pidPath, 'utf8'));
+      if (Number.isInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+        }
+      }
+    }
+    await running;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 // Smaller configured limits exercise real enforcement without consuming production budgets on the VPS.
 test('stdout and private control frames share the output byte budget', async () => {

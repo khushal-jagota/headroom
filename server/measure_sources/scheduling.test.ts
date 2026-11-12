@@ -232,35 +232,3 @@ test('source clock is off by default and shares dispatcher ownership and the sto
     stop.mockRestore();
   }
 });
-
-/** Gap: ordinary loop checks do not emit a change synchronously inside a pass. */
-test('a reentrant clock wake retains one timer and stop clears it', async () => {
-  const { SourceScheduleLoop } = await import('./schedule_loop.ts');
-  vi.useFakeTimers();
-  try {
-    let polls = 0;
-    const loop = new SourceScheduleLoop({
-      database: fixture(),
-      clock: new TestClock('2027-01-01T08:30:00+14:00'),
-      assert_database_owned() {},
-      participants: [
-        {
-          start() {},
-          poll() {
-            polls++;
-            if (polls === 1) loop.wake();
-          },
-          stop() {},
-        },
-      ],
-    });
-    loop.start(5);
-    vi.advanceTimersToNextTimer();
-    expect(polls).toBe(1);
-    expect(vi.getTimerCount()).toBe(1);
-    await loop.stop({ deadline: performance.now() / 1000 + 5 });
-    expect(vi.getTimerCount()).toBe(0);
-  } finally {
-    vi.useRealTimers();
-  }
-});
