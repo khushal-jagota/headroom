@@ -89,7 +89,7 @@ function nativeText(text: string): void {
     nativeNotification('item/started', { item: user });
     nativeNotification('item/completed', { item: user });
     nativeNotification('item/started', {
-      item: { type: 'agentMessage', id: `message-${nativeTurn}` },
+      item: { type: 'agentMessage', id: `message-${nativeTurn}`, text: '' },
     });
   }
   const chunks = text === 'malformed output' ? ['malformed ', 'output'] : [text];
@@ -131,6 +131,7 @@ function coreMessage(message: Record<string, unknown>): boolean {
     });
     // Native resume can announce historical usage before the next turn starts.
     nativeNotification('thread/tokenUsage/updated', {
+      turnId: `turn-${nativeState.nextTurn}`,
       tokenUsage: { total: { inputTokens: 11, outputTokens: 5, cachedInputTokens: 2 } },
     });
   } else if (message.method === 'skills/list')
