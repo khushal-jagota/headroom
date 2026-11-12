@@ -32,6 +32,10 @@ final class ServerReachabilityTests: XCTestCase {
             return max(0, remaining)
         }
         XCTAssertTrue(title.waitForExistence(timeout: remainingCoverTime()))
+        XCTAssertTrue(title.isHittable)
+        let retry = app.buttons["Try again"]
+        XCTAssertTrue(retry.waitForExistence(timeout: remainingCoverTime()))
+        XCTAssertTrue(retry.isHittable)
         // The title and accessibility tree can settle in separate updates.
         // All absence checks share the same transition deadline.
         for coveredElement in [
@@ -46,5 +50,8 @@ final class ServerReachabilityTests: XCTestCase {
         try await state("online")
         XCTAssertTrue(proposal.waitForExistence(timeout: 70))
         XCTAssertTrue(title.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(proposal.isHittable)
+        proposal.tap()
+        XCTAssertTrue(app.buttons["detail-back"].waitForExistence(timeout: 8))
     }
 }

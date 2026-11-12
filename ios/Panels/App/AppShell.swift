@@ -13,9 +13,11 @@ struct AppShell: View {
     @State private var morePath: [AppRoute] = []
 
     var body: some View {
-        tabs
-        // Keep route edit owners mounted beneath the connection reminder.
+        // Keep every route mounted while a separate accessibility container hides
+        // the UIKit-backed tabs and their descendants beneath the connection cover.
+        ZStack { tabs }
         .allowsHitTesting(!store.serverUnreachable)
+        .accessibilityElement(children: store.serverUnreachable ? .ignore : .contain)
         .accessibilityHidden(store.serverUnreachable)
         .overlay {
             if store.serverUnreachable {
