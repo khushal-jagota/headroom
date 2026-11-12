@@ -1460,13 +1460,21 @@ class SleepCycles:
         )
         keys = [k for _, payload in waiting if (k := _payload_key(str(payload))) is not None]
         self.required_after_kill.update(keys)
+        end_keys = {key for key in keys if key.startswith("end:")}
+        applied_ends = await asyncio.to_thread(
+            _query,
+            self.db_path,
+            "SELECT item_key FROM harness_link_applied WHERE item_key LIKE 'end:%'",
+        )
+        end_keys.update(str(key) for (key,) in applied_ends)
         lives = {}
         for conversation_id in self.conversations:
             agents = _Agents.read(self.agent_logs / f"{conversation_id}.jsonl")
             self.killed_lives[conversation_id].add(agents.lives)
-            # A turn whose end is still waiting in the outbox ends when it is replayed.
+            # A queued end replays, and a committed end needs no interruption even if
+            # the kill caught the agent before it logged the end's acknowledgement.
             open_turn = agents.open_turn
-            if f"end:{conversation_id}:{open_turn}" in keys:
+            if f"end:{conversation_id}:{open_turn}" in end_keys:
                 open_turn = None
             lives[conversation_id] = {
                 "life": agents.lives,
