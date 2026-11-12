@@ -422,10 +422,13 @@ class _Harness:
         idle_child_stop_after_seconds: float = 30 * 60,
         idle_child_sweep_interval_seconds: float = 5 * 60,
         factory_wrapper: Callable[[BackendChildFactory], BackendChildFactory] | None = None,
+        home_server_url: str | None = None,
     ) -> None:
         self.db_path = db_path
         self.clock = _FakeMonotonicClock() if clock is None else clock
-        self.store = ConversationStore(str(db_path), integer_now=lambda: int(self.clock.now))
+        self.store = ConversationStore(
+            str(db_path), integer_now=lambda: int(self.clock.now), home_server_url=home_server_url
+        )
         self.backends: dict[str, _FakeBackend] = {}
         self.spawned_conversation_ids: list[str] = []
         self.resolved_starts: list[ResolvedConversationStart] = []

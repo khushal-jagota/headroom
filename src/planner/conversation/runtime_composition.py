@@ -186,10 +186,12 @@ def build_conversation_runtime(
     cleanup: AsyncExitStack | None = None,
     signal_composition: SignalRuntimeComposition | None = None,
     defer_view_cleanup: bool = False,
+    home_server_url: str | None = None,
 ) -> ConversationRuntime:
     """Compose the conversation system, its record, the files it keeps, and the tail."""
     store = ConversationStore(
         db_path,
+        home_server_url=home_server_url,
         busy_timeout_ms=db_busy_timeout_ms,
         event_participant=credential_request_data.observe_events,
         startup_participant=credential_request_data.reconcile_deliveries,

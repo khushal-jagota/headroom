@@ -320,6 +320,7 @@ def create_app(
 
             async with application_runtime(
                 db_path=config.db_path,
+                home_server_url=f"http://{HOST}:{config.port}",
                 db_busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
                 sse_heartbeat_ms=SSE_HEARTBEAT_MS,
                 backend_child_factories=backend_factories,

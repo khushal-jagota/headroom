@@ -81,7 +81,7 @@ from planner.conversation.lifecycle_storage import (
     read_facts,
     validate_runtime_ownership,
 )
-from planner.conversation.local_child_contracts import LocalChildIdentity
+from planner.conversation.local_child_contracts import LegacySourceContext, LocalChildIdentity
 from planner.conversation.logic.conversation_start_resolution import bind_conversation_origin
 from planner.conversation.logic.retained_turn import OpenRunTurn, facts_after_restart
 from planner.conversation.publication.coordinator import (
@@ -228,6 +228,7 @@ class ConversationStore:
         self,
         db_path: str,
         *,
+        home_server_url: str | None = None,
         integer_now: Callable[[], int] = lambda: int(time.time()),
         busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MILLISECONDS,
         transaction_participant: ConversationTransactionParticipant | None = None,
@@ -250,6 +251,7 @@ class ConversationStore:
             "signal_mutation", default=None
         )
         self._db_path = db_path
+        self._home_server_url = home_server_url
         self._transaction_participant = transaction_participant
         self._event_participant = event_participant
         self._startup_participant = startup_participant
@@ -329,8 +331,10 @@ class ConversationStore:
                 now=self._integer_now(),
             )
         manifests = read_manifests(Path(self._db_path))
+        from planner.conversation.legacy_sources import checked_update_stop, inspect_source
+
         unresolved = tuple(
-            turn for turn in read_unresolved_turns(conn)
+            turn for turn in read_unresolved_turns(conn, include_claimed_unknown=True)
             if turn.conversation_id not in open_runs
         )
         # Older turns lack an immutable occurrence. Assign identity only, while
@@ -342,10 +346,39 @@ class ConversationStore:
                     (turn.conversation_id, turn.turn_number, uuid4().hex, turn.runtime_epoch),
                 )
         unresolved = tuple(
-            turn for turn in read_unresolved_turns(conn)
+            turn for turn in read_unresolved_turns(conn, include_claimed_unknown=True)
             if turn.conversation_id not in open_runs
         )
         child_custody.observe_unknown_owners(conn, unresolved)
+        for turn in unresolved:
+            if child_custody.retirement_proven(conn, turn.conversation_id):
+                continue
+            checked_stop = any(
+                checked_update_stop(self._db_path, manifest)
+                and any(captured.conversation_id == turn.conversation_id
+                        and captured.turn_number == turn.turn_number
+                        and (captured.occurrence_id == turn.occurrence_id
+                             or (captured.occurrence_id is None
+                                 and captured.runtime_epoch == turn.runtime_epoch))
+                        for captured in manifest.turns)
+                for manifest in manifests
+            )
+            context = self._legacy_source_context(conn, turn.conversation_id)
+            if context is None:
+                continue
+            inspection = inspect_source(context)
+            # Only the no-Ticket launch path stays inside the stopped home service.
+            # A Worker unit can survive a failed detach, so incomplete inspection is
+            # never enough for that path, even when an update stopped the server.
+            direct_stop = (
+                checked_stop and not dict(context.identity_variables).get("PLAN_TICKET_ID")
+            )
+            if inspection == () or (inspection is None and direct_stop):
+                row = conn.execute(
+                    "SELECT generation FROM conversation_child_custody WHERE conversation_id=?",
+                    (turn.conversation_id,),
+                ).fetchone()
+                child_custody.write_retired(conn, turn.conversation_id, str(row[0]))
         self.blocked_local_conversations = {
             turn.conversation_id
             for turn in unresolved
@@ -444,6 +477,72 @@ class ConversationStore:
             for conversation_id, payloads in recovered_events.items():
                 self._insert_rows(conn, conversation_id, payloads)
         commit_without_change_signal(conn)
+
+    def _legacy_source_context(
+        self, conn: sqlite3.Connection, conversation_id: str,
+    ) -> LegacySourceContext | None:
+        row = conn.execute(
+            "SELECT identity_environment_variables FROM conversations WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        variables = dict(json.loads(str(row[0])))
+        variables["PLAN_CONVERSATION_ID"] = conversation_id
+        return LegacySourceContext(
+            str(Path(self._db_path).resolve()), conversation_id, tuple(variables.items()),
+            self._home_server_url,
+        )
+
+    async def repair_legacy_source(self, conversation_id: str) -> bool:
+        proved = await self._write(self._repair_legacy_source_sync, conversation_id)
+        if proved:
+            self.blocked_local_conversations.discard(conversation_id)
+            self.legacy_blocked_details.pop(conversation_id, None)
+        return proved
+
+    def _repair_legacy_source_sync(self, conversation_id: str) -> bool:
+        from planner.conversation.legacy_sources import repair_source
+
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT generation,occurrence_id,runtime_epoch FROM conversation_child_custody "
+                "WHERE conversation_id=?", (conversation_id,),
+            ).fetchone()
+            context = self._legacy_source_context(conn, conversation_id)
+            claim = conn.execute(
+                "SELECT id,worker_step_claim,worker_step_claim_revision FROM tickets "
+                "WHERE conversation_id=?", (conversation_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None or context is None or not repair_source(context):
+            return False
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute(
+                "SELECT generation,occurrence_id,runtime_epoch FROM conversation_child_custody "
+                "WHERE conversation_id=?", (conversation_id,),
+            ).fetchone()
+            current_claim = conn.execute(
+                "SELECT id,worker_step_claim,worker_step_claim_revision FROM tickets "
+                "WHERE conversation_id=?", (conversation_id,),
+            ).fetchone()
+            if current != row or current_claim != claim:
+                conn.rollback()
+                return False
+            self._apply_signal_mutation(conn, admission)
+            child_custody.write_retired(conn, conversation_id, str(row[0]))
+            facts = facts_after_restart(read_facts(conn, conversation_id), None)
+            apply_facts(conn, conversation_id, facts)
+            participate(
+                conn, self._transaction_participant,
+                LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
+                guard=self._transaction_control_guard,
+            )
+            self._commit_rows(conn, ())
+            return True
 
     async def legacy_recovery_detail(self, conversation_id: str) -> str | None:
         return self.legacy_blocked_details.get(conversation_id)

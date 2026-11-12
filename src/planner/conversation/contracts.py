@@ -842,6 +842,10 @@ class ConversationSystem(Protocol):
         """Discard one held message, or return false if it is no longer held."""
         ...
 
+    async def repair_legacy_source(self, conversation_id: str) -> bool:
+        """Explicit Restart Worker can stop and prove retirement of an exact old local source."""
+        ...
+
     async def retirement_is_confirmed(self, conversation_id: str) -> bool:
         """Whether this conversation's exact child is proven stopped or never started.
 

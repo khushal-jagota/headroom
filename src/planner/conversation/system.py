@@ -1192,6 +1192,20 @@ class SqliteProcessConversationSystem:
                 recording_receipt=recording_receipt,
             )
 
+    async def repair_legacy_source(self, conversation_id: str) -> bool:
+        """The existing explicit restart owns cleanup of this exact old source."""
+        state = await self._conversation_state(conversation_id)
+        if state is None or conversation_id not in self._store.blocked_local_conversations:
+            return False
+        async with state.lock:
+            if state.child is not None or state.retained_child_reference is not None:
+                return False
+            if not await self._store.repair_legacy_source(conversation_id):
+                return False
+            state.child_is_quarantined = False
+            state.local_child_retirement_proven = True
+            return True
+
     async def retirement_is_confirmed(self, conversation_id: str) -> bool:
         """Require an actual cleanup receipt or proof that no source ever started."""
         state = await self._conversation_state(conversation_id)
@@ -1208,7 +1222,10 @@ class SqliteProcessConversationSystem:
                 and (
                     remote_receipt
                     or state.local_child_retirement_proven
-                    or not state.has_delivered_prompt
+                    or (
+                        not state.has_delivered_prompt
+                        and conversation_id not in self._store.blocked_local_conversations
+                    )
                 )
             )
 

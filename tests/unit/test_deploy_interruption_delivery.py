@@ -1169,92 +1169,144 @@ def test_ordinary_home_crash_recovers_once_with_durable_identity(tmp_path: Path)
     _run(exercise)
 
 
-def test_legacy_upgrade_fence_resolves_after_proven_home_reboot(
+def test_legacy_upgrade_recovers_checked_stop_and_repairs_crash_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from planner.conversation import child_custody
-    from planner.conversation.contracts import PromptDeliveryRefused
-    from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
-    from planner.conversation.local_child_contracts import LocalHostBootIdentity
+    import json
+    import os
+    import subprocess
+    import sys
+    from dataclasses import replace
+    from datetime import UTC, datetime
+    from uuid import uuid4
 
-    path = tmp_path / "upgrade.db"
+    from planner.conversation import legacy_sources
+    from planner.conversation.contracts import ConversationRoleMaterials
+    from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
+
+    root = tmp_path / "installation"
+    path = root / "data/planner.db"
+    path.parent.mkdir(parents=True)
+    (root / "app").mkdir()
     conn = connect(str(path))
     create_schema(conn)
     conn.close()
     original = _Harness(path)
-    current_host = LocalHostBootIdentity("this-home", "before-reboot")
-    monkeypatch.setattr(child_custody, "host_boot_identity", lambda: current_host)
+    orphan_id = "legacy-orphan-" + uuid4().hex
+    server_url = "http://127.0.0.1:19876"
+    role = (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "orphan-ticket"))
+    # This case uses an uncontained test process. No real Worker service exists.
+    monkeypatch.setattr(legacy_sources, "_control", lambda *args: "")
 
     async def exercise() -> None:
-        await _start(original)
+        await _start(original, "idle")
+        await _start(
+            original, role_materials=ConversationRoleMaterials(
+                "Worker", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", "t")),
+            ),
+        )
         _ticket(path)
-        await original.system.send("c", text_message_content("legacy work"), sender_label="owner")
-        await original.system.shutdown()
-        # Model the populated previous schema: it has the turn and its exact claim,
-        # but none of this migration's custody or dispatch records.
+        await original.system.send("c", text_message_content("stopped work"), sender_label="owner")
+        await _start(
+            original, orphan_id,
+            role_materials=ConversationRoleMaterials("Worker", role),
+        )
+        await original.system.send(
+            orphan_id, text_message_content("interrupted work"), sender_label="owner"
+        )
         with connect(str(path)) as db:
-            db.execute("DROP TABLE conversation_child_custody")
-            db.execute("DROP TABLE worker_step_dispatch_intents")
-            db.execute("DROP TABLE automatic_start_bindings")
-            db.execute("DELETE FROM conversation_turn_occurrences WHERE conversation_id='c'")
             db.execute(
-                "UPDATE alembic_version SET version_num='retire_executor_websocket_tables'"
+                "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
+                "field_values,created_at,updated_at,conversation_id,worker_step_claim,"
+                "worker_step_claim_revision,workflow_json) VALUES "
+                "('orphan-ticket','Worker','coding','hermes','needs_implementation',"
+                "'needs_implementation','{}',0,0,?,'out',7,?)",
+                (orphan_id, preset_workflow_json(db)),
             )
             db.commit()
-        upgrade = connect(str(path))
-        create_schema(upgrade)
-        upgrade.close()
-        first_boot = _Harness(path)
+        captured = replace(
+            _capture(path, owner_id="t"), deployment_id="update-owned-stop", captured_at=3
+        )
+        await original.system.shutdown()
+        environment = {**os.environ, **dict(role), "PLAN_CONVERSATION_ID": orphan_id,
+                       "PLAN_SERVER_URL": server_url}
+        # Hermes does not inherit PLAN_DB_PATH. The exact injected home URL scopes it.
+        environment.pop("PLAN_DB_PATH", None)
+        source = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"], env=environment,
+        )
+        # Limit discovery to this case's owned child. Model its uncontained launcher
+        # without inspecting or controlling the real Worker's surrounding service.
+        monkeypatch.setattr(
+            legacy_sources, "_process_directories", lambda: (Path("/proc") / str(source.pid),)
+        )
+        monkeypatch.setattr(legacy_sources, "_process_unit", lambda path: None)
         try:
-            await run_automatic_recovery(first_boot.system, first_boot.store)
-            assert first_boot.system.workspace_activity() == "unknown"
-            refusal = await first_boot.system.send(
-                "c", text_message_content("new work"), sender_label="owner"
-            )
-            assert isinstance(refusal, PromptDeliveryRefused)
-            assert first_boot.spawned_conversation_ids == []
-            assert await first_boot.store.legacy_recovery_detail("c") == (
-                "Previous-version ownership needs one full restart of this home; "
-                "restarting only the app does not clear it"
-            )
             with connect(str(path)) as db:
-                assert tuple(db.execute(
-                    "SELECT worker_step_claim,worker_step_claim_revision FROM tickets WHERE id='t'"
-                ).fetchone()) == ("out", 7)
-                assert tuple(db.execute(
-                    "SELECT state,host,boot FROM conversation_child_custody "
-                    "WHERE conversation_id='c'"
-                ).fetchone()) == ("legacy_unknown", "this-home", "before-reboot")
+                db.execute("DROP TABLE conversation_child_custody")
+                db.execute("DROP TABLE worker_step_dispatch_intents")
+                db.execute("DROP TABLE automatic_start_bindings")
+                db.execute(
+                    "UPDATE alembic_version SET version_num='retire_executor_websocket_tables'"
+                )
+                # An old startup can already have settled the abandoned Worker turn.
+                db.execute(
+                    "UPDATE conversation_lifecycle_facts SET status='unavailable' "
+                    "WHERE conversation_id=? AND kind='turn'", (orphan_id,),
+                )
+                db.commit()
+            upgrade = connect(str(path))
+            create_schema(upgrade)
+            upgrade.close()
+            write_manifest(path, captured)
+            (root / "app/manifest.json").write_text(json.dumps({"app_sha": "b" * 40}))
+            steps = {
+                key: datetime.fromtimestamp(second, UTC).isoformat()
+                for key, second in (("work_paused", 0), ("installing", 1),
+                                    ("service_stopped", 2), ("interruptions_captured", 3),
+                                    ("app_swapped", 4))
+            }
+            (path.parent / "update-attempt.json").write_text(json.dumps({
+                "attempt_id": "update-owned-stop", "from_sha": "a" * 40,
+                "to_sha": "b" * 40, "state": "installing", "steps": steps,
+            }))
+            restarted = _Harness(path, home_server_url=server_url)
+            try:
+                assert "idle" not in restarted.store.blocked_local_conversations
+                assert "c" not in restarted.store.blocked_local_conversations
+                assert orphan_id in restarted.store.blocked_local_conversations
+                with connect(str(path)) as db:
+                    assert tuple(db.execute(
+                        "SELECT worker_step_claim,worker_step_claim_revision "
+                        "FROM tickets WHERE id='orphan-ticket'"
+                    ).fetchone()) == ("out", 7)
+                await run_automatic_recovery(restarted.system, restarted.store)
+                assert len(restarted.backend("c").writes) == 1
+                await run_automatic_recovery(restarted.system, restarted.store)
+                assert len(restarted.backend("c").writes) == 1
+                assert source.poll() is None
+
+                async def next_step() -> WorkerStepStartResult:
+                    return WorkerStepStartResult(started=False)
+
+                db = connect(str(path))
+                try:
+                    await restart_worker(
+                        restarted.system, db, OWNER_PRINCIPAL, "orphan-ticket",
+                        start_worker_step=next_step, now=lambda: 1001,
+                    )
+                finally:
+                    db.close()
+                source.wait(timeout=5)
+                assert source.returncode is not None
+                assert orphan_id not in restarted.store.blocked_local_conversations
+                await restarted.complete_turn("c")
+                assert restarted.system.workspace_activity() == "idle"
+            finally:
+                await restarted.system.shutdown()
         finally:
-            await first_boot.system.shutdown()
-        # A process restart within this boot cannot manufacture termination proof.
-        same_boot = _Harness(path)
-        try:
-            assert same_boot.system.workspace_activity() == "unknown"
-            assert same_boot.spawned_conversation_ids == []
-        finally:
-            await same_boot.system.shutdown()
-        nonlocal current_host
-        current_host = LocalHostBootIdentity("this-home", "after-reboot")
-        after_reboot = _Harness(path)
-        try:
-            assert not after_reboot.store.blocked_local_conversations
-            await run_automatic_recovery(after_reboot.system, after_reboot.store)
-            assert len(after_reboot.backend("c").writes) == 1
-            assert "Inspect the interrupted work" in after_reboot.backend("c").written_texts()[0]
-            await run_automatic_recovery(after_reboot.system, after_reboot.store)
-            assert len(after_reboot.backend("c").writes) == 1
-            with connect(str(path)) as db:
-                assert db.execute("SELECT count(*) FROM deploy_interruptions").fetchone()[0] == 1
-            await after_reboot.complete_turn("c")
-            assert after_reboot.system.workspace_activity() == "idle"
-            admitted: list[bool] = []
-            assert await after_reboot.system.run_with_workspace_admission(
-                lambda: admitted.append(True), require_idle=True,
-            )
-            assert admitted == [True]
-        finally:
-            after_reboot.system.workspace_admission.reopen()
-            await after_reboot.system.shutdown()
+            if source.poll() is None:
+                source.terminate()
+                source.wait(timeout=5)
 
     _run(exercise)

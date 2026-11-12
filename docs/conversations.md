@@ -83,7 +83,9 @@ After a deploy or ordinary crash interrupts a session, an eligible conversation 
 
 Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace.
 
-After the first upgrade to child ownership records, older unresolved conversations need one owner-controlled reboot of the home. Restarting only Headroom does not clear them. Headroom first records the machine and its current boot without releasing their claims. A later boot on the same machine proves that the previous local agents stopped. The ordinary recovery path then resumes eligible work. A different machine or unreadable identity keeps the fence. An incomplete launch with unknown ownership follows the same reboot proof rule. A blocked send or Worker Restart explains the required home restart. See [Deployment](deployment.md) and [Worker steps](worker-steps.md).
+A normal update needs no recovery action from the owner. Update When Finished waits for idle work. Update Now pauses work, stops the old application, and captures its interrupted turns. Headroom accepts that stop only through the matching installer record and current source inspection. It then sends one inspection prompt.
+
+If an upgrade crashes before stop proof exists, the old source stays fenced. The existing Restart Worker action inspects its saved identity. It stops an exact matching Worker service or process, checks that the source is gone, and then restarts the Worker. An incomplete inspection keeps the fence and explains the required repair. A full home reboot remains an optional source of stop proof, not a normal update requirement.
 
 A restart of the Mac's executor process interrupts its turns the same way: once the Mac has sent everything it held for a conversation, that turn ends interrupted and gets the same one recovery prompt, which resumes the session in a fresh agent. A message the old process never fetched goes to the fresh agent instead, and nothing is interrupted. A steer the Mac does not take in time, or that later proves it never reached its turn, waits in the queue as the next message.
 

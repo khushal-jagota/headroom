@@ -14,8 +14,8 @@ from planner.conversation.deploy_interruptions.contracts import CapturedTurn
 from planner.conversation.local_child_contracts import LocalChildIdentity, LocalHostBootIdentity
 
 LEGACY_RECOVERY_DETAIL = (
-    "Previous-version ownership needs one full restart of this home; "
-    "restarting only the app does not clear it"
+    "The previous agent has no verified stop record. "
+    "Use Restart Worker to inspect and repair its exact source."
 )
 
 
@@ -117,22 +117,6 @@ def legacy_recovery_detail(conn: sqlite3.Connection, conversation_id: str) -> st
     ).fetchone()
     if row is None or row[0] not in {"legacy_unknown", "launch_pending"}:
         return None
-    current = host_boot_identity()
-    if current is None or row[1] is None or row[2] is None:
-        return (
-            "Previous-version ownership cannot resolve while this home's machine or boot "
-            "identity is unavailable. Restore readable identity evidence before a full restart."
-        )
-    if current.host != row[1]:
-        return (
-            "Previous-version ownership belongs to another home. Return this record to that "
-            "home and restart that home fully to resolve ownership."
-        )
-    if row[0] == "launch_pending":
-        return (
-            "An incomplete agent launch needs one full restart of this home; "
-            "restarting only the app does not clear it"
-        )
     return LEGACY_RECOVERY_DETAIL
 
 

@@ -67,7 +67,8 @@ def capture_stopped_database(db_path: Path, deployment_id: str, capture_id: str)
 
 
 def read_unresolved_turns(
-    conn: sqlite3.Connection, *, conversation_ids: tuple[str, ...] | None = None
+    conn: sqlite3.Connection, *, conversation_ids: tuple[str, ...] | None = None,
+    include_claimed_unknown: bool = False,
 ) -> tuple[CapturedTurn, ...]:
     """Turns still intent or running, outside unresolved Mac runs, optionally for some
     conversations only."""
@@ -91,9 +92,20 @@ def read_unresolved_turns(
         if conversation_ids is None
         else f"AND conversation_id IN ({','.join('?' for _ in conversation_ids)}) "
     )
+    eligible = "status IN ('intent','running')"
+    if include_claimed_unknown:
+        eligible += (
+            " OR (status='unavailable' AND EXISTS(SELECT 1 FROM tickets t "
+            "WHERE t.conversation_id=conversation_lifecycle_facts.conversation_id "
+            "AND t.worker_step_claim IN ('out','errored') AND t.stage!='done') "
+            "AND turn_number=(SELECT max(latest.turn_number) "
+            "FROM conversation_lifecycle_facts latest "
+            "WHERE latest.conversation_id=conversation_lifecycle_facts.conversation_id "
+            "AND latest.kind='turn'))"
+        )
     facts = conn.execute(
         "SELECT conversation_id,turn_number,status FROM conversation_lifecycle_facts "
-        "WHERE kind='turn' AND status IN ('intent','running') "
+        "WHERE kind='turn' AND (" + eligible + ") "
         + only
         + "ORDER BY conversation_id,turn_number",
         conversation_ids or (),

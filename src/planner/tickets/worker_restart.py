@@ -169,6 +169,13 @@ async def _prepare_worker_restart(
                 killed_conversation_id
             )
             if not source_retirement_proven:
+                repair = getattr(conversations, "repair_legacy_source", None)
+                if repair is not None:
+                    await repair(killed_conversation_id)
+                    source_retirement_proven = await conversations.retirement_is_confirmed(
+                        killed_conversation_id
+                    )
+            if not source_retirement_proven:
                 legacy_detail = await run_on_worker_thread(
                     legacy_recovery_detail, conn, killed_conversation_id
                 )
