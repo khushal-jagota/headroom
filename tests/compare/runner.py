@@ -6,6 +6,7 @@ import asyncio
 import json
 import math
 import re
+import shutil
 import sqlite3
 import time
 from contextlib import closing
@@ -30,7 +31,10 @@ ID = re.compile(
 # Shared navigation owns this TS-only collation index. Its order is proved through
 # scoped routes, not compared as storage bytes by unrelated domain lists.
 SHARED_DERIVED_TABLES = {
-    "navigation_view_ordered": "TS-only Intl order index; ordered IDs and paging are compared through navigation routes (Unit 4).",
+    "navigation_view_ordered": (
+        "TS-only Intl order index; ordered IDs and paging are compared through "
+        "navigation routes (Unit 4)."
+    ),
 }
 
 HEADERS = (
@@ -346,6 +350,7 @@ def run_list(
         with closing(connect(str(seed))) as conn:
             create_schema(conn)
     seed_captures: dict[str, Any] = {}
+    seed_attachments = root / "seed-attachments"
     if spec.get("seed_requests"):
         seed_server = _start_server(
             root / "seed-source", seed_db=lambda target: backup_database(seed, target),
@@ -367,6 +372,9 @@ def run_list(
         finally:
             _stop_server(seed_server)
         backup_database(seed_server.db_path, seed)
+        attachments = seed_server.db_path.parent / "files" / "conversations"
+        if attachments.is_dir():
+            shutil.copytree(attachments, seed_attachments)
     servers = []
     modules = ["tests.compare.host", right_module]
     differences: list[dict[str, Any]] = []
@@ -376,6 +384,11 @@ def run_list(
 
             def copy_seed(target: Path) -> None:
                 backup_database(seed, target)
+                if seed_attachments.is_dir():
+                    shutil.copytree(
+                        seed_attachments, target.parent / "files" / "conversations",
+                        dirs_exist_ok=True,
+                    )
 
             host_environment = (
                 {"PLAN_COMPARE_CONVERSATION_SYSTEM": "in_memory"}
