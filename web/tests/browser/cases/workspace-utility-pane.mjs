@@ -38,6 +38,8 @@ import { buildWorkspaceRail } from '../src/lib/workspaceRail';
   managers.filter(item=>item.settled).length);
 import {installConversationViewReaderFixture} from '../tests/support/conversationViewReaderFixture';
 const overlay = new URLSearchParams(location.search).has('overlay');
+const previewClock = new URLSearchParams(location.search).has('preview-clock');
+if(previewClock)installConversationViewReaderFixture('preview-conversation');
 const ownerUpdates = new URLSearchParams(location.search).has('owner-updates');
 if (overlay) installConversationViewReaderFixture(location.hash.includes('t_overlay0') ? 'ticket-overlay' : 'bounded-reader');
 const ReaderSource = globalThis.EventSource;
@@ -73,7 +75,7 @@ class QuietEventSource {
       });
       return;
     }
-    if (!url.startsWith('/api/navigation/view/events')) { if (overlay) return new ReaderSource(url); return; }
+    if (!url.startsWith('/api/navigation/view/events')) { if (overlay || previewClock) return new ReaderSource(url); return; }
     sources.add(this);
     void this.refresh();
   }
