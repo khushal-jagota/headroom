@@ -153,9 +153,6 @@ jobs:
           (cd web && node node_modules/vite/bin/vite.js build)
           .venv/bin/python -m playwright install --with-deps chromium
 
-          # The Goal-owned conversation case requires Unit 13 Part 2 / PR751:
-          # SourceDispatcher must execute queued source runs. Both Goal-holder
-          # cases below remain in this gate; no selected test is skipped.
           browser_cases=(
             'tests/e2e/test_conversation_signals.py::test_exact_conversation_signals_cross_runtime_stream_and_surfaces[chromium-desktop]'
             'tests/e2e/test_conversation_signals.py::test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers[chromium]'
@@ -168,6 +165,7 @@ jobs:
             'tests/e2e/test_ticket_list_first_draw.py::test_ticket_lists_arrive_settled_when_switching_pages[chromium]'
             'tests/e2e/test_orchestrator_rail.py::test_settle_reopen_keeps_outstanding_work_and_worker_address[chromium]'
             'tests/e2e/test_ticket_file_previews.py::test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place[chromium]'
+            'tests/e2e/test_goals_browser.py::test_goal_page_persistence_external_refresh_and_owned_conversation[chromium]'
             'tests/e2e/test_goal_holders_browser.py::test_goal_promotion_and_stable_url_share_manager_name[chromium]'
             'tests/e2e/test_goal_holders_browser.py::test_leaving_a_goal_manager_with_text_blocks_opens_each_next_page[chromium]'
           )
