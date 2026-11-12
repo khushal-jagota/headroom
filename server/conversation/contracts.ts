@@ -341,7 +341,6 @@ export interface ConversationSystem {
     mode: HeldPromptPromotionMode,
   ): Promise<HeldPromptPromotionFate | null>;
   discard_held_prompt(conversation_id: string, held_prompt_id: string): Promise<boolean>;
-  retirement_is_confirmed(conversation_id: string): Promise<boolean>;
   kill(conversation_id: string): Promise<void>;
   is_running(conversation_id: string): Promise<boolean>;
   has_pending_permission_ask(conversation_id: string): Promise<boolean>;
