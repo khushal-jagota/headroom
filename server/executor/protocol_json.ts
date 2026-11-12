@@ -15,6 +15,42 @@ export function ordered_json_entries(
   return keys.map((key) => [key, value[key]] as const);
 }
 
+/** Copy a Python dictionary while retaining source order for integer-looking keys. */
+export function ordered_json_object(
+  entries: Iterable<readonly [string, unknown]>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = Object.create(null);
+  const keys: string[] = [];
+  for (const [key, value] of entries) {
+    if (!Object.hasOwn(result, key)) keys.push(key);
+    result[key] = value;
+  }
+  // Object.entries must expose Python order even for integer-looking keys. Both generic
+  // value conversion and byte serialization use the shared JSON formatter.
+  const ordered = new Proxy(result, {
+    ownKeys: (target) => [
+      ...keys,
+      ...Reflect.ownKeys(target).filter((key) => typeof key === 'symbol'),
+    ],
+    defineProperty(target, key, descriptor) {
+      const fresh = !Object.hasOwn(target, key);
+      const defined = Reflect.defineProperty(target, key, descriptor);
+      if (defined && fresh && typeof key === 'string') keys.push(key);
+      return defined;
+    },
+    deleteProperty(target, key) {
+      const deleted = Reflect.deleteProperty(target, key);
+      if (deleted && typeof key === 'string') {
+        const index = keys.indexOf(key);
+        if (index >= 0) keys.splice(index, 1);
+      }
+      return deleted;
+    },
+  });
+  object_keys.set(ordered, keys);
+  return ordered;
+}
+
 export class ExecutorJSONSyntaxError extends SyntaxError {
   readonly reason: string;
   /** Bytes inspected, including the offending byte; EOF uses the complete input length. */

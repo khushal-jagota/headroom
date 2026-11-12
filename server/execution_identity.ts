@@ -22,3 +22,10 @@ export function supports_executor_versions(
     spool_format_version === SPOOL_FORMAT_VERSION
   );
 }
+/** The canonical executor protocol refusal, shared by both halves. */
+export class ProtocolRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProtocolRefused';
+  }
+}
