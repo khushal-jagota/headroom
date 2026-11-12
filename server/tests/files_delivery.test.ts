@@ -1,3 +1,4 @@
+import { gunzipSync } from 'node:zlib';
 import { mkdirSync, writeFileSync, symlinkSync, utimesSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -22,6 +23,15 @@ test('agent file rewrites invalidate cached bytes and confine HTML navigation', 
   const config = loadConfig(undefined, { PLAN_DB_PATH: db, PLAN_TEST_MODE: '1' });
   const app = await createApp(config, { database, areas: [{ prefix: '', routes }] });
   try {
+    // Python's final 64 KiB range chunk is a complete body, so gzip retains length.
+    writeFileSync(join(root, 'boundary.bin'), Buffer.alloc(64 * 1024 + 1));
+    const boundary = await app.inject({
+      url: `/files/tickets/${ticket.id}/boundary.bin`,
+      headers: { range: 'bytes=0-65535', 'accept-encoding': 'gzip' },
+    });
+    expect(boundary.statusCode).toBe(206);
+    expect(Number(boundary.headers['content-length'])).toBe(boundary.rawPayload.length);
+    expect(gunzipSync(boundary.rawPayload).equals(Buffer.alloc(64 * 1024))).toBe(true);
     const url = `/files/tickets/${ticket.id}/site/index.html`;
     const first = await app.inject({ url });
     expect(first.statusCode).toBe(200);
