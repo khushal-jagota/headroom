@@ -568,6 +568,15 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     }
     reservation.automatic_notice = delivery.automatic_notice;
     const survivors = delivery.messages.length > 0 ? delivery.messages : batch;
+    // A drain credits only the successful admission envelopes returned by delivery.
+    // A definite refusal returns none. The remaining refused rows never carry read credit.
+    const drain_bounds = delivery.messages
+      .filter(
+        (message) =>
+          message.sender?.kind === 'owner' && message.owner_read_through_sequence !== null,
+      )
+      .map((message) => message.owner_read_through_sequence!);
+    const drain_read_through = drain_bounds.length > 0 ? Math.max(...drain_bounds) : null;
     const fate = await state.lock.run(async () => {
       try {
         if (delivery.refusal_reason !== null) {
@@ -592,9 +601,14 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
                   {
                     lifecycle: index === 0 ? lifecycle : [],
                     recording_receipt: message.recording_receipt,
-                    owner_read_through_sequence: message.acknowledge_owner_on_failure
-                      ? message.owner_read_through_sequence
-                      : null,
+                    owner_read_through_sequence:
+                      index !== 0
+                        ? null
+                        : queued && !promoted
+                          ? drain_read_through
+                          : message.acknowledge_owner_on_failure
+                            ? message.owner_read_through_sequence
+                            : null,
                   },
                 ),
               );
