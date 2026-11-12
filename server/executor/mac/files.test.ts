@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import { FilesService, file_version } from './files.ts';
+import { ServerLifecycleError } from '../../lifecycle/contracts.ts';
 import {
   directory_open_flags,
   flock_descriptor,
@@ -187,7 +188,7 @@ describe('retained executor file capabilities', () => {
     const admitted = service.file_digest(source);
     const stopped = service.stop({ deadline: performance.now() / 1000 - 1 });
     await expect(service.file_digest(source)).rejects.toThrow();
-    await expect(stopped).rejects.toMatchObject({ name: 'ServerLifecycleError' });
+    await expect(stopped).rejects.toBeInstanceOf(ServerLifecycleError);
     await retained; // The service closes this deliberately unreturned handle at real settlement.
     expect((await admitted)[1]).toBe(1024 * 1024);
     await service.stop({ deadline: performance.now() / 1000 + 10 });
