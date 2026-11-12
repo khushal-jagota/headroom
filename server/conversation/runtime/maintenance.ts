@@ -173,8 +173,13 @@ export class IdleChildJanitor {
 }
 
 /** Detach preserves durable task rows for the later restart-recovery owner. */
-export async function detach_children(states: readonly ConversationState[],
-  additional: readonly { child: import('../backends/contracts.ts').BackendChild; state: ConversationState }[] = []): Promise<void> {
+export async function detach_children(
+  states: readonly ConversationState[],
+  additional: readonly {
+    child: import('../backends/contracts.ts').BackendChild;
+    state: ConversationState;
+  }[] = [],
+): Promise<void> {
   const candidates = new Map(additional.map(({ child, state }) => [child, state]));
   for (const state of states) if (state.child !== null) candidates.set(state.child, state);
   const detaches = [...candidates].map(async ([child, state]) => {
